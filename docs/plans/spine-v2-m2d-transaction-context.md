@@ -175,10 +175,25 @@ over `tests/` was blind to one.** CI caught three failures in
 `tests/work-operations-evidence.test.js` — a fourth file with the
 mixed-composition pattern, after this plan already claimed three. That file
 carries a literal NUL at line 309 (`'null\0byte'`, a hostile-input fixture), so
-`file` reports it as `data` and grep classifies it as binary and skips it
-**without saying so**. Demonstrated both directions in one experiment: the same
-planted spelling in the same file is seen by a `readFileSync` scan and reported
-absent by grep, exit 1.
+`file` reports it as `data`, and what happens next **depends on which tool
+`grep` actually is** — which is the sharper half of this finding, because it was
+not the tool assumed:
+
+| tool | `-c` on the planted token | says anything? |
+|---|---|---|
+| `/usr/bin/grep` (BSD, macOS) | `8`, exit 0 | yes — `Binary file … matches`, matching lines suppressed |
+| `ugrep 7.8.4`, which is what `grep` resolves to in this environment | nothing, exit **1** | **no** |
+
+The searches in this milestone ran through a shell function resolving `grep` to
+`ugrep`, which reports a NUL-bearing file as *no match at all*. GNU and BSD grep
+do not silently skip: they find the matches and suppress the lines, which is
+recoverable. Suppressing binary matches on those needs `-I` /
+`--binary-files=without-match` explicitly.
+
+So the general claim "grep skips binary files silently" is **false as stated**,
+and the true one is narrower and worse: *the tool invoked as `grep` was not
+grep, and that was never checked.* A `readFileSync` scan sees the planted
+spelling in the same file either way.
 
 Six tracked test files have that property — `delivery-change-acceptance-e2e`,
 `lifecycle-amendment-execution-e2e`, `package-scaffold`, `project-bootstrap`,
@@ -288,46 +303,58 @@ answer it. Omitted (as `scripts/repo-truth.js` constructs it) the reader
 defaults to `() => null`: a handle assembled without the wrapper cannot prove a
 transaction and says so, which is the fail-closed direction.
 
-### 3. Pull, not push — and the assumption it rests on
+### 3. Pull, not push — and ownership, not merely presence
 
 `proveCallerTransaction` **pulls** the witness from the handle that will do the
-writing rather than accepting one from the caller. A caller therefore cannot
-satisfy it by holding some other transaction's token, because its token is never
-consulted. Pull was chosen over push because it changes zero consumer call
-sites, and because under today's invariants it proves exactly as much.
+writing rather than accepting one from the caller, so a caller cannot satisfy it
+by holding some other transaction's token: its token is never consulted.
 
-> **NAMED ASSUMPTION.** "An outer transaction is open on this handle" is
-> equivalent to "the caller's transaction" **only** while all three of these
-> hold:
+An earlier cut of this milestone stopped there, proved only that *a* transaction
+was open on the connection, and recorded the difference as a named limitation.
+That was wrong to ship under a function called `proveCallerTransaction`. The
+witness is now published into the async context that opened the transaction
+(`AsyncLocalStorage`), so the proof answers **which flow owns it**:
+
+| situation | outcome |
+|---|---|
+| inside the flow that opened the transaction | `ACTIVE` |
+| another flow, transaction genuinely open | `NOT_TRANSACTION_OWNER` |
+| after it committed or rolled back | `NO_TRANSACTION` |
+
+Measured in all three states rather than reasoned about.
+
+**The false refusal this buys, and why it is not papered over.** Ownership can
+be lost. Async context survives `await`, `queueMicrotask`, `process.nextTick`,
+`setTimeout`, `setImmediate` and an event emitted inside the transaction — each
+measured in the suite, not assumed — and is lost by a callback that leaves the
+transaction and is invoked later, including a listener registered inside it and
+emitted outside. A caller in that position is refused with **the boundary named
+and the fix offered** (`AsyncResource.bind`), because reporting "no transaction"
+to somebody whose transaction is plainly open is the worst available message.
+The bound callback reading `ACTIVE` and the plain one reading
+`NOT_TRANSACTION_OWNER` are both asserted.
+
+**One implementation note worth keeping, because it failed first.** The scope
+must close when the transaction *body* settles, not when the scope function
+returns. A `finally` around `AsyncLocalStorage.run` fires the moment an async
+body hands back its pending promise, which drops the witness while the
+transaction is still open — the first cut did exactly that and told every
+legitimate consumer there was no transaction. The negative-evidence suite caught
+it immediately.
+
+> **REMAINING ASSUMPTIONS.** The same-handle half assumes **one connection per
+> application instance**; the registries are module-private, so **one loaded core
+> module instance per process** (two copies fail closed as `FORGED_WITNESS`).
+> `NESTED_TRANSACTION` is no longer load-bearing for ownership — it was what made
+> the old gap unreachable in production, and the gap is closed.
 >
-> 1. **One connection per application instance.** `createDatabase` opens one
->    `DatabaseSync` and every module service receives that same object
->    (`packages/app/src/create-app.js:166`).
-> 2. **Nested outer transactions are refused.** `begin()` raises
->    `NESTED_TRANSACTION` (`packages/core/src/database.js`), so a transaction
->    open on the handle cannot belong to an inner scope the caller does not own.
-> 3. **One loaded core module instance per process.** The witness registry is a
->    module-private `WeakSet`; two copies of `packages/core` in one process do
->    not share it.
->
-> **What breaks it, and what M3 must therefore provide.** The ratified
-> PostgreSQL plan (`docs/plans/production-spine-v2-postgresql.md`) introduces
-> connection pooling and, in its own words, "transaction connection affinity"
-> (§707). The moment a storage handle can span or outlive connections, invariant
-> 1 fails and "open on this handle" stops meaning "the caller's transaction".
->
-> Pull remains correct under pooling **if and only if** the PostgreSQL adapter
-> mints its witness on a *connection-affine* handle — that is, the object
-> `proveCallerTransaction` compares by identity must be the pooled client bound
-> to the active transaction, not a pool-level facade shared across clients.
-> **This is an obligation on M3, not a property M3 inherits.** An M3
-> implementation that mints at pool level would leave every consumer in this
-> milestone silently proving nothing, with no test failing.
->
-> Invariant 3 is why a mixed composition fails closed with
-> `TRANSACTION_PROOF.FORGED_WITNESS` in `details.proof`. That is safe but
-> unobvious, and it is the sentence a developer hitting it in a test harness
-> needs first.
+> **What M3 must provide.** Under connection pooling
+> (`docs/plans/production-spine-v2-postgresql.md`, "transaction connection
+> affinity") both halves need the adapter's help: the object compared by identity
+> must be the pooled client bound to the active transaction rather than a
+> pool-level facade, **and** the ownership scope must be opened around that
+> client's work. An adapter that does the first and not the second would restore
+> exactly the gap this milestone closed, with no test failing.
 
 ### 4. The same-handle half, which nothing was checking
 
@@ -408,6 +435,18 @@ is strictly more correct.
     commits nothing; still rolls back whole inside one; and the legitimate path
     is untouched.
   - The witness lifetime, across both commit and rollback.
+  - **Ownership**: a flow that did not open the transaction is refused
+    `NOT_TRANSACTION_OWNER` while one is genuinely open, writes nothing, and is
+    told both the cause and the fix.
+  - **Every boundary the refusal claims carries context, measured** — `await`,
+    `queueMicrotask`, `process.nextTick`, `setTimeout`, `setImmediate`, an event
+    emitted inside — plus the one that loses it and the `AsyncResource.bind`
+    escape hatch that recovers it.
+  - **The mint is closed by exhaustion**: a second `claimTransactionMinter()` is
+    refused however the module was reached, and the module exposes no other
+    minting surface. This replaced pinning the computed-import gap as a
+    limitation, which stopped being honest the moment the witness claimed
+    ownership rather than presence.
   - **The boundary of the proof itself**, pinned so the function's name cannot
     be mistaken for a stronger guarantee: flow B, having opened nothing, is
     *not* refused during flow A's open window, and loses its writes to A's
@@ -448,40 +487,15 @@ is strictly more correct.
   out of scope, and the M2D guard makes no claim about them.
 - **Two copies of core in one process fail closed.** See the named assumption,
   invariant 3.
-- **The witness proves a transaction is open on the handle, not which async
-  flow owns it.** One connection serves the whole instance, so if flow A opens
-  `transactionAsync` and awaits, a flow B that opened nothing can call one of
-  these capabilities during that window, be told it succeeded, and lose its
-  writes when A rolls back. Measured, not reasoned:
-
-  ```
-  PROBE P1: flow B (no transaction of its own) -> SUCCEEDED (3 rows)
-  PROBE P1: obligation status while A still open = handed_over
-  PROBE P1: obligation status after A rolled back  = pending_handover
-  ```
-
-  **This is not a regression and M2D does not widen it.** Before M2D
-  `markHandedOver` had no check at all, so B was never refused; Work read
-  `isTransaction`, the same process-wide connection flag, which is `true`
-  throughout A's window. The behaviour is byte-identical either side of this
-  change. What M2D did narrow is the far larger hazard: a transactionless caller
-  used to corrupt **unconditionally**, and now only inside another flow's open
-  window.
-
-  It is also unreachable in production today. Every caller of all four consumers
-  is a record action, and a concurrent record action opens its own transaction
-  and is refused `NESTED_TRANSACTION` loudly. Reaching it needs a production
-  caller that invokes one of these capabilities outside an action, which the
-  consumer search above establishes does not exist.
-
-  Closing it properly means binding the witness to the async caller rather than
-  to the connection — the same ownership question as M3's transaction connection
-  affinity, and the same place it should be answered. An `AsyncLocalStorage`
-  binding would do it, at the cost of a real false-refusal mode: context is lost
-  across timer and event-emitter boundaries, so legitimate code would begin
-  refusing for reasons nothing in the error explains. That trade belongs to the
-  milestone that owns connection ownership, not to one whose mandate is
-  preservation.
+- **Ownership beyond one connection.** The proof binds a transaction to the
+  async flow that opened it, on one connection. Under a pooled adapter both
+  halves need help from that adapter — see the remaining assumptions in
+  Decisions §3, recorded as an obligation on M3 in `DECISIONS.md`.
+- **A legitimate caller can be refused.** A callback that leaves the transaction
+  and is invoked later has no ownership and is told so. That is a real cost of
+  proving ownership rather than presence, it is named in the refusal with
+  `AsyncResource.bind` as the fix, and the boundaries are measured rather than
+  guessed.
 
 ## Outcome and follow-up
 

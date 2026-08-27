@@ -6,7 +6,16 @@ import { dirname, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { AppError, ConflictError } from './errors.js';
 import { createSqliteStorage } from './storage-contract.js';
-import { mintTransactionWitness } from './transaction-witness.js';
+import { claimTransactionMinter, currentTransactionWitness } from './transaction-witness.js';
+
+/**
+ * The right to open an owned transaction scope, claimed once at module load so
+ * that nothing else in the process can take it (Spine v2 M2D). Claiming here
+ * rather than inside `createDatabase` is deliberate: the capability must be
+ * gone before any package's code can run, not merely before the first
+ * database is opened.
+ */
+const openTransactionScope = claimTransactionMinter();
 
 /**
  * @typedef {{
@@ -403,19 +412,6 @@ export function createDatabase(options = {}) {
   // "cannot start a transaction within a transaction".
   let inOuterTransaction = false;
 
-  /**
-   * The opaque witness for the outer transaction currently open on this
-   * connection, or null (Spine v2 M2D).
-   *
-   * It is minted and dropped **beside** `inOuterTransaction`, in the same two
-   * places, so the witness's lifetime is the transaction's lifetime and there
-   * is no second piece of state that could drift from the first. Consumers
-   * that must prove transactional context read it through
-   * `storage.activeTransaction()`; the slot itself is closed over here, so
-   * nothing outside this function can set it.
-   */
-  let currentWitness = null;
-
   function begin() {
     if (inOuterTransaction) {
       throw new AppError(
@@ -435,10 +431,6 @@ export function createDatabase(options = {}) {
       throw error;
     }
     inOuterTransaction = true;
-    // Minted only after BEGIN actually succeeded: a witness for a transaction
-    // that was never opened would be the one lie this whole mechanism exists
-    // to make impossible.
-    currentWitness = mintTransactionWitness(storage);
   }
 
   /** @param {unknown} primaryError — never masked by a rollback failure */
@@ -455,7 +447,11 @@ export function createDatabase(options = {}) {
   const transaction = (fn) => {
     begin();
     try {
-      const result = fn();
+      // The scope mints the witness only after BEGIN has actually succeeded —
+      // a witness for a transaction that was never opened would be the one lie
+      // this mechanism exists to make impossible — publishes it into the async
+      // context running `fn`, and drops it however `fn` ends.
+      const result = openTransactionScope(storage, fn);
       raw.exec('COMMIT;');
       return result;
     } catch (error) {
@@ -465,16 +461,12 @@ export function createDatabase(options = {}) {
         : error;
     } finally {
       inOuterTransaction = false;
-      // Dropped whether the transaction committed or rolled back: past this
-      // point the witness names a transaction that is over, and a consumer
-      // holding one must not be able to write through it.
-      currentWitness = null;
     }
   };
   const transactionAsync = async (fn) => {
     begin();
     try {
-      const result = await fn();
+      const result = await openTransactionScope(storage, fn);
       raw.exec('COMMIT;');
       return result;
     } catch (error) {
@@ -484,16 +476,12 @@ export function createDatabase(options = {}) {
         : error;
     } finally {
       inOuterTransaction = false;
-      // Dropped whether the transaction committed or rolled back: past this
-      // point the witness names a transaction that is over, and a consumer
-      // holding one must not be able to write through it.
-      currentWitness = null;
     }
   };
-  // `begin()` above refers to `storage` — legal because it can only run after
-  // this function has returned, and deliberate: the witness must be bound to
-  // the very handle a consumer will later ask.
-  const storage = createSqliteStorage(raw, transaction, transactionAsync, () => currentWitness);
+  // Both transaction wrappers above refer to `storage` — legal because they can
+  // only run after this function has returned, and deliberate: the witness must
+  // be bound to the very handle a consumer will later ask about.
+  const storage = createSqliteStorage(raw, transaction, transactionAsync, () => currentTransactionWitness(storage));
 
   return {
     raw,

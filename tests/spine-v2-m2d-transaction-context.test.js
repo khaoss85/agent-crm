@@ -312,12 +312,10 @@ test('a package can ask the question and cannot answer it', () => {
     'the sanctioned import must stay allowed',
   );
 
-  // **And the honest half.** The rule reads import *specifiers*, so a computed
-  // one is beyond its reach. A package that wrote this would pass the scan, get
-  // the mint, and be able to manufacture a witness for the real handle. Pinned
-  // as a NON-catch so nobody reads the assertions above as a proof of
-  // unreachability: the residual defence there is trusted checked-in source
-  // (ADR-018 addendum 4), exactly as it is for every other package boundary.
+  // The import rule reads *specifiers*, so a computed one walks past it. That
+  // used to be pinned here as an honest limitation; it is now only a statement
+  // about the rule, because reaching the module no longer gets you anything —
+  // see the next test.
   for (const computed of [
     "const p = '../../core/src/transaction-witness.js'; await import(p);",
     "await import(new URL('../../core/src/transaction-witness.js', import.meta.url));",
@@ -325,6 +323,45 @@ test('a package can ask the question and cannot answer it', () => {
     assert.equal(importsPrivateKernelPath(computed), false,
       `the import rule is a specifier scan and does not claim to catch: ${computed}`);
   }
+});
+
+/**
+ * **The mint is closed by exhaustion, not by analysis.**
+ *
+ * While the witness only claimed *connection* scope, "a package could reach the
+ * mint through a computed import" was a limitation worth stating. Once it
+ * claims **ownership**, a package that can mint can manufacture the ownership
+ * this module exists to prove, and a limitation becomes the hole.
+ *
+ * So the capability is taken rather than guarded. `packages/core/src/database.js`
+ * claims it at module load; by the time any package's code can run there is
+ * nothing left to claim, whatever spelling it uses to get here — static import,
+ * computed specifier, `import(new URL(...))`, it makes no difference, because
+ * the refusal is not about how you arrived.
+ */
+test('the transaction minter can be claimed once, and the kernel has already claimed it', async () => {
+  const witness = await import('../packages/core/src/transaction-witness.js');
+
+  // Reaching the private module by any path is possible; getting anything out
+  // of it is not. The database wrapper claimed the minter at module load.
+  assert.throws(
+    () => witness.claimTransactionMinter(),
+    (error) => {
+      assert.match(error.message, /already claimed/);
+      return true;
+    },
+    'a second claim must be refused however the module was reached',
+  );
+
+  // And there is no other door: nothing here hands out a witness, and nothing
+  // lets a caller mint one without also running the body that owns it.
+  assert.deepEqual(
+    Object.keys(witness).filter((name) => /mint|Mint/.test(name)),
+    ['claimTransactionMinter'],
+    'the only minting surface is the one-shot claim',
+  );
+  assert.equal(typeof witness.currentTransactionWitness, 'function',
+    'reading the current witness stays available and proves nothing on its own');
 });
 
 /* ------------------------------------------------------------------ */
@@ -486,32 +523,24 @@ test('a fault between the Task and the Activity rolls both back, in the real app
 });
 
 /**
- * **The boundary of the proof, pinned — not a hazard blessed as desirable.**
+ * **Ownership, which the earlier version of this test pinned as a limitation.**
  *
- * `proveCallerTransaction` is named for the caller. What it checks is that an
- * outer transaction is open on the connection, and it cannot see which async
- * flow opened one. The two are the same statement only while a concurrent
- * record action is refused `NESTED_TRANSACTION`, which is what makes the gap
- * below unreachable in production today.
+ * That test asserted the opposite: flow B, having opened nothing, was *not*
+ * refused during flow A's open window, and lost its writes to A's rollback. It
+ * carried the instruction that if it ever failed because the witness became
+ * caller-scoped, that was a fix — update the test, do not restore the
+ * behaviour. It failed for exactly that reason, so this is the update.
  *
- * This test exists so that nobody reads that function's name and concludes the
- * witness is caller-scoped. It is the same job the token-scan test does for the
- * structural guard: name the limit, so the mechanism cannot be mistaken for a
- * stronger one.
- *
- * **If this test ever fails because the witness became caller-scoped, that is a
- * fix.** Update the test to assert the refusal; do not restore the behaviour it
- * currently pins. The measured hazard is recorded in
- * `docs/plans/spine-v2-m2d-transaction-context.md` and the ownership question
- * belongs to the pooled-connection affinity obligation in `DECISIONS.md`
- * (ADR-018 addendum 8).
+ * The witness is now published into the async context that opened the
+ * transaction, so "a transaction is open on this connection" and "this call
+ * opened it" are two different questions and the proof asks the second one.
  */
-test('the witness proves a transaction is open on the connection, not which flow owns it', async (t) => {
+test('a flow that did not open the transaction is refused, even while one is open', async (t) => {
   const root = project(t, { withDelivery: true });
-  const context = await boot(root, join(root, 'data', 'm2d-interleave.sqlite'));
+  const context = await boot(root, join(root, 'data', 'm2d-ownership.sqlite'));
   t.after(() => context.close());
   const { app } = context;
-  const { contract } = await activatedContract(root, app, { name: 'M2D Interleave', offers: OFFERS });
+  const { contract } = await activatedContract(root, app, { name: 'M2D Ownership', offers: OFFERS });
 
   const capability = app.domains.capability({
     consumer: 'delivery', capability: 'delivery-obligations', version: 1,
@@ -521,47 +550,115 @@ test('the witness proves a transaction is open on the connection, not which flow
   const pending = capability.listPending(contract.id);
   assert.ok(pending.length >= 1);
 
+  const handover = (ref) => capability.markHandedOver({
+    contractId: contract.id, obligationIds: pending.map((row) => row.id),
+    handoverRef: ref, actor: ACTOR,
+  });
+
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
 
-  // Flow A opens a transaction and holds it open across an await.
+  // Flow A opens a transaction and parks, holding it open.
   const flowA = app.database.transactionAsync(async () => {
     await gate;
     throw new Error('flow A rolls back');
   });
 
-  // Flow B opened nothing. It is told the proof holds, because on this one
-  // connection it does — A's transaction is open, and nothing here can tell
-  // that A is somebody else.
-  const marked = await capability.markHandedOver({
-    contractId: contract.id,
-    obligationIds: pending.map((row) => row.id),
-    handoverRef: 'flow-b-ref',
-    actor: ACTOR,
-  });
-  assert.equal(marked, pending.length, 'B is not refused: the proof is connection-scoped');
-  assert.equal(service.get(pending[0].id).status, 'handed_over', 'and B genuinely wrote');
+  // Flow B runs HERE — in this test's own async context, not inside A's
+  // callback, which is the whole point: a call made from inside A's callback
+  // *is* A and is correctly served.
+  const outsideFlow = await handover('flow-b').then(() => null, (error) => error);
 
-  // …and B's writes were never B's to keep.
   release();
   await assert.rejects(() => flowA, /flow A rolls back/);
-  assert.equal(service.get(pending[0].id).status, pending[0].status,
-    "B was told it succeeded, and A's rollback took the writes with it");
-  assert.equal(service.get(pending[0].id).handoverRef, null);
 
-  // The invariant that makes this unreachable in production, asserted rather
-  // than described: a concurrent flow that opens its own transaction — which is
-  // what every production caller does, because every one of them is a record
-  // action — is refused before it can reach any of this.
-  await app.database.transactionAsync(async () => {
-    await assert.rejects(
-      () => app.database.transactionAsync(async () => 'never runs'),
-      (error) => {
-        assert.equal(error.code, 'NESTED_TRANSACTION');
-        return true;
-      },
-    );
+  // …and is refused, naming the cause rather than claiming no transaction.
+  assert.ok(outsideFlow, 'flow B must be refused, not served');
+  assert.equal(outsideFlow.code, 'CONTRACT_TRANSACTION_REQUIRED');
+  assert.equal(outsideFlow.details.proof, TRANSACTION_PROOF.NOT_TRANSACTION_OWNER);
+  assert.match(outsideFlow.message, /does not own/);
+  assert.match(outsideFlow.message, /different asynchronous flow/);
+  // The message must say what to do about it, not only what went wrong.
+  assert.match(outsideFlow.message, /AsyncResource\.bind/);
+  assert.equal(service.get(pending[0].id).status, pending[0].status, 'and wrote nothing');
+});
+
+/**
+ * **The false-refusal mode, enumerated rather than left to be discovered.**
+ *
+ * Binding to the async owner buys a refusal a caller can hit legitimately: a
+ * callback that leaves the transaction and is invoked later has no context, and
+ * would otherwise be told "no transaction" while one is plainly open. The
+ * boundaries are measured here — the ones that carry, the one that does not,
+ * and the escape hatch the refusal message names.
+ */
+test('async context survives the boundaries the refusal claims it survives', async (t) => {
+  const db = createDatabase({ path: ':memory:' });
+  t.after(() => db.close());
+  const service = serviceOn(db);
+  const proof = () => proveCallerTransaction([service]);
+
+  /** @type {Record<string, string>} */
+  const seen = {};
+  await db.transactionAsync(async () => {
+    seen.direct = proof();
+    seen.await = await Promise.resolve().then(proof);
+    seen.microtask = await new Promise((r) => queueMicrotask(() => r(proof())));
+    seen.nextTick = await new Promise((r) => process.nextTick(() => r(proof())));
+    seen.setTimeout = await new Promise((r) => setTimeout(() => r(proof()), 1));
+    seen.setImmediate = await new Promise((r) => setImmediate(() => r(proof())));
+    const { EventEmitter } = await import('node:events');
+    const inner = new EventEmitter();
+    inner.on('x', () => { seen.emitInside = proof(); });
+    inner.emit('x');
   });
+  for (const [boundary, outcome] of Object.entries(seen)) {
+    assert.equal(outcome, TRANSACTION_PROOF.ACTIVE,
+      `${boundary} must carry the transaction owner's context`);
+  }
+  assert.deepEqual(Object.keys(seen).sort(),
+    ['await', 'direct', 'emitInside', 'microtask', 'nextTick', 'setImmediate', 'setTimeout'],
+    'every boundary the refusal message names as carrying is actually measured here');
+
+  // The boundary that genuinely loses it — a callback that leaves the scope —
+  // and the escape hatch the message tells a caller to use.
+  const { AsyncResource } = await import('node:async_hooks');
+  /** @type {any} */ let plain = null;
+  /** @type {any} */ let bound = null;
+  await db.transactionAsync(async () => {
+    plain = () => proof();
+    bound = AsyncResource.bind(() => proof());
+    // Both still hold the context while the transaction is open…
+    assert.equal(plain(), TRANSACTION_PROOF.ACTIVE);
+  });
+  // …and once it has closed, neither can write, which is the honest answer:
+  // the transaction is over, so the outcome is NO_TRANSACTION, not ownership.
+  assert.equal(plain(), TRANSACTION_PROOF.NO_TRANSACTION);
+  assert.equal(bound(), TRANSACTION_PROOF.NO_TRANSACTION);
+
+  // The ownership case: a transaction still open, and two callers outside it —
+  // one that let its context go, one that bound it. This is the pair the
+  // refusal message is written for.
+  let releaseInner;
+  const innerGate = new Promise((resolve) => { releaseInner = resolve; });
+  /** @type {any} */ let plainOutside = null;
+  /** @type {any} */ let boundOutside = null;
+  const owner = db.transactionAsync(async () => {
+    // Handed out of the scope: one plain, one bound.
+    plainOutside = () => proof();
+    boundOutside = AsyncResource.bind(() => proof());
+    await innerGate;
+  });
+  // Called from this context, while the owner's transaction is genuinely open.
+  const plainVerdict = plainOutside();
+  const boundVerdict = boundOutside();
+  releaseInner();
+  await owner;
+
+  assert.equal(plainVerdict, TRANSACTION_PROOF.NOT_TRANSACTION_OWNER,
+    'a callback that left the transaction has no claim on it, and is told exactly that');
+  assert.equal(boundVerdict, TRANSACTION_PROOF.ACTIVE,
+    'AsyncResource.bind carries the ownership the refusal message tells a caller to bind');
 });
 
 /* ------------------------------------------------------------------ */

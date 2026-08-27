@@ -496,12 +496,14 @@ its caller opened anything.
 
 ### What M2D deliberately did not close
 
-- **The proof is connection-scoped, not caller-scoped.** It proves an outer
-  transaction is open on the handle; it cannot see which async flow opened one.
-  Measured, pinned by a checked-in test, and unreachable in production only
-  because a concurrent record action is refused `NESTED_TRANSACTION`. Closing it
-  is the same ownership question as pooled-connection affinity and is recorded
-  against that milestone in `DECISIONS.md` (ADR-018 addendum 8).
+- **Nothing about transaction ownership.** An earlier cut of this milestone
+  proved only that a transaction was open on the connection, and recorded the
+  gap as a limitation. It is now closed: the witness is published into the async
+  context that opened the transaction, a flow that did not open one is refused
+  `NOT_TRANSACTION_OWNER`, and the mint that could forge ownership is taken once
+  by the kernel at module load rather than guarded by import analysis. What
+  remains open belongs to pooled connections and is an obligation on that
+  milestone (`DECISIONS.md`, ADR-018 addendum 8).
 - **No domain's persistence is migrated.** M2D is a transaction-context slice.
   Every `deferred` row in the storage-contract assessment above stays exactly
   where it was.

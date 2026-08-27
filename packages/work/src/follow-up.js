@@ -344,6 +344,12 @@ export function isUniqueConflict(error) {
 }
 
 /**
+ * Why a transaction can be open and still not be the caller's, and what to do
+ * about it. Shared by the refusals below so the diagnosis is written once.
+ */
+const LOST_ASYNC_CONTEXT = 'It was opened by a different asynchronous flow. Either another request owns it — and writing here would join a transaction this code does not control, to be committed or rolled back by somebody else — or this call has crossed a boundary that dropped its async context. Context survives await, queueMicrotask, process.nextTick, setTimeout, setImmediate and an event emitted inside the transaction; it is lost by a callback that leaves the transaction and is invoked later, including a listener registered inside it and emitted outside. Call this inside the transaction, or wrap the callback with AsyncResource.bind before it leaves.';
+
+/**
  * **Fail closed when the promised transaction is not there.**
  *
  * This package's whole guarantee is that a Task and its creation Activity are
@@ -387,6 +393,16 @@ export function requireCallerTransaction(tasks, activities) {
         + 'as one pair, and outside a transaction a failure between them would leave the task without the activity. '
         + 'Call it from a package action\'s execute, or from inside database.transactionAsync.',
       { code: 'WORK_TRANSACTION_REQUIRED', status: 500 },
+    );
+  }
+  // A real transaction, opened by somebody else. Refused with the cause named:
+  // a generic "no transaction" here would send a caller hunting for one that is
+  // already open, which is the worst version of this message.
+  if (proof === TRANSACTION_PROOF.NOT_TRANSACTION_OWNER) {
+    throw new AppError(
+      'work/follow-up@1 found a transaction open on this connection that this call does not own, so it refuses '
+        + 'to write a task and its activity into it. ' + LOST_ASYNC_CONTEXT,
+      { code: 'WORK_TRANSACTION_REQUIRED', status: 500, details: { proof } },
     );
   }
   // Everything else — no handle, two handles, a handle that cannot answer, or

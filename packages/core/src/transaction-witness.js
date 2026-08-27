@@ -1,5 +1,7 @@
 // @ts-check
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 /**
  * **Proving a caller-owned transaction without handing out the driver.**
  *
@@ -54,6 +56,34 @@
 const MINTED = new WeakSet();
 
 /**
+ * **Who owns the transaction that is open right now.**
+ *
+ * The witness registry above answers "is this a real witness for this handle".
+ * It cannot answer "did *this* call open it", because one connection serves the
+ * whole instance and nothing on the handle distinguishes one async flow from
+ * another. This does: the witness is published into the async context that
+ * opened the transaction, so a flow that did not open one reads `undefined`
+ * even while a transaction is genuinely open on the connection.
+ *
+ * Node carries this across `await`, `queueMicrotask`, `process.nextTick`,
+ * `setTimeout`, `setImmediate` and an `EventEmitter` emitted inside the scope.
+ * It does **not** carry across a callback that leaves the scope and is invoked
+ * later — a stored function, or a listener registered inside and emitted
+ * outside. `AsyncResource.bind` carries it across those deliberately. The
+ * refusal names all of this rather than leaving a caller to guess.
+ */
+const OWNERSHIP = new AsyncLocalStorage();
+
+/**
+ * The witness for the transaction currently open on each storage handle.
+ *
+ * It lives here rather than in the database wrapper so that minting, publishing
+ * and clearing are one operation in one place — there is no second slot that
+ * could disagree with this one.
+ */
+const CURRENT = new WeakMap();
+
+/**
  * Which storage handle each witness was minted for. A witness from another
  * database proves nothing about the connection the write is about to land on,
  * so the binding is recorded rather than assumed.
@@ -80,25 +110,98 @@ export const TRANSACTION_PROOF = Object.freeze({
   FORGED_WITNESS: 'forged-witness',
   /** A genuine handle, honestly reporting that no outer transaction is open. */
   NO_TRANSACTION: 'no-transaction',
+  /**
+   * A real transaction is open on this handle, and this call is not the flow
+   * that opened it — either another flow owns it, or this call crossed a
+   * boundary that dropped its async context.
+   */
+  NOT_TRANSACTION_OWNER: 'not-transaction-owner',
 });
 
+/** Claimed exactly once, by the database wrapper, at module load. */
+let minterClaimed = false;
+
 /**
- * Mint the witness for one outer transaction on one storage handle.
+ * **Claim the right to open an owned transaction scope. Once, per process.**
  *
- * Called by the database wrapper's `begin()` and by nothing else. It is
- * deliberately **not** re-exported from `packages/core/index.js`: a package
- * that could mint could manufacture the proof it is supposed to be subject to.
+ * Not exporting the mint was never the boundary it looked like. The rule that
+ * keeps a package out of `packages/core/src/…` reads import *specifiers*, so
+ * `const p = '…'; await import(p)` walks straight past it — and a package that
+ * reaches the mint can manufacture the ownership this module exists to prove.
+ * Documenting that as a limitation was honest while the witness only claimed
+ * connection scope. It is not honest now, so the hole is closed instead.
  *
- * @param {object} storage the storage handle the transaction is open on
- * @returns {object} the opaque witness
+ * It is closed by **exhaustion, not by analysis**: the first caller takes the
+ * capability and every later caller is refused, whatever import spelling it
+ * used. `packages/core/src/database.js` claims it at module load, so by the
+ * time any package can run, there is nothing left to take. A package that
+ * somehow loads first and claims it does not get a quiet forgery either — the
+ * database wrapper's own claim then throws and the application fails to boot,
+ * loudly, which is the direction this framework fails in.
+ *
+ * There is deliberately no way to mint a witness *without* running the body
+ * that owns it: minting, publishing into the async context, and clearing are
+ * one operation. A caller cannot obtain a witness and use it somewhere else,
+ * because it never holds one.
+ *
+ * @returns {(storage: object, body: () => any) => any}
  */
-export function mintTransactionWitness(storage) {
-  // No fields, and frozen. A witness is an identity, not a value — there is
-  // nothing here for a caller to observe and replicate.
-  const witness = Object.freeze({});
-  MINTED.add(witness);
-  OWNER.set(witness, storage);
-  return witness;
+export function claimTransactionMinter() {
+  if (minterClaimed) {
+    throw new Error(
+      'The transaction witness minter is already claimed. It is claimed once per process by the database '
+        + 'wrapper, so that no other code can mint the witness that proves transaction ownership.',
+    );
+  }
+  minterClaimed = true;
+  /**
+   * Open the owned scope for one outer transaction, run `body` inside it, and
+   * drop the witness whatever happens.
+   *
+   * @param {object} storage @param {() => any} body
+   */
+  return function openTransactionScope(storage, body) {
+    // No fields, and frozen. A witness is an identity, not a value — there is
+    // nothing here for a caller to observe and replicate.
+    const witness = Object.freeze({});
+    MINTED.add(witness);
+    OWNER.set(witness, storage);
+    CURRENT.set(storage, witness);
+    // The scope has to close when the BODY finishes, not when `run` returns.
+    // A `finally` here fires the moment an async body hands back its pending
+    // promise, which would drop the witness while the transaction is still
+    // open — the first version did exactly that, and every consumer inside the
+    // transaction was told there was none.
+    let closed = false;
+    const close = () => { if (!closed) { closed = true; CURRENT.delete(storage); } };
+    try {
+      const result = OWNERSHIP.run(witness, body);
+      if (result && typeof (/** @type {any} */ (result).then) === 'function') {
+        return /** @type {any} */ (result).then(
+          (/** @type {any} */ value) => { close(); return value; },
+          (/** @type {any} */ error) => { close(); throw error; },
+        );
+      }
+      close();
+      return result;
+    } catch (error) {
+      close();
+      throw error;
+    }
+  };
+}
+
+/**
+ * The witness for the outer transaction currently open on this handle, or null.
+ *
+ * Read-only, and the value is meaningless on its own: holding it proves
+ * nothing, because {@link proveCallerTransaction} never accepts a witness from
+ * a caller — it looks one up.
+ *
+ * @param {object} storage
+ */
+export function currentTransactionWitness(storage) {
+  return CURRENT.get(storage) ?? null;
 }
 
 /**
@@ -131,45 +234,55 @@ function storageOf(service) {
  * connection: a caller cannot satisfy it by holding some other transaction's
  * token, because its token is never consulted.
  *
- * ### What this proves, and what it does not
+ * ### What this proves
  *
- * The name says "caller". What the code checks is that **an outer transaction
- * is open on this connection** — it cannot see which async flow opened it, and
- * there is nothing on the handle that would tell it.
+ * Three things, and the third is the one the name promises:
  *
- * The two are the same statement only while three invariants hold:
+ * 1. every service that must commit together writes on **one** storage handle;
+ * 2. an outer transaction is open on that handle right now;
+ * 3. **this call's asynchronous flow is the one that opened it.**
  *
- * 1. **One connection per application instance.** `createDatabase` opens one,
- *    and every module service receives that same object.
- * 2. **Nested outer transactions are refused.** `begin()` raises
- *    `NESTED_TRANSACTION`, so a transaction open on this connection cannot
- *    belong to an inner scope the caller does not own.
- * 3. **One loaded core module instance per process.** The witness registry is
- *    the module-private `WeakSet` above; two copies of `packages/core` in one
- *    process do not share it, and the proof fails closed as `FORGED_WITNESS`.
+ * (3) is why the name is honest. An earlier cut of this module proved only (1)
+ * and (2), and documented the gap: if flow A opened a transaction and awaited,
+ * a flow B that opened nothing was told `ACTIVE`, wrote inside A's transaction
+ * and lost those writes to A's rollback. The witness is now published into the
+ * async context that opened the transaction, so B reads a different store — or
+ * none — and is refused `NOT_TRANSACTION_OWNER`.
  *
- * **The gap those invariants leave, stated plainly.** If flow A opens
- * `transactionAsync` and awaits, a flow B that opened nothing can call a
- * consumer of this function during that window, be told `ACTIVE`, write inside
- * A's transaction, and lose those writes when A rolls back. That is measured,
- * not hypothetical — `tests/spine-v2-m2d-transaction-context.test.js` pins it.
+ * ### The false refusal this buys, and how a caller gets out of it
  *
- * It is unreachable in production **today**, and by invariant 2 rather than by
- * luck: every caller of every consumer is a record action, and a concurrent
- * record action opens its own transaction and is refused `NESTED_TRANSACTION`
- * before it can reach here. **A caller that invokes one of those consumers
- * outside a record action would reach it**, which is the thing to check before
- * adding one.
+ * Ownership is real, so it can be lost. Async context survives `await`,
+ * `queueMicrotask`, `process.nextTick`, `setTimeout`, `setImmediate` and an
+ * event emitted inside the transaction — all measured, in
+ * `tests/spine-v2-m2d-transaction-context.test.js`, not assumed. It is lost by
+ * a callback that leaves the transaction and is invoked later, including a
+ * listener registered inside it and emitted outside.
  *
- * This is also strictly better than what it replaced: reading the driver's
- * `isTransaction` flag answered the same connection-wide question, and two of
- * the four consumers had no check at all, so a transactionless caller used to
- * corrupt unconditionally rather than only inside another flow's window.
+ * A caller in that position is refused, and the refusal **names the cause and
+ * the fix** rather than reporting a missing transaction while one is plainly
+ * open: wrap the callback with `AsyncResource.bind` before it leaves. That is
+ * measured too — the bound callback reads `ACTIVE`, the plain one reads
+ * `NOT_TRANSACTION_OWNER`.
  *
- * Closing the gap means binding the witness to the async caller rather than to
- * the connection — the same ownership question as the pooled-connection
- * affinity obligation recorded in `DECISIONS.md` (ADR-018 addendum 8), and it
- * belongs there rather than here.
+ * ### What it still assumes
+ *
+ * - **One connection per application instance.** `createDatabase` opens one and
+ *   every module service receives that same object, which is what makes (1) a
+ *   comparison rather than a guess.
+ * - **One loaded core module instance per process.** The registries above are
+ *   module-private; two copies of `packages/core` in one process do not share
+ *   them, and the proof fails closed as `FORGED_WITNESS`.
+ *
+ * `NESTED_TRANSACTION` is no longer load-bearing for correctness here — it was
+ * what made the ownership gap unreachable in production, and the gap is closed.
+ * It remains the framework's answer to a second outer transaction on one
+ * connection.
+ *
+ * Under a pooled connection (`docs/plans/production-spine-v2-postgresql.md`)
+ * both halves need the adapter's help: the handle compared by identity must be
+ * the pooled client bound to the active transaction, and the ownership scope
+ * must be opened around that client's work. Recorded as an obligation in
+ * `DECISIONS.md` (ADR-018 addendum 8).
  *
  * @param {any[]} services the module services whose writes must commit together
  * @returns {string} one of {@link TRANSACTION_PROOF}
@@ -203,6 +316,11 @@ export function proveCallerTransaction(services) {
   // is the one a caller can fix by opening a transaction.
   if (witness === null || witness === undefined) return TRANSACTION_PROOF.NO_TRANSACTION;
   if (!isActiveTransactionWitness(storage, witness)) return TRANSACTION_PROOF.FORGED_WITNESS;
+  // The ownership half. A transaction is genuinely open on the connection; this
+  // asks whether *this* call is the flow that opened it. A caller running in
+  // another flow's window reads a different store — or none — and is refused
+  // rather than silently joining a transaction it does not control.
+  if (OWNERSHIP.getStore() !== witness) return TRANSACTION_PROOF.NOT_TRANSACTION_OWNER;
   return TRANSACTION_PROOF.ACTIVE;
 }
 

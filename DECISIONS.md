@@ -575,25 +575,40 @@ atomicity even inside a transaction, because they are inside two different ones.
 The mint function is deliberately not public — a package that could mint could
 manufacture the proof it is subject to.
 
-**What the witness does not prove.** It proves a transaction is open on the
-handle, not which async flow owns it. If flow A opens `transactionAsync` and
-awaits, a flow B that opened nothing can write inside A's transaction during that
-window and lose those writes to A's rollback — measured, and byte-identical
-before this change, since `markHandedOver` had no check at all and Work read the
-same process-wide connection flag. M2D narrows the hazard from unconditional to
-window-bounded; it does not close it. Closing it means binding the witness to the
-async caller, which is the same ownership question as connection affinity below
-and belongs with it.
+**Ownership, and the two ways the mint is kept out of reach.** The witness is
+published into the async context that opened the transaction, so the proof
+answers "did *this* flow open it" rather than only "is one open". An earlier cut
+proved only the latter, and the gap was real: flow A opens `transactionAsync`
+and awaits, flow B writes inside A's transaction and loses those writes to A's
+rollback. Measured both before and after; B is now refused
+`NOT_TRANSACTION_OWNER`, with the cause and the fix in the message.
 
-**The assumption, and the obligation it places on M3.** "An outer transaction is
-open on this handle" means "the caller's transaction" only while one application
-instance has one connection, nested outer transactions are refused
-(`NESTED_TRANSACTION`), and one core module instance is loaded per process. The
+That makes the mint load-bearing in a way it was not before — a package that can
+mint can manufacture ownership — so it is closed by **exhaustion rather than by
+analysis**. `claimTransactionMinter()` yields the capability once; the database
+wrapper takes it at module load, and every later caller is refused whatever
+import spelling it used. Static analysis of import specifiers could never have
+done this: a computed specifier walks past it, which is why the previous cut
+could only document the hole. Minting, publishing into the async context and
+clearing are also one indivisible operation, so no caller ever holds a witness
+it could use elsewhere.
+
+**The false refusal this buys.** Async context is lost by a callback that leaves
+the transaction and is invoked later. Such a caller is refused with the boundary
+named and `AsyncResource.bind` offered, rather than being told there is no
+transaction while one is plainly open. The boundaries that carry context and the
+one that does not are measured, not assumed.
+
+**The assumptions that remain, and the obligation they place on M3.** The
+same-handle half still assumes one connection per application instance, and the
+registries are module-private, so one loaded core module instance per process.
+`NESTED_TRANSACTION` is no longer load-bearing for ownership — it was what made
+the gap unreachable, and the gap is closed. The
 ratified PostgreSQL plan introduces connection pooling and transaction
-connection affinity. **A pooled adapter must mint its witness on a
-connection-affine handle** — the object compared by identity must be the pooled
-client bound to the active transaction, never a pool-level facade shared across
-clients. This is an obligation on that milestone, not a property it inherits: an
+connection affinity. **A pooled adapter must open the ownership scope around the
+pooled client's work, on a connection-affine handle** — the object compared by
+identity must be the pooled client bound to the active transaction, never a
+pool-level facade shared across clients. This is an obligation on that milestone, not a property it inherits: an
 implementation that mints at pool level would leave all four consumers silently
 proving nothing, with no test failing. Recorded here rather than only in
 `docs/plans/spine-v2-m2d-transaction-context.md` because that is where the

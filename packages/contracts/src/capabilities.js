@@ -231,6 +231,23 @@ export function requireCallerTransaction(services, what) {
       { code: 'CONTRACT_TRANSACTION_REQUIRED', status: 500 },
     );
   }
+  // A real transaction, opened by somebody else. Named as such, because telling
+  // a caller there is no transaction when one is plainly open is the worst
+  // version of this message.
+  if (proof === TRANSACTION_PROOF.NOT_TRANSACTION_OWNER) {
+    throw new AppError(
+      `${what} found a transaction open on this connection that this call does not own, so it refuses to write `
+        + 'the first row of a set into it. '
+        + 'It was opened by a different asynchronous flow. Either another request owns it — and writing here '
+        + 'would join a transaction this code does not control, to be committed or rolled back by somebody '
+        + 'else — or this call has crossed a boundary that dropped its async context. Context survives await, '
+        + 'queueMicrotask, process.nextTick, setTimeout, setImmediate and an event emitted inside the '
+        + 'transaction; it is lost by a callback that leaves the transaction and is invoked later, including a '
+        + 'listener registered inside it and emitted outside. Call this inside the transaction, or wrap the '
+        + 'callback with AsyncResource.bind before it leaves.',
+      { code: 'CONTRACT_TRANSACTION_REQUIRED', status: 500, details: { proof } },
+    );
+  }
   throw new AppError(
     `${what} cannot prove it is running inside the caller's transaction, so it refuses to write the first row `
       + 'of a set whose remainder might not commit with it.',
