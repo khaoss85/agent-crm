@@ -40,13 +40,13 @@ const dataPath = join(root, 'docs', 'plans', 'spine-v2-m2-requirements.json');
 const outPath = join(root, 'docs', 'plans', 'spine-v2-m2-requirement-map.md');
 
 /** Fact ids the generated truth document states, read once and cached. */
-let truthFactIdCache = null;
-function truthFactIds() {
-  if (!truthFactIdCache) {
+let truthFactCache = null;
+function truthFacts() {
+  if (!truthFactCache) {
     const truth = JSON.parse(readFileSync(join(root, 'docs', 'repository-truth.json'), 'utf8'));
-    truthFactIdCache = new Set((truth.facts ?? []).map((fact) => fact.id));
+    truthFactCache = new Map((truth.facts ?? []).map((fact) => [fact.id, fact.value]));
   }
-  return truthFactIdCache;
+  return truthFactCache;
 }
 
 const CLASSIFICATIONS = new Set([
@@ -127,13 +127,13 @@ export function fingerprintOf(text) {
  *
  * @param {{fingerprint: string, text: string}[]} units
  * @param {{groups: any[]}} data
- * @param {{fileExists?: (path: string) => boolean, factExists?: (id: string) => boolean}} [world]
+ * @param {{fileExists?: (path: string) => boolean, factValue?: (id: string) => unknown}} [world]
  *   Injected so the drift tests can pin the evidence rules without touching disk.
  * @returns {string[]} reasons the gate must fail
  */
 export function inspectCoverage(units, data, world = {}) {
   const fileExists = world.fileExists ?? ((path) => existsSync(join(root, path)));
-  const factExists = world.factExists ?? ((id) => truthFactIds().has(id));
+  const factValue = world.factValue ?? ((id) => truthFacts().get(id));
   const failures = [];
   const groups = Array.isArray(data?.groups) ? data.groups : null;
   if (!groups) return ['spine-v2-m2-map: the requirements document has no `groups` array.'];
@@ -176,22 +176,38 @@ export function inspectCoverage(units, data, world = {}) {
     // MERGED_PROVED and the gate would agree that an obligation is already met
     // on nobody's authority. Evidence must exist, and must point at things that
     // exist — a source path that resolves, a fact id the truth document states.
+    // **Existence is not proof.** The first cut of this rule accepted any path
+    // that resolved and any fact id that was stated — so `evidence.sources:
+    // ["AGENTS.md"]` declared an obligation met. A claim that work is already
+    // done has to name something that would fail if it were not: a test that
+    // runs, or a generated fact together with the value it must hold. Naming a
+    // file proves only that the file exists.
     if (group.classification === 'MERGED_PROVED') {
-      const sources = group.evidence?.sources ?? [];
+      const tests = group.evidence?.tests ?? [];
       const facts = group.evidence?.truthFacts ?? [];
-      if (!sources.length && !facts.length) {
+      if (!tests.length && !facts.length) {
         failures.push(
-          `${group.id}: claims MERGED_PROVED with no evidence. Name the sources or the generated facts that carry it, `
-          + 'or classify it as work this campaign owes.',
+          `${group.id}: claims MERGED_PROVED without executable evidence. Name the tests that prove it, or the generated `
+          + 'facts and the values they must hold — a source path only proves the file exists.',
         );
       }
-      for (const source of sources) {
-        if (!fileExists(source)) failures.push(`${group.id}: evidence names ${source}, which does not exist.`);
+      for (const test of tests) {
+        if (!/^tests\//.test(test)) failures.push(`${group.id}: evidence names ${test}, which is not a test.`);
+        else if (!fileExists(test)) failures.push(`${group.id}: evidence names ${test}, which does not exist.`);
       }
       for (const fact of facts) {
-        if (!factExists(fact)) failures.push(`${group.id}: evidence names fact ${fact}, which the truth document does not state.`);
+        if (typeof fact !== 'object' || fact === null || !fact.id || !Object.hasOwn(fact, 'value')) {
+          failures.push(`${group.id}: fact evidence must state {id, value}; a bare id asserts nothing.`);
+          continue;
+        }
+        const actual = factValue(fact.id);
+        if (actual === undefined) failures.push(`${group.id}: evidence names fact ${fact.id}, which the truth document does not state.`);
+        else if (JSON.stringify(actual) !== JSON.stringify(fact.value)) {
+          failures.push(`${group.id}: evidence expects ${fact.id} = ${JSON.stringify(fact.value)}, but it is ${JSON.stringify(actual)}.`);
+        }
       }
     }
+
     for (const fingerprint of group.claims ?? []) {
       if (claimed.has(fingerprint)) {
         failures.push(`${fingerprint} is claimed by both ${claimed.get(fingerprint)} and ${group.id}; one requirement, one owner.`);

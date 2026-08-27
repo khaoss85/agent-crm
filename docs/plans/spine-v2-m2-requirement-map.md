@@ -17,8 +17,8 @@ without a destination is an omission, and the gate refuses one.
 | Classification | Units | Share |
 |---|---|---|
 | `CONTRADICTION_REQUIRES_FIX` | 1 | 0% |
-| `CURRENT_CAMPAIGN` | 93 | 40% |
-| `DEFERRED_OUTSIDE_M2` | 137 | 59% |
+| `CURRENT_CAMPAIGN` | 95 | 41% |
+| `DEFERRED_OUTSIDE_M2` | 135 | 58% |
 | `MERGED_PROVED` | 1 | 0% |
 
 ## CONTRADICTION_REQUIRES_FIX
@@ -41,6 +41,7 @@ without a destination is an omission, and the gate refuses one.
 | `G07` | M2F | 3 | Bounded {adapter, available} storage descriptor on every public surface |
 | `G08a` | M2E/M2F | 2 | serve on the async factory over SQLite; await startup before serving |
 | `G08b` | M2E | 1 | Child-process entry-point evidence for both adapters |
+| `G09a` | M2F | 2 | db:migrate refuses PostgreSQL, and SQLite compatibility is unchanged |
 | `G13` | M2F | 8 | Production MCP static-context-only and source-only |
 | `G14` | M2F | 15 | One shared versioned deployment-storage configuration loader |
 | `G15a` | M2F | 3 | TLS as a closed contract field, and the settings a parser can refuse |
@@ -54,6 +55,7 @@ without a destination is an omission, and the gate refuses one.
 
 - **G01** — workflows+action-runtime trace family is M2C; Work transaction context is M2D; Spine store dual-plane closure is M2F.
 - **G08b** — Composite. The SQLite child-process entry-point evidence lands with M2E and gates M2 — the requirement exists precisely to say a direct factory call is not sufficient evidence, which is as true on SQLite as on PostgreSQL. Only the PostgreSQL half waits for the adapter. This is the identical error already fixed on G28b and missed here.
+- **G09a** — Both are executable at M2-complete and gate it: the refusal needs the deployment-storage loader, not the adapter, and G28a already classifies the same CLI refusal as current work — so deferring these two made the map disagree with itself. The third composite deferral found by review after the rule meant to stop them; the rule only catches a group that declares itself composite, which is the hole named in my own last review request.
 - **G13** — Adapter-independent: it is a refusal surface proved by absence of reachability, provable on SQLite.
 - **G14** — The loader, its closed envelope, precedence and refusals are adapter-independent. PostgreSQL selection refuses until M3.
 - **G15a** — The closed envelope must carry the TLS fields, and a parser refuses plaintext, sslmode=disable|allow|prefer, verification-disabled settings and a permissive production default without opening a connection. My own deferral reason said as much and then deferred all four units anyway, so the parser boundaries could have gone green uncounted. Certificate-chain, expiry and hostname verification need real endpoints and stay with G15.
@@ -66,7 +68,7 @@ without a destination is an omission, and the gate refuses one.
 
 | Group | Slice / proved in | Units | Requirement |
 |---|---|---|---|
-| `G09` | M3 | 6 | Startup attestation gates production migrations |
+| `G09` | M3 | 4 | Startup attestation gates production migrations |
 | `G10` | M3 | 6 | Verifier provider contract v2 discovery/attestation operations |
 | `G11` | M3 | 4 | PostgreSQL DDL + ledger + audit in one transaction, fault-proved |
 | `G12` | M3 | 6 | Control-plane bootstrap under pg_advisory_xact_lock |

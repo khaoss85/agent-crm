@@ -143,24 +143,30 @@ test('the published map matches what the classification authority renders', () =
  * in all three shapes — and it caught a fabricated fact id of mine on its first
  * run, which is why the reference check is here and not just the presence one.
  */
-test('MERGED_PROVED must point at things that exist', () => {
+test('MERGED_PROVED must name evidence that would fail if the claim were false', () => {
   const units = m2Units(plan);
-  const strip = { groups: data.groups.map((g) => (g.classification === 'MERGED_PROVED' ? { ...g, evidence: undefined } : g)) };
-  assert.ok(inspectCoverage(units, strip).some((f) => /claims MERGED_PROVED with no evidence/.test(f)));
+  const mutate = (fn) => ({ groups: data.groups.map((g) => (g.classification === 'MERGED_PROVED' ? fn(g) : g)) });
 
-  const promoted = {
-    groups: data.groups.map((g) => (g.id === 'G01' ? { ...g, classification: 'MERGED_PROVED', evidence: undefined } : g)),
-  };
-  assert.ok(inspectCoverage(units, promoted).some((f) => /G01: claims MERGED_PROVED with no evidence/.test(f)));
+  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: undefined })))
+    .some((f) => /without executable evidence/.test(f)));
 
-  const ghost = {
-    groups: data.groups.map((g) => (g.classification === 'MERGED_PROVED'
-      ? { ...g, evidence: { sources: ['packages/core/src/nope.js'], truthFacts: ['spine.nope'] } }
-      : g)),
-  };
-  const failures = inspectCoverage(units, ghost);
-  assert.ok(failures.some((f) => /nope\.js, which does not exist/.test(f)));
-  assert.ok(failures.some((f) => /fact spine\.nope, which the truth document does not state/.test(f)));
+  // The defect that prompted this: any resolvable path satisfied the rule, so
+  // naming a document declared an obligation met.
+  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { sources: ['AGENTS.md'] } })))
+    .some((f) => /without executable evidence/.test(f)));
+
+  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { tests: ['packages/core/index.js'] } })))
+    .some((f) => /which is not a test/.test(f)));
+  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { tests: ['tests/nope.test.js'] } })))
+    .some((f) => /tests\/nope\.test\.js, which does not exist/.test(f)));
+
+  // A bare id asserts nothing; a stated value can be wrong, and must be caught.
+  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { truthFacts: ['spine.tenant.isolation.mode'] } })))
+    .some((f) => /must state \{id, value\}/.test(f)));
+  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { truthFacts: [{ id: 'spine.nope', value: 'x' }] } })))
+    .some((f) => /which the truth document does not state/.test(f)));
+  assert.ok(inspectCoverage(units, mutate((g) => ({ ...g, evidence: { truthFacts: [{ id: 'spine.tenant.isolation.mode', value: 'wrong' }] } })))
+    .some((f) => /expects spine\.tenant\.isolation\.mode = "wrong", but it is/.test(f)));
 });
 
 /** Every composite whose executable half gates M2 must say so rather than defer whole. */

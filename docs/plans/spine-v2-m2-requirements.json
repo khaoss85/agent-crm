@@ -64,13 +64,19 @@
       "classification": "MERGED_PROVED",
       "slice": "ADR-038 / Spine v1",
       "evidence": {
-        "sources": [
-          "packages/core/src/tenant-binding.js",
-          "packages/core/src/tenant-storage.js"
+        "tests": [
+          "tests/spine-tenancy-truth.test.js",
+          "tests/spine-plane-collision.test.js"
         ],
         "truthFacts": [
-          "spine.multi_tenant_single_instance",
-          "spine.tenant.isolation.mode"
+          {
+            "id": "spine.multi_tenant_single_instance",
+            "value": "refused_at_startup"
+          },
+          {
+            "id": "spine.tenant.isolation.mode",
+            "value": "one_tenant_per_instance"
+          }
         ]
       },
       "claims": [
@@ -125,6 +131,17 @@
       "note": "Composite. The SQLite child-process entry-point evidence lands with M2E and gates M2 — the requirement exists precisely to say a direct factory call is not sufficient evidence, which is as true on SQLite as on PostgreSQL. Only the PostgreSQL half waits for the adapter. This is the identical error already fixed on G28b and missed here."
     },
     {
+      "id": "G09a",
+      "title": "db:migrate refuses PostgreSQL, and SQLite compatibility is unchanged",
+      "claims": [
+        "7708cd00203e",
+        "e028b6666bb0"
+      ],
+      "classification": "CURRENT_CAMPAIGN",
+      "slice": "M2F",
+      "note": "Both are executable at M2-complete and gate it: the refusal needs the deployment-storage loader, not the adapter, and G28a already classifies the same CLI refusal as current work — so deferring these two made the map disagree with itself. The third composite deferral found by review after the rule meant to stop them; the rule only catches a group that declares itself composite, which is the hole named in my own last review request."
+    },
+    {
       "id": "G09",
       "title": "Startup attestation gates production migrations",
       "classification": "DEFERRED_OUTSIDE_M2",
@@ -134,9 +151,7 @@
         "8340bc0af3ec",
         "2e4e19e20165",
         "7c41da4d68a8",
-        "b57355662a3f",
-        "7708cd00203e",
-        "e028b6666bb0"
+        "b57355662a3f"
       ]
     },
     {
