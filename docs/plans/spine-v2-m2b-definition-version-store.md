@@ -197,6 +197,19 @@ adapter is SQLite.**
   `Reflect.ownKeys` and also requires a genuine `Object.prototype` prototype —
   the same test the storage contract's own `closed()` applies — so a class
   instance and a null-prototype bag carrying the four fields are refused too.
+- **Closing the shape has two halves, and the first review fix only did one.**
+  `Reflect.ownKeys` refuses keys nobody named. It does not ensure the keys that
+  *were* named are present on the object: a polluted `Object.prototype` supplies
+  a missing `fingerprint` (or `type`, `name`, `version`) through the chain, with
+  no unsupported own key to find and a prototype that genuinely is
+  `Object.prototype`, so the entry validated and persisted an inherited value.
+  Every named field is now required to be an own property via `Object.hasOwn`.
+  This is an established concern in this repository rather than a clever edge
+  case — `tests/commercial-contract.test.js` already refuses `__proto__`,
+  `constructor` and `prototype` as lookup names. The regression pollutes all
+  four fields in turn with valid-looking values, asserts the refusal happens
+  before any transaction opens, and restores `Object.prototype` in a `finally`
+  so the pollution cannot leak into another suite in the same process.
 - **The guard's *claim* was narrowed, not only its pattern widened.** Review
   found `database['raw']` and `const { raw } = database` both restored driver
   reachability while the scan stayed green, and the test called its examples
@@ -295,6 +308,10 @@ npm run verify
   both fixed with regressions written first: the closed entry shape was not
   closed against non-enumerable or symbol keys, and the structural guard claimed
   more than a token scan can prove.
+- **2026-08-27:** A third P2 on the next head: the entry shape was still open to
+  prototype pollution, because refusing unnamed keys says nothing about whether
+  the named ones are own properties. Fixed with `Object.hasOwn` for all four
+  fields, regression first, `Object.prototype` restored in a `finally`.
 - **2026-08-27:** CI `verify` failed on the pushed head and caught two things
   the targeted suites could not: the falsification mutation had stopped aiming at
   anything, and the three characterization baselines were stale. Both are

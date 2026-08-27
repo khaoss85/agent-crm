@@ -405,6 +405,65 @@ test('the closed entry shape refuses non-enumerable, symbol and non-plain entrie
   assert.equal(rows(database).length, 0, 'and none of them persisted anything');
 });
 
+/**
+ * **Closing a shape has two halves, and `Reflect.ownKeys` covers only one.**
+ * "No key you did not name" is not enough: every key you *did* name has to be
+ * present on the object itself. A polluted `Object.prototype` supplies a
+ * missing field through the chain — `Reflect.ownKeys` sees no unsupported key
+ * because the field is not an own key at all, and the prototype check passes
+ * because the entry's prototype genuinely is `Object.prototype`. The malformed
+ * entry then reaches the transaction and persists an inherited value.
+ *
+ * Not hypothetical here: `tests/commercial-contract.test.js` already refuses
+ * `__proto__`, `constructor` and `prototype` as lookup names, so hostile
+ * prototype keys are an established concern in this repository.
+ *
+ * Every pollution is restored in a `finally`. A test that pollutes
+ * `Object.prototype` and does not clean up fails unrelated suites in the same
+ * process, and nobody traces that back to here.
+ */
+test('a polluted Object.prototype cannot supply a field the entry does not own', (t) => {
+  const database = memory(t);
+  const opened = [];
+  const sync = database.storage.sync;
+  const handle = {
+    storage: {
+      sync: { ...sync, transaction(fn) { opened.push('transaction'); return sync.transaction(fn); } },
+    },
+  };
+  const store = createDefinitionVersionStore(handle);
+
+  // Each pollution is a *valid-looking* value, so nothing downstream would
+  // refuse it on its merits: only ownership can.
+  for (const [field, value] of [
+    ['type', 'inherited-kind'],
+    ['name', 'inherited-name'],
+    ['version', 7],
+    ['fingerprint', 'e'.repeat(64)],
+  ]) {
+    const incomplete = entry();
+    delete incomplete[field];
+    assert.equal(Object.hasOwn(incomplete, field), false, `${field} really is missing from the entry`);
+    Object.defineProperty(Object.prototype, field, {
+      value, configurable: true, writable: true, enumerable: false,
+    });
+    try {
+      assert.equal(incomplete[field], value, `${field} really is readable through the prototype`);
+      assert.throws(
+        () => store.persist([incomplete]),
+        (error) => error.code === 'VALIDATION_ERROR' && /requires own field/.test(error.message),
+        `an entry that inherits ${field} rather than owning it must be refused`,
+      );
+    } finally {
+      delete (/** @type {any} */ (Object.prototype))[field];
+    }
+    assert.equal(Object.hasOwn(Object.prototype, field), false, `Object.prototype.${field} was restored`);
+  }
+
+  assert.deepEqual(opened, [], 'no polluted entry reached BEGIN IMMEDIATE');
+  assert.equal(rows(database).length, 0, 'and none of them persisted an inherited value');
+});
+
 test('the store validates the whole batch before it opens a transaction', (t) => {
   const database = memory(t);
   const opened = [];

@@ -95,6 +95,15 @@ function validateEntry(entry, index) {
     const named = typeof unknown === 'symbol' ? unknown.toString() : unknown;
     throw new ValidationError(`Definition version entry has an unsupported field "${named}"`, { index, field: named });
   }
+  // The other half of closing the shape. Refusing keys nobody named is not
+  // enough: every named key must be present on the object *itself*. A polluted
+  // `Object.prototype` otherwise supplies a missing field through the chain —
+  // no unsupported own key to find, a prototype that genuinely is
+  // `Object.prototype`, and a read that quietly returns the inherited value.
+  const missing = ENTRY_FIELDS.find((field) => !Object.hasOwn(entry, field));
+  if (missing !== undefined) {
+    throw new ValidationError(`Definition version entry requires own field "${missing}"`, { index, field: missing });
+  }
   const record = /** @type {Record<string, unknown>} */ (entry);
   const version = record.version;
   if (!Number.isInteger(version) || /** @type {number} */ (version) < 0) {
