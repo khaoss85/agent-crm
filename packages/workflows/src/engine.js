@@ -26,17 +26,20 @@ import { createExecutionRunStore } from '../../core/src/execution-run-store.js';
  */
 
 export class WorkflowEngine {
+  /** @type {ReturnType<typeof createExecutionRunStore>} */
+  #runs;
+
   /** @param {{database: any, services: Record<string, any>, config?: Record<string, any>}} dependencies */
   constructor({ database, services, config = {} }) {
     this.database = database;
     this.services = services;
     this.config = config;
-    /**
-     * Run and span persistence, owned by the kernel rather than by this engine.
-     * Built once because `this.database` is: `packages/app/src/create-app.js`
-     * is the only construction site and never hands over a second handle.
-     */
-    this.runs = createExecutionRunStore(database);
+    // Run and span persistence, owned by the kernel rather than by this
+    // engine. Built once because `this.database` is: `packages/app/src/create-app.js`
+    // is the only construction site and never hands over a second handle.
+    // Genuinely private, so composing an application does not put a persistence
+    // object on the engine every in-process caller already holds.
+    this.#runs = createExecutionRunStore(database);
     /** @type {Map<string, WorkflowDefinition>} */
     this.workflows = new Map();
   }
@@ -62,7 +65,7 @@ export class WorkflowEngine {
   async run(name, input, context = {}) {
     const workflow = this.workflows.get(name);
     if (!workflow) throw new NotFoundError('Workflow', name);
-    const runId = this.runs.startRun({ workflowName: name, input });
+    const runId = this.#runs.startRun({ workflowName: name, input });
 
     /** @type {Record<string, any>} */
     let state = {};
@@ -71,7 +74,7 @@ export class WorkflowEngine {
 
     try {
       for (const step of workflow.steps) {
-        const spanId = this.runs.startSpan({ runId, name: step.name, input: { input, state } });
+        const spanId = this.#runs.startSpan({ runId, name: step.name, input: { input, state } });
 
         try {
           const output = await step.execute({
@@ -89,16 +92,16 @@ export class WorkflowEngine {
             state = { ...state, [step.name]: output };
           }
           completed.push({ definition: step, output });
-          this.runs.completeSpan({ spanId, output });
+          this.#runs.completeSpan({ spanId, output });
         } catch (error) {
           const normalized = normalizeError(error);
-          this.runs.failSpan({ spanId, error: normalized.message });
+          this.#runs.failSpan({ spanId, error: normalized.message });
           throw normalized;
         }
       }
 
       const output = state;
-      this.runs.completeRun({ runId, output });
+      this.#runs.completeRun({ runId, output });
       return { runId, status: 'completed', output };
     } catch (error) {
       const normalized = normalizeError(error);
@@ -120,7 +123,7 @@ export class WorkflowEngine {
           console.error(`[accordo] compensation failed in ${item.definition.name}: ${compensation.message}`);
         }
       }
-      this.runs.failRun({ runId, error: normalized.message, output: state });
+      this.#runs.failRun({ runId, error: normalized.message, output: state });
       normalized.details = {
         ...(normalized.details && typeof normalized.details === 'object' ? normalized.details : {}),
         workflowRunId: runId,
@@ -131,7 +134,7 @@ export class WorkflowEngine {
 
   /** @param {{status?: string, workflowName?: string, limit?: number}} [filters] */
   listRuns(filters = {}) {
-    return this.runs.listRuns({
+    return this.#runs.listRuns({
       status: filters.status,
       workflowName: filters.workflowName,
       limit: filters.limit,
@@ -140,7 +143,7 @@ export class WorkflowEngine {
 
   /** @param {string} id */
   getRun(id) {
-    const run = this.runs.getRun(id);
+    const run = this.#runs.getRun(id);
     if (!run) throw new NotFoundError('Workflow run', id);
     return run;
   }

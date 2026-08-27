@@ -120,6 +120,29 @@ function assertIdentityText(value, subject, details) {
 }
 
 /**
+ * **The other half of the `error` exemption above.** Exempting a message from
+ * bounds and from the character class is not the same as accepting anything:
+ * these columns are `TEXT` in a `STRICT` table, so a number or an object lands
+ * on a driver datatype refusal, and because the trace write is best-effort that
+ * refusal is swallowed and logged in the driver's words. A *type* check costs
+ * the newline nothing and is the difference between "this store validates
+ * everything except one field" and a rule with a stated exception.
+ *
+ * Deliberately no length bound: a normalized exception message has never had
+ * one, and truncating the sentence a person reads when something failed would
+ * be a behaviour change dressed as hardening.
+ *
+ * @param {unknown} value @param {string} subject @param {unknown} [details]
+ */
+function assertOptionalMessage(value, subject, details) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') {
+    throw new ValidationError(`${subject} must be a string or null`, details);
+  }
+  return value;
+}
+
+/**
  * The status a row may carry, checked against the set the schema's own `CHECK`
  * constraint declares. The same values SQLite would refuse, refused earlier and
  * in this framework's words rather than the driver's.
@@ -358,9 +381,10 @@ export function createExecutionRunStore(database, options = {}) {
     failSpan(span) {
       const own = closedArgument(span, 'Trace span failure', ['spanId', 'error'], ['spanId', 'error']);
       const spanId = assertIdentityText(own.spanId, 'Trace span id', { field: 'spanId' });
+      const error = assertOptionalMessage(own.error, 'Trace span error', { field: 'error' });
       patch(SPANS, spanId, [
         { column: 'status', value: 'failed' },
-        { column: 'error', value: own.error ?? null },
+        { column: 'error', value: error },
         { column: 'finished_at', value: now() },
       ]);
     },
@@ -387,9 +411,10 @@ export function createExecutionRunStore(database, options = {}) {
     failRun(run) {
       const own = closedArgument(run, 'Execution run failure', ['runId', 'error', 'output'], ['runId', 'error']);
       const runId = assertIdentityText(own.runId, 'Execution run id', { field: 'runId' });
+      const error = assertOptionalMessage(own.error, 'Execution run error', { field: 'error' });
       patch(RUNS, runId, [
         { column: 'status', value: 'failed' },
-        { column: 'error', value: own.error ?? null },
+        { column: 'error', value: error },
         { column: 'output_json', value: encodeJson(own.output) },
         { column: 'finished_at', value: now() },
       ]);
@@ -417,6 +442,7 @@ export function createExecutionRunStore(database, options = {}) {
       const workflowName = assertIdentityText(own.workflowName, 'Execution run workflow name', { field: 'workflowName' });
       const status = assertStatus(own.status, RUN_STATUSES, 'Execution run status', { field: 'status' });
       const startedAt = assertIdentityText(own.startedAt, 'Execution run startedAt', { field: 'startedAt' });
+      const error = assertOptionalMessage(own.error, 'Execution run error', { field: 'error' });
 
       // The whole batch is validated before the first row is written. The one
       // behaviour this moves is *when* a malformed step is refused — it used to
@@ -455,7 +481,7 @@ export function createExecutionRunStore(database, options = {}) {
           { column: 'status', value: status },
           { column: 'input_json', value: encodeJson(own.input) },
           { column: 'output_json', value: encodeJson(own.output) },
-          { column: 'error', value: own.error ?? null },
+          { column: 'error', value: error },
           { column: 'started_at', value: startedAt },
           { column: 'finished_at', value: finishedAt },
         ],
@@ -559,7 +585,7 @@ function boundedSteps(steps) {
       name: assertIdentityText(own.name, 'Trace span name', { index, field: 'name' }),
       status: assertStatus(own.status, SPAN_STATUSES, 'Trace span status', { index, field: 'status' }),
       output: own.output,
-      error: /** @type {string | null} */ (own.error ?? null),
+      error: assertOptionalMessage(own.error, 'Trace span error', { index, field: 'error' }),
     });
   }
   return collected;

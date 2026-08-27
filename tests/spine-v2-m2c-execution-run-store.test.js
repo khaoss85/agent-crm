@@ -486,6 +486,40 @@ test('an error message keeps its newlines, because a trace of a failure must sur
   assert.equal(spanRows(database, 'run-2')[0].error, message);
 });
 
+test('an error that is not text is refused here, not by the driver\'s datatype rule', (t) => {
+  const database = memory(t);
+  const store = pinned(database);
+  const runId = store.startRun({ workflowName: 'demo', input: null });
+  const spanId = store.startSpan({ runId, name: 'boom', input: null });
+
+  // Exempting a message from BOUNDS is not the same as accepting anything.
+  // These columns are TEXT in a STRICT table, so a number or an object lands on
+  // a driver datatype refusal — and because the trace write is best-effort, that
+  // refusal is swallowed and logged in the driver's words rather than this
+  // store's. The type check is what makes the exemption a stated exception
+  // instead of a hole.
+  for (const bad of [42, {}, [], true, () => {}]) {
+    assert.throws(() => store.failSpan({ spanId, error: /** @type {any} */ (bad) }),
+      (error) => error.code === 'VALIDATION_ERROR' && /must be a string or null/.test(error.message));
+    assert.throws(() => store.failRun({ runId, error: /** @type {any} */ (bad), output: null }),
+      (error) => error.code === 'VALIDATION_ERROR' && /must be a string or null/.test(error.message));
+    assert.throws(() => store.recordRun(recordedRun({ runId: 'other', error: bad })),
+      (error) => error.code === 'VALIDATION_ERROR' && /must be a string or null/.test(error.message));
+    assert.throws(() => store.recordRun(recordedRun({
+      runId: 'other', steps: [{ name: 'x', status: 'failed', error: bad }],
+    })), (error) => error.code === 'VALIDATION_ERROR' && /must be a string or null/.test(error.message));
+  }
+  // `null` and an absent error remain exactly what they were.
+  store.failSpan({ spanId, error: null });
+  assert.equal(spanRows(database, runId)[0].error, null);
+  // …and a long message is still stored whole: no bound was smuggled in with
+  // the type check, because truncating what a person reads on a failure would
+  // be a behaviour change dressed as hardening.
+  const long = 'e'.repeat(5_000);
+  store.failRun({ runId, error: long, output: null });
+  assert.equal(runRows(database)[0].error, long);
+});
+
 test('a status outside the schema\'s own CHECK set is refused in the framework\'s words', (t) => {
   const database = memory(t);
   const store = pinned(database);

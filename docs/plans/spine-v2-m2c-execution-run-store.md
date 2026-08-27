@@ -170,6 +170,18 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   shared JSON encoder, and `JSON.stringify` already escapes every control
   character. Bounding either would be a new refusal on evidence the framework
   itself produces.
+- **Exempting `error` from the bounds is not the same as accepting anything, and
+  the first pass conflated the two.** `error` was the one stored field with no
+  check at all — not even a type. Both columns are `TEXT` in a `STRICT` table,
+  so a number or an object reaches a driver datatype refusal, and because the
+  trace write is best-effort that refusal is swallowed and logged *in the
+  driver's words*: exactly the leak this store exists to stop, hiding behind a
+  deliberate exemption. `assertOptionalMessage` now type-checks every `error`
+  the store stores — deliberately with **no length bound and no character
+  class**, so the newline that made the exemption necessary still costs nothing
+  and the sentence a person reads on a failure is never truncated. Found by
+  walking the store's own surface rather than by review, which is the point of
+  walking it.
 - **The read path validates nothing and refuses nothing.** `getRun` is
   HTTP-reachable (`GET /api/traces/:id`). Today a control-character id reaches
   the parameterized lookup, matches no row, and becomes `NotFoundError` — a 404.
@@ -203,9 +215,16 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   minted ids are checked against each other, which is free; beyond that a
   colliding id meets the `PRIMARY KEY`, exactly as it does today. The asymmetry
   with M2B is deliberate and commented in the source.
-- **The engine builds its store once, in its constructor.** `packages/app/src/create-app.js:249`
-  is the only construction site and `this.database` is never reassigned, so a
-  per-call store would buy nothing. `writeTrace` builds one per call, matching
+- **The engine builds its store once, in its constructor, into a genuinely
+  private field.** `packages/app/src/create-app.js:249` is the only construction
+  site and `this.database` is never reassigned, so a per-call store would buy
+  nothing. It is `#runs` rather than `this.runs` on purpose: `app.workflows` is
+  an object every in-process caller holds, and composing an application should
+  not put a persistence object on it as a side effect of a refactor. One delta
+  follows and is deliberate — the constructor now refuses a handle without the
+  seam, where the refusal used to wait until the first `run()`. Failing at
+  composition time is what fail-closed means here, and the only construction
+  site always passes a real handle. `writeTrace` builds one per call, matching
   M2B's per-call registry pattern: it is a function, not an object with a
   lifetime, and construction is a clock resolution and a property read.
 - **No new Repository Truth fact and no new authority probe.** No fact is read
@@ -269,6 +288,21 @@ npm run verify
   above for what was watched failing.
 - **2026-08-27:** Reconciled the M2A and M2B inventory rows, the alignment
   matrix and the task ledger, and regenerated Repository Truth.
+- **2026-08-27:** Walked the store's own surface after the first push rather
+  than waiting for review, and it returned two real gaps. `error` was the one
+  stored field with no check at all — the bounds exemption had been conflated
+  with accepting anything — and the engine's store was `this.runs` on an object
+  every in-process caller holds, now `#runs`. Both fixed with regressions.
+- **2026-08-27:** CI `verify` and `public-claims` both passed at `c086ce2`,
+  which retires the local full-tree run: that one had been confounded by the
+  mutation harness editing source underneath it, and its ten failures were all
+  in benchmark-fixture suites this PR does not touch.
+- **2026-08-27:** Added `packages/core/src/definition-version-store.js` to the
+  three behaviour-bearing lists on the integrator's instruction, having first
+  argued for deferring it. The instruction was right: the argument for adding
+  M2C's store is identical for M2B's, and that gap is merged and live rather
+  than hypothetical. Written up under *The receipts* as a defect found in M2B's
+  evidence.
 - **2026-08-27:** Baselined the workflow, action-runtime, pipeline, admin, API,
   MCP, scenario, package end-to-end and characterization suites at `c284867`.
   One pre-existing darwin-only failure in `tests/spine-v2-m0-characterization.test.js`
@@ -289,15 +323,31 @@ byte-identical, which is the strongest available evidence that this refactor is
 boundary-preserving. No characterization receipt was weakened to make anything
 pass.
 
-**`execution-run-store.js` was added to all three behaviour-bearing lists, and
-that is a fix rather than an addition.** Those lists exist so a change to a file
-that decides a domain's behaviour stales the baseline. Moving behaviour *out* of
-a hashed file and into an unhashed one would have left each baseline strictly
-*less* sensitive than it was — a regression this PR would have caused. Recorded
-as follow-on work, deliberately not in this PR: `packages/core/src/definition-version-store.js`
-has exactly the same standing after M2B and is in none of the three lists.
-Retrofitting another milestone's omission would enlarge a bounded slice; naming
-it is what stops the next one.
+**Both extraction stores were added to all three behaviour-bearing lists, and
+that is a fix rather than an addition.** Those lists exist so that a change to a
+file which decides a domain's behaviour stales the baseline. Moving behaviour
+*out* of a hashed file and into an unhashed one leaves each baseline strictly
+*less* sensitive than it was, and **nothing announces it** — the receipt goes on
+passing while covering less. That is worse than a receipt that fails.
+
+`packages/core/src/execution-run-store.js` is the instance this PR would
+otherwise have caused: all three lists hash `packages/core/src/action-runtime.js`,
+and `writeTrace`'s body moved out of it.
+
+**`packages/core/src/definition-version-store.js` is the same defect, already
+merged.** M2B moved the persist-or-verify loop out of three hashed registry
+files into a store no list hashes, so until this PR a change to the ADR-015
+drift refusal — the rule that decides whether an application starts — moved no
+baseline hash at all. This was first written up here as follow-on work on the
+grounds that retrofitting another milestone's omission enlarges a bounded slice.
+That was the wrong call and the integrator was right to refuse it: the argument
+for adding one store is *identical* for the other, the gap is live rather than
+hypothetical, and shipping the fix for one instance while leaving its known twin
+merged is exactly the shape this repository refuses elsewhere. Both are in all
+three lists now, and the cost was one path per list inside a regeneration this
+PR was already doing.
+
+Recorded as a defect M2C found in M2B's merged evidence, not as M2C scope.
 
 **The guard was watched failing, 26 times.** Every one of the thirteen spellings
 was written into `packages/workflows/src/engine.js` and then into
@@ -306,16 +356,23 @@ was written into `packages/workflows/src/engine.js` and then into
 nobody has watched fail is not a guard, and a guard watched failing in one file
 says nothing about the other.
 
-**The suite refuses the regressions it claims to.** Fifteen mutations were
+**The suite refuses the regressions it claims to.** Sixteen mutations were
 written into the store, the engine and the trace writer, and every one was
-caught: neutralising the identity rule (3 tests), the status check (3), the
-closed-shape check (2), the own-field check (1); making `recordRun` re-read the
-clock per span (1) or a recorded span borrow its own start (1); writing an
-encoded `null` where an open run holds SQL `NULL` (1); validating `getRun`'s
-lookup key (2); dropping the `listRuns` clamp (2), the span cap (1) or the id
-self-collision check (1); making `writeTrace` swallow its own failure (2);
-and, in the engine, dropping the state a failed run records (1), the
-`workflowRunId` detail (1) or the reverse order of compensation (1).
+caught: neutralising the identity rule, the `error` type check, the status
+check, the closed-shape check and the own-field check; making `recordRun`
+re-read the clock per span, or a recorded span borrow its own start; writing an
+encoded `null` where an open run holds SQL `NULL`; validating `getRun`'s lookup
+key; dropping the `listRuns` clamp, the span cap or the id self-collision check;
+making `writeTrace` swallow its own failure; and, in the engine, dropping the
+state a failed run records, the `workflowRunId` detail, or the reverse order of
+compensation.
+
+**A note on running that harness, because it bit once.** Each mutation restores
+its file in a `finally`, which does not run when the harness itself is killed —
+a two-minute command timeout left `if (collected.length >= MAX_SPANS)` reading
+`if (false)` in the working tree. Caught by reading `git diff` against `HEAD`
+rather than by trusting the harness, restored, and re-run to completion. A
+source-mutating harness needs its tree checked afterwards, not assumed.
 
 **No falsification mutation had to move.** `scripts/falsify.js` aims at
 `decide-opportunity-approval.js`, `request-opportunity-stage-change.js`,
@@ -367,11 +424,10 @@ Explicitly still open, and deliberately so:
   scans for `database.raw` only, and Work's own residue is spelled
   `tasks?.database?.raw`, which that scan walks straight past. M2B and M2C both
   use the widened set.
-- **`packages/core/src/definition-version-store.js` is in none of the three
-  characterization behaviour-bearing lists.** M2C added `execution-run-store.js`
-  to all three because *this* PR moved behaviour into it; M2B's store has
-  exactly the same standing and the same gap. Retrofitting it here would enlarge
-  a bounded slice, so it is named rather than done.
+- **Closed here rather than deferred:** `packages/core/src/definition-version-store.js`
+  was in none of the three characterization behaviour-bearing lists, so M2B's
+  merged evidence silently covered less than it had. It is in all three now,
+  beside `execution-run-store.js`. See *The receipts*.
 - **Run and span persistence still carries no actor context and no audit
   event**, exactly as it did before M2C. Recorded above under *Known limitation,
   carried forward deliberately*.

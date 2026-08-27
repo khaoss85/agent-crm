@@ -153,6 +153,14 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/intelligence/src/registry.js',
   'packages/intelligence/src/capability.js',
   'packages/core/src/definition-fingerprint.js',
+  // The definition-version store, which owns the persist-or-verify loop the
+  // registries above used to render by hand (Spine v2 M2B). Hashed for the same
+  // reason as the execution-run store in this list: M2B moved behaviour out of
+  // files this list hashes into one it did not, so until this line existed a change
+  // to the rule that decides whether the application starts moved no baseline
+  // hash at all. Found and closed by M2C
+  // (`docs/plans/spine-v2-m2c-execution-run-store.md`).
+  'packages/core/src/definition-version-store.js',
   'packages/core/src/timeout.js',
   'packages/core/src/action-runtime.js',
   // The execution-run store, which now owns the run and span rows `writeTrace`
