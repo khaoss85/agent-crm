@@ -48,6 +48,39 @@ test('the inventory shape is checked', () => {
   assert.ok(inspect(section, invented).some((f) => /indexes text that is not there/.test(f)));
 });
 
+/**
+ * **No owner may read as a verdict.** `merged` used to be accepted, defined as
+ * "landed before this campaign" — a completion assertion sitting beside a
+ * promise that this index asserts nothing is met. An owner column answers who
+ * owns an area, never whether it is done, and nothing here can establish the
+ * second.
+ */
+test('the owner vocabulary carries no completion claim', () => {
+  for (const owner of OWNERS) {
+    assert.doesNotMatch(owner, /merged|done|complete[d]?|proved|shipped/i,
+      `${owner} reads as a verdict; owners say who owns an area, not whether it is finished`);
+  }
+  assert.ok(inspect(section, { ...data, entries: data.entries.map((e, i) => (i === 0 ? { ...e, owner: 'merged' } : e)) })
+    .some((f) => /not a milestone this campaign recognises/.test(f)));
+});
+
+/**
+ * **The rendered document must not claim more than the gate holds.** Its
+ * wording said the campaign had assigned "each area of M2" — an exhaustiveness
+ * claim nothing here establishes, since deleting a row fails nothing. It now
+ * says what a green run actually means, and this pins that it keeps saying so.
+ */
+test('the rendered index disclaims exhaustiveness and completion', () => {
+  const rendered = render(data, fingerprintOf(section));
+  assert.match(rendered, /does not establish that\s+they are all of M2/);
+  assert.match(rendered, /deleting a row from it fails nothing/);
+  assert.match(rendered, /makes no\s+claim that any requirement is met/);
+  assert.doesNotMatch(rendered, /each area of M2/);
+
+  // The claim it disclaims is real: a shorter inventory still passes.
+  assert.deepEqual(inspect(section, { ...data, entries: data.entries.slice(0, 5) }), []);
+});
+
 /** Every owner in the inventory is one the script publishes, so the two cannot drift apart. */
 test('owners come from the published list', () => {
   for (const entry of data.entries) assert.ok(OWNERS.includes(entry.owner), `${entry.id}: ${entry.owner}`);

@@ -1,5 +1,5 @@
 {
-  "$comment": "Curated inventory of the ratified Spine v2 M2 section. Hand-kept, not derived: it records how this campaign has assigned each area of M2 and why. It is an index, not a proof — see scripts/spine-v2-m2-map.js.",
+  "$comment": "Curated inventory of the ratified Spine v2 M2 section. Hand-kept, not derived: it records which areas of M2 this campaign has assigned, to whom, and why. It does not establish that the listed areas are all of them. It is an index, not a proof — see scripts/spine-v2-m2-map.js.",
   "section": {
     "fingerprint": "8874e940d985f32f",
     "note": "Set by scripts/spine-v2-m2-map.js --write. A change here means the ratified section moved and the inventory below needs re-reading."
@@ -43,7 +43,7 @@
     {
       "id": "M2-06",
       "title": "Provisioning tenant resolver separate from application binding",
-      "owner": "merged",
+      "owner": "pre-campaign",
       "excerpt": "Keep the provisioning-side tenant resolver separate from the application binding; the application handle still cannot name a second tenant.",
       "reason": null
     },

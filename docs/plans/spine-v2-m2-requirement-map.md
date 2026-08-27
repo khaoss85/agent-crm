@@ -9,9 +9,12 @@ Indexing section `8874e940d985f32f`. If that fingerprint moves, the ratified tex
 changed and these entries were written against a different section — the gate
 fails until someone re-reads it.
 
-**This is an index, not a proof.** It records how the campaign has assigned each
-area of M2 and why. It makes no claim that any requirement is met, and a green
-run does not say one is: proof is tests, Repository Truth and measurement.
+**This is an index, not a proof, and not an inventory of everything.** It
+records the areas listed below and who owns them. It does not establish that
+they are all of M2 — deleting a row from it fails nothing — and it makes no
+claim that any requirement is met. A green run says the listed entries are
+well-formed and the section they index has not moved, and says nothing else:
+proof is tests, Repository Truth and measurement.
 
 | Id | Area | Owner | Why |
 |---|---|---|---|
@@ -20,7 +23,7 @@ run does not say one is: proof is tests, Repository Truth and measurement.
 | `M2-03` | packageContract/actionContract/operationContract/capabilityContract 2 | M2E | — |
 | `M2-04` | The four contract-2 versions — capabilityContract collides with merged meaning | M2E-1 | The ratified sentence defines capabilityContract: 2 as "capability consumers await every service/context/dependency operation". The repository already ships capabilityContract: 2 with a different mean |
 | `M2-05` | Repository guard gating compatibility-path deletion | M2F | — |
-| `M2-06` | Provisioning tenant resolver separate from application binding | merged | — |
+| `M2-06` | Provisioning tenant resolver separate from application binding | pre-campaign | — |
 | `M2-07` | Cross-plane audit intent, claim, delivery and reconciliation | M2F | — |
 | `M2-08` | Bounded {adapter, available} storage descriptor on every public surface | M2F | — |
 | `M2-09` | serve on the async factory over SQLite; await startup before serving | M2E/M2F | — |

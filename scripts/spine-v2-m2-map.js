@@ -42,9 +42,18 @@ const planPath = join(root, 'docs', 'plans', 'production-spine-v2-postgresql.md'
 const dataPath = join(root, 'docs', 'plans', 'spine-v2-m2-requirements.json');
 const outPath = join(root, 'docs', 'plans', 'spine-v2-m2-requirement-map.md');
 
-/** Milestones an entry may be assigned to. `merged` means it landed before this campaign. */
+/**
+ * Where an entry is assigned. These are *owners*, not verdicts.
+ *
+ * `pre-campaign` replaced `merged`, which was a completion assertion sitting
+ * next to a promise that this index asserts nothing is met: it said the work
+ * had landed, and nothing here can establish that. `pre-campaign` says only
+ * that the area is not this campaign's to build, which is the question an
+ * owner column answers. Whether it is actually done is a matter for tests,
+ * Repository Truth and measurement, as it is for every other row.
+ */
 export const OWNERS = Object.freeze([
-  'merged', 'M2C/M2D/M2F', 'M2E', 'M2E-1', 'M2E/M2F', 'M2F', 'M2 completion gate', 'M3', 'M4',
+  'pre-campaign', 'M2C/M2D/M2F', 'M2E', 'M2E-1', 'M2E/M2F', 'M2F', 'M2 completion gate', 'M3', 'M4',
 ]);
 
 /** The ratified section, verbatim, between its own heading and M3's. */
@@ -155,9 +164,12 @@ export function render(data, fingerprint) {
     'changed and these entries were written against a different section — the gate',
     'fails until someone re-reads it.',
     '',
-    '**This is an index, not a proof.** It records how the campaign has assigned each',
-    'area of M2 and why. It makes no claim that any requirement is met, and a green',
-    'run does not say one is: proof is tests, Repository Truth and measurement.',
+    '**This is an index, not a proof, and not an inventory of everything.** It',
+    'records the areas listed below and who owns them. It does not establish that',
+    'they are all of M2 — deleting a row from it fails nothing — and it makes no',
+    'claim that any requirement is met. A green run says the listed entries are',
+    'well-formed and the section they index has not moved, and says nothing else:',
+    'proof is tests, Repository Truth and measurement.',
     '',
     '| Id | Area | Owner | Why |',
     '|---|---|---|---|',
