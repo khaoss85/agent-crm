@@ -141,8 +141,11 @@ A list of only positives is not a search.
 
 ### How the search was falsified
 
-Two findings, both of which would have produced a wrong answer if left
-unchecked.
+Four findings. The first two came from deliberately falsifying the search before
+reporting it. **The last two came afterwards — one from CI, one from checking a
+scan I was about to report from — and they are the more useful pair**, because
+they are failures of the *corpus* and the *unit* rather than of the query, which
+is the class falsification as practised here does not catch.
 
 **1. The raw-reach inventory needed two greps, not one.** Five synthetic
 spellings were planted in a package file and the primary grep run against them:
@@ -167,10 +170,52 @@ query surfaces for their first 130 lines. They were found only by counting
 `createManaged|applyManaged` per file and following the two files with a
 non-zero count. A skim would have reported them read-only.
 
+**3. `grep` silently skips a file containing a NUL byte, and every inventory
+over `tests/` was blind to one.** CI caught three failures in
+`tests/work-operations-evidence.test.js` — a fourth file with the
+mixed-composition pattern, after this plan already claimed three. That file
+carries a literal NUL at line 309 (`'null\0byte'`, a hostile-input fixture), so
+`file` reports it as `data` and grep classifies it as binary and skips it
+**without saying so**. Demonstrated both directions in one experiment: the same
+planted spelling in the same file is seen by a `readFileSync` scan and reported
+absent by grep, exit 1.
+
+Six tracked test files have that property — `delivery-change-acceptance-e2e`,
+`lifecycle-amendment-execution-e2e`, `package-scaffold`, `project-bootstrap`,
+`scenario-run`, `work-operations-evidence`. All six were then scanned properly
+for every load-bearing token and all six run green. **No production source is
+affected**, and the checked-in structural guards are not blind either: M1's, M2A's
+and M2B's all read with `readFileSync`, so they see these files. The blind spot
+is confined to ad-hoc shell inventories.
+
+Why the earlier falsification could not have caught it: **planting a match tests
+the query, not the corpus.** The skip happens before matching, so a planted
+string is invisible to a tool that never opens the file. Falsifying a search
+means falsifying both halves, and only one half had been done.
+
+**4. A file-level scan cannot answer a function-level question, and looks
+authoritative either way.** Verifying "which capabilities write" for the matrix
+below, a first pass scanned each package for a file containing both `create(` and
+a managed write. It reported two false positives — Delivery's
+`change-acceptance.js` and `economics-actions.js` hold capability definitions and
+*action* definitions in one file, so the writes it found are in the actions — and
+one false negative on Work, whose capability delegates to `follow-up.js`.
+
+**The matrix rows in this milestone therefore rest on reading each capability's
+`create()` body, not on that scan.** A reviewer who reproduces the file-level
+version will get different numbers; this is the reason, written down rather than
+left to be raised.
+
 The sweep covers `packages`, `examples`, `tests`, `apps`, `api`, `scripts`,
 `site`, `benchmarks`, `design` and `skills`, with plain directory pathspecs and
 a quoted `--include="*.js"` — never a `**` glob, which is how a previous
 milestone got an empty pathspec reported as an absence.
+
+Two of those four are the same failure in different clothes — a tool reporting
+absence it never established — and the general form is worth carrying forward:
+**a scan whose unit is the file cannot answer a question whose unit is the
+function, and a scan that never opens a file cannot answer anything about it.**
+Both look exactly like a clean result.
 
 ## The defect, measured
 
