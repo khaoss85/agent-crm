@@ -1,0 +1,170 @@
+// @ts-check
+
+import { randomUUID } from 'node:crypto';
+import { ValidationError } from './errors.js';
+import { resolveClock } from './time.js';
+
+/**
+ * **The one persist-or-verify loop for registered definition versions (ADR-015).**
+ *
+ * A definition version is immutable once registered: re-registering the same
+ * `{type, name, version}` with the same fingerprint is a no-op, and the same
+ * identity with a *changed* fingerprint stops the boot. Every registry that
+ * publishes versioned definitions needs that rule, and each of them used to
+ * carry its own copy of it, prepared against the SQLite driver by hand.
+ *
+ * Several copies of one rule is several places for it to drift, and the rule is
+ * the one that decides whether an application starts. This store is the single
+ * implementation, behind Storage Contract v1: it renders no SQL, names no
+ * table but its own, and gives a caller no way to reach the driver. It knows
+ * nothing about any domain — `type` is an opaque identity string its callers
+ * choose.
+ *
+ * ### What it deliberately is not
+ *
+ * Not a repository, not an ORM, not a query surface. It accepts a bounded
+ * collection of definition identities and persists exactly those four fields;
+ * there is no predicate builder, no table parameter and no raw escape hatch.
+ * It never stores an executable definition or its config — only the identity
+ * and the fingerprint computed from them.
+ *
+ * ### Whole-batch semantics
+ *
+ * Every entry is verified-or-inserted inside ONE storage transaction — the same
+ * `BEGIN IMMEDIATE` wrapper the application handle opens, so nesting
+ * refusal (`NESTED_TRANSACTION`) and the retryable `CONFLICT` a busy database
+ * produces are unchanged. A batch that refuses halfway persists nothing, and
+ * two applications booting concurrently serialize on the write lock: the loser
+ * re-reads the committed rows and verifies instead of racing to a UNIQUE
+ * violation. Reads happen before the matching write inside the transaction, so
+ * an identity that appears twice in one batch verifies against what the batch
+ * itself just wrote.
+ *
+ * The batch is validated in full *before* the transaction opens: a malformed
+ * identity is a startup-time defect, and it should never be the reason a
+ * transaction has to roll back.
+ */
+
+/** The one table this store persists into. Not a parameter, deliberately. */
+const TABLE = 'definition_versions';
+
+/** How much of a fingerprint the drift refusal quotes. */
+const FINGERPRINT_PREVIEW = 12;
+
+/** The closed identity shape a caller may hand over. `id` and `registeredAt` are the store's. */
+const ENTRY_FIELDS = Object.freeze(['type', 'name', 'version', 'fingerprint']);
+
+/**
+ * @param {unknown} value
+ * @param {string} field
+ * @param {number} index
+ */
+function requireIdentityString(value, field, index) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new ValidationError(
+      `Definition version ${field} must be a non-empty string`,
+      { index, field },
+    );
+  }
+  return value;
+}
+
+/**
+ * Reject anything that is not one of the four identity fields. A caller that
+ * hands over `config`, `evaluate` or a stray key is asking this store to
+ * persist something it must never persist, and silently dropping the key would
+ * make that request look as if it had succeeded.
+ * @param {unknown} entry
+ * @param {number} index
+ */
+function validateEntry(entry, index) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new ValidationError('Definition version entry must be a plain object', { index });
+  }
+  const unknown = Object.keys(entry).find((key) => !ENTRY_FIELDS.includes(key));
+  if (unknown !== undefined) {
+    throw new ValidationError(`Definition version entry has an unsupported field "${unknown}"`, { index, field: unknown });
+  }
+  const record = /** @type {Record<string, unknown>} */ (entry);
+  const version = record.version;
+  if (!Number.isInteger(version) || /** @type {number} */ (version) < 0) {
+    throw new ValidationError('Definition version version must be a non-negative integer', { index, field: 'version' });
+  }
+  return Object.freeze({
+    type: requireIdentityString(record.type, 'type', index),
+    name: requireIdentityString(record.name, 'name', index),
+    version: /** @type {number} */ (version),
+    fingerprint: requireIdentityString(record.fingerprint, 'fingerprint', index),
+  });
+}
+
+/**
+ * The refusal a registered definition's changed source produces. Byte-identical
+ * across all four registries by construction — it used to be four copies of one
+ * template, and a boot failure is the worst place for two of them to disagree.
+ * @param {{type: string, name: string, version: number, fingerprint: string}} entry
+ * @param {unknown} persisted
+ */
+function driftError(entry, persisted) {
+  return new ValidationError(
+    `${entry.type} "${entry.name}@${entry.version}" source changed after registration (persisted fingerprint ${String(persisted).slice(0, FINGERPRINT_PREVIEW)}…, current ${entry.fingerprint.slice(0, FINGERPRINT_PREVIEW)}…). `
+      + 'Registered definition versions are immutable: publish a new version instead of editing this one.',
+  );
+}
+
+/**
+ * @param {any} database — an application database handle carrying `storage.sync`
+ * @param {{clock?: () => string, newId?: () => string}} [options]
+ *   `clock` and `newId` exist so a test can pin `registered_at` and `id`; the
+ *   defaults are the framework clock and `randomUUID`, which is what every
+ *   registry used before this store existed.
+ */
+export function createDefinitionVersionStore(database, options = {}) {
+  const now = resolveClock(options.clock);
+  const newId = options.newId ?? randomUUID;
+  if (typeof newId !== 'function') throw new TypeError('newId must be a function returning an id');
+  const storage = database?.storage?.sync;
+  if (!storage) {
+    throw new ValidationError('The definition-version store requires a database with Storage Contract v1');
+  }
+
+  return Object.freeze({
+    /**
+     * Persist-or-verify every identity in one transaction.
+     * @param {Iterable<{type: string, name: string, version: number, fingerprint: string}>} entries
+     */
+    persist(entries) {
+      const bounded = [...entries].map(validateEntry);
+      storage.transaction(() => {
+        for (const entry of bounded) {
+          const persisted = storage.maybeOne({
+            kind: 'select',
+            table: TABLE,
+            columns: ['fingerprint'],
+            where: [
+              { column: 'type', op: 'eq', value: entry.type },
+              { column: 'name', op: 'eq', value: entry.name },
+              { column: 'version', op: 'eq', value: entry.version },
+            ],
+          });
+          if (!persisted) {
+            storage.execute({
+              kind: 'insert',
+              table: TABLE,
+              values: [
+                { column: 'id', value: newId() },
+                { column: 'type', value: entry.type },
+                { column: 'name', value: entry.name },
+                { column: 'version', value: entry.version },
+                { column: 'fingerprint', value: entry.fingerprint },
+                { column: 'registered_at', value: now() },
+              ],
+            });
+            continue;
+          }
+          if (String(persisted.fingerprint) !== entry.fingerprint) throw driftError(entry, persisted.fingerprint);
+        }
+      });
+    },
+  });
+}

@@ -3,6 +3,7 @@
 import {
   ValidationError,
   NotFoundError,
+  createDefinitionVersionStore,
   computeDefinitionFingerprint,
   validateDeclaredConfig,
   CHARGE_TYPES,
@@ -63,6 +64,21 @@ export function validateDiscountPolicy(definition) {
     throw new ValidationError(`discount policy "${definition.name}@${definition.version}": evaluate must be a function`);
   }
   return definition;
+}
+
+/**
+ * The closed identity the definition-version store persists: four fields, and
+ * never the definition or its config.
+ * @param {string} type
+ * @param {{definition: {name: string, version: number}, fingerprint: string}} entry
+ */
+function identity(type, entry) {
+  return {
+    type,
+    name: entry.definition.name,
+    version: entry.definition.version,
+    fingerprint: entry.fingerprint,
+  };
 }
 
 /**
@@ -159,36 +175,15 @@ export class CommercialRegistries {
   /**
    * Persist-or-verify every identity in definition_versions, in one
    * transaction (ADR-015 semantics: drift under a registered version throws;
-   * concurrent boots serialize).
+   * concurrent boots serialize). The kernel's definition-version store owns
+   * that loop — this registry only says which identities it publishes.
    * @param {any} database
    */
   persistFingerprints(database) {
-    const entries = [
-      ...[...this.catalogProviders.values()].map((entry) => ({ type: 'catalog-provider', entry })),
-      ...[...this.discountPolicies.values()].map((entry) => ({ type: 'discount-policy', entry })),
-    ];
-    database.transaction(() => {
-      const select = database.raw.prepare(
-        'SELECT fingerprint FROM definition_versions WHERE type = ? AND name = ? AND version = ?',
-      );
-      const insert = database.raw.prepare(
-        'INSERT INTO definition_versions(id, type, name, version, fingerprint, registered_at) VALUES (?, ?, ?, ?, ?, ?)',
-      );
-      for (const { type, entry } of entries) {
-        const { name, version } = entry.definition;
-        const existing = select.get(type, name, version);
-        if (existing === undefined) {
-          insert.run(crypto.randomUUID(), type, name, version, entry.fingerprint, new Date().toISOString());
-          continue;
-        }
-        if (String(existing.fingerprint) !== entry.fingerprint) {
-          throw new ValidationError(
-            `${type} "${name}@${version}" source changed after registration (persisted fingerprint ${String(existing.fingerprint).slice(0, 12)}…, current ${entry.fingerprint.slice(0, 12)}…). ` +
-              'Registered definition versions are immutable: publish a new version instead of editing this one.',
-          );
-        }
-      }
-    });
+    createDefinitionVersionStore(database).persist([
+      ...[...this.catalogProviders.values()].map((entry) => identity('catalog-provider', entry)),
+      ...[...this.discountPolicies.values()].map((entry) => identity('discount-policy', entry)),
+    ]);
   }
 
   /** Serializable, function-free metadata for /api/schema. */

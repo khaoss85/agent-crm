@@ -85,6 +85,19 @@ export { normalizeEmail, normalizeCompanyName } from './src/core-adapters.js';
 // first-party definition uses: declared JSON-safe config, canonical source.
 export { computeDefinitionFingerprint, validateDeclaredConfig } from './src/definition-fingerprint.js';
 
+// ---- persisting those fingerprints (ADR-015's own rule, published) ----
+// The other half of the mechanism above. Computing a fingerprint is only half
+// of "a registered definition version is immutable": something has to record
+// each `{type, name, version, fingerprint}` at startup and refuse the boot when
+// a registered version's source has moved underneath it. That loop is a runtime
+// capability, not a domain concept — the store knows only the four identity
+// fields and the one core table they live in, and `type` is an opaque string
+// its caller chooses. It is published for the same reason
+// `computeDefinitionFingerprint` is: a package that re-implements it
+// re-implements the rule that decides whether the application starts, and the
+// one sentence a person reads at boot becomes several that disagree.
+export { createDefinitionVersionStore } from './src/definition-version-store.js';
+
 // ---- money (ADR-014/016) ----
 // Integer minor units, never floats, with the framework's shared bounds. A
 // package that stores or renders an amount uses these rather than inventing

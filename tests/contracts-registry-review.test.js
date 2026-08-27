@@ -138,7 +138,11 @@ test('policy fingerprints are persisted, drift-checked and all-or-nothing', asyn
   let inserts = 0;
   app.database.raw.prepare = (sql) => {
     const statement = realPrepare(sql);
-    if (!sql.startsWith('INSERT INTO definition_versions')) return statement;
+    // The adapter quotes identifiers, so the statement the driver actually
+    // receives is `INSERT INTO "definition_versions" (…)`. Match both forms:
+    // the fault this test injects is about the second row failing, not about
+    // which layer rendered the SQL.
+    if (!/^INSERT INTO "?definition_versions"?\b/.test(sql)) return statement;
     return {
       ...statement,
       run: (...args) => {

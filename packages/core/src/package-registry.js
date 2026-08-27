@@ -1,8 +1,8 @@
 // @ts-check
 
-import { randomUUID } from 'node:crypto';
 import { ValidationError, NotFoundError, AppError } from './errors.js';
 import { validateDeclaredConfig } from './definition-fingerprint.js';
+import { createDefinitionVersionStore } from './definition-version-store.js';
 import { resolvePackageComposition } from './package-composition.js';
 
 /**
@@ -497,32 +497,19 @@ export class PackageRegistry {
    * Persist-or-verify every policy identity in `definition_versions`, in one
    * transaction (ADR-015 semantics): editing a registered version's source or
    * config stops the next boot, and rollback means publishing a new version.
+   * The definition-version store owns that loop; the registry only names the
+   * identities the composition publishes.
    * @param {any} database
    */
   persistFingerprints(database) {
     const entries = [...this.#policies.values()];
     if (entries.length === 0) return;
-    database.transaction(() => {
-      const select = database.raw.prepare('SELECT fingerprint FROM definition_versions WHERE type = ? AND name = ? AND version = ?');
-      const insert = database.raw.prepare(
-        'INSERT INTO definition_versions(id, type, name, version, fingerprint, registered_at) VALUES (?, ?, ?, ?, ?, ?)',
-      );
-      for (const entry of entries) {
-        const type = `domain-policy:${entry.domain}:${entry.kind}`;
-        const { name, version } = entry.definition;
-        const existing = select.get(type, name, version);
-        if (existing === undefined) {
-          insert.run(randomUUID(), type, name, version, entry.fingerprint, new Date().toISOString());
-          continue;
-        }
-        if (String(existing.fingerprint) !== entry.fingerprint) {
-          throw new ValidationError(
-            `${type} "${name}@${version}" source changed after registration (persisted fingerprint ${String(existing.fingerprint).slice(0, 12)}…, current ${entry.fingerprint.slice(0, 12)}…). ` +
-              'Registered definition versions are immutable: publish a new version instead of editing this one.',
-          );
-        }
-      }
-    });
+    createDefinitionVersionStore(database).persist(entries.map((entry) => ({
+      type: `domain-policy:${entry.domain}:${entry.kind}`,
+      name: entry.definition.name,
+      version: entry.definition.version,
+      fingerprint: entry.fingerprint,
+    })));
   }
 
   /**
