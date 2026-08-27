@@ -26,14 +26,14 @@ Generated: **2026-08-27**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **Production Spine v2 M2B definition-version store**, merged by PR #132 as `27cc663`. Production Spine v2 M2A preceded it, merged by PR #130 as `b4dde94`, with review closeout PR #131 as `e1ff9a0`. The internal storage contract exists; the handwritten Company slice uses it, and the current generated-service template is executable through it for the probed string, nullable-string and enum shapes across public and all-managed service paths. <!-- truth: spine.storage.contract=1 --><!-- truth: spine.storage.company_runtime=implemented --><!-- truth: spine.storage.generated_runtime=implemented --> M2A migrated the Approval, Contact and Opportunity compatibility services plus Work's legacy-task reader onto the structured seam; Work's legacy migration no longer reaches the raw driver. <!-- truth: spine.storage.work_legacy_raw=absent --> M2B replaced the four duplicated definition-version registries — Commercial, Signature, Intelligence and the package registry — with one internal core store on the same seam, leaving the workflow engine, the action runtime and Work's transaction-context check as the remaining later-M2 raw consumers. Neither M2A nor M2B adds a PostgreSQL adapter. <!-- truth: spine.postgresql.implemented=absent --> |
+| Latest merged milestone | **Production Spine v2 M2C execution-run store**, merged by PR #137. Production Spine v2 M2B preceded it, merged by PR #132 as `27cc663`, and Production Spine v2 M2A before that, merged by PR #130 as `b4dde94`, with review closeout PR #131 as `e1ff9a0`. The internal storage contract exists; the handwritten Company slice uses it, and the current generated-service template is executable through it for the probed string, nullable-string and enum shapes across public and all-managed service paths. <!-- truth: spine.storage.contract=1 --><!-- truth: spine.storage.company_runtime=implemented --><!-- truth: spine.storage.generated_runtime=implemented --> M2A migrated the Approval, Contact and Opportunity compatibility services plus Work's legacy-task reader onto the structured seam; Work's legacy migration no longer reaches the raw driver. <!-- truth: spine.storage.work_legacy_raw=absent --> M2B replaced the four duplicated definition-version registries — Commercial, Signature, Intelligence and the package registry — with one internal core store on the same seam. M2C then moved the workflow engine and the action runtime's `writeTrace` behind one internal execution-run store, leaving `packages/work/src/follow-up.js#requireCallerTransaction` as the only application-runtime raw consumer in `packages/`. None of M2A, M2B or M2C adds a PostgreSQL adapter. <!-- truth: spine.postgresql.implemented=absent --> |
 | Measured at | `27cc663` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
 | Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | Real-Chromium checks remain manual and are **not in CI** — no workflow launches a browser, and `npm run smoke` is an in-process application smoke (`docs/ADMIN_SMOKE.md`). The Work v1 section has a **30-check** block, all passing, driven twice at `184e543`; it covers that section only and re-runs none of the earlier blocks. PR #58's desktop and mobile receipts still describe `ef8487a`, and nothing since has re-run them. |
 | CI | The latest completed integration run concluded `success` on both jobs, `verify` and `public-claims`, at its own exact head. This row records that a run passed; it does not claim any particular commit is still the head. GitHub Actions holds the current answer. |
-| Open PRs | None at this snapshot. The post-M2B measurement PR produces this state; once merged it is history, not remaining work. |
+| Open PRs | The post-M2C measurement PR, which will record the merge commit and re-measure the suite. Until it does, `Measured at` names `e1ff9a0` and `measurement.test_tree_current` correctly reads `false`. |
 | Public discovery | GitHub About and all 20 intent topics are live. Smithery `khaoss85/accordo` returns 200 and exposes the three production Docs MCP tools. The GitHub social preview is live and **stale**: it was rendered from a much older measurement and its replacement still needs a manual Settings upload, which is a human step no branch can take. |
 | npm | **`create-accordo@0.1.0` is live since 2026-08-19** — staged from CI through OIDC trusted publishing (run 32224731197, Sigstore provenance), approved by the maintainer with 2FA, and confirmed against the registry: the published shasum matches the CI assembly, `latest` resolves to `0.1.0`, and a clean-directory `npm create accordo` scaffolds a verifying project. `accordo@0.0.1` remains an **empty name reservation by design** (no framework library). The `@accordo` organization exists since 2026-08-19 and its scope is **deliberately empty**: `@accordo/mcp` was investigated and refused, because the project MCP server composes from the generated indexes of the tree it runs in and a published copy would answer about the wrong application (ADR-034). The MCP-registry submission is no longer blocked by it — `server.json` registers the remote documentation endpoint instead. `site/brand.json` records `npm.status: published`. |
 | Project bootstrap | **`create-accordo` is real source and its publication is live**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates the bounded publishable directory while the source manifest stays `private: true` — publication never lowered that wall, because what npm published is the assembly, which strips `private`. The staged path proved itself the hard way: one dispatch died `E401` (a `registry-url` placeholder token preempting OIDC), the next `ENEEDAUTH` (no matching trusted-publisher config), and run `32224731197` staged clean once the publisher allowed `npm stage publish`. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
@@ -111,14 +111,15 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **Production Spine v2 M2 is under way: M2A and M2B are merged, the rest is
-   not started.** Its causal boundary is the remaining SQLite extraction and
+1. **Production Spine v2 M2 is under way: M2A, M2B and M2C are merged, the rest
+   is not started.** Its causal boundary is the remaining SQLite extraction and
    compatibility work named by the merged ExecPlans and Legacy Alignment Matrix.
    M2A extracted the Approval, Contact and Opportunity compatibility services
    and Work's legacy-task reader. <!-- truth: spine.storage.work_legacy_raw=absent -->
    M2B extracted the four definition-version registries behind one internal core
-   store. The workflow engine, the action runtime and Work's separate
-   transaction-context check remain.
+   store, and M2C extracted the workflow engine and the action runtime's trace
+   writer behind an execution-run store on the same seam. Work's separate
+   transaction-context check is the remaining application-runtime raw consumer.
 2. M2 must preserve the M0/M1 public contracts and must not be confused with the
    later production PostgreSQL adapter milestone. Cloud C0 and shared-database
    row tenancy remain outside this sequence.
@@ -162,8 +163,9 @@ Production Spine v1 one-instance/one-tenant binding and membership permissions;
 the checked SEE/PLAN/BUILD/CHECK/PROVE rails; CLI and MCP; and the live
 `create-accordo@0.1.0` bootstrap package. Production Spine v2 M0 is executable
 characterization only; M1 added the internal SQLite storage contract, M2A
-migrated the named compatibility consumers onto it, and M2B moved the
-definition-version registries behind one internal store on the same seam.
+migrated the named compatibility consumers onto it, M2B moved the
+definition-version registries behind one internal store on the same seam, and
+M2C moved workflow-run and trace-span persistence behind another.
 <!-- truth: spine.storage.contract=1 -->
 None of them adds PostgreSQL storage, and the seam stays SQLite-only rather than
 portable.

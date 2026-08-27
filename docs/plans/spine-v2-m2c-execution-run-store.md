@@ -340,4 +340,38 @@ either migrated file's persistence.
 
 ## Outcome and follow-up
 
-_Filled in on completion._
+The two declared consumers no longer reach the raw SQLite driver, and the row
+family they shared exists once. Public behaviour is unchanged:
+`WorkflowEngine.run()` keeps its result and exception shapes, `listRuns()` and
+`getRun()` stay synchronous with the same mapped shapes and the same
+`NotFoundError`, `writeTrace(database, run)` keeps its published signature and
+still throws so its callers' best-effort catch still has something to catch,
+Storage Contract v1 is untouched, and no export was added.
+
+With M2C the kernel's own raw residue is down to one application-runtime
+consumer: `packages/work/src/follow-up.js#requireCallerTransaction`, which reads
+the driver's transaction flag through optional chaining, so Work stays
+`partial`. The adapter internals in `packages/core/src/database.js`,
+`core-adapters.js` and `spine-store.js` own the driver by design, and
+`scripts/repo-truth.js` opens isolated in-memory databases as a
+repository-maintenance script rather than as runtime. PostgreSQL remains absent.
+
+Explicitly still open, and deliberately so:
+
+- **Work's transaction-context seam.** The last one, and it is a *read* of the
+  driver's state rather than persistence, so it needs a different answer than
+  a store — probably a contract-level way to ask "am I inside the caller's
+  transaction?". Sequenced, not forgotten.
+- **M2A's guard still carries the un-hardened pattern.** M2B named this as
+  follow-on and it is still true: `tests/work-legacy-task-migration.test.js`
+  scans for `database.raw` only, and Work's own residue is spelled
+  `tasks?.database?.raw`, which that scan walks straight past. M2B and M2C both
+  use the widened set.
+- **`packages/core/src/definition-version-store.js` is in none of the three
+  characterization behaviour-bearing lists.** M2C added `execution-run-store.js`
+  to all three because *this* PR moved behaviour into it; M2B's store has
+  exactly the same standing and the same gap. Retrofitting it here would enlarge
+  a bounded slice, so it is named rather than done.
+- **Run and span persistence still carries no actor context and no audit
+  event**, exactly as it did before M2C. Recorded above under *Known limitation,
+  carried forward deliberately*.
