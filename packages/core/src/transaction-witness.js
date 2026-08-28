@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { AppError } from './errors.js';
 
 /**
  * **Proving a caller-owned transaction without handing out the driver.**
@@ -158,9 +159,17 @@ export function claimTransactionMinter() {
    * Open the owned scope for one outer transaction, run `body` inside it, and
    * drop the witness whatever happens.
    *
+   * `allowAsync` is false for the **synchronous** wrapper, which commits as soon
+   * as this returns. An async body handed to it would have its `COMMIT` executed
+   * while it was still running — and, once ownership existed, its continuation
+   * would be told `ACTIVE` for a transaction that had already committed. That is
+   * the false green this whole module exists to prevent, so it is refused rather
+   * than accommodated.
+   *
    * @param {object} storage @param {() => any} body
+   * @param {{allowAsync?: boolean}} [options]
    */
-  return function openTransactionScope(storage, body) {
+  return function openTransactionScope(storage, body, { allowAsync = true } = {}) {
     // No fields, and frozen. A witness is an identity, not a value — there is
     // nothing here for a caller to observe and replicate.
     const witness = Object.freeze({});
@@ -177,6 +186,18 @@ export function claimTransactionMinter() {
     try {
       const result = OWNERSHIP.run(witness, body);
       if (result && typeof (/** @type {any} */ (result).then) === 'function') {
+        if (!allowAsync) {
+          // Ownership is dropped BEFORE throwing, so the body's continuation —
+          // which keeps running, and which this function cannot stop — is
+          // refused by the proof rather than served a committed transaction.
+          close();
+          throw new AppError(
+            'database.transaction() is synchronous and commits as soon as its callback returns, so an async '
+              + 'callback would be committed while it was still running and its continuation would be told it '
+              + 'is inside a transaction that has already committed. Use database.transactionAsync() instead.',
+            { code: 'SYNC_TRANSACTION_ASYNC_BODY', status: 500 },
+          );
+        }
         return /** @type {any} */ (result).then(
           (/** @type {any} */ value) => { close(); return value; },
           (/** @type {any} */ error) => { close(); throw error; },

@@ -451,7 +451,12 @@ export function createDatabase(options = {}) {
       // a witness for a transaction that was never opened would be the one lie
       // this mechanism exists to make impossible — publishes it into the async
       // context running `fn`, and drops it however `fn` ends.
-      const result = openTransactionScope(storage, fn);
+      //
+      // `allowAsync: false` because the COMMIT below runs the moment this
+      // returns. An async `fn` would be committed mid-flight, which this
+      // wrapper has always done, and would additionally have its continuation
+      // told it still owns the transaction. Refused instead.
+      const result = openTransactionScope(storage, fn, { allowAsync: false });
       raw.exec('COMMIT;');
       return result;
     } catch (error) {

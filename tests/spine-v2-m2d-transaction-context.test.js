@@ -661,6 +661,54 @@ test('async context survives the boundaries the refusal claims it survives', asy
     'AsyncResource.bind carries the ownership the refusal message tells a caller to bind');
 });
 
+/**
+ * **The synchronous wrapper cannot host an async body, and now says so.**
+ *
+ * `database.transaction()` executes `COMMIT` the moment its callback returns.
+ * An async callback therefore always had its transaction committed while it was
+ * still running — that part predates this milestone. What ownership added was
+ * worse: the continuation, resuming after the commit, was told `ACTIVE` for a
+ * transaction that no longer existed, and would have written outside any
+ * transaction while holding a proof that it was inside one.
+ *
+ * Refused before `COMMIT`, and ownership is dropped *before* the refusal is
+ * thrown — the body keeps running and cannot be stopped, so what matters is
+ * that it is refused rather than served.
+ */
+test('an async body handed to the synchronous transaction wrapper is refused before COMMIT', async (t) => {
+  const db = createDatabase({ path: ':memory:' });
+  t.after(() => db.close());
+  const service = serviceOn(db);
+
+  const statements = [];
+  const realExec = db.raw.exec.bind(db.raw);
+  db.raw.exec = (sql) => { if (/BEGIN|COMMIT|ROLLBACK/i.test(sql)) statements.push(sql.trim()); return realExec(sql); };
+  t.after(() => { db.raw.exec = realExec; });
+
+  /** @type {string|undefined} */ let afterResume;
+  const settled = new Promise((resolve) => {
+    assert.throws(
+      () => db.transaction(async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        afterResume = proveCallerTransaction([service]);
+        resolve(undefined);
+      }),
+      (error) => {
+        assert.equal(error.code, 'SYNC_TRANSACTION_ASYNC_BODY');
+        assert.match(error.message, /transactionAsync/);
+        return true;
+      },
+    );
+  });
+
+  assert.equal(statements.includes('COMMIT;'), false, 'it refused before committing anything');
+  assert.equal(statements.filter((sql) => /ROLLBACK/i.test(sql)).length, 1, 'and rolled the opened transaction back');
+
+  await settled;
+  assert.equal(afterResume, TRANSACTION_PROOF.NO_TRANSACTION,
+    'the continuation must not be told it owns a transaction that was rolled back');
+});
+
 /* ------------------------------------------------------------------ */
 /* Contracts — the three measured partial commits, now refused         */
 /* ------------------------------------------------------------------ */

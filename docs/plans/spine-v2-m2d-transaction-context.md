@@ -442,15 +442,19 @@ before `validateFollowUpRequest` before M2D, and still does.
 
 The only reachable behaviour that changes anywhere is the path measured above.
 
-### 8. Three tests moved off a mixed composition
+### 8. Four tests moved off a mixed composition
 
-`work-operations-e2e`, `work-provenance-and-actor` and `work-source-key-stability`
-booted an application from a throwaway project copy and then drove it with
-`createFollowUp` imported from *this* checkout — two framework instances, which
-no deployment can produce. They now load the package source the application
-actually composed. The two sources are byte-identical (`project()` copies this
-checkout), so no coverage is lost and the tests exercise the composed code, which
-is strictly more correct.
+`work-operations-e2e`, `work-provenance-and-actor`, `work-source-key-stability`
+and `work-operations-evidence` booted an application from a throwaway project
+copy and then drove it with `createFollowUp` imported from *this* checkout — two
+framework instances, which no deployment can produce. They now load the package
+source the application actually composed. The two sources are byte-identical
+(`project()` copies this checkout), so no coverage is lost and the tests exercise
+the composed code, which is strictly more correct.
+
+**This section said "three" until CI proved otherwise**, and the fourth is the
+one whose discovery is recorded in falsification finding 3: it was invisible to
+every shell inventory run in this milestone.
 
 ## Validation
 
@@ -480,14 +484,14 @@ is strictly more correct.
     minting surface. This replaced pinning the computed-import gap as a
     limitation, which stopped being honest the moment the witness claimed
     ownership rather than presence.
-  - **The boundary of the proof itself**, pinned so the function's name cannot
-    be mistaken for a stronger guarantee: flow B, having opened nothing, is
-    *not* refused during flow A's open window, and loses its writes to A's
-    rollback — with the `NESTED_TRANSACTION` refusal that makes this
-    unreachable in production asserted in the same test. Named for the limit it
-    establishes, the way the token-scan test is, and carrying the instruction
-    that if it ever fails because the witness became caller-scoped, that is a
-    fix and the test should be updated rather than the behaviour restored.
+  - **An async body handed to the synchronous `transaction()` is refused**
+    `SYNC_TRANSACTION_ASYNC_BODY`, before `COMMIT`. That wrapper commits as soon
+    as its callback returns, so an async callback was always committed
+    mid-flight; once ownership existed, its continuation was additionally told
+    `ACTIVE` for a transaction that had already committed — measured, and the
+    exact false green this module exists to prevent. Ownership is dropped before
+    the refusal is thrown, so the continuation that cannot be stopped reads
+    `NO_TRANSACTION` rather than being served.
   - **The two halves of unforgeability, both asserted.** `mintTransactionWitness`
     and `isActiveTransactionWitness` are absent from `packages/core/index.js`,
     **and** `importsPrivateKernelPath` refuses the exact specifier a package
