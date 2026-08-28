@@ -183,6 +183,34 @@ const DATA_PLANE_MIGRATIONS = [
       ) STRICT;
     `,
   },
+  {
+    version: 6,
+    name: 'spine_data_plane_binding_marker',
+    // M2 cross-plane audit recovery needs a destination identity that is not a
+    // path, URL or credential. The one row is written/verified before an
+    // Organization can be resolved and is immutable afterwards. Version 6 is
+    // globally append-only: the released v1-v5 prefix is never renumbered.
+    sql: `
+      CREATE TABLE spine_data_plane_binding (
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        tenant_slug TEXT NOT NULL,
+        data_plane_id TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+      ) STRICT;
+
+      CREATE TRIGGER spine_data_plane_binding_no_update
+      BEFORE UPDATE ON spine_data_plane_binding
+      BEGIN
+        SELECT RAISE(ABORT, 'spine data-plane binding is immutable');
+      END;
+
+      CREATE TRIGGER spine_data_plane_binding_no_delete
+      BEFORE DELETE ON spine_data_plane_binding
+      BEGIN
+        SELECT RAISE(ABORT, 'spine data-plane binding is immutable');
+      END;
+    `,
+  },
 ];
 
 /**
@@ -241,6 +269,119 @@ const CONTROL_PLANE_MIGRATIONS = [
         ON spine_memberships(subject);
     `,
   },
+  {
+    version: 7,
+    name: 'spine_cross_plane_audit_intents',
+    // M2 bounded recovery for Organization/Membership audit. This is not a
+    // general outbox: its schema is closed over exactly one security-evidence
+    // event and permits one terminal transition, pending -> delivered.
+    sql: `
+      ALTER TABLE spine_organizations ADD COLUMN audit_revision INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE spine_memberships ADD COLUMN audit_revision INTEGER NOT NULL DEFAULT 0;
+
+      CREATE TRIGGER spine_organizations_audit_revision_insert
+      BEFORE INSERT ON spine_organizations
+      WHEN NEW.audit_revision < 0 OR NEW.audit_revision > 9007199254740991
+      BEGIN
+        SELECT RAISE(ABORT, 'spine audit revision must be a non-negative safe integer');
+      END;
+
+      CREATE TRIGGER spine_organizations_audit_revision_update
+      BEFORE UPDATE OF audit_revision ON spine_organizations
+      WHEN NEW.audit_revision < 0 OR NEW.audit_revision > 9007199254740991
+      BEGIN
+        SELECT RAISE(ABORT, 'spine audit revision must be a non-negative safe integer');
+      END;
+
+      CREATE TRIGGER spine_memberships_audit_revision_insert
+      BEFORE INSERT ON spine_memberships
+      WHEN NEW.audit_revision < 0 OR NEW.audit_revision > 9007199254740991
+      BEGIN
+        SELECT RAISE(ABORT, 'spine audit revision must be a non-negative safe integer');
+      END;
+
+      CREATE TRIGGER spine_memberships_audit_revision_update
+      BEFORE UPDATE OF audit_revision ON spine_memberships
+      WHEN NEW.audit_revision < 0 OR NEW.audit_revision > 9007199254740991
+      BEGIN
+        SELECT RAISE(ABORT, 'spine audit revision must be a non-negative safe integer');
+      END;
+
+      CREATE TABLE spine_tenant_bindings (
+        tenant_slug TEXT PRIMARY KEY,
+        data_plane_id TEXT UNIQUE,
+        created_at TEXT NOT NULL
+      ) STRICT;
+
+      CREATE TRIGGER spine_tenant_bindings_no_update
+      BEFORE UPDATE ON spine_tenant_bindings
+      WHEN NEW.tenant_slug IS NOT OLD.tenant_slug
+        OR NEW.created_at IS NOT OLD.created_at
+        OR OLD.data_plane_id IS NOT NULL
+        OR NEW.data_plane_id IS NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'spine tenant binding permits only its first data-plane claim');
+      END;
+
+      CREATE TRIGGER spine_tenant_bindings_no_delete
+      BEFORE DELETE ON spine_tenant_bindings
+      BEGIN
+        SELECT RAISE(ABORT, 'spine tenant binding is immutable');
+      END;
+
+      CREATE TABLE spine_audit_intents (
+        id TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        destination_tenant_slug TEXT NOT NULL,
+        audit_event_id TEXT NOT NULL UNIQUE,
+        payload_fingerprint TEXT NOT NULL,
+        actor_type TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        mutation_revision INTEGER NOT NULL
+          CHECK(mutation_revision BETWEEN 1 AND 9007199254740991),
+        created_at TEXT NOT NULL,
+        delivered_at TEXT,
+        UNIQUE(entity_type, entity_id, mutation_revision),
+        FOREIGN KEY(destination_tenant_slug)
+          REFERENCES spine_tenant_bindings(tenant_slug) ON DELETE RESTRICT
+      ) STRICT;
+
+      CREATE INDEX spine_audit_intents_pending_destination
+        ON spine_audit_intents(destination_tenant_slug, created_at, id)
+        WHERE delivered_at IS NULL;
+
+      CREATE TRIGGER spine_audit_intents_terminal_update
+      BEFORE UPDATE ON spine_audit_intents
+      WHEN NEW.id IS NOT OLD.id
+        OR NEW.idempotency_key IS NOT OLD.idempotency_key
+        OR NEW.destination_tenant_slug IS NOT OLD.destination_tenant_slug
+        OR NEW.audit_event_id IS NOT OLD.audit_event_id
+        OR NEW.payload_fingerprint IS NOT OLD.payload_fingerprint
+        OR NEW.actor_type IS NOT OLD.actor_type
+        OR NEW.actor_id IS NOT OLD.actor_id
+        OR NEW.action IS NOT OLD.action
+        OR NEW.entity_type IS NOT OLD.entity_type
+        OR NEW.entity_id IS NOT OLD.entity_id
+        OR NEW.data_json IS NOT OLD.data_json
+        OR NEW.mutation_revision IS NOT OLD.mutation_revision
+        OR NEW.created_at IS NOT OLD.created_at
+        OR OLD.delivered_at IS NOT NULL
+        OR NEW.delivered_at IS NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'spine audit intent is immutable except pending-to-delivered');
+      END;
+
+      CREATE TRIGGER spine_audit_intents_no_delete
+      BEFORE DELETE ON spine_audit_intents
+      BEGIN
+        SELECT RAISE(ABORT, 'spine audit intent history is immutable');
+      END;
+    `,
+  },
 ];
 
 /**
@@ -251,7 +392,11 @@ const CONTROL_PLANE_MIGRATIONS = [
  * tenant binding opens two databases and asks for one plane each.
  */
 const MIGRATION_PLANES = Object.freeze({
-  combined: [...DATA_PLANE_MIGRATIONS, ...CONTROL_PLANE_MIGRATIONS],
+  // The plane subsets have holes by design (data owns v6, control owns v7).
+  // A combined legacy database must retain the globally ordered v1-v5 prefix,
+  // so concatenating the subsets would incorrectly run v6 before v5.
+  combined: [...DATA_PLANE_MIGRATIONS, ...CONTROL_PLANE_MIGRATIONS]
+    .sort((left, right) => left.version - right.version),
   data: DATA_PLANE_MIGRATIONS,
   control: CONTROL_PLANE_MIGRATIONS,
 });
@@ -265,7 +410,7 @@ const MIGRATION_PLANES = Object.freeze({
 export const CORE_MIGRATIONS_FOR_CHARACTERIZATION = Object.freeze([
   ...DATA_PLANE_MIGRATIONS.map((migration) => Object.freeze({ plane: 'data', ...migration })),
   ...CONTROL_PLANE_MIGRATIONS.map((migration) => Object.freeze({ plane: 'control', ...migration })),
-]);
+].sort((left, right) => left.version - right.version));
 
 /** The migration versions each plane owns, published so a test can pin them. */
 export const MIGRATION_VERSIONS = Object.freeze({
@@ -317,12 +462,25 @@ export function createDatabase(options = {}) {
     ) STRICT;
   `);
 
-  const applied = new Set(
-    raw.prepare('SELECT version FROM schema_migrations').all().map((row) => Number(row.version)),
+  const applied = new Map(
+    raw.prepare('SELECT version, name FROM schema_migrations').all()
+      .map((row) => [Number(row.version), String(row.name)]),
   );
 
   for (const migration of migrations) {
-    if (applied.has(migration.version)) continue;
+    if (applied.has(migration.version)) {
+      if (applied.get(migration.version) !== migration.name) {
+        raw.close();
+        throw new AppError(
+          `Core migration version ${migration.version} is recorded with the wrong immutable name`,
+          {
+            code: 'CORE_MIGRATION_IDENTITY_MISMATCH', status: 500,
+            details: { version: migration.version, expectedName: migration.name },
+          },
+        );
+      }
+      continue;
+    }
     raw.exec('BEGIN IMMEDIATE;');
     try {
       raw.exec(migration.sql);
