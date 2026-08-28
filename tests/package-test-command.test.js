@@ -200,6 +200,97 @@ test('composition conformance reads each accepted graph fact once', async (t) =>
   }
 });
 
+test('declaration conformance publishes one accepted graph snapshot without rereading getters', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-stateful-declaration-checks-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'index.js'), 'export {};\n');
+
+  const reads = { name: 0, version: 0, packageContract: 0, requires: 0, capabilities: 0 };
+  let metadataCalls = 0;
+  class StatefulDefinition {
+    #marker = 'original-receiver';
+
+    label = 'Stateful declaration';
+
+    resources = [];
+
+    actions = [];
+
+    operations = [];
+
+    policies = [{
+      kind: 'stateful-policy',
+      definition: { name: 'stateful-rule', version: 1, decide() { return true; } },
+    }];
+
+    get name() {
+      reads.name += 1;
+      return reads.name === 1 ? 'stateful-declaration' : 'drifted-declaration';
+    }
+
+    get version() {
+      reads.version += 1;
+      return reads.version === 1 ? 7 : 8;
+    }
+
+    get packageContract() {
+      reads.packageContract += 1;
+      return reads.packageContract === 1 ? 2 : 1;
+    }
+
+    get requires() {
+      reads.requires += 1;
+      return reads.requires === 1
+        ? []
+        : [{ package: 'ghost-provider', capability: 'ghost-capability', version: 1 }];
+    }
+
+    get capabilities() {
+      reads.capabilities += 1;
+      return reads.capabilities === 1
+        ? [{
+          name: 'accepted-capability', version: 1, capabilityContract: 2, create() { return {}; },
+        }]
+        : [{ name: 'ghost-capability', version: 1, create() { return {}; } }];
+    }
+
+    metadata() {
+      metadataCalls += 1;
+      return { marker: this.#marker };
+    }
+  }
+
+  const report = runDeclarationChecks({ definition: new StatefulDefinition(), dir });
+  assert.deepEqual(report.problems, []);
+  assert.deepEqual(report.published, {
+    resources: [],
+    actions: [],
+    requires: [],
+    provides: ['accepted-capability@1'],
+  });
+  assert.equal(report.checks.find((entry) => entry.id === 'declaration.contract').status, 'passed');
+  assert.match(
+    report.checks.find((entry) => entry.id === 'declaration.contract').evidence,
+    /declares packageContract 2/,
+  );
+  assert.equal(report.checks.find((entry) => entry.id === 'declaration.policy-fingerprints').status, 'passed');
+  assert.equal(report.metadata.packageContract, 2);
+  assert.equal(report.metadata.version, 7);
+  assert.deepEqual(report.metadata.requires, []);
+  assert.deepEqual(report.metadata.provides, [{
+    name: 'accepted-capability', version: 1, capabilityContract: 2,
+  }]);
+  assert.equal(report.metadata.marker, 'original-receiver');
+  assert.equal(metadataCalls, 2, 'the determinism check calls metadata twice with the original receiver');
+  assert.deepEqual(reads, {
+    name: 1,
+    version: 1,
+    packageContract: 1,
+    requires: 1,
+    capabilities: 1,
+  }, 'every declaration observer uses the first accepted graph facts');
+});
+
 test('package test refuses a malformed action through the package contract, without crashing', async (t) => {
   const root = fixtureProject(t);
   const packagePath = writeFixturePackage(root, 'fixture-bad-action', `// @ts-check

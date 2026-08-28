@@ -414,6 +414,63 @@ test('package fact snapshots preserve historical validation precedence', () => {
     'an invalid early identity is refused before later declaration getters run');
 });
 
+test('PACKAGE_INVALID diagnostics use the first observed name without rereading the declaration', () => {
+  for (const secondRead of ['throw', 'drift']) {
+    let nameReads = 0;
+    let laterReads = 0;
+    const invalid = {
+      get name() {
+        nameReads += 1;
+        if (nameReads === 1) return 'INVALID NAME';
+        if (secondRead === 'throw') throw new Error('SECOND_NAME_READ');
+        return 'drifted-valid-name';
+      },
+      get actions() {
+        laterReads += 1;
+        return [];
+      },
+    };
+
+    const resolved = resolvePackageComposition([invalid]);
+    assert.equal(nameReads, 1, `${secondRead}: diagnostics do not re-enter the name getter`);
+    assert.equal(laterReads, 0, `${secondRead}: the earlier name refusal keeps getter precedence`);
+    assert.equal(resolved.problems.length, 1);
+    const problem = resolved.problems[0];
+    assert.equal(problem.code, 'PACKAGE_INVALID');
+    assert.equal(problem.package, 'INVALID NAME');
+    assert.match(problem.message, /name must match/);
+    assert.deepEqual(Object.keys(problem).sort(), ['code', 'error', 'message', 'package'],
+      'the internal name receipt does not widen the public problem shape');
+    assert.deepEqual(Object.getOwnPropertySymbols(problem.error), [],
+      'the public error carries no metadata symbol');
+  }
+
+  let firstReadThrows = 0;
+  const unreadable = {
+    get name() {
+      firstReadThrows += 1;
+      throw new Error('FIRST_NAME_READ');
+    },
+  };
+  const unresolved = resolvePackageComposition([unreadable]);
+  assert.equal(firstReadThrows, 1);
+  assert.equal(unresolved.problems[0].package, '(unnamed)',
+    'no name is invented when the first read itself cannot complete');
+
+  let attempts = 0;
+  const retried = {
+    get name() {
+      attempts += 1;
+      if (attempts === 1) return 'INVALID RETRY NAME';
+      throw new Error('RETRY_NAME_UNREADABLE');
+    },
+  };
+  assert.equal(resolvePackageComposition([retried]).problems[0].package, 'INVALID RETRY NAME');
+  assert.equal(resolvePackageComposition([retried]).problems[0].package, '(unnamed)',
+    'a new attempt clears the previous receipt before reading the getter');
+  assert.equal(attempts, 2, 'each validation attempt reads the name at most once');
+});
+
 test('a v2 package requiring a v1 capability fails with the ratified stable refusal', () => {
   const provider = pkg('sync-provider', 1, { capabilities: [capability('facts')] });
   const consumer = pkg('async-consumer', 2, {

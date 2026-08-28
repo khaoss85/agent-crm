@@ -84,7 +84,7 @@ export function runDeclarationChecks({ definition, dir }) {
     valid ? 'validatePackageDefinition accepted the definition' : 'validatePackageDefinition refused the definition',
     undefined, 'package-contract'));
 
-  const declared = definition?.packageContract;
+  const declared = valid ? validated.packageContract : definition?.packageContract;
   checks.push(check('declaration.contract', 'declaration',
     // The accepted SET, not the emitted version. Checking against the single
     // current version would fail a package the registry accepts — a conformance
@@ -93,7 +93,8 @@ export function runDeclarationChecks({ definition, dir }) {
     `declares packageContract ${JSON.stringify(declared)}; this framework supports ${SUPPORTED_PACKAGE_CONTRACTS.join(', ')}`,
     undefined, 'package-contract'));
 
-  const hasLabel = typeof definition?.label === 'string' && definition.label.length > 0;
+  const declaredLabel = definition?.label;
+  const hasLabel = typeof declaredLabel === 'string' && declaredLabel.length > 0;
   checks.push(check('declaration.label', 'declaration', hasLabel ? PASSED : 'failed',
     hasLabel
       ? 'has a human label'
@@ -101,9 +102,14 @@ export function runDeclarationChecks({ definition, dir }) {
     undefined, 'authoring-rule'));
 
   // Resources, actions, requires and provides as the registry publishes them.
-  const resources = [...(definition?.resources ?? [])].sort();
-  const actions = (definition?.actions ?? []).map((action) => `${action?.module}.${action?.name}`).sort();
-  const requires = (definition?.requires ?? [])
+  const resourceDefinitions = definition?.resources ?? [];
+  const actionDefinitions = definition?.actions ?? [];
+  const policyDefinitions = definition?.policies ?? [];
+  const operationDefinitions = definition?.operations ?? [];
+  const declaredDescription = definition?.description;
+  const resources = [...resourceDefinitions].sort();
+  const actions = actionDefinitions.map((action) => `${action?.module}.${action?.name}`).sort();
+  const requires = (valid ? validated.requires : (definition?.requires ?? []))
     .map((entry) => `${entry?.package}/${entry?.capability}@${entry?.version}`).sort();
   const provides = valid
     ? validated.capabilities.map((entry) => `${entry.name}@${entry.version}`).sort()
@@ -116,13 +122,44 @@ export function runDeclarationChecks({ definition, dir }) {
     return { checks, problems, published: { resources, actions, requires, provides } };
   }
 
+  // Build invariant probes from the exact facts the first validation accepted.
+  // Re-reading package/capability accessors would let a mutable getter make the
+  // declaration report contradict `declaration.valid`; spreading the authored
+  // object also destroys class/private receivers. Only the five graph facts
+  // under M2E-1's first-read guarantee are snapshotted. Existing resource,
+  // action, policy and operation behavior keeps its historical boundary.
+  const capabilityProbes = validated.capabilities.map((fact) => ({
+    name: fact.name,
+    version: fact.version,
+    capabilityContract: fact.capabilityContract,
+    ...(fact.description === undefined ? {} : { description: fact.description }),
+    create(...args) { return fact.entry.create(...args); },
+  }));
+  const metadataMethod = definition?.metadata;
+  const acceptedProbe = {
+    packageContract: validated.packageContract,
+    name: validated.name,
+    version: validated.version,
+    ...(declaredLabel === undefined ? {} : { label: declaredLabel }),
+    ...(declaredDescription === undefined ? {} : { description: declaredDescription }),
+    resources: resourceDefinitions,
+    actions: actionDefinitions,
+    policies: policyDefinitions,
+    operations: operationDefinitions,
+    requires: [],
+    capabilities: capabilityProbes,
+    ...(typeof metadataMethod === 'function'
+      ? { metadata() { return metadataMethod.call(definition); } }
+      : {}),
+  };
+
   // Metadata: data, never behaviour, and the same twice.
   let metadata = null;
   let metadataStatus = PASSED;
   let metadataEvidence = 'metadata() is absent, which is allowed';
   try {
-    const first = new PackageRegistry({ packages: [{ ...definition, requires: [] }] }).metadata()[definition.name];
-    const second = new PackageRegistry({ packages: [{ ...definition, requires: [] }] }).metadata()[definition.name];
+    const first = new PackageRegistry({ packages: [acceptedProbe] }).metadata()[validated.name];
+    const second = new PackageRegistry({ packages: [acceptedProbe] }).metadata()[validated.name];
     metadata = first;
     const stable = JSON.stringify(first) === JSON.stringify(second);
     const functionFree = !JSON.stringify(first ?? {}).includes('function');
@@ -140,12 +177,12 @@ export function runDeclarationChecks({ definition, dir }) {
     undefined, 'authoring-rule'));
 
   // Every declared policy carries a fingerprint, so a changed rule is visible.
-  const policies = (definition?.policies ?? []);
+  const policies = policyDefinitions;
   if (policies.length === 0) {
     checks.push(check('declaration.policy-fingerprints', 'declaration', 'not_applicable',
       'the package declares no policy', 'NO_POLICIES_DECLARED', 'package-contract'));
   } else {
-    const composed = resolvePackageComposition([{ ...definition, requires: [] }]);
+    const composed = resolvePackageComposition([acceptedProbe]);
     const fingerprinted = [...composed.policies.values()]
       .filter((entry) => /^[0-9a-f]{64}$/.test(String(entry.fingerprint ?? '')));
     checks.push(check('declaration.policy-fingerprints', 'declaration',
@@ -182,7 +219,7 @@ export function runDeclarationChecks({ definition, dir }) {
   // Reaching into another package's private source. Resolved, not substring
   // matched: `packages/contracts/src/service-capability.js` contains the text
   // "service" in the sense of a filename, not a package boundary.
-  const declaredPackages = new Set((definition?.requires ?? []).map((entry) => entry?.package));
+  const declaredPackages = new Set(validated.requires.map((entry) => entry.package));
   const crossPackage = [];
   for (const file of sources) {
     const shortName = file.slice(dir.length + 1).split(/[\\/]/).join('/');
@@ -190,7 +227,7 @@ export function runDeclarationChecks({ definition, dir }) {
       const match = /(?:^|\/)packages\/([a-z][a-z0-9-]*)\/src\//.exec(specifier);
       if (!match) continue;
       const other = match[1];
-      if (other === definition.name || other === 'core') continue;
+      if (other === validated.name || other === 'core') continue;
       if (declaredPackages.has(other)) {
         crossPackage.push(`${shortName} imports ${other}'s private source (declared as a dependency, but a capability is the only sanctioned reach)`);
       } else {

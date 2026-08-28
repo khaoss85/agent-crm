@@ -3,6 +3,7 @@
 import { AppError, ValidationError } from './errors.js';
 import { computeDefinitionFingerprint } from './definition-fingerprint.js';
 import { validatePackageDefinitionForComposition } from './package-registry.js';
+import { observedPackageValidationName } from './package-validation-receipt.js';
 import { SUPPORTED_PACKAGE_CONTRACTS } from './package-contract-versions.js';
 
 /**
@@ -35,9 +36,8 @@ import { SUPPORTED_PACKAGE_CONTRACTS } from './package-contract-versions.js';
  * }} CompositionProblem
  */
 
-/** A name safe to put in a problem, whatever the definition actually is. */
-function safeName(pkg) {
-  const name = pkg && typeof pkg === 'object' ? /** @type {any} */ (pkg).name : undefined;
+/** A first-observed name safe to put in a problem without rereading source. */
+function safeName(name) {
   return typeof name === 'string' ? name.slice(0, 64) : '(unnamed)';
 }
 
@@ -111,7 +111,7 @@ export function resolvePackageComposition(list = []) {
       // already failed to be a package.
       fail({
         code: 'PACKAGE_INVALID',
-        package: safeName(declared),
+        package: safeName(observedPackageValidationName(declared)),
         message: error instanceof Error ? error.message : String(error),
         error: error instanceof Error ? error : undefined,
       });

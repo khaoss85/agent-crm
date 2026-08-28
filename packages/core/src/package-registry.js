@@ -7,6 +7,10 @@ import { validateDeclaredConfig } from './definition-fingerprint.js';
 import { createDefinitionVersionStore } from './definition-version-store.js';
 import { resolvePackageComposition } from './package-composition.js';
 import {
+  beginPackageValidation,
+  rememberPackageValidationName,
+} from './package-validation-receipt.js';
+import {
   DEFAULT_CAPABILITY_CONTRACT,
   SUPPORTED_CAPABILITY_CONTRACTS,
   SUPPORTED_OPERATION_CONTRACTS,
@@ -207,7 +211,9 @@ export function validatePackageDefinitionForComposition(pkg) {
   // package object remains the runtime definition; only declarative facts are
   // copied into this private record. Keeping reads stepwise also preserves
   // error precedence: an invalid name is refused before any later getter runs.
+  beginPackageValidation(pkg);
   const name = pkg.name;
+  rememberPackageValidationName(pkg, name);
   const label = typeof name === 'string' ? `package "${name.slice(0, MAX_NAME)}"` : 'domain package';
   if (typeof name !== 'string' || !NAME_RE.test(name)) {
     throw new ValidationError(`${label}: name must match ${NAME_RE}`);

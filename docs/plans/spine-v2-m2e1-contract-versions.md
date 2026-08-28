@@ -404,6 +404,17 @@ npm run verify
 
 ## Progress log
 
+- **2026-08-28:** The final package-facts delta review found two remaining
+  rereads. Declaration conformance accepted one package snapshot, then rebuilt
+  the authored object with spread for metadata/policy probes and reread raw
+  name, version, contract, requirements and capabilities for its published
+  evidence. It now builds those probes only from the accepted private facts,
+  delegating executable metadata/capability behavior to the exact original
+  receivers. Separately, the invalid-package error path reread `definition.name`
+  while formatting the problem, so a getter could throw a second error or make
+  the package field contradict the validation message. A source-private WeakMap
+  receipt now carries only the first completed name read, is cleared before
+  every attempt, and changes neither the public Error nor problem shape.
 - **2026-08-28:** The final bounded delta found two conformance failures. The
   package-test collision and undeclared-reach probes rebuilt a definition with
   object spread, so inherited/non-enumerable class package capabilities that
