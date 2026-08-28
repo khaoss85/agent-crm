@@ -531,19 +531,12 @@ test('M2-22 parser still does not import the verifier; resolution lives in the s
   assert.equal(resolver.includes('using '), false);
 });
 
-test('M2-22 does not wire CLI, serve or MCP and does not depend on a PostgreSQL driver', () => {
-  const surfaces = [
-    'packages/app/src/create-app.js',
-    'packages/cli/src/commands.js',
-    'packages/mcp/src/stdio.js',
-  ];
-  for (const relative of surfaces) {
-    const source = readFileSync(join(repoRoot, relative), 'utf8');
-    assert.equal(source.includes('deployment-storage'), false, `${relative} imported the loader`);
-    assert.equal(source.includes('identity-verifier'), false, `${relative} imported the resolver`);
-    assert.equal(source.includes('prepareDeploymentPreconnect'), false, `${relative} wired preconnect`);
-    assert.equal(source.includes('--deployment-storage'), false, `${relative} grew a flag`);
-  }
+test('M2-22 factory stays unwired and this slice does not depend on a PostgreSQL driver', () => {
+  const factory = readFileSync(join(repoRoot, 'packages/app/src/create-app.js'), 'utf8');
+  assert.equal(factory.includes('deployment-storage'), false, 'create-app imported the loader');
+  assert.equal(factory.includes('identity-verifier'), false, 'create-app imported the resolver');
+  assert.equal(factory.includes('prepareDeploymentPreconnect'), false, 'create-app wired preconnect');
+  assert.equal(factory.includes('--deployment-storage'), false, 'create-app grew a flag');
 
   const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
   const names = [

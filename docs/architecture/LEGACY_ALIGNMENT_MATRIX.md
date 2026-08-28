@@ -87,9 +87,9 @@ horizontal capability the way the contract intends?*
 
 The shared deployment-storage loader is a horizontal *runtime* capability: every
 executable will eventually select adapter and spine binding through one closed
-document. Domains do not select storage and must not import the loader. This PR
-ships the parser only; CLI/serve/MCP wiring and public-locator replacement are
-named follow-ups.
+document. Domains do not select storage and must not import the loader. CLI,
+serve and MCP now call `prepareDeploymentPreconnect`; public-locator replacement
+on `app.doctor()` / `/api/schema` remains the rest of M2-08.
 
 | Domain | Status | Reason |
 |---|---|---|
@@ -106,16 +106,17 @@ named follow-ups.
 | Customer Data | `not_applicable` | package behaviour does not select the storage adapter |
 | Custom-package fixture | `not_applicable` | customer packages receive no deployment-storage document |
 
-Closing the consumer gap (factory/CLI/MCP and public `{adapter, available}`
-surfaces) is later M2F work, not a per-domain backfill.
+Closing the remaining public-locator gap (`app.doctor().database`, `/api/schema`)
+is later M2F work (remainder of M2-08), not a per-domain backfill. The factory
+does not import the loader; entries call `prepareDeploymentPreconnect`.
 
 ### Identity-verifier pre-connect contract v2 assessment (Production Spine v2 M2F)
 
 The verifier resolver is a horizontal *runtime* capability: every executable
 will eventually import one repository-relative ESM provider before it connects.
-Domains do not resolve verifiers and must not import the resolver. This PR
-ships the pre-connect contract only; CLI/serve/MCP wiring and live
-discover/attest (M3) are named follow-ups.
+Domains do not resolve verifiers and must not import the resolver. CLI/serve/MCP
+now resolve the verifier through `prepareDeploymentPreconnect` before a
+database or listener exists. Live discover/attest remains M3.
 
 | Domain | Status | Reason |
 |---|---|---|
