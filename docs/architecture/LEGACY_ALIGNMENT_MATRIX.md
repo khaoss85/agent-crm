@@ -117,7 +117,7 @@ persistence: each of those packages still writes its own records directly, which
 is why none of their rows becomes `aligned`. Declaring every other domain aligned
 would still be the silent backfill this matrix prevents.
 
-M2C adds the last of the kernel's own raw consumers: run and span lifecycle
+M2C extracts the kernel's remaining raw consumers for run and span lifecycle
 evidence. The workflow engine and the action runtime's `writeTrace` each
 prepared their own statements against `workflow_runs` and `trace_spans`, and
 now share one internal core store on the same seam. Like M2B this is *kernel*

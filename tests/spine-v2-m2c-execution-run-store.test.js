@@ -67,10 +67,10 @@ const RAW_DRIVER_SPELLINGS = Object.freeze([
 const rawDriverSpelling = (source) => RAW_DRIVER_SPELLINGS.find((pattern) => pattern.test(source)) ?? null;
 
 /**
- * The two files M2C declared, and nothing else. Work's transaction-context
- * check in `packages/work/src/follow-up.js` and the adapter internals in
- * `packages/core/src/database.js`, `core-adapters.js` and `spine-store.js` still
- * reach the driver, deliberately, and this assertion makes no claim about them.
+ * The two files M2C declared, and nothing else. M2D later closed Work's separate
+ * transaction-context reach. Adapter internals in `packages/core/src/database.js`,
+ * `core-adapters.js` and `spine-store.js` still reach the driver deliberately;
+ * this M2C-scoped assertion makes no claim about them.
  */
 const M2C_SLICE = Object.freeze([
   'packages/workflows/src/engine.js',

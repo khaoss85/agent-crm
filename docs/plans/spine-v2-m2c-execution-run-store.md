@@ -87,7 +87,7 @@ grep -rnE "database\s*\??\.\s*raw|\??\.\s*raw\s*\??\.\s*(prepare|exec)\s*\(|Data
 |---|---|---|---|---|
 | `M2C_CURRENT_SLICE` | `packages/workflows/src/engine.js` — workflow run and span lifecycle | 9 → **0** | Run/span insert, update and read statements, moved to the shared store. | `tests/workflow.test.js`, `tests/opportunity-pipeline-e2e.test.js`, M2C guard |
 | `M2C_CURRENT_SLICE` | `packages/core/src/action-runtime.js` — `writeTrace` | 2 → **0** | Finalized run and span inserts, moved to the shared store; `writeTrace` keeps its signature and stays the published surface. | `tests/action-runtime-semantics.test.js`, M2C guard |
-| `LATER_M2_PACKAGE` | `packages/work/src/follow-up.js#requireCallerTransaction` | 1, written `tasks?.database?.raw` | Work's capability reads the driver's `isTransaction` flag to prove the caller's transaction. **Work remains `partial`**, and its residue is reachable only through optional chaining. Untouched by M2C. | Work capability fault/concurrency suites |
+| `CLOSED_BY_M2D` | `packages/work/src/follow-up.js#requireCallerTransaction` | 1 at the M2C merge → **0** after M2D | M2C deliberately left Work's transaction-context read for a different seam. M2D subsequently replaced it with the caller-owned transaction witness and closed the application-runtime residue. | M2D transaction-context and Work capability fault/concurrency suites |
 | `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/database.js` | 3 | The SQLite adapter owns `DatabaseSync`, the PRAGMAs, rendering, and the raw-driver closure. | M0/M1 storage suites |
 | `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/core-adapters.js` | 2 | Core adapter/compatibility internals. | M0/M1 storage suites |
 | `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/spine-store.js` | 1 | Control-plane store internals (`database.raw ?? database`). | Spine suites |
@@ -96,10 +96,13 @@ grep -rnE "database\s*\??\.\s*raw|\??\.\s*raw\s*\??\.\s*(prepare|exec)\s*\(|Data
 | `CHARACTERIZATION_ONLY` | fixtures and temporary-project harnesses under `tests/characterization/` | — | Direct SQLite setup is preserved test evidence, not production reachability. | characterization suites |
 | `TEST_ONLY` | remaining occurrences under `tests/` | — | Fault injection, physical-schema assertions and adapter tests intentionally exercise SQLite directly. | owning test files |
 
-After M2C the pattern above returns **nothing** under `packages/workflows`, and
-nothing in `packages/core/src/action-runtime.js`. The only application-runtime
-raw residue left in `packages/` is Work's optional-chained transaction-context
-check. **PostgreSQL remains absent: the only adapter is SQLite.**
+At the M2C merge the pattern above returned **nothing** under
+`packages/workflows` and nothing in `packages/core/src/action-runtime.js`; Work's
+optional-chained transaction-context check was the only application-runtime raw
+residue left in `packages/`. M2D subsequently closed that residue. The resulting
+tree has no application-runtime raw-driver consumer; the remaining reaches are
+adapter internals and repository-maintenance probes. **PostgreSQL remains absent:
+the only adapter is SQLite.**
 
 ## Decisions
 
@@ -668,20 +671,21 @@ family they shared exists once. Public behaviour is unchanged:
 still throws so its callers' best-effort catch still has something to catch,
 Storage Contract v1 is untouched, and no export was added.
 
-With M2C the kernel's own raw residue is down to one application-runtime
-consumer: `packages/work/src/follow-up.js#requireCallerTransaction`, which reads
-the driver's transaction flag through optional chaining, so Work stays
-`partial`. The adapter internals in `packages/core/src/database.js`,
-`core-adapters.js` and `spine-store.js` own the driver by design, and
-`scripts/repo-truth.js` opens isolated in-memory databases as a
-repository-maintenance script rather than as runtime. PostgreSQL remains absent.
+At the M2C boundary the kernel's own raw residue was down to one
+application-runtime consumer:
+`packages/work/src/follow-up.js#requireCallerTransaction`. M2D subsequently
+replaced that driver-state read with a caller-owned transaction witness, so Work
+is no longer `partial` for this reason. The adapter internals in
+`packages/core/src/database.js`, `core-adapters.js` and `spine-store.js` own the
+driver by design, and `scripts/repo-truth.js` opens isolated in-memory databases
+as a repository-maintenance script rather than as runtime. PostgreSQL remains
+absent.
 
-Explicitly still open, and deliberately so:
+What M2C explicitly left open, and its resulting disposition:
 
-- **Work's transaction-context seam.** The last one, and it is a *read* of the
-  driver's state rather than persistence, so it needs a different answer than
-  a store — probably a contract-level way to ask "am I inside the caller's
-  transaction?". Sequenced, not forgotten.
+- **Work's transaction-context seam — closed by M2D.** It was a *read* of the
+  driver's state rather than persistence, so M2C correctly sequenced it behind a
+  different seam. M2D supplied that seam and removed the raw reach.
 - **M2A's guard still carries the un-hardened pattern.** M2B named this as
   follow-on and it is still true: `tests/work-legacy-task-migration.test.js`
   scans for `database.raw` only, and Work's own residue is spelled
