@@ -145,9 +145,10 @@ predicate shapes, and complete mutation/readback checks against their generated
 schemas. They prove those selected runtimes and the generator template use the
 contract; they do not claim every checked-in generated service is migrated. The Work
 probe executes `legacy-tasks.js` through structured table-discovery and bounded-row
-reads. It proves only that migration path is off the raw driver; Work remains partial
-because `follow-up.js#requireCallerTransaction` still inspects the adapter-owned raw
-transaction state pending a later transaction-context seam.
+reads. It proves only that migration path is off the raw driver. M2D separately
+closed Work's transaction-context residue: `follow-up.js#requireCallerTransaction`
+now requires a caller-owned transaction witness rather than inspecting
+adapter-owned raw state.
 
 ## The rule that matters most
 

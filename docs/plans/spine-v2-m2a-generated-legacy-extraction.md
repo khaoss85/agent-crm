@@ -32,10 +32,11 @@ canonical generator already emits `storageContract: 1` services. Before M2A,
 three older checked-in generated services used `database.raw`, while Work's
 retained forward migration read a legacy `tasks` table through the raw driver.
 They now use closed Storage Contract v1 statements and service-owned relation
-reads; the separate Work transaction-context check remains raw. The
+reads. At the M2A boundary the separate Work transaction-context check remained
+raw; M2D subsequently replaced it with the caller-owned transaction witness. The
 Repository Truth storage authority in `scripts/repo-truth.js` executes the Work
-migration reads, and the alignment matrix distinguishes this bounded extraction
-from Work's remaining transaction-context residue.
+migration reads, and the alignment matrix records both the bounded M2A extraction
+and the later M2D closure.
 
 ## Milestones
 
@@ -65,7 +66,7 @@ from Work's remaining transaction-context residue.
 | `EXTRACTED_IN_M2C` | `packages/core/src/action-runtime.js` | Core runtime persistence outside this bounded compatibility family at M2A. `packages/core/src/package-registry.js` was listed here too and is extracted behind the definition-version store by M2B (`docs/plans/spine-v2-m2b-definition-version-store.md`); `writeTrace` is extracted behind the execution-run store by M2C (`docs/plans/spine-v2-m2c-execution-run-store.md`). | action suites plus `tests/spine-v2-m2c-execution-run-store.test.js` |
 | `EXTRACTED_IN_M2B` | `packages/commercial/src/registry.js`, `packages/signature/src/registry.js`, `packages/intelligence/src/registry.js` | Package definition-version registries were separate package extraction work at M2A. M2B extracts all three, with `packages/core/src/package-registry.js`, behind one internal definition-version store (`docs/plans/spine-v2-m2b-definition-version-store.md`). | package characterization suites plus `tests/spine-v2-m2b-definition-version-store.test.js` |
 | `EXTRACTED_IN_M2C` | `packages/workflows/src/engine.js` | Workflow-run persistence was a separate runtime with its own read shapes at M2A. M2C extracts it, with the action runtime's trace writer, behind one internal execution-run store (`docs/plans/spine-v2-m2c-execution-run-store.md`). | workflow tests plus `tests/spine-v2-m2c-execution-run-store.test.js` |
-| `LATER_M2_PACKAGE` | `packages/work/src/follow-up.js#requireCallerTransaction` | Work's capability checks the raw driver's `isTransaction` flag to prevent a half-written task/activity pair; the legacy migration is extracted in M2A, but this separate transaction-context seam keeps Work `partial`. | Work capability fault/concurrency suites |
+| `CLOSED_BY_M2D` | `packages/work/src/follow-up.js#requireCallerTransaction` | M2A deliberately left the separate transaction-context seam outside its migration slice. M2D subsequently replaced the raw `isTransaction` read with the caller-owned transaction witness, so Work is no longer `partial` for this reason. | M2D transaction-context and Work capability fault/concurrency suites |
 | `MIGRATION_SOURCE_ALLOWED` | `packages/core/src/module-evolution.js` | References the adapter-owned foreign-key migration check in explanatory source; it does not open the driver. | module-evolution tests |
 | `CHARACTERIZATION_ONLY` | M0/M1 fixtures and temporary-project harnesses under `tests/characterization/` | Direct SQLite setup is preserved test evidence, not production reachability. | characterization suites |
 | `TEST_ONLY` | remaining occurrences under `tests/` | Fault injection, physical-schema assertions, and adapter tests intentionally exercise SQLite directly. | owning test files |
@@ -122,9 +123,9 @@ Codex review must have no unresolved P1/P2/P3 before merge.
 
 The declared Approval, Contact, Opportunity, and Work legacy-migration paths no
 longer reach the raw SQLite driver. Public behavior and Storage Contract v1 are
-unchanged. Work deliberately remains `partial`: `follow-up.js` still checks the
-raw driver's transaction state, which requires a bounded transaction-context
-seam in later M2 package work. Core runtime stores, package registries, and the
-workflow engine remain explicitly outside M2A; PostgreSQL and M2B did not start
-from this branch. M2B extracts the definition-version store, which is why two rows
-above are annotated rather than left describing a checkout that has moved.
+unchanged. At the M2A boundary Work deliberately remained `partial` because
+`follow-up.js` still checked raw transaction state; M2D subsequently supplied the
+bounded transaction-context seam and closed that residue. Core runtime stores,
+package registries, and the workflow engine were explicitly outside M2A;
+PostgreSQL and M2B did not start from this branch. Later M2 slices are annotated
+above rather than leaving this living plan to describe a checkout that has moved.
