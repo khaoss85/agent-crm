@@ -17,6 +17,8 @@ import {
   createDatabase,
 } from '../packages/core/src/database.js';
 import { createSpineStore } from '../packages/core/index.js';
+import { ConflictError } from '../packages/core/src/errors.js';
+import { assertBoundOrganization } from '../packages/core/src/tenant-binding.js';
 
 function spineConfig(root, tenant = 'alpha', controlPlanePath = undefined) {
   return {
@@ -715,6 +717,30 @@ test('two cold-start processes on one fresh physical file converge without raw S
     ).get('alpha').data_plane_id,
     firstId,
   );
+});
+
+test('startup provisioning converges when a racing create already committed the slug', () => {
+  const org = Object.freeze({ id: 'org_alpha', slug: 'alpha', name: 'alpha' });
+  let reads = 0;
+  const organizations = {
+    bySlug(slug) {
+      reads += 1;
+      assert.equal(slug, 'alpha');
+      return reads === 1 ? null : org;
+    },
+    create() {
+      throw new ConflictError('an organization with slug "alpha" already exists', {
+        field: 'organization.slug',
+      });
+    },
+  };
+  const bound = assertBoundOrganization({
+    binding: { boundTenantId: 'alpha', provision: { name: 'alpha' } },
+    organizations,
+    mode: 'production',
+  });
+  assert.equal(bound, org);
+  assert.equal(reads, 2);
 });
 
 test('persistent startup locking is normalized to one stable credential-free error', (t) => {

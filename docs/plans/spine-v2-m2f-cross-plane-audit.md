@@ -285,6 +285,11 @@ first environment alias; the second remains an inherited corpus failure.
   migration expectation and all three characterization source fingerprints
   that own `create-app.js`. The two remaining full-run failures reproduce on
   starting `origin/main`; independent review remains.
+- 2026-08-28: GitHub verify on `402382a` failed the two-process cold-start:
+  both children observed an empty slug, then `organizations.create()` threw
+  `CONFLICT` for the loser. Public create still refuses duplicates; startup
+  `assertBoundOrganization` now re-reads the committed row after that exact
+  conflict. Deterministic unit coverage plus the existing two-process test.
 
 ## Outcome and follow-up
 

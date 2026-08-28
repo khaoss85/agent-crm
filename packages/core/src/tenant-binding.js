@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ValidationError } from './errors.js';
+import { AppError, ConflictError, ValidationError } from './errors.js';
 import { assertTenantId, bindTenantStorage } from './tenant-storage.js';
 
 /**
@@ -226,20 +226,31 @@ export function assertBoundOrganization({ binding, organizations, mode }) {
   // Local mode may create its own tenant; that is the documented local rule and
   // the row records how it came to exist, so it can never be mistaken later for
   // one an operator configured.
-  if (mode === 'local-development') {
-    return organizations.create({
-      slug: binding.boundTenantId,
-      name: binding.provision?.name ?? binding.boundTenantId,
-      provenance: 'local-development-migration',
-    });
-  }
+  try {
+    if (mode === 'local-development') {
+      return organizations.create({
+        slug: binding.boundTenantId,
+        name: binding.provision?.name ?? binding.boundTenantId,
+        provenance: 'local-development-migration',
+      });
+    }
 
-  if (binding.provision) {
-    return organizations.create({
-      slug: binding.boundTenantId,
-      name: binding.provision.name,
-      provenance: 'operator-configured',
-    });
+    if (binding.provision) {
+      return organizations.create({
+        slug: binding.boundTenantId,
+        name: binding.provision.name,
+        provenance: 'operator-configured',
+      });
+    }
+  } catch (error) {
+    // Two processes provisioning the same fresh control file both observe an
+    // empty slug, then one insert wins. The public create() surface still
+    // refuses duplicates; startup must converge on the committed row.
+    if (error instanceof ConflictError && error.details?.field === 'organization.slug') {
+      const raced = organizations.bySlug(binding.boundTenantId);
+      if (raced) return raced;
+    }
+    throw error;
   }
 
   throw new AppError(
