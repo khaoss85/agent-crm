@@ -26,14 +26,14 @@ Generated: **2026-08-28**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **Production Spine v2 M2E-1 contract-v2 composition vocabulary**, after M2D's caller-owned transaction proof in PR #138 and M2C's execution-run store in PR #137. Core accepts uniform contract-1 and contract-2 package graphs, normalizes omitted capability contracts to synchronous v1, publishes the resolved values and refuses mixed package/action/operation/capability graphs before startup. Every bundled package and `createAccordoApp()` remain on the characterized synchronous v1 path; M2E-2 owns the portable async factory and M2E-3 owns dual bundled graphs. The internal storage contract exists; the handwritten Company slice and the current generated-service template use it for the characterized shapes. <!-- truth: spine.storage.contract=1 --><!-- truth: spine.storage.company_runtime=implemented --><!-- truth: spine.storage.generated_runtime=implemented --> M2A migrated Approval, Contact, Opportunity and Work's legacy-task reader; Work's legacy migration no longer reaches the raw driver. <!-- truth: spine.storage.work_legacy_raw=absent --> M2B consolidated the four definition-version stores, M2C moved workflow-run and trace-span persistence behind one execution-run store, and M2D replaced the final business/package driver's transaction-state read with an opaque caller-owned witness. No application-runtime business consumer in `packages/` reaches the raw driver; the remaining reaches are adapter internals owned by M2F's closure. None of M2A–M2E-1 adds a PostgreSQL adapter. <!-- truth: spine.postgresql.implemented=absent --> |
+| Latest merged milestone | **Production Spine v2 M2F cross-plane audit recovery and Spine-store closure**, alongside M2E-1's contract-v2 composition vocabulary. Core accepts uniform contract-1 and contract-2 package graphs, normalizes omitted capability contracts to synchronous v1, publishes the resolved values and refuses mixed package/action/operation/capability graphs before startup. Every bundled package and `createAccordoApp()` remain on the characterized synchronous v1 path; M2E-2 owns the portable async factory and M2E-3 owns dual bundled graphs. The internal storage contract exists; the handwritten Company slice and the current generated-service template use it for the characterized shapes. <!-- truth: spine.storage.contract=1 --><!-- truth: spine.storage.company_runtime=implemented --><!-- truth: spine.storage.generated_runtime=implemented --> M2A migrated Approval, Contact, Opportunity and Work's legacy-task reader; Work's legacy migration no longer reaches the raw driver. <!-- truth: spine.storage.work_legacy_raw=absent --> M2B consolidated the four definition-version stores, M2C moved workflow-run and trace-span persistence behind one execution-run store, M2D replaced the final business/package driver's transaction-state read with an opaque caller-owned witness, and this bounded M2F slice moved Organization/Membership persistence onto the seam. Their cross-plane security audit now commits an immutable tenant-bound intent with the control mutation and finalizes in the fixed short-control → committed-data → short-control-CAS order; failure returns committed-with-pending evidence rather than a false rollback. No application-runtime business or Spine-store consumer in `packages/` reaches the raw driver; `packages/core/src/core-adapters.js` still looks up Company/Contact rows on `database.raw` as a composed adapter internal. None of M2A–M2F adds a PostgreSQL adapter. <!-- truth: spine.postgresql.implemented=absent --> |
 | Measured at | `27cc663` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
 | Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | Real-Chromium checks remain manual and are **not in CI** — no workflow launches a browser, and `npm run smoke` is an in-process application smoke (`docs/ADMIN_SMOKE.md`). The Work v1 section has a **30-check** block, all passing, driven twice at `184e543`; it covers that section only and re-runs none of the earlier blocks. PR #58's desktop and mobile receipts still describe `ef8487a`, and nothing since has re-run them. |
 | CI | The latest completed integration run concluded `success` on both jobs, `verify` and `public-claims`, at its own exact head. This row records that a run passed; it does not claim any particular commit is still the head. GitHub Actions holds the current answer. |
-| Open PRs | GitHub's live PR list is authoritative. The bounded M2C evidence follow-up is complete in PR #139; M2E-2/M2E-3 and M2F remain unmerged. PR #134 is unrelated strategic-roadmap work and is not part of the infrastructure campaign. No measurement runs until M2 is complete; `Measured at` and `site/claims.json` therefore still name `27cc663`, and `measurement.test_tree_current` correctly reads `false`. |
+| Open PRs | GitHub's live PR list is authoritative. The bounded M2C evidence follow-up is complete in PR #139 and M2E-1 is merged in PR #140; M2E-2/M2E-3 and the remaining M2F deployment/configuration slices remain active infrastructure work, and this status does not infer their current PR numbers. PR #134 is unrelated strategic-roadmap work and is not part of the infrastructure campaign. No measurement runs until M2 is complete; `Measured at` and `site/claims.json` therefore still name `27cc663`, and `measurement.test_tree_current` correctly reads `false`. |
 | Public discovery | GitHub About and all 20 intent topics are live. Smithery `khaoss85/accordo` returns 200 and exposes the three production Docs MCP tools. The GitHub social preview is live and **stale**: it was rendered from a much older measurement and its replacement still needs a manual Settings upload, which is a human step no branch can take. |
 | npm | **`create-accordo@0.1.0` is live since 2026-08-19** — staged from CI through OIDC trusted publishing (run 32224731197, Sigstore provenance), approved by the maintainer with 2FA, and confirmed against the registry: the published shasum matches the CI assembly, `latest` resolves to `0.1.0`, and a clean-directory `npm create accordo` scaffolds a verifying project. `accordo@0.0.1` remains an **empty name reservation by design** (no framework library). The `@accordo` organization exists since 2026-08-19 and its scope is **deliberately empty**: `@accordo/mcp` was investigated and refused, because the project MCP server composes from the generated indexes of the tree it runs in and a published copy would answer about the wrong application (ADR-034). The MCP-registry submission is no longer blocked by it — `server.json` registers the remote documentation endpoint instead. `site/brand.json` records `npm.status: published`. |
 | Project bootstrap | **`create-accordo` is real source and its publication is live**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates the bounded publishable directory while the source manifest stays `private: true` — publication never lowered that wall, because what npm published is the assembly, which strips `private`. The staged path proved itself the hard way: one dispatch died `E401` (a `registry-url` placeholder token preempting OIDC), the next `ENEEDAUTH` (no matching trusted-publisher config), and run `32224731197` staged clean once the publisher allowed `npm stage publish`. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
@@ -111,8 +111,10 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **Production Spine v2 M2 is under way: M2A, M2B, M2C and M2D are merged;
-   M2E and M2F remain.** Its causal boundary is the remaining SQLite extraction
+1. **Production Spine v2 M2 is under way: M2A, M2B, M2C, M2D, M2E-1 and the
+   bounded M2F cross-plane-audit slice are merged; M2E-2/M2E-3 and the rest of
+   M2F remain.** Its
+   causal boundary is the remaining SQLite extraction
    and compatibility work named by the merged ExecPlans and Legacy Alignment Matrix.
    M2A extracted the Approval, Contact and Opportunity compatibility services
    and Work's legacy-task reader. <!-- truth: spine.storage.work_legacy_raw=absent -->
@@ -120,9 +122,15 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
    store, M2C extracted the workflow engine and the action runtime's trace
    writer behind an execution-run store on the same seam, and M2D moved Work and
    Contracts' multi-write transaction proof behind an opaque caller-owned
-   witness. M2E owns portable async composition and dual v1/v2 package graphs;
-   M2F owns the remaining adapter closure, deployment-storage configuration,
-   cross-plane recovery and bounded entry-point surfaces.
+   witness. The first M2F slice closes `spine-store.js` over the seam and makes
+   Organization/Membership cross-plane audit explicitly recoverable without
+   claiming a general outbox. Its startup boundary validates migration-plane
+   identity, converges boundedly on a fresh-file race and closes every handle on
+   a refused composition; legacy v1-v5 control adoption preserves dormant CRM
+   tables while runtime handles remain separate. M2E-1 makes both contract
+   vocabularies expressible and refuses mixed graphs; M2E-2 owns portable async
+   composition and M2E-3 owns dual v1/v2 package graphs. The remaining M2F work owns deployment-storage
+   configuration and bounded entry-point surfaces.
 2. M2 must preserve the M0/M1 public contracts and must not be confused with the
    later production PostgreSQL adapter milestone. Cloud C0 and shared-database
    row tenancy remain outside this sequence.
@@ -170,7 +178,13 @@ migrated the named compatibility consumers onto it, M2B moved the
 definition-version registries behind one internal store on the same seam, M2C
 moved workflow-run and trace-span persistence behind another, and M2D removed
 the last business/package raw-driver reach by proving caller-owned transaction
-context through the structured storage handle.
+context through the structured storage handle. The bounded M2F audit slice then
+moved Spine Organization/Membership persistence behind that seam and added
+immutable tenant-bound intent/reconciliation for the one demonstrated
+cross-plane security failure; it is not the later general jobs/outbox system.
+M2E-1 separately made uniform contract-1 and contract-2 package graphs
+expressible and refused mixed graphs while leaving the bundled packages and
+the synchronous application factory on v1.
 <!-- truth: spine.storage.contract=1 -->
 None of them adds PostgreSQL storage, and the seam stays SQLite-only rather than
 portable.

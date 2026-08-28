@@ -3162,12 +3162,15 @@ unreachable through the handle the application holds. There is no branch in
 which a bound application can reach the unscoped shared database, because no
 such handle is ever constructed.
 
-**Two planes, two files, two schemas.** Control-plane migrations (organizations,
-memberships) and data-plane migrations (CRM) are separate lists. A tenant
-database has no membership table and the control plane has no CRM table, so a
-write that crossed the boundary raises `no such table` rather than quietly
-succeeding — which is what turns a convention into an enforcement. The combined
-list remains the default, so every composition without a spine is unchanged.
+**Two runtime planes and two files; fresh schemas are disjoint.** Control-plane
+migrations (organizations, memberships) and data-plane migrations (CRM) are
+separate lists. A fresh tenant database has no membership table and a fresh
+control database has no CRM table, so a write that crossed the boundary raises
+`no such table` rather than quietly succeeding. The released v1-v5 combined
+database remains adoptable as the control file and may retain dormant CRM tables:
+the enforced claim there is that CRM services never receive or use the control
+handle, not that adoption deletes historical data. The combined list remains the
+default, so every composition without a spine is unchanged.
 
 **The tenant is never inferred** — not from localhost, `NODE_ENV`, the listening
 interface, the first membership, the first Organization row, a header, a body or
@@ -3230,6 +3233,77 @@ one somebody arranged to be found; `SYSTEM_ACTOR` is reachable only through
 the framework claims its own authority; and request payloads have
 server-controlled keys **stripped** rather than overridden, so the property no
 longer depends on the order of an object spread anywhere.
+
+#### Amendment 4 — a control mutation and its tenant audit cannot share a transaction
+
+Organization and Membership mutations live in the shared control plane; their
+security audit lives in the bound tenant data plane. Production Spine v1 wrote
+the control row first and then called the audit sink. If the second write failed,
+the caller received an error even though the authorization state had committed.
+Measured on `bootstrapOwner`: the membership was active, the data audit count
+was zero and the caller saw the injected failure. That is a false rollback over
+committed security state.
+
+**Decision: bounded immutable audit intent, not a claim of cross-database
+atomicity and not a general outbox.** Each of the four writers — Organization
+create and Membership bootstrap/grant/suspend — performs every state,
+authorization and concurrency read, the mutation and one audit intent inside a
+single `BEGIN IMMEDIATE` control transaction. Intent identity is the canonical
+tenant slug plus entity type/id and positive safe mutation revision. Its payload
+fingerprint is separate, so changed evidence under the same revision refuses
+rather than minting a second plausible audit.
+
+The destination has two persistent parts. The tenant data file mints an opaque
+random marker `{tenant slug, dataPlaneId}` first. The control mapping is keyed by
+slug and may begin with a NULL id when another Organization is provisioned in
+the shared control plane; the first application configured for that tenant CASes
+NULL to its own marker id. A different physical file mints a different id and
+loses stably. This is **first-configured-file-wins**, not resource attestation:
+a copied file carries the marker, and leases, clone promotion and external
+resource identity remain later M4 work.
+
+Delivery order is load-bearing and never holds both SQLite write locks:
+
+```text
+short control eligibility transaction
+→ independently committed exact data-audit transaction
+→ short control pending-to-delivered CAS
+```
+
+A crash after the data commit leaves the intent pending; retry verifies the same
+exact audit and closes it. A caller-owned transaction on either plane refuses
+namedly, because joining it could mark an audit delivered before the caller
+rolls the data write back. A poisoned pending intent is reported independently
+and cannot starve later work; each pass is bounded while its `pending` count is
+exact.
+
+Compatibility is explicit. The public
+`createSpineStore({database,audit?,now?})` still accepts the framework wrapper or
+direct SQLite input, returns only Organizations/Memberships and keeps its v1
+error precedence and successful result shapes. Public `AuditLog.record()` still
+owns id and time. Exact insertion and the recoverable store are deep-internal,
+unexported factories. On delivery failure only, the committed entity gains a
+bounded `committed_with_pending_audit` receipt; ordinary success stays
+byte-shape compatible. The application exposes one tenant-scoped, frozen
+`auditIntents` contract for bounded listing and explicit reconciliation. It is
+not a lease, retry worker, scheduler, arbitrary message queue or deletion API.
+
+Both methods accept only a non-proxy plain options object with the optional
+integer `limit` in `1..100`; invalid shapes and accessor properties refuse with
+stable credential-free codes. The public v1 Organization/Membership list
+behavior is unchanged behind the closed storage seam: a negative numeric limit
+means SQLite's historical unbounded listing, while zero or `NaN` selects the
+released default.
+
+Startup owns every SQLite handle until it returns the application. A failure at
+any later composition step closes both handles without replacing the original
+error. Migration startup rechecks each ledger row only after acquiring its
+bounded write lock, so two cold processes converge; a persistent lock becomes
+`CORE_DATABASE_STARTUP_BUSY`, never a raw SQLite error. Every known core
+migration row is name-validated regardless of the selected plane, and data-only
+or control-marked files used for the opposite plane refuse as
+`CORE_DATABASE_PLANE_MISMATCH`. This identity is a migration-family boundary,
+not M4 resource attestation.
 
 
 ### The spine is opt-in, and its absence is loud

@@ -4226,7 +4226,7 @@
     "apps/admin/public/admin-quotes.js": "2989d42b38ddc8e114f32524f9fb163bdee18c33ba3fd849e21b57c93dbeb066",
     "apps/server/src/http-server.js": "16a09c578acb7e2c06c0b47e4d53ec687b316f7cbe229182dca47cabb9d1509f",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
-    "packages/app/src/create-app.js": "2687a0e26d822737854cf982a584fbd5c920c20f7f65ea45193d1bd2baa29723",
+    "packages/app/src/create-app.js": "76a7bbaa6c69178e4b55e71c25c45676cf4a63f99c1ece3c7c553bc9bf3ec320",
     "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",
     "packages/commercial/modules/offer.module.json": "3eb3c85338d22f8a8962ed0c0c0fe79da0007e8c4e66a44aad14d9b8bbca22c4",
     "packages/commercial/modules/price-book.module.json": "35793cdd5dca999c30760f055622b607d1e68b215b4f9ceaf8fac63ce1b0a670",

@@ -160,9 +160,11 @@ What makes it wiring rather than a guard:
 - `bindTenantStorage()` returns an object with **no `databasePathFor` on it**, so
   a second tenant is unreachable through the handle the application holds rather
   than refused by a check somebody could forget;
-- control-plane and data-plane migrations are **separate lists**, so a tenant
-  database has no membership table and the control plane has no CRM table: a
-  crossing write raises `no such table` instead of quietly succeeding.
+- control-plane and data-plane migrations are **separate lists**. Fresh tenant
+  and control files have disjoint schemas, so a crossing write raises `no such
+  table` instead of quietly succeeding. A released v1-v5 combined file may be
+  adopted as control without deleting dormant CRM tables; the bound runtime
+  enforces separation by never handing that handle to CRM services.
 
 ### The tenant binding contract
 
