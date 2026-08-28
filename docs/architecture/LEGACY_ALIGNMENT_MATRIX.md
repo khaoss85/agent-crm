@@ -105,7 +105,7 @@ adding a command or rail. No domain reads it and no application behavior moves.
 | Customer Data | `not_applicable` | package behavior and evidence do not read `/version.json` |
 | Custom-package fixture | `not_applicable` | customer packages receive no public-site deployment metadata |
 
-### Storage contract v1 assessment (Production Spine v2 M1 + M2A + M2B + M2C + M2D)
+### Storage contract v1 assessment (Production Spine v2 M1 + M2A + M2B + M2C + M2D + M2F)
 
 The internal dialect-neutral storage seam is horizontal kernel machinery. M1
 initially proved only Company and generated Work resources. M2A added the bounded
@@ -125,6 +125,14 @@ now share one internal core store on the same seam. Like M2B this is *kernel*
 persistence rather than a domain's own records, so it promotes no domain row —
 but unlike M2B it is true of every domain's evidence at once, which is recorded
 below the table rather than repeated fourteen times.
+
+M2F closes the remaining Spine store itself. Organization and Membership
+persistence now uses the same closed statement vocabulary, including its
+control mutation plus immutable audit-intent transaction. This is control-plane
+identity machinery, not a migration of any domain's own rows, so it changes no
+domain status below. The released direct-SQLite `createSpineStore` input is
+preserved by a deep-internal adapter; the store file itself no longer reaches
+the driver.
 
 | Domain | Status | Reason |
 |---|---|---|
@@ -160,18 +168,21 @@ A `deferred` row therefore means this domain's own records, not its policy
 identity and not the evidence recorded about its runs. What still keeps a
 domain off `aligned` is exactly what it always was: its own persistence.
 
-**The kernel's remaining raw residue, after M2C and M2D.** **No
-application-runtime consumer is left in `packages/`.** M2C moved the workflow
-engine's run and span lifecycle onto the store; M2D moved the last one,
-`packages/work/src/follow-up.js#requireCallerTransaction`, which read the
-driver's transaction flag through optional chaining and is why Work was
-`partial` until now.
+**The kernel's remaining raw residue, after M2C, M2D and the M2F Spine-store
+closure.** M2C moved the workflow engine's run and span lifecycle onto the
+store; M2D moved `packages/work/src/follow-up.js#requireCallerTransaction` off
+the driver's transaction flag; M2F then moved the Organization/Membership store
+itself onto the same seam. **No application-runtime business or Spine-store
+consumer is left in `packages/`.** `packages/core/src/core-adapters.js` still
+prepares Company/Contact lookup SQL against `database.raw`; it is a composed
+adapter internal, not Spine-store, and is not closed by this slice.
 
-Scanned on the merged tree, the only files in `packages/` matching any known
-driver spelling are `packages/core/src/database.js`, `core-adapters.js` and
-`spine-store.js` — the adapter internals that own the driver by design — plus a
-prose mention in `packages/core/index.js` describing what the transaction proof
-replaced. **PostgreSQL remains absent: the only adapter is SQLite.**
+Scanned on the M2F tree, no application-runtime business or Spine-store consumer
+in `packages/` reaches the driver. Known driver spellings remain in
+`packages/core/src/database.js`, `core-adapters.js` and the deep-internal
+`spine-store-storage-adapter.js`, which own SQLite adaptation by design, plus a
+prose mention in `packages/core/index.js` describing what M2D replaced.
+**PostgreSQL remains absent: the only adapter is SQLite.**
 
 This paragraph was true when M2C wrote it and false the moment M2D merged into
 it, with no conflict marker to say so: git merged the two edits cleanly because
@@ -204,6 +215,41 @@ does not mean its current v1 graph is invalid. M2E-3 owns every promotion.
 | Custom-package fixture | `deferred` | it remains the unchanged customer-authored contract-1 compatibility proof; M2E-3 adds a separate v2 fixture without rewriting it |
 | Custom-package score-disclosure fixture | `deferred` | its contract-1 graph and `intelligence@1` dependency remain the customer-authored capability-consumer proof; M2E-3 owns any v2 companion rather than silently rewriting this v1 fixture |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
+
+### Cross-plane Spine audit recovery assessment (Production Spine v2 M2F)
+
+The immutable audit-intent and explicit-reconciliation contract applies only to
+Spine Organizations and Memberships: control-plane authorization state whose
+audit belongs in a separate tenant data plane. It is horizontal security
+machinery, but not a domain capability and not an invitation to route domain
+events through a generic outbox.
+
+The startup corrections stay at the same boundary: known global migration
+identity and the selected data/control family are checked before composition;
+fresh-process ledger races receive bounded startup-only retry; every post-open
+refusal closes both handles; and the public recovery options are a closed
+`limit: 1..100` shape. A released v1-v5 combined file may still be adopted as
+control with dormant CRM tables intact. The isolation claim is separate runtime
+handles and service reachability, not physical deletion and not M4 resource
+attestation. None of these rules adds a domain persistence consumer, so the
+per-domain dispositions below remain unchanged.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | its data and audit already share the tenant data-plane transaction; no cross-plane Organization/Membership write occurs |
+| Pipeline | `not_applicable` | pipeline rows are tenant data and this slice exposes no general event/outbox contract |
+| Lead Intelligence | `not_applicable` | package records are tenant data; the contract is closed over Spine authorization mutations |
+| Commercial Operations | `not_applicable` | package records are tenant data; the contract is closed over Spine authorization mutations |
+| Signature & Order | `not_applicable` | external-operation recovery is its own contract; M2F audit intent accepts no arbitrary package work |
+| Contract Activation | `not_applicable` | package multi-write atomicity remains on the caller transaction proof, not this cross-plane intent |
+| Delivery | `not_applicable` | delivery writes no Organization or Membership row |
+| Service | `not_applicable` | service writes no Organization or Membership row |
+| Work | `not_applicable` | Work's transaction boundary is M2D; M2F adds no Work persistence surface |
+| Lifecycle | `not_applicable` | lifecycle writes no Organization or Membership row |
+| Customer Data | `not_applicable` | customer identity rows are tenant data, not control-plane membership |
+| Custom-package fixture | `not_applicable` | customer packages receive neither audit-intent construction nor reconciliation authority |
+| Custom-package score-disclosure fixture | `not_applicable` | it consumes `intelligence@1` as a customer-authored capability proof and never writes Organization or Membership rows |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime mutation |
 
 ### Hosted Docs MCP transport assessment
 

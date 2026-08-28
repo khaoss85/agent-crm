@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createDatabase } from '../../core/src/database.js';
+import { prepareSpineAuditBinding } from '../../core/src/spine-store.js';
 import { resolveTenantBinding } from '../../core/src/tenant-binding.js';
 import { resolveRuntimeMode } from '../../core/src/runtime-mode.js';
 import { createSpine } from './spine.js';
@@ -75,14 +76,17 @@ export function createAccordoApp(options = {}) {
    * unscoped shared database. That is not a rule applied at each call site; the
    * only handle to a data plane this function ever constructs is the bound one.
    */
-  const binding = options.spine
-    ? resolveTenantBinding({
-      mode: resolveRuntimeMode({
+  const spineMode = options.spine
+    ? resolveRuntimeMode({
         mode: /** @type {any} */ (options.spine).mode,
         env: /** @type {any} */ (options.spine).env,
         identityVerifier: /** @type {any} */ (options.spine).identityVerifier,
         tenantStrategy: /** @type {any} */ (options.spine).tenant,
-      }).mode,
+      })
+    : null;
+  const binding = options.spine
+    ? resolveTenantBinding({
+      mode: spineMode.mode,
       tenant: /** @type {any} */ (options.spine).tenant,
       dataPlanePathConfigured: options.dbPath !== undefined,
     })
@@ -91,24 +95,40 @@ export function createAccordoApp(options = {}) {
   const database = createDatabase({
     path: binding ? binding.storage.dataPlanePath : options.dbPath,
     busyTimeoutMs: options.busyTimeoutMs,
-    // A bound tenant database receives the CRM plane only. It has no
+    // A newly created bound tenant database receives the CRM plane only. It has no
     // `spine_memberships` table at all, so a coding error that tried to read
     // one from tenant-reachable storage fails loudly instead of finding rows.
     plane: binding ? 'data' : 'combined',
     moduleMigrations,
   });
 
-  // The control plane is a separate file with a separate schema: Organizations
-  // and Memberships, and not one CRM table. The separation is what makes
-  // "tenant data never mixes with membership data" checkable rather than
-  // promised — each write that crossed it would hit a table that is not there.
-  const controlPlaneDatabase = binding
-    ? createDatabase({
-      path: binding.storage.controlPlanePath,
-      busyTimeoutMs: options.busyTimeoutMs,
-      plane: 'control',
-    })
-    : null;
+  /** @type {ReturnType<typeof createDatabase>|null} */
+  let controlPlaneDatabase = null;
+  try {
+    // The runtime control handle is always a different file and is never used
+    // for tenant CRM reads or writes. A newly created control file contains
+    // only control tables. A released v1-v5 combined file may be adopted as
+    // control without deleting its dormant CRM tables; handle separation, not
+    // physical deletion of legacy data, is the enforced boundary.
+    controlPlaneDatabase = binding
+      ? createDatabase({
+        path: binding.storage.controlPlanePath,
+        busyTimeoutMs: options.busyTimeoutMs,
+        plane: 'control',
+      })
+      : null;
+
+  // Create/verify the opaque data marker first, then CAS its control binding
+  // before `createSpine` can resolve — or provision — an Organization.
+    const spineAuditBinding = binding
+      ? prepareSpineAuditBinding({
+        database: controlPlaneDatabase,
+        dataPlane: database,
+        tenantSlug: binding.boundTenantId,
+        mayProvision: spineMode.mode === 'local-development' || binding.provision !== null,
+        now,
+      })
+      : null;
 
   const events = new EventBus();
   const audit = new AuditLog(database);
@@ -121,6 +141,7 @@ export function createAccordoApp(options = {}) {
       audit,
       now,
       binding,
+      dataPlaneBinding: spineAuditBinding,
       config: options.spine,
     })
     : null;
@@ -455,5 +476,13 @@ export function createAccordoApp(options = {}) {
     /** @type {any} */ (app)[alias.appMethod] = alias.fn;
   }
 
-  return app;
+    return app;
+  } catch (error) {
+    // Until the app is returned, this factory owns both handles. Close every
+    // successfully opened resource on any later composition refusal and never
+    // let a cleanup error replace the original startup cause.
+    try { controlPlaneDatabase?.close(); } catch {}
+    try { database.close(); } catch {}
+    throw error;
+  }
 }
