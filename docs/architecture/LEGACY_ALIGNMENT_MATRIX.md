@@ -104,7 +104,7 @@ adding a command or rail. No domain reads it and no application behavior moves.
 | Customer Data | `not_applicable` | package behavior and evidence do not read `/version.json` |
 | Custom-package fixture | `not_applicable` | customer packages receive no public-site deployment metadata |
 
-### Storage contract v1 assessment (Production Spine v2 M1 + M2A + M2B)
+### Storage contract v1 assessment (Production Spine v2 M1 + M2A + M2B + M2C)
 
 The internal dialect-neutral storage seam is horizontal kernel machinery. M1
 initially proved only Company and generated Work resources. M2A added the bounded
@@ -117,11 +117,19 @@ persistence: each of those packages still writes its own records directly, which
 is why none of their rows becomes `aligned`. Declaring every other domain aligned
 would still be the silent backfill this matrix prevents.
 
+M2C adds the last of the kernel's own raw consumers: run and span lifecycle
+evidence. The workflow engine and the action runtime's `writeTrace` each
+prepared their own statements against `workflow_runs` and `trace_spans`, and
+now share one internal core store on the same seam. Like M2B this is *kernel*
+persistence rather than a domain's own records, so it promotes no domain row —
+but unlike M2B it is true of every domain's evidence at once, which is recorded
+below the table rather than repeated fourteen times.
+
 | Domain | Status | Reason |
 |---|---|---|
 | Core CRM (Sales) | `aligned` | Company, Contact, Opportunity and Approval now use the structured seam; conversion, pipeline and approval suites preserve their characterized behavior, and a structural guard prevents raw-driver reachability from returning |
 | Work | `partial` | its generated resources and `migrateLegacyTasks(...)` use the structured storage seam, with executable migration evidence; `packages/work/src/follow-up.js#requireCallerTransaction` still reads `database.raw.isTransaction` to prove the caller transaction and remains sequenced for later M2 |
-| Pipeline | `deferred` | runtime pipeline persistence remains direct SQLite and is sequenced for M2 |
+| Pipeline | `deferred` | runtime pipeline persistence remains direct SQLite and is sequenced for M2; its workflow-run and trace evidence moved onto the seam with M2C, which is kernel machinery rather than this domain's own records |
 | Lead Intelligence | `partial` | M2B moved its definition-version registration (enrichment providers, scoring models, routing policies) onto the shared store behind the seam; its own domain persistence remains outside the migrated slice |
 | Commercial Operations | `partial` | M2B moved its definition-version registration (catalog providers, discount policies) onto the shared store behind the seam; its own domain persistence remains outside the migrated slice |
 | Signature & Order | `partial` | M2B moved its definition-version registration (signature providers) onto the shared store behind the seam; its own domain persistence remains outside the migrated slice |
@@ -138,6 +146,21 @@ package at once: a package's declared `domain-policy:<domain>:<kind>` versions
 are now registered through the same store on the seam, whatever that package's
 own persistence does. A `deferred` row above therefore means *this domain's own
 records*, not its policy identity.
+
+The same is true of M2C, for the same reason. Every domain's **run and trace
+evidence** — every `workflow_runs` row and every `trace_spans` row, whether a
+named workflow, a record action, an external operation or a package-owned
+operation produced it — is now written through one internal store on the seam.
+A `deferred` row therefore means this domain's own records, not its policy
+identity and not the evidence recorded about its runs. What still keeps a
+domain off `aligned` is exactly what it always was: its own persistence.
+
+**The kernel's remaining raw residue, after M2C.** One application-runtime
+consumer is left in `packages/`: `packages/work/src/follow-up.js#requireCallerTransaction`,
+which reads the driver's transaction flag through optional chaining, which is
+why Work stays `partial`. The adapter internals in `packages/core/src/database.js`,
+`core-adapters.js` and `spine-store.js` own the driver by design. **PostgreSQL
+remains absent: the only adapter is SQLite.**
 
 ### Hosted Docs MCP transport assessment
 
