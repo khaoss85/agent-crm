@@ -37,7 +37,9 @@ test('the domain seam refuses everything malformed, fail-closed', () => {
   for (const name of ['', 'D', '1domain', 'has space', 'has_underscore', '__proto__x'.replace('x', ''), null, 42]) {
     refuses(() => validatePackageDefinition(domain({ name })), /name must match|must be an object/);
   }
-  refuses(() => validatePackageDefinition(domain({ packageContract: 2 })), /packageContract/);
+  // M2E-1: 2 is a supported graph; 3 is the first unsupported one.
+  assert.doesNotThrow(() => validatePackageDefinition(domain({ packageContract: 2 })));
+  refuses(() => validatePackageDefinition(domain({ packageContract: 3 })), /packageContract/);
   refuses(() => validatePackageDefinition(domain({ packageContract: undefined })), /packageContract/);
   refuses(() => validatePackageDefinition(domain({ actions: 'nope' })), /actions must be an array/);
   refuses(() => validatePackageDefinition(domain({ policies: {} })), /policies must be an array/);

@@ -22,6 +22,10 @@ export {
   validatePackageDefinition,
   PackageRegistry,
   SUPPORTED_PACKAGE_CONTRACT,
+  SUPPORTED_PACKAGE_CONTRACTS,
+  SUPPORTED_OPERATION_CONTRACTS,
+  SUPPORTED_CAPABILITY_CONTRACTS,
+  DEFAULT_CAPABILITY_CONTRACT,
   // Historical aliases from the M12 seam, kept so existing composition works.
   DomainRegistries,
   validateDomainDefinition,

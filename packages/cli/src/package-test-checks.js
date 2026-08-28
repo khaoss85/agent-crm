@@ -1,7 +1,9 @@
 // @ts-check
 
 import { readFileSync } from 'node:fs';
-import { PackageRegistry, SUPPORTED_PACKAGE_CONTRACT, validatePackageDefinition } from '../../core/index.js';
+import {
+  PackageRegistry, SUPPORTED_PACKAGE_CONTRACT, SUPPORTED_PACKAGE_CONTRACTS, validatePackageDefinition,
+} from '../../core/index.js';
 import { resolvePackageComposition } from '../../core/src/package-composition.js';
 import { importSpecifiers, importsPrivateKernelPath, packageSources } from './package-sources.js';
 
@@ -81,8 +83,11 @@ export function runDeclarationChecks({ definition, dir }) {
 
   const declared = definition?.packageContract;
   checks.push(check('declaration.contract', 'declaration',
-    declared === SUPPORTED_PACKAGE_CONTRACT ? PASSED : 'failed',
-    `declares packageContract ${JSON.stringify(declared)}; this framework supports ${SUPPORTED_PACKAGE_CONTRACT}`,
+    // The accepted SET, not the emitted version. Checking against the single
+    // current version would fail a package the registry accepts — a conformance
+    // kit contradicting the contract it exists to prove.
+    SUPPORTED_PACKAGE_CONTRACTS.includes(declared) ? PASSED : 'failed',
+    `declares packageContract ${JSON.stringify(declared)}; this framework supports ${SUPPORTED_PACKAGE_CONTRACTS.join(', ')}`,
     undefined, 'package-contract'));
 
   const hasLabel = typeof definition?.label === 'string' && definition.label.length > 0;

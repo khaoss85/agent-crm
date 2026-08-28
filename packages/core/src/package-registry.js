@@ -51,8 +51,46 @@ const MAX_NAME = 64;
 const MAX_LABEL = 80;
 const MAX_DESCRIPTION = 400;
 const MAX_VERSION = 1_000_000;
+/**
+ * **The contract version this framework emits**, unchanged. It is what
+ * scaffolding writes into a new package and what `package test` reports as
+ * current, so it stays a single number: a consumer that reads it wants "the
+ * one to declare", not "the ones accepted".
+ */
 export const SUPPORTED_PACKAGE_CONTRACT = 1;
 export const SUPPORTED_OPERATION_CONTRACT = 1;
+
+/**
+ * **The contract versions this framework accepts** (Spine v2 M2E-1). Separate
+ * constants rather than widening the singular ones, for two reasons found by
+ * reading the consumers rather than assuming them.
+ *
+ * The first is that the singular constants are *values*: scaffolding writes
+ * `packageContract: SUPPORTED_PACKAGE_CONTRACT` into a generated package, and
+ * a set there would emit an array as a contract version.
+ *
+ * The second is sharper. `action-registry.js` validates a **different** field —
+ * `externalOperation`, the ADR-017 phase-shape marker — against
+ * `SUPPORTED_ACTION_CONTRACT`. Widening that constant in place would silently
+ * make `externalOperation: 2` valid: a fifth contract nobody has designed,
+ * accepted by an edit that never mentioned it. Enumerating the accepted set
+ * separately leaves every piggybacking check exactly where it was.
+ *
+ * Enumerated, never a range: `>= 1` would accept a 3 nobody has defined.
+ */
+export const SUPPORTED_PACKAGE_CONTRACTS = Object.freeze([1, 2]);
+export const SUPPORTED_OPERATION_CONTRACTS = Object.freeze([1, 2]);
+export const SUPPORTED_CAPABILITY_CONTRACTS = Object.freeze([1, 2]);
+
+/**
+ * A capability entry that declares no contract is contract 1.
+ *
+ * Absence and an explicit `1` must stay **indistinguishable everywhere
+ * downstream**. Anything that can tell them apart leaks a third state the
+ * contract does not have, so this default is resolved once, here, and the
+ * resolved value is what travels.
+ */
+export const DEFAULT_CAPABILITY_CONTRACT = 1;
 
 /**
  * Declare a domain package. This is a validating identity function: it returns
@@ -111,9 +149,9 @@ export function validatePackageDefinition(pkg) {
   if (pkg.name.length > MAX_NAME) {
     throw new ValidationError(`${label}: name must be at most ${MAX_NAME} characters`);
   }
-  if (pkg.packageContract !== SUPPORTED_PACKAGE_CONTRACT) {
+  if (!SUPPORTED_PACKAGE_CONTRACTS.includes(pkg.packageContract)) {
     throw new ValidationError(
-      `${label}: packageContract must be ${SUPPORTED_PACKAGE_CONTRACT} (received ${JSON.stringify(pkg.packageContract)})`,
+      `${label}: packageContract must be one of ${SUPPORTED_PACKAGE_CONTRACTS.join(', ')} (received ${JSON.stringify(pkg.packageContract)})`,
     );
   }
   assertVersion(label, pkg.version, 'version');
@@ -185,6 +223,34 @@ export function validatePackageDefinition(pkg) {
     if (entry.description !== undefined && (typeof entry.description !== 'string' || entry.description.length > MAX_DESCRIPTION)) {
       throw new ValidationError(`${label}: capability "${entry.name}" description must be a bounded string`);
     }
+    // **The capability contract, declared where composition can read it.**
+    // Before M2E-1 this field existed only on the object `create()` returns —
+    // thirteen of them — which the registry never sees and composition cannot
+    // reach, so a contract stated there was a comment. `package-registry.js`
+    // already made this argument about capability summaries: a frozen summary
+    // carries no function "so the declaration stays the truth rather than a
+    // comment". Same object, same fix.
+    if (entry.capabilityContract !== undefined
+      && !SUPPORTED_CAPABILITY_CONTRACTS.includes(entry.capabilityContract)) {
+      throw new ValidationError(
+        `${label}: capability "${entry.name}" capabilityContract must be one of ${SUPPORTED_CAPABILITY_CONTRACTS.join(', ')} (received ${JSON.stringify(entry.capabilityContract)})`,
+      );
+    }
+    // **A typo'd contract key is refused, because a default protects the value
+    // and not the key.** `capabilitiesContract: 2` would read as absent, mean
+    // 1, and compose a v2 capability as v1 — producing exactly the
+    // Promise-as-a-domain-value failure this contract exists to prevent.
+    // Refusing an unnamed key is justified precisely when accepting it would be
+    // silently *misread*, which is what distinguishes this from the fields a
+    // caller may harmlessly carry past an evidence writer.
+    const strayContract = Object.keys(entry).find(
+      (key) => key !== 'capabilityContract' && /contract/i.test(key),
+    );
+    if (strayContract !== undefined) {
+      throw new ValidationError(
+        `${label}: capability "${entry.name}" declares "${strayContract}"; did you mean capabilityContract?`,
+      );
+    }
     const key = `${entry.name}@${entry.version}`;
     if (offered.has(key)) throw new ValidationError(`${label}: duplicate capability ${key}`);
     offered.add(key);
@@ -208,9 +274,9 @@ export function validatePackageDefinition(pkg) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       throw new ValidationError(`${label}: each operations entry must be an object`);
     }
-    if (entry.operationContract !== SUPPORTED_OPERATION_CONTRACT) {
+    if (!SUPPORTED_OPERATION_CONTRACTS.includes(entry.operationContract)) {
       throw new ValidationError(
-        `${label}: operations[].operationContract must be ${SUPPORTED_OPERATION_CONTRACT} (received ${JSON.stringify(entry.operationContract)})`,
+        `${label}: operations[].operationContract must be one of ${SUPPORTED_OPERATION_CONTRACTS.join(', ')} (received ${JSON.stringify(entry.operationContract)})`,
       );
     }
     if (typeof entry.name !== 'string' || !NAME_RE.test(entry.name) || entry.name.length > MAX_NAME) {
