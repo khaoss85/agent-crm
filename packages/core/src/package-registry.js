@@ -1,5 +1,6 @@
 // @ts-check
 
+import { types } from 'node:util';
 import { ValidationError, NotFoundError, AppError } from './errors.js';
 import { validateActionDefinition } from './action-registry.js';
 import { validateDeclaredConfig } from './definition-fingerprint.js';
@@ -122,41 +123,21 @@ function isCapabilityContractTypo(key) {
     || CAPABILITY_CONTRACT_TYPOS.has(compact);
 }
 
-const MAX_DECLARATION_PROTOTYPE_DEPTH = 64;
-
-function prototypeChainValidationError(label, name, reason) {
-  return new ValidationError(
-    `${label}: capability "${validationDiagnosticText(name)}" prototype chain ${reason}`,
-  );
-}
-
 /**
  * Property names are declarations too. Walk class prototypes and
  * non-enumerable properties so an inherited typo cannot hide contract 2,
  * while never reading the corresponding values or invoking their getters.
+ * Ordinary prototype chains cannot cycle under JavaScript semantics and keep
+ * their historical unbounded depth. A Proxy is the explicit boundary: inspect
+ * its own names, but never invoke an arbitrary `getPrototypeOf` trap.
  */
-function declarationPropertyNames(entry, label, name) {
+function declarationPropertyNames(entry) {
   const names = new Set();
-  const visited = new Set();
   let cursor = entry;
-  let depth = 0;
   while (cursor && cursor !== Object.prototype) {
-    if (visited.has(cursor)) {
-      throw prototypeChainValidationError(label, name, 'must be finite and acyclic');
-    }
-    if (depth >= MAX_DECLARATION_PROTOTYPE_DEPTH) {
-      throw prototypeChainValidationError(
-        label, name, `must contain at most ${MAX_DECLARATION_PROTOTYPE_DEPTH} objects`,
-      );
-    }
-    visited.add(cursor);
-    depth += 1;
-    try {
-      for (const property of Object.getOwnPropertyNames(cursor)) names.add(property);
-      cursor = Object.getPrototypeOf(cursor);
-    } catch {
-      throw prototypeChainValidationError(label, name, 'could not be inspected safely');
-    }
+    for (const property of Object.getOwnPropertyNames(cursor)) names.add(property);
+    if (types.isProxy(cursor)) break;
+    cursor = Object.getPrototypeOf(cursor);
   }
   return names;
 }
@@ -207,39 +188,68 @@ function assertVersion(label, value, field) {
  * exact definition object for package-author compatibility.
  *
  * @param {any} pkg
- * @returns {{capabilities: readonly {entry: any, name: string, version: number, capabilityContract: number, description?: string}[]}}
+ * @returns {{
+ *   definition: any,
+ *   name: string,
+ *   version: number,
+ *   packageContract: number,
+ *   requires: readonly {package: string, capability: string, version: number}[],
+ *   capabilities: readonly {entry: any, name: string, version: number, capabilityContract: number, description?: string}[],
+ * }}
  */
 export function validatePackageDefinitionForComposition(pkg) {
   if (!pkg || typeof pkg !== 'object' || Array.isArray(pkg)) {
     throw new ValidationError('Domain package definition must be an object');
   }
-  const label = typeof pkg.name === 'string' ? `package "${pkg.name.slice(0, MAX_NAME)}"` : 'domain package';
-  if (typeof pkg.name !== 'string' || !NAME_RE.test(pkg.name)) {
+  // Accessors are executable code. Snapshot each graph fact when historical
+  // validation reaches it, so composition cannot accept one value and publish
+  // or probe another merely because a getter changed between reads. The exact
+  // package object remains the runtime definition; only declarative facts are
+  // copied into this private record. Keeping reads stepwise also preserves
+  // error precedence: an invalid name is refused before any later getter runs.
+  const name = pkg.name;
+  const label = typeof name === 'string' ? `package "${name.slice(0, MAX_NAME)}"` : 'domain package';
+  if (typeof name !== 'string' || !NAME_RE.test(name)) {
     throw new ValidationError(`${label}: name must match ${NAME_RE}`);
   }
   // The name is a Map key, a `/api/schema` key and part of a persisted
   // `definition_versions` type. Unbounded identities travel further than the
   // author expects, so they are bounded like every other stored identity.
-  if (pkg.name.length > MAX_NAME) {
+  if (name.length > MAX_NAME) {
     throw new ValidationError(`${label}: name must be at most ${MAX_NAME} characters`);
   }
-  if (!SUPPORTED_PACKAGE_CONTRACTS.includes(pkg.packageContract)) {
+  const packageContract = pkg.packageContract;
+  if (!SUPPORTED_PACKAGE_CONTRACTS.includes(packageContract)) {
     throw new ValidationError(
-      `${label}: packageContract must be one of ${SUPPORTED_PACKAGE_CONTRACTS.join(', ')} (received ${JSON.stringify(pkg.packageContract)})`,
+      `${label}: packageContract must be one of ${SUPPORTED_PACKAGE_CONTRACTS.join(', ')} (received ${validationDiagnosticValue(packageContract)})`,
     );
   }
-  assertVersion(label, pkg.version, 'version');
-  if (pkg.label !== undefined && (typeof pkg.label !== 'string' || pkg.label.length === 0 || pkg.label.length > MAX_LABEL)) {
+  const version = pkg.version;
+  assertVersion(label, version, 'version');
+  const packageLabel = pkg.label;
+  if (packageLabel !== undefined && (typeof packageLabel !== 'string' || packageLabel.length === 0 || packageLabel.length > MAX_LABEL)) {
     throw new ValidationError(`${label}: label must be a non-empty string of at most ${MAX_LABEL} characters`);
   }
-  if (pkg.description !== undefined && (typeof pkg.description !== 'string' || pkg.description.length > MAX_DESCRIPTION)) {
+  const description = pkg.description;
+  if (description !== undefined && (typeof description !== 'string' || description.length > MAX_DESCRIPTION)) {
     throw new ValidationError(`${label}: description must be a string of at most ${MAX_DESCRIPTION} characters`);
   }
+  const collectionDeclarations = {};
   for (const field of ['actions', 'policies', 'resources', 'requires', 'capabilities', 'operations']) {
-    if (pkg[field] !== undefined && !Array.isArray(pkg[field])) {
+    const declaration = pkg[field];
+    if (declaration !== undefined && !Array.isArray(declaration)) {
       throw new ValidationError(`${label}: ${field} must be an array`);
     }
+    collectionDeclarations[field] = declaration;
   }
+  const {
+    actions,
+    policies,
+    resources: resourcesDeclaration,
+    requires: requiresDeclaration,
+    capabilities: capabilitiesDeclaration,
+    operations,
+  } = collectionDeclarations;
 
   // Package actions travel through composition before the application's
   // ActionRegistry sees them. Validate the action shape here as well, so
@@ -248,20 +258,21 @@ export function validatePackageDefinitionForComposition(pkg) {
   // composition dereferences a null entry. Module existence remains the
   // application's concern; every other action-contract rule is shared with
   // the runtime validator instead of copied here.
-  for (const entry of pkg.actions ?? []) {
+  for (const entry of actions ?? []) {
     // The canonical action validator already owns null, arrays, class-backed
     // definitions and every executable field. Adding a package-only prototype
     // rule would reject definitions ActionRegistry has always accepted.
     validateActionDefinition(entry, { moduleExists: () => true });
   }
-  if (pkg.metadata !== undefined && typeof pkg.metadata !== 'function') {
+  const metadata = pkg.metadata;
+  if (metadata !== undefined && typeof metadata !== 'function') {
     throw new ValidationError(`${label}: metadata must be a function when present`);
   }
 
   // Resources: the record modules this package owns. Declaring them is what
   // makes a collision between two packages detectable before boot.
   const resources = new Set();
-  for (const resource of pkg.resources ?? []) {
+  for (const resource of resourcesDeclaration ?? []) {
     if (typeof resource !== 'string' || !NAME_RE.test(resource)) {
       throw new ValidationError(`${label}: resource names must match ${NAME_RE}`);
     }
@@ -273,23 +284,32 @@ export function validatePackageDefinitionForComposition(pkg) {
 
   // Declared dependencies on other packages' capabilities.
   const required = new Set();
-  for (const entry of pkg.requires ?? []) {
+  const requirementFacts = [];
+  for (const entry of requiresDeclaration ?? []) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       throw new ValidationError(`${label}: each requires entry must be an object`);
     }
-    if (typeof entry.package !== 'string' || !NAME_RE.test(entry.package)) {
+    const requiredPackage = entry.package;
+    const capability = entry.capability;
+    const requiredVersion = entry.version;
+    if (typeof requiredPackage !== 'string' || !NAME_RE.test(requiredPackage)) {
       throw new ValidationError(`${label}: requires[].package must match ${NAME_RE}`);
     }
-    if (typeof entry.capability !== 'string' || !NAME_RE.test(entry.capability)) {
+    if (typeof capability !== 'string' || !NAME_RE.test(capability)) {
       throw new ValidationError(`${label}: requires[].capability must match ${NAME_RE}`);
     }
-    assertVersion(label, entry.version, 'requires[].version');
-    if (entry.package === pkg.name) {
+    assertVersion(label, requiredVersion, 'requires[].version');
+    if (requiredPackage === name) {
       throw new ValidationError(`${label}: a package cannot require a capability from itself`);
     }
-    const key = `${entry.package}/${entry.capability}@${entry.version}`;
+    const key = `${requiredPackage}/${capability}@${requiredVersion}`;
     if (required.has(key)) throw new ValidationError(`${label}: duplicate requirement ${key}`);
     required.add(key);
+    requirementFacts.push(Object.freeze({
+      package: requiredPackage,
+      capability,
+      version: requiredVersion,
+    }));
   }
 
   // Capabilities this package offers to others: the ONLY way another package
@@ -298,7 +318,7 @@ export function validatePackageDefinitionForComposition(pkg) {
   // a private service or table.
   const offered = new Set();
   const capabilityFacts = [];
-  for (const entry of pkg.capabilities ?? []) {
+  for (const entry of capabilitiesDeclaration ?? []) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       throw new ValidationError(`${label}: each capability entry must be an object`);
     }
@@ -339,7 +359,7 @@ export function validatePackageDefinitionForComposition(pkg) {
     // Refusing an unnamed key is justified precisely when accepting it would be
     // silently *misread*, which is what distinguishes this from the fields a
     // caller may harmlessly carry past an evidence writer.
-    const strayContract = [...declarationPropertyNames(entry, label, name)].find(isCapabilityContractTypo);
+    const strayContract = [...declarationPropertyNames(entry)].find(isCapabilityContractTypo);
     if (strayContract !== undefined) {
       throw new ValidationError(
         `${label}: capability "${validationDiagnosticText(name)}" declares "${validationDiagnosticText(strayContract)}"; did you mean capabilityContract?`,
@@ -359,7 +379,7 @@ export function validatePackageDefinitionForComposition(pkg) {
     }));
   }
 
-  for (const entry of pkg.policies ?? []) {
+  for (const entry of policies ?? []) {
     if (!entry || typeof entry !== 'object') {
       throw new ValidationError(`${label}: each policy entry must be an object`);
     }
@@ -373,7 +393,7 @@ export function validatePackageDefinitionForComposition(pkg) {
   // composition attaches generically. Absent means absent — no contract bump.
   const declaredOperations = new Set();
   const declaredAliases = new Set();
-  for (const entry of pkg.operations ?? []) {
+  for (const entry of operations ?? []) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       throw new ValidationError(`${label}: each operations entry must be an object`);
     }
@@ -434,7 +454,14 @@ export function validatePackageDefinitionForComposition(pkg) {
       throw new ValidationError(`${label}: operation "${entry.name}" must declare create()`);
     }
   }
-  return Object.freeze({ capabilities: Object.freeze(capabilityFacts) });
+  return Object.freeze({
+    definition: pkg,
+    name,
+    version,
+    packageContract,
+    requires: Object.freeze(requirementFacts),
+    capabilities: Object.freeze(capabilityFacts),
+  });
 }
 
 /**
@@ -512,6 +539,8 @@ function assertPlainMetadata(name, value, path) {
 export class PackageRegistry {
   /** @type {Map<string, any>} */
   #packages;
+  /** @type {Map<string, {definition: any, name: string, version: number, packageContract: number, requires: readonly {package: string, capability: string, version: number}[], capabilities: readonly any[]}>} */
+  #packageFacts;
   /** @type {Map<string, {domain: string, kind: string, definition: any, fingerprint: string}>} */
   #policies;
   /** @type {Map<string, {package: string, entry: any, name: string, version: number, capabilityContract: number, description?: string}>} */
@@ -534,6 +563,7 @@ export class PackageRegistry {
       throw first.error ?? new ValidationError(first.message);
     }
     this.#packages = resolved.packages;
+    this.#packageFacts = resolved.packageFacts;
     this.#resources = resolved.resources;
     this.#capabilities = resolved.capabilities;
     this.#policies = resolved.policies;
@@ -555,8 +585,8 @@ export class PackageRegistry {
    * attach operations generically; the entries are the validated declarations.
    */
   operations() {
-    return [...this.#packages.values()].flatMap((pkg) => (pkg.operations ?? [])
-      .map((entry) => ({ package: pkg.name, entry })));
+    return [...this.#packages.entries()].flatMap(([name, pkg]) => (pkg.operations ?? [])
+      .map((entry) => ({ package: name, entry })));
   }
 
   /** How many packages are registered. The composition, not the definitions. */
@@ -590,14 +620,15 @@ export class PackageRegistry {
   get(name) {
     const pkg = this.#packages.get(name);
     if (!pkg) throw new NotFoundError('Domain package', String(name));
+    const facts = this.#packageFacts.get(name);
     return Object.freeze({
-      name: pkg.name,
-      version: pkg.version,
-      packageContract: pkg.packageContract,
-      label: pkg.label ?? pkg.name,
+      name: facts.name,
+      version: facts.version,
+      packageContract: facts.packageContract,
+      label: pkg.label ?? facts.name,
       ...(pkg.description ? { description: pkg.description } : {}),
       resources: Object.freeze([...(pkg.resources ?? [])].sort()),
-      requires: Object.freeze((pkg.requires ?? [])
+      requires: Object.freeze(facts.requires
         .map((entry) => Object.freeze({ package: entry.package, capability: entry.capability, version: entry.version }))),
       provides: Object.freeze(this.#providedBy(name)
         .map((entry) => Object.freeze({
@@ -650,7 +681,8 @@ export class PackageRegistry {
   capability({ consumer, capability, version, context = {} }) {
     const requester = this.#packages.get(consumer);
     if (!requester) throw new NotFoundError('Domain package', String(consumer));
-    const declaration = (requester.requires ?? []).find(
+    const requesterFacts = this.#packageFacts.get(consumer);
+    const declaration = requesterFacts.requires.find(
       (entry) => entry.capability === capability && entry.version === version,
     );
     if (!declaration) {
@@ -716,6 +748,7 @@ export class PackageRegistry {
     /** @type {Record<string, unknown>} */
     const out = {};
     for (const [name, pkg] of [...this.#packages.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      const facts = this.#packageFacts.get(name);
       const declared = typeof pkg.metadata === 'function' ? pkg.metadata() : {};
       if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) {
         throw new AppError(`Domain package "${name}" metadata() must return a plain object`, {
@@ -737,12 +770,12 @@ export class PackageRegistry {
       }
       out[name] = {
         ...declared,
-        packageContract: pkg.packageContract,
-        version: pkg.version,
+        packageContract: facts.packageContract,
+        version: facts.version,
         label: pkg.label ?? name,
         ...(pkg.description ? { description: pkg.description } : {}),
         resources: [...(pkg.resources ?? [])].sort(),
-        requires: (pkg.requires ?? [])
+        requires: facts.requires
           .map((entry) => ({ package: entry.package, capability: entry.capability, version: entry.version }))
           .sort((a, b) => (`${a.package}/${a.capability}` < `${b.package}/${b.capability}` ? -1 : 1)),
         provides: this.#providedBy(name)
@@ -786,24 +819,27 @@ export class PackageRegistry {
    */
   report() {
     return {
-      packageContract: this.#packages.size === 0
+      packageContract: this.#packageFacts.size === 0
         ? SUPPORTED_PACKAGE_CONTRACT
-        : this.#packages.values().next().value.packageContract,
-      packages: [...this.#packages.values()]
-        .map((pkg) => ({
-          name: pkg.name,
-          version: pkg.version,
-          packageContract: pkg.packageContract,
-          label: pkg.label ?? pkg.name,
-          resources: [...(pkg.resources ?? [])].sort(),
-          actions: (pkg.actions ?? []).map((action) => `${action.module}.${action.name}`).sort(),
-          policies: [...this.#policies.values()]
-            .filter((entry) => entry.domain === pkg.name)
-            .map((entry) => `${entry.kind}/${entry.definition.name}@${entry.definition.version}`)
-            .sort(),
-          requires: (pkg.requires ?? []).map((entry) => `${entry.package}/${entry.capability}@${entry.version}`).sort(),
-          provides: this.#providedBy(pkg.name).map((entry) => `${entry.name}@${entry.version}`).sort(),
-        }))
+        : this.#packageFacts.values().next().value.packageContract,
+      packages: [...this.#packages.entries()]
+        .map(([name, pkg]) => {
+          const facts = this.#packageFacts.get(name);
+          return {
+            name: facts.name,
+            version: facts.version,
+            packageContract: facts.packageContract,
+            label: pkg.label ?? facts.name,
+            resources: [...(pkg.resources ?? [])].sort(),
+            actions: (pkg.actions ?? []).map((action) => `${action.module}.${action.name}`).sort(),
+            policies: [...this.#policies.values()]
+              .filter((entry) => entry.domain === facts.name)
+              .map((entry) => `${entry.kind}/${entry.definition.name}@${entry.definition.version}`)
+              .sort(),
+            requires: facts.requires.map((entry) => `${entry.package}/${entry.capability}@${entry.version}`).sort(),
+            provides: this.#providedBy(facts.name).map((entry) => `${entry.name}@${entry.version}`).sort(),
+          };
+        })
         .sort((a, b) => (a.name < b.name ? -1 : 1)),
     };
   }

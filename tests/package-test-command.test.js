@@ -98,6 +98,108 @@ test('composition conformance preserves class package capability declarations in
     'all conformance checks use the contract snapshot accepted by compose.clean');
 });
 
+test('composition conformance reads each accepted graph fact once', async (t) => {
+  const cases = [
+    {
+      field: 'name',
+      configure(definition, count) {
+        Object.defineProperty(definition, 'name', {
+          enumerable: true,
+          get() { count(); return count.reads === 1 ? 'stateful-name' : 'drifted-name'; },
+        });
+      },
+    },
+    {
+      field: 'version',
+      configure(definition, count) {
+        Object.defineProperty(definition, 'version', {
+          enumerable: true,
+          get() { count(); return count.reads === 1 ? 1 : 2; },
+        });
+      },
+    },
+    {
+      field: 'packageContract',
+      configure(definition, count) {
+        Object.defineProperty(definition, 'packageContract', {
+          enumerable: true,
+          get() { count(); return count.reads === 1 ? 2 : 1; },
+        });
+      },
+    },
+    {
+      field: 'requires',
+      configure(definition, count) {
+        definition.capabilities = [];
+        Object.defineProperty(definition, 'requires', {
+          enumerable: true,
+          get() {
+            count();
+            return count.reads === 1
+              ? [{ package: 'stateful-dependency', capability: 'stateful-facts', version: 1 }]
+              : [];
+          },
+        });
+      },
+      providers: [{
+        packageContract: 2,
+        name: 'stateful-dependency',
+        version: 1,
+        capabilities: [{
+          name: 'stateful-facts', version: 1, capabilityContract: 2, create() { return {}; },
+        }],
+      }],
+    },
+    {
+      field: 'capabilityContract',
+      configure(definition, count) {
+        Object.defineProperty(definition.capabilities[0], 'capabilityContract', {
+          enumerable: true,
+          get() { count(); return count.reads === 1 ? 2 : 1; },
+        });
+      },
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.field, () => {
+      const count = () => { count.reads += 1; };
+      count.reads = 0;
+      const definition = {
+        packageContract: 2,
+        name: 'stateful-package',
+        version: 1,
+        label: 'Stateful package',
+        resources: [],
+        actions: [],
+        policies: [],
+        operations: [],
+        requires: [],
+        capabilities: [{
+          name: 'stateful-facts', version: 1, capabilityContract: 2, create() { return {}; },
+        }],
+      };
+      scenario.configure(definition, count);
+
+      const composition = runCompositionChecks({
+        definition,
+        providers: scenario.providers ?? [],
+      });
+      assert.equal(
+        composition.checks.find((entry) => entry.id === 'compose.clean').status,
+        'passed',
+      );
+      assert.deepEqual(
+        composition.checks.filter((entry) => entry.status === 'failed'),
+        [],
+        JSON.stringify(composition.checks),
+      );
+      assert.equal(count.reads, 1,
+        `${scenario.field} is read by the first composition and never by its probes`);
+    });
+  }
+});
+
 test('package test refuses a malformed action through the package contract, without crashing', async (t) => {
   const root = fixtureProject(t);
   const packagePath = writeFixturePackage(root, 'fixture-bad-action', `// @ts-check

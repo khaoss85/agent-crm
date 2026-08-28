@@ -75,6 +75,7 @@ function asyncContractError(message, details) {
  * @returns {{
  *   problems: CompositionProblem[],
  *   packages: Map<string, any>,
+ *   packageFacts: Map<string, {definition: any, name: string, version: number, packageContract: number, requires: readonly {package: string, capability: string, version: number}[], capabilities: readonly any[]}>,
  *   resources: Map<string, string>,
  *   capabilities: Map<string, {package: string, entry: any, name: string, version: number, capabilityContract: number, description?: string}>,
  *   policies: Map<string, {domain: string, kind: string, definition: any, fingerprint: string}>,
@@ -85,12 +86,12 @@ export function resolvePackageComposition(list = []) {
   const problems = [];
   /** @type {Map<string, any>} */
   const packages = new Map();
+  /** @type {Map<string, {definition: any, name: string, version: number, packageContract: number, requires: readonly {package: string, capability: string, version: number}[], capabilities: readonly any[]}>} */
+  const packageFacts = new Map();
   /** @type {Map<string, string>} */
   const resources = new Map();
   /** @type {Map<string, {package: string, entry: any, name: string, version: number, capabilityContract: number, description?: string}>} */
   const capabilities = new Map();
-  /** @type {Map<string, readonly any[]>} accepted declarative facts, by package */
-  const packageCapabilities = new Map();
   /** @type {Map<string, {domain: string, kind: string, definition: any, fingerprint: string}>} */
   const policies = new Map();
   /** @type {Map<string, string>} appMethod alias → owning package (ADR-032) */
@@ -121,12 +122,14 @@ export function resolvePackageComposition(list = []) {
     // non-enumerable fields and reference identity. The resolved graph carries
     // the one normalized contract fact separately instead.
     const pkg = declared;
-    if (packages.has(pkg.name)) {
-      fail({ code: 'PACKAGE_DUPLICATE', package: pkg.name, message: `Duplicate domain package name: ${pkg.name}` });
+    const facts = validated;
+    const packageName = facts.name;
+    if (packages.has(packageName)) {
+      fail({ code: 'PACKAGE_DUPLICATE', package: packageName, message: `Duplicate domain package name: ${packageName}` });
       continue;
     }
-    packages.set(pkg.name, pkg);
-    packageCapabilities.set(pkg.name, validated.capabilities);
+    packages.set(packageName, pkg);
+    packageFacts.set(packageName, facts);
 
     // A resource belongs to exactly one package: two packages claiming the
     // same record module would fight over its table and its meaning.
@@ -134,27 +137,27 @@ export function resolvePackageComposition(list = []) {
       const owner = resources.get(resource);
       if (owner !== undefined) {
         fail({
-          code: 'RESOURCE_COLLISION', package: pkg.name, resource,
-          message: `Resource collision: "${resource}" is claimed by packages "${owner}" and "${pkg.name}"`,
+          code: 'RESOURCE_COLLISION', package: packageName, resource,
+          message: `Resource collision: "${resource}" is claimed by packages "${owner}" and "${packageName}"`,
         });
         continue;
       }
-      resources.set(resource, pkg.name);
+      resources.set(resource, packageName);
     }
 
-    for (const fact of validated.capabilities) {
+    for (const fact of facts.capabilities) {
       const key = `${fact.name}@${fact.version}`;
       const existing = capabilities.get(key);
       if (existing !== undefined) {
         const displayedKey = contractDiagnosticIdentity(key);
         fail({
-          code: 'CAPABILITY_COLLISION', package: pkg.name, capability: displayedKey,
-          message: `Capability collision: "${displayedKey}" is offered by packages "${existing.package}" and "${pkg.name}"`,
+          code: 'CAPABILITY_COLLISION', package: packageName, capability: displayedKey,
+          message: `Capability collision: "${displayedKey}" is offered by packages "${existing.package}" and "${packageName}"`,
         });
         continue;
       }
       capabilities.set(key, Object.freeze({
-        package: pkg.name,
+        package: packageName,
         ...fact,
       }));
     }
@@ -167,22 +170,22 @@ export function resolvePackageComposition(list = []) {
       const existing = operationAliases.get(entry.appMethod);
       if (existing !== undefined) {
         fail({
-          code: 'OPERATION_ALIAS_COLLISION', package: pkg.name,
-          message: `Operation alias collision: app method "${entry.appMethod}" is declared by packages "${existing}" and "${pkg.name}"`,
+          code: 'OPERATION_ALIAS_COLLISION', package: packageName,
+          message: `Operation alias collision: app method "${entry.appMethod}" is declared by packages "${existing}" and "${packageName}"`,
         });
         continue;
       }
-      operationAliases.set(entry.appMethod, pkg.name);
+      operationAliases.set(entry.appMethod, packageName);
     }
 
     for (const { kind, definition } of pkg.policies ?? []) {
-      const key = `${pkg.name}/${kind}/${definition.name}@${definition.version}`;
+      const key = `${packageName}/${kind}/${definition.name}@${definition.version}`;
       if (policies.has(key)) {
-        fail({ code: 'POLICY_DUPLICATE', package: pkg.name, message: `Duplicate policy identity: ${key}` });
+        fail({ code: 'POLICY_DUPLICATE', package: packageName, message: `Duplicate policy identity: ${key}` });
         continue;
       }
       policies.set(key, {
-        domain: pkg.name,
+        domain: packageName,
         kind,
         definition,
         // The declared-definition fingerprint (ADR-015): canonical source plus
@@ -190,7 +193,7 @@ export function resolvePackageComposition(list = []) {
         // which is why thresholds belong in `config`.
         fingerprint: computeDefinitionFingerprint({
           type: `domain-policy:${kind}`,
-          domain: pkg.name,
+          domain: packageName,
           name: definition.name,
           version: definition.version,
           config: definition.config ?? null,
@@ -207,7 +210,8 @@ export function resolvePackageComposition(list = []) {
   // Accepting both *declarations* does not make them interoperable: a Promise
   // crossing into a v1 consumer looks like an ordinary domain value until the
   // first runtime call. Refuse every mixed edge at composition instead.
-  for (const pkg of packages.values()) {
+  for (const facts of packageFacts.values()) {
+    const pkg = facts.definition;
     const members = [
       ...(pkg.actions ?? []).map((entry) => ({
         kind: 'action',
@@ -219,7 +223,7 @@ export function resolvePackageComposition(list = []) {
         name: contractDiagnosticIdentity(entry.name),
         contract: entry.operationContract,
       })),
-      ...(packageCapabilities.get(pkg.name) ?? []).map((entry) => ({
+      ...facts.capabilities.map((entry) => ({
         kind: 'capability',
         name: contractDiagnosticIdentity(`${entry.name}@${entry.version}`),
         contract: entry.capabilityContract,
@@ -228,16 +232,16 @@ export function resolvePackageComposition(list = []) {
     for (const member of members) {
       // The member's own validator owns missing and unknown versions. This
       // check owns only a graph made of individually understood contracts.
-      if (!isKnownContract(member.contract) || member.contract === pkg.packageContract) continue;
-      const message = `Package "${pkg.name}" declares packageContract ${pkg.packageContract}, but its `
+      if (!isKnownContract(member.contract) || member.contract === facts.packageContract) continue;
+      const message = `Package "${facts.name}" declares packageContract ${facts.packageContract}, but its `
         + `${member.kind} "${member.name}" declares contract ${member.contract}; sync-v1 and async-v2 contracts cannot share one package graph`;
       fail({
         code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED',
-        package: pkg.name,
+        package: facts.name,
         message,
         error: asyncContractError(message, {
-          package: pkg.name,
-          packageContract: pkg.packageContract,
+          package: facts.name,
+          packageContract: facts.packageContract,
           memberKind: member.kind,
           member: member.name,
           memberContract: member.contract,
@@ -249,14 +253,14 @@ export function resolvePackageComposition(list = []) {
   // Every declared requirement must be offered by a registered package at the
   // declared version. A package that silently loses a dependency would fail
   // later, inside a transaction.
-  for (const pkg of packages.values()) {
-    for (const entry of pkg.requires ?? []) {
+  for (const facts of packageFacts.values()) {
+    for (const entry of facts.requires) {
       const requiredCapability = contractDiagnosticIdentity(`${entry.capability}@${entry.version}`);
-      const provider = packages.get(entry.package);
+      const provider = packageFacts.get(entry.package);
       if (!provider) {
         fail({
-          code: 'DEPENDENCY_MISSING_PACKAGE', package: pkg.name, capability: requiredCapability,
-          message: `Package "${pkg.name}" requires package "${entry.package}", which is not registered`,
+          code: 'DEPENDENCY_MISSING_PACKAGE', package: facts.name, capability: requiredCapability,
+          message: `Package "${facts.name}" requires package "${entry.package}", which is not registered`,
         });
         continue;
       }
@@ -267,25 +271,25 @@ export function resolvePackageComposition(list = []) {
           .map(([key]) => contractDiagnosticIdentity(key));
         const displayedAvailable = contractDiagnosticIdentity(available.join(', ') || 'none');
         fail({
-          code: 'DEPENDENCY_UNSATISFIED', package: pkg.name, capability: requiredCapability,
-          message: `Package "${pkg.name}" requires "${entry.package}" capability ${requiredCapability}, `
+          code: 'DEPENDENCY_UNSATISFIED', package: facts.name, capability: requiredCapability,
+          message: `Package "${facts.name}" requires "${entry.package}" capability ${requiredCapability}, `
             + `which it does not offer (offers: ${displayedAvailable})`,
         });
         continue;
       }
-      if (pkg.packageContract !== offered.capabilityContract) {
+      if (facts.packageContract !== offered.capabilityContract) {
         const capability = contractDiagnosticIdentity(`${entry.capability}@${entry.version}`);
-        const message = `Package "${pkg.name}" uses packageContract ${pkg.packageContract}, but requires `
+        const message = `Package "${facts.name}" uses packageContract ${facts.packageContract}, but requires `
           + `"${entry.package}" capability ${capability} with capabilityContract `
           + `${offered.capabilityContract}; sync-v1 and async-v2 contracts cannot share one dependency edge`;
         fail({
           code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED',
-          package: pkg.name,
+          package: facts.name,
           capability,
           message,
           error: asyncContractError(message, {
-            package: pkg.name,
-            packageContract: pkg.packageContract,
+            package: facts.name,
+            packageContract: facts.packageContract,
             provider: entry.package,
             capability: contractDiagnosticIdentity(entry.capability),
             capabilityVersion: entry.version,
@@ -297,8 +301,8 @@ export function resolvePackageComposition(list = []) {
   }
 
   const graphContracts = new Map();
-  for (const pkg of packages.values()) {
-    if (!graphContracts.has(pkg.packageContract)) graphContracts.set(pkg.packageContract, pkg.name);
+  for (const facts of packageFacts.values()) {
+    if (!graphContracts.has(facts.packageContract)) graphContracts.set(facts.packageContract, facts.name);
   }
   if (graphContracts.size > 1) {
     const entries = [...graphContracts.entries()].sort(([a], [b]) => a - b);
@@ -308,7 +312,10 @@ export function resolvePackageComposition(list = []) {
       code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED',
       message,
       error: asyncContractError(message, {
-        packages: [...packages.values()].map((pkg) => ({ name: pkg.name, packageContract: pkg.packageContract })),
+        packages: [...packageFacts.values()].map((facts) => ({
+          name: facts.name,
+          packageContract: facts.packageContract,
+        })),
       }),
     });
   }
@@ -334,12 +341,12 @@ export function resolvePackageComposition(list = []) {
       return;
     }
     state.set(name, 'visiting');
-    for (const entry of packages.get(name)?.requires ?? []) {
+    for (const entry of packageFacts.get(name)?.requires ?? []) {
       if (packages.has(entry.package)) visit(entry.package, [...trail, name]);
     }
     state.set(name, 'done');
   };
   for (const name of packages.keys()) visit(name, []);
 
-  return { problems, packages, resources, capabilities, policies };
+  return { problems, packages, packageFacts, resources, capabilities, policies };
 }

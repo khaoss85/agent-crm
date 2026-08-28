@@ -244,41 +244,44 @@ export async function inspectApplication({ rootDir: requested }) {
     capabilityFactsByPackage.set(value.package, entries);
   }
 
-  const packages = [...composition.packages.values()]
-    .map((pkg) => ({
-      name: pkg.name,
-      version: pkg.version,
-      packageContract: pkg.packageContract,
-      label: pkg.label ?? pkg.name,
-      description: pkg.description ?? null,
-      resources: [...(pkg.resources ?? [])].sort(),
-      actions: (pkg.actions ?? []).map((action) => `${action.module}.${action.name}`).sort(),
-      requires: (pkg.requires ?? [])
-        .map((entry) => ({ package: entry.package, capability: entry.capability, version: entry.version }))
-        .sort((a, b) => compare(`${a.package}/${a.capability}@${a.version}`, `${b.package}/${b.capability}@${b.version}`)),
-      provides: (capabilityFactsByPackage.get(pkg.name) ?? [])
-        .map((entry) => ({
-          name: entry.name,
-          version: entry.version,
-          capabilityContract: entry.capabilityContract,
-          description: entry.description ?? null,
-        }))
-        .sort((a, b) => compare(`${a.name}@${a.version}`, `${b.name}@${b.version}`)),
-      // Declared application-scoped operations (ADR-032): additive, and gone
-      // when the package detaches.
-      operations: (pkg.operations ?? [])
-        .map((entry) => ({
-          name: entry.name,
-          operationContract: entry.operationContract,
-          ...(entry.appMethod ? { appMethod: entry.appMethod } : {}),
-        }))
-        .sort((a, b) => compare(a.name, b.name)),
-      policies: [...composition.policies.values()]
-        .filter((entry) => entry.domain === pkg.name)
-        .map((entry) => `${entry.kind}/${entry.definition.name}@${entry.definition.version}`)
-        .sort(compare),
-      metadata: safeMetadata(pkg, problems, rootDir),
-    }))
+  const packages = [...composition.packageFacts.values()]
+    .map((facts) => {
+      const pkg = facts.definition;
+      return {
+        name: facts.name,
+        version: facts.version,
+        packageContract: facts.packageContract,
+        label: pkg.label ?? facts.name,
+        description: pkg.description ?? null,
+        resources: [...(pkg.resources ?? [])].sort(),
+        actions: (pkg.actions ?? []).map((action) => `${action.module}.${action.name}`).sort(),
+        requires: facts.requires
+          .map((entry) => ({ package: entry.package, capability: entry.capability, version: entry.version }))
+          .sort((a, b) => compare(`${a.package}/${a.capability}@${a.version}`, `${b.package}/${b.capability}@${b.version}`)),
+        provides: (capabilityFactsByPackage.get(facts.name) ?? [])
+          .map((entry) => ({
+            name: entry.name,
+            version: entry.version,
+            capabilityContract: entry.capabilityContract,
+            description: entry.description ?? null,
+          }))
+          .sort((a, b) => compare(`${a.name}@${a.version}`, `${b.name}@${b.version}`)),
+        // Declared application-scoped operations (ADR-032): additive, and gone
+        // when the package detaches.
+        operations: (pkg.operations ?? [])
+          .map((entry) => ({
+            name: entry.name,
+            operationContract: entry.operationContract,
+            ...(entry.appMethod ? { appMethod: entry.appMethod } : {}),
+          }))
+          .sort((a, b) => compare(a.name, b.name)),
+        policies: [...composition.policies.values()]
+          .filter((entry) => entry.domain === facts.name)
+          .map((entry) => `${entry.kind}/${entry.definition.name}@${entry.definition.version}`)
+          .sort(compare),
+        metadata: safeMetadata(pkg, facts.name, problems, rootDir),
+      };
+    })
     .sort((a, b) => compare(a.name, b.name));
   const packageContracts = [...new Set(packages.map((pkg) => pkg.packageContract))];
 
@@ -296,12 +299,12 @@ export async function inspectApplication({ rootDir: requested }) {
       description: value.description ?? null,
     });
   }
-  for (const pkg of composition.packages.values()) {
-    for (const entry of pkg.requires ?? []) {
+  for (const facts of composition.packageFacts.values()) {
+    for (const entry of facts.requires) {
       const key = `${entry.capability}@${entry.version}`;
       const row = capabilityRows.get(key);
       if (row && row.provider === entry.package) {
-        row.consumers.push(pkg.name);
+        row.consumers.push(facts.name);
         continue;
       }
       // An unresolved requirement is still part of the graph — reporting only
@@ -311,7 +314,7 @@ export async function inspectApplication({ rootDir: requested }) {
         consumers: [], status: 'missing', description: null,
       };
       if (missing.provider !== null && missing.provider !== entry.package) missing.status = 'provider-mismatch';
-      missing.consumers.push(pkg.name);
+      missing.consumers.push(facts.name);
       capabilityRows.set(key, missing);
     }
   }
@@ -345,8 +348,8 @@ export async function inspectApplication({ rootDir: requested }) {
   const actions = [
     ...(Array.isArray(loaded.actions?.generatedActions) ? loaded.actions.generatedActions : [])
       .map((action) => describeAction(action, null)),
-    ...[...composition.packages.values()].flatMap((pkg) =>
-      (pkg.actions ?? []).map((action) => describeAction(action, pkg.name))),
+    ...[...composition.packageFacts.values()].flatMap((facts) =>
+      (facts.definition.actions ?? []).map((action) => describeAction(action, facts.name))),
   ].sort((a, b) => compare(`${a.module}.${a.name}`, `${b.module}.${b.name}`));
 
   // ── policies and providers ───────────────────────────────────────────────
@@ -435,15 +438,15 @@ function compare(a, b) {
  * only on the transport: a report is a document an agent reads, and an
  * unbounded block turns one package into a denial of the whole document.
  */
-function safeMetadata(pkg, problems, rootDir) {
+function safeMetadata(pkg, acceptedName, problems, rootDir) {
   if (typeof pkg.metadata !== 'function') return {};
   let declared;
   try {
     declared = pkg.metadata();
   } catch (error) {
     problems.push({
-      code: 'PACKAGE_METADATA_FAILED', package: pkg.name,
-      message: `Package "${pkg.name}" metadata() threw: ${safeMessage(error, rootDir)}`,
+      code: 'PACKAGE_METADATA_FAILED', package: acceptedName,
+      message: `Package "${acceptedName}" metadata() threw: ${safeMessage(error, rootDir)}`,
     });
     return {};
   }
@@ -452,15 +455,15 @@ function safeMetadata(pkg, problems, rootDir) {
     serialized = JSON.stringify(declared ?? {});
   } catch (error) {
     problems.push({
-      code: 'PACKAGE_METADATA_INVALID', package: pkg.name,
-      message: `Package "${pkg.name}" metadata() is not JSON-safe: ${safeMessage(error, rootDir)}`,
+      code: 'PACKAGE_METADATA_INVALID', package: acceptedName,
+      message: `Package "${acceptedName}" metadata() is not JSON-safe: ${safeMessage(error, rootDir)}`,
     });
     return {};
   }
   if (serialized.length > MAX_METADATA_BYTES) {
     problems.push({
-      code: 'PACKAGE_METADATA_TOO_LARGE', package: pkg.name,
-      message: `Package "${pkg.name}" metadata() is ${serialized.length} bytes, over the ${MAX_METADATA_BYTES}-byte `
+      code: 'PACKAGE_METADATA_TOO_LARGE', package: acceptedName,
+      message: `Package "${acceptedName}" metadata() is ${serialized.length} bytes, over the ${MAX_METADATA_BYTES}-byte `
         + 'bound; it is omitted from the report rather than published',
     });
     return {};

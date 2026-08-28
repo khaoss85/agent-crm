@@ -52,6 +52,16 @@ test('capabilityContract absence resolves to v1 before any downstream consumer o
     'the v1 source declaration remains backward-compatible');
   assert.strictEqual(resolved.packages.get('absent-provider'), absent,
     'composition does not clone executable definitions to materialize the default');
+  const absentFacts = resolved.packageFacts.get('absent-provider');
+  assert.strictEqual(absentFacts.definition, absent,
+    'the private fact record points to the exact executable package');
+  assert.equal(Object.isFrozen(absentFacts), true);
+  assert.equal(Object.isFrozen(absentFacts.requires), true);
+  assert.equal(Object.isFrozen(absentFacts.capabilities), true);
+  assert.deepEqual(
+    { name: absentFacts.name, version: absentFacts.version, packageContract: absentFacts.packageContract },
+    { name: 'absent-provider', version: 1, packageContract: 1 },
+  );
   assert.strictEqual(resolved.capabilities.get('absent-cap@1').entry, absent.capabilities[0]);
   assert.equal(Object.isFrozen(resolved.capabilities.get('absent-cap@1')), true,
     'the accepted declarative snapshot cannot drift after composition');
@@ -143,9 +153,8 @@ test('capability declaration facts are snapshotted once while runtime keeps the 
   const declaredCapability = {
     get name() { nameReads += 1; return 'stateful-capability'; },
     get version() { versionReads += 1; return 1; },
-    // The first four reads let the pre-fix composition accept a uniform v2
-    // graph; every observer after that sees a contradictory v1 declaration.
-    get capabilityContract() { contractReads += 1; return contractReads <= 4 ? 2 : 1; },
+    // Only the accepted read says v2; every later raw read would contradict it.
+    get capabilityContract() { contractReads += 1; return contractReads === 1 ? 2 : 1; },
     get description() { descriptionReads += 1; return 'stateful declaration'; },
     async create() {
       createReceiver = this;
@@ -177,6 +186,67 @@ test('capability declaration facts are snapshotted once while runtime keeps the 
   assert.strictEqual(createReceiver, declaredCapability,
     'the executable entry, rather than a clone or proxy, remains the create() receiver');
   assert.strictEqual(opened.declaration, declaredCapability);
+});
+
+test('package graph facts remain the accepted snapshot across registry observers and authorization', async () => {
+  const reads = { name: 0, version: 0, packageContract: 0, requires: 0 };
+  const provider = {
+    get name() { reads.name += 1; return reads.name === 1 ? 'stateful-provider' : 'drifted-provider'; },
+    get version() { reads.version += 1; return reads.version === 1 ? 1 : 2; },
+    get packageContract() { reads.packageContract += 1; return reads.packageContract === 1 ? 2 : 1; },
+    label: 'Stateful provider',
+    resources: [], actions: [], operations: [], policies: [], requires: [],
+    capabilities: [{
+      name: 'stateful-facts',
+      version: 1,
+      capabilityContract: 2,
+      async create() { return { source: this }; },
+    }],
+  };
+  const consumer = pkg('stateful-consumer', 2);
+  Object.defineProperty(consumer, 'requires', {
+    enumerable: true,
+    get() {
+      reads.requires += 1;
+      return reads.requires === 1
+        ? [{ package: 'stateful-provider', capability: 'stateful-facts', version: 1 }]
+        : [];
+    },
+  });
+
+  const registry = new PackageRegistry({ packages: [provider, consumer] });
+  assert.deepEqual(reads, { name: 1, version: 1, packageContract: 1, requires: 1 });
+  assert.deepEqual(
+    {
+      get: registry.get('stateful-provider'),
+      metadata: registry.metadata()['stateful-provider'],
+      report: registry.report().packages.find((entry) => entry.name === 'stateful-provider'),
+    },
+    {
+      get: {
+        name: 'stateful-provider', version: 1, packageContract: 2,
+        label: 'Stateful provider', resources: [], requires: [],
+        provides: [{ name: 'stateful-facts', version: 1, capabilityContract: 2 }],
+        actions: [], operations: [],
+      },
+      metadata: {
+        packageContract: 2, version: 1, label: 'Stateful provider', resources: [], requires: [],
+        provides: [{ name: 'stateful-facts', version: 1, capabilityContract: 2 }],
+        actions: [], operations: [], policies: [],
+      },
+      report: {
+        name: 'stateful-provider', version: 1, packageContract: 2,
+        label: 'Stateful provider', resources: [], actions: [], policies: [], requires: [],
+        provides: ['stateful-facts@1'],
+      },
+    },
+  );
+  const opened = await registry.capability({
+    consumer: 'stateful-consumer', capability: 'stateful-facts', version: 1,
+  });
+  assert.strictEqual(opened.source, provider.capabilities[0]);
+  assert.deepEqual(reads, { name: 1, version: 1, packageContract: 1, requires: 1 },
+    'observers and authorization never re-enter accepted package getters');
 });
 
 test('a uniform v2 graph is accepted and every published contract version is truthful', () => {
@@ -327,6 +397,23 @@ test('package validation preserves class actions accepted by the canonical actio
     'private-field branding survives because the class instance is not cloned');
 });
 
+test('package fact snapshots preserve historical validation precedence', () => {
+  let laterGetterCalled = false;
+  const invalid = {
+    name: 'Invalid package name',
+    get actions() {
+      laterGetterCalled = true;
+      throw new Error('later getter must not run');
+    },
+  };
+  assert.throws(
+    () => validatePackageDefinition(invalid),
+    /name must match/,
+  );
+  assert.equal(laterGetterCalled, false,
+    'an invalid early identity is refused before later declaration getters run');
+});
+
 test('a v2 package requiring a v1 capability fails with the ratified stable refusal', () => {
   const provider = pkg('sync-provider', 1, { capabilities: [capability('facts')] });
   const consumer = pkg('async-consumer', 2, {
@@ -421,7 +508,25 @@ test('capability contract typo detection names contract fields without rejecting
   );
 });
 
-test('hostile prototype graphs are refused in bounded child processes', () => {
+test('ordinary capability prototype depth remains unbounded by the contract', () => {
+  for (const depth of [65, 128]) {
+    let prototype = null;
+    for (let index = 0; index < depth; index += 1) prototype = Object.create(prototype);
+    const entry = Object.assign(Object.create(prototype), {
+      name: `deep-${depth}`,
+      version: 1,
+      create() { return {}; },
+    });
+    assert.equal(
+      validatePackageDefinition(pkg(`deep-provider-${depth}`, 1, { capabilities: [entry] }))
+        .capabilities[0],
+      entry,
+      `a finite ordinary prototype chain of depth ${depth} remains compatible`,
+    );
+  }
+});
+
+test('proxy prototype traps are a bounded inspection boundary', () => {
   const kernel = new URL('../packages/core/index.js', import.meta.url).href;
   for (const mode of ['self', 'pair', 'unbounded']) {
     const script = `
@@ -439,14 +544,14 @@ if (${JSON.stringify(mode)} === 'self') {
   entry = new Proxy(target, handler);
 }
 try {
-  validatePackageDefinition({
+  const definition = {
     packageContract: 1, name: 'hostile-package', version: 1, capabilities: [entry],
-  });
-  process.exitCode = 2;
+  };
+  const accepted = validatePackageDefinition(definition);
+  if (accepted !== definition) process.exitCode = 2;
 } catch (error) {
-  const message = String(error?.message ?? error);
-  if (error?.constructor?.name !== 'ValidationError'
-    || !message.includes('capability "hostile-prototype" prototype chain')) process.exitCode = 3;
+  console.error(error);
+  process.exitCode = 3;
 }
 `;
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
@@ -455,6 +560,25 @@ try {
     assert.equal(child.error?.code, undefined, `${mode}: child hung (${child.error?.code})`);
     assert.equal(child.status, 0, `${mode}: stderr=${child.stderr}`);
   }
+
+  let prototypeTrapCalled = false;
+  const typo = new Proxy({
+    name: 'proxy-own-typo',
+    version: 1,
+    capabiltyContract: 2,
+    create() { return {}; },
+  }, {
+    getPrototypeOf() {
+      prototypeTrapCalled = true;
+      throw new Error('prototype traversal must stop at a Proxy');
+    },
+  });
+  assert.throws(
+    () => validatePackageDefinition(pkg('proxy-own-typo-provider', 1, { capabilities: [typo] })),
+    /declares "capabiltyContract"; did you mean capabilityContract/,
+    'own typo names remain visible at the Proxy boundary',
+  );
+  assert.equal(prototypeTrapCalled, false, 'validation never executes the Proxy getPrototypeOf trap');
 });
 
 test('capability validation diagnostics are stable, bounded and stringify-safe', () => {

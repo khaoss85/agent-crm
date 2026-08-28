@@ -325,6 +325,10 @@ failure this campaign keeps finding.
   `{name, version, capabilityContract, description}`. Composition, registry
   summaries, metadata, inspection and conformance publish the snapshot; only
   runtime invocation reaches the original entry, with its receiver intact.
+  The same private accepted-facts record carries each package's exact object
+  identity plus its first validated `{name, version, packageContract, requires}`;
+  dependency resolution, authorization and observers never re-enter those
+  accessors after accepting them.
   This adds semantic facts without cloning, mutating or exposing executable
   behavior, and a mutable accessor cannot make an accepted v2 graph later
   report v1.
@@ -342,7 +346,11 @@ failure this campaign keeps finding.
   so a class getter cannot hide contract 2. It is deliberately not a generic
   edit-distance matcher: ordinary metadata such as `contractor`,
   `contractNotes`, `capabilityContractor`, `capabilityContact` and
-  `capabilityContrast` remains allowed.
+  `capabilityContrast` remains allowed. Ordinary prototype chains retain their
+  historical unbounded depth. A Proxy is a deliberate inspection boundary:
+  own property names are checked, but validation does not execute its arbitrary
+  `getPrototypeOf` trap. Consequently, a typo hidden only behind a Proxy's
+  virtual prototype is outside this guard's claim.
 - **A Promise-shaped service entering v1 execution is refused**, and the refusal
   belongs where v1 execution begins rather than at composition, because a
   service can only be observed to be Promise-shaped when it is called. Where
@@ -404,12 +412,22 @@ npm run verify
   already accepted composition and builds invariant-specific probes from those
   facts; each executable delegate still invokes the exact original capability
   entry as receiver. The author's definition is neither spread nor recomposed,
-  so a stateful getter cannot change the contract after `compose.clean`. The prototype
-  property-name walk could also loop forever when a Proxy returned itself, a
-  two-object cycle, or a fresh object forever from `getPrototypeOf`. Identity
-  cycle detection plus a 64-object hard bound now turns all three into named
-  `ValidationError`s. Checked-in child-process regressions were observed timing
-  out before the repair and terminating after it.
+  so a stateful getter cannot change the contract after `compose.clean`. The
+  prototype property-name walk could also loop forever when a Proxy returned
+  itself, a two-object cycle, or a fresh object forever from `getPrototypeOf`.
+  Validation now walks ordinary JavaScript prototype chains without an invented
+  depth limit, inspects a Proxy's own names and stops before its prototype trap.
+  Checked-in regressions cover ordinary depths 65 and 128 plus bounded
+  self/pair/fresh Proxy traps.
+- **2026-08-28:** Final review of the conformance delta found that accepted
+  package identity, version, contract and requirements were still reread after
+  validation. Stateful getters could therefore make `compose.clean` pass while
+  collision, dependency and undeclared-reach probes tested a different graph.
+  Validation now returns one immutable private package-facts record; resolution,
+  registry observers, inspection and conformance derive from it while runtime
+  keeps the exact original package/capability objects. Separate regressions make
+  each stateful getter disagree after its first read and prove that every probe
+  remains coherent with the accepted graph.
 - **2026-08-28:** Bounded delta review found three final material groups. A
   stateful `capabilityContract` getter could return 2 during validation and
   composition, then 1 when `PackageRegistry.get()`, metadata, inspection or the
