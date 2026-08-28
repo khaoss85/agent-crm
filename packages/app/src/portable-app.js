@@ -164,7 +164,7 @@ function createPortableCoreAdapters({ storage, services, pipelines }) {
  *   options?: Record<string, any>,
  * }} input
  */
-function assemblePortableGraph({ accepted, storage, options = {} }) {
+async function assemblePortableGraph({ accepted, storage, options = {} }) {
   const now = resolveClock(options.clock);
   const handle = {
     storage,
@@ -222,9 +222,11 @@ function assemblePortableGraph({ accepted, storage, options = {} }) {
   });
 
   const domains = new PackageRegistry({ packages: [...accepted.packages] });
-  domains.persistFingerprints(handle);
+  await domains.persistFingerprints(handle);
   for (const pkg of accepted.packages) {
-    if (typeof pkg.persistFingerprints === 'function') pkg.persistFingerprints(handle);
+    if (typeof pkg.persistFingerprints === 'function') {
+      await pkg.persistFingerprints(handle);
+    }
   }
   for (const definition of domains.actions()) actions.register(definition);
 

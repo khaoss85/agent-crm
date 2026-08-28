@@ -441,6 +441,28 @@ test('a uniform v2 graph composes kernel modules, packages, actions, operations,
   assert.equal(app.modules.get('company').name, 'company');
 });
 
+test('async persistFingerprints settles before the portable facade is returned', async (t) => {
+  const workspace = workspaceFor(t);
+  let persisted = false;
+  const delayed = pkg('probe-persist', 2, {
+    persistFingerprints: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      persisted = true;
+    },
+  });
+  const app = await startPortableSqliteApp({
+    selected: {
+      packageContract: 2,
+      packages: [delayed],
+      actions: [],
+      modules: [],
+    },
+    dbPath: workspace.dbPath,
+  });
+  t.after(() => app.close());
+  assert.equal(persisted, true, 'startup must await a thenable persistFingerprints');
+});
+
 test('successful portable close is async, idempotent and shares one settlement', async (t) => {
   const { app } = await portableAppFor(t);
   const first = app.close();
