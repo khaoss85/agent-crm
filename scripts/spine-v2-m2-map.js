@@ -16,11 +16,13 @@
  * **What this is.** Two much smaller facts, both checkable:
  *
  *   1. the fingerprint of the whole ratified M2 section — if it moves, the
- *      inventory below was written against different text and a person re-reads
- *      it, which is the only honest response to prose changing;
+ *      inventory was written against different text and the check fails.
+ *      Adopting the new fingerprint with `--write` clears that failure; it is
+ *      not evidence anyone re-read anything, which this script cannot observe;
  *   2. the inventory's own shape — every entry has a stable id, a source
- *      excerpt, an owning milestone and a reason, ids are unique, and owners
- *      are milestones this campaign recognises.
+ *      excerpt that appears in the section, and an owning milestone this
+ *      campaign recognises; ids are unique; a reason is optional and, when
+ *      present, is a non-empty string.
  *
  * It indexes; it does not prove. **Proof is tests, Repository Truth and
  * measurement** — nothing here asserts a requirement is met, and no reader
@@ -109,6 +111,13 @@ export function inspect(section, data) {
       if (typeof entry[field] !== 'string' || entry[field].trim() === '') {
         failures.push(`${id}: ${field} is required and must be a non-empty string.`);
       }
+    }
+    // A reason is optional, but a *coerced* one is worse than none: an object
+    // renders as `[object Object]` and an array as a comma-joined string, both
+    // of which publish something nobody wrote while the run stays green.
+    if (entry.reason !== undefined && entry.reason !== null
+      && (typeof entry.reason !== 'string' || entry.reason.trim() === '')) {
+      failures.push(`${id}: reason must be null or a non-empty string, not ${JSON.stringify(entry.reason)}.`);
     }
     if (!OWNERS.includes(entry.owner)) {
       failures.push(`${id}: owner ${JSON.stringify(entry.owner)} is not a milestone this campaign recognises.`);

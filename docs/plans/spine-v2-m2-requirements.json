@@ -232,9 +232,9 @@
     {
       "id": "M2-33",
       "title": "CLI matrix executed against real PostgreSQL",
-      "owner": "M2F",
+      "owner": "M3",
       "excerpt": "It runs every command on SQLite, every supported command on PostgreSQL, every declared refusal, missing/malformed key cases, lost-response replay for mutators, no-SQLite-fallback s",
-      "reason": "Composite. Running every command on SQLite, every declared refusal, the missing/malformed key cases and the no-SQLite-fallback sentinels are executable at M2-complete and gate it. Only the live-PostgreSQL execution of the supported commands waits for the M3 adapter, and it is re-proved there. Deferring the whole sentence because one clause names PostgreSQL would have hidden the SQLite obligations from the gating count — the exact error this map exists to refuse."
+      "reason": "Running every supported command against a live PostgreSQL service needs the M3 adapter and a real service container, so this half cannot be executed at M2-complete. The SQLite run, the declared refusals and the classification contract are M2F and are carried by M2-32; splitting them is what keeps the owner column answerable by a reader who does not open the reason."
     },
     {
       "id": "M2-34",

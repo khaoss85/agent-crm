@@ -113,6 +113,34 @@ test('the rendered index disclaims exhaustiveness and completion', () => {
   assert.deepEqual(inspect(section, { ...data, entries: data.entries.slice(0, 5) }), []);
 });
 
+/**
+ * A reason is optional, but a coerced one publishes something nobody wrote
+ * while the run stays green — `[object Object]` in a document whose whole
+ * claim is that its entries are well-formed.
+ */
+test('a reason is null or real text, never coerced', () => {
+  const withReason = (reason) => ({ ...data, entries: data.entries.map((e, i) => (i === 0 ? { ...e, reason } : e)) });
+  for (const bad of [{}, ['a', 'b'], 42, '', '   ', true]) {
+    assert.ok(inspect(section, withReason(bad)).some((f) => /reason must be null or a non-empty string/.test(f)),
+      `${JSON.stringify(bad)} must be refused`);
+  }
+  assert.deepEqual(inspect(section, withReason(null)), []);
+  assert.deepEqual(inspect(section, withReason('a real reason')), []);
+});
+
+/**
+ * The script's own header is where a maintainer reads the contract, and it
+ * promised two things the gate cannot deliver: that a changed fingerprint makes
+ * a person re-read, and that every entry carries a reason. Ten do not.
+ */
+test('the script header promises only what the gate checks', () => {
+  const header = readFileSync(join(root, 'scripts', 'spine-v2-m2-map.js'), 'utf8').slice(0, 2600);
+  assert.match(header, /not evidence anyone re-read anything/);
+  assert.match(header, /a reason is optional/);
+  assert.doesNotMatch(header, /a person re-reads/);
+  assert.ok(data.entries.some((e) => e.reason === null), 'the optional-reason claim must describe the real inventory');
+});
+
 /** Every owner in the inventory is one the script publishes, so the two cannot drift apart. */
 test('owners come from the published list', () => {
   for (const entry of data.entries) assert.ok(OWNERS.includes(entry.owner), `${entry.id}: ${entry.owner}`);
