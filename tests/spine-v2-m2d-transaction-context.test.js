@@ -726,6 +726,23 @@ test('an async body handed to the synchronous transaction wrapper is refused bef
   assert.doesNotMatch(ran.stderr, /body rejects/,
     'the abandoned rejection is observed, not surfaced as a second unhandled error');
 
+  // …and the other half: a caller that does NOT catch must die of the **named
+  // refusal**, not of the body's abandoned rejection. Exit 0 above proves the
+  // process survives; this proves that when it does fail, it fails for the
+  // right reason. Without both, a fix that swallowed the refusal too would
+  // still pass the first assertion.
+  const uncaught = `
+    import { createDatabase } from ${JSON.stringify(new URL('../packages/core/src/database.js', import.meta.url).href)};
+    const db = createDatabase({ path: ':memory:' });
+    db.transaction(async () => { await new Promise((r) => setTimeout(r, 5)); throw new Error('body rejects'); });
+  `;
+  const bare = spawnSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', uncaught], { encoding: 'utf8' });
+  assert.notEqual(bare.status, 0, 'an unhandled refusal must still fail the process');
+  assert.match(bare.stderr, /SYNC_TRANSACTION_ASYNC_BODY/,
+    'it must die of the named refusal, which the caller can act on');
+  assert.doesNotMatch(bare.stderr, /body rejects/,
+    'and never of the abandoned body, which would name the wrong cause');
+
   await settled;
   assert.equal(afterResume, TRANSACTION_PROOF.NO_TRANSACTION,
     'the continuation must not be told it owns a transaction that was rolled back');
