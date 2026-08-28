@@ -3205,6 +3205,60 @@ the framework claims its own authority; and request payloads have
 server-controlled keys **stripped** rather than overridden, so the property no
 longer depends on the order of an object spread anywhere.
 
+#### Amendment 4 — a control mutation and its tenant audit cannot share a transaction
+
+Organization and Membership mutations live in the shared control plane; their
+security audit lives in the bound tenant data plane. Production Spine v1 wrote
+the control row first and then called the audit sink. If the second write failed,
+the caller received an error even though the authorization state had committed.
+Measured on `bootstrapOwner`: the membership was active, the data audit count
+was zero and the caller saw the injected failure. That is a false rollback over
+committed security state.
+
+**Decision: bounded immutable audit intent, not a claim of cross-database
+atomicity and not a general outbox.** Each of the four writers — Organization
+create and Membership bootstrap/grant/suspend — performs every state,
+authorization and concurrency read, the mutation and one audit intent inside a
+single `BEGIN IMMEDIATE` control transaction. Intent identity is the canonical
+tenant slug plus entity type/id and positive safe mutation revision. Its payload
+fingerprint is separate, so changed evidence under the same revision refuses
+rather than minting a second plausible audit.
+
+The destination has two persistent parts. The tenant data file mints an opaque
+random marker `{tenant slug, dataPlaneId}` first. The control mapping is keyed by
+slug and may begin with a NULL id when another Organization is provisioned in
+the shared control plane; the first application configured for that tenant CASes
+NULL to its own marker id. A different physical file mints a different id and
+loses stably. This is **first-configured-file-wins**, not resource attestation:
+a copied file carries the marker, and leases, clone promotion and external
+resource identity remain later M4 work.
+
+Delivery order is load-bearing and never holds both SQLite write locks:
+
+```text
+short control eligibility transaction
+→ independently committed exact data-audit transaction
+→ short control pending-to-delivered CAS
+```
+
+A crash after the data commit leaves the intent pending; retry verifies the same
+exact audit and closes it. A caller-owned transaction on either plane refuses
+namedly, because joining it could mark an audit delivered before the caller
+rolls the data write back. A poisoned pending intent is reported independently
+and cannot starve later work; each pass is bounded while its `pending` count is
+exact.
+
+Compatibility is explicit. The public
+`createSpineStore({database,audit?,now?})` still accepts the framework wrapper or
+direct SQLite input, returns only Organizations/Memberships and keeps its v1
+error precedence and successful result shapes. Public `AuditLog.record()` still
+owns id and time. Exact insertion and the recoverable store are deep-internal,
+unexported factories. On delivery failure only, the committed entity gains a
+bounded `committed_with_pending_audit` receipt; ordinary success stays
+byte-shape compatible. The application exposes one tenant-scoped, frozen
+`auditIntents` contract for bounded listing and explicit reconciliation. It is
+not a lease, retry worker, scheduler, arbitrary message queue or deletion API.
+
 
 ### The spine is opt-in, and its absence is loud
 
