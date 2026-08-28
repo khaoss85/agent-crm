@@ -83,6 +83,32 @@ providers, not where the domain lives.
 Columns are the six built domains. Read a row as: *does this domain use this
 horizontal capability the way the contract intends?*
 
+### Deployment-storage loader contract v1 assessment (Production Spine v2 M2F)
+
+The shared deployment-storage loader is a horizontal *runtime* capability: every
+executable will eventually select adapter and spine binding through one closed
+document. Domains do not select storage and must not import the loader. This PR
+ships the parser only; CLI/serve/MCP wiring and public-locator replacement are
+named follow-ups.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project records do not select the deployment adapter |
+| Pipeline | `not_applicable` | pipeline composition does not load deployment storage |
+| Lead Intelligence | `not_applicable` | package behaviour does not select the storage adapter |
+| Commercial Operations | `not_applicable` | package behaviour does not select the storage adapter |
+| Signature & Order | `not_applicable` | package behaviour does not select the storage adapter |
+| Contract Activation | `not_applicable` | package behaviour does not select the storage adapter |
+| Delivery | `not_applicable` | package behaviour does not select the storage adapter |
+| Service | `not_applicable` | package behaviour does not select the storage adapter |
+| Work | `not_applicable` | package behaviour does not select the storage adapter |
+| Lifecycle | `not_applicable` | package behaviour does not select the storage adapter |
+| Customer Data | `not_applicable` | package behaviour does not select the storage adapter |
+| Custom-package fixture | `not_applicable` | customer packages receive no deployment-storage document |
+
+Closing the consumer gap (factory/CLI/MCP and public `{adapter, available}`
+surfaces) is later M2F work, not a per-domain backfill.
+
 ### Public site provenance contract v2 assessment
 
 `/version.json` v2 is a horizontal discovery contract for the generated public
