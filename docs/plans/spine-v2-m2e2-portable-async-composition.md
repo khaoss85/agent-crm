@@ -151,18 +151,18 @@ never to the pool.
 
 ### 2A — contract, preflight and lifecycle (this PR)
 
-1. Add this complete plan before source changes.
-2. Add failing-first tests for v1-only, mixed and uniform-v2 selected graphs.
+1. [x] Add this complete plan before source changes.
+2. [x] Add failing-first tests for v1-only, mixed and uniform-v2 selected graphs.
    Refusal must happen before a SQLite path/directory, migration, opener spy,
    provider spy or listener can move.
-3. Add the source-private preflight and lifecycle. Do not export it from
+3. [x] Add the source-private preflight and lifecycle. Do not export it from
    `packages/app/src/index.js` or `packages/core/index.js`.
-4. Prove a real v2 SQLite child process can open, transact through the storage
+4. [x] Prove a real v2 SQLite child process can open, transact through the storage
    seam, read its committed result and close. A direct in-process call alone is
    insufficient.
-5. Fault post-open assembly and close independently. Prove owned cleanup runs
+5. [x] Fault post-open assembly and close independently. Prove owned cleanup runs
    once, close is idempotent, and cleanup never masks the startup cause.
-6. Re-run sync factory characterization: exact public export, non-thenable
+6. [x] Re-run sync factory characterization: exact public export, non-thenable
    return, immediate reads and existing application suites.
 
 Exit: lifecycle/preflight are usable only by source-private imports; no second
@@ -232,6 +232,11 @@ Required observations:
   inspection and the v1 factory/database sources. Chose a source-private 2A
   because the checked-in graph remains v1 and a public factory whose default
   always refuses fails the DX Simplicity Gate.
+- **2026-08-28:** Added `packages/app/src/async-lifecycle.js` (not exported) and
+  `tests/spine-v2-m2e2-async-lifecycle.test.js`. Preflight reads the selected
+  contract once, delegates package problems to M2E-1 composition, and opens
+  SQLite only after a uniform v2 graph is accepted. Close is one shared
+  promise; assembly failure closes the adapter without replacing the cause.
 
 ## Decision log
 
@@ -252,6 +257,6 @@ Required observations:
 
 ## Outcome and follow-up
 
-Not implemented yet. 2A stops at private preflight/lifecycle evidence. 2B owns
+2A is implemented as source-private preflight/lifecycle evidence. 2B owns
 the private portable graph/facade, 2C owns awaited HTTP/security entry points,
 and M2E-3 owns dual bundled definitions plus any honest public factory export.
