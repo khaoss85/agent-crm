@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { AppError, NotFoundError, ValidationError, normalizeError } from './errors.js';
 import { nowIso } from './time.js';
+import { createExecutionRunStore } from './execution-run-store.js';
 // Cycle-safe: both modules export hoisted function declarations only, and
 // neither touches the other at module-evaluation time (ADR-017).
 import { runExternalOperation } from './external-operation.js';
@@ -489,33 +490,19 @@ function safeActor(actor) {
 /**
  * Best-effort operation trace writer, shared with app-level operations that
  * follow the action envelope (e.g. catalog sync, ADR-016).
+ *
+ * This is the published surface; `createExecutionRunStore` is the internal
+ * primitive underneath it, shared with the workflow engine so one run row and
+ * one span row mean the same thing whichever runtime produced them. **The
+ * best-effort rule lives at the call site, not here** — every caller wraps this
+ * in a `try`/`catch` that logs and swallows, because a trace write failure must
+ * never mask the action's real outcome (ADR-012/016). This function throws, and
+ * always did.
+ *
  * @param {any} database @param {{runId: string, workflowName: string, status: string, input: unknown, output: unknown, error: string | null, startedAt: string, steps: Array<{name: string, status: string, output?: unknown, error?: string}>}} run
  */
 export function writeTrace(database, run) {
-  const finishedAt = nowIso();
-  database.raw
-    .prepare(
-      `INSERT INTO workflow_runs(id, workflow_name, status, input_json, output_json, error, started_at, finished_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(run.runId, run.workflowName, run.status, safeJson(run.input), safeJson(run.output), run.error, run.startedAt, finishedAt);
-  for (const step of run.steps) {
-    database.raw
-      .prepare(
-        `INSERT INTO trace_spans(id, run_id, parent_span_id, name, status, input_json, output_json, error, started_at, finished_at)
-         VALUES (?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?)`,
-      )
-      .run(randomUUID(), run.runId, step.name, step.status, safeJson(step.output ?? null), step.error ?? null, run.startedAt, finishedAt);
-  }
-}
-
-/** @param {unknown} value */
-function safeJson(value) {
-  try {
-    return JSON.stringify(value ?? null);
-  } catch {
-    return JSON.stringify({ unserializable: true });
-  }
+  createExecutionRunStore(database).recordRun(run);
 }
 
 export { ValidationError, NotFoundError };
