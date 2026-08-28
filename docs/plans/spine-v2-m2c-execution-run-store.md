@@ -270,8 +270,20 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   constructs; `suppliedShape` reads the named fields and ignores the rest for
   `recordRun` and each step. Both keep the plain-object test, the required-field
   test and `Object.hasOwn` reads. A test pins that an extra field writes the
-  trace unchanged **through `writeTrace`**, and that the `spans:` typo is still
-  refused.
+  trace unchanged **through `writeTrace`**, that no unnamed field reaches a
+  stored byte, and that the `spans:` typo is still refused.
+  **The honest residual, because the justification above is narrower than it
+  reads.** The required-field rule catches a caller who *omits* `steps`. It does
+  not catch one who passes `steps: []` **alongside** a populated
+  differently-named field — that writes a spanless run and reports success,
+  which is the failure mode the closed check originally cited. Verified:
+  `steps: []` with a populated `spans:` is accepted, one run row, zero spans.
+  It is **not** a defect and refusing it would be wrong, because `steps: []` is
+  indistinguishable from a legitimate no-span run and the store has no basis to
+  tell them apart. Recorded here rather than left implied, because this plan
+  re-argues the justification and a justification stated more broadly than its
+  evidence is the defect this milestone kept finding in its own prose.
+  Found by Worker B's delta review.
 - **`MAX_SPANS` is the one place this milestone deliberately sacrifices
   evidence to avoid a crash — and the sacrifice is silent, because the caller
   swallows the refusal.** It is kept, and it is not pure preservation: the

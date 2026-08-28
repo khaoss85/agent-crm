@@ -635,7 +635,30 @@ test('a caller may carry extra fields; a missing one is still refused', (t) => {
     runId: 'r2', steps: [{ name: 'a', status: 'completed', durationMs: 5 }],
   }));
   assert.deepEqual(runRows(database).map((row) => row.id), ['r1', 'r2'],
-    'both traces are written, with the extra fields simply unread');
+    'both traces are written');
+
+  // **"Simply unread" is the property this relaxation rests on, so it is
+  // asserted rather than described** — a claim in a comment that no assertion
+  // covers is exactly the shape this PR spent four review rounds removing.
+  //
+  // What this pins, stated precisely: the observable property a caller cares
+  // about, that no unnamed field reaches a stored byte. It does NOT isolate
+  // which mechanism guarantees it, and that was checked rather than assumed —
+  // rewriting `own` to copy every own key leaves this test green, because the
+  // inserts name their columns explicitly and a stray key in `own` still
+  // reaches no row. Two independent mechanisms hold the property, so no single
+  // mutation can break it; the assertion is worth having for the boundary it
+  // watches, not as a guard on either one.
+  const stored = JSON.stringify(runRows(database).concat(
+    spanRows(database, 'r1'), spanRows(database, 'r2'),
+  ));
+  for (const leaked of ['tenantId', 'traceVersion', 'durationMs']) {
+    assert.doesNotMatch(stored, new RegExp(leaked),
+      `an unnamed field must reach no stored byte: ${leaked}`);
+  }
+  assert.deepEqual(Object.keys(runRows(database)[0]), [
+    'id', 'workflow_name', 'status', 'input_json', 'output_json', 'error', 'started_at', 'finished_at',
+  ], 'and the row carries exactly the columns the schema declares');
 
   // **What still carries the weight is the MISSING field, not the extra one.**
   // I originally justified the closed check by saying a caller passing
@@ -648,6 +671,10 @@ test('a caller may carry extra fields; a missing one is still refused', (t) => {
   assert.throws(() => store.recordRun(/** @type {any} */ (withoutSteps)),
     /requires own field "steps"/);
   assert.throws(() => store.recordRun(/** @type {any} */ ('nope')), /must be a plain object/);
+  // A null-prototype bag carrying every correct field is still not the shape
+  // this contract names, and `suppliedShape` keeps that test.
+  assert.throws(() => store.recordRun(Object.assign(Object.create(null), recordedRun({ runId: 'r5' }))),
+    /must be a plain object/);
 
   // The shapes the store OWNS keep the closed check: an unnamed key there means
   // a caller is using an API that does not exist.
