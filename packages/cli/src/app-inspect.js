@@ -8,7 +8,6 @@ import { actionMetadata } from '../../core/src/action-registry.js';
 import { resolvePackageComposition } from '../../core/src/package-composition.js';
 import { readModuleState } from '../../core/src/module-evolution.js';
 import { SUPPORTED_PACKAGE_CONTRACT } from '../../core/src/package-registry.js';
-import { DEFAULT_CAPABILITY_CONTRACT } from '../../core/src/package-contract-versions.js';
 import { repoRelative, safeMessage } from './safe-text.js';
 
 /**
@@ -237,6 +236,14 @@ export async function inspectApplication({ rootDir: requested }) {
     });
   }
 
+  /** Accepted capability facts, snapshotted by composition before observers run. */
+  const capabilityFactsByPackage = new Map();
+  for (const value of composition.capabilities.values()) {
+    const entries = capabilityFactsByPackage.get(value.package) ?? [];
+    entries.push(value);
+    capabilityFactsByPackage.set(value.package, entries);
+  }
+
   const packages = [...composition.packages.values()]
     .map((pkg) => ({
       name: pkg.name,
@@ -249,11 +256,11 @@ export async function inspectApplication({ rootDir: requested }) {
       requires: (pkg.requires ?? [])
         .map((entry) => ({ package: entry.package, capability: entry.capability, version: entry.version }))
         .sort((a, b) => compare(`${a.package}/${a.capability}@${a.version}`, `${b.package}/${b.capability}@${b.version}`)),
-      provides: (pkg.capabilities ?? [])
+      provides: (capabilityFactsByPackage.get(pkg.name) ?? [])
         .map((entry) => ({
           name: entry.name,
           version: entry.version,
-          capabilityContract: entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
+          capabilityContract: entry.capabilityContract,
           description: entry.description ?? null,
         }))
         .sort((a, b) => compare(`${a.name}@${a.version}`, `${b.name}@${b.version}`)),
@@ -280,13 +287,13 @@ export async function inspectApplication({ rootDir: requested }) {
   const capabilityRows = new Map();
   for (const [key, value] of composition.capabilities) {
     capabilityRows.set(key, {
-      name: value.entry.name,
-      version: value.entry.version,
+      name: value.name,
+      version: value.version,
       capabilityContract: value.capabilityContract,
       provider: value.package,
       consumers: [],
       status: 'resolved',
-      description: value.entry.description ?? null,
+      description: value.description ?? null,
     });
   }
   for (const pkg of composition.packages.values()) {

@@ -100,52 +100,41 @@ function validationDiagnosticValue(value) {
   return validationDiagnosticText(value);
 }
 
+/** Demonstrated misspellings whose acceptance hides contract 2 as v1. */
+const CAPABILITY_CONTRACT_TYPOS = new Set([
+  'capabiltycontract',
+  'capabilitiycontract',
+  'capabilitycontrcat',
+  'capabilitycontarct',
+  'capabilitycontrxct',
+]);
+
 /**
- * Refuse one-character damage to the two closed capability-contract key
- * spellings. This is deliberately not a general fuzzy-key matcher: only the
- * compact canonical names participate, and the only tolerated distance is one
- * insertion/deletion/substitution or one adjacent transposition. Ordinary
- * metadata such as `contractor`, `contractNotes` and `capabilityContractor` is
- * not close enough to either closed name.
- *
- * @param {string} compact
+ * Refuse only names that state clear capability-contract intent. A generic
+ * edit-distance rule also catches useful metadata words such as
+ * `capabilityContact` and `capabilityContrast`, so the closed spelling family
+ * and the typo probes that caused real Promise-as-v1 failures are explicit.
  */
-function isOneCharacterCapabilityContractTypo(compact) {
-  for (const canonical of ['capabilitycontract', 'capabilitiescontract']) {
-    const delta = compact.length - canonical.length;
-    if (Math.abs(delta) > 1 || compact === canonical) continue;
+function isCapabilityContractTypo(key) {
+  if (key === 'capabilityContract') return false;
+  const compact = key.replace(/[^a-zA-Z0-9]+/g, '').toLowerCase();
+  return /^(?:capability|capabilities)contracts*(?:versions?)?$/.test(compact)
+    || CAPABILITY_CONTRACT_TYPOS.has(compact);
+}
 
-    if (delta === 0) {
-      const different = [];
-      for (let index = 0; index < canonical.length; index += 1) {
-        if (compact[index] !== canonical[index]) different.push(index);
-      }
-      if (different.length === 1) return true;
-      if (different.length === 2
-        && different[1] === different[0] + 1
-        && compact[different[0]] === canonical[different[1]]
-        && compact[different[1]] === canonical[different[0]]) return true;
-      continue;
-    }
-
-    const shorter = delta < 0 ? compact : canonical;
-    const longer = delta < 0 ? canonical : compact;
-    let shortIndex = 0;
-    let longIndex = 0;
-    let edits = 0;
-    while (shortIndex < shorter.length && longIndex < longer.length) {
-      if (shorter[shortIndex] === longer[longIndex]) {
-        shortIndex += 1;
-        longIndex += 1;
-      } else {
-        edits += 1;
-        if (edits > 1) break;
-        longIndex += 1;
-      }
-    }
-    if (edits <= 1 && shortIndex === shorter.length) return true;
+/**
+ * Property names are declarations too. Walk class prototypes and
+ * non-enumerable properties so an inherited typo cannot hide contract 2,
+ * while never reading the corresponding values or invoking their getters.
+ */
+function declarationPropertyNames(entry) {
+  const names = new Set();
+  let cursor = entry;
+  while (cursor && cursor !== Object.prototype) {
+    for (const name of Object.getOwnPropertyNames(cursor)) names.add(name);
+    cursor = Object.getPrototypeOf(cursor);
   }
-  return false;
+  return names;
 }
 
 /**
@@ -189,9 +178,14 @@ function assertVersion(label, value, field) {
  * belong to the registry, because they are only answerable once the whole
  * composition is known.
  *
+ * This source-only export is the composition authority's internal view; the
+ * public kernel exports `validatePackageDefinition`, whose return remains the
+ * exact definition object for package-author compatibility.
+ *
  * @param {any} pkg
+ * @returns {{capabilities: readonly {entry: any, name: string, version: number, capabilityContract: number, description?: string}[]}}
  */
-export function validatePackageDefinition(pkg) {
+export function validatePackageDefinitionForComposition(pkg) {
   if (!pkg || typeof pkg !== 'object' || Array.isArray(pkg)) {
     throw new ValidationError('Domain package definition must be an object');
   }
@@ -279,19 +273,27 @@ export function validatePackageDefinition(pkg) {
   // capability participates in the caller's transaction without ever exposing
   // a private service or table.
   const offered = new Set();
+  const capabilityFacts = [];
   for (const entry of pkg.capabilities ?? []) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       throw new ValidationError(`${label}: each capability entry must be an object`);
     }
-    if (typeof entry.name !== 'string' || !NAME_RE.test(entry.name)) {
+    // Read each declarative fact exactly once. Accessors are executable code:
+    // validating one value and later publishing another would make the graph
+    // contradict the application that was allowed to boot.
+    const name = entry.name;
+    const version = entry.version;
+    const declaredContract = entry.capabilityContract;
+    const description = entry.description;
+    if (typeof name !== 'string' || !NAME_RE.test(name)) {
       throw new ValidationError(`${label}: capability name must match ${NAME_RE}`);
     }
-    assertVersion(label, entry.version, 'capability version');
+    assertVersion(label, version, 'capability version');
     if (typeof entry.create !== 'function') {
-      throw new ValidationError(`${label}: capability "${validationDiagnosticText(entry.name)}" must declare create()`);
+      throw new ValidationError(`${label}: capability "${validationDiagnosticText(name)}" must declare create()`);
     }
-    if (entry.description !== undefined && (typeof entry.description !== 'string' || entry.description.length > MAX_DESCRIPTION)) {
-      throw new ValidationError(`${label}: capability "${validationDiagnosticText(entry.name)}" description must be a bounded string`);
+    if (description !== undefined && (typeof description !== 'string' || description.length > MAX_DESCRIPTION)) {
+      throw new ValidationError(`${label}: capability "${validationDiagnosticText(name)}" description must be a bounded string`);
     }
     // **The capability contract, declared where composition can read it.**
     // Before M2E-1 this field existed only on the object `create()` returns —
@@ -300,10 +302,10 @@ export function validatePackageDefinition(pkg) {
     // already made this argument about capability summaries: a frozen summary
     // carries no function "so the declaration stays the truth rather than a
     // comment". Same object, same fix.
-    if (entry.capabilityContract !== undefined
-      && !SUPPORTED_CAPABILITY_CONTRACTS.includes(entry.capabilityContract)) {
+    if (declaredContract !== undefined
+      && !SUPPORTED_CAPABILITY_CONTRACTS.includes(declaredContract)) {
       throw new ValidationError(
-        `${label}: capability "${validationDiagnosticText(entry.name)}" capabilityContract must be one of ${SUPPORTED_CAPABILITY_CONTRACTS.join(', ')} (received ${validationDiagnosticValue(entry.capabilityContract)})`,
+        `${label}: capability "${validationDiagnosticText(name)}" capabilityContract must be one of ${SUPPORTED_CAPABILITY_CONTRACTS.join(', ')} (received ${validationDiagnosticValue(declaredContract)})`,
       );
     }
     // **A typo'd contract key is refused, because a default protects the value
@@ -313,33 +315,24 @@ export function validatePackageDefinition(pkg) {
     // Refusing an unnamed key is justified precisely when accepting it would be
     // silently *misread*, which is what distinguishes this from the fields a
     // caller may harmlessly carry past an evidence writer.
-    const strayContract = Object.keys(entry).find((key) => {
-      if (key === 'capabilityContract') return false;
-      const tokens = key
-        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-        .split(/[^a-zA-Z0-9]+/)
-        .filter(Boolean)
-        .map((token) => token.toLowerCase());
-      const compact = tokens.join('');
-      const normalized = tokens.map((token) => {
-        if (token === 'capabilities') return 'capability';
-        if (token === 'contracts') return 'contract';
-        return token;
-      });
-      return (normalized.includes('contract') && normalized.includes('capability'))
-        || /^(?:capability|capabilities)contracts?(?:version)?$/.test(compact)
-        || isOneCharacterCapabilityContractTypo(compact);
-    });
+    const strayContract = [...declarationPropertyNames(entry)].find(isCapabilityContractTypo);
     if (strayContract !== undefined) {
       throw new ValidationError(
-        `${label}: capability "${validationDiagnosticText(entry.name)}" declares "${validationDiagnosticText(strayContract)}"; did you mean capabilityContract?`,
+        `${label}: capability "${validationDiagnosticText(name)}" declares "${validationDiagnosticText(strayContract)}"; did you mean capabilityContract?`,
       );
     }
-    const key = `${entry.name}@${entry.version}`;
+    const key = `${name}@${version}`;
     if (offered.has(key)) {
       throw new ValidationError(`${label}: duplicate capability ${validationDiagnosticText(key)}`);
     }
     offered.add(key);
+    capabilityFacts.push(Object.freeze({
+      entry,
+      name,
+      version,
+      capabilityContract: declaredContract ?? DEFAULT_CAPABILITY_CONTRACT,
+      description,
+    }));
   }
 
   for (const entry of pkg.policies ?? []) {
@@ -417,6 +410,17 @@ export function validatePackageDefinition(pkg) {
       throw new ValidationError(`${label}: operation "${entry.name}" must declare create()`);
     }
   }
+  return Object.freeze({ capabilities: Object.freeze(capabilityFacts) });
+}
+
+/**
+ * Public validating identity. Composition uses the internal snapshot-returning
+ * variant above; package authors keep the historical exact-object return.
+ *
+ * @param {any} pkg
+ */
+export function validatePackageDefinition(pkg) {
+  validatePackageDefinitionForComposition(pkg);
   return pkg;
 }
 
@@ -486,7 +490,7 @@ export class PackageRegistry {
   #packages;
   /** @type {Map<string, {domain: string, kind: string, definition: any, fingerprint: string}>} */
   #policies;
-  /** @type {Map<string, {package: string, entry: any, capabilityContract: number}>} */
+  /** @type {Map<string, {package: string, entry: any, name: string, version: number, capabilityContract: number, description?: string}>} */
   #capabilities;
   /** @type {Map<string, string>} */
   #resources;
@@ -509,6 +513,11 @@ export class PackageRegistry {
     this.#resources = resolved.resources;
     this.#capabilities = resolved.capabilities;
     this.#policies = resolved.policies;
+  }
+
+  /** Declarative capability snapshots in original registration order. */
+  #providedBy(packageName) {
+    return [...this.#capabilities.values()].filter((entry) => entry.package === packageName);
   }
 
   /** Every action contributed by every registered package, in registration order. */
@@ -566,11 +575,11 @@ export class PackageRegistry {
       resources: Object.freeze([...(pkg.resources ?? [])].sort()),
       requires: Object.freeze((pkg.requires ?? [])
         .map((entry) => Object.freeze({ package: entry.package, capability: entry.capability, version: entry.version }))),
-      provides: Object.freeze((pkg.capabilities ?? [])
+      provides: Object.freeze(this.#providedBy(name)
         .map((entry) => Object.freeze({
           name: entry.name,
           version: entry.version,
-          capabilityContract: entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
+          capabilityContract: entry.capabilityContract,
         }))),
       actions: Object.freeze((pkg.actions ?? []).map((action) => `${action.module}.${action.name}`).sort()),
       operations: Object.freeze((pkg.operations ?? [])
@@ -712,11 +721,11 @@ export class PackageRegistry {
         requires: (pkg.requires ?? [])
           .map((entry) => ({ package: entry.package, capability: entry.capability, version: entry.version }))
           .sort((a, b) => (`${a.package}/${a.capability}` < `${b.package}/${b.capability}` ? -1 : 1)),
-        provides: (pkg.capabilities ?? [])
+        provides: this.#providedBy(name)
           .map((entry) => ({
             name: entry.name,
             version: entry.version,
-            capabilityContract: entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
+            capabilityContract: entry.capabilityContract,
             ...(entry.description ? { description: entry.description } : {}),
           }))
           .sort((a, b) => (a.name === b.name ? a.version - b.version : a.name < b.name ? -1 : 1)),
@@ -769,7 +778,7 @@ export class PackageRegistry {
             .map((entry) => `${entry.kind}/${entry.definition.name}@${entry.definition.version}`)
             .sort(),
           requires: (pkg.requires ?? []).map((entry) => `${entry.package}/${entry.capability}@${entry.version}`).sort(),
-          provides: (pkg.capabilities ?? []).map((entry) => `${entry.name}@${entry.version}`).sort(),
+          provides: this.#providedBy(pkg.name).map((entry) => `${entry.name}@${entry.version}`).sort(),
         }))
         .sort((a, b) => (a.name < b.name ? -1 : 1)),
     };

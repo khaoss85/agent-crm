@@ -2,10 +2,8 @@
 
 import { AppError, ValidationError } from './errors.js';
 import { computeDefinitionFingerprint } from './definition-fingerprint.js';
-import { validatePackageDefinition } from './package-registry.js';
-import {
-  DEFAULT_CAPABILITY_CONTRACT, SUPPORTED_PACKAGE_CONTRACTS,
-} from './package-contract-versions.js';
+import { validatePackageDefinitionForComposition } from './package-registry.js';
+import { SUPPORTED_PACKAGE_CONTRACTS } from './package-contract-versions.js';
 
 /**
  * **Composition resolution** — the rules that decide whether a set of package
@@ -43,11 +41,6 @@ function safeName(pkg) {
   return typeof name === 'string' ? name.slice(0, 64) : '(unnamed)';
 }
 
-/** Contract semantics are normalized without rewriting executable source. */
-function capabilityContractOf(entry) {
-  return entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT;
-}
-
 function isKnownContract(value) {
   return SUPPORTED_PACKAGE_CONTRACTS.includes(value);
 }
@@ -83,7 +76,7 @@ function asyncContractError(message, details) {
  *   problems: CompositionProblem[],
  *   packages: Map<string, any>,
  *   resources: Map<string, string>,
- *   capabilities: Map<string, {package: string, entry: any, capabilityContract: number}>,
+ *   capabilities: Map<string, {package: string, entry: any, name: string, version: number, capabilityContract: number, description?: string}>,
  *   policies: Map<string, {domain: string, kind: string, definition: any, fingerprint: string}>,
  * }}
  */
@@ -94,8 +87,10 @@ export function resolvePackageComposition(list = []) {
   const packages = new Map();
   /** @type {Map<string, string>} */
   const resources = new Map();
-  /** @type {Map<string, {package: string, entry: any, capabilityContract: number}>} */
+  /** @type {Map<string, {package: string, entry: any, name: string, version: number, capabilityContract: number, description?: string}>} */
   const capabilities = new Map();
+  /** @type {Map<string, readonly any[]>} accepted declarative facts, by package */
+  const packageCapabilities = new Map();
   /** @type {Map<string, {domain: string, kind: string, definition: any, fingerprint: string}>} */
   const policies = new Map();
   /** @type {Map<string, string>} appMethod alias → owning package (ADR-032) */
@@ -106,8 +101,9 @@ export function resolvePackageComposition(list = []) {
   };
 
   for (const declared of list ?? []) {
+    let validated;
     try {
-      validatePackageDefinition(declared);
+      validated = validatePackageDefinitionForComposition(declared);
     } catch (error) {
       // A definition that does not satisfy the contract is not registered at
       // all: every later rule would be asking questions of a shape that has
@@ -130,6 +126,7 @@ export function resolvePackageComposition(list = []) {
       continue;
     }
     packages.set(pkg.name, pkg);
+    packageCapabilities.set(pkg.name, validated.capabilities);
 
     // A resource belongs to exactly one package: two packages claiming the
     // same record module would fight over its table and its meaning.
@@ -145,8 +142,8 @@ export function resolvePackageComposition(list = []) {
       resources.set(resource, pkg.name);
     }
 
-    for (const entry of pkg.capabilities ?? []) {
-      const key = `${entry.name}@${entry.version}`;
+    for (const fact of validated.capabilities) {
+      const key = `${fact.name}@${fact.version}`;
       const existing = capabilities.get(key);
       if (existing !== undefined) {
         const displayedKey = contractDiagnosticIdentity(key);
@@ -156,11 +153,10 @@ export function resolvePackageComposition(list = []) {
         });
         continue;
       }
-      capabilities.set(key, {
+      capabilities.set(key, Object.freeze({
         package: pkg.name,
-        entry,
-        capabilityContract: capabilityContractOf(entry),
-      });
+        ...fact,
+      }));
     }
 
     // Declared operation aliases share ONE application surface (ADR-032): two
@@ -223,10 +219,10 @@ export function resolvePackageComposition(list = []) {
         name: contractDiagnosticIdentity(entry.name),
         contract: entry.operationContract,
       })),
-      ...(pkg.capabilities ?? []).map((entry) => ({
+      ...(packageCapabilities.get(pkg.name) ?? []).map((entry) => ({
         kind: 'capability',
         name: contractDiagnosticIdentity(`${entry.name}@${entry.version}`),
-        contract: capabilityContractOf(entry),
+        contract: entry.capabilityContract,
       })),
     ];
     for (const member of members) {

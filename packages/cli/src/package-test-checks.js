@@ -2,12 +2,11 @@
 
 import { readFileSync } from 'node:fs';
 import {
-  PackageRegistry, validatePackageDefinition,
+  PackageRegistry,
 } from '../../core/index.js';
 import { resolvePackageComposition } from '../../core/src/package-composition.js';
-import {
-  DEFAULT_CAPABILITY_CONTRACT, SUPPORTED_PACKAGE_CONTRACTS,
-} from '../../core/src/package-contract-versions.js';
+import { validatePackageDefinitionForComposition } from '../../core/src/package-registry.js';
+import { SUPPORTED_PACKAGE_CONTRACTS } from '../../core/src/package-contract-versions.js';
 import { importSpecifiers, importsPrivateKernelPath, packageSources } from './package-sources.js';
 
 /**
@@ -74,8 +73,9 @@ export function runDeclarationChecks({ definition, dir }) {
   const problems = [];
 
   let valid = true;
+  let validated = null;
   try {
-    validatePackageDefinition(definition);
+    validated = validatePackageDefinitionForComposition(definition);
   } catch (error) {
     valid = false;
     problems.push({ code: 'PACKAGE_INVALID', message: error instanceof Error ? error.message : String(error) });
@@ -105,7 +105,9 @@ export function runDeclarationChecks({ definition, dir }) {
   const actions = (definition?.actions ?? []).map((action) => `${action?.module}.${action?.name}`).sort();
   const requires = (definition?.requires ?? [])
     .map((entry) => `${entry?.package}/${entry?.capability}@${entry?.version}`).sort();
-  const provides = (definition?.capabilities ?? []).map((entry) => `${entry?.name}@${entry?.version}`).sort();
+  const provides = valid
+    ? validated.capabilities.map((entry) => `${entry.name}@${entry.version}`).sort()
+    : (definition?.capabilities ?? []).map((entry) => `${entry?.name}@${entry?.version}`).sort();
   checks.push(check('declaration.surface', 'declaration', PASSED,
     `${resources.length} resource(s), ${actions.length} action(s), ${requires.length} declared dependency(ies), ${provides.length} capability(ies) offered`,
     undefined, 'package-contract'));
@@ -267,7 +269,11 @@ export function runCompositionChecks({ definition, providers }) {
   }
 
   // Two packages cannot offer one capability at one version.
-  const offered = definition?.capabilities ?? [];
+  // Use the composition snapshot, not mutable declaration accessors. The
+  // collision probe must test the same identity/version/contract that this
+  // composition accepted and that runtime observers publish.
+  const offered = [...resolvePackageComposition([{ ...definition, requires: [] }]).capabilities.values()]
+    .filter((entry) => entry.package === definition.name);
   if (offered.length === 0) {
     checks.push(check('compose.capability-collision-refused', 'composition', 'not_applicable',
       'the package offers no capability', 'NO_CAPABILITIES_OFFERED', 'composition'));
@@ -282,7 +288,7 @@ export function runCompositionChecks({ definition, providers }) {
             capabilities: [{
               name: offered[0].name,
               version: offered[0].version,
-              capabilityContract: offered[0].capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
+              capabilityContract: offered[0].capabilityContract,
               create: () => ({}),
             }],
           },

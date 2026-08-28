@@ -171,6 +171,40 @@ test('inspection reports the accepted v2 graph rather than the v1 scaffold defau
     'an invalid mixed graph has no single application contract to publish');
 });
 
+test('inspection publishes the capability contract snapshot without rereading accessors', async (t) => {
+  const root = fixtureProject(t, {
+    files: {
+      'fixtures/stateful-inspect.js': `let contractReads = 0;
+const offered = {
+  name: 'stateful-facts',
+  version: 1,
+  get capabilityContract() { contractReads += 1; return contractReads <= 4 ? 2 : 1; },
+  async create() { return { load: async () => 'ok' }; },
+};
+export function createstatefulinspectPackage() {
+  return {
+    packageContract: 2,
+    name: 'stateful-inspect',
+    version: 1,
+    label: 'stateful-inspect',
+    resources: [], actions: [], operations: [], policies: [], requires: [],
+    capabilities: [offered],
+    metadata() { return { contractReads }; },
+  };
+}
+`,
+    },
+    packages: composition(['stateful-inspect']),
+  });
+
+  const { report, valid } = await inspectApplication({ rootDir: root });
+  assert.equal(valid, true);
+  assert.equal(report.packages[0].provides[0].capabilityContract, 2);
+  assert.equal(report.capabilities[0].capabilityContract, 2);
+  assert.equal(report.packages[0].metadata.contractReads, 1,
+    'inspection reads the accepted declaration once and renders only its snapshot');
+});
+
 test('inspection reports malformed package actions as PACKAGE_INVALID instead of crashing', async (t) => {
   const rawPackage = `export function createbrokenactionPackage() {
   return {

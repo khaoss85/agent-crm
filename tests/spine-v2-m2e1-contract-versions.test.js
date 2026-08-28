@@ -52,6 +52,8 @@ test('capabilityContract absence resolves to v1 before any downstream consumer o
   assert.strictEqual(resolved.packages.get('absent-provider'), absent,
     'composition does not clone executable definitions to materialize the default');
   assert.strictEqual(resolved.capabilities.get('absent-cap@1').entry, absent.capabilities[0]);
+  assert.equal(Object.isFrozen(resolved.capabilities.get('absent-cap@1')), true,
+    'the accepted declarative snapshot cannot drift after composition');
   assert.equal(resolved.capabilities.get('absent-cap@1').capabilityContract, 1);
   assert.equal(resolved.capabilities.get('explicit-cap@1').capabilityContract, 1);
 
@@ -129,6 +131,51 @@ test('capability normalization preserves executable declaration identity and pro
     'private-field branding survives because no clone or Proxy becomes the receiver');
   assert.equal(Object.hasOwn(declaredCapability, 'capabilityContract'), false,
     'normalization does not mutate the source declaration');
+});
+
+test('capability declaration facts are snapshotted once while runtime keeps the original receiver', async () => {
+  let nameReads = 0;
+  let versionReads = 0;
+  let contractReads = 0;
+  let descriptionReads = 0;
+  let createReceiver = null;
+  const declaredCapability = {
+    get name() { nameReads += 1; return 'stateful-capability'; },
+    get version() { versionReads += 1; return 1; },
+    // The first four reads let the pre-fix composition accept a uniform v2
+    // graph; every observer after that sees a contradictory v1 declaration.
+    get capabilityContract() { contractReads += 1; return contractReads <= 4 ? 2 : 1; },
+    get description() { descriptionReads += 1; return 'stateful declaration'; },
+    async create() {
+      createReceiver = this;
+      return { declaration: this };
+    },
+  };
+  const provider = pkg('stateful-provider', 2, { capabilities: [declaredCapability] });
+  const consumer = pkg('stateful-consumer', 2, {
+    requires: [{ package: 'stateful-provider', capability: 'stateful-capability', version: 1 }],
+  });
+
+  const registry = new PackageRegistry({ packages: [provider, consumer] });
+  assert.deepEqual(
+    { nameReads, versionReads, contractReads, descriptionReads },
+    { nameReads: 1, versionReads: 1, contractReads: 1, descriptionReads: 1 },
+    'composition snapshots declarative facts instead of rereading mutable accessors',
+  );
+  assert.equal(registry.get('stateful-provider').provides[0].capabilityContract, 2);
+  assert.equal(registry.metadata()['stateful-provider'].provides[0].capabilityContract, 2);
+  assert.deepEqual(
+    { nameReads, versionReads, contractReads, descriptionReads },
+    { nameReads: 1, versionReads: 1, contractReads: 1, descriptionReads: 1 },
+    'public observers use the accepted snapshot',
+  );
+
+  const opened = await registry.capability({
+    consumer: 'stateful-consumer', capability: 'stateful-capability', version: 1,
+  });
+  assert.strictEqual(createReceiver, declaredCapability,
+    'the executable entry, rather than a clone or proxy, remains the create() receiver');
+  assert.strictEqual(opened.declaration, declaredCapability);
 });
 
 test('a uniform v2 graph is accepted and every published contract version is truthful', () => {
@@ -304,6 +351,11 @@ test('capability contract typo detection names contract fields without rejecting
       contractor: 'example',
       contractNotes: 'ordinary metadata',
       capabilityContractor: 'ordinary metadata too',
+      capabilityContext: 'ordinary metadata too',
+      capabilityControl: 'ordinary metadata too',
+      capabilityConnector: 'ordinary metadata too',
+      capabilityContact: 'ordinary metadata too',
+      capabilityContrast: 'ordinary metadata too',
     }],
   })));
 
@@ -325,7 +377,9 @@ test('capability contract typo detection names contract fields without rejecting
     'capabilities-contracts',
     'capabiltyContract',
     'capabilityContrcat',
+    'capabilityContarct',
     'capabilityContrxct',
+    'capabilitiy_contract',
   ]) {
     const definition = pkg('typo-provider', 1, {
       capabilities: [{ name: 'facts', version: 1, [key]: 2, create: hiddenAsyncInterface }],
@@ -346,6 +400,24 @@ test('capability contract typo detection names contract fields without rejecting
       key,
     );
   }
+
+  class PrototypeTypoCapability {
+    name = 'prototype-typo';
+
+    version = 1;
+
+    get capabiltyContract() { return 2; }
+
+    async create() { return { hidden: true }; }
+  }
+  const prototypeTypo = pkg('prototype-typo-provider', 1, {
+    capabilities: [new PrototypeTypoCapability()],
+  });
+  assert.throws(
+    () => validatePackageDefinition(prototypeTypo),
+    /declares "capabiltyContract"; did you mean capabilityContract/,
+    'contract-intent names on a prototype cannot hide async creation behind the v1 default',
+  );
 });
 
 test('capability validation diagnostics are stable, bounded and stringify-safe', () => {
@@ -392,7 +464,7 @@ test('capability validation diagnostics are stable, bounded and stringify-safe',
       && /…/.test(error.message),
   );
 
-  const hostileKey = `capabilityContract${'X'.repeat(200_000)}`;
+  const hostileKey = `capabilityContract${'s'.repeat(200_000)}`;
   const keyed = pkg('invalid-long-contract-key', 1, {
     capabilities: [{ ...capability('facts', 1), [hostileKey]: 2 }],
   });

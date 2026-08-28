@@ -70,6 +70,7 @@ export const fixturePackage = {
 test('package test awaits a v2 capability before calling its resolved interface valid', async (t) => {
   const root = fixtureProject(t);
   writeFixturePackage(root, 'fixture-v2-null-provider', `// @ts-check
+let contractReads = 0;
 export const fixturePackage = {
   packageContract: 2,
   name: 'fixture-v2-null-provider',
@@ -79,7 +80,7 @@ export const fixturePackage = {
   capabilities: [{
     name: 'null-interface',
     version: 1,
-    capabilityContract: 2,
+    get capabilityContract() { contractReads += 1; return contractReads <= 4 ? 2 : 1; },
     create: async () => null,
   }],
 };

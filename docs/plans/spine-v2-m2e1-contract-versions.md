@@ -321,8 +321,13 @@ failure this campaign keeps finding.
   publish 1. The executable declaration itself is deliberately not rewritten:
   package and capability objects may carry prototype methods, accessors,
   non-enumerable state and identity that composition has always preserved. The
-  graph carries `{entry, capabilityContract}` separately, so normalization adds
-  one semantic fact without cloning, mutating or exposing the executable entry.
+  graph carries the original `entry` beside a one-read declarative snapshot of
+  `{name, version, capabilityContract, description}`. Composition, registry
+  summaries, metadata, inspection and conformance publish the snapshot; only
+  runtime invocation reaches the original entry, with its receiver intact.
+  This adds semantic facts without cloning, mutating or exposing executable
+  behavior, and a mutable accessor cannot make an accepted v2 graph later
+  report v1.
 - **An unrecognised capability-contract key on a capability entry is refused.** A
   default protects the *value* and not the *key*: `capabilitiesContract: 2` or
   `capabilityContractVersion: 2` would silently read as absent, mean 1, and
@@ -330,9 +335,14 @@ failure this campaign keeps finding.
   failure this contract exists to prevent. This is the discriminator M2C
   settled, applied in the other direction: refusing an unnamed key is justified
   exactly when accepting it would be **silently misread**, and a typo'd contract
-  key is the clearest possible case. The check tokenizes the key and requires
-  both `capability|capabilities` and `contract`; ordinary metadata such as
-  `contractor`, `contractNotes` and `capabilityContractor` remains allowed.
+  key is the clearest possible case. The check recognizes the closed
+  capability-contract spelling family plus the concrete deletion,
+  transposition and substitution typos reproduced by tests. It walks own,
+  non-enumerable and prototype property *names* without invoking their values,
+  so a class getter cannot hide contract 2. It is deliberately not a generic
+  edit-distance matcher: ordinary metadata such as `contractor`,
+  `contractNotes`, `capabilityContractor`, `capabilityContact` and
+  `capabilityContrast` remains allowed.
 - **A Promise-shaped service entering v1 execution is refused**, and the refusal
   belongs where v1 execution begins rather than at composition, because a
   service can only be observed to be Promise-shaped when it is called. Where
@@ -386,6 +396,19 @@ npm run verify
 
 ## Progress log
 
+- **2026-08-28:** Bounded delta review found three final material groups. A
+  stateful `capabilityContract` getter could return 2 during validation and
+  composition, then 1 when `PackageRegistry.get()`, metadata, inspection or the
+  package-test boot reread it; the latter then treated a Promise resolving to
+  null as a valid v1 interface. Capability identity, version, contract and
+  description are now captured once by the composition authority, every
+  observer uses that immutable fact record, and runtime alone invokes the exact
+  original entry/receiver. The same review showed the one-edit typo matcher was
+  both too narrow structurally (prototype/non-enumerable typos escaped) and too
+  broad semantically (`capabilityContact` and `capabilityContrast` were refused).
+  The guard now inspects property names across the prototype chain without
+  evaluating arbitrary getters and recognizes only the closed spelling family
+  plus demonstrated contract-intent typos.
 - **2026-08-28:** Review of the corrective head found four further material
   finding groups. The conformance boot treated an unresolved v2 Promise object
   as a capability interface; one-character damage to `capabilityContract`
@@ -400,7 +423,8 @@ npm run verify
   delegates actions to the shared authority and bounds stringify-safe
   diagnostics, and composition preserves the exact validated
   package/capability objects while carrying the normalized contract as a
-  separate graph fact.
+  separate graph fact. A later bounded review narrowed that key matcher and
+  made the graph fact a one-read declarative snapshot, as recorded above.
 - **2026-08-28:** The exact-head broad review found three material boundary
   failures. Package composition could dereference malformed actions before the
   runtime action registry validated them; plural and separated misspellings of
