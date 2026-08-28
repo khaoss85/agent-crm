@@ -463,6 +463,35 @@ test('async persistFingerprints settles before the portable facade is returned',
   assert.equal(persisted, true, 'startup must await a thenable persistFingerprints');
 });
 
+test('a rejecting persistFingerprints thenable aborts startup before a facade or listener exists', async (t) => {
+  const workspace = workspaceFor(t);
+  const cause = new Error('PERSIST_REJECTED');
+  let listenCalls = 0;
+  let facade;
+  await assert.rejects(
+    async () => {
+      facade = await startPortableSqliteApp({
+        selected: {
+          packageContract: 2,
+          packages: [pkg('probe-persist-reject', 2, {
+            persistFingerprints: async () => {
+              await new Promise((resolve) => setTimeout(resolve, 10));
+              throw cause;
+            },
+          })],
+          actions: [],
+          modules: [],
+        },
+        dbPath: workspace.dbPath,
+        listen() { listenCalls += 1; },
+      });
+    },
+    (error) => error === cause,
+  );
+  assert.equal(facade, undefined, 'no portable facade is returned after a rejected persist hook');
+  assert.equal(listenCalls, 0, 'no listener is installed before persist settlement');
+});
+
 test('successful portable close is async, idempotent and shares one settlement', async (t) => {
   const { app } = await portableAppFor(t);
   const first = app.close();
