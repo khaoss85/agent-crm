@@ -252,6 +252,8 @@ test('the source capability is read-only by construction', () => {
     ['subscription-line', { listWhere: () => [] }],
   ]);
   const opened = capability.create({ modules: { get: (name) => contractModuleDouble(rows.get(name)) } });
+  assert.equal(opened.capabilityContract, 1,
+    'the synchronous interface uses capabilityContract 1; capability version 2 describes its domain shape');
 
   // Every exposed member is a read. There is no write, and no handle to write with.
   const members = Object.keys(opened).filter((key) => key !== 'capabilityContract');

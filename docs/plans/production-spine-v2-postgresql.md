@@ -1270,6 +1270,15 @@ than inheriting this one.
 - **Legacy package code never receives async services accidentally.** Contract 1
   remains SQLite/synchronous; PostgreSQL requires an all-v2 async package,
   action, operation and capability graph.
+- **`capabilityContract` versions execution semantics, not a capability's domain
+  shape.** Before M2E-1 the only returned interface carrying value `2` was the
+  synchronous `contract-lifecycle-source@2`; `c363be2` explained the capability
+  version bump and never assigned meaning to that interface field, composition
+  read no such field, and no test pinned the value. M2E-1 corrects the returned
+  interface to contract 1 in the same change that makes the declaration field
+  authoritative, with absence normalized to 1. The capability remains domain
+  version 2. This is an argued correction to the ratified vocabulary, not a
+  silent reinterpretation of merged synchronous code.
 - **Write portability includes predicates.** PostgreSQL business writes are
   serializable, with retries forbidden after external effects.
 - **Logical identifiers are not physical identifiers.** One recorded renderer

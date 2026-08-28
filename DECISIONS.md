@@ -614,6 +614,32 @@ proving nothing, with no test failing. Recorded here rather than only in
 `docs/plans/spine-v2-m2d-transaction-context.md` because that is where the
 implementer will look.
 
+### ADR-018 addendum 9 — contract v2 is a uniform package graph
+
+Production Spine v2 M2E-1 makes the package execution contracts explicit before
+an async factory can expose Promise-shaped services. Package, action, operation
+and capability declarations accept the enumerated versions 1 and 2. Version 1
+retains the synchronous SQLite meaning; version 2 means the consumer awaits the
+corresponding execution seam. A composition may use either graph, never both:
+an internal mismatch, a mixed dependency edge, or disconnected v1/v2 packages
+refuse startup with `PACKAGE_ASYNC_CONTRACT_REQUIRED`.
+
+Capability declarations gain `capabilityContract`; absence means 1 and is
+normalized before any registry, schema or inspection consumer sees it. This is
+the authoritative composition value. Returned capability interfaces may echo
+it, but M2E-2 owns verification because composition deliberately does not invoke
+factories. The old `contract-lifecycle-source@2` returned
+`capabilityContract: 2` synchronously. That number was read nowhere, asserted by
+no test, and the commit that introduced it explained the *domain capability*
+version rather than execution semantics. It is corrected atomically to
+capability contract 1; the capability's domain version remains 2.
+
+Existing singular constants remain the v1 values emitted by scaffolding. The
+accepted sets and capability default stay private to core: package authors
+declare one version and do not negotiate one through a public constant. The
+bundled packages remain v1 in this addendum; M2E-3 owns their dual graphs, and
+retiring v1 remains a separate compatibility decision.
+
 ## ADR-019 — Safe generated-module evolution through explicit revisions and append-only named migrations
 
 **Status:** accepted (Module Evolution v1).

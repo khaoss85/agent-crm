@@ -28,10 +28,10 @@
     },
     {
       "id": "M2-04",
-      "title": "The four contract-2 versions — capabilityContract collides with merged meaning",
+      "title": "The four contract-2 versions — capabilityContract collision resolved",
       "owner": "M2E-1",
       "excerpt": "`packageContract: 2`, `actionContract: 2`, `operationContract: 2` and `capabilityContract: 2` require actions, operations and capability consumers to await every service/context/de",
-      "reason": "The ratified sentence defines capabilityContract: 2 as \"capability consumers await every service/context/dependency operation\". The repository already ships capabilityContract: 2 with a different meaning — packages/contracts/src/lifecycle-capability.js:177 returns it as that capability's second, synchronous shape, chosen by the provider — and core validates the field nowhere. Implementing the sentence literally either reinterprets a merged synchronous declaration as async or forces it to 3, which the plan does not say. Resolving it is M2E-1's first deliverable and may require amending the ratified plan; it is recorded here rather than coded around, because a map reporting zero contradictions while one is known is the dishonesty this gate exists to refuse. It gates M2 either way."
+      "reason": "M2E-1 resolved the collision atomically: capabilityContract now lives on the declaration composition can read, absence normalizes to synchronous v1, and the historical synchronous contract-lifecycle-source@2 interface was corrected from capabilityContract 2 to 1 while its domain capability version remains 2. The c363be2 archaeology and the ratified-vocabulary correction are recorded in the plan decision log and ADR-018 addendum 9; mixed graphs refuse with PACKAGE_ASYNC_CONTRACT_REQUIRED."
     },
     {
       "id": "M2-05",

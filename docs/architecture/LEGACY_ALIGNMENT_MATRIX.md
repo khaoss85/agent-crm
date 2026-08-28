@@ -71,6 +71,7 @@ Verified against the working tree, 2026-08-19.
 | Lifecycle | `packages/lifecycle/` — `src/`, `modules/`, `README.md` | **yes** — package-native (M16a, M16b) |
 | Customer Data | `packages/customer-data/` — `src/`, `modules/`, `README.md` | **yes** — package-native (ADR-037). It **requires nothing**, adds no master customer table, and links and projects rather than duplicating |
 | Custom-package fixture | `examples/custom-packages/partner-scorecard/` | **yes** — the customer-authoring proof |
+| Custom-package capability-consumer fixture | `examples/custom-packages/score-disclosure/` | **yes** — the customer-authored proof that a package can consume `intelligence@1` |
 | Marketing & Growth | documentation only (`docs/strategy/`) | — |
 
 Each of the four has a `packages/<name>/generated/` directory and nothing else:
@@ -186,6 +187,32 @@ it, with no conflict marker to say so: git merged the two edits cleanly because
 neither touched the other's lines. It is corrected here rather than in a later
 reconciliation, because a sentence naming a consumer that no longer exists is
 the kind of stale claim this matrix exists to catch.
+
+### Async package-contract v2 assessment (Production Spine v2 M2E-1)
+
+M2E-1 is horizontal kernel capability: it makes uniform contract-1 and
+contract-2 package graphs expressible, normalizes an absent capability contract
+to 1, publishes the resolved versions, and refuses a mixed graph before any
+service is called. It deliberately migrates no package. A `deferred` row below
+therefore means the domain still ships only its synchronous v1 definition; it
+does not mean its current v1 graph is invalid. M2E-3 owns every promotion.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project-owned records are not package definitions; their async service composition belongs to M2E-2 |
+| Pipeline | `not_applicable` | a kernel workflow capability, not a domain package |
+| Lead Intelligence | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
+| Commercial Operations | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
+| Signature & Order | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
+| Contract Activation | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
+| Delivery | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
+| Service | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
+| Work | `deferred` | its capability declaration still omits the field by compatibility and resolves to contract 1; M2E-3 owns the explicit dual graph |
+| Lifecycle | `deferred` | it consumes domain capability version 2 on synchronous execution contract 1; M2E-3 owns the async graph |
+| Customer Data | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
+| Custom-package fixture | `deferred` | it remains the unchanged customer-authored contract-1 compatibility proof; M2E-3 adds a separate v2 fixture without rewriting it |
+| Custom-package score-disclosure fixture | `deferred` | its contract-1 graph and `intelligence@1` dependency remain the customer-authored capability-consumer proof; M2E-3 owns any v2 companion rather than silently rewriting this v1 fixture |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
 
 ### Cross-plane Spine audit recovery assessment (Production Spine v2 M2F)
 

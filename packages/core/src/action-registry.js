@@ -3,7 +3,17 @@
 import { NotFoundError, ValidationError } from './errors.js';
 import { PERMISSIONS } from './authorization.js';
 
+/** The action contract version this framework emits. Still a single number. */
 export const SUPPORTED_ACTION_CONTRACT = 1;
+
+/**
+ * The action contract versions it accepts (Spine v2 M2E-1). Separate from the
+ * constant above **on purpose**: `externalOperation` — a different field, the
+ * ADR-017 phase-shape marker — is validated against `SUPPORTED_ACTION_CONTRACT`
+ * below, and widening that constant in place would have silently accepted
+ * `externalOperation: 2`.
+ */
+export const SUPPORTED_ACTION_CONTRACTS = Object.freeze([1, 2]);
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
 // `json` is bounded structured input (a signer list, ADR-017): the runtime
 // normalizes it to plain JSON-safe data, drops dangerous keys and bounds its
@@ -16,7 +26,7 @@ const INPUT_TYPES = new Set(['string', 'timestamp', 'enum', 'integer', 'boolean'
  *   name: string,
  *   label?: string,
  *   description?: string,
- *   actionContract: 1,
+ *   actionContract: 1 | 2,
  *   input?: Array<{name: string, type: 'string' | 'timestamp' | 'enum' | 'integer', required?: boolean, values?: string[]}>,
  *   fromStates?: string[],
  *   stateField?: string,
@@ -45,8 +55,8 @@ export function validateActionDefinition(definition, deps) {
   if (typeof definition.name !== 'string' || !NAME_RE.test(definition.name)) {
     throw new ValidationError(`${label}: name must match ${NAME_RE}`);
   }
-  if (definition.actionContract !== SUPPORTED_ACTION_CONTRACT) {
-    throw new ValidationError(`${label}: actionContract must be ${SUPPORTED_ACTION_CONTRACT}`);
+  if (!SUPPORTED_ACTION_CONTRACTS.includes(definition.actionContract)) {
+    throw new ValidationError(`${label}: actionContract must be one of ${SUPPORTED_ACTION_CONTRACTS.join(', ')}`);
   }
   // ADR-038. `requiredPermission` is contractual, so it is checked where every
   // other contractual field is checked: at registration, not at the first
@@ -81,6 +91,10 @@ export function validateActionDefinition(definition, deps) {
   // local write transactions, which a single `execute` cannot express
   // honestly. Exactly one of the two shapes must be present.
   if (definition.externalOperation !== undefined) {
+    // Deliberately still the singular constant. This is the phase-shape marker,
+    // not the action contract; it shares the constant historically and M2E-1
+    // does not move it. Widening it here would create a fifth contract version
+    // nobody designed.
     if (definition.externalOperation !== SUPPORTED_ACTION_CONTRACT) {
       throw new ValidationError(`${label}: externalOperation must be ${SUPPORTED_ACTION_CONTRACT}`);
     }
@@ -178,7 +192,7 @@ export function actionMetadata(action) {
     name: action.name,
     label: action.label ?? action.name,
     description: action.description ?? null,
-    actionContract: SUPPORTED_ACTION_CONTRACT,
+    actionContract: action.actionContract,
     input: (action.input ?? []).map((field) => ({
       name: field.name,
       type: field.type,
