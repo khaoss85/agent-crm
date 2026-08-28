@@ -168,15 +168,15 @@ never to the pool.
 Exit: lifecycle/preflight are usable only by source-private imports; no second
 public factory exists, no v1 app object is wrapped, and all 2A tests/gates pass.
 
-### 2B — private graph and portable facade (later PR)
+### 2B — private graph and portable facade (this PR)
 
-1. Extract/share lower-level constructors without making the v1 app the input.
-2. Compose modules, packages, actions, operations, audit, workflow and provider
-   state directly over 2A's lifecycle.
-3. Return a frozen lexical allowlist facade plus bounded storage descriptor.
-4. Add the adversarial whole-object-graph leak test covering every nested v1
+1. [x] Extract/share lower-level constructors without making the v1 app the input.
+2. [x] Compose modules, packages, actions, operations, audit, workflow and
+   provider state directly over 2A's lifecycle.
+3. [x] Return a frozen lexical allowlist facade plus bounded storage descriptor.
+4. [x] Add the adversarial whole-object-graph leak test covering every nested v1
    leak found by the M2F audit.
-5. Keep the factory source-private while the default selected graph remains v1.
+5. [x] Keep the factory source-private while the default selected graph remains v1.
 
 Exit: a private uniform-v2 SQLite graph works end to end and exposes no storage
 handle through its portable facade.
@@ -224,6 +224,37 @@ Required observations:
 - public surface: no `createAccordoAppAsync` export and no accepted-version
   constant leaked.
 
+2B runs at least:
+
+```text
+node --test tests/spine-v2-m2e2-portable-facade.test.js
+node --test tests/spine-v2-m2e2-async-lifecycle.test.js
+node --test tests/spine-v2-m2e1-contract-versions.test.js
+node --test tests/core-adapters.test.js tests/workflow.test.js tests/generated-api.test.js
+node scripts/falsify.js
+npm run check
+npm run surface:check
+npm run repo:truth -- --check
+git diff --check
+npm run verify
+```
+
+Required observations:
+
+- public surface: still only `createAccordoApp`; no `createAccordoAppAsync` and
+  no `startPortableSqliteApp` export;
+- portable factory source does not import or call the v1 factory;
+- v1/mixed selection still refuses before any opener, path, provider or
+  listener moves;
+- uniform v2: frozen lexical-allowlist facade, bounded `{adapter, available}`
+  descriptor, kernel write/audit/workflow plus selected package action and
+  operation;
+- whole-object-graph leak walk: no database, raw driver, storage handle,
+  binding path or credential reachable, including the nested M2F v1 sites;
+- the same walker is not vacuous against `createAccordoApp()`;
+- child process composes, writes through a service, reads audit, closes once;
+- close is async, idempotent and shares one settlement.
+
 ## Progress log
 
 - **2026-08-28:** Created a new causal branch from merged M2E-1 head
@@ -242,6 +273,14 @@ Required observations:
   rejection when close also throws, with a bounded console report instead of a
   TypeError. The Compatibility Backfill Rule records M2E-2A as private
   lifecycle, not a complete portable factory.
+- **2026-08-28:** 2B from merged `c37f349`. Added source-private
+  `packages/app/src/portable-app.js` and
+  `tests/spine-v2-m2e2-portable-facade.test.js`. The portable factory assembles
+  kernel modules, selected packages/actions/operations, audit, workflow and
+  providers over 2A's storage handle and returns one frozen lexical-allowlist
+  facade plus `{adapter: 'sqlite', available: true}`. The leak walk covers own
+  properties, prototypes, Maps/Sets and accessor descriptors without invoking
+  getters or methods. `packages/app/src/create-app.js` is not an input.
 
 ## Decision log
 
@@ -259,9 +298,23 @@ Required observations:
 - **No transaction facade reconstruction.** The lifecycle passes the exact
   connection-affine storage handle. PostgreSQL must later bind the equivalent
   handle to one checked-out client.
+- **Lexical facade, not dynamic aliases.** v1 attaches `appMethod` keys onto
+  the returned object after construction. 2B's keys are listed at the freeze
+  site; selected operations are reached through `operations.run(name)`, never
+  as extra own properties. 2C may map those names onto HTTP without widening
+  the in-process allowlist.
+- **Portable core adapters over storage.** v1 `createCoreAdapters` still reads
+  `database.raw`. The portable path reimplements the same declared capabilities
+  through Storage Contract v1 so the facade never holds a driver.
+- **No Spine in 2B.** 2A owns one SQLite adapter. Control-plane/tenant binding
+  composition stays with 2C/M2F coordination, not this facade.
 
 ## Outcome and follow-up
 
-2A is implemented as source-private preflight/lifecycle evidence. 2B owns
-the private portable graph/facade, 2C owns awaited HTTP/security entry points,
-and M2E-3 owns dual bundled definitions plus any honest public factory export.
+2A is source-private preflight/lifecycle evidence. 2B is the source-private
+portable graph/facade over that lifecycle: kernel Company/Contact/Opportunity/
+Approval plus a selected uniform-v2 package graph, frozen allowlist, bounded
+storage descriptor, and a whole-object-graph leak test. It does not compose
+generated project modules (the framework graph is empty), bundled v1 domains,
+or Spine. 2C owns awaited HTTP/security entry points. M2E-3 owns dual bundled
+definitions plus any honest public factory export.
