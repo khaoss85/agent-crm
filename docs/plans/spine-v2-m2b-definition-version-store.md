@@ -480,13 +480,14 @@ keeps its signature, `createAccordoApp()` stays synchronous, Storage Contract v1
 is untouched, and the ADR-015 refusal is byte-identical — a test asserts the whole
 message, per family, rather than matching a fragment of it.
 
-Explicitly still open at M2B, and deliberately so: `packages/workflows/src/engine.js` and
-`packages/core/src/action-runtime.js` remained later-M2 raw consumers — **both are
-extracted by M2C** (`docs/plans/spine-v2-m2c-execution-run-store.md`);
-`packages/work/src/follow-up.js#requireCallerTransaction` still reads the driver's
-transaction flag through optional chaining, so Work stays `partial` — and that
-residue is invisible to a plain `database\.raw` scan, which is why the M2B guard
-catches the optional-chained spelling and why M2A's guard is named above as
-follow-on work; the adapter internals in
+Explicitly still open at M2B, and deliberately so:
+`packages/workflows/src/engine.js` and `packages/core/src/action-runtime.js`
+remained later-M2 raw consumers; M2C subsequently extracted both
+(`docs/plans/spine-v2-m2c-execution-run-store.md`). Work's
+`packages/work/src/follow-up.js#requireCallerTransaction` also still read the
+driver's transaction flag through optional chaining at M2B, keeping Work
+`partial`; M2D subsequently replaced that read with the caller-owned transaction
+witness and closed the residue. The optional-chained spelling was invisible to a
+plain `database\.raw` scan, which is why the M2B guard covered it. The adapter internals in
 `packages/core/src/database.js`, `core-adapters.js` and `spine-store.js` own the
 driver by design. PostgreSQL remains absent.

@@ -32,10 +32,11 @@ canonical generator already emits `storageContract: 1` services. Before M2A,
 three older checked-in generated services used `database.raw`, while Work's
 retained forward migration read a legacy `tasks` table through the raw driver.
 They now use closed Storage Contract v1 statements and service-owned relation
-reads; the separate Work transaction-context check remains raw. The
+reads. At the M2A boundary the separate Work transaction-context check remained
+raw; M2D subsequently replaced it with the caller-owned transaction witness. The
 Repository Truth storage authority in `scripts/repo-truth.js` executes the Work
-migration reads, and the alignment matrix distinguishes this bounded extraction
-from Work's remaining transaction-context residue.
+migration reads, and the alignment matrix records both the bounded M2A extraction
+and the later M2D closure.
 
 ## Milestones
 

@@ -686,11 +686,11 @@ What M2C explicitly left open, and its resulting disposition:
 - **Work's transaction-context seam — closed by M2D.** It was a *read* of the
   driver's state rather than persistence, so M2C correctly sequenced it behind a
   different seam. M2D supplied that seam and removed the raw reach.
-- **M2A's guard still carries the un-hardened pattern.** M2B named this as
-  follow-on and it is still true: `tests/work-legacy-task-migration.test.js`
-  scans for `database.raw` only, and Work's own residue is spelled
-  `tasks?.database?.raw`, which that scan walks straight past. M2B and M2C both
-  use the widened set.
+- **M2A's guard was narrower than the later guards.** At the M2C boundary,
+  `tests/work-legacy-task-migration.test.js` scanned for `database.raw` only and
+  walked past Work's then-live optional-chained spelling. M2D removed that reach
+  and added its own wider, falsified guard over every migrated consumer; the old
+  M2A scan is no longer the authority for application-runtime raw reachability.
 - **Closed here rather than deferred:** `packages/core/src/definition-version-store.js`
   was in none of the three characterization behaviour-bearing lists, so M2B's
   merged evidence silently covered less than it had. It is in all three now,
