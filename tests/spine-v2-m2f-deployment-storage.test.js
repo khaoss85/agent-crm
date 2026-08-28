@@ -439,7 +439,15 @@ test('M2-20 truncating the opened inode between fstat and read cannot bypass tru
     const stat = arguments.length > 1 ? realFstatSync(fd, options) : realFstatSync(fd);
     if (!flipped && stat.isFile() && stat.size === originalSize) {
       flipped = true;
-      fs.ftruncateSync(fd, 0);
+      // Truncate through a second writable handle. ftruncate on the O_RDONLY
+      // loader fd fails with EBADF/EINVAL and would make this test green even
+      // if the post-read identity checks were deleted.
+      const writable = openSync(configPath, 'r+');
+      try {
+        fs.ftruncateSync(writable, 0);
+      } finally {
+        closeSync(writable);
+      }
     }
     return stat;
   });
