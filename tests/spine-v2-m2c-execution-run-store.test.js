@@ -630,9 +630,23 @@ test('a caller may carry extra fields; a missing one is still refused', (t) => {
   // against this store's own three categories that refusal failed all three:
   // the field is not owned by the store, the driver never sees it, and an
   // unread field corrupts no row.
-  store.recordRun({ ...recordedRun({ runId: 'r1' }), tenantId: 'acme', traceVersion: 2 });
+  // Distinctive VALUES, not just distinctive keys. The first draft of this
+  // test planted `tenantId: 'acme'` and then scanned for the string
+  // "tenantId" — but `SELECT *` returns schema column names, so that string
+  // could never appear and the assertion could not fail for the reason it
+  // claimed. What actually needs proving is that an unnamed field's *value*
+  // reaches no column: `'acme'` copied into `error` would have passed.
+  const SENTINEL = Object.freeze({
+    tenant: 'sentinel-tenant-4f9c21',
+    version: 'sentinel-version-7ab3de',
+    duration: 'sentinel-duration-0c5e88',
+  });
+  store.recordRun({
+    ...recordedRun({ runId: 'r1' }),
+    tenantId: SENTINEL.tenant, traceVersion: SENTINEL.version,
+  });
   store.recordRun(recordedRun({
-    runId: 'r2', steps: [{ name: 'a', status: 'completed', durationMs: 5 }],
+    runId: 'r2', steps: [{ name: 'a', status: 'completed', durationMs: SENTINEL.duration }],
   }));
   assert.deepEqual(runRows(database).map((row) => row.id), ['r1', 'r2'],
     'both traces are written');
@@ -642,20 +656,38 @@ test('a caller may carry extra fields; a missing one is still refused', (t) => {
   // covers is exactly the shape this PR spent four review rounds removing.
   //
   // What this pins, stated precisely: the observable property a caller cares
-  // about, that no unnamed field reaches a stored byte. It does NOT isolate
-  // which mechanism guarantees it, and that was checked rather than assumed —
+  // about, that no unnamed field's NAME OR VALUE reaches a stored byte, with a
+  // positive control proving the scan can see a value that is stored. It does
+  // NOT isolate which mechanism guarantees the property, and that was checked
+  // rather than assumed —
   // rewriting `own` to copy every own key leaves this test green, because the
   // inserts name their columns explicitly and a stray key in `own` still
   // reaches no row. Two independent mechanisms hold the property, so no single
   // mutation can break it; the assertion is worth having for the boundary it
   // watches, not as a guard on either one.
-  const stored = JSON.stringify(runRows(database).concat(
-    spanRows(database, 'r1'), spanRows(database, 'r2'),
-  ));
-  for (const leaked of ['tenantId', 'traceVersion', 'durationMs']) {
-    assert.doesNotMatch(stored, new RegExp(leaked),
-      `an unnamed field must reach no stored byte: ${leaked}`);
+  // One scan, used for both the assertion and the control below, so the
+  // control genuinely exercises the same code path.
+  const storedBytes = (ids) => JSON.stringify(
+    runRows(database).concat(...ids.map((id) => spanRows(database, id))),
+  );
+
+  const stored = storedBytes(['r1', 'r2']);
+  for (const [field, value] of Object.entries(SENTINEL)) {
+    assert.ok(!stored.includes(value),
+      `an unnamed field's VALUE must reach no stored byte: ${field} = ${value}`);
   }
+  // The key names too — weaker, since `SELECT *` returns column names, but free.
+  for (const name of ['tenantId', 'traceVersion', 'durationMs']) {
+    assert.ok(!stored.includes(name), `nor its key: ${name}`);
+  }
+
+  // **A positive control, because an assertion that cannot fail proves
+  // nothing.** The same scan over a run whose input legitimately CONTAINS a
+  // sentinel must find it — otherwise the checks above are green for the
+  // reason the first draft was: they were looking at the wrong bytes.
+  store.recordRun(recordedRun({ runId: 'r3', input: { note: SENTINEL.tenant } }));
+  assert.ok(storedBytes(['r1', 'r2', 'r3']).includes(SENTINEL.tenant),
+    'the scan must be able to see a sentinel that IS stored, or it proves nothing');
   assert.deepEqual(Object.keys(runRows(database)[0]), [
     'id', 'workflow_name', 'status', 'input_json', 'output_json', 'error', 'started_at', 'finished_at',
   ], 'and the row carries exactly the columns the schema declares');
