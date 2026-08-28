@@ -585,10 +585,12 @@ never able to answer "what did I make untrue".
 - **This is not authentication.** The witness proves a transaction is open on a
   handle. It says nothing about who opened it or what they may do. The security
   model remains trusted checked-in source (ADR-018 addendum 4).
-- **The kernel still reaches the driver, deliberately.**
-  `packages/workflows/src/engine.js`, `packages/core/src/action-runtime.js`,
-  `packages/core/src/core-adapters.js` and `packages/core/src/spine-store.js` are
-  out of scope, and the M2D guard makes no claim about them.
+- **The adapter kernel still reaches the driver, deliberately.**
+  `packages/core/src/database.js`, `packages/core/src/core-adapters.js` and
+  `packages/core/src/spine-store.js` are adapter internals by design. M2C moved
+  `packages/workflows/src/engine.js` and `packages/core/src/action-runtime.js`
+  behind the structured seam; M2D's focused guard makes no claim about the
+  three adapter-internal files.
 - **Two copies of core in one process fail closed.** See the named assumption,
   invariant 3.
 - **Ownership beyond one connection.** The proof binds a transaction to the
