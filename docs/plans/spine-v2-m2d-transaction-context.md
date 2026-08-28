@@ -510,6 +510,48 @@ every shell inventory run in this milestone.
   of unreachability.
 - `npm run verify` on the exact head.
 
+### A clean merge is a way for a true sentence to become false
+
+A method note, promoted out of this milestone because every causal PR in M2F
+will merge `main` at least once, and M2F is where the truth documents are
+densest.
+
+Merging `origin/main` (M2C) into this branch produced two conflicts, both in
+`docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, both resolved by keeping what is
+true rather than by preferring a side — including taking **main's** Pipeline row
+over this branch's, because main's carried M2C's new and correct clause.
+
+The part worth carrying forward is the defect git did **not** surface. M2C's
+"kernel's remaining raw residue" paragraph named
+`packages/work/src/follow-up.js#requireCallerTransaction` as the one
+application-runtime raw consumer left in `packages/`, and said that is why Work
+stays `partial`. It was true when M2C wrote it. It was false the instant this
+branch merged into it — and there was **no conflict marker**, because neither
+edit touched the other's lines. Git produced, correctly, a document that
+contradicted itself two sections apart.
+
+No conflict marker, no test and no CI job would ever have reported it. A merge
+gate checks that two changes do not overlap; it cannot check that two true
+statements are still jointly true. The only thing that caught it was rescanning
+the merged tree instead of reasoning from either side's diff:
+
+```
+packages/core/src/database.js       adapter internal, by design
+packages/core/src/core-adapters.js  adapter internal, by design
+packages/core/src/spine-store.js    adapter internal, by design
+packages/core/index.js:104          prose in a comment, not a reach
+```
+
+**No application-runtime raw consumer remains in `packages/`** — M2C moved the
+workflow engine and the action runtime, M2D moved the last one — which is one of
+the M2-complete gate's named conditions and is now measured rather than argued.
+
+The rule, stated so a later milestone can apply it without rediscovering it:
+**after a merge, re-derive every claim that spans the two sides from the merged
+tree.** Not from your diff, not from theirs. This is the same family as the two
+falsification findings above — a tool answering a narrower question than the one
+that matters, and looking exactly like a clean result while doing it.
+
 ## Known limitations, stated rather than papered over
 
 - **The guard is a token scan.** `d['r' + 'aw']` defeats it, and chasing that is
