@@ -172,8 +172,10 @@ domain off `aligned` is exactly what it always was: its own persistence.
 closure.** M2C moved the workflow engine's run and span lifecycle onto the
 store; M2D moved `packages/work/src/follow-up.js#requireCallerTransaction` off
 the driver's transaction flag; M2F then moved the Organization/Membership store
-itself onto the same seam. **No application-runtime consumer is left in
-`packages/`.**
+itself onto the same seam. **No application-runtime business or Spine-store
+consumer is left in `packages/`.** `packages/core/src/core-adapters.js` still
+prepares Company/Contact lookup SQL against `database.raw`; it is a composed
+adapter internal, not Spine-store, and is not closed by this slice.
 
 Scanned on the M2F tree, no application-runtime business or Spine-store consumer
 in `packages/` reaches the driver. Known driver spellings remain in
@@ -246,6 +248,7 @@ per-domain dispositions below remain unchanged.
 | Lifecycle | `not_applicable` | lifecycle writes no Organization or Membership row |
 | Customer Data | `not_applicable` | customer identity rows are tenant data, not control-plane membership |
 | Custom-package fixture | `not_applicable` | customer packages receive neither audit-intent construction nor reconciliation authority |
+| Custom-package score-disclosure fixture | `not_applicable` | it consumes `intelligence@1` as a customer-authored capability proof and never writes Organization or Membership rows |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime mutation |
 
 ### Hosted Docs MCP transport assessment

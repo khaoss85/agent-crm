@@ -308,10 +308,14 @@ test('public v1 store and AuditLog keep their released surface while internals g
     mode: { mode: 'production', allowsAssertedActors: false },
   });
 
+  for (let index = 0; index < 99; index += 1) {
+    store.organizations.create({ slug: `extra-${index}`, name: `Extra ${index}` });
+  }
   assert.equal(store.organizations.list({ limit: 1 }).length, 1);
-  assert.equal(store.organizations.list({ limit: -1 }).length, 2);
-  assert.equal(store.organizations.list({ limit: 0 }).length, 2);
-  assert.equal(store.organizations.list({ limit: Number.NaN }).length, 2);
+  assert.equal(store.organizations.list().length, 100, 'omitted limit keeps the released default of 100');
+  assert.equal(store.organizations.list({ limit: -1 }).length, 101, 'a negative limit omits LIMIT rather than using the default');
+  assert.equal(store.organizations.list({ limit: 0 }).length, 100);
+  assert.equal(store.organizations.list({ limit: Number.NaN }).length, 100);
   assert.equal(store.memberships.listFor({ organizationId: organization.id, limit: 1 }).length, 1);
   assert.equal(store.memberships.listFor({ organizationId: organization.id, limit: -1 }).length, 2);
   assert.equal(store.memberships.listFor({ organizationId: organization.id, limit: 0 }).length, 2);
@@ -388,7 +392,7 @@ test('audit-intent options fail closed with one bounded credential-free contract
       assert.throws(
         () => app.spine.auditIntents[method](options),
         (error) => error.code === 'SPINE_AUDIT_INTENT_OPTIONS_INVALID'
-          && !/secret|credential|path/i.test(JSON.stringify(error)),
+          && !/secret|credential|path/i.test(`${error.message}\n${JSON.stringify(error)}`),
       );
     }
   }
@@ -396,18 +400,18 @@ test('audit-intent options fail closed with one bounded credential-free contract
     assert.throws(
       () => app.spine.auditIntents.listPending({ limit }),
       (error) => error.code === 'SPINE_AUDIT_INTENT_LIMIT_INVALID'
-        && !/private credential|path/i.test(JSON.stringify(error)),
+        && !/private credential|path/i.test(`${error.message}\n${JSON.stringify(error)}`),
     );
     assert.throws(
       () => app.spine.auditIntents.reconcile({ limit }),
       (error) => error.code === 'SPINE_AUDIT_INTENT_LIMIT_INVALID'
-        && !/private credential|path/i.test(JSON.stringify(error)),
+        && !/private credential|path/i.test(`${error.message}\n${JSON.stringify(error)}`),
     );
   }
   assert.throws(
     () => app.spine.auditIntents.listPending({ limit: 1, credential: 'private credential' }),
     (error) => error.code === 'SPINE_AUDIT_INTENT_OPTIONS_INVALID'
-      && !/private credential|path/i.test(JSON.stringify(error)),
+      && !/private credential|path/i.test(`${error.message}\n${JSON.stringify(error)}`),
   );
   const accessor = {};
   Object.defineProperty(accessor, 'limit', {
@@ -418,7 +422,7 @@ test('audit-intent options fail closed with one bounded credential-free contract
     assert.throws(
       () => app.spine.auditIntents.listPending(options),
       (error) => error.code === 'SPINE_AUDIT_INTENT_OPTIONS_INVALID'
-        && !/private credential|path/i.test(JSON.stringify(error)),
+        && !/private credential|path/i.test(`${error.message}\n${JSON.stringify(error)}`),
     );
   }
   assert.equal(app.spine.auditIntents.listPending().length, 1);
