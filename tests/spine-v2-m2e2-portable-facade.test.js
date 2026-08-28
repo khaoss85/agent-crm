@@ -267,10 +267,12 @@ test('public surfaces do not grow a second factory or leak the portable facade',
   assert.deepEqual(Object.keys(publicApp).sort(), ['createAccordoApp']);
   assert.equal(Object.hasOwn(publicApp, 'createAccordoAppAsync'), false);
   assert.equal(Object.hasOwn(publicApp, 'startPortableSqliteApp'), false);
+  assert.equal(Object.hasOwn(publicApp, 'startPortableHttpServer'), false);
   assert.equal(Object.hasOwn(publicApp, 'preflightSelectedGraph'), false);
   assert.equal(Object.hasOwn(publicApp, 'startSqliteLifecycle'), false);
   assert.equal(Object.hasOwn(publicKernel, 'createAccordoAppAsync'), false);
   assert.equal(Object.hasOwn(publicKernel, 'startPortableSqliteApp'), false);
+  assert.equal(Object.hasOwn(publicKernel, 'startPortableHttpServer'), false);
 });
 
 test('portable factory source does not wrap or import the v1 factory', () => {

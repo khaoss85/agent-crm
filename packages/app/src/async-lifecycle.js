@@ -44,7 +44,7 @@ function reportCleanupFailure(startupError, cleanupError) {
   }
 }
 
-function attachCleanupError(error, cleanupError) {
+export function attachCleanupError(error, cleanupError) {
   let attached = false;
   if (error && (typeof error === 'object' || typeof error === 'function')) {
     try {
