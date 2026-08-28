@@ -510,11 +510,30 @@ every shell inventory run in this milestone.
   of unreachability.
 - `npm run verify` on the exact head.
 
-### A clean merge is a way for a true sentence to become false
+### A change can falsify a claim it does not touch
 
-A method note, promoted out of this milestone because every causal PR in M2F
-will merge `main` at least once, and M2F is where the truth documents are
-densest.
+A method note, promoted out of this milestone because it fired **four times
+here** and M2F is where it will fire most: every causal PR merges `main` at
+least once, and the deployment-storage work will invalidate prose across the
+plan, the matrix and the status file at the same time.
+
+The rule, and it is one rule rather than two:
+
+> **After any change — a merge or your own edit — re-derive every claim the
+> change could have falsified, from the resulting tree rather than from the
+> diff.**
+
+The mechanism is not the merge. It is that **a change can falsify a claim it
+does not touch**, and a diff only shows what was touched. Three of the nine
+findings on this PR were exactly that, in a single file with no merge involved:
+
+- the module header still said the witness "says nothing about who opened it",
+  written before ownership existed and left behind by the change that added it;
+- a validation bullet still claimed flow B is *not* refused, contradicting both
+  the ownership bullet above it and the test;
+- the storage-contract section's Work row still said Work reads the driver.
+
+The fourth is the merge case below, which is the same shape across two files.
 
 Merging `origin/main` (M2C) into this branch produced two conflicts, both in
 `docs/architecture/LEGACY_ALIGNMENT_MATRIX.md`, both resolved by keeping what is
@@ -546,11 +565,17 @@ packages/core/index.js:104          prose in a comment, not a reach
 workflow engine and the action runtime, M2D moved the last one — which is one of
 the M2-complete gate's named conditions and is now measured rather than argued.
 
-The rule, stated so a later milestone can apply it without rediscovering it:
-**after a merge, re-derive every claim that spans the two sides from the merged
-tree.** Not from your diff, not from theirs. This is the same family as the two
-falsification findings above — a tool answering a narrower question than the one
-that matters, and looking exactly like a clean result while doing it.
+Applied to the second merge of `main` in this milestone, it found nothing: the
+requirement inventory's `M2-01` is owned `M2C/M2D/M2F` and reads "Work
+transaction context is M2D", which this branch satisfies rather than falsifies.
+**That is recorded deliberately.** A rule mentioned only when it fires reads as
+luck; the run that costs two minutes and finds nothing is what makes it a
+method.
+
+This is the same family as the two falsification findings above — a tool
+answering a narrower question than the one that matters, and looking exactly
+like a clean result while doing it. A diff answers "what did I touch". It was
+never able to answer "what did I make untrue".
 
 ## Known limitations, stated rather than papered over
 
