@@ -181,16 +181,15 @@ public factory exists, no v1 app object is wrapped, and all 2A tests/gates pass.
 Exit: a private uniform-v2 SQLite graph works end to end and exposes no storage
 handle through its portable facade.
 
-### 2C — HTTP/security awaits and entry-point proof (later PR)
+### 2C — HTTP/security awaits and entry-point proof (this PR)
 
-1. Await every contract-2 action, operation, capability and authorization path;
+1. [x] Await every contract-2 action, operation, capability and authorization path;
    refuse Promise-shaped v1 values at their first observable execution seam.
-2. Verify capability declaration/interface contract echoes at instantiation.
-3. Make the selected SQLite server path await full startup before listening and
-   close lifecycle ownership on signal/error.
-4. Preserve route/SDK response envelopes and add child-process entry-point
-   evidence. Coordinate deployment loader/serve selection with M2F without
-   absorbing its CLI/MCP scope.
+2. [x] Verify capability declaration/interface contract echoes at instantiation.
+3. [x] Make the selected SQLite server path await full startup before listening and
+   close lifecycle ownership on startup failure. Close is one shared promise.
+4. [x] Preserve route/SDK response envelopes and add child-process entry-point
+   evidence. Do not absorb M2F CLI/MCP or change default `accordo serve`.
 
 Exit: HTTP/security behavior is portable and awaited. Public factory promotion
 still waits for M2E-3's usable default v2 graph.
@@ -255,6 +254,47 @@ Required observations:
 - child process composes, writes through a service, reads audit, closes once;
 - close is async, idempotent and shares one settlement.
 
+2C runs at least:
+
+```text
+node --test tests/spine-v2-m2e2-portable-http.test.js
+node --test tests/spine-v2-m2e2-portable-facade.test.js
+node --test tests/spine-v2-m2e2-async-lifecycle.test.js
+node --test tests/spine-v2-m2e1-contract-versions.test.js
+node --test tests/http-envelope.test.js tests/spine-route-authorization.test.js
+node --test tests/core-adapters.test.js tests/workflow.test.js tests/generated-api.test.js
+npm run check
+npm run surface:check
+npm run repo:truth -- --check
+git diff --check
+npm run verify
+```
+
+Required observations:
+
+- public surface: still only `createAccordoApp`; no `createAccordoAppAsync`,
+  `startPortableSqliteApp` or `startPortableHttpServer` export;
+- portable HTTP source does not import or call the v1 factory;
+- v1/mixed selection still refuses before any opener, provider or listener;
+- listener spy is zero until composition, security start, identity-verifier
+  assembly, package startup hooks and capability-echo verification settle;
+- hanging async security provider never binds a listener;
+- rejecting identity verifier / package `start` hook close owned resources and
+  never listen;
+- thenable capability interface treated as a domain value is refused before
+  listen;
+- HTTP body `{ items: Promise }` is refused with
+  `PACKAGE_ASYNC_CONTRACT_REQUIRED` rather than JSON.stringified as `{}`;
+- startup failure plus cleanup failure preserves the original cause via 2A
+  `attachCleanupError`;
+- capability declaration/interface contract echoes are verified before
+  `/health` is reachable;
+- portable HTTP awaits service create, record action and operation execution;
+- v1 `createAccordoApp()` HTTP envelopes stay 201/200 domain objects;
+- child process starts portable HTTP, writes through a route, reads audit,
+  closes once;
+- default `accordo serve` still constructs the synchronous factory.
+
 ## Progress log
 
 - **2026-08-28:** Created a new causal branch from merged M2E-1 head
@@ -281,6 +321,18 @@ Required observations:
   facade plus `{adapter: 'sqlite', available: true}`. The leak walk covers own
   properties, prototypes, Maps/Sets and accessor descriptors without invoking
   getters or methods. `packages/app/src/create-app.js` is not an input.
+- **2026-08-29:** 2C from merged `bf5bd6e` (PR #143). Added source-private
+  `packages/app/src/portable-http.js` (`startPortableHttpServer`) and
+  `tests/spine-v2-m2e2-portable-http.test.js`. Security/identity/authorization
+  assembly, package `start` hooks and capability-contract echoes settle before
+  `listen`. `createHttpServer` awaits identity verification, authorization and
+  service/action/operation results, and refuses a thenable standing in for a
+  domain value at the dispatcher. Startup failure closes owned resources via
+  2A `attachCleanupError` and never binds a listener. Default `accordo serve`
+  is unchanged. There is still no public `createAccordoAppAsync`. Commercial,
+  Intelligence and Signature characterization observations are unchanged; only
+  the `apps/server/src/http-server.js` source digest moved because handlers now
+  await identity, authorization and service/action/operation results.
 
 ## Decision log
 
@@ -308,13 +360,29 @@ Required observations:
   through Storage Contract v1 so the facade never holds a driver.
 - **No Spine in 2B.** 2A owns one SQLite adapter. Control-plane/tenant binding
   composition stays with 2C/M2F coordination, not this facade.
+- **Source-private HTTP entry, not default serve.** 2C owns
+  `startPortableHttpServer`. Wiring it to `accordo serve` while the bundled
+  graph is v1 would be a public factory whose default invocation can only
+  refuse. M2F owns deployment-storage/CLI selection; this slice does not
+  absorb that scope.
+- **Thenable-as-domain-value is refused, not awaited-away, when it is the
+  value.** Contract 2 settles a Promise of an interface. A thenable that
+  already carries `capabilityContract` (the thenable trap) and an HTTP
+  `{ items: Promise }` envelope are refused with
+  `PACKAGE_ASYNC_CONTRACT_REQUIRED` at the first observable seam.
+- **HTTP `appMethod` aliases stay off the 2B facade.** 2C attaches them on an
+  HTTP-only adapter so enumerated routes (`syncCatalog`, …) work without
+  widening the in-process allowlist.
 
 ## Outcome and follow-up
 
 2A is source-private preflight/lifecycle evidence. 2B is the source-private
 portable graph/facade over that lifecycle: kernel Company/Contact/Opportunity/
 Approval plus a selected uniform-v2 package graph, frozen allowlist, bounded
-storage descriptor, and a whole-object-graph leak test. It does not compose
-generated project modules (the framework graph is empty), bundled v1 domains,
-or Spine. 2C owns awaited HTTP/security entry points. M2E-3 owns dual bundled
-definitions plus any honest public factory export.
+storage descriptor, and a whole-object-graph leak test. 2C is the
+source-private awaited HTTP/security entry over that facade: composition,
+security, package startup and capability echoes settle before listen; HTTP
+handlers await service/action/operation/capability execution; a thenable is
+never a domain value at the dispatcher. It does not compose generated project
+modules, bundled v1 domains, dual-plane Spine, or change default serve.
+M2E-3 owns dual bundled definitions plus any honest public factory export.
