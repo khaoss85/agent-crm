@@ -85,7 +85,7 @@ grep -rnE "database\s*\??\.\s*raw|\??\.\s*raw\s*\??\.\s*(prepare|exec)\s*\(|Data
 | `M2B_CURRENT_SLICE` | `packages/core/src/package-registry.js` — `domain-policy:<domain>:<kind>` | 2 → **0** | Raw persist-or-verify loop, moved to the shared store. | `tests/contracts-registry-review.test.js`, M2B guard |
 | `EXTRACTED_IN_M2C` | `packages/workflows/src/engine.js` | 9 → **0** | Workflow-run persistence was a separate runtime with its own read shapes, untouched by M2B. M2C moved all nine sites to the execution-run store (`docs/plans/spine-v2-m2c-execution-run-store.md`). | workflow tests, M2C guard |
 | `EXTRACTED_IN_M2C` | `packages/core/src/action-runtime.js` | 2 → **0** | `writeTrace` was a separate later-M2 slice, untouched by M2B. M2C moved both sites to the execution-run store while `writeTrace` kept its published signature (`docs/plans/spine-v2-m2c-execution-run-store.md`). | action/trace suites, M2C guard |
-| `LATER_M2_PACKAGE` | `packages/work/src/follow-up.js#requireCallerTransaction` | 1, written `tasks?.database?.raw` | Work's capability reads the driver's `isTransaction` flag to prove the caller's transaction. **Work remains `partial`, and its residue is reachable only through optional chaining, which the plain-token scan does not surface.** Untouched by M2B. | Work capability fault/concurrency suites |
+| `CLOSED_BY_M2D` | `packages/work/src/follow-up.js#requireCallerTransaction` | 1 at the M2B merge → **0** after M2D | M2B deliberately left Work's separate transaction-context seam untouched. M2D subsequently replaced the optional-chained raw-state read with the caller-owned transaction witness. | M2D transaction-context and Work capability fault/concurrency suites |
 | `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/database.js` | 3 | The SQLite adapter owns `DatabaseSync`, the PRAGMAs, rendering, and the raw-driver closure. | M0/M1 storage suites |
 | `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/core-adapters.js` | 2 | Core adapter/compatibility internals. | M0/M1 storage suites |
 | `ADAPTER_INTERNAL_ALLOWED` | `packages/core/src/spine-store.js` | 1 | Control-plane store internals (`database.raw ?? database`). | Spine suites |
@@ -480,13 +480,14 @@ keeps its signature, `createAccordoApp()` stays synchronous, Storage Contract v1
 is untouched, and the ADR-015 refusal is byte-identical — a test asserts the whole
 message, per family, rather than matching a fragment of it.
 
-Explicitly still open at M2B, and deliberately so: `packages/workflows/src/engine.js` and
-`packages/core/src/action-runtime.js` remained later-M2 raw consumers — **both are
-extracted by M2C** (`docs/plans/spine-v2-m2c-execution-run-store.md`);
-`packages/work/src/follow-up.js#requireCallerTransaction` still reads the driver's
-transaction flag through optional chaining, so Work stays `partial` — and that
-residue is invisible to a plain `database\.raw` scan, which is why the M2B guard
-catches the optional-chained spelling and why M2A's guard is named above as
-follow-on work; the adapter internals in
+Explicitly still open at M2B, and deliberately so:
+`packages/workflows/src/engine.js` and `packages/core/src/action-runtime.js`
+remained later-M2 raw consumers; M2C subsequently extracted both
+(`docs/plans/spine-v2-m2c-execution-run-store.md`). Work's
+`packages/work/src/follow-up.js#requireCallerTransaction` also still read the
+driver's transaction flag through optional chaining at M2B, keeping Work
+`partial`; M2D subsequently replaced that read with the caller-owned transaction
+witness and closed the residue. The optional-chained spelling was invisible to a
+plain `database\.raw` scan, which is why the M2B guard covered it. The adapter internals in
 `packages/core/src/database.js`, `core-adapters.js` and `spine-store.js` own the
 driver by design. PostgreSQL remains absent.
