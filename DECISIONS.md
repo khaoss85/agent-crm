@@ -3327,10 +3327,40 @@ The loader is an internal runtime capability in `packages/core/src/deployment-st
 and is not published on the domain-package kernel. Factory, CLI and MCP do not
 call it in the PR that introduces the parser; wiring those surfaces is a later
 M2F slice. `identityVerifier` is parsed as an opaque relative path; ESM
-resolution is M2-22. Replacing every public locator with `{adapter, available}`
+resolution is Amendment 6 / M2-22. Replacing every public locator with `{adapter, available}`
 is the remainder of M2-08.
 
 Plan: `docs/plans/spine-v2-m2f-deployment-storage.md`.
+
+#### Amendment 6 — FIFO/TOCTOU-safe open and identityVerifier pre-connect
+
+A config path that is a FIFO hangs `openSync` without `O_NONBLOCK`. A
+stat-then-read on the path, rather than on the opened fd, is a TOCTOU: the
+bytes parsed can belong to a different inode than the metadata just checked.
+
+**Decision: one internal trusted-file helper** opens with
+`O_RDONLY|O_NOFOLLOW|O_NONBLOCK` (refusing when a flag is unavailable),
+`fstat`s that fd, requires a regular owner-only file, reads from the same
+descriptor, and refuses if inode/dev/uid/mode/size change. The deployment-storage
+loader and the identity-verifier resolver share it.
+
+**Decision: a sibling pre-connect resolver**, not an async parser.
+`loadDeploymentStorage` stays the synchronous closed-envelope function.
+`packages/core/src/identity-verifier.js` resolves the repository-relative ESM
+reference before any database connection or listener exists. The module
+namespace is closed (`identityVerifierContract`, `identityVerifierTrust`,
+`createIdentityVerifier`); the factory receives only `{ mode, signal }`; the
+returned operations are exactly the v2 five. Discover/attest names are wrapped
+to `IDENTITY_VERIFIER_OPERATION_UNSUPPORTED` and never call through. The whole
+pipeline — realpath, trusted open, `import()`, factory — runs under
+`IDENTITY_VERIFIER_INIT_TIMEOUT_MS`. Hang fixtures (factory and top-level
+`await`) are proved in a child process that exits inside the bound. Diagnostics
+carry no path, file bytes or credential.
+
+Neither module is published on `packages/core/index.js`. Factory, CLI and MCP
+still do not import them. Live discover/attest is M3.
+
+Plan: `docs/plans/spine-v2-m2f-verifier-preconnect.md`.
 
 
 ### The spine is opt-in, and its absence is loud

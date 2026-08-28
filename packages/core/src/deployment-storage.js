@@ -1,16 +1,17 @@
 // @ts-check
 
-import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { AppError } from './errors.js';
 import { RUNTIME_MODES } from './runtime-mode.js';
+import { readTrustedRegularFile } from './trusted-file.js';
 
 /**
  * Shared deployment-storage configuration loader (Production Spine v2 M2F).
  *
  * One closed document selects adapter and spine binding for every future
  * executable. This module parses and refuses; it does not open a database,
- * import an identity verifier, or talk to a TLS endpoint.
+ * import an identity verifier, or talk to a TLS endpoint. File bytes come
+ * from a same-fd no-follow nonblock open (see trusted-file.js).
  */
 
 export const DEPLOYMENT_STORAGE_CONTRACT = 1;
@@ -97,55 +98,19 @@ function requiredString(value) {
 }
 
 /**
- * @param {unknown} options
- * @returns {number | null}
- */
-function resolveExpectedUid(options) {
-  if (isPlainObject(options) && Object.hasOwn(options, 'expectedUid')) {
-    return Number.isInteger(options.expectedUid) ? /** @type {number} */ (options.expectedUid) : null;
-  }
-  if (typeof process.getuid !== 'function') return null;
-  return process.getuid();
-}
-
-/**
- * Open a config file with no-follow discipline and read its bytes.
+ * Open a config file with no-follow / nonblock discipline and read its bytes.
  *
  * @param {string} configPath
  * @param {unknown} options
  * @returns {string}
  */
 function readTrustedConfig(configPath, options) {
-  if (typeof constants.O_NOFOLLOW !== 'number') untrusted();
-  const expectedUid = resolveExpectedUid(options);
-  if (!Number.isInteger(expectedUid)) untrusted();
-
-  let fd;
-  try {
-    fd = openSync(configPath, constants.O_RDONLY | constants.O_NOFOLLOW);
-  } catch {
-    untrusted();
+  /** @type {{ expectedUid?: unknown, maxBytes: number, untrusted: () => never }} */
+  const trustedOptions = { maxBytes: DEPLOYMENT_STORAGE_MAX_BYTES, untrusted };
+  if (isPlainObject(options) && Object.hasOwn(options, 'expectedUid')) {
+    trustedOptions.expectedUid = options.expectedUid;
   }
-
-  try {
-    const first = fstatSync(fd);
-    if (!first.isFile() || first.size > DEPLOYMENT_STORAGE_MAX_BYTES || first.size < 0) untrusted();
-    if (first.uid !== expectedUid) untrusted();
-    if ((first.mode & 0o077) !== 0) untrusted();
-
-    const buffer = Buffer.alloc(first.size);
-    const bytesRead = first.size === 0 ? 0 : readSync(fd, buffer, 0, first.size, 0);
-    if (bytesRead !== first.size) untrusted();
-
-    const second = fstatSync(fd);
-    if (second.ino !== first.ino || second.dev !== first.dev || second.uid !== first.uid
-      || second.mode !== first.mode || second.size !== first.size || !second.isFile()) {
-      untrusted();
-    }
-    return buffer.toString('utf8');
-  } finally {
-    try { closeSync(fd); } catch { /* the refusal already owns the outcome */ }
-  }
+  return readTrustedRegularFile(configPath, trustedOptions);
 }
 
 /** @param {string} source */
