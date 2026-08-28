@@ -322,6 +322,35 @@ through this private facade; it does not mean that v1 graph is invalid.
 | Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime facade |
 
+### Awaited portable HTTP/security assessment (Production Spine v2 M2E-2C)
+
+M2E-2C is horizontal kernel machinery, not a domain capability and not M2E-2
+complete. It awaits portable composition, security/identity/authorization
+assembly, package startup hooks and capability-contract echoes before binding
+an HTTP listener, and it refuses a thenable standing in for a domain value at
+the first observable HTTP/capability seam. It is **not** a public async
+factory (M2E-3) and it does **not** change default `accordo serve`.
+`createAccordoApp()` remains the only public factory and remains synchronous.
+A `deferred` row means the domain's released contract-1 graph is not selected
+through this private HTTP entry; it does not mean that v1 graph is invalid.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval writes and reads are awaited over portable HTTP; generated project modules and dual-plane Spine are not composed here |
+| Pipeline | `not_applicable` | a kernel workflow capability; this slice does not migrate pipeline contract 1 |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Signature & Order | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Contract Activation | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Delivery | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Service | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto portable HTTP |
+| Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
+| Customer Data | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; this slice adds no v2 fixture |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime HTTP graph |
+
 ### Cross-plane Spine audit recovery assessment (Production Spine v2 M2F)
 
 The immutable audit-intent and explicit-reconciliation contract applies only to

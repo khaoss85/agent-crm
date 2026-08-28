@@ -11,6 +11,7 @@ import {
   ValidationError,
   normalizeError,
 } from '../../../packages/core/src/errors.js';
+import { refuseThenableDomainValue } from '../../../packages/core/src/async-values.js';
 import { isExposableGeneratedModule } from '../../../packages/core/src/generated-module-contract.js';
 import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
 import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
@@ -76,7 +77,7 @@ export function createHttpServer(app, options = {}) {
           body,
           rawBody,
           headers: request.headers,
-          ...requestIdentity(app, request),
+          ...await requestIdentity(app, request),
         });
         if (!response.writableEnded) {
           // A handler either returns a tagged envelope (explicit status) or a
@@ -84,7 +85,13 @@ export function createHttpServer(app, options = {}) {
           // "status"/"body" property, so a domain object that happens to carry
           // its own `status` field — a lead with status "qualified", say — can
           // never be mistaken for an envelope and turned into an HTTP status.
+          // A thenable standing in for that payload is the Promise-as-domain-
+          // value failure: JSON.stringify would silently emit `{}`.
+          refuseThenableDomainValue(result, 'http handler result');
           const envelope = isResponseEnvelope(result) ? result : { status: 200, body: result };
+          if (isResponseEnvelope(result)) {
+            refuseThenableDomainValue(result.body, 'http body');
+          }
           sendJson(response, envelope.status, envelope.body);
         }
         return;
@@ -256,7 +263,7 @@ function buildRouter(app) {
   // Catalog synchronization (ADR-016). Local-development surface like every
   // other write route; the provider call runs outside the write transaction.
   router.add('POST', '/api/catalog/sync', async ({ body, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.write');
+    await gate(app, identity, organizationId, 'records.write');
     if (typeof app.syncCatalog !== 'function') {
       throw new NotFoundError('Operation', 'catalog sync');
     }
@@ -264,7 +271,7 @@ function buildRouter(app) {
     if (typeof input.provider !== 'string' || input.provider === '') {
       throw new ValidationError('provider is required', { field: 'provider' });
     }
-    return app.syncCatalog({ provider: input.provider, input: input.input, actor });
+    return await app.syncCatalog({ provider: input.provider, input: input.input, actor });
   });
 
   // Signature provider events (ADR-017). A dedicated route, NOT a record
@@ -278,7 +285,7 @@ function buildRouter(app) {
     if (typeof app.ingestSignatureEvent !== 'function') {
       throw new NotFoundError('Operation', 'signature events');
     }
-    return app.ingestSignatureEvent({
+    return await app.ingestSignatureEvent({
       provider: params.provider,
       rawBody: rawBody ?? Buffer.alloc(0),
       headers: safeSignatureHeaders(headers),
@@ -291,11 +298,11 @@ function buildRouter(app) {
   // Explicit envelope reconciliation (ADR-017). No background scheduler ships
   // in this milestone: recovery is always an explicit, audited operation.
   router.add('POST', '/api/signature/envelopes/:id/reconcile', async ({ params, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'signature.reconcile');
+    await gate(app, identity, organizationId, 'signature.reconcile');
     if (typeof app.reconcileSignature !== 'function') {
       throw new NotFoundError('Operation', 'signature reconciliation');
     }
-    return app.reconcileSignature({ envelopeId: params.id, actor });
+    return await app.reconcileSignature({ envelopeId: params.id, actor });
   });
 
   // Customer Data Foundation (ADR-037). Three enumerated routes, the same
@@ -305,7 +312,7 @@ function buildRouter(app) {
   // arbitrary path registration for packages, so an enumerated adapter is the
   // sanctioned shape rather than a shortcut around one.
   router.add('POST', '/api/customer-data/import/preview', async ({ body, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
+    await gate(app, identity, organizationId, 'records.read');
     if (typeof app.previewCustomerImport !== 'function') {
       throw new NotFoundError('Operation', 'customer data import');
     }
@@ -315,23 +322,23 @@ function buildRouter(app) {
     // overridden. Overriding works only while this spread stays in this order,
     // and a security property that depends on the order of an object literal is
     // one refactor away from being gone.
-    return app.previewCustomerImport({ ...stripServerControlledKeys(body), actor });
+    return await app.previewCustomerImport({ ...stripServerControlledKeys(body), actor });
   });
 
   router.add('POST', '/api/customer-data/import/apply', async ({ body, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.write');
+    await gate(app, identity, organizationId, 'records.write');
     if (typeof app.applyCustomerImport !== 'function') {
       throw new NotFoundError('Operation', 'customer data import');
     }
-    return app.applyCustomerImport({ ...stripServerControlledKeys(body), actor });
+    return await app.applyCustomerImport({ ...stripServerControlledKeys(body), actor });
   });
 
   router.add('GET', '/api/customer-data/profile/:resource/:id', async ({ params, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
+    await gate(app, identity, organizationId, 'records.read');
     if (typeof app.readCustomerProfile !== 'function') {
       throw new NotFoundError('Operation', 'customer profile');
     }
-    return app.readCustomerProfile({ resource: params.resource, id: params.id });
+    return await app.readCustomerProfile({ resource: params.resource, id: params.id });
   });
 
   // Uniform resource surface for generated modules (ADR-008). Only modules
@@ -340,34 +347,34 @@ function buildRouter(app) {
   // definitions — fails closed as 404. This is a framework contract against
   // accidental misuse, not a sandbox against malicious source-code changes.
   router.add('GET', '/api/modules/:module', async ({ params, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
+    await gate(app, identity, organizationId, 'records.read');
     const module = resolveGeneratedModule(app, params.module);
     return generatedModuleMetadata(module, app.actions.listForModule(module.name));
   });
   router.add('GET', '/api/modules/:module/records', async ({ params, searchParams, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
+    await gate(app, identity, organizationId, 'records.read');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'list');
     return {
-      items: module.service.list({
+      items: await module.service.list({
         limit: strictLimit(searchParams),
         where: strictCollectionFilter(searchParams, module),
       }),
     };
   });
   router.add('POST', '/api/modules/:module/records', async ({ params, body, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.write');
+    await gate(app, identity, organizationId, 'records.write');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'create');
     return respond(201, await module.service.create(recordInput(body), { actor }));
   });
   router.add('GET', '/api/modules/:module/records/:id', async ({ params, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
+    await gate(app, identity, organizationId, 'records.read');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'get');
-    return module.service.get(params.id);
+    return await module.service.get(params.id);
   });
   router.add('PATCH', '/api/modules/:module/records/:id', async ({ params, body, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.write');
+    await gate(app, identity, organizationId, 'records.write');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'update');
-    return module.service.update(params.id, recordInput(body), { actor });
+    return await module.service.update(params.id, recordInput(body), { actor });
   });
 
   // Code-first actions over the generic surface (ADR-011/014). The route only
@@ -382,7 +389,7 @@ function buildRouter(app) {
     resolveActionableModule(app, params.module); // 404 for unknown/ineligible modules
     // The action runtime authorizes with the action's own declared permission;
     // passing the identity through is what makes that possible.
-    return app.runAction({
+    return await app.runAction({
       module: params.module,
       action: params.action,
       recordId: params.id,
@@ -394,32 +401,32 @@ function buildRouter(app) {
   });
 
   router.add('GET', '/api/companies', async ({ query, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
-    return { items: app.services.companies.list({ limit: parseLimit(query.limit) }) };
+    await gate(app, identity, organizationId, 'records.read');
+    return { items: await app.services.companies.list({ limit: parseLimit(query.limit) }) };
   });
   router.add('POST', '/api/companies', async ({ body, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.write');
+    await gate(app, identity, organizationId, 'records.write');
     return respond(201, await app.services.companies.create(body ?? {}, { actor }));
   });
 
   router.add('GET', '/api/contacts', async ({ query, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
+    await gate(app, identity, organizationId, 'records.read');
     return {
-      items: app.services.contacts.list({
+      items: await app.services.contacts.list({
         companyId: query.companyId,
         limit: parseLimit(query.limit),
       }),
     };
   });
   router.add('POST', '/api/contacts', async ({ body, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.write');
+    await gate(app, identity, organizationId, 'records.write');
     return respond(201, await app.services.contacts.create(body ?? {}, { actor }));
   });
 
   router.add('GET', '/api/opportunities', async ({ query, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
+    await gate(app, identity, organizationId, 'records.read');
     return {
-      items: app.services.opportunities.list({
+      items: await app.services.opportunities.list({
         stage: query.stage,
         type: query.type,
         companyId: query.companyId,
@@ -428,16 +435,16 @@ function buildRouter(app) {
     };
   });
   router.add('POST', '/api/opportunities', async ({ body, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.write');
+    await gate(app, identity, organizationId, 'records.write');
     return respond(201, await app.services.opportunities.create(body ?? {}, { actor }));
   });
   router.add('GET', '/api/opportunities/:id', async ({ params, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
-    return app.services.opportunities.get(params.id);
+    await gate(app, identity, organizationId, 'records.read');
+    return await app.services.opportunities.get(params.id);
   });
   router.add('POST', '/api/opportunities/:id/stage', async ({ params, body, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.write');
-    return app.workflows.run(
+    await gate(app, identity, organizationId, 'records.write');
+    return await app.workflows.run(
       'request-opportunity-stage-change',
       { opportunityId: params.id, targetStage: body?.targetStage },
       { actor },
@@ -445,9 +452,9 @@ function buildRouter(app) {
   });
 
   router.add('GET', '/api/approvals', async ({ query, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
+    await gate(app, identity, organizationId, 'records.read');
     return {
-      items: app.services.approvals.list({
+      items: await app.services.approvals.list({
         status: query.status,
         opportunityId: query.opportunityId,
         limit: parseLimit(query.limit),
@@ -455,16 +462,16 @@ function buildRouter(app) {
     };
   });
   router.add('POST', '/api/approvals/:id/approve', async ({ params, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'approvals.decide');
-    return app.workflows.run(
+    await gate(app, identity, organizationId, 'approvals.decide');
+    return await app.workflows.run(
       'decide-opportunity-approval',
       { approvalId: params.id, decision: 'approved' },
       { actor },
     );
   });
   router.add('POST', '/api/approvals/:id/reject', async ({ params, actor, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'approvals.decide');
-    return app.workflows.run(
+    await gate(app, identity, organizationId, 'approvals.decide');
+    return await app.workflows.run(
       'decide-opportunity-approval',
       { approvalId: params.id, decision: 'rejected' },
       { actor },
@@ -476,9 +483,9 @@ function buildRouter(app) {
   // disclosure of who did what, which is precisely what this milestone exists
   // to protect.
   router.add('GET', '/api/traces', async ({ query, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
+    await gate(app, identity, organizationId, 'records.read');
     return {
-      items: app.workflows.listRuns({
+      items: await app.workflows.listRuns({
         status: query.status,
         workflowName: query.workflowName,
         limit: parseLimit(query.limit),
@@ -486,14 +493,14 @@ function buildRouter(app) {
     };
   });
   router.add('GET', '/api/traces/:id', async ({ params, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
-    return app.workflows.getRun(params.id);
+    await gate(app, identity, organizationId, 'records.read');
+    return await app.workflows.getRun(params.id);
   });
 
   router.add('GET', '/api/audit', async ({ query, identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
+    await gate(app, identity, organizationId, 'records.read');
     return {
-      items: app.audit.list({
+      items: await app.audit.list({
         entityType: query.entityType,
         entityId: query.entityId,
         limit: parseLimit(query.limit),
@@ -508,9 +515,9 @@ function buildRouter(app) {
     if (!app.spine) {
       throw new NotFoundError('Operation', 'production spine');
     }
-    const organization = organizationId ? app.spine.organizations.get(organizationId) : null;
+    const organization = organizationId ? await app.spine.organizations.get(organizationId) : null;
     const membership = (identity?.subject && organizationId)
-      ? app.spine.memberships.find({ organizationId, subject: identity.subject })
+      ? await app.spine.memberships.find({ organizationId, subject: identity.subject })
       : null;
     return {
       ...app.spine.describe(),
@@ -523,15 +530,15 @@ function buildRouter(app) {
 
   router.add('GET', '/api/spine/memberships', async ({ identity, organizationId }) => {
     if (!app.spine) throw new NotFoundError('Operation', 'production spine');
-    gate(app, identity, organizationId, 'admin.memberships.manage');
-    return { items: app.spine.memberships.listFor({ organizationId }) };
+    await gate(app, identity, organizationId, 'admin.memberships.manage');
+    return { items: await app.spine.memberships.listFor({ organizationId }) };
   });
 
   router.add('POST', '/api/spine/memberships', async ({ body, identity, organizationId }) => {
     if (!app.spine) throw new NotFoundError('Operation', 'production spine');
     // The store authorizes and applies the no-self-grant and last-administrator
     // rules; the route does not get to decide any of that.
-    return respond(201, app.spine.memberships.grant({
+    return respond(201, await app.spine.memberships.grant({
       organizationId,
       subject: body?.subject,
       role: body?.role,
@@ -544,7 +551,7 @@ function buildRouter(app) {
 
   router.add('POST', '/api/spine/memberships/:subject/suspend', async ({ params, body, identity, organizationId }) => {
     if (!app.spine) throw new NotFoundError('Operation', 'production spine');
-    return app.spine.memberships.suspend({
+    return await app.spine.memberships.suspend({
       organizationId,
       subject: params.subject,
       reason: body?.reason,
@@ -554,17 +561,17 @@ function buildRouter(app) {
   });
 
   router.add('GET', '/api/notifications', async ({ identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.read');
-    return { items: app.notifications.list() };
+    await gate(app, identity, organizationId, 'records.read');
+    return { items: await app.notifications.list() };
   });
 
   router.add('POST', '/api/demo/seed', async ({ identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.write');
+    await gate(app, identity, organizationId, 'records.write');
     return respond(201, await app.seedDemo());
   });
   router.add('POST', '/api/demo/run', async ({ identity, organizationId }) => {
-    gate(app, identity, organizationId, 'records.write');
-    return app.runDemo();
+    await gate(app, identity, organizationId, 'records.write');
+    return await app.runDemo();
   });
 
   return router;
@@ -582,9 +589,11 @@ function buildRouter(app) {
  *
  * @param {any} app @param {any} identity @param {string|null} organizationId @param {string} permission
  */
-function gate(app, identity, organizationId, permission) {
+async function gate(app, identity, organizationId, permission) {
   if (!app?.spine) return null;
-  return app.spine.authorize({ identity, organizationId, permission });
+  const decision = await app.spine.authorize({ identity, organizationId, permission });
+  refuseThenableDomainValue(decision, 'authorization');
+  return decision;
 }
 
 /**
@@ -614,7 +623,7 @@ function gate(app, identity, organizationId, permission) {
  *
  * @param {any} app @param {import('node:http').IncomingMessage} request
  */
-function requestIdentity(app, request) {
+async function requestIdentity(app, request) {
   const spine = app?.spine ?? null;
 
   if (!spine) {
@@ -631,10 +640,18 @@ function requestIdentity(app, request) {
   let identity = null;
   if (verifier) {
     // The adapter verifies. Anything it throws, or fails to return, is treated
-    // as "not verified" — never as "probably fine".
+    // as "not verified" — never as "probably fine". A thenable identity is not
+    // "not verified": it is a Promise used as the identity value, and that
+    // refusal must not be swallowed as anonymous.
     try {
-      identity = spine.defineIdentity(verifier({ headers: request.headers, method: request.method, url: request.url }));
-    } catch {
+      const verified = await verifier({ headers: request.headers, method: request.method, url: request.url });
+      refuseThenableDomainValue(verified, 'identity');
+      identity = verified == null ? null : await spine.defineIdentity(verified);
+      refuseThenableDomainValue(identity, 'identity');
+    } catch (error) {
+      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'PACKAGE_ASYNC_CONTRACT_REQUIRED') {
+        throw error;
+      }
       identity = null;
     }
   }
@@ -644,7 +661,8 @@ function requestIdentity(app, request) {
     // explicitly ASSERTED identity; in production it becomes anonymous, which
     // authorizes nothing. `identityFor` owns that difference so there is one
     // place it is decided.
-    identity = spine.identityFor({ actor: legacyActorFromHeaders(request) });
+    identity = await spine.identityFor({ actor: legacyActorFromHeaders(request) });
+    refuseThenableDomainValue(identity, 'identity');
   }
 
   return {

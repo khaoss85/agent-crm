@@ -100,8 +100,12 @@ the portable async path, but M2E-1 does not ship that path and does not migrate
 customer packages. Do not change this number in isolation: package, every
 action, every declared operation and every offered capability must select the
 same version, and a mixed graph refuses startup with
-`PACKAGE_ASYNC_CONTRACT_REQUIRED`. The async factory and bundled dual graphs are
-the sequenced M2E-2/M2E-3 work.
+`PACKAGE_ASYNC_CONTRACT_REQUIRED`. The portable async path (M2E-2) is
+source-private until M2E-3 ships dual bundled graphs; M2E-2C verifies an
+offered capability's optional interface `capabilityContract` against the
+declaration before a portable HTTP listener binds, and refuses a thenable
+standing in for that interface. The public factory and default `accordo serve`
+remain the synchronous v1 path.
 
 ## 3. Declare what you need from other packages
 
