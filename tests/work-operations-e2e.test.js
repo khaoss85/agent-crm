@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { activatedContract, boot, project } from './helpers/contracts-project.js';
 import {
@@ -127,7 +128,7 @@ test('the schema block publishes the transition table and refuses the words that
 // ---------------------------------------------------------------------------
 
 test('consumer 1 — lead qualification opens one task and one activity, atomically', async (t) => {
-  const { context } = await leadProject(t, 'lead-work.sqlite');
+  const { root, context } = await leadProject(t, 'lead-work.sqlite');
   const { app, client } = context;
   const lead = await app.modules.get('lead').service.create(
     { firstName: 'Dana', lastName: 'Rossi', email: 'dana@acme.example' }, { actor: ACTOR },
@@ -253,7 +254,7 @@ test('consumer 2b — a service escalation opens one task and still routes and n
 // ---------------------------------------------------------------------------
 
 test('the transition table is the whole answer, and both terminals are terminal', async (t) => {
-  const { context } = await leadProject(t, 'lifecycle-table.sqlite');
+  const { root, context } = await leadProject(t, 'lifecycle-table.sqlite');
   const { app } = context;
   const tasks = app.modules.get('work-task').service;
 
@@ -303,7 +304,7 @@ test('the transition table is the whole answer, and both terminals are terminal'
 });
 
 test('every writing action is a human decision, and an agent is refused each one', async (t) => {
-  const { context } = await leadProject(t, 'human-boundary.sqlite');
+  const { root, context } = await leadProject(t, 'human-boundary.sqlite');
   const { app } = context;
   const lead = await app.modules.get('lead').service.create(
     { firstName: 'Human', lastName: 'Only', email: 'human@x.example' }, { actor: ACTOR },
@@ -325,7 +326,7 @@ test('every writing action is a human decision, and an agent is refused each one
 });
 
 test('a note is safe text on the timeline, and the timeline stays a closed vocabulary', async (t) => {
-  const { context } = await leadProject(t, 'notes.sqlite');
+  const { root, context } = await leadProject(t, 'notes.sqlite');
   const { app } = context;
   const lead = await app.modules.get('lead').service.create(
     { firstName: 'Noted', lastName: 'Lead', email: 'noted@x.example' }, { actor: ACTOR },
@@ -357,9 +358,15 @@ test('a note is safe text on the timeline, and the timeline stays a closed vocab
 // ---------------------------------------------------------------------------
 
 test('same key and same payload replays; a divergent payload is refused by field name', async (t) => {
-  const { context } = await leadProject(t, 'idempotency.sqlite');
+  const { root, context } = await leadProject(t, 'idempotency.sqlite');
   const { app } = context;
-  const { createFollowUp } = await import('../packages/work/src/index.js');
+  // Imported from the throwaway project, not from this checkout: the witness
+  // that proves the caller's transaction is minted by the database that
+  // application composed, and recognized only by the core instance it was
+  // minted in (Spine v2 M2D). Driving a composed app with a second copy of
+  // Work is a mixed composition no deployment can produce, and it now fails
+  // closed. The two sources are byte-identical — `project()` copies this one.
+  const { createFollowUp } = await import(pathToFileURL(join(root, 'packages/work/src/index.js')).href);
   const lead = await app.modules.get('lead').service.create(
     { firstName: 'Retry', lastName: 'Client', email: 'retry@x.example' }, { actor: ACTOR },
   );
@@ -444,9 +451,15 @@ test('same key and same payload replays; a divergent payload is refused by field
 // ---------------------------------------------------------------------------
 
 test('a follow-up outside the caller transaction is refused, so no half pair can exist', async (t) => {
-  const { context } = await leadProject(t, 'no-transaction.sqlite');
+  const { root, context } = await leadProject(t, 'no-transaction.sqlite');
   const { app } = context;
-  const { createFollowUp } = await import('../packages/work/src/index.js');
+  // Imported from the throwaway project, not from this checkout: the witness
+  // that proves the caller's transaction is minted by the database that
+  // application composed, and recognized only by the core instance it was
+  // minted in (Spine v2 M2D). Driving a composed app with a second copy of
+  // Work is a mixed composition no deployment can produce, and it now fails
+  // closed. The two sources are byte-identical — `project()` copies this one.
+  const { createFollowUp } = await import(pathToFileURL(join(root, 'packages/work/src/index.js')).href);
   const ctx = { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' };
   const request = {
     sourceKey: 'orphan:1', title: 'Follow up', dueAt: null,
@@ -484,9 +497,15 @@ test('a follow-up outside the caller transaction is refused, so no half pair can
 // ---------------------------------------------------------------------------
 
 test('a real business identity is accepted whatever digits it contains, and bad syntax is refused', async (t) => {
-  const { context } = await leadProject(t, 'source-key.sqlite');
+  const { root, context } = await leadProject(t, 'source-key.sqlite');
   const { app } = context;
-  const { createFollowUp } = await import('../packages/work/src/index.js');
+  // Imported from the throwaway project, not from this checkout: the witness
+  // that proves the caller's transaction is minted by the database that
+  // application composed, and recognized only by the core instance it was
+  // minted in (Spine v2 M2D). Driving a composed app with a second copy of
+  // Work is a mixed composition no deployment can produce, and it now fails
+  // closed. The two sources are byte-identical — `project()` copies this one.
+  const { createFollowUp } = await import(pathToFileURL(join(root, 'packages/work/src/index.js')).href);
   const ctx = { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' };
   const base = {
     title: 'x', subject: { resource: 'lead', id: 'l1', owner: 'host' },
@@ -532,9 +551,15 @@ test('a real business identity is accepted whatever digits it contains, and bad 
 // ---------------------------------------------------------------------------
 
 test('an impossible due date is refused rather than rolled over to a plausible one', async (t) => {
-  const { context } = await leadProject(t, 'due-at.sqlite');
+  const { root, context } = await leadProject(t, 'due-at.sqlite');
   const { app } = context;
-  const { createFollowUp } = await import('../packages/work/src/index.js');
+  // Imported from the throwaway project, not from this checkout: the witness
+  // that proves the caller's transaction is minted by the database that
+  // application composed, and recognized only by the core instance it was
+  // minted in (Spine v2 M2D). Driving a composed app with a second copy of
+  // Work is a mixed composition no deployment can produce, and it now fails
+  // closed. The two sources are byte-identical — `project()` copies this one.
+  const { createFollowUp } = await import(pathToFileURL(join(root, 'packages/work/src/index.js')).href);
   const ctx = { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' };
   const base = {
     sourceKey: 'due:1', title: 'x', subject: { resource: 'lead', id: 'l1', owner: 'host' },
@@ -572,7 +597,7 @@ test('an impossible due date is refused rather than rolled over to a plausible o
 
 test('dueAt never moves a task: the clock is stepped past it and the row is byte-identical', async (t) => {
   let instant = '2026-08-01T00:00:00.000Z';
-  const { context } = await leadProject(t, 'due.sqlite', () => instant);
+  const { root, context } = await leadProject(t, 'due.sqlite', () => instant);
   const { app } = context;
   const lead = await app.modules.get('lead').service.create(
     { firstName: 'Due', lastName: 'Date', email: 'due@x.example' }, { actor: ACTOR },

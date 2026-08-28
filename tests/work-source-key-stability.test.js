@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { boot, project } from './helpers/contracts-project.js';
-import { createFollowUp, sortTimeline } from '../packages/work/src/index.js';
+import { sortTimeline } from '../packages/work/src/index.js';
 import { workFollowUpKey as lifecycleKey } from '../packages/lifecycle/src/index.js';
 import { workFollowUpKey as serviceKey } from '../packages/service/src/service-actions.js';
 
@@ -50,7 +51,9 @@ async function leadProject(t, file, clock) {
   assert.equal(applied.status, 0, applied.stderr);
   const context = await boot(root, join(root, 'data', file), clock ? { clock } : {});
   t.after(() => context.close());
-  return context;
+  // `root` travels with the context so a test can load the package source the
+  // application actually composed (see the note at the call site).
+  return Object.assign(context, { root });
 }
 
 test('every consumer key is a pure function of a committed record id, at any instant', () => {
@@ -86,6 +89,13 @@ test('the host consumer key survives a clock that has moved a year', async (t) =
   // A year later, the same business event computes the same key and replays.
   // This is the property the clock regex was standing in for, proven directly.
   instant = '2027-08-01T00:00:00.000Z';
+  // Loaded from the throwaway project, not from this checkout: the witness that
+  // proves the caller's transaction is minted by the database that application
+  // composed and is recognized only inside the core instance that minted it
+  // (Spine v2 M2D). Driving a composed app with a second copy of Work is a
+  // mixed composition no deployment can produce, and it now fails closed. The
+  // two sources are byte-identical — `project()` copies this very checkout.
+  const { createFollowUp } = await import(pathToFileURL(join(context.root, 'packages/work/src/index.js')).href);
   const retry = await app.database.transactionAsync(() => createFollowUp(
     { modules: app.modules, actor: ACTOR, now: () => instant },
     {

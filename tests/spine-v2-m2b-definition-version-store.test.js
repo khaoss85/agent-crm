@@ -39,9 +39,13 @@ import { IntelligenceRegistries } from '../packages/intelligence/src/registry.js
  * one is named for what it does.
  *
  * The spellings it does cover are pinned below, each watched failing. The list
- * grew twice under review: optional chaining (`tasks?.database?.raw`, which is
- * how `packages/work/src/follow-up.js` still reaches the driver and why the
- * inherited M2A pattern does not see it), then bracket access and destructuring.
+ * grew twice under review: optional chaining (`tasks?.database?.raw`, which was
+ * how `packages/work/src/follow-up.js` reached the driver until M2D, and why
+ * the inherited M2A pattern did not see it), then bracket access and
+ * destructuring. M2D's own search re-proved the destructuring half the hard
+ * way: its first sweep used only the first pattern here and reported a clean
+ * tree, and a planted `const { raw } = database` showed why that was not an
+ * answer. Any spelling added here must be added to the M2D list too.
  */
 const RAW_DRIVER_SPELLINGS = Object.freeze([
   // `database.raw`, `database?.raw`, `this.database.raw`
@@ -61,9 +65,12 @@ const rawDriverSpelling = (source) => RAW_DRIVER_SPELLINGS.find((pattern) => pat
 
 /**
  * The four files M2B declared, and nothing else:
- * `packages/workflows/src/engine.js`, the action runtime and Work's
- * transaction-context seam still reach the driver, deliberately, and this
- * assertion makes no claim about them.
+ * `packages/workflows/src/engine.js` and the action runtime still reach the
+ * driver, deliberately, and this assertion makes no claim about them.
+ *
+ * Work's transaction-context seam was on that list until M2D removed it; the
+ * files that replaced it are scanned by
+ * `tests/spine-v2-m2d-transaction-context.test.js`, with the same spelling list.
  */
 const M2B_SLICE = Object.freeze([
   'packages/commercial/src/registry.js',

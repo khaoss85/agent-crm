@@ -540,6 +540,80 @@ Company therefore still refuses before either dependent write. M2 owns the rest
 of the SQLite extraction; this addendum must not be read as repository-wide raw
 driver removal or as PostgreSQL support.
 
+
+### ADR-018 addendum 8 — proving the caller's transaction is core machinery, from four consumers
+
+Production Spine v2 M2D removes the last business-consumer raw-driver reach.
+`packages/work/src/follow-up.js` read the SQLite driver's `isTransaction` flag
+off the module service's database handle: one boolean, bought by a business
+package holding the driver, and with it every table in the application. It
+survived three milestones because it was spelled with optional chaining, which a
+plain token scan for the property does not see.
+
+**Four consumers, not one.** Applying the two-consumer rule found three more
+capabilities promising the same atomicity in their own doc comments with nothing
+checking it, and each was measured — not reasoned about — committing a partial
+write outside a transaction: `delivery-obligations@1.markHandedOver` left an
+obligation marked handed over to a delivery project that would never exist and
+permanently un-handoverable; `service-obligations@1.markActivated` did the same
+through a different status column; and
+`contracts-successor-activation@1.executeSuccession` committed a successor
+commercial agreement with no lineage row, so nothing on disk said which
+agreement it replaced. The primitive is core machinery because four unlike
+consumers need it, and all four are migrated onto it here.
+
+**The mechanism.** The database wrapper mints one opaque witness — a frozen
+empty object — per outer transaction, beside the flag that already tracked one,
+and drops it in the same `finally`. Membership lives in a module-private
+`WeakSet` with no exported mutator, bound to the storage handle it was minted
+for, so a boolean, a bare object, a frozen empty object of exactly the right
+shape, or a genuine witness from another handle are all refused.
+`proveCallerTransaction` **pulls** it from the handle the write will land on
+rather than accepting one from a caller, and first compares the handles of the
+services that must commit together: two services on two connections break
+atomicity even inside a transaction, because they are inside two different ones.
+The mint function is deliberately not public — a package that could mint could
+manufacture the proof it is subject to.
+
+**Ownership, and the two ways the mint is kept out of reach.** The witness is
+published into the async context that opened the transaction, so the proof
+answers "did *this* flow open it" rather than only "is one open". An earlier cut
+proved only the latter, and the gap was real: flow A opens `transactionAsync`
+and awaits, flow B writes inside A's transaction and loses those writes to A's
+rollback. Measured both before and after; B is now refused
+`NOT_TRANSACTION_OWNER`, with the cause and the fix in the message.
+
+That makes the mint load-bearing in a way it was not before — a package that can
+mint can manufacture ownership — so it is closed by **exhaustion rather than by
+analysis**. `claimTransactionMinter()` yields the capability once; the database
+wrapper takes it at module load, and every later caller is refused whatever
+import spelling it used. Static analysis of import specifiers could never have
+done this: a computed specifier walks past it, which is why the previous cut
+could only document the hole. Minting, publishing into the async context and
+clearing are also one indivisible operation, so no caller ever holds a witness
+it could use elsewhere.
+
+**The false refusal this buys.** Async context is lost by a callback that leaves
+the transaction and is invoked later. Such a caller is refused with the boundary
+named and `AsyncResource.bind` offered, rather than being told there is no
+transaction while one is plainly open. The boundaries that carry context and the
+one that does not are measured, not assumed.
+
+**The assumptions that remain, and the obligation they place on M3.** The
+same-handle half still assumes one connection per application instance, and the
+registries are module-private, so one loaded core module instance per process.
+`NESTED_TRANSACTION` is no longer load-bearing for ownership — it was what made
+the gap unreachable, and the gap is closed. The
+ratified PostgreSQL plan introduces connection pooling and transaction
+connection affinity. **A pooled adapter must open the ownership scope around the
+pooled client's work, on a connection-affine handle** — the object compared by
+identity must be the pooled client bound to the active transaction, never a
+pool-level facade shared across clients. This is an obligation on that milestone, not a property it inherits: an
+implementation that mints at pool level would leave all four consumers silently
+proving nothing, with no test failing. Recorded here rather than only in
+`docs/plans/spine-v2-m2d-transaction-context.md` because that is where the
+implementer will look.
+
 ## ADR-019 — Safe generated-module evolution through explicit revisions and append-only named migrations
 
 **Status:** accepted (Module Evolution v1).

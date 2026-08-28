@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, calendarDaysBetween } from '../../core/index.js';
+import { requireCallerTransaction } from './capabilities.js';
 import {
   classifyComponents,
   loadActivationSource,
@@ -819,6 +820,28 @@ export function createSuccessorActivationCapability(moduleNames) {
           const now = typeof context.now === 'function' ? context.now : () => new Date().toISOString();
           const activatedAt = now();
           const term = signedTermFromSnapshot(derived.evidence.signedTerm);
+
+          // Every refusal above is a read: the plan, the coherence guards, the
+          // policy. Below is the largest write set this repository produces —
+          // a contract, its version, its lines, a subscription and its lines,
+          // the obligations, the activation row and the lineage that says what
+          // was replaced. `translateRace` below states plainly that a lost race
+          // "rolls back whole"; that is true only inside a caller-owned
+          // transaction, so this proves there is one before the first row.
+          //
+          // All nine services, not the first one: they must land on ONE
+          // connection, and two handles would break the set even inside a
+          // transaction because they would be inside two different ones.
+          requireCallerTransaction(
+            [
+              trusted(modules, names.contract), trusted(modules, names.contractVersion),
+              trusted(modules, names.contractLine), trusted(modules, names.subscription),
+              trusted(modules, names.subscriptionLine), trusted(modules, names.deliveryObligation),
+              trusted(modules, names.serviceObligation), trusted(modules, names.activation),
+              trusted(modules, names.succession),
+            ],
+            'Executing a successor commercial agreement',
+          );
 
           let written;
           try {
