@@ -64,6 +64,90 @@ const MAX_NAME = 64;
 const MAX_LABEL = 80;
 const MAX_DESCRIPTION = 400;
 const MAX_VERSION = 1_000_000;
+const MAX_VALIDATION_DIAGNOSTIC = 160;
+
+function boundValidationDiagnostic(text) {
+  return text.length <= MAX_VALIDATION_DIAGNOSTIC
+    ? text
+    : `${text.slice(0, MAX_VALIDATION_DIAGNOSTIC)}…`;
+}
+
+/** A declaration identity/key is data in an error, never an unbounded reply. */
+function validationDiagnosticText(value) {
+  try {
+    return boundValidationDiagnostic(String(value));
+  } catch {
+    return '(unprintable)';
+  }
+}
+
+/** JSON-like diagnostics that cannot throw on BigInt, cycles or hostile hooks. */
+function validationDiagnosticValue(value) {
+  try {
+    const seen = new WeakSet();
+    const json = JSON.stringify(value, (_key, item) => {
+      if (typeof item === 'bigint') return `${item}n`;
+      if (item && typeof item === 'object') {
+        if (seen.has(item)) return '[Circular]';
+        seen.add(item);
+      }
+      return item;
+    });
+    if (json !== undefined) return boundValidationDiagnostic(json);
+  } catch {
+    // A throwing toJSON/getter falls through to the bounded text form.
+  }
+  return validationDiagnosticText(value);
+}
+
+/**
+ * Refuse one-character damage to the two closed capability-contract key
+ * spellings. This is deliberately not a general fuzzy-key matcher: only the
+ * compact canonical names participate, and the only tolerated distance is one
+ * insertion/deletion/substitution or one adjacent transposition. Ordinary
+ * metadata such as `contractor`, `contractNotes` and `capabilityContractor` is
+ * not close enough to either closed name.
+ *
+ * @param {string} compact
+ */
+function isOneCharacterCapabilityContractTypo(compact) {
+  for (const canonical of ['capabilitycontract', 'capabilitiescontract']) {
+    const delta = compact.length - canonical.length;
+    if (Math.abs(delta) > 1 || compact === canonical) continue;
+
+    if (delta === 0) {
+      const different = [];
+      for (let index = 0; index < canonical.length; index += 1) {
+        if (compact[index] !== canonical[index]) different.push(index);
+      }
+      if (different.length === 1) return true;
+      if (different.length === 2
+        && different[1] === different[0] + 1
+        && compact[different[0]] === canonical[different[1]]
+        && compact[different[1]] === canonical[different[0]]) return true;
+      continue;
+    }
+
+    const shorter = delta < 0 ? compact : canonical;
+    const longer = delta < 0 ? canonical : compact;
+    let shortIndex = 0;
+    let longIndex = 0;
+    let edits = 0;
+    while (shortIndex < shorter.length && longIndex < longer.length) {
+      if (shorter[shortIndex] === longer[longIndex]) {
+        shortIndex += 1;
+        longIndex += 1;
+      } else {
+        edits += 1;
+        if (edits > 1) break;
+        longIndex += 1;
+      }
+    }
+    if (edits <= 1 && shortIndex === shorter.length) return true;
+  }
+  return false;
+}
+
 /**
  * Declare a domain package. This is a validating identity function: it returns
  * the definition it was given, having refused anything the runtime could not
@@ -147,13 +231,9 @@ export function validatePackageDefinition(pkg) {
   // application's concern; every other action-contract rule is shared with
   // the runtime validator instead of copied here.
   for (const entry of pkg.actions ?? []) {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new ValidationError(`${label}: each actions entry must be a plain object`);
-    }
-    const prototype = Object.getPrototypeOf(entry);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new ValidationError(`${label}: each actions entry must be a plain object`);
-    }
+    // The canonical action validator already owns null, arrays, class-backed
+    // definitions and every executable field. Adding a package-only prototype
+    // rule would reject definitions ActionRegistry has always accepted.
     validateActionDefinition(entry, { moduleExists: () => true });
   }
   if (pkg.metadata !== undefined && typeof pkg.metadata !== 'function') {
@@ -208,10 +288,10 @@ export function validatePackageDefinition(pkg) {
     }
     assertVersion(label, entry.version, 'capability version');
     if (typeof entry.create !== 'function') {
-      throw new ValidationError(`${label}: capability "${entry.name}" must declare create()`);
+      throw new ValidationError(`${label}: capability "${validationDiagnosticText(entry.name)}" must declare create()`);
     }
     if (entry.description !== undefined && (typeof entry.description !== 'string' || entry.description.length > MAX_DESCRIPTION)) {
-      throw new ValidationError(`${label}: capability "${entry.name}" description must be a bounded string`);
+      throw new ValidationError(`${label}: capability "${validationDiagnosticText(entry.name)}" description must be a bounded string`);
     }
     // **The capability contract, declared where composition can read it.**
     // Before M2E-1 this field existed only on the object `create()` returns —
@@ -223,7 +303,7 @@ export function validatePackageDefinition(pkg) {
     if (entry.capabilityContract !== undefined
       && !SUPPORTED_CAPABILITY_CONTRACTS.includes(entry.capabilityContract)) {
       throw new ValidationError(
-        `${label}: capability "${entry.name}" capabilityContract must be one of ${SUPPORTED_CAPABILITY_CONTRACTS.join(', ')} (received ${JSON.stringify(entry.capabilityContract)})`,
+        `${label}: capability "${validationDiagnosticText(entry.name)}" capabilityContract must be one of ${SUPPORTED_CAPABILITY_CONTRACTS.join(', ')} (received ${validationDiagnosticValue(entry.capabilityContract)})`,
       );
     }
     // **A typo'd contract key is refused, because a default protects the value
@@ -247,15 +327,18 @@ export function validatePackageDefinition(pkg) {
         return token;
       });
       return (normalized.includes('contract') && normalized.includes('capability'))
-        || /^(?:capability|capabilities)contracts?(?:version)?$/.test(compact);
+        || /^(?:capability|capabilities)contracts?(?:version)?$/.test(compact)
+        || isOneCharacterCapabilityContractTypo(compact);
     });
     if (strayContract !== undefined) {
       throw new ValidationError(
-        `${label}: capability "${entry.name}" declares "${strayContract}"; did you mean capabilityContract?`,
+        `${label}: capability "${validationDiagnosticText(entry.name)}" declares "${validationDiagnosticText(strayContract)}"; did you mean capabilityContract?`,
       );
     }
     const key = `${entry.name}@${entry.version}`;
-    if (offered.has(key)) throw new ValidationError(`${label}: duplicate capability ${key}`);
+    if (offered.has(key)) {
+      throw new ValidationError(`${label}: duplicate capability ${validationDiagnosticText(key)}`);
+    }
     offered.add(key);
   }
 
@@ -403,7 +486,7 @@ export class PackageRegistry {
   #packages;
   /** @type {Map<string, {domain: string, kind: string, definition: any, fingerprint: string}>} */
   #policies;
-  /** @type {Map<string, {package: string, entry: any}>} */
+  /** @type {Map<string, {package: string, entry: any, capabilityContract: number}>} */
   #capabilities;
   /** @type {Map<string, string>} */
   #resources;

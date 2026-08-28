@@ -282,7 +282,7 @@ export async function inspectApplication({ rootDir: requested }) {
     capabilityRows.set(key, {
       name: value.entry.name,
       version: value.entry.version,
-      capabilityContract: value.entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
+      capabilityContract: value.capabilityContract,
       provider: value.package,
       consumers: [],
       status: 'resolved',

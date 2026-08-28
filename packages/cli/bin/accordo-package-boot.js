@@ -95,16 +95,25 @@ try {
   const summary = packageName ? describe(app, packageName) : null;
   for (const entry of summary?.requires ?? []) {
     const [providerAndCapability, version] = entry.split('@');
-    const [, capability] = providerAndCapability.split('/');
+    const [provider, capability] = providerAndCapability.split('/');
     let status = 'resolved';
     let detail = null;
     try {
-      const opened = registry.capability({
+      const offered = registry.get(provider).provides.find(
+        (candidate) => candidate.name === capability && candidate.version === Number(version),
+      );
+      const candidate = registry.capability({
         consumer: packageName,
         capability,
         version: Number(version),
         context: { modules: app.modules, actor: { type: 'system', id: 'package-test' }, now: app.now },
       });
+      // Contract 1 is deliberately left synchronous: awaiting every object
+      // would assimilate a v1 interface that legitimately carries a `then`
+      // method and would change the compatibility path. Contract 2, by
+      // contrast, is not resolved until its Promise settles; the Promise
+      // object itself is never evidence that an interface exists.
+      const opened = offered?.capabilityContract === 2 ? await candidate : candidate;
       if (!opened || typeof opened !== 'object') {
         status = 'invalid';
         detail = 'the capability did not return an object';

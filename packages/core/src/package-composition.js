@@ -43,15 +43,9 @@ function safeName(pkg) {
   return typeof name === 'string' ? name.slice(0, 64) : '(unnamed)';
 }
 
-/** Resolve the capability default before anything downstream can observe it. */
-function normalizePackageContracts(pkg) {
-  return {
-    ...pkg,
-    capabilities: (pkg.capabilities ?? []).map((entry) => ({
-      ...entry,
-      capabilityContract: entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
-    })),
-  };
+/** Contract semantics are normalized without rewriting executable source. */
+function capabilityContractOf(entry) {
+  return entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT;
 }
 
 function isKnownContract(value) {
@@ -89,7 +83,7 @@ function asyncContractError(message, details) {
  *   problems: CompositionProblem[],
  *   packages: Map<string, any>,
  *   resources: Map<string, string>,
- *   capabilities: Map<string, {package: string, entry: any}>,
+ *   capabilities: Map<string, {package: string, entry: any, capabilityContract: number}>,
  *   policies: Map<string, {domain: string, kind: string, definition: any, fingerprint: string}>,
  * }}
  */
@@ -100,7 +94,7 @@ export function resolvePackageComposition(list = []) {
   const packages = new Map();
   /** @type {Map<string, string>} */
   const resources = new Map();
-  /** @type {Map<string, {package: string, entry: any}>} */
+  /** @type {Map<string, {package: string, entry: any, capabilityContract: number}>} */
   const capabilities = new Map();
   /** @type {Map<string, {domain: string, kind: string, definition: any, fingerprint: string}>} */
   const policies = new Map();
@@ -126,7 +120,11 @@ export function resolvePackageComposition(list = []) {
       });
       continue;
     }
-    const pkg = normalizePackageContracts(declared);
+    // Keep the exact validated definition. Package and capability declarations
+    // are executable objects: spreading them loses prototypes, accessors,
+    // non-enumerable fields and reference identity. The resolved graph carries
+    // the one normalized contract fact separately instead.
+    const pkg = declared;
     if (packages.has(pkg.name)) {
       fail({ code: 'PACKAGE_DUPLICATE', package: pkg.name, message: `Duplicate domain package name: ${pkg.name}` });
       continue;
@@ -151,13 +149,18 @@ export function resolvePackageComposition(list = []) {
       const key = `${entry.name}@${entry.version}`;
       const existing = capabilities.get(key);
       if (existing !== undefined) {
+        const displayedKey = contractDiagnosticIdentity(key);
         fail({
-          code: 'CAPABILITY_COLLISION', package: pkg.name, capability: key,
-          message: `Capability collision: "${key}" is offered by packages "${existing.package}" and "${pkg.name}"`,
+          code: 'CAPABILITY_COLLISION', package: pkg.name, capability: displayedKey,
+          message: `Capability collision: "${displayedKey}" is offered by packages "${existing.package}" and "${pkg.name}"`,
         });
         continue;
       }
-      capabilities.set(key, { package: pkg.name, entry });
+      capabilities.set(key, {
+        package: pkg.name,
+        entry,
+        capabilityContract: capabilityContractOf(entry),
+      });
     }
 
     // Declared operation aliases share ONE application surface (ADR-032): two
@@ -223,7 +226,7 @@ export function resolvePackageComposition(list = []) {
       ...(pkg.capabilities ?? []).map((entry) => ({
         kind: 'capability',
         name: contractDiagnosticIdentity(`${entry.name}@${entry.version}`),
-        contract: entry.capabilityContract,
+        contract: capabilityContractOf(entry),
       })),
     ];
     for (const member of members) {
@@ -252,10 +255,11 @@ export function resolvePackageComposition(list = []) {
   // later, inside a transaction.
   for (const pkg of packages.values()) {
     for (const entry of pkg.requires ?? []) {
+      const requiredCapability = contractDiagnosticIdentity(`${entry.capability}@${entry.version}`);
       const provider = packages.get(entry.package);
       if (!provider) {
         fail({
-          code: 'DEPENDENCY_MISSING_PACKAGE', package: pkg.name, capability: `${entry.capability}@${entry.version}`,
+          code: 'DEPENDENCY_MISSING_PACKAGE', package: pkg.name, capability: requiredCapability,
           message: `Package "${pkg.name}" requires package "${entry.package}", which is not registered`,
         });
         continue;
@@ -264,19 +268,20 @@ export function resolvePackageComposition(list = []) {
       if (!offered || offered.package !== entry.package) {
         const available = [...capabilities.entries()]
           .filter(([, value]) => value.package === entry.package)
-          .map(([key]) => key);
+          .map(([key]) => contractDiagnosticIdentity(key));
+        const displayedAvailable = contractDiagnosticIdentity(available.join(', ') || 'none');
         fail({
-          code: 'DEPENDENCY_UNSATISFIED', package: pkg.name, capability: `${entry.capability}@${entry.version}`,
-          message: `Package "${pkg.name}" requires "${entry.package}" capability ${entry.capability}@${entry.version}, `
-            + `which it does not offer (offers: ${available.join(', ') || 'none'})`,
+          code: 'DEPENDENCY_UNSATISFIED', package: pkg.name, capability: requiredCapability,
+          message: `Package "${pkg.name}" requires "${entry.package}" capability ${requiredCapability}, `
+            + `which it does not offer (offers: ${displayedAvailable})`,
         });
         continue;
       }
-      if (pkg.packageContract !== offered.entry.capabilityContract) {
+      if (pkg.packageContract !== offered.capabilityContract) {
         const capability = contractDiagnosticIdentity(`${entry.capability}@${entry.version}`);
         const message = `Package "${pkg.name}" uses packageContract ${pkg.packageContract}, but requires `
           + `"${entry.package}" capability ${capability} with capabilityContract `
-          + `${offered.entry.capabilityContract}; sync-v1 and async-v2 contracts cannot share one dependency edge`;
+          + `${offered.capabilityContract}; sync-v1 and async-v2 contracts cannot share one dependency edge`;
         fail({
           code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED',
           package: pkg.name,
@@ -288,7 +293,7 @@ export function resolvePackageComposition(list = []) {
             provider: entry.package,
             capability: contractDiagnosticIdentity(entry.capability),
             capabilityVersion: entry.version,
-            capabilityContract: offered.entry.capabilityContract,
+            capabilityContract: offered.capabilityContract,
           }),
         });
       }

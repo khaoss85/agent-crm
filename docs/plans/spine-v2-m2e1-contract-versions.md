@@ -315,10 +315,14 @@ failure this campaign keeps finding.
   behaviour-preserving for the shipped application.
 - **Exact equality becomes set membership, not a range.** `>= 1` would silently
   accept a `3` nobody has defined. The supported set is enumerated.
-- **Absent and explicit `1` must be indistinguishable everywhere downstream.**
-  With absence defaulting to 1 and the set being `{1, 2}`, anything that can
-  tell "absent" from "declared 1" leaks a third state the contract does not
-  have. Stated as an invariant so a later `?? null` does not quietly create it.
+- **Absent and explicit `1` must be indistinguishable on every contract-bearing
+  observation.** With absence defaulting to 1 and the set being `{1, 2}`, the
+  resolved capability graph, registry summaries, metadata and inspection all
+  publish 1. The executable declaration itself is deliberately not rewritten:
+  package and capability objects may carry prototype methods, accessors,
+  non-enumerable state and identity that composition has always preserved. The
+  graph carries `{entry, capabilityContract}` separately, so normalization adds
+  one semantic fact without cloning, mutating or exposing the executable entry.
 - **An unrecognised capability-contract key on a capability entry is refused.** A
   default protects the *value* and not the *key*: `capabilitiesContract: 2` or
   `capabilityContractVersion: 2` would silently read as absent, mean 1, and
@@ -382,6 +386,21 @@ npm run verify
 
 ## Progress log
 
+- **2026-08-28:** Review of the corrective head found four further material
+  finding groups. The conformance boot treated an unresolved v2 Promise object
+  as a capability interface; one-character damage to `capabilityContract`
+  bypassed the exact-token typo guard; object-spread normalization erased
+  prototype methods and inherited package surfaces while a package-only plain
+  object rule rejected class actions the canonical action registry accepts; and
+  capability validation could throw while rendering BigInt/cyclic values or
+  echo unbounded names/typo keys. Each was reproduced before repair.
+  The boot now awaits only capability contract 2 (a v1 thenable remains exactly
+  synchronous), the closed canonical key matcher covers one edit or adjacent
+  transposition without becoming a general metadata matcher, validation
+  delegates actions to the shared authority and bounds stringify-safe
+  diagnostics, and composition preserves the exact validated
+  package/capability objects while carrying the normalized contract as a
+  separate graph fact.
 - **2026-08-28:** The exact-head broad review found three material boundary
   failures. Package composition could dereference malformed actions before the
   runtime action registry validated them; plural and separated misspellings of
@@ -395,8 +414,8 @@ npm run verify
   `problems: string[]`; the plan now claims structured refusal identity only on
   the surfaces that actually preserve it.
 - **2026-08-28:** Merged current `origin/main` regularly into the writer branch
-  after M2D. Implemented private accepted-version sets, declaration-time
-  capability normalization, uniform v1/v2 graph validation, the stable
+  after M2D. Implemented private accepted-version sets, graph-time capability
+  contract normalization, uniform v1/v2 graph validation, the stable
   `PACKAGE_ASYNC_CONTRACT_REQUIRED` refusal, truthful registry/action/inspection
   metadata, and the Option 4 lifecycle correction. Fixture coverage now proves
   v1-only, v2-only, every internal mixed permutation, disconnected mixed
@@ -463,9 +482,11 @@ npm run verify
 M2E-1 makes both contract graphs expressible and makes mixed composition fail
 at startup. Contract 1 remains the emitted/scaffolded synchronous contract;
 contract 2 is accepted only as a uniform package/action/operation/capability
-graph. Capability absence is normalized to 1 before registry, metadata or
-inspection consumers see it. The existing lifecycle capability's synchronous
-interface now says contract 1; its domain capability version remains 2.
+graph. Capability absence is normalized to 1 in the resolved graph and before
+registry, metadata or inspection consumers see it, without rewriting executable
+package or capability declarations. The existing lifecycle capability's
+synchronous interface now says contract 1; its domain capability version
+remains 2.
 
 No bundled package was migrated and `createAccordoApp()` was not touched.
 M2E-2 owns the unconditional async factory, interface-echo verification and the

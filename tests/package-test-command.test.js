@@ -62,9 +62,128 @@ export const fixturePackage = {
   assert.equal(report.checks.find((entry) => entry.id === 'declaration.valid').status, 'failed');
   const problem = report.problems.find((entry) => entry.code === 'PACKAGE_INVALID');
   assert.ok(problem, JSON.stringify(report.problems));
-  assert.match(problem.message, /actions entry must be a plain object/);
+  assert.match(problem.message, /Action definition must be an object/);
   assert.equal(/TypeError|Cannot read properties/.test(JSON.stringify(report)), false,
     'the invalid declaration remains a bounded contract failure');
+});
+
+test('package test awaits a v2 capability before calling its resolved interface valid', async (t) => {
+  const root = fixtureProject(t);
+  writeFixturePackage(root, 'fixture-v2-null-provider', `// @ts-check
+export const fixturePackage = {
+  packageContract: 2,
+  name: 'fixture-v2-null-provider',
+  label: 'Fixture v2 null provider',
+  version: 1,
+  resources: [],
+  capabilities: [{
+    name: 'null-interface',
+    version: 1,
+    capabilityContract: 2,
+    create: async () => null,
+  }],
+};
+`);
+  const packagePath = writeFixturePackage(root, 'fixture-v2-consumer', `// @ts-check
+export const fixturePackage = {
+  packageContract: 2,
+  name: 'fixture-v2-consumer',
+  label: 'Fixture v2 consumer',
+  version: 1,
+  resources: [],
+  requires: [{
+    package: 'fixture-v2-null-provider',
+    capability: 'null-interface',
+    version: 1,
+  }],
+};
+`);
+
+  const { exitCode, report } = await packageTestCommand({
+    packagePath,
+    rootDir: root,
+    capture: true,
+  });
+  assert.equal(report.checks.find((entry) => entry.id === 'lifecycle.attach').status, 'passed');
+  const capability = report.checks.find((entry) => entry.id === 'lifecycle.capabilities-resolve');
+  assert.equal(capability.status, 'failed', capability.evidence);
+  assert.match(capability.evidence, /did not return an object/);
+  assert.equal(exitCode, 1, 'a Promise object is not evidence that its resolved value is an interface');
+
+  writeFixturePackage(root, 'fixture-v2-valid-provider', `// @ts-check
+export const fixturePackage = {
+  packageContract: 2,
+  name: 'fixture-v2-valid-provider',
+  label: 'Fixture v2 valid provider',
+  version: 1,
+  resources: [],
+  capabilities: [{
+    name: 'valid-interface',
+    version: 1,
+    capabilityContract: 2,
+    create: async () => ({ load: async () => 'ok' }),
+  }],
+};
+`);
+  const validPath = writeFixturePackage(root, 'fixture-v2-valid-consumer', `// @ts-check
+export const fixturePackage = {
+  packageContract: 2,
+  name: 'fixture-v2-valid-consumer',
+  label: 'Fixture v2 valid consumer',
+  version: 1,
+  resources: [],
+  requires: [{
+    package: 'fixture-v2-valid-provider',
+    capability: 'valid-interface',
+    version: 1,
+  }],
+};
+`);
+  const valid = await packageTestCommand({ packagePath: validPath, rootDir: root, capture: true });
+  assert.equal(valid.exitCode, 0);
+  assert.equal(
+    valid.report.checks.find((entry) => entry.id === 'lifecycle.capabilities-resolve').status,
+    'passed',
+  );
+
+  writeFixturePackage(root, 'fixture-v1-thenable-provider', `// @ts-check
+export const fixturePackage = {
+  packageContract: 1,
+  name: 'fixture-v1-thenable-provider',
+  label: 'Fixture v1 thenable provider',
+  version: 1,
+  resources: [],
+  capabilities: [{
+    name: 'thenable-interface',
+    version: 1,
+    capabilityContract: 1,
+    create: () => ({
+      then() { throw new Error('a v1 interface was incorrectly awaited'); },
+      load() { return 'ok'; },
+    }),
+  }],
+};
+`);
+  const syncPath = writeFixturePackage(root, 'fixture-v1-thenable-consumer', `// @ts-check
+export const fixturePackage = {
+  packageContract: 1,
+  name: 'fixture-v1-thenable-consumer',
+  label: 'Fixture v1 thenable consumer',
+  version: 1,
+  resources: [],
+  requires: [{
+    package: 'fixture-v1-thenable-provider',
+    capability: 'thenable-interface',
+    version: 1,
+  }],
+};
+`);
+  const sync = await packageTestCommand({ packagePath: syncPath, rootDir: root, capture: true });
+  assert.equal(sync.exitCode, 0, 'the v1 capability path remains exactly synchronous');
+  assert.equal(
+    sync.report.checks.find((entry) => entry.id === 'lifecycle.capabilities-resolve').status,
+    'passed',
+  );
 });
 
 test('every first-party package conforms, and the report says how', async (t) => {

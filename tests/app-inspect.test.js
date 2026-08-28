@@ -192,7 +192,7 @@ test('inspection reports malformed package actions as PACKAGE_INVALID instead of
   assert.equal(valid, false);
   const problem = report.problems.find((entry) => entry.code === 'PACKAGE_INVALID');
   assert.ok(problem, JSON.stringify(report.problems));
-  assert.match(problem.message, /actions entry must be a plain object/);
+  assert.match(problem.message, /Action definition must be an object/);
   assert.equal(report.actions.length, 0, 'no malformed action reaches action metadata');
 });
 
