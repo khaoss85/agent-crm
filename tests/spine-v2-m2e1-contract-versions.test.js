@@ -471,6 +471,82 @@ test('PACKAGE_INVALID diagnostics use the first observed name without rereading 
   assert.equal(attempts, 2, 'each validation attempt reads the name at most once');
 });
 
+test('PACKAGE_INVALID name receipts belong to the failing attempt, not a reentrant definition', () => {
+  let insideNameGetter = false;
+  let nameReads = 0;
+  let innerError;
+  const reentrant = {
+    get name() {
+      nameReads += 1;
+      if (insideNameGetter) return 'inner-valid';
+      insideNameGetter = true;
+      try {
+        validatePackageDefinition(reentrant);
+      } catch (error) {
+        innerError = error;
+      } finally {
+        insideNameGetter = false;
+      }
+      throw new Error('OUTER_NAME_FAILED');
+    },
+  };
+
+  const resolved = resolvePackageComposition([reentrant]);
+  assert.equal(nameReads, 2, 'the inner and outer attempts each read the name once');
+  assert.match(innerError?.message ?? '', /packageContract must be one of/,
+    'the inner attempt completed its own name read before failing later');
+  assert.equal(resolved.problems[0].package, '(unnamed)',
+    'the outer failure cannot inherit the inner attempt name');
+  assert.equal(resolved.problems[0].message, 'OUTER_NAME_FAILED');
+});
+
+test('PACKAGE_INVALID name receipts do not survive a revoked definition into a later attempt', () => {
+  const { proxy, revoke } = Proxy.revocable({ name: 'previous-valid' }, {});
+  const first = resolvePackageComposition([proxy]);
+  assert.equal(first.problems[0].package, 'previous-valid');
+  assert.match(first.problems[0].message, /packageContract must be one of/);
+
+  revoke();
+  const second = resolvePackageComposition([proxy]);
+  assert.equal(second.problems[0].package, '(unnamed)',
+    'failure before name observation cannot reuse an earlier attempt receipt');
+  assert.match(second.problems[0].message, /revoked/i);
+});
+
+test('PACKAGE_INVALID attempt receipts clear reused errors and normalize primitive name throws', () => {
+  const shared = new Error('SHARED_FAILURE');
+  const first = {
+    name: 'first-observed',
+    get packageContract() { throw shared; },
+  };
+  assert.equal(resolvePackageComposition([first]).problems[0].package, 'first-observed');
+
+  let sharedReads = 0;
+  const second = {
+    get name() {
+      sharedReads += 1;
+      throw shared;
+    },
+  };
+  assert.equal(resolvePackageComposition([second]).problems[0].package, '(unnamed)',
+    'rethrowing one Error before name observation clears its prior attempt receipt');
+  assert.equal(sharedReads, 1);
+
+  for (const thrown of ['STRING_NAME_FAILURE', Symbol('SYMBOL_NAME_FAILURE')]) {
+    let reads = 0;
+    const definition = {
+      get name() {
+        reads += 1;
+        throw thrown;
+      },
+    };
+    const problem = resolvePackageComposition([definition]).problems[0];
+    assert.equal(problem.package, '(unnamed)');
+    assert.equal(problem.message, String(thrown));
+    assert.equal(reads, 1);
+  }
+});
+
 test('a v2 package requiring a v1 capability fails with the ratified stable refusal', () => {
   const provider = pkg('sync-provider', 1, { capabilities: [capability('facts')] });
   const consumer = pkg('async-consumer', 2, {

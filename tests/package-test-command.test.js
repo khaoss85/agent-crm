@@ -291,6 +291,75 @@ test('declaration conformance publishes one accepted graph snapshot without rere
   }, 'every declaration observer uses the first accepted graph facts');
 });
 
+test('package test returns the invalid-name report before reading description', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-invalid-description-precedence-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let reads = 0;
+  const definition = {
+    packageContract: 1,
+    name: 'INVALID NAME',
+    label: 'Invalid',
+    resources: [],
+    actions: [],
+    requires: [],
+    capabilities: [],
+    policies: [],
+    operations: [],
+    get description() { reads += 1; throw new Error('LATER_DESCRIPTION'); },
+  };
+
+  const report = runDeclarationChecks({ definition, dir });
+  assert.equal(reads, 0);
+  assert.deepEqual(report.problems.map((problem) => problem.code), ['PACKAGE_INVALID']);
+  assert.match(report.problems[0].message, /name must match/);
+});
+
+test('package test returns the invalid-name report before reading policies', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-invalid-policies-precedence-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let reads = 0;
+  const definition = {
+    packageContract: 1,
+    name: 'INVALID NAME',
+    label: 'Invalid',
+    resources: [],
+    actions: [],
+    requires: [],
+    capabilities: [],
+    operations: [],
+    description: 'invalid',
+    get policies() { reads += 1; throw new Error('LATER_POLICIES'); },
+  };
+
+  const report = runDeclarationChecks({ definition, dir });
+  assert.equal(reads, 0);
+  assert.deepEqual(report.problems.map((problem) => problem.code), ['PACKAGE_INVALID']);
+  assert.match(report.problems[0].message, /name must match/);
+});
+
+test('package test returns the invalid-name report before reading operations', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-invalid-operations-precedence-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let reads = 0;
+  const definition = {
+    packageContract: 1,
+    name: 'INVALID NAME',
+    label: 'Invalid',
+    resources: [],
+    actions: [],
+    requires: [],
+    capabilities: [],
+    policies: [],
+    description: 'invalid',
+    get operations() { reads += 1; throw new Error('LATER_OPERATIONS'); },
+  };
+
+  const report = runDeclarationChecks({ definition, dir });
+  assert.equal(reads, 0);
+  assert.deepEqual(report.problems.map((problem) => problem.code), ['PACKAGE_INVALID']);
+  assert.match(report.problems[0].message, /name must match/);
+});
+
 test('package test refuses a malformed action through the package contract, without crashing', async (t) => {
   const root = fixtureProject(t);
   const packagePath = writeFixturePackage(root, 'fixture-bad-action', `// @ts-check

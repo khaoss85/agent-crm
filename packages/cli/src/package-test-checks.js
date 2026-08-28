@@ -104,9 +104,6 @@ export function runDeclarationChecks({ definition, dir }) {
   // Resources, actions, requires and provides as the registry publishes them.
   const resourceDefinitions = definition?.resources ?? [];
   const actionDefinitions = definition?.actions ?? [];
-  const policyDefinitions = definition?.policies ?? [];
-  const operationDefinitions = definition?.operations ?? [];
-  const declaredDescription = definition?.description;
   const resources = [...resourceDefinitions].sort();
   const actions = actionDefinitions.map((action) => `${action?.module}.${action?.name}`).sort();
   const requires = (valid ? validated.requires : (definition?.requires ?? []))
@@ -121,6 +118,13 @@ export function runDeclarationChecks({ definition, dir }) {
   if (!valid) {
     return { checks, problems, published: { resources, actions, requires, provides } };
   }
+
+  // These observers are used only by the accepted-declaration probes. Keep
+  // them after the validity gate so an earlier identity failure retains its
+  // historical precedence over later executable getters.
+  const policyDefinitions = definition?.policies ?? [];
+  const operationDefinitions = definition?.operations ?? [];
+  const declaredDescription = definition?.description;
 
   // Build invariant probes from the exact facts the first validation accepted.
   // Re-reading package/capability accessors would let a mutable getter make the

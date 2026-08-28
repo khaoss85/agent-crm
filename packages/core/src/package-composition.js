@@ -111,7 +111,7 @@ export function resolvePackageComposition(list = []) {
       // already failed to be a package.
       fail({
         code: 'PACKAGE_INVALID',
-        package: safeName(observedPackageValidationName(declared)),
+        package: safeName(observedPackageValidationName(error)),
         message: error instanceof Error ? error.message : String(error),
         error: error instanceof Error ? error : undefined,
       });

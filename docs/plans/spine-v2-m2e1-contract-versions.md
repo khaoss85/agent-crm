@@ -413,8 +413,14 @@ npm run verify
   receivers. Separately, the invalid-package error path reread `definition.name`
   while formatting the problem, so a getter could throw a second error or make
   the package field contradict the validation message. A source-private WeakMap
-  receipt now carries only the first completed name read, is cleared before
-  every attempt, and changes neither the public Error nor problem shape.
+  receipt now binds the first completed name read to the exact object thrown by
+  that wrapped validation attempt; a catch before name observation clears any
+  receipt for a reused error object. Reentrancy, retries and failures before
+  `Array.isArray` therefore cannot borrow another attempt's name, and neither
+  the public Error nor problem shape changes. Declaration conformance also
+  restores its historical early-return precedence: description, policy and
+  operation observers introduced by the snapshot probe run only after the
+  declaration has passed validation.
 - **2026-08-28:** The final bounded delta found two conformance failures. The
   package-test collision and undeclared-reach probes rebuilt a definition with
   object spread, so inherited/non-enumerable class package capabilities that
