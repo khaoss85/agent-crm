@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createDatabase } from '../../core/src/database.js';
+import { prepareSpineAuditBinding } from '../../core/src/spine-store.js';
 import { resolveTenantBinding } from '../../core/src/tenant-binding.js';
 import { resolveRuntimeMode } from '../../core/src/runtime-mode.js';
 import { createSpine } from './spine.js';
@@ -75,14 +76,17 @@ export function createAccordoApp(options = {}) {
    * unscoped shared database. That is not a rule applied at each call site; the
    * only handle to a data plane this function ever constructs is the bound one.
    */
-  const binding = options.spine
-    ? resolveTenantBinding({
-      mode: resolveRuntimeMode({
+  const spineMode = options.spine
+    ? resolveRuntimeMode({
         mode: /** @type {any} */ (options.spine).mode,
         env: /** @type {any} */ (options.spine).env,
         identityVerifier: /** @type {any} */ (options.spine).identityVerifier,
         tenantStrategy: /** @type {any} */ (options.spine).tenant,
-      }).mode,
+      })
+    : null;
+  const binding = options.spine
+    ? resolveTenantBinding({
+      mode: spineMode.mode,
       tenant: /** @type {any} */ (options.spine).tenant,
       dataPlanePathConfigured: options.dbPath !== undefined,
     })
@@ -110,6 +114,28 @@ export function createAccordoApp(options = {}) {
     })
     : null;
 
+  // Create/verify the opaque data marker first, then CAS its control binding
+  // before `createSpine` can resolve — or provision — an Organization.
+  let spineAuditBinding = null;
+  try {
+    spineAuditBinding = binding
+      ? prepareSpineAuditBinding({
+        database: controlPlaneDatabase,
+        dataPlane: database,
+        tenantSlug: binding.boundTenantId,
+        mayProvision: spineMode.mode === 'local-development' || binding.provision !== null,
+        now,
+      })
+      : null;
+  } catch (error) {
+    // A binding conflict is a startup refusal after both SQLite handles have
+    // opened. Close them here so a refused second instance does not leave a
+    // lock or descriptor behind while operators correct the configuration.
+    controlPlaneDatabase?.close();
+    database.close();
+    throw error;
+  }
+
   const events = new EventBus();
   const audit = new AuditLog(database);
 
@@ -121,6 +147,7 @@ export function createAccordoApp(options = {}) {
       audit,
       now,
       binding,
+      dataPlaneBinding: spineAuditBinding,
       config: options.spine,
     })
     : null;

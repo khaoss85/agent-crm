@@ -10,13 +10,13 @@ import {
   TENANT_STRATEGY,
   assertBoundOrganization,
   authorizationFingerprint,
-  createSpineStore,
   decideAuthorization,
   defineIdentity,
   identityEvidence,
   requireAuthorization,
   resolveRuntimeMode,
 } from '../../core/index.js';
+import { createRecoverableSpineStore } from '../../core/src/spine-store.js';
 
 /**
  * **The assembled Production Spine (ADR-038).**
@@ -93,6 +93,7 @@ export const SPINE_NOT_MODELED = Object.freeze([
  * @param {{
  *   database: any,
  *   dataPlane?: any,
+ *   dataPlaneBinding?: {tenantSlug: string, dataPlaneId: string},
  *   binding: any,
  *   audit?: any,
  *   now?: () => string,
@@ -103,7 +104,7 @@ export const SPINE_NOT_MODELED = Object.freeze([
  *   },
  * }} deps
  */
-export function createSpine({ database, dataPlane, binding, audit, now, config = {} }) {
+export function createSpine({ database, dataPlane, dataPlaneBinding, binding, audit, now, config = {} }) {
   const mode = resolveRuntimeMode({
     mode: config.mode,
     identityVerifier: config.identityVerifier,
@@ -122,7 +123,12 @@ export function createSpine({ database, dataPlane, binding, audit, now, config =
     );
   }
 
-  const store = createSpineStore({ database, audit, now });
+  if (!dataPlaneBinding) {
+    throw new AppError('a spine may not be composed before its data-plane marker is verified', {
+      code: 'SPINE_DATA_PLANE_BINDING_REQUIRED', status: 500,
+    });
+  }
+  const store = createRecoverableSpineStore({ database, dataPlane, dataPlaneBinding, now });
 
   /**
    * **The one tenant this instance serves.** Resolved once, at startup, from
@@ -342,6 +348,8 @@ export function createSpine({ database, dataPlane, binding, audit, now, config =
     verifyRequest: typeof config.identityVerifier === 'function' ? config.identityVerifier : null,
     organizations: store.organizations,
     memberships: store.memberships,
+    /** Tenant-bound pending security-audit evidence and explicit recovery. */
+    auditIntents: store.auditIntents,
     /** The one tenant this instance serves. Frozen at startup. */
     boundOrganization,
     boundTenantId: binding.boundTenantId,
@@ -361,6 +369,7 @@ export function createSpine({ database, dataPlane, binding, audit, now, config =
     describe() {
       return {
         spineContract: SPINE_CONTRACT,
+        auditIntentContract: store.auditIntents.auditIntentContract,
         mode: mode.mode,
         allowsAssertedActors: mode.allowsAssertedActors,
         warning: mode.warning,
