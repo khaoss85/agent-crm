@@ -704,6 +704,28 @@ test('an async body handed to the synchronous transaction wrapper is refused bef
   assert.equal(statements.includes('COMMIT;'), false, 'it refused before committing anything');
   assert.equal(statements.filter((sql) => /ROLLBACK/i.test(sql)).length, 1, 'and rolled the opened transaction back');
 
+  // **The abandoned body's promise is observed, or the process dies.** Throwing
+  // discards the body's promise; a body that rejects after its first `await`
+  // would then be an unhandled rejection, and Node terminates on those by
+  // default. Asserted out-of-process, because an in-process assertion cannot
+  // survive the failure it is testing for — the whole runner would go with it.
+  const probe = `
+    import { createDatabase } from ${JSON.stringify(new URL('../packages/core/src/database.js', import.meta.url).href)};
+    const db = createDatabase({ path: ':memory:' });
+    try {
+      db.transaction(async () => { await new Promise((r) => setTimeout(r, 5)); throw new Error('body rejects'); });
+    } catch (error) {
+      if (error.code !== 'SYNC_TRANSACTION_ASYNC_BODY') { console.error('wrong refusal'); process.exit(2); }
+    }
+    setTimeout(() => { db.close(); process.exit(0); }, 50);
+  `;
+  const { spawnSync } = await import('node:child_process');
+  const ran = spawnSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', probe], { encoding: 'utf8' });
+  assert.equal(ran.status, 0,
+    `a rejected async body must not take the process down; exit was ${ran.status}: ${ran.stderr}`);
+  assert.doesNotMatch(ran.stderr, /body rejects/,
+    'the abandoned rejection is observed, not surfaced as a second unhandled error');
+
   await settled;
   assert.equal(afterResume, TRANSACTION_PROOF.NO_TRANSACTION,
     'the continuation must not be told it owns a transaction that was rolled back');

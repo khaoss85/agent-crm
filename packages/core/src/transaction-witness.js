@@ -45,8 +45,14 @@ import { AppError } from './errors.js';
  * ### What it is NOT
  *
  * Not authentication, and not a capability. It proves a transaction is open on
- * a storage handle; it says nothing about who opened it or what they may do.
- * The security model remains trusted checked-in source (ADR-018 addendum 4).
+ * a storage handle **and that this call's async flow opened it**; it says
+ * nothing about who that caller is or what they may do. The security model
+ * remains trusted checked-in source (ADR-018 addendum 4).
+ *
+ * (An earlier cut proved only that a transaction was open, and this paragraph
+ * said so. Ownership was added afterwards and the sentence was left behind —
+ * which is why it now states the guarantee and its limit in the same breath,
+ * where a consumer reads the contract.)
  */
 
 /**
@@ -191,6 +197,14 @@ export function claimTransactionMinter() {
           // which keeps running, and which this function cannot stop — is
           // refused by the proof rather than served a committed transaction.
           close();
+          // **And its promise must be observed, or the process dies.** We are
+          // about to throw and abandon `result`. A body that rejects after its
+          // first `await` would then be an unhandled rejection, which Node
+          // terminates the process on by default — measured: exit code 1. The
+          // caller has already been told loudly what it did wrong, so the
+          // body's own failure is a consequence of a refusal already reported,
+          // not a second defect to surface.
+          void /** @type {any} */ (result).then(undefined, () => {});
           throw new AppError(
             'database.transaction() is synchronous and commits as soon as its callback returns, so an async '
               + 'callback would be committed while it was still running and its continuation would be told it '
