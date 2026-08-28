@@ -1,0 +1,520 @@
+// @ts-check
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createAccordoApp } from '../packages/app/src/index.js';
+import {
+  DEPLOYMENT_STORAGE_CONTRACT,
+  DEPLOYMENT_STORAGE_ENV,
+  describeDeploymentStorage,
+  loadDeploymentStorage,
+} from '../packages/core/src/deployment-storage.js';
+
+const require = createRequire(import.meta.url);
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, '..');
+
+const SENTINEL_PASSWORD = 'SUPERSECRET_SENTINEL_PASSWORD';
+const SENTINEL_TOKEN = 'SENTINEL_CONFIG_BYTES_DO_NOT_ECHO';
+const roots = [];
+
+function scratch() {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-deploy-storage-'));
+  roots.push(root);
+  return root;
+}
+
+test.after(() => {
+  for (const root of roots) rmSync(root, { recursive: true, force: true });
+});
+
+function sqliteEnvelope(overrides = {}) {
+  return {
+    contract: 1,
+    adapter: 'sqlite',
+    connection: { path: './data/tenant.sqlite' },
+    controlPlane: { path: './data/control.sqlite' },
+    spine: { mode: 'local-development', tenant: { id: 'acme' } },
+    identityVerifier: './providers/identity-verifier.js',
+    ...overrides,
+  };
+}
+
+function postgresTls() {
+  return {
+    enabled: true,
+    verify: 'full',
+    caFile: './tls/deployment-ca.pem',
+    servername: 'db.example.test',
+  };
+}
+
+function postgresEnvelope(overrides = {}) {
+  return {
+    contract: 1,
+    adapter: 'postgresql',
+    connection: {
+      host: '127.0.0.1',
+      port: 1,
+      database: 'accordo',
+      user: 'accordo',
+      password: SENTINEL_PASSWORD,
+      sslmode: 'verify-full',
+      tls: postgresTls(),
+    },
+    controlPlane: {
+      host: '127.0.0.1',
+      port: 1,
+      database: 'accordo_control',
+      user: 'accordo',
+      password: SENTINEL_PASSWORD,
+      sslmode: 'verify-full',
+      tls: postgresTls(),
+    },
+    spine: { mode: 'production', tenant: { id: 'acme' } },
+    identityVerifier: './providers/identity-verifier.js',
+    ...overrides,
+  };
+}
+
+function writeConfig(root, body, { mode = 0o600, name = 'deployment-storage.json' } = {}) {
+  const filePath = join(root, name);
+  const contents = typeof body === 'string' ? body : `${JSON.stringify(body, null, 2)}\n`;
+  writeFileSync(filePath, contents);
+  chmodSync(filePath, mode);
+  return filePath;
+}
+
+function leakHaystack(error) {
+  const details = error && typeof error === 'object' ? /** @type {any} */ (error).details : undefined;
+  return [
+    String(error?.message ?? ''),
+    String(error?.stack ?? ''),
+    JSON.stringify(error),
+    JSON.stringify(details),
+    String(error),
+  ].join('\n');
+}
+
+function assertCredentialFree(error, extras = []) {
+  const haystack = leakHaystack(error);
+  for (const token of [SENTINEL_PASSWORD, SENTINEL_TOKEN, ...extras]) {
+    assert.equal(haystack.includes(token), false, `diagnostic leaked ${token}`);
+  }
+}
+
+function assertCode(fn, code, extras = []) {
+  let caught;
+  try {
+    fn();
+  } catch (error) {
+    caught = error;
+  }
+  assert.ok(caught, `expected ${code}`);
+  assert.equal(/** @type {any} */ (caught).code, code);
+  assertCredentialFree(caught, extras);
+  return caught;
+}
+
+test('M2-17 publishes a versioned loader and SQLite --db compatibility', () => {
+  assert.equal(DEPLOYMENT_STORAGE_CONTRACT, 1);
+  assert.equal(DEPLOYMENT_STORAGE_ENV, 'ACCORDO_DEPLOYMENT_STORAGE');
+
+  const selected = loadDeploymentStorage({ dbPath: ':memory:', env: {} });
+  assert.equal(selected.contract, 1);
+  assert.equal(selected.adapter, 'sqlite');
+  assert.equal(selected.source, 'db-flag');
+  assert.deepEqual(describeDeploymentStorage(selected), { adapter: 'sqlite', available: true });
+  assert.deepEqual(Object.keys(describeDeploymentStorage(selected)).sort(), ['adapter', 'available']);
+  assert.equal(Object.isFrozen(describeDeploymentStorage(selected)), true);
+
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  try {
+    assert.ok(app.modules);
+  } finally {
+    app.close();
+  }
+});
+
+test('M2-17 loads a trusted SQLite document and keeps connection off the descriptor', () => {
+  const root = scratch();
+  const configPath = writeConfig(root, sqliteEnvelope());
+  const selected = loadDeploymentStorage({ configPath, env: {} });
+  assert.equal(selected.adapter, 'sqlite');
+  assert.equal(selected.source, 'config');
+  assert.equal(selected.identityVerifier, './providers/identity-verifier.js');
+  assert.equal(selected.spine.mode, 'local-development');
+  assert.equal(selected.spine.tenant.id, 'acme');
+  assert.equal(selected.connection.path, './data/tenant.sqlite');
+  assert.equal(selected.controlPlane.path, './data/control.sqlite');
+  const descriptor = describeDeploymentStorage(selected);
+  assert.deepEqual(descriptor, { adapter: 'sqlite', available: true });
+  assert.equal(JSON.stringify(descriptor).includes('tenant.sqlite'), false);
+  assert.equal(JSON.stringify(descriptor).includes('identity-verifier'), false);
+});
+
+test('M2-17 explicit config path wins over the documented env var', () => {
+  const root = scratch();
+  const winner = writeConfig(root, sqliteEnvelope({
+    connection: { path: './winner.sqlite' },
+    controlPlane: { path: './winner-control.sqlite' },
+  }), { name: 'winner.json' });
+  const loser = writeConfig(root, sqliteEnvelope({
+    connection: { path: './loser.sqlite' },
+    controlPlane: { path: './loser-control.sqlite' },
+  }), { name: 'loser.json' });
+  const selected = loadDeploymentStorage({
+    configPath: winner,
+    env: { [DEPLOYMENT_STORAGE_ENV]: loser },
+  });
+  assert.equal(selected.source, 'config');
+  assert.equal(selected.connection.path, './winner.sqlite');
+});
+
+test('M2-17 env path is used when no explicit config path is supplied', () => {
+  const root = scratch();
+  const configPath = writeConfig(root, sqliteEnvelope({
+    connection: { path: './env.sqlite' },
+    controlPlane: { path: './env-control.sqlite' },
+  }));
+  const selected = loadDeploymentStorage({
+    env: { [DEPLOYMENT_STORAGE_ENV]: configPath },
+  });
+  assert.equal(selected.source, 'env');
+  assert.equal(selected.connection.path, './env.sqlite');
+});
+
+test('M2-17 refuses config together with --db before opening either surface', () => {
+  const root = scratch();
+  const configPath = writeConfig(root, sqliteEnvelope(), { mode: 0o644 });
+  const extras = [configPath, root];
+  assertCode(() => loadDeploymentStorage({
+    configPath,
+    dbPath: ':memory:',
+    env: {},
+  }), 'DEPLOYMENT_STORAGE_DB_CONFLICT', extras);
+  assertCode(() => loadDeploymentStorage({
+    dbPath: '/tmp/accordo.sqlite',
+    env: { [DEPLOYMENT_STORAGE_ENV]: configPath },
+  }), 'DEPLOYMENT_STORAGE_DB_CONFLICT', extras);
+});
+
+test('M2-17 refuses an empty selection rather than inventing a path', () => {
+  assertCode(() => loadDeploymentStorage({ env: {} }), 'DEPLOYMENT_STORAGE_SOURCE_REQUIRED');
+});
+
+test('M2-17 extra envelope keys, prototypes and unknown adapters refuse', () => {
+  const root = scratch();
+  const extras = [root];
+  const cases = [
+    { extra: true },
+    { adapter: 'mysql' },
+    { adapter: 'SQLite' },
+    { identityVerifier: { factory: 'eval' } },
+    { identityVerifier: '/abs/verifier.js' },
+    { identityVerifier: '' },
+    { identityVerifier: 'has\0nul.js' },
+    { connection: { path: './data/tenant.sqlite', tls: { enabled: false } } },
+    { spine: { mode: 'production', tenant: { id: 'acme' }, extra: 1 } },
+    { spine: { mode: 'staging', tenant: { id: 'acme' } } },
+    { spine: { mode: 'local-development', tenant: 'acme' } },
+    { spine: { mode: 'local-development', tenant: { id: 1 } } },
+  ];
+  for (const patch of cases) {
+    const body = sqliteEnvelope(patch);
+    const configPath = writeConfig(root, body, { name: `bad-${cases.indexOf(patch)}.json` });
+    extras.push(configPath);
+    assertCode(() => loadDeploymentStorage({ configPath, env: {} }), 'DEPLOYMENT_STORAGE_ENVELOPE_INVALID', extras);
+  }
+
+  const protoPath = writeConfig(root, [
+    '{',
+    '  "contract": 1,',
+    '  "adapter": "sqlite",',
+    '  "connection": { "path": "./data/tenant.sqlite" },',
+    '  "controlPlane": { "path": "./data/control.sqlite" },',
+    '  "spine": { "mode": "local-development", "tenant": { "id": "acme" } },',
+    '  "identityVerifier": "./providers/identity-verifier.js",',
+    '  "__proto__": { "adapter": "postgresql" }',
+    '}',
+  ].join('\n'), { name: 'proto.json' });
+  assertCode(() => loadDeploymentStorage({ configPath: protoPath, env: {} }), 'DEPLOYMENT_STORAGE_ENVELOPE_INVALID', [protoPath]);
+
+  const inherited = Object.assign(Object.create({ adapter: 'sqlite' }), sqliteEnvelope());
+  delete inherited.adapter;
+  const inheritedPath = writeConfig(root, JSON.stringify(inherited), { name: 'inherited.json' });
+  assertCode(() => loadDeploymentStorage({ configPath: inheritedPath, env: {} }), 'DEPLOYMENT_STORAGE_ENVELOPE_INVALID', [inheritedPath]);
+});
+
+test('M2-17 unsupported contract versions refuse without echoing bytes', () => {
+  const root = scratch();
+  const configPath = writeConfig(root, sqliteEnvelope({ contract: 2 }));
+  assertCode(() => loadDeploymentStorage({ configPath, env: {} }), 'DEPLOYMENT_STORAGE_CONTRACT_UNSUPPORTED', [configPath]);
+});
+
+test('M2-17 malformed JSON refuses without echoing file bytes', () => {
+  const root = scratch();
+  const configPath = writeConfig(root, `{ "adapter": "${SENTINEL_TOKEN}"\n`, { name: 'truncated.json' });
+  assertCode(() => loadDeploymentStorage({ configPath, env: {} }), 'DEPLOYMENT_STORAGE_ENVELOPE_INVALID', [configPath]);
+});
+
+test('M2-20 no-follow ownership and mode discipline uses one pre-parse code', () => {
+  const root = scratch();
+  const extras = [root];
+
+  const missing = join(root, 'missing.json');
+  extras.push(missing);
+  assertCode(() => loadDeploymentStorage({ configPath: missing, env: {} }), 'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED', extras);
+
+  const directory = join(root, 'dir.json');
+  mkdirSync(directory);
+  extras.push(directory);
+  assertCode(() => loadDeploymentStorage({ configPath: directory, env: {} }), 'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED', extras);
+
+  const trusted = writeConfig(root, sqliteEnvelope(), { name: 'target.json' });
+  const linked = join(root, 'link.json');
+  symlinkSync(trusted, linked);
+  extras.push(linked, trusted);
+  assertCode(() => loadDeploymentStorage({ configPath: linked, env: {} }), 'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED', extras);
+
+  const mode644 = writeConfig(root, sqliteEnvelope(), { mode: 0o644, name: 'world.json' });
+  extras.push(mode644);
+  assertCode(() => loadDeploymentStorage({ configPath: mode644, env: {} }), 'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED', extras);
+
+  const mode640 = writeConfig(root, sqliteEnvelope(), { mode: 0o640, name: 'group.json' });
+  extras.push(mode640);
+  assertCode(() => loadDeploymentStorage({ configPath: mode640, env: {} }), 'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED', extras);
+
+  const owned = writeConfig(root, sqliteEnvelope(), { name: 'owned.json' });
+  extras.push(owned);
+  assertCode(() => loadDeploymentStorage({
+    configPath: owned,
+    env: {},
+    expectedUid: (typeof process.getuid === 'function' ? process.getuid() : 0) + 1,
+  }), 'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED', extras);
+
+  const unprovable = writeConfig(root, sqliteEnvelope(), { name: 'unprovable.json' });
+  extras.push(unprovable);
+  assertCode(() => loadDeploymentStorage({
+    configPath: unprovable,
+    env: {},
+    expectedUid: null,
+  }), 'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED', extras);
+
+  const oversized = join(root, 'huge.json');
+  const fd = openSync(oversized, 'w', 0o600);
+  try {
+    writeFileSync(fd, `${'{"contract":1,'.padEnd(16 * 1024 + 8, 'x')}`);
+  } finally {
+    closeSync(fd);
+  }
+  chmodSync(oversized, 0o600);
+  extras.push(oversized);
+  assertCode(() => loadDeploymentStorage({ configPath: oversized, env: {} }), 'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED', extras);
+});
+
+test('M2-20 diagnostics never contain the path or the file bytes', () => {
+  const root = scratch();
+  const configPath = writeConfig(root, `{ "password": "${SENTINEL_TOKEN}" }`, { mode: 0o644, name: 'leaky.json' });
+  const error = assertCode(
+    () => loadDeploymentStorage({ configPath, env: {} }),
+    'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED',
+    [configPath, root, 'leaky.json'],
+  );
+  assert.equal(leakHaystack(error).includes('leaky.json'), false);
+});
+
+test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and missing TLS', () => {
+  const root = scratch();
+  const extras = [root, SENTINEL_PASSWORD];
+
+  const patches = [
+    {
+      name: 'missing-tls.json',
+      body: postgresEnvelope({
+        connection: {
+          host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
+          password: SENTINEL_PASSWORD, sslmode: 'verify-full',
+        },
+      }),
+    },
+    {
+      name: 'plaintext.json',
+      body: postgresEnvelope({
+        connection: {
+          host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
+          password: SENTINEL_PASSWORD, sslmode: 'verify-full',
+          tls: { enabled: false, verify: 'full', caFile: './tls/deployment-ca.pem' },
+        },
+      }),
+    },
+    {
+      name: 'sslmode-disable.json',
+      body: postgresEnvelope({
+        connection: {
+          host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
+          password: SENTINEL_PASSWORD, sslmode: 'disable',
+          tls: postgresTls(),
+        },
+      }),
+    },
+    {
+      name: 'sslmode-allow.json',
+      body: postgresEnvelope({
+        connection: {
+          host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
+          password: SENTINEL_PASSWORD, sslmode: 'allow',
+          tls: postgresTls(),
+        },
+      }),
+    },
+    {
+      name: 'sslmode-prefer.json',
+      body: postgresEnvelope({
+        connection: {
+          host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
+          password: SENTINEL_PASSWORD, sslmode: 'prefer',
+          tls: postgresTls(),
+        },
+      }),
+    },
+    {
+      name: 'sslmode-require.json',
+      body: postgresEnvelope({
+        connection: {
+          host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
+          password: SENTINEL_PASSWORD, sslmode: 'require',
+          tls: postgresTls(),
+        },
+      }),
+    },
+    {
+      name: 'verify-none.json',
+      body: postgresEnvelope({
+        connection: {
+          host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
+          password: SENTINEL_PASSWORD, sslmode: 'verify-full',
+          tls: { enabled: true, verify: 'none', caFile: './tls/deployment-ca.pem' },
+        },
+      }),
+    },
+    {
+      name: 'reject-unauthorized-false.json',
+      body: postgresEnvelope({
+        connection: {
+          host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
+          password: SENTINEL_PASSWORD, sslmode: 'verify-full',
+          tls: {
+            enabled: true, verify: 'full', caFile: './tls/deployment-ca.pem',
+            rejectUnauthorized: false,
+          },
+        },
+      }),
+    },
+    {
+      name: 'control-plane-plaintext.json',
+      body: postgresEnvelope({
+        controlPlane: {
+          host: '127.0.0.1', port: 1, database: 'accordo_control', user: 'accordo',
+          password: SENTINEL_PASSWORD, sslmode: 'verify-full',
+          tls: { enabled: false, verify: 'full', caFile: './tls/deployment-ca.pem' },
+        },
+      }),
+    },
+  ];
+
+  for (const fixture of patches) {
+    const configPath = writeConfig(root, fixture.body, { name: fixture.name });
+    extras.push(configPath);
+    assertCode(() => loadDeploymentStorage({ configPath, env: {} }), 'DEPLOYMENT_STORAGE_TLS_REFUSED', extras);
+  }
+});
+
+test('M2-17 PostgreSQL selection refuses with a stable code before opening a connection', () => {
+  const root = scratch();
+  const configPath = writeConfig(root, postgresEnvelope());
+  const started = Date.now();
+  const error = assertCode(
+    () => loadDeploymentStorage({ configPath, env: {} }),
+    'DEPLOYMENT_STORAGE_POSTGRESQL_UNSUPPORTED',
+    [configPath, root, SENTINEL_PASSWORD, '127.0.0.1', 'db.example.test'],
+  );
+  assert.ok(Date.now() - started < 250, 'postgresql refusal opened a connection');
+  assert.equal(error instanceof Error, true);
+  assert.deepEqual(describeDeploymentStorage({ adapter: 'postgresql' }), {
+    adapter: 'postgresql',
+    available: false,
+  });
+});
+
+test('M2-17 does not import or depend on a PostgreSQL driver', () => {
+  const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+  const names = [
+    ...Object.keys(pkg.dependencies ?? {}),
+    ...Object.keys(pkg.optionalDependencies ?? {}),
+    ...Object.keys(pkg.peerDependencies ?? {}),
+  ];
+  for (const name of ['pg', 'postgres', 'postgresql', 'pg-native']) {
+    assert.equal(names.includes(name), false, `unexpected production dependency ${name}`);
+    assert.throws(() => require.resolve(name, { paths: [repoRoot] }), { code: 'MODULE_NOT_FOUND' });
+  }
+  const source = readFileSync(join(repoRoot, 'packages/core/src/deployment-storage.js'), 'utf8');
+  assert.equal(/\bfrom ['"]pg['"]/.test(source), false);
+  assert.equal(/\brequire\(['"]pg['"]\)/.test(source), false);
+  assert.equal(/net\.connect|tls\.connect|createConnection/.test(source), false);
+});
+
+test('M2-17 does not wire CLI, serve or MCP in this slice', () => {
+  const surfaces = [
+    'packages/app/src/create-app.js',
+    'packages/cli/src/commands.js',
+    'packages/mcp/src/stdio.js',
+  ];
+  for (const relative of surfaces) {
+    const source = readFileSync(join(repoRoot, relative), 'utf8');
+    assert.equal(source.includes('deployment-storage'), false, `${relative} imported the loader`);
+    assert.equal(source.includes('DEPLOYMENT_STORAGE'), false, `${relative} named the contract`);
+    assert.equal(source.includes('--deployment-storage'), false, `${relative} grew a flag`);
+  }
+  const help = readFileSync(join(repoRoot, 'packages/cli/src/commands.js'), 'utf8');
+  assert.equal(help.includes('accordo serve [--port 4000] [--db ./data/accordo.sqlite]'), true);
+});
+
+test('M2-17 loading the same trusted document twice is identical', () => {
+  const root = scratch();
+  const configPath = writeConfig(root, sqliteEnvelope());
+  const first = loadDeploymentStorage({ configPath, env: {} });
+  const second = loadDeploymentStorage({ configPath, env: {} });
+  assert.equal(first.source, 'config');
+  assert.deepEqual(first, second);
+  assert.deepEqual(describeDeploymentStorage(first), describeDeploymentStorage(second));
+});
+
+test('M2-22 is not started: identityVerifier remains an opaque relative path', () => {
+  const root = scratch();
+  const configPath = writeConfig(root, sqliteEnvelope({
+    identityVerifier: './does-not-exist-and-must-not-be-imported.js',
+  }));
+  const selected = loadDeploymentStorage({ configPath, env: {} });
+  assert.equal(selected.identityVerifier, './does-not-exist-and-must-not-be-imported.js');
+  const source = readFileSync(join(repoRoot, 'packages/core/src/deployment-storage.js'), 'utf8');
+  assert.equal(/import\(/.test(source), false);
+  assert.equal(/pathToFileURL/.test(source), false);
+  assert.equal(pathToFileURL(configPath).href.startsWith('file:'), true);
+});

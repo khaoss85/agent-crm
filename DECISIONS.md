@@ -3305,6 +3305,33 @@ or control-marked files used for the opposite plane refuse as
 `CORE_DATABASE_PLANE_MISMATCH`. This identity is a migration-family boundary,
 not M4 resource attestation.
 
+#### Amendment 5 — one closed deployment-storage loader, PostgreSQL refused before connect
+
+Three executables selecting storage independently is how a deployment boots
+PostgreSQL unbound or prints a credential. `--db` cannot carry a spine binding
+or a secret connection, so it stays SQLite compatibility only.
+
+**Decision: one versioned loader over a closed JSON envelope**, with exact keys
+`{contract, adapter, connection, controlPlane, spine, identityVerifier}`. Extra
+keys refuse. The document is opened with no-follow / owner-only / no group-or-
+other bits, and every pre-parse failure shares `DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED`.
+PostgreSQL production TLS is a parser field: plaintext, `sslmode=disable|allow|prefer`,
+verification-disabled settings and a missing production TLS block refuse as
+`DEPLOYMENT_STORAGE_TLS_REFUSED` without opening a socket. A valid PostgreSQL
+document then refuses as `DEPLOYMENT_STORAGE_POSTGRESQL_UNSUPPORTED` before any
+connection; M3 owns the driver. Config and `--db` together refuse as
+`DEPLOYMENT_STORAGE_DB_CONFLICT`. Diagnostics carry no path, file bytes or
+credential.
+
+The loader is an internal runtime capability in `packages/core/src/deployment-storage.js`
+and is not published on the domain-package kernel. Factory, CLI and MCP do not
+call it in the PR that introduces the parser; wiring those surfaces is a later
+M2F slice. `identityVerifier` is parsed as an opaque relative path; ESM
+resolution is M2-22. Replacing every public locator with `{adapter, available}`
+is the remainder of M2-08.
+
+Plan: `docs/plans/spine-v2-m2f-deployment-storage.md`.
+
 
 ### The spine is opt-in, and its absence is loud
 
