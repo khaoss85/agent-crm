@@ -32,8 +32,9 @@ const openTransactionScope = claimTransactionMinter();
 /**
  * **The tenant CRM data plane.** Every record, audit row, workflow run and
  * trace span a tenant's users can reach. One database file per tenant when a
- * tenant binding is configured (ADR-038), and these migrations are the only
- * ones that file ever receives.
+ * tenant binding is configured (ADR-038). A fresh file receives only this
+ * family; explicit adoption may preserve dormant tables from a released
+ * combined file, but CRM services still receive only this dedicated handle.
  */
 const DATA_PLANE_MIGRATIONS = [
   {
@@ -216,10 +217,10 @@ const DATA_PLANE_MIGRATIONS = [
 /**
  * **The control plane.** Organizations and Memberships — the tenant of the
  * SOFTWARE and the people who may act inside it. Deliberately a separate list
- * from the data plane, so a control-plane database has no CRM table and a
- * tenant database has no membership table: a stray write across the boundary
- * raises `no such table` instead of quietly succeeding, which is what turns a
- * convention into an enforcement.
+ * from the data plane. Fresh files have disjoint schemas, so a stray write
+ * across the boundary raises `no such table`. Explicit adoption may retain
+ * dormant opposite-plane tables; service wiring and distinct handles remain
+ * the enforcement rather than a destructive migration.
  *
  * A legacy single-file project applied this as version 5 of one combined list.
  * It still does — `plane: 'combined'` is the default — so nothing that boots
@@ -433,6 +434,80 @@ function isBusyError(error) {
   );
 }
 
+const STARTUP_BUSY_RETRY_DELAYS_MS = Object.freeze([5, 20, 50]);
+const startupWaitCell = new Int32Array(new SharedArrayBuffer(4));
+const CORE_MIGRATION_BY_VERSION = new Map(
+  MIGRATION_PLANES.combined.map((migration) => [migration.version, migration]),
+);
+
+function startupBusyError() {
+  return new AppError(
+    'Database startup could not acquire its bounded migration lock; retry startup',
+    { code: 'CORE_DATABASE_STARTUP_BUSY', status: 503 },
+  );
+}
+
+/** Startup-only bounded retry. Runtime/business writes never call this helper. */
+function withStartupBusyRetry(operation) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return operation();
+    } catch (error) {
+      if (!isBusyError(error)) throw error;
+      const delay = STARTUP_BUSY_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) throw startupBusyError();
+      Atomics.wait(startupWaitCell, 0, 0, delay);
+    }
+  }
+}
+
+function assertCoreMigrationIdentity(applied) {
+  for (const [version, recordedName] of applied) {
+    const known = CORE_MIGRATION_BY_VERSION.get(version);
+    if (known && recordedName !== known.name) {
+      throw new AppError(
+        `Core migration version ${version} is recorded with the wrong immutable name`,
+        {
+          code: 'CORE_MIGRATION_IDENTITY_MISMATCH', status: 500,
+          details: { version, expectedName: known.name },
+        },
+      );
+    }
+  }
+}
+
+function assertMigrationPlane(applied, expectedPlane) {
+  if (expectedPlane === 'combined' || applied.size === 0) return;
+  const hasDataHistory = [1, 2, 3, 4].some((version) => applied.has(version));
+  const hasDataIdentity = applied.has(6);
+  const hasControlIdentity = applied.has(5) || applied.has(7);
+  const recordedPlane = hasDataIdentity && hasControlIdentity
+    ? 'combined'
+    : hasDataIdentity || (hasDataHistory && !hasControlIdentity)
+      ? 'data'
+      : hasControlIdentity
+        ? 'control'
+        : null;
+
+  // A released combined file can be copied into a dedicated plane without
+  // deleting the other family's dormant tables. Data history distinguishes
+  // that compatibility input from a control-only file. v6 is the persistent
+  // data-file identity and can never be adopted as control; a control-only
+  // ledger has no data history and can never be adopted as data.
+  const mismatch = expectedPlane === 'control'
+    ? hasDataIdentity || (hasDataHistory && !hasControlIdentity)
+    : hasControlIdentity && !hasDataHistory;
+  if (recordedPlane && mismatch) {
+    throw new AppError(
+      'The selected database file carries a different core migration plane identity',
+      {
+        code: 'CORE_DATABASE_PLANE_MISMATCH', status: 500,
+        details: { expectedPlane, recordedPlane },
+      },
+    );
+  }
+}
+
 /**
  * @param {{path?: string, moduleMigrations?: Array<{name: string, sql: string}>, busyTimeoutMs?: number, plane?: 'combined'|'data'|'control'}} [options]
  * @returns {AccordoDatabase}
@@ -450,86 +525,87 @@ export function createDatabase(options = {}) {
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
 
   const raw = new DatabaseSync(dbPath);
-  raw.exec('PRAGMA foreign_keys = ON;');
-  raw.exec(`PRAGMA busy_timeout = ${Number.isInteger(options.busyTimeoutMs) && /** @type {number} */ (options.busyTimeoutMs) >= 0 ? options.busyTimeoutMs : 5000};`);
-  if (dbPath !== ':memory:') raw.exec('PRAGMA journal_mode = WAL;');
+  try {
+    withStartupBusyRetry(() => raw.exec('PRAGMA foreign_keys = ON;'));
+    withStartupBusyRetry(() => raw.exec(`PRAGMA busy_timeout = ${Number.isInteger(options.busyTimeoutMs) && /** @type {number} */ (options.busyTimeoutMs) >= 0 ? options.busyTimeoutMs : 5000};`));
+    if (dbPath !== ':memory:') withStartupBusyRetry(() => raw.exec('PRAGMA journal_mode = WAL;'));
 
-  raw.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      version INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
-      applied_at TEXT NOT NULL
-    ) STRICT;
-  `);
+    withStartupBusyRetry(() => raw.exec(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      ) STRICT;
+    `));
 
-  const applied = new Map(
-    raw.prepare('SELECT version, name FROM schema_migrations').all()
-      .map((row) => [Number(row.version), String(row.name)]),
-  );
+    const readCoreMigration = (version) => raw
+      .prepare('SELECT version, name FROM schema_migrations WHERE version = ?')
+      .get(version);
+    const readCoreMigrations = () => new Map(
+      raw.prepare('SELECT version, name FROM schema_migrations').all()
+        .map((row) => [Number(row.version), String(row.name)]),
+    );
+    const applied = withStartupBusyRetry(readCoreMigrations);
+    // Identity is global, not selected-plane-local. A data file carrying a
+    // wrong control migration name (or the reverse) must never pass merely
+    // because this boot would not execute that migration family.
+    assertCoreMigrationIdentity(applied);
+    assertMigrationPlane(applied, plane);
 
-  for (const migration of migrations) {
-    if (applied.has(migration.version)) {
-      if (applied.get(migration.version) !== migration.name) {
-        raw.close();
-        throw new AppError(
-          `Core migration version ${migration.version} is recorded with the wrong immutable name`,
-          {
-            code: 'CORE_MIGRATION_IDENTITY_MISMATCH', status: 500,
-            details: { version: migration.version, expectedName: migration.name },
-          },
-        );
+    const startupTransaction = (fn) => withStartupBusyRetry(() => {
+      let active = false;
+      try {
+        raw.exec('BEGIN IMMEDIATE;');
+        active = true;
+        const result = fn();
+        raw.exec('COMMIT;');
+        active = false;
+        return result;
+      } catch (error) {
+        if (active) {
+          try { raw.exec('ROLLBACK;'); } catch {}
+        }
+        throw error;
       }
-      continue;
+    });
+
+    for (const migration of migrations) {
+      startupTransaction(() => {
+        // Re-read only after owning the write lock. Two fresh processes may
+        // both have observed an empty ledger; the second must converge on the
+        // first process's committed migration, not rerun it or race its INSERT.
+        const recorded = readCoreMigration(migration.version);
+        if (recorded) {
+          assertCoreMigrationIdentity(new Map([[Number(recorded.version), String(recorded.name)]]));
+          return;
+        }
+        raw.exec(migration.sql);
+        raw.prepare(
+          'INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)',
+        ).run(migration.version, migration.name, new Date().toISOString());
+      });
     }
-    raw.exec('BEGIN IMMEDIATE;');
-    try {
-      raw.exec(migration.sql);
-      raw.prepare(
-        'INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)',
-      ).run(migration.version, migration.name, new Date().toISOString());
-      raw.exec('COMMIT;');
-    } catch (error) {
-      raw.exec('ROLLBACK;');
-      throw error;
-    }
-  }
 
   // Generated-module migrations are keyed by name, not version, so the set can
   // grow in any order without renumbering migrations that already ran. The SQL
   // checksum makes drift detectable: an applied migration whose SQL later
   // changes must fail loudly, never be silently treated as already applied.
-  raw.exec(`
-    CREATE TABLE IF NOT EXISTS module_migrations (
-      name TEXT PRIMARY KEY,
-      checksum TEXT NOT NULL,
-      applied_at TEXT NOT NULL
-    ) STRICT;
-  `);
-  const appliedModuleMigrations = new Map(
-    raw
-      .prepare('SELECT name, checksum FROM module_migrations')
-      .all()
-      .map((row) => [String(row.name), String(row.checksum)]),
-  );
-  const seenMigrationNames = new Set();
-  for (const migration of options.moduleMigrations ?? []) {
-    if (seenMigrationNames.has(migration.name)) {
-      throw new Error(
-        `Duplicate module migration name "${migration.name}": two modules claim the same migration identity.`,
-      );
-    }
-    seenMigrationNames.add(migration.name);
-    const checksum = createHash('sha256').update(migration.sql).digest('hex');
-    const appliedChecksum = appliedModuleMigrations.get(migration.name);
-    if (appliedChecksum !== undefined) {
-      if (appliedChecksum !== checksum) {
+    withStartupBusyRetry(() => raw.exec(`
+      CREATE TABLE IF NOT EXISTS module_migrations (
+        name TEXT PRIMARY KEY,
+        checksum TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      ) STRICT;
+    `));
+    const seenMigrationNames = new Set();
+    for (const migration of options.moduleMigrations ?? []) {
+      if (seenMigrationNames.has(migration.name)) {
         throw new Error(
-          `Module migration "${migration.name}" was already applied with different SQL. ` +
-            'Applied migrations are immutable: add a new migration instead of editing an applied one.',
+          `Duplicate module migration name "${migration.name}": two modules claim the same migration identity.`,
         );
       }
-      continue;
-    }
+      seenMigrationNames.add(migration.name);
+      const checksum = createHash('sha256').update(migration.sql).digest('hex');
     // Referential integrity is verified inside the migration's own transaction,
     // so a migration that leaves a dangling reference rolls back rather than
     // being recorded as applied (ADR-019).
@@ -539,30 +615,37 @@ export function createDatabase(options = {}) {
     // future migration on it means such a database can never be upgraded —
     // which is the worse outcome. The check is a before/after comparison
     // because it needs no list of the tables a migration happened to touch.
-    const fingerprintViolations = () => new Set(
-      raw.prepare('PRAGMA foreign_key_check').all()
-        .map((row) => `${String(row.table)}#${String(row.rowid)}#${String(row.fkid)}`),
-    );
-    const preExisting = fingerprintViolations();
-    raw.exec('BEGIN IMMEDIATE;');
-    try {
-      raw.exec(migration.sql);
-      const introduced = [...fingerprintViolations()].filter((key) => !preExisting.has(key));
-      if (introduced.length > 0) {
-        throw new Error(
-          `Module migration "${migration.name}" introduced ${introduced.length} foreign key violation(s), `
-            + `starting at ${introduced[0]}. The migration was rolled back.`,
-        );
-      }
-      raw
-        .prepare('INSERT INTO module_migrations(name, checksum, applied_at) VALUES (?, ?, ?)')
-        .run(migration.name, checksum, new Date().toISOString());
-      raw.exec('COMMIT;');
-    } catch (error) {
-      raw.exec('ROLLBACK;');
-      throw error;
+      const fingerprintViolations = () => new Set(
+        raw.prepare('PRAGMA foreign_key_check').all()
+          .map((row) => `${String(row.table)}#${String(row.rowid)}#${String(row.fkid)}`),
+      );
+      startupTransaction(() => {
+        const recorded = raw.prepare(
+          'SELECT checksum FROM module_migrations WHERE name = ?',
+        ).get(migration.name);
+        if (recorded) {
+          if (String(recorded.checksum) !== checksum) {
+            throw new Error(
+              `Module migration "${migration.name}" was already applied with different SQL. ` +
+                'Applied migrations are immutable: add a new migration instead of editing an applied one.',
+            );
+          }
+          return;
+        }
+        const preExisting = fingerprintViolations();
+        raw.exec(migration.sql);
+        const introduced = [...fingerprintViolations()].filter((key) => !preExisting.has(key));
+        if (introduced.length > 0) {
+          throw new Error(
+            `Module migration "${migration.name}" introduced ${introduced.length} foreign key violation(s), `
+              + `starting at ${introduced[0]}. The migration was rolled back.`,
+          );
+        }
+        raw
+          .prepare('INSERT INTO module_migrations(name, checksum, applied_at) VALUES (?, ?, ?)')
+          .run(migration.name, checksum, new Date().toISOString());
+      });
     }
-  }
 
   // One outer transaction at a time per connection. SQLite cannot nest BEGIN,
   // so a nested attempt (an action invoking another action, a workflow inside
@@ -646,14 +729,20 @@ export function createDatabase(options = {}) {
   // be bound to the very handle a consumer will later ask about.
   const storage = createSqliteStorage(raw, transaction, transactionAsync, () => currentTransactionWitness(storage));
 
-  return {
-    raw,
-    storage,
-    path: dbPath,
-    /** Which migration plane this file received. Published so a test can pin it. */
-    plane,
-    close: () => raw.close(),
-    transaction,
-    transactionAsync,
-  };
+    return {
+      raw,
+      storage,
+      path: dbPath,
+      /** Which migration plane this file received. Published so a test can pin it. */
+      plane,
+      close: () => raw.close(),
+      transaction,
+      transactionAsync,
+    };
+  } catch (error) {
+    // createDatabase owns the raw handle until it returns. Any startup refusal
+    // — including a persistent lock — closes it without masking the cause.
+    try { raw.close(); } catch {}
+    throw isBusyError(error) ? startupBusyError() : error;
+  }
 }

@@ -195,6 +195,16 @@ audit belongs in a separate tenant data plane. It is horizontal security
 machinery, but not a domain capability and not an invitation to route domain
 events through a generic outbox.
 
+The startup corrections stay at the same boundary: known global migration
+identity and the selected data/control family are checked before composition;
+fresh-process ledger races receive bounded startup-only retry; every post-open
+refusal closes both handles; and the public recovery options are a closed
+`limit: 1..100` shape. A released v1-v5 combined file may still be adopted as
+control with dormant CRM tables intact. The isolation claim is separate runtime
+handles and service reachability, not physical deletion and not M4 resource
+attestation. None of these rules adds a domain persistence consumer, so the
+per-domain dispositions below remain unchanged.
+
 | Domain | Status | Reason |
 |---|---|---|
 | Core CRM (Sales) | `not_applicable` | its data and audit already share the tenant data-plane transaction; no cross-plane Organization/Membership write occurs |

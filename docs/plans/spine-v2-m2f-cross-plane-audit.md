@@ -79,6 +79,11 @@ The implementing files are:
   statement vocabulary.
 - [x] Exercise restart, races, lock ordering, marker mismatch, divergent
   evidence, migration adoption, unsafe revisions and credential-free errors.
+- [x] Make truly fresh two-process startup converge under a bounded migrator
+  retry, close both handles on every post-open composition refusal, and reject
+  swapped migration-plane identities without rejecting v1-v5 control adoption.
+- [x] Pin the additive audit-intent options contract and preserve negative-limit
+  behavior of the released v1 Organization/Membership lists behind the seam.
 - [x] Reconcile DECISIONS, Legacy Alignment Matrix, TASKS, PROJECT_STATUS and
   Repository Truth.
 - [x] Run focused compatibility suites and the full repository gate; isolate
@@ -177,6 +182,36 @@ that only 100 exist. Intents are immutable except for one pending-to-delivered
 transition and cannot be deleted. There are no leases, timers, background
 workers, retry policy, compaction or arbitrary messages.
 
+`listPending()` and `reconcile()` accept only a non-proxy plain options object
+whose sole optional field is an integer `limit` from 1 through 100. Absence means
+100; coercion, clamping, accessors and ignored unknown keys were rejected because
+this is a public recovery boundary. Refusals name only the contract failure,
+never the input, payload, path or credential-shaped value.
+
+### Startup owns handles and migration-plane identity
+
+The application factory owns both database handles until it returns the app, so
+any binding or later composition refusal closes every handle while preserving
+the original error. The migrator uses bounded startup-only retry and, after it
+owns `BEGIN IMMEDIATE`, re-reads the ledger row before applying either a core or
+module migration. Two processes starting on a genuinely fresh root therefore
+converge instead of racing the immutable ledger; a persistent lock refuses as
+`CORE_DATABASE_STARTUP_BUSY`. Business mutations are never retried by this
+mechanism.
+
+Every known global core migration row is name-validated before the selected
+family runs. A v6 data-marked file cannot boot as control, and a v5/v7
+control-marked file cannot boot as data. The explicit compatibility exception is
+the released combined v1-v5 prefix: it may be adopted as control, retaining its
+dormant CRM tables, while the application proves separation through distinct
+files and dedicated runtime handles. This is plane-family identity, not resource
+attestation, clone detection or an M4 lease.
+
+The Storage Contract vocabulary did not grow. For released v1 list methods, a
+negative numeric limit is represented by omitting the statement limit (SQLite's
+historical unbounded behavior); zero and `NaN` retain their old defaults and
+positive values retain their caps.
+
 ## Validation
 
 The focused suite executes, rather than infers, these boundaries:
@@ -189,6 +224,13 @@ caller-owned data/control transaction   -> named refusal, never false delivery
 NULL destination                        -> no-op for this instance, exact pending
 two files / same slug CAS race          -> one winner, stable loser
 same physical file / two processes      -> one marker and one mapping
+fresh root / two cold processes         -> bounded migration convergence, no raw SQLite
+persistent startup lock                 -> CORE_DATABASE_STARTUP_BUSY, handle closed
+known wrong-name / swapped plane        -> fail closed before selected migrations
+legacy combined v1-v5 control adoption  -> dormant CRM preserved, runtime handles separate
+audit-intent option/type/limit errors    -> stable bounded credential-free refusal
+v1 negative list limits                 -> unbounded compatibility through omitted limit
+post-binding composition refusal        -> both database handles closed, cause preserved
 marker before CAS crash                 -> same-file retry reuses marker
 CAS before audit crash                  -> restart-visible pending intent
 marker mismatch                         -> refuse and leave pending

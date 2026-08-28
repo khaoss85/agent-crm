@@ -294,6 +294,30 @@ test('public v1 store and AuditLog keep their released surface while internals g
     'v1 still resolves the Organization before validating grant input',
   );
   store.memberships.bootstrapOwner({ organizationId: organization.id, subject: 'alice' });
+  store.memberships.bootstrapOwner({ organizationId: directOrganization.id, subject: 'alice' });
+  store.memberships.grant({
+    organizationId: organization.id,
+    subject: 'bob',
+    role: 'viewer',
+    reason: 'v1 limit compatibility probe',
+    identity: {
+      kind: 'verified-user', subject: 'alice', organizationId: organization.id,
+    },
+    mode: { mode: 'production', allowsAssertedActors: false },
+  });
+
+  assert.equal(store.organizations.list({ limit: 1 }).length, 1);
+  assert.equal(store.organizations.list({ limit: -1 }).length, 2);
+  assert.equal(store.organizations.list({ limit: 0 }).length, 2);
+  assert.equal(store.organizations.list({ limit: Number.NaN }).length, 2);
+  assert.equal(store.memberships.listFor({ organizationId: organization.id, limit: 1 }).length, 1);
+  assert.equal(store.memberships.listFor({ organizationId: organization.id, limit: -1 }).length, 2);
+  assert.equal(store.memberships.listFor({ organizationId: organization.id, limit: 0 }).length, 2);
+  assert.equal(store.memberships.listFor({ organizationId: organization.id, limit: Number.NaN }).length, 2);
+  assert.equal(store.memberships.listForSubject({ subject: 'alice', limit: 1 }).length, 1);
+  assert.equal(store.memberships.listForSubject({ subject: 'alice', limit: -1 }).length, 2);
+  assert.equal(store.memberships.listForSubject({ subject: 'alice', limit: 0 }).length, 2);
+  assert.equal(store.memberships.listForSubject({ subject: 'alice', limit: Number.NaN }).length, 2);
   assert.throws(
     () => store.memberships.bootstrapOwner({ organizationId: organization.id, subject: null }),
     (error) => error.code === 'CONFLICT',
@@ -335,13 +359,68 @@ test('audit-intent recovery exposes one bounded tenant-scoped surface', (t) => {
     'auditIntentContract', 'listPending', 'reconcile',
   ]);
   assert.equal(app.spine.describe().auditIntentContract, 1);
-  const pending = app.spine.auditIntents.listPending({ limit: 500 });
+  const pending = app.spine.auditIntents.listPending({ limit: 1 });
   assert.equal(pending.length, 1);
   assert.equal(Object.isFrozen(pending[0]), true);
   assert.deepEqual(Object.keys(pending[0]).sort(), [
     'action', 'createdAt', 'entityId', 'entityType', 'intentId',
   ]);
   assert.doesNotMatch(JSON.stringify(pending), /actor|dataPlane|payload|tenant|credential/i);
+});
+
+test('audit-intent options fail closed with one bounded credential-free contract', (t) => {
+  const app = fixture(t);
+  const organization = app.spine.boundOrganization;
+  app.database.raw.exec(`
+    CREATE TRIGGER m2f_hold_options_probe
+    BEFORE INSERT ON audit_events
+    WHEN NEW.entity_type = 'spine_membership'
+    BEGIN
+      SELECT RAISE(ABORT, 'private credential-shaped options probe');
+    END;
+  `);
+  app.spine.memberships.bootstrapOwner({ organizationId: organization.id, subject: 'alice' });
+
+  for (const options of [null, 'one', Symbol('secret'), [], new Date(), () => {}]) {
+    for (const method of ['listPending', 'reconcile']) {
+      assert.throws(
+        () => app.spine.auditIntents[method](options),
+        (error) => error.code === 'SPINE_AUDIT_INTENT_OPTIONS_INVALID'
+          && !/secret|credential|path/i.test(JSON.stringify(error)),
+      );
+    }
+  }
+  for (const limit of [0, -1, 1.5, 101, Number.NaN, Number.POSITIVE_INFINITY, '1']) {
+    assert.throws(
+      () => app.spine.auditIntents.listPending({ limit }),
+      (error) => error.code === 'SPINE_AUDIT_INTENT_LIMIT_INVALID'
+        && !/private credential|path/i.test(JSON.stringify(error)),
+    );
+    assert.throws(
+      () => app.spine.auditIntents.reconcile({ limit }),
+      (error) => error.code === 'SPINE_AUDIT_INTENT_LIMIT_INVALID'
+        && !/private credential|path/i.test(JSON.stringify(error)),
+    );
+  }
+  assert.throws(
+    () => app.spine.auditIntents.listPending({ limit: 1, credential: 'private credential' }),
+    (error) => error.code === 'SPINE_AUDIT_INTENT_OPTIONS_INVALID'
+      && !/private credential|path/i.test(JSON.stringify(error)),
+  );
+  const accessor = {};
+  Object.defineProperty(accessor, 'limit', {
+    enumerable: true,
+    get() { throw new Error('private credential getter'); },
+  });
+  for (const options of [accessor, new Proxy({ limit: 1 }, {})]) {
+    assert.throws(
+      () => app.spine.auditIntents.listPending(options),
+      (error) => error.code === 'SPINE_AUDIT_INTENT_OPTIONS_INVALID'
+        && !/private credential|path/i.test(JSON.stringify(error)),
+    );
+  }
+  assert.equal(app.spine.auditIntents.listPending().length, 1);
+  assert.equal(app.spine.auditIntents.listPending(Object.assign(Object.create(null), { limit: 1 })).length, 1);
 });
 
 test('spine-store carries no known raw-driver spelling, and the token guard is falsifiable', () => {
@@ -545,18 +624,61 @@ test('unknown production tenant refuses before marker or control mapping is crea
   assert.equal(control.prepare('SELECT COUNT(*) AS n FROM spine_tenant_bindings').get().n, 0);
 });
 
-test('two processes for one physical file converge on one marker and one control binding', async (t) => {
+test('a startup refusal after binding closes both database handles and preserves its cause', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-m2f-startup-cleanup-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const appUrl = new URL('../packages/app/src/index.js', import.meta.url).href;
+  const childSource = `
+    import { DatabaseSync } from 'node:sqlite';
+    import { createAccordoApp } from ${JSON.stringify(appUrl)};
+    const close = DatabaseSync.prototype.close;
+    let closed = 0;
+    DatabaseSync.prototype.close = function (...args) {
+      closed += 1;
+      Reflect.apply(close, this, args);
+      throw new Error('private cleanup sentinel');
+    };
+    try {
+      createAccordoApp({ spine: {
+        mode: 'production', identityVerifier: () => {},
+        tenant: {
+          id: 'alpha', storageRoot: process.env.M2F_ROOT,
+          provision: { name: '' },
+        },
+      } });
+      console.log(JSON.stringify({ unexpected: true, closed }));
+    } catch (error) {
+      console.log(JSON.stringify({ code: error.code, message: error.message, closed }));
+    }
+  `;
+  const observed = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--no-warnings', '--input-type=module', '-e', childSource], {
+      env: { ...process.env, M2F_ROOT: root }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) reject(new Error(stderr || `child exited ${code}`));
+      else resolve(JSON.parse(stdout.trim()));
+    });
+  });
+  assert.equal(observed.code, 'VALIDATION_ERROR');
+  assert.match(observed.message, /organization\.name/);
+  assert.equal(observed.closed, 2, 'both handles opened before createSpine must close on refusal');
+});
+
+test('two cold-start processes on one fresh physical file converge without raw SQLite errors', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'accordo-m2f-same-file-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const initialized = createAccordoApp({ spine: spineConfig(root, 'alpha') });
-  const expected = initialized.database.raw.prepare(
-    'SELECT data_plane_id FROM spine_data_plane_binding',
-  ).get().data_plane_id;
-  initialized.close();
 
   const appUrl = new URL('../packages/app/src/index.js', import.meta.url).href;
   const childSource = `
     import { createAccordoApp } from ${JSON.stringify(appUrl)};
+    const wait = Math.max(0, Number(process.env.M2F_START) - Date.now());
+    if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
     const app = createAccordoApp({ spine: {
       mode: 'production', identityVerifier: () => {},
       tenant: { id: 'alpha', storageRoot: process.env.M2F_ROOT, provision: { name: 'alpha' } },
@@ -565,9 +687,10 @@ test('two processes for one physical file converge on one marker and one control
     await new Promise((resolve) => setTimeout(resolve, 40));
     app.close();
   `;
+  const start = String(Date.now() + 300);
   const runChild = () => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--no-warnings', '--input-type=module', '-e', childSource], {
-      env: { ...process.env, M2F_ROOT: root },
+      env: { ...process.env, M2F_ROOT: root, M2F_START: start },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -581,8 +704,8 @@ test('two processes for one physical file converge on one marker and one control
     });
   });
   const [firstId, secondId] = await Promise.all([runChild(), runChild()]);
-  assert.equal(firstId, expected);
-  assert.equal(secondId, expected);
+  assert.match(firstId, /^dp_[a-f0-9]{32}$/);
+  assert.equal(secondId, firstId);
 
   const verified = createAccordoApp({ spine: spineConfig(root, 'alpha') });
   t.after(() => verified.close());
@@ -590,7 +713,34 @@ test('two processes for one physical file converge on one marker and one control
     verified.controlPlaneDatabase.raw.prepare(
       'SELECT data_plane_id FROM spine_tenant_bindings WHERE tenant_slug = ?',
     ).get('alpha').data_plane_id,
-    expected,
+    firstId,
+  );
+});
+
+test('persistent startup locking is normalized to one stable credential-free error', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-m2f-startup-lock-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, 'locked.sqlite');
+  const seed = new DatabaseSync(path);
+  seed.exec(`
+    CREATE TABLE schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    ) STRICT;
+  `);
+  seed.exec('BEGIN IMMEDIATE;');
+  t.after(() => {
+    try { seed.exec('ROLLBACK;'); } catch {}
+    seed.close();
+  });
+
+  assert.throws(
+    () => createDatabase({ path, plane: 'data', busyTimeoutMs: 1 }),
+    (error) => error.code === 'CORE_DATABASE_STARTUP_BUSY'
+      && error.status === 503
+      && !JSON.stringify(error).includes(path)
+      && !/SQLITE|database is locked/i.test(error.message),
   );
 });
 
@@ -728,6 +878,108 @@ test('core migration identities and plane order are append-only and wrong names 
       && error.details.version === 5
       && error.details.expectedName === 'production_spine_identity',
   );
+});
+
+test('core migration identity is global and swapped plane files refuse while legacy v5 adopts', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-m2f-plane-identity-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const seedLedger = (path, version, name) => {
+    const raw = new DatabaseSync(path);
+    raw.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      ) STRICT;
+    `);
+    raw.prepare('INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)')
+      .run(version, name, '2026-08-28T00:00:00.000Z');
+    raw.close();
+  };
+
+  const dataWrongControlVersion = join(root, 'data-wrong-control-version.sqlite');
+  seedLedger(dataWrongControlVersion, 5, 'wrong-control-name');
+  assert.throws(
+    () => createDatabase({ path: dataWrongControlVersion, plane: 'data' }),
+    (error) => error.code === 'CORE_MIGRATION_IDENTITY_MISMATCH'
+      && error.details.version === 5
+      && error.details.expectedName === 'production_spine_identity',
+  );
+
+  const controlWrongDataVersion = join(root, 'control-wrong-data-version.sqlite');
+  seedLedger(controlWrongDataVersion, 1, 'wrong-data-name');
+  assert.throws(
+    () => createDatabase({ path: controlWrongDataVersion, plane: 'control' }),
+    (error) => error.code === 'CORE_MIGRATION_IDENTITY_MISMATCH'
+      && error.details.version === 1
+      && error.details.expectedName === 'initial_crm_schema',
+  );
+
+  const dataOnlyPath = join(root, 'data-only.sqlite');
+  const dataOnly = createDatabase({ path: dataOnlyPath, plane: 'data' });
+  dataOnly.raw.prepare(
+    `INSERT INTO spine_data_plane_binding(singleton, tenant_slug, data_plane_id, created_at)
+     VALUES (1, ?, ?, ?)`,
+  ).run('foreign-tenant', 'dp_foreign', '2026-08-28T00:00:00.000Z');
+  dataOnly.close();
+  assert.throws(
+    () => createDatabase({ path: dataOnlyPath, plane: 'control' }),
+    (error) => error.code === 'CORE_DATABASE_PLANE_MISMATCH'
+      && error.details.expectedPlane === 'control'
+      && error.details.recordedPlane === 'data'
+      && !JSON.stringify(error).includes(root),
+  );
+
+  const controlOnlyPath = join(root, 'control-only.sqlite');
+  createDatabase({ path: controlOnlyPath, plane: 'control' }).close();
+  assert.throws(
+    () => createDatabase({ path: controlOnlyPath, plane: 'data' }),
+    (error) => error.code === 'CORE_DATABASE_PLANE_MISMATCH'
+      && error.details.expectedPlane === 'data'
+      && error.details.recordedPlane === 'control'
+      && !JSON.stringify(error).includes(root),
+  );
+
+  const legacyPath = join(root, 'legacy-combined-v5.sqlite');
+  const legacy = new DatabaseSync(legacyPath);
+  legacy.exec(`
+    CREATE TABLE schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    ) STRICT;
+  `);
+  for (const migration of CORE_MIGRATIONS_FOR_CHARACTERIZATION.filter(({ version }) => version <= 5)) {
+    legacy.exec(migration.sql);
+    legacy.prepare('INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)')
+      .run(migration.version, migration.name, '2026-08-28T00:00:00.000Z');
+  }
+  legacy.close();
+
+  const adopted = createDatabase({ path: legacyPath, plane: 'control' });
+  assert.equal(adopted.plane, 'control');
+  assert.equal(
+    adopted.raw.prepare("SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 7").get().n,
+    1,
+  );
+  assert.doesNotThrow(
+    () => adopted.raw.prepare('SELECT COUNT(*) AS n FROM companies').get(),
+    'legacy adoption preserves dormant CRM tables instead of deleting data',
+  );
+  adopted.close();
+
+  const app = createAccordoApp({
+    spine: spineConfig(join(root, 'legacy-runtime'), 'alpha', legacyPath),
+  });
+  t.after(() => app.close());
+  const isolation = app.spine.describe().tenantIsolation;
+  assert.equal(isolation.dataPlaneSeparateFromControlPlane, true);
+  assert.equal(isolation.crmDataPlaneEnforced, true);
+  assert.equal(isolation.crossTenantCrmReadPossible, false);
+  assert.notEqual(app.database.path, app.controlPlaneDatabase.path);
+  assert.doesNotThrow(() => app.controlPlaneDatabase.raw.prepare('SELECT COUNT(*) FROM companies').get());
+  assert.throws(() => app.database.raw.prepare('SELECT COUNT(*) FROM spine_memberships').get(), /no such table/);
 });
 
 test('stored payload fingerprint is reverified before delivery and divergent intent stays pending', (t) => {

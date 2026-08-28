@@ -398,8 +398,11 @@ export function createSpine({ database, dataPlane, dataPlaneBinding, binding, au
           strategy: TENANT_STRATEGY,
           controlPlaneScoped: true,
           storageBoundaryWired: Boolean(binding?.storage?.dataPlanePath),
-          // Separate files, and separate schemas: a CRM write against the
-          // control plane hits a table that does not exist there.
+          // Separate files and dedicated runtime handles: CRM services receive
+          // only the data handle and Spine services receive only control. A
+          // fresh control file also has no CRM tables; an adopted v1-v5 combined
+          // control file may retain dormant ones without making them reachable
+          // through the bound tenant runtime.
           dataPlaneSeparateFromControlPlane:
             binding.storage.dataPlanePath !== binding.storage.controlPlanePath
             && dataPlane?.plane === 'data'

@@ -3136,12 +3136,15 @@ unreachable through the handle the application holds. There is no branch in
 which a bound application can reach the unscoped shared database, because no
 such handle is ever constructed.
 
-**Two planes, two files, two schemas.** Control-plane migrations (organizations,
-memberships) and data-plane migrations (CRM) are separate lists. A tenant
-database has no membership table and the control plane has no CRM table, so a
-write that crossed the boundary raises `no such table` rather than quietly
-succeeding — which is what turns a convention into an enforcement. The combined
-list remains the default, so every composition without a spine is unchanged.
+**Two runtime planes and two files; fresh schemas are disjoint.** Control-plane
+migrations (organizations, memberships) and data-plane migrations (CRM) are
+separate lists. A fresh tenant database has no membership table and a fresh
+control database has no CRM table, so a write that crossed the boundary raises
+`no such table` rather than quietly succeeding. The released v1-v5 combined
+database remains adoptable as the control file and may retain dormant CRM tables:
+the enforced claim there is that CRM services never receive or use the control
+handle, not that adoption deletes historical data. The combined list remains the
+default, so every composition without a spine is unchanged.
 
 **The tenant is never inferred** — not from localhost, `NODE_ENV`, the listening
 interface, the first membership, the first Organization row, a header, a body or
@@ -3258,6 +3261,23 @@ bounded `committed_with_pending_audit` receipt; ordinary success stays
 byte-shape compatible. The application exposes one tenant-scoped, frozen
 `auditIntents` contract for bounded listing and explicit reconciliation. It is
 not a lease, retry worker, scheduler, arbitrary message queue or deletion API.
+
+Both methods accept only a non-proxy plain options object with the optional
+integer `limit` in `1..100`; invalid shapes and accessor properties refuse with
+stable credential-free codes. The public v1 Organization/Membership list
+behavior is unchanged behind the closed storage seam: a negative numeric limit
+means SQLite's historical unbounded listing, while zero or `NaN` selects the
+released default.
+
+Startup owns every SQLite handle until it returns the application. A failure at
+any later composition step closes both handles without replacing the original
+error. Migration startup rechecks each ledger row only after acquiring its
+bounded write lock, so two cold processes converge; a persistent lock becomes
+`CORE_DATABASE_STARTUP_BUSY`, never a raw SQLite error. Every known core
+migration row is name-validated regardless of the selected plane, and data-only
+or control-marked files used for the opposite plane refuse as
+`CORE_DATABASE_PLANE_MISMATCH`. This identity is a migration-family boundary,
+not M4 resource attestation.
 
 
 ### The spine is opt-in, and its absence is loud

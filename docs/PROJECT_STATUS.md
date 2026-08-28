@@ -123,7 +123,10 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
    Contracts' multi-write transaction proof behind an opaque caller-owned
    witness. The first M2F slice closes `spine-store.js` over the seam and makes
    Organization/Membership cross-plane audit explicitly recoverable without
-   claiming a general outbox. M2E owns portable async composition and dual
+   claiming a general outbox. Its startup boundary validates migration-plane
+   identity, converges boundedly on a fresh-file race and closes every handle on
+   a refused composition; legacy v1-v5 control adoption preserves dormant CRM
+   tables while runtime handles remain separate. M2E owns portable async composition and dual
    v1/v2 package graphs; the remaining M2F work owns deployment-storage
    configuration and bounded entry-point surfaces.
 2. M2 must preserve the M0/M1 public contracts and must not be confused with the

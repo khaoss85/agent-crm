@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createHash, randomUUID } from 'node:crypto';
+import { isProxy } from 'node:util/types';
 import { AppError, ConflictError, NotFoundError, ValidationError } from './errors.js';
 import { ROLES, ROLE_BUNDLES, decideAuthorization } from './authorization.js';
 import { identityString } from './identity.js';
@@ -46,6 +47,45 @@ const MAX_AUDIT_DATA_BYTES = 4096;
 
 /** Slugs are the operator-facing tenant handle: bounded, lowercase, no surprises. */
 const SLUG_RE = /^[a-z][a-z0-9-]{0,62}$/;
+
+/** Preserve the released raw-SQLite list semantics behind the closed seam. */
+function v1ListLimit(value, fallback, maximum) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric < 0) return undefined;
+  return Math.min(numeric || fallback, maximum);
+}
+
+function auditIntentLimit(options) {
+  let prototype;
+  let keys;
+  let limitDescriptor;
+  try {
+    if (options === null || typeof options !== 'object' || isProxy(options)) throw new Error('invalid');
+    prototype = Object.getPrototypeOf(options);
+    keys = Reflect.ownKeys(options);
+    limitDescriptor = Object.getOwnPropertyDescriptor(options, 'limit');
+  } catch {
+    throw new AppError('Spine audit-intent options must be a plain options object', {
+      code: 'SPINE_AUDIT_INTENT_OPTIONS_INVALID', status: 400,
+    });
+  }
+  if ((prototype !== Object.prototype && prototype !== null)
+      || keys.some((key) => key !== 'limit')
+      || (keys.includes('limit')
+        && (!limitDescriptor || !Object.prototype.hasOwnProperty.call(limitDescriptor, 'value')))) {
+    throw new AppError('Spine audit-intent options must be a plain object containing only limit', {
+      code: 'SPINE_AUDIT_INTENT_OPTIONS_INVALID', status: 400,
+    });
+  }
+  if (!keys.includes('limit')) return MAX_RECONCILE;
+  const limit = limitDescriptor.value;
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RECONCILE) {
+    throw new AppError('Spine audit-intent limit must be an integer from 1 through 100', {
+      code: 'SPINE_AUDIT_INTENT_LIMIT_INVALID', status: 400,
+    });
+  }
+  return limit;
+}
 
 /** The one organization a local-development project gets, when it gets one. */
 export const LOCAL_ORGANIZATION_SLUG = 'local-development';
@@ -719,10 +759,11 @@ function createSpineStoreImplementation({
     },
 
     list({ limit = 100 } = {}) {
+      const bounded = v1ListLimit(limit, 100, 500);
       return storage.many({
         kind: 'select', table: 'spine_organizations', columns: '*', where: [],
         orderBy: [{ column: 'created_at' }, { column: 'id' }],
-        limit: Math.min(Number(limit) || 100, 500),
+        ...(bounded === undefined ? {} : { limit: bounded }),
       }).map(rowToOrganization);
     },
   };
@@ -743,17 +784,19 @@ function createSpineStoreImplementation({
     /** @param {{organizationId: string, limit?: number}} query */
     listFor({ organizationId, limit = 200 }) {
       if (typeof organizationId !== 'string' || organizationId === '') return [];
+      const bounded = v1ListLimit(limit, 200, 500);
       return storage.many({
         kind: 'select', table: 'spine_memberships', columns: '*',
         where: [{ column: 'organization_id', op: 'eq', value: organizationId }],
         orderBy: [{ column: 'created_at' }, { column: 'id' }],
-        limit: Math.min(Number(limit) || 200, 500),
+        ...(bounded === undefined ? {} : { limit: bounded }),
       }).map(rowToMembership);
     },
 
     /** Every organization one subject may act in — the Admin's tenant switcher. */
     listForSubject({ subject, limit = 100 }) {
       if (typeof subject !== 'string' || subject === '') return [];
+      const bounded = v1ListLimit(limit, 100, 500);
       return storage.many({
         kind: 'select', table: 'spine_memberships', columns: '*',
         where: [
@@ -761,7 +804,7 @@ function createSpineStoreImplementation({
           { column: 'status', op: 'eq', value: 'active' },
         ],
         orderBy: [{ column: 'created_at' }, { column: 'id' }],
-        limit: Math.min(Number(limit) || 100, 500),
+        ...(bounded === undefined ? {} : { limit: bounded }),
       }).map(rowToMembership);
     },
 
@@ -1039,8 +1082,8 @@ function createSpineStoreImplementation({
 
   const auditIntents = Object.freeze({
     auditIntentContract: SPINE_AUDIT_INTENT_CONTRACT,
-    listPending({ limit = MAX_RECONCILE } = {}) {
-      const bounded = Math.min(Math.max(Number(limit) || MAX_RECONCILE, 1), MAX_RECONCILE);
+    listPending(options = {}) {
+      const bounded = auditIntentLimit(options);
       return storage.many({
         kind: 'select', table: 'spine_audit_intents', columns: '*',
         where: [
@@ -1057,7 +1100,8 @@ function createSpineStoreImplementation({
       }));
     },
 
-    reconcile({ limit = MAX_RECONCILE } = {}) {
+    reconcile(options = {}) {
+      const limit = auditIntentLimit(options);
       assertNoCallerControlTransaction();
       assertNoCallerDataTransaction();
       const pending = auditIntents.listPending({ limit });
