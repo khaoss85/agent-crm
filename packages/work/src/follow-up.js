@@ -1,7 +1,8 @@
 // @ts-check
 
 import {
-  AppError, ConflictError, ValidationError, isCalendarDate, normalizeActor, optionalIsoDate,
+  AppError, ConflictError, TRANSACTION_PROOF, ValidationError, isCalendarDate, normalizeActor,
+  optionalIsoDate, proveCallerTransaction,
 } from '../../core/index.js';
 
 /**
@@ -343,6 +344,12 @@ export function isUniqueConflict(error) {
 }
 
 /**
+ * Why a transaction can be open and still not be the caller's, and what to do
+ * about it. Shared by the refusals below so the diagnosis is written once.
+ */
+const LOST_ASYNC_CONTEXT = 'It was opened by a different asynchronous flow. Either another request owns it — and writing here would join a transaction this code does not control, to be committed or rolled back by somebody else — or this call has crossed a boundary that dropped its async context. Context survives await, queueMicrotask, process.nextTick, setTimeout, setImmediate and an event emitted inside the transaction; it is lost by a callback that leaves the transaction and is invoked later, including a listener registered inside it and emitted outside. Call this inside the transaction, or wrap the callback with AsyncResource.bind before it leaves.';
+
+/**
  * **Fail closed when the promised transaction is not there.**
  *
  * This package's whole guarantee is that a Task and its creation Activity are
@@ -354,24 +361,33 @@ export function isUniqueConflict(error) {
  * produces. It was reachable, and it produced one (probe: inject a fault into
  * the activity write with no transaction open, and the task survives).
  *
- * So the transactional context is verified rather than assumed. The handle is
- * the module service's own database — the same connection the write will go
- * to, so this cannot be satisfied by a caller passing a *different*
- * transaction's handle — and a context that cannot prove an open transaction is
- * refused before the first write.
+ * So the transactional context is verified rather than assumed — and verified
+ * without the driver.
  *
- * @param {any} tasks
+ * This used to read the SQLite driver's `isTransaction` flag straight off the
+ * module service's database handle: one boolean, bought by holding the driver
+ * itself, and with it `exec`, `prepare` and every table in the application,
+ * inside a business package. `proveCallerTransaction` answers
+ * the same question through the storage seam (Spine v2 M2D). It pulls the
+ * opaque witness from the handle the write will actually land on, so it still
+ * cannot be satisfied by a caller holding a *different* transaction's handle,
+ * and it now also refuses a value the core witness module never minted.
+ *
+ * **Both services, not one.** The Task and the Activity are resolved
+ * independently from the caller's `modules`, and nothing used to prove they
+ * were the same connection. Two handles would break the pair even *inside* a
+ * transaction, because they would be inside two different ones. That is one
+ * identity comparison, and it is the "same storage handle" half of the promise
+ * this function's name makes.
+ *
+ * @param {any} tasks @param {any} activities
  */
-function requireCallerTransaction(tasks) {
-  const raw = tasks?.database?.raw;
-  if (!raw || typeof raw.isTransaction !== 'boolean') {
-    throw new AppError(
-      'A follow-up cannot prove it is running inside the caller\'s transaction, so it refuses to write a task '
-        + 'whose activity might not commit with it.',
-      { code: 'WORK_TRANSACTION_REQUIRED', status: 500 },
-    );
-  }
-  if (!raw.isTransaction) {
+export function requireCallerTransaction(tasks, activities) {
+  const proof = proveCallerTransaction([tasks, activities]);
+  if (proof === TRANSACTION_PROOF.ACTIVE) return;
+  // A genuine handle honestly reporting that nothing is open is the one case a
+  // caller can fix, so it keeps the sentence that says how.
+  if (proof === TRANSACTION_PROOF.NO_TRANSACTION) {
     throw new AppError(
       'work/follow-up@1 must be called inside the caller\'s transaction: it writes a task and its creation activity '
         + 'as one pair, and outside a transaction a failure between them would leave the task without the activity. '
@@ -379,6 +395,24 @@ function requireCallerTransaction(tasks) {
       { code: 'WORK_TRANSACTION_REQUIRED', status: 500 },
     );
   }
+  // A real transaction, opened by somebody else. Refused with the cause named:
+  // a generic "no transaction" here would send a caller hunting for one that is
+  // already open, which is the worst version of this message.
+  if (proof === TRANSACTION_PROOF.NOT_TRANSACTION_OWNER) {
+    throw new AppError(
+      'work/follow-up@1 found a transaction open on this connection that this call does not own, so it refuses '
+        + 'to write a task and its activity into it. ' + LOST_ASYNC_CONTEXT,
+      { code: 'WORK_TRANSACTION_REQUIRED', status: 500, details: { proof } },
+    );
+  }
+  // Everything else — no handle, two handles, a handle that cannot answer, or
+  // an answer nothing minted — is the same refusal it has always been: this
+  // code cannot prove the pair will commit together, so it writes neither half.
+  throw new AppError(
+    'A follow-up cannot prove it is running inside the caller\'s transaction, so it refuses to write a task '
+      + 'whose activity might not commit with it.',
+    { code: 'WORK_TRANSACTION_REQUIRED', status: 500, details: { proof } },
+  );
 }
 
 /**
@@ -448,7 +482,7 @@ function services(context) {
  */
 export async function createFollowUp(context, request) {
   const { tasks, activities } = services(context);
-  requireCallerTransaction(tasks);
+  requireCallerTransaction(tasks, activities);
   const now = typeof context.now === 'function' ? context.now : () => new Date().toISOString();
   const actor = context.actor;
   const who = normalizeWorkActor(actor);

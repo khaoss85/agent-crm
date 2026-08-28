@@ -102,6 +102,27 @@ export { computeDefinitionFingerprint, validateDeclaredConfig } from './src/defi
 // one sentence a person reads at boot becomes several that disagree.
 export { createDefinitionVersionStore } from './src/definition-version-store.js';
 
+// ---- caller-owned transaction proof (Spine v2 M2D) ----
+// A package whose writes are only correct as a SET must be able to prove it is
+// inside the caller's transaction before it writes the first row. Reading the
+// SQLite driver's `isTransaction` flag off `database.raw` did that, at the
+// price of a business package holding the raw driver — every table in the
+// application, `exec` and `prepare` — for one boolean.
+//
+// `proveCallerTransaction` is that boolean without the driver: it compares the
+// storage handles of the services that must commit together, then asks that one
+// handle for the opaque witness the database wrapper mints per outer
+// transaction. It is published because FOUR capabilities proved they need it —
+// `work/follow-up@1`, `contracts/delivery-obligations@1`,
+// `contracts/service-obligations@1` and
+// `contracts/contracts-successor-activation@1` — three of which were measured
+// committing a partial write outside a transaction
+// (`docs/plans/spine-v2-m2d-transaction-context.md` §2).
+//
+// `mintTransactionWitness` is deliberately NOT here. A package that could mint
+// could manufacture the very proof it is subject to.
+export { TRANSACTION_PROOF, proveCallerTransaction } from './src/transaction-witness.js';
+
 // ---- money (ADR-014/016) ----
 // Integer minor units, never floats, with the framework's shared bounds. A
 // package that stores or renders an amount uses these rather than inventing
