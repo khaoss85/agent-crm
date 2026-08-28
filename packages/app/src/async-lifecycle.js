@@ -26,6 +26,41 @@ function requireArray(value, label) {
   return value;
 }
 
+const CLEANUP_REPORT_LIMIT = 200;
+
+function reportCleanupFailure(startupError, cleanupError) {
+  try {
+    const startup = startupError instanceof Error
+      ? startupError.message.slice(0, CLEANUP_REPORT_LIMIT)
+      : 'non-error';
+    const cleanup = cleanupError instanceof Error
+      ? cleanupError.message.slice(0, CLEANUP_REPORT_LIMIT)
+      : String(cleanupError).slice(0, CLEANUP_REPORT_LIMIT);
+    console.error(
+      `[accordo] sqlite lifecycle cleanup failed after startup error; original cause preserved — startup: ${startup} — cleanup: ${cleanup}`,
+    );
+  } catch {
+    // Reporting must never replace the original rejection.
+  }
+}
+
+function attachCleanupError(error, cleanupError) {
+  let attached = false;
+  if (error && (typeof error === 'object' || typeof error === 'function')) {
+    try {
+      Object.defineProperty(error, 'cleanupError', {
+        value: cleanupError,
+        enumerable: true,
+        configurable: true,
+      });
+      attached = Object.hasOwn(error, 'cleanupError');
+    } catch {
+      attached = false;
+    }
+  }
+  if (!attached) reportCleanupFailure(error, cleanupError);
+}
+
 function readSelectedContract(selected) {
   if (selected === null || selected === undefined || typeof selected !== 'object' || Array.isArray(selected)) {
     throw asyncContractError(
@@ -146,13 +181,7 @@ export async function startSqliteLifecycle(options = {}) {
     try {
       closeAdapter();
     } catch (cleanupError) {
-      if (error && typeof error === 'object') {
-        Object.defineProperty(error, 'cleanupError', {
-          value: cleanupError,
-          enumerable: true,
-          configurable: true,
-        });
-      }
+      attachCleanupError(error, cleanupError);
     }
     throw error;
   }

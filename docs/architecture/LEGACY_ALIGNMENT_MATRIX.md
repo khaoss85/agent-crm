@@ -205,6 +205,35 @@ does not mean its current v1 graph is invalid. M2E-3 owns every promotion.
 | Custom-package score-disclosure fixture | `deferred` | its contract-1 graph and `intelligence@1` dependency remain the customer-authored capability-consumer proof; M2E-3 owns any v2 companion rather than silently rewriting this v1 fixture |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
 
+### Private async SQLite lifecycle assessment (Production Spine v2 M2E-2A)
+
+M2E-2A is horizontal kernel machinery, not a domain capability and not M2E-2
+complete. It proves a selected graph is uniformly async-v2 before any SQLite
+path, opener, provider or listener can move, then owns one adapter through
+post-open assembly and one shared close promise. It is **not** M2E-1's
+graph-validation vocabulary (already merged), **not** a portable application
+facade (M2E-2B), **not** awaited HTTP/security (M2E-2C), and **not** a public
+async factory (M2E-3). `createAccordoApp()` remains the only public factory and
+remains synchronous. A `deferred` row means the domain is not composed through
+this private lifecycle; it does not mean its released v1 graph is invalid.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project-owned records are not selected through this private lifecycle; 2B owns any portable service graph over it |
+| Pipeline | `not_applicable` | a kernel workflow capability, not a selected package graph |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
+| Signature & Order | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
+| Contract Activation | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
+| Delivery | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
+| Service | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
+| Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto the private lifecycle |
+| Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
+| Customer Data | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; this slice adds no v2 fixture |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime lifecycle |
+
 ### Hosted Docs MCP transport assessment
 
 The stateless Streamable HTTP transport in `packages/docs-mcp/src/http.js` is a

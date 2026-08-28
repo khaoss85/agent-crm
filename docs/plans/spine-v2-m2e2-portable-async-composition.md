@@ -237,6 +237,11 @@ Required observations:
   contract once, delegates package problems to M2E-1 composition, and opens
   SQLite only after a uniform v2 graph is accepted. Close is one shared
   promise; assembly failure closes the adapter without replacing the cause.
+- **2026-08-28:** Node 22.16 CI rejected `using` in the 2A tests; cleanup now
+  uses `t.after`. Frozen/sealed/non-extensible startup errors stay the
+  rejection when close also throws, with a bounded console report instead of a
+  TypeError. The Compatibility Backfill Rule records M2E-2A as private
+  lifecycle, not a complete portable factory.
 
 ## Decision log
 

@@ -50,6 +50,12 @@ function tempRoot() {
   };
 }
 
+function workspaceFor(t) {
+  const workspace = tempRoot();
+  t.after(() => workspace[Symbol.dispose]());
+  return workspace;
+}
+
 function isAsyncContract(error) {
   return error?.code === 'PACKAGE_ASYNC_CONTRACT_REQUIRED' && error.status === 400;
 }
@@ -78,8 +84,8 @@ test('the released factory stays synchronous, non-thenable and immediately reada
   }
 });
 
-test('an omitted or v1 selected contract refuses before any opener, path, provider or listener moves', async () => {
-  using workspace = tempRoot();
+test('an omitted or v1 selected contract refuses before any opener, path, provider or listener moves', async (t) => {
+  const workspace = workspaceFor(t);
   const missingParent = join(workspace.root, 'never-created', 'accordo.sqlite');
   let opened = 0;
   let provided = 0;
@@ -118,8 +124,8 @@ test('an omitted or v1 selected contract refuses before any opener, path, provid
   assert.equal(existsSync(join(workspace.root, 'never-created')), false);
 });
 
-test('a mixed or uniform-v1 graph selected as v2 refuses with the existing composition identities', async () => {
-  using workspace = tempRoot();
+test('a mixed or uniform-v1 graph selected as v2 refuses with the existing composition identities', async (t) => {
+  const workspace = workspaceFor(t);
   let opened = 0;
   const openDatabase = () => {
     opened += 1;
@@ -148,8 +154,8 @@ test('a mixed or uniform-v1 graph selected as v2 refuses with the existing compo
   assert.equal(existsSync(join(workspace.root, 'data')), false);
 });
 
-test('a valid v1 action on a v2 selected graph refuses before SQLite opens', async () => {
-  using workspace = tempRoot();
+test('a valid v1 action on a v2 selected graph refuses before SQLite opens', async (t) => {
+  const workspace = workspaceFor(t);
   let opened = 0;
   await assert.rejects(
     () => startSqliteLifecycle({
@@ -170,8 +176,8 @@ test('a valid v1 action on a v2 selected graph refuses before SQLite opens', asy
   assert.equal(opened, 0);
 });
 
-test('malformed top-level actions keep their existing validation identity and never open SQLite', async () => {
-  using workspace = tempRoot();
+test('malformed top-level actions keep their existing validation identity and never open SQLite', async (t) => {
+  const workspace = workspaceFor(t);
   let opened = 0;
   const missing = action(2);
   delete missing.actionContract;
@@ -221,8 +227,8 @@ test('preflight snapshots the selected contract once and keeps exact executable 
   assert.strictEqual(accepted.packageFacts[0].definition, provider);
 });
 
-test('a uniform v2 graph opens SQLite only after preflight and returns an internal receipt', async () => {
-  using workspace = tempRoot();
+test('a uniform v2 graph opens SQLite only after preflight and returns an internal receipt', async (t) => {
+  const workspace = workspaceFor(t);
   let opened = 0;
   const provider = pkg('async-provider', 2);
   const lifecycle = await startSqliteLifecycle({
@@ -297,6 +303,48 @@ test('post-open assembly failure closes the adapter once and preserves the start
   assert.equal(closes, 2);
 });
 
+test('frozen, sealed and non-extensible startup errors stay the rejection when cleanup fails', async (t) => {
+  const storage = Object.freeze({ contract: 1 });
+  const reports = [];
+  const originalError = console.error;
+  console.error = (...args) => { reports.push(args.map(String).join(' ')); };
+  t.after(() => { console.error = originalError; });
+
+  const cases = [
+    ['frozen', (error) => Object.freeze(error)],
+    ['sealed', (error) => Object.seal(error)],
+    ['non-extensible', (error) => Object.preventExtensions(error)],
+  ];
+
+  for (const [label, lock] of cases) {
+    reports.length = 0;
+    const cause = new Error(`ASSEMBLY_${label}`);
+    lock(cause);
+    const cleanup = new Error(`CLOSE_${label}`);
+    await assert.rejects(
+      () => startSqliteLifecycle({
+        selected: v2Empty,
+        openDatabase: () => ({
+          storage,
+          close() { throw cleanup; },
+        }),
+        assemble: () => { throw cause; },
+      }),
+      (error) => {
+        assert.equal(error, cause, label);
+        assert.equal(Object.hasOwn(error, 'cleanupError'), false, label);
+        return true;
+      },
+    );
+    assert.ok(
+      reports.some((line) => line.includes('[accordo] sqlite lifecycle cleanup failed after startup error')
+        && line.includes(`ASSEMBLY_${label}`)
+        && line.includes(`CLOSE_${label}`)),
+      `${label}: ${JSON.stringify(reports)}`,
+    );
+  }
+});
+
 test('successful close is async, idempotent and shares one settlement', async () => {
   let closes = 0;
   const storage = Object.freeze({ contract: 1 });
@@ -317,8 +365,8 @@ test('successful close is async, idempotent and shares one settlement', async ()
   assert.equal(closes, 1);
 });
 
-test('a child process opens SQLite, transacts through the storage seam, reads the row and closes', () => {
-  using workspace = tempRoot();
+test('a child process opens SQLite, transacts through the storage seam, reads the row and closes', (t) => {
+  const workspace = workspaceFor(t);
   const lifecycleHref = new URL('../packages/app/src/async-lifecycle.js', import.meta.url).href;
   const script = `
 import { startSqliteLifecycle } from ${JSON.stringify(lifecycleHref)};
