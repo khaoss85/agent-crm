@@ -235,34 +235,44 @@ export function runCompositionChecks({ definition, providers }) {
       : composed.problems.map((problem) => problem.code).sort().join(', '),
     undefined, 'composition'));
 
-  // Registering the same package twice is refused.
-  let duplicateRefused = false;
-  try {
-    new PackageRegistry({ packages: [{ ...definition, requires: [] }, { ...definition, requires: [] }] });
-  } catch (error) {
-    duplicateRefused = /Duplicate domain package name/.test(String(error?.message ?? ''));
+  let probeName = 'conformance-probe';
+  for (let suffix = 2; composed.packages.has(probeName); suffix += 1) {
+    probeName = `conformance-probe-${suffix}`;
   }
+
+  // Behavioral probes are deliberately small definitions derived from facts
+  // the first composition accepted. Re-composing the author's executable
+  // definition would rerun mutable accessors and could test a different
+  // contract from `compose.clean`; spreading it would instead erase classes,
+  // private receivers and non-enumerable declarations.
+  const packageProbe = (name, extra = {}) => ({
+    packageContract: definition.packageContract,
+    name,
+    version: definition.version,
+    ...extra,
+  });
+
+  // Registering the same package twice is refused.
+  const duplicate = packageProbe(definition.name);
+  const duplicated = resolvePackageComposition([duplicate, duplicate]);
+  const duplicateRefused = duplicated.problems.some((problem) => problem.code === 'PACKAGE_DUPLICATE');
   checks.push(check('compose.duplicate-refused', 'composition', duplicateRefused ? PASSED : 'failed',
     duplicateRefused ? 'the same package cannot be registered twice' : 'a duplicate registration was not refused',
     undefined, 'composition'));
 
   // Two packages cannot own one record.
-  const resources = [...(definition?.resources ?? [])];
+  const resources = [...composed.resources.entries()]
+    .filter(([, owner]) => owner === definition.name)
+    .map(([resource]) => resource);
   if (resources.length === 0) {
     checks.push(check('compose.resource-collision-refused', 'composition', 'not_applicable',
       'the package owns no record', 'NO_RESOURCES_DECLARED', 'composition'));
   } else {
-    let collisionRefused = false;
-    try {
-      new PackageRegistry({
-        packages: [
-          { ...definition, requires: [] },
-          { packageContract: definition.packageContract, name: 'conformance-probe', version: 1, resources: [resources[0]] },
-        ],
-      });
-    } catch (error) {
-      collisionRefused = /Resource collision/.test(String(error?.message ?? ''));
-    }
+    const collision = resolvePackageComposition([
+      packageProbe(definition.name, { resources: [resources[0]] }),
+      packageProbe(probeName, { resources: [resources[0]] }),
+    ]);
+    const collisionRefused = collision.problems.some((problem) => problem.code === 'RESOURCE_COLLISION');
     checks.push(check('compose.resource-collision-refused', 'composition', collisionRefused ? PASSED : 'failed',
       collisionRefused ? `a second package claiming "${resources[0]}" is refused` : 'a resource collision was not refused',
       undefined, 'composition'));
@@ -272,31 +282,26 @@ export function runCompositionChecks({ definition, providers }) {
   // Use the composition snapshot, not mutable declaration accessors. The
   // collision probe must test the same identity/version/contract that this
   // composition accepted and that runtime observers publish.
-  const offered = [...resolvePackageComposition([{ ...definition, requires: [] }]).capabilities.values()]
+  const offered = [...composed.capabilities.values()]
     .filter((entry) => entry.package === definition.name);
   if (offered.length === 0) {
     checks.push(check('compose.capability-collision-refused', 'composition', 'not_applicable',
       'the package offers no capability', 'NO_CAPABILITIES_OFFERED', 'composition'));
   } else {
-    let collisionRefused = false;
-    try {
-      new PackageRegistry({
-        packages: [
-          { ...definition, requires: [] },
-          {
-            packageContract: definition.packageContract, name: 'conformance-probe', version: 1,
-            capabilities: [{
-              name: offered[0].name,
-              version: offered[0].version,
-              capabilityContract: offered[0].capabilityContract,
-              create: () => ({}),
-            }],
-          },
-        ],
-      });
-    } catch (error) {
-      collisionRefused = /Capability collision/i.test(String(error?.message ?? ''));
-    }
+    const capabilityProbe = (accepted) => ({
+      name: accepted.name,
+      version: accepted.version,
+      capabilityContract: accepted.capabilityContract,
+      ...(accepted.description === undefined ? {} : { description: accepted.description }),
+      // If a future probe reaches behavior, invoke the exact executable entry
+      // as its receiver. A clone/Proxy would break class private fields.
+      create(...args) { return accepted.entry.create(...args); },
+    });
+    const collision = resolvePackageComposition([
+      packageProbe(definition.name, { capabilities: [capabilityProbe(offered[0])] }),
+      packageProbe(probeName, { capabilities: [capabilityProbe(offered[0])] }),
+    ]);
+    const collisionRefused = collision.problems.some((problem) => problem.code === 'CAPABILITY_COLLISION');
     checks.push(check('compose.capability-collision-refused', 'composition', collisionRefused ? PASSED : 'failed',
       collisionRefused
         ? `a second provider of "${offered[0].name}@${offered[0].version}" is refused`
@@ -311,14 +316,19 @@ export function runCompositionChecks({ definition, providers }) {
     checks.push(check('compose.unmet-dependency-refused', 'composition', 'not_applicable',
       'the package declares no dependency', 'NO_DEPENDENCIES_DECLARED', 'composition'));
   } else {
+    const acceptedRequires = requires.map((entry) => ({
+      package: entry.package, capability: entry.capability, version: entry.version,
+    }));
+    const withoutProviders = resolvePackageComposition([
+      packageProbe(definition.name, { requires: acceptedRequires }),
+    ]);
     const unproven = [];
     for (const entry of requires) {
-      let refused = false;
-      try {
-        new PackageRegistry({ packages: [{ ...definition, requires: [entry] }] });
-      } catch (error) {
-        refused = new RegExp(`requires package "${entry.package}"`).test(String(error?.message ?? ''));
-      }
+      const refused = withoutProviders.problems.some((problem) => (
+        problem.package === definition.name
+        && problem.capability === `${entry.capability}@${entry.version}`
+        && ['DEPENDENCY_MISSING_PACKAGE', 'DEPENDENCY_UNSATISFIED'].includes(problem.code)
+      ));
       if (!refused) unproven.push(`${entry.package}/${entry.capability}@${entry.version}`);
     }
     checks.push(check('compose.unmet-dependency-refused', 'composition', unproven.length === 0 ? PASSED : 'failed',
@@ -333,18 +343,33 @@ export function runCompositionChecks({ definition, providers }) {
     checks.push(check('compose.undeclared-reach-refused', 'composition', 'not_applicable',
       'the package offers no capability to reach for', 'NO_CAPABILITIES_OFFERED', 'composition'));
   } else {
+    const accepted = offered[0];
+    const provider = packageProbe(definition.name, {
+      capabilities: [{
+        name: accepted.name,
+        version: accepted.version,
+        capabilityContract: accepted.capabilityContract,
+        ...(accepted.description === undefined ? {} : { description: accepted.description }),
+        create(...args) { return accepted.entry.create(...args); },
+      }],
+    });
     let refused = false;
     let detail = '';
     try {
-      const registry = new PackageRegistry({ packages: [{ ...definition, requires: [] }] });
+      const registry = new PackageRegistry({
+        packages: [
+          provider,
+          packageProbe(probeName),
+        ],
+      });
       registry.capability({
-        consumer: 'conformance-probe',
+        consumer: probeName,
         capability: offered[0].name,
         version: offered[0].version,
         context: {},
       });
     } catch (error) {
-      refused = true;
+      refused = error?.code === 'CAPABILITY_NOT_DECLARED';
       detail = String(error?.code ?? error?.message ?? '');
     }
     checks.push(check('compose.undeclared-reach-refused', 'composition', refused ? PASSED : 'failed',

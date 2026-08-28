@@ -396,6 +396,20 @@ npm run verify
 
 ## Progress log
 
+- **2026-08-28:** The final bounded delta found two conformance failures. The
+  package-test collision and undeclared-reach probes rebuilt a definition with
+  object spread, so inherited/non-enumerable class package capabilities that
+  declaration validation had published disappeared and both checks reported
+  `NO_CAPABILITIES_OFFERED`. Conformance now takes offered facts from the
+  already accepted composition and builds invariant-specific probes from those
+  facts; each executable delegate still invokes the exact original capability
+  entry as receiver. The author's definition is neither spread nor recomposed,
+  so a stateful getter cannot change the contract after `compose.clean`. The prototype
+  property-name walk could also loop forever when a Proxy returned itself, a
+  two-object cycle, or a fresh object forever from `getPrototypeOf`. Identity
+  cycle detection plus a 64-object hard bound now turns all three into named
+  `ValidationError`s. Checked-in child-process regressions were observed timing
+  out before the repair and terminating after it.
 - **2026-08-28:** Bounded delta review found three final material groups. A
   stateful `capabilityContract` getter could return 2 during validation and
   composition, then 1 when `PackageRegistry.get()`, metadata, inspection or the

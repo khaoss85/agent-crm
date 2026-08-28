@@ -6,7 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { packageTestCommand } from '../packages/cli/src/package-test-command.js';
-import { AUTHORITIES } from '../packages/cli/src/package-test-checks.js';
+import {
+  AUTHORITIES, runCompositionChecks, runDeclarationChecks,
+} from '../packages/cli/src/package-test-checks.js';
 import { importSpecifiers, importsPrivateKernelPath, stripComments } from '../packages/cli/src/package-sources.js';
 import {
   HANGS, HOSTILE_PACKAGES, SCRATCH_PROBES, SPAWNS_LONG_LIVED_CHILD, WELL_FORMED, consumer,
@@ -39,6 +41,62 @@ const OFFICIAL = [
   ['packages/delivery', 'delivery'],
   ['packages/service', 'service'],
 ];
+
+test('composition conformance preserves class package capability declarations in every probe', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-class-package-checks-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'index.js'), 'export {};\n');
+
+  let contractReads = 0;
+  class ClassCapability {
+    get name() { return 'class-facts'; }
+
+    get version() { return 1; }
+
+    get capabilityContract() { contractReads += 1; return contractReads === 1 ? 2 : 1; }
+
+    async create() { return { declaration: this }; }
+  }
+  class ClassPackage {
+    #capability = new ClassCapability();
+
+    constructor() {
+      this.packageContract = 2;
+      this.name = 'class-conformance';
+      this.label = 'Class conformance';
+      this.version = 1;
+    }
+
+    get resources() { return []; }
+
+    get actions() { return []; }
+
+    get capabilities() { return [this.#capability]; }
+  }
+
+  const definition = new ClassPackage();
+  const declaration = runDeclarationChecks({ definition, dir });
+  assert.deepEqual(declaration.published.provides, ['class-facts@1'],
+    'the declaration check observes inherited and non-enumerable package/capability fields');
+
+  contractReads = 0;
+  const composition = runCompositionChecks({ definition, providers: [] });
+  assert.equal(
+    composition.checks.find((entry) => entry.id === 'compose.capability-collision-refused').status,
+    'passed',
+  );
+  assert.equal(
+    composition.checks.find((entry) => entry.id === 'compose.undeclared-reach-refused').status,
+    'passed',
+  );
+  assert.equal(
+    composition.checks.some((entry) => entry.reason === 'NO_CAPABILITIES_OFFERED'),
+    false,
+    'a class-backed capability never disappears into a not-applicable result',
+  );
+  assert.equal(contractReads, 1,
+    'all conformance checks use the contract snapshot accepted by compose.clean');
+});
 
 test('package test refuses a malformed action through the package contract, without crashing', async (t) => {
   const root = fixtureProject(t);

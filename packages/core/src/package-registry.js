@@ -122,17 +122,41 @@ function isCapabilityContractTypo(key) {
     || CAPABILITY_CONTRACT_TYPOS.has(compact);
 }
 
+const MAX_DECLARATION_PROTOTYPE_DEPTH = 64;
+
+function prototypeChainValidationError(label, name, reason) {
+  return new ValidationError(
+    `${label}: capability "${validationDiagnosticText(name)}" prototype chain ${reason}`,
+  );
+}
+
 /**
  * Property names are declarations too. Walk class prototypes and
  * non-enumerable properties so an inherited typo cannot hide contract 2,
  * while never reading the corresponding values or invoking their getters.
  */
-function declarationPropertyNames(entry) {
+function declarationPropertyNames(entry, label, name) {
   const names = new Set();
+  const visited = new Set();
   let cursor = entry;
+  let depth = 0;
   while (cursor && cursor !== Object.prototype) {
-    for (const name of Object.getOwnPropertyNames(cursor)) names.add(name);
-    cursor = Object.getPrototypeOf(cursor);
+    if (visited.has(cursor)) {
+      throw prototypeChainValidationError(label, name, 'must be finite and acyclic');
+    }
+    if (depth >= MAX_DECLARATION_PROTOTYPE_DEPTH) {
+      throw prototypeChainValidationError(
+        label, name, `must contain at most ${MAX_DECLARATION_PROTOTYPE_DEPTH} objects`,
+      );
+    }
+    visited.add(cursor);
+    depth += 1;
+    try {
+      for (const property of Object.getOwnPropertyNames(cursor)) names.add(property);
+      cursor = Object.getPrototypeOf(cursor);
+    } catch {
+      throw prototypeChainValidationError(label, name, 'could not be inspected safely');
+    }
   }
   return names;
 }
@@ -315,7 +339,7 @@ export function validatePackageDefinitionForComposition(pkg) {
     // Refusing an unnamed key is justified precisely when accepting it would be
     // silently *misread*, which is what distinguishes this from the fields a
     // caller may harmlessly carry past an evidence writer.
-    const strayContract = [...declarationPropertyNames(entry)].find(isCapabilityContractTypo);
+    const strayContract = [...declarationPropertyNames(entry, label, name)].find(isCapabilityContractTypo);
     if (strayContract !== undefined) {
       throw new ValidationError(
         `${label}: capability "${validationDiagnosticText(name)}" declares "${validationDiagnosticText(strayContract)}"; did you mean capabilityContract?`,

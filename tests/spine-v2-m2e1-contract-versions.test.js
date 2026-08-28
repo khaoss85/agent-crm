@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -418,6 +419,42 @@ test('capability contract typo detection names contract fields without rejecting
     /declares "capabiltyContract"; did you mean capabilityContract/,
     'contract-intent names on a prototype cannot hide async creation behind the v1 default',
   );
+});
+
+test('hostile prototype graphs are refused in bounded child processes', () => {
+  const kernel = new URL('../packages/core/index.js', import.meta.url).href;
+  for (const mode of ['self', 'pair', 'unbounded']) {
+    const script = `
+import { validatePackageDefinition } from ${JSON.stringify(kernel)};
+const target = { name: 'hostile-prototype', version: 1, create() { return {}; } };
+let entry;
+if (${JSON.stringify(mode)} === 'self') {
+  entry = new Proxy(target, { getPrototypeOf() { return entry; } });
+} else if (${JSON.stringify(mode)} === 'pair') {
+  let other;
+  entry = new Proxy(target, { getPrototypeOf() { return other; } });
+  other = new Proxy({}, { getPrototypeOf() { return entry; } });
+} else {
+  const handler = { getPrototypeOf() { return new Proxy({}, handler); } };
+  entry = new Proxy(target, handler);
+}
+try {
+  validatePackageDefinition({
+    packageContract: 1, name: 'hostile-package', version: 1, capabilities: [entry],
+  });
+  process.exitCode = 2;
+} catch (error) {
+  const message = String(error?.message ?? error);
+  if (error?.constructor?.name !== 'ValidationError'
+    || !message.includes('capability "hostile-prototype" prototype chain')) process.exitCode = 3;
+}
+`;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf8', timeout: 2_000,
+    });
+    assert.equal(child.error?.code, undefined, `${mode}: child hung (${child.error?.code})`);
+    assert.equal(child.status, 0, `${mode}: stderr=${child.stderr}`);
+  }
 });
 
 test('capability validation diagnostics are stable, bounded and stringify-safe', () => {
