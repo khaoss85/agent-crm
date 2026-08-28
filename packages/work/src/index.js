@@ -14,6 +14,7 @@ import {
   createFollowUp,
   optionalSafeText,
   recordActivity,
+  requireCallerTransaction,
   requireHumanActor,
   resolveModule,
   safeText,
@@ -79,6 +80,26 @@ function activityService(modules, name) {
   return service;
 }
 
+/**
+ * The activity service of a closing action, with the pair proven first.
+ *
+ * `complete` and `cancel` write the task transition and its closing activity —
+ * the same atomic pair `createFollowUp` writes, so the same proof applies. In
+ * production both run inside `runRecordAction`'s envelope and this can never
+ * fire; that is exactly why it is here rather than assumed. An `execute`
+ * invoked with a hand-built context — a script, a future runner, a test double
+ * — would otherwise commit the transition and lose the timeline entry, and no
+ * reader of either row could tell that had happened.
+ *
+ * @param {any} modules @param {{task: string, activity: string}} names
+ */
+function closingServices(modules, names) {
+  const tasks = resolveModule(modules, names.task)?.service;
+  const activities = activityService(modules, names.activity);
+  requireCallerTransaction(tasks, activities);
+  return activities;
+}
+
 /** The subject envelope as it was recorded on the task; never re-resolved. */
 function subjectOf(record) {
   return { resource: record.subjectResource, id: record.subjectId };
@@ -109,7 +130,7 @@ export function buildCompleteTaskAction(moduleNames) {
     async execute({ record, input, actor, modules, managed, now }) {
       const completedBy = requireHumanActor(actor, 'Completing a task');
       const note = optionalSafeText(input.note, 'note', bounds.reason);
-      const activities = activityService(modules, names.activity);
+      const activities = closingServices(modules, names);
       const completedAt = now();
       const task = await managed(record.id, {
         status: 'completed',
@@ -158,7 +179,7 @@ export function buildCancelTaskAction(moduleNames) {
     async execute({ record, input, actor, modules, managed, now }) {
       const cancelledBy = requireHumanActor(actor, 'Cancelling a task');
       const reason = safeText(input.reason, 'reason', bounds.reason);
-      const activities = activityService(modules, names.activity);
+      const activities = closingServices(modules, names);
       const cancelledAt = now();
       const task = await managed(record.id, {
         status: 'cancelled',

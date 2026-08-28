@@ -6,6 +6,16 @@ import { dirname, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { AppError, ConflictError } from './errors.js';
 import { createSqliteStorage } from './storage-contract.js';
+import { claimTransactionMinter, currentTransactionWitness } from './transaction-witness.js';
+
+/**
+ * The right to open an owned transaction scope, claimed once at module load so
+ * that nothing else in the process can take it (Spine v2 M2D). Claiming here
+ * rather than inside `createDatabase` is deliberate: the capability must be
+ * gone before any package's code can run, not merely before the first
+ * database is opened.
+ */
+const openTransactionScope = claimTransactionMinter();
 
 /**
  * @typedef {{
@@ -437,7 +447,16 @@ export function createDatabase(options = {}) {
   const transaction = (fn) => {
     begin();
     try {
-      const result = fn();
+      // The scope mints the witness only after BEGIN has actually succeeded —
+      // a witness for a transaction that was never opened would be the one lie
+      // this mechanism exists to make impossible — publishes it into the async
+      // context running `fn`, and drops it however `fn` ends.
+      //
+      // `allowAsync: false` because the COMMIT below runs the moment this
+      // returns. An async `fn` would be committed mid-flight, which this
+      // wrapper has always done, and would additionally have its continuation
+      // told it still owns the transaction. Refused instead.
+      const result = openTransactionScope(storage, fn, { allowAsync: false });
       raw.exec('COMMIT;');
       return result;
     } catch (error) {
@@ -452,7 +471,7 @@ export function createDatabase(options = {}) {
   const transactionAsync = async (fn) => {
     begin();
     try {
-      const result = await fn();
+      const result = await openTransactionScope(storage, fn);
       raw.exec('COMMIT;');
       return result;
     } catch (error) {
@@ -464,7 +483,10 @@ export function createDatabase(options = {}) {
       inOuterTransaction = false;
     }
   };
-  const storage = createSqliteStorage(raw, transaction, transactionAsync);
+  // Both transaction wrappers above refer to `storage` — legal because they can
+  // only run after this function has returned, and deliberate: the witness must
+  // be bound to the very handle a consumer will later ask about.
+  const storage = createSqliteStorage(raw, transaction, transactionAsync, () => currentTransactionWitness(storage));
 
   return {
     raw,
