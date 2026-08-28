@@ -619,44 +619,63 @@ test('a status outside the schema\'s own CHECK set is refused in the framework\'
   assert.deepEqual(runRows(database), []);
 });
 
-test('every argument shape is closed against unknown, symbol, non-enumerable and inherited fields', (t) => {
+test('a caller may carry extra fields; a missing one is still refused', (t) => {
   const database = memory(t);
   const store = pinned(database);
 
-  // An unnamed key is refused rather than dropped: a caller passing `spans`
-  // instead of `steps` would otherwise write a run with no spans and be told it
-  // succeeded.
-  assert.throws(() => store.recordRun({ ...recordedRun(), spans: [] }),
-    /unsupported field "spans"/);
+  // **The last invented refusal, removed.** `recordRun` arrives through
+  // `writeTrace`, a published surface, and an extra field on it used to be
+  // refused before any row was written — so a SUCCESSFUL operation lost its
+  // entire trace, silently, because someone added a key to an object. Measured
+  // against this store's own three categories that refusal failed all three:
+  // the field is not owned by the store, the driver never sees it, and an
+  // unread field corrupts no row.
+  store.recordRun({ ...recordedRun({ runId: 'r1' }), tenantId: 'acme', traceVersion: 2 });
+  store.recordRun(recordedRun({
+    runId: 'r2', steps: [{ name: 'a', status: 'completed', durationMs: 5 }],
+  }));
+  assert.deepEqual(runRows(database).map((row) => row.id), ['r1', 'r2'],
+    'both traces are written, with the extra fields simply unread');
+
+  // **What still carries the weight is the MISSING field, not the extra one.**
+  // I originally justified the closed check by saying a caller passing
+  // `spans:` instead of `steps:` would write a run with no spans and be told
+  // it succeeded. That caller is caught here — by the required-field rule,
+  // which is the check that was doing the work all along.
+  const { steps, ...withoutSteps } = recordedRun({ runId: 'r3' });
+  assert.throws(() => store.recordRun(/** @type {any} */ ({ ...withoutSteps, spans: steps })),
+    /requires own field "steps"/);
+  assert.throws(() => store.recordRun(/** @type {any} */ (withoutSteps)),
+    /requires own field "steps"/);
+  assert.throws(() => store.recordRun(/** @type {any} */ ('nope')), /must be a plain object/);
+
+  // The shapes the store OWNS keep the closed check: an unnamed key there means
+  // a caller is using an API that does not exist.
   assert.throws(() => store.startRun(/** @type {any} */ ({ workflowName: 'a', input: null, extra: 1 })),
     /unsupported field "extra"/);
-
-  // A symbol key, and a non-enumerable one: `Object.keys` sees neither.
-  const symbolled = { ...recordedRun(), [Symbol('hidden')]: 1 };
-  assert.throws(() => store.recordRun(symbolled), /unsupported field "Symbol\(hidden\)"/);
-  const hidden = { ...recordedRun() };
+  const symbolled = { workflowName: 'a', input: null, [Symbol('hidden')]: 1 };
+  assert.throws(() => store.startRun(/** @type {any} */ (symbolled)), /unsupported field "Symbol\(hidden\)"/);
+  const hidden = { workflowName: 'a', input: null };
   Object.defineProperty(hidden, 'sneaky', { value: 1, enumerable: false });
-  assert.throws(() => store.recordRun(hidden), /unsupported field "sneaky"/);
-
-  // Not a plain object: a class instance and a null-prototype bag carrying the
-  // same fields are still not the shape this contract names.
+  assert.throws(() => store.startRun(/** @type {any} */ (hidden)), /unsupported field "sneaky"/);
   class Run {}
-  assert.throws(() => store.recordRun(Object.assign(new Run(), recordedRun())), /must be a plain object/);
-  assert.throws(() => store.recordRun(Object.assign(Object.create(null), recordedRun())), /must be a plain object/);
+  assert.throws(() => store.startRun(Object.assign(new Run(), { workflowName: 'a', input: null })),
+    /must be a plain object/);
   assert.throws(() => store.startRun(/** @type {any} */ ([])), /must be a plain object/);
 
-  // A required field must be an OWN property: refusing keys nobody named says
-  // nothing about whether the named ones came from a polluted prototype.
+  // A required field must be an OWN property on BOTH kinds of shape: a polluted
+  // prototype otherwise supplies it through the chain.
   try {
     // eslint-disable-next-line no-extend-native
     /** @type {any} */ (Object.prototype).workflowName = 'injected';
-    const { workflowName, ...withoutName } = recordedRun();
-    assert.throws(() => store.recordRun(/** @type {any} */ (withoutName)),
+    const { workflowName, ...noName } = recordedRun({ runId: 'r4' });
+    assert.throws(() => store.recordRun(/** @type {any} */ (noName)),
+      /requires own field "workflowName"/);
+    assert.throws(() => store.startRun(/** @type {any} */ ({ input: null })),
       /requires own field "workflowName"/);
   } finally {
     delete (/** @type {any} */ (Object.prototype).workflowName);
   }
-  assert.deepEqual(runRows(database), []);
 });
 
 /**
@@ -738,7 +757,7 @@ test('no refusal leaks a driver message', (t) => {
     () => store.recordRun(recordedRun({ status: 'nope' })),
     () => store.recordRun(recordedRun({ steps: 7 })),
     () => store.recordRun(recordedRun({ error: /** @type {any} */ ([]) })),
-    () => store.recordRun({ ...recordedRun(), spans: [] }),
+    () => store.startRun(/** @type {any} */ ({ workflowName: 'a', input: null, extra: 1 })),
     () => createExecutionRunStore(database, { newId: () => /** @type {any} */ (null) })
       .startSpan({ runId: 'r', name: 'n', input: null }),
   ];

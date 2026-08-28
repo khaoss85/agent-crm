@@ -182,8 +182,9 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   anyway**, established by probing the real schema rather than assuming — a
   status outside the schema's own `CHECK` set, and a value a `STRICT` `TEXT`
   column genuinely cannot take; **(3) a shape whose acceptance
-  would silently corrupt** — an unnamed key, or a named field arriving through a
-  polluted prototype. Everything else a caller supplies is stored as given.
+  would silently corrupt** — a **missing** named field, or a named field
+  arriving through a polluted prototype. An **extra** field is refused only on
+  the shapes the store owns, never on what arrives through `writeTrace`. Everything else a caller supplies is stored as given.
   **The asymmetry with M2B is the load-bearing argument.** M2B applies an
   identical character-class and length rule to `definition_versions`, and that
   is right *there* because it sits on the **startup** path, where a refusal is
@@ -246,6 +247,31 @@ check. **PostgreSQL remains absent: the only adapter is SQLite.**
   driver renders a JS number as a double, so `42` stores as `"42.0"`, and
   converting in the store would have stored `"42"` and silently changed the rows
   this milestone promises to preserve. A test pins `"42.0"`.
+- **The closed-shape rule was the last invented refusal, and my own
+  justification for it was wrong.** I argued that refusing an unnamed key on
+  `recordRun` stopped a caller passing `spans:` instead of `steps:` from
+  writing a run with no spans and being told it succeeded. Probed rather than
+  re-argued: that caller is refused by the **required-field** check —
+  `requires own field "steps"` — which was doing the work all along. The
+  unnamed-key refusal therefore only ever caught the *harmless* case: every
+  named field correctly present, plus an extra one. And its cost on a published
+  surface was the whole trace of a **successful** operation, silently, because
+  someone added a key to an object. Measured against this store's own three
+  categories it failed all three — not owned by the store, never seen by the
+  driver, and corrupting nothing, because an unread field changes no row.
+  **The rule was borrowed from `definition-version-store`, where it is
+  correct**, and the difference is worth naming because it is not "unexpected
+  versus expected": there, an unnamed key on the *entry* shape means a caller
+  believes it is persisting something the store will silently drop. Here
+  nothing is persisted either way. The discriminator is whether a rejected
+  shape could otherwise have been **silently persisted**.
+  Split accordingly: `ownedShape` keeps the closed check for the store's own
+  lifecycle arguments, which nothing outside core and the workflow engine
+  constructs; `suppliedShape` reads the named fields and ignores the rest for
+  `recordRun` and each step. Both keep the plain-object test, the required-field
+  test and `Object.hasOwn` reads. A test pins that an extra field writes the
+  trace unchanged **through `writeTrace`**, and that the `spans:` typo is still
+  refused.
 - **`MAX_SPANS` is the one place this milestone deliberately sacrifices
   evidence to avoid a crash — and the sacrifice is silent, because the caller
   swallows the refusal.** It is kept, and it is not pure preservation: the
@@ -439,6 +465,15 @@ npm run verify
   count rather than the comment. One P2 was already closed at that head by the
   `error` type check found in the self-sweep; one P2 was real and mine, and is
   fixed below; the two P1s were one finding stated twice.
+- **2026-08-27:** A third review at `2c41ce0` — arriving *after* one that
+  returned zero findings — caught the closed-shape check as the last invented
+  refusal. Probing my own justification for it showed the justification was
+  false: the `spans:`-for-`steps:` typo I cited is caught by the required-field
+  rule, so the unnamed-key refusal only ever caught the harmless case while
+  costing a successful operation its entire trace. Split into `ownedShape` and
+  `suppliedShape`. Two lessons recorded rather than only applied: a rule correct
+  in one store can be wrong in another with the opposite failure mode, and a
+  clean review read is not the end of a pass.
 - **2026-08-27:** Review at `821625d` returned two P2s, both stale prose that
   outlived the code it described — a plan bullet still stating the universal
   identity rule as the contract, and `assertOptionalMessage`'s own header still

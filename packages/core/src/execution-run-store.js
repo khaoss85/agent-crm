@@ -142,8 +142,13 @@ const FORBIDDEN_IDENTITY_TEXT = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
  *    to bind. Same *what* SQLite refuses, moved earlier and into this
  *    framework's words. See `assertStorableText`, `assertStatus` and
  *    `assertOptionalMessage`.
- * 3. **A shape whose acceptance would silently corrupt.** An unnamed key, or a
- *    named field arriving through a polluted prototype. See `closedArgument`.
+ * 3. **A shape whose acceptance would silently corrupt.** A **missing** named
+ *    field — a caller who meant to pass `steps` has asked for a run with no
+ *    spans — or a named field arriving through a polluted prototype. An
+ *    **extra** field is refused only on the shapes this store owns, never on
+ *    what arrives through `writeTrace`: an unread field corrupts nothing, and
+ *    refusing it cost the whole trace of a successful operation. See
+ *    `suppliedShape` and `ownedShape`.
  *
  * Anything else a caller supplies is stored as given. That is deliberate and it
  * was learned the hard way: a 200-character ceiling and a control-character
@@ -260,31 +265,30 @@ function assertStatus(value, allowed, subject, details) {
 }
 
 /**
- * Read a closed argument shape.
+ * Read the named fields off an argument object, and nothing else.
  *
- * Three things, and each of them closes a different hole. `Reflect.ownKeys`
- * rather than `Object.keys`, because a field hidden behind
- * `Object.defineProperty(…, {enumerable: false})` or held under a symbol is
- * still a field the caller is asking this store to accept. A genuine
+ * Two things, and each closes a hole that matters on every shape. A genuine
  * `Object.prototype` prototype, because a class instance and a null-prototype
- * bag can carry the same fields and still not be the shape this contract names.
- * And every value read through `Object.hasOwn`, because otherwise a polluted
- * `Object.prototype` supplies a field the caller never passed, with no
- * unsupported own key to find.
+ * bag can carry the same fields and still not be the shape this contract names
+ * — and because a non-object cannot be read at all. And every value read
+ * through `Object.hasOwn`, because otherwise a polluted `Object.prototype`
+ * supplies a field the caller never passed.
+ *
+ * A **missing** named field is refused here, and that is the check that carries
+ * the weight: a caller who meant to pass `steps` and passed something else has
+ * asked this store to record a run with no spans, which it must not do quietly.
+ *
+ * An **extra** field is not this function's business — see `ownedShape` for the
+ * one place it is.
  *
  * @param {unknown} value @param {string} label
  * @param {readonly string[]} allowed @param {readonly string[]} required
  * @returns {Record<string, unknown>}
  */
-function closedArgument(value, label, allowed, required) {
+function suppliedShape(value, label, allowed, required) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.getPrototypeOf(value) !== Object.prototype) {
     throw new ValidationError(`${label} must be a plain object`);
-  }
-  const unknown = Reflect.ownKeys(value).find((key) => !allowed.includes(/** @type {any} */ (key)));
-  if (unknown !== undefined) {
-    const named = typeof unknown === 'symbol' ? unknown.toString() : unknown;
-    throw new ValidationError(`${label} has an unsupported field "${named}"`, { field: named });
   }
   const missing = required.find((key) => !Object.hasOwn(value, key));
   if (missing !== undefined) {
@@ -295,6 +299,52 @@ function closedArgument(value, label, allowed, required) {
   const own = {};
   for (const key of allowed) if (Object.hasOwn(record, key)) own[key] = record[key];
   return own;
+}
+
+/**
+ * `suppliedShape`, plus a refusal for any key nobody named.
+ *
+ * **Used only on the shapes this store owns** — the arguments to its own
+ * lifecycle methods, which nothing outside `packages/core` and the workflow
+ * engine constructs. There an unnamed key means a caller is using an API that
+ * does not exist, and saying so immediately is a kindness.
+ *
+ * **It is deliberately NOT used on `recordRun`.** That shape arrives through
+ * `writeTrace`, a published surface, and refusing an extra field there was the
+ * last invented refusal in this store — measured against its own three
+ * categories it failed all of them. The field is not something the store owns;
+ * the driver never sees it; and accepting it corrupts nothing, because an
+ * unread field changes no row. What it cost was the entire trace of a
+ * *successful* operation, silently, because someone added a key to an object.
+ *
+ * The rule was borrowed from `definition-version-store`, where it is right: an
+ * unnamed key on *that* entry shape means a caller believes it is persisting
+ * something the store will drop. The difference is not whether a shape is
+ * unexpected — it is whether a rejected shape could otherwise have been
+ * silently persisted. Here nothing is persisted either way.
+ *
+ * @param {unknown} value @param {string} label
+ * @param {readonly string[]} allowed @param {readonly string[]} required
+ * @returns {Record<string, unknown>}
+ */
+function ownedShape(value, label, allowed, required) {
+  // The shape check comes first, and the duplication with `suppliedShape` is
+  // deliberate: an array reaching `Reflect.ownKeys` first reports an
+  // "unsupported field \"length\"", which is a true statement about the wrong
+  // problem.
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new ValidationError(`${label} must be a plain object`);
+  }
+  // `Reflect.ownKeys`, not `Object.keys`: a field hidden behind
+  // `Object.defineProperty(…, {enumerable: false})`, or held under a symbol,
+  // is still a key the caller put there.
+  const unknown = Reflect.ownKeys(value).find((key) => !allowed.includes(/** @type {any} */ (key)));
+  if (unknown !== undefined) {
+    const named = typeof unknown === 'symbol' ? unknown.toString() : unknown;
+    throw new ValidationError(`${label} has an unsupported field "${named}"`, { field: named });
+  }
+  return suppliedShape(value, label, allowed, required);
 }
 
 /**
@@ -408,7 +458,7 @@ export function createExecutionRunStore(database, options = {}) {
      * @returns {string}
      */
     startRun(run) {
-      const own = closedArgument(run, 'Execution run', ['workflowName', 'input'], ['workflowName']);
+      const own = ownedShape(run, 'Execution run', ['workflowName', 'input'], ['workflowName']);
       const workflowName = assertStorableText(own.workflowName, 'Execution run workflow name', { field: 'workflowName' });
       const id = assertGeneratedId(newId(), 'The generated run id', { field: 'id' });
       storage.execute({
@@ -437,7 +487,7 @@ export function createExecutionRunStore(database, options = {}) {
      * @returns {string}
      */
     startSpan(span) {
-      const own = closedArgument(span, 'Trace span', ['runId', 'name', 'input'], ['runId', 'name']);
+      const own = ownedShape(span, 'Trace span', ['runId', 'name', 'input'], ['runId', 'name']);
       const runId = assertStorableText(own.runId, 'Trace span run id', { field: 'runId' });
       const name = assertStorableText(own.name, 'Trace span name', { field: 'name' });
       const id = assertGeneratedId(newId(), 'The generated span id', { field: 'id' });
@@ -467,7 +517,7 @@ export function createExecutionRunStore(database, options = {}) {
      * @param {{spanId: string, output: unknown}} span
      */
     completeSpan(span) {
-      const own = closedArgument(span, 'Trace span completion', ['spanId', 'output'], ['spanId']);
+      const own = ownedShape(span, 'Trace span completion', ['spanId', 'output'], ['spanId']);
       const spanId = assertStorableText(own.spanId, 'Trace span id', { field: 'spanId' });
       patch(SPANS, spanId, [
         { column: 'status', value: 'completed' },
@@ -483,7 +533,7 @@ export function createExecutionRunStore(database, options = {}) {
      * @param {{spanId: string, error: string | null}} span
      */
     failSpan(span) {
-      const own = closedArgument(span, 'Trace span failure', ['spanId', 'error'], ['spanId', 'error']);
+      const own = ownedShape(span, 'Trace span failure', ['spanId', 'error'], ['spanId', 'error']);
       const spanId = assertStorableText(own.spanId, 'Trace span id', { field: 'spanId' });
       const error = assertOptionalMessage(own.error, 'Trace span error', { field: 'error' });
       patch(SPANS, spanId, [
@@ -498,7 +548,7 @@ export function createExecutionRunStore(database, options = {}) {
      * @param {{runId: string, output: unknown}} run
      */
     completeRun(run) {
-      const own = closedArgument(run, 'Execution run completion', ['runId', 'output'], ['runId']);
+      const own = ownedShape(run, 'Execution run completion', ['runId', 'output'], ['runId']);
       const runId = assertStorableText(own.runId, 'Execution run id', { field: 'runId' });
       patch(RUNS, runId, [
         { column: 'status', value: 'completed' },
@@ -513,7 +563,7 @@ export function createExecutionRunStore(database, options = {}) {
      * @param {{runId: string, error: string | null, output: unknown}} run
      */
     failRun(run) {
-      const own = closedArgument(run, 'Execution run failure', ['runId', 'error', 'output'], ['runId', 'error']);
+      const own = ownedShape(run, 'Execution run failure', ['runId', 'error', 'output'], ['runId', 'error']);
       const runId = assertStorableText(own.runId, 'Execution run id', { field: 'runId' });
       const error = assertOptionalMessage(own.error, 'Execution run error', { field: 'error' });
       patch(RUNS, runId, [
@@ -539,7 +589,7 @@ export function createExecutionRunStore(database, options = {}) {
      *   steps: Iterable<{name: string, status: string, output?: unknown, error?: string}>}} run
      */
     recordRun(run) {
-      const own = closedArgument(run, 'Recorded execution run',
+      const own = suppliedShape(run, 'Recorded execution run',
         ['runId', 'workflowName', 'status', 'input', 'output', 'error', 'startedAt', 'steps'],
         ['runId', 'workflowName', 'status', 'startedAt', 'steps']);
       const runId = assertStorableText(own.runId, 'Execution run id', { field: 'runId' });
@@ -646,7 +696,7 @@ export function createExecutionRunStore(database, options = {}) {
      * @param {{status?: string, workflowName?: string, limit?: number}} filters
      */
     listRuns(filters) {
-      const own = closedArgument(filters, 'Execution run filter', ['status', 'workflowName', 'limit'], []);
+      const own = ownedShape(filters, 'Execution run filter', ['status', 'workflowName', 'limit'], []);
       const where = [];
       if (own.status) where.push({ column: 'status', op: 'eq', value: own.status });
       if (own.workflowName) where.push({ column: 'workflow_name', op: 'eq', value: own.workflowName });
@@ -683,7 +733,7 @@ function boundedSteps(steps) {
       throw new ValidationError(`Too many trace spans in one run (the limit is ${MAX_SPANS})`, { field: 'steps' });
     }
     const index = collected.length;
-    const own = closedArgument(step, `Trace span step at index ${index}`,
+    const own = suppliedShape(step, `Trace span step at index ${index}`,
       ['name', 'status', 'output', 'error'], ['name', 'status']);
     collected.push({
       name: assertStorableText(own.name, 'Trace span name', { index, field: 'name' }),
