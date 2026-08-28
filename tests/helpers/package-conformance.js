@@ -28,14 +28,15 @@ export { packageSources };
  * @param {{
  *   definition: any,
  *   dir: string,
- *   expected: {name: string, version: number, resources: string[], actions?: string[], requires?: string[], provides?: string[]},
+ *   expected: {name: string, version: number, packageContract?: number, resources: string[], actions?: string[], requires?: string[], provides?: string[]},
  *   forbiddenImports?: RegExp[],
  * }} spec
  */
 export function assertPackageConforms({ definition, dir, expected, forbiddenImports = [] }) {
   // ---- identity and contract ----
   validatePackageDefinition(definition);
-  assert.equal(definition.packageContract, 1, 'declares the contract version it was written against');
+  assert.equal(definition.packageContract, expected.packageContract ?? 1,
+    'declares the contract version it was written against');
   assert.equal(definition.name, expected.name);
   assert.equal(definition.version, expected.version);
   assert.ok(typeof definition.label === 'string' && definition.label.length > 0, 'has a human label');
@@ -99,7 +100,7 @@ export function assertPackageConforms({ definition, dir, expected, forbiddenImpo
       () => new PackageRegistry({
         packages: [
           { ...definition, requires: [] },
-          { packageContract: 1, name: 'other-package', version: 1, resources: [definition.resources[0]] },
+          { packageContract: definition.packageContract, name: 'other-package', version: 1, resources: [definition.resources[0]] },
         ],
       }),
       /Resource collision/,

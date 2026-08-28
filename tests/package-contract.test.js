@@ -40,8 +40,16 @@ test('the package contract is bounded and fails closed', () => {
   for (const name of ['', 'P', '1p', 'has space', 'has_underscore', null, 42, undefined]) {
     refuses(() => validatePackageDefinition(pkg({ name })), /name must match|must be an object/);
   }
-  refuses(() => validatePackageDefinition(pkg({ packageContract: 2 })), /packageContract must be 1/);
-  refuses(() => validatePackageDefinition(pkg({ packageContract: '1' })), /packageContract must be 1/);
+  // Spine v2 M2E-1 widened the accepted set from {1} to {1, 2}, so the
+  // boundary moved rather than disappeared: 2 is now a supported graph and 3 is
+  // the first unsupported one. Enumerated, not a range — `>= 1` would accept a
+  // 3 nobody has defined.
+  assert.doesNotThrow(() => validatePackageDefinition(pkg({ packageContract: 2 })),
+    'a v2 package graph is a supported declaration');
+  refuses(() => validatePackageDefinition(pkg({ packageContract: 3 })), /packageContract must be one of 1, 2/);
+  refuses(() => validatePackageDefinition(pkg({ packageContract: 0 })), /packageContract must be one of 1, 2/);
+  // A string is still not a version, and the type refusal is unchanged.
+  refuses(() => validatePackageDefinition(pkg({ packageContract: '1' })), /packageContract must be one of 1, 2/);
   refuses(() => validatePackageDefinition(pkg({ version: 0 })), /version must be a positive integer/);
   refuses(() => validatePackageDefinition(pkg({ version: 1.5 })), /version must be a positive integer/);
   refuses(() => validatePackageDefinition(pkg({ label: '' })), /label must be a non-empty string/);
@@ -415,7 +423,7 @@ test('the registry keeps its own state private and hands out no executable defin
   const summary = registry.get('provider');
   assert.equal(summary.capabilities, undefined, 'get() must not return capability factories');
   assert.equal(typeof summary.metadata, 'undefined', 'get() must not return functions');
-  assert.deepEqual(summary.provides, [{ name: 'cap', version: 1 }]);
+  assert.deepEqual(summary.provides, [{ name: 'cap', version: 1, capabilityContract: 1 }]);
   assert.ok(Object.isFrozen(summary), 'the summary is frozen');
 
   // The registry's own indexes are not a public mutation surface. `resources()`

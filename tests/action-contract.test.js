@@ -26,11 +26,28 @@ test('a well-formed action definition validates', () => {
   assert.doesNotThrow(() => validateActionDefinition(validDefinition(), deps));
 });
 
+test('M2E-1: actionContract 2 is accepted, and externalOperation did not move with it', () => {
+  // The accepted set widened to {1, 2}.
+  assert.doesNotThrow(() => validateActionDefinition(validDefinition({ actionContract: 2 }), deps));
+
+  // **`externalOperation` shares `SUPPORTED_ACTION_CONTRACT` historically but is
+  // a different field** — the ADR-017 phase-shape marker. Widening the action
+  // contract in place would have silently accepted `externalOperation: 2`, a
+  // fifth contract version nobody designed. It still refuses anything but 1.
+  assert.throws(
+    () => validateActionDefinition(validDefinition({
+      actionContract: 2, externalOperation: 2, execute: undefined,
+      intent() {}, external() {}, finalize() {},
+    }), deps),
+    /externalOperation must be 1/,
+  );
+});
+
 test('malformed action definitions fail closed with a precise reason', () => {
   const cases = [
     [validDefinition({ module: 'Lead' }), /module must match/],
     [validDefinition({ name: 'Qualify' }), /name must match/],
-    [validDefinition({ actionContract: 2 }), /actionContract must be 1/],
+    [validDefinition({ actionContract: 3 }), /actionContract must be one of 1, 2/],
     [validDefinition({ module: 'ghost' }), /target module "ghost" is not a generated module/],
     [validDefinition({ execute: 'nope' }), /execute must be a function/],
     [validDefinition({ input: {} }), /input must be an array/],

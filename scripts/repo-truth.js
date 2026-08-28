@@ -1449,7 +1449,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
   // ── the reference composition ────────────────────────────────────────────
   try {
     const { resolvePackageComposition } = await import(url('packages/core/src/package-composition.js'));
-    const { SUPPORTED_PACKAGE_CONTRACT } = await import(url('packages/core/src/package-registry.js'));
+    const { SUPPORTED_PACKAGE_CONTRACTS } = await import(url('packages/core/src/package-contract-versions.js'));
     /** @type {any[]} */
     const definitions = [];
     for (const [, path, factory] of REFERENCE_PACKAGES) {
@@ -1461,7 +1461,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
       definitions.push(module[factory]());
     }
     const composition = resolvePackageComposition(definitions);
-    bundle.supportedPackageContract = SUPPORTED_PACKAGE_CONTRACT;
+    bundle.supportedPackageContracts = [...SUPPORTED_PACKAGE_CONTRACTS];
     bundle.composition = {
       problems: composition.problems.map((problem) => ({ code: problem.code, message: problem.message })),
       packages: [...composition.packages.values()].map((pkg) => ({
@@ -1967,7 +1967,7 @@ export function buildFacts(bundle) {
       }
       add({
         id,
-        value: pkg.packageContract === bundle.supportedPackageContract ? 'package_native' : 'unknown',
+        value: bundle.supportedPackageContracts.includes(pkg.packageContract) ? 'package_native' : 'unknown',
         authority: 'reference.composition',
         evidence: [
           `package:${pkg.name}@${pkg.version}`,
