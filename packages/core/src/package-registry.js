@@ -1,6 +1,7 @@
 // @ts-check
 
 import { ValidationError, NotFoundError, AppError } from './errors.js';
+import { validateActionDefinition } from './action-registry.js';
 import { validateDeclaredConfig } from './definition-fingerprint.js';
 import { createDefinitionVersionStore } from './definition-version-store.js';
 import { resolvePackageComposition } from './package-composition.js';
@@ -137,6 +138,24 @@ export function validatePackageDefinition(pkg) {
       throw new ValidationError(`${label}: ${field} must be an array`);
     }
   }
+
+  // Package actions travel through composition before the application's
+  // ActionRegistry sees them. Validate the action shape here as well, so
+  // package validation, package test and source inspection cannot accept a
+  // declaration that application boot would later reject — or crash while
+  // composition dereferences a null entry. Module existence remains the
+  // application's concern; every other action-contract rule is shared with
+  // the runtime validator instead of copied here.
+  for (const entry of pkg.actions ?? []) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new ValidationError(`${label}: each actions entry must be a plain object`);
+    }
+    const prototype = Object.getPrototypeOf(entry);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new ValidationError(`${label}: each actions entry must be a plain object`);
+    }
+    validateActionDefinition(entry, { moduleExists: () => true });
+  }
   if (pkg.metadata !== undefined && typeof pkg.metadata !== 'function') {
     throw new ValidationError(`${label}: metadata must be a function when present`);
   }
@@ -222,10 +241,13 @@ export function validatePackageDefinition(pkg) {
         .filter(Boolean)
         .map((token) => token.toLowerCase());
       const compact = tokens.join('');
-      return (tokens.includes('contract')
-        && (tokens.includes('capability') || tokens.includes('capabilities')))
-        || compact === 'capabilitycontract'
-        || compact === 'capabilitiescontract';
+      const normalized = tokens.map((token) => {
+        if (token === 'capabilities') return 'capability';
+        if (token === 'contracts') return 'contract';
+        return token;
+      });
+      return (normalized.includes('contract') && normalized.includes('capability'))
+        || /^(?:capability|capabilities)contracts?(?:version)?$/.test(compact);
     });
     if (strayContract !== undefined) {
       throw new ValidationError(

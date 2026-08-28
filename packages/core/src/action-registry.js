@@ -26,7 +26,7 @@ const INPUT_TYPES = new Set(['string', 'timestamp', 'enum', 'integer', 'boolean'
  *   name: string,
  *   label?: string,
  *   description?: string,
- *   actionContract: 1,
+ *   actionContract: 1 | 2,
  *   input?: Array<{name: string, type: 'string' | 'timestamp' | 'enum' | 'integer', required?: boolean, values?: string[]}>,
  *   fromStates?: string[],
  *   stateField?: string,

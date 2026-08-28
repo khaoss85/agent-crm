@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import * as publicKernel from '../packages/core/index.js';
-import { PackageRegistry, definePackage } from '../packages/core/index.js';
+import { PackageRegistry, definePackage, validatePackageDefinition } from '../packages/core/index.js';
+import { validatePackageCommand } from '../packages/cli/src/package-commands.js';
 import { actionMetadata } from '../packages/core/src/action-registry.js';
 import { resolvePackageComposition } from '../packages/core/src/package-composition.js';
 
@@ -108,6 +112,73 @@ test('every individually valid sync-v1/async-v2 mixture is refused at compositio
   assert.match(disconnected.problems[0].message, /separate application graphs/);
 });
 
+test('mixed-graph diagnostics bound every unbounded hostile member identity without rejecting declarations', () => {
+  const hostileName = `run-${'x'.repeat(200_000)}`;
+  const cases = [
+    ['action', { actions: [{ ...action(2), name: hostileName }] }],
+    ['capability', { capabilities: [capability(hostileName, 2)] }],
+  ];
+
+  for (const [kind, members] of cases) {
+    const definition = pkg(`bounded-${kind}`, 1, members);
+    assert.doesNotThrow(() => validatePackageDefinition(definition),
+      `${kind}: M2E-1 does not invent a new declaration length limit`);
+    const resolved = resolvePackageComposition([definition]);
+    const problem = resolved.problems[0];
+    assert.equal(problem.code, 'PACKAGE_ASYNC_CONTRACT_REQUIRED', kind);
+    assert.ok(problem.message.length < 1_000, `${kind} message length: ${problem.message.length}`);
+    assert.ok(problem.error.details.member.length <= 161,
+      `${kind} member length: ${problem.error.details.member.length}`);
+    assert.equal(problem.message.includes(hostileName), false, kind);
+    assert.equal(JSON.stringify(problem.error.details).includes(hostileName), false, kind);
+    assert.match(problem.error.details.member, /…$/, kind);
+  }
+});
+
+test('overlong operation identities are bounded by the existing declaration contract', () => {
+  const hostileName = `run-${'x'.repeat(200_000)}`;
+  const definition = pkg('bounded-operation', 1, {
+    operations: [{ ...operation(2), name: hostileName }],
+  });
+
+  assert.throws(
+    () => validatePackageDefinition(definition),
+    /operation name must match .* and be at most 64 characters/,
+    'the pre-M2E-1 operation identity limit remains in force',
+  );
+  const resolved = resolvePackageComposition([definition]);
+  assert.equal(resolved.problems[0]?.code, 'PACKAGE_INVALID');
+  assert.ok(resolved.problems[0].message.length < 1_000);
+  assert.equal(resolved.problems[0].message.includes(hostileName), false);
+});
+
+test('package composition refuses malformed action entries before any consumer dereferences them', () => {
+  const missingContract = action(1);
+  delete missingContract.actionContract;
+  const missingExecute = action(1);
+  delete missingExecute.execute;
+  const inherited = Object.assign(Object.create({ inherited: true }), action(1));
+  const cases = [
+    ['null entry', null, /plain object/],
+    ['array entry', [], /plain object/],
+    ['non-plain entry', inherited, /plain object/],
+    ['hostile module', { ...action(1), module: 'Bad Module' }, /module must match/],
+    ['hostile name', { ...action(1), name: 'Bad Name' }, /name must match/],
+    ['missing contract', missingContract, /actionContract must be one of 1, 2/],
+    ['unknown contract', action(3), /actionContract must be one of 1, 2/],
+    ['missing execute', missingExecute, /execute must be a function/],
+  ];
+
+  for (const [label, entry, pattern] of cases) {
+    const definition = pkg('bad-action-package', 1, { actions: [entry] });
+    assert.throws(() => validatePackageDefinition(definition), pattern, label);
+    const resolved = resolvePackageComposition([definition]);
+    assert.equal(resolved.problems[0]?.code, 'PACKAGE_INVALID', label);
+    assert.match(resolved.problems[0]?.message ?? '', pattern, label);
+    assert.throws(() => new PackageRegistry({ packages: [definition] }), pattern, label);
+  }
+});
+
 test('a v2 package requiring a v1 capability fails with the ratified stable refusal', () => {
   const provider = pkg('sync-provider', 1, { capabilities: [capability('facts')] });
   const consumer = pkg('async-consumer', 2, {
@@ -126,7 +197,7 @@ test('a v2 package requiring a v1 capability fails with the ratified stable refu
   );
 });
 
-test('capability contract typo detection names contract fields without rejecting ordinary metadata', () => {
+test('capability contract typo detection names contract fields without rejecting ordinary metadata', async () => {
   assert.doesNotThrow(() => definePackage(pkg('metadata-ok', 1, {
     capabilities: [{
       ...capability('facts'),
@@ -136,14 +207,91 @@ test('capability contract typo detection names contract fields without rejecting
     }],
   })));
 
-  for (const key of ['capabilitiesContract', 'capability_contract', 'capabilityContractVersion']) {
+  const hiddenAsyncInterface = async () => ({
+    load: async () => 'a Promise a v1 caller must never receive by typo',
+  });
+  const hiddenPromise = hiddenAsyncInterface({});
+  assert.ok(hiddenPromise instanceof Promise,
+    'the hostile fixture executes the Promise-shaped interface the typo would hide');
+  assert.equal(typeof (await hiddenPromise).load, 'function');
+
+  for (const key of [
+    'capabilitiesContract',
+    'capability_contract',
+    'capabilityContractVersion',
+    'capabilityContracts',
+    'capabilitiesContracts',
+    'capability_contracts',
+    'capabilities-contracts',
+  ]) {
+    const definition = pkg('typo-provider', 1, {
+      capabilities: [{ name: 'facts', version: 1, [key]: 2, create: hiddenAsyncInterface }],
+    });
+    const consumer = pkg('typo-consumer', 1, {
+      requires: [{ package: 'typo-provider', capability: 'facts', version: 1 }],
+    });
     assert.throws(
-      () => definePackage(pkg('typo-provider', 1, {
-        capabilities: [{ ...capability('facts'), [key]: 2 }],
-      })),
+      () => definePackage(definition),
       new RegExp(`declares "${key}"; did you mean capabilityContract`),
     );
+    const resolved = resolvePackageComposition([definition, consumer]);
+    assert.equal(resolved.problems[0]?.code, 'PACKAGE_INVALID', key);
+    assert.match(resolved.problems[0]?.message ?? '', new RegExp(`declares "${key}"`));
+    assert.throws(
+      () => new PackageRegistry({ packages: [definition, consumer] }),
+      new RegExp(`declares "${key}"`),
+      key,
+    );
   }
+});
+
+test('package validate keeps its legacy string problem shape while reporting the mixed-graph reason', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-m2e1-package-validate-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'src'));
+  writeFileSync(join(dir, 'src/index.js'), `export const fixturePackage = {
+  packageContract: 2,
+  name: 'mixed-validate-fixture',
+  version: 1,
+  label: 'mixed validate fixture',
+  resources: [],
+  actions: [{
+    module: 'fixture-record',
+    name: 'run-fixture',
+    actionContract: 1,
+    execute: async () => ({}),
+  }],
+};
+`);
+
+  const report = await validatePackageCommand({ packagePath: dir });
+  assert.equal(report.ok, false);
+  assert.ok(report.problems.length > 0);
+  assert.ok(report.problems.every((problem) => typeof problem === 'string'),
+    'package validate keeps its established string[] problem contract');
+  assert.match(report.problems[0], /sync-v1 and async-v2 contracts cannot share one package graph/);
+});
+
+test('package validate reports malformed actions through its bounded legacy problem shape', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-m2e1-package-action-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'src'));
+  writeFileSync(join(dir, 'src/index.js'), `export const fixturePackage = {
+  packageContract: 1,
+  name: 'malformed-action-fixture',
+  version: 1,
+  label: 'malformed action fixture',
+  resources: [],
+  actions: [null],
+};
+`);
+
+  const report = await validatePackageCommand({ packagePath: dir });
+  assert.equal(report.ok, false);
+  assert.ok(report.problems.every((problem) => typeof problem === 'string'));
+  assert.match(report.problems[0], /actions entry must be a plain object/);
+  assert.equal(/TypeError|Cannot read properties/.test(JSON.stringify(report)), false,
+    'a malformed declaration remains a contract refusal, never a dereference crash');
 });
 
 test('accepted-version sets and capability defaults stay private to the kernel', () => {

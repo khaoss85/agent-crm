@@ -99,9 +99,13 @@ below.
   well-formed but not portable". The thirteen composition refusals all report
   structural defects — collision, cycle, missing dependency, unsatisfied
   requirement, invalid metadata.
-- **Portability.** It lives in the composition result's `problems[]` exactly as
-  the other thirteen do, so it reaches the CLI, `package validate`, and any
-  consumer of `resolvePackageComposition` without harness-specific logic.
+- **Portability.** It lives in the composition result's structured `problems[]`
+  exactly as the other thirteen do, so it reaches `app inspect`, the startup
+  registry error and any consumer of `resolvePackageComposition` without
+  harness-specific logic. The older `package validate` contract deliberately
+  retains `problems: string[]`: it carries the same bounded reason, but not the
+  AppError code/status/details. Adding structured problems there would be a
+  separate agent-facing contract change, not a silent part of M2E-1.
 - **Machine-readable evidence.** A problem code and a non-zero exit, which is
   what every other composition refusal already produces.
 - **The name fits the family**, which is the reason to keep the ratified one
@@ -378,6 +382,18 @@ npm run verify
 
 ## Progress log
 
+- **2026-08-28:** The exact-head broad review found three material boundary
+  failures. Package composition could dereference malformed actions before the
+  runtime action registry validated them; plural and separated misspellings of
+  `capabilityContract` could still normalize to v1; and mixed-graph diagnostics
+  echoed unbounded action/capability identities. Composition now shares the
+  action validator before dereference, the typo guard recognizes the normalized
+  singular/plural contract token while preserving ordinary metadata, and
+  diagnostic rendering is capped without inventing a declaration limit. The
+  existing 64-character operation-name contract remains unchanged and is
+  tested separately. `package validate` still returns its established
+  `problems: string[]`; the plan now claims structured refusal identity only on
+  the surfaces that actually preserve it.
 - **2026-08-28:** Merged current `origin/main` regularly into the writer branch
   after M2D. Implemented private accepted-version sets, declaration-time
   capability normalization, uniform v1/v2 graph validation, the stable

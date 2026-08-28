@@ -40,6 +40,33 @@ const OFFICIAL = [
   ['packages/service', 'service'],
 ];
 
+test('package test refuses a malformed action through the package contract, without crashing', async (t) => {
+  const root = fixtureProject(t);
+  const packagePath = writeFixturePackage(root, 'fixture-bad-action', `// @ts-check
+export const fixturePackage = {
+  packageContract: 1,
+  name: 'fixture-bad-action',
+  label: 'Fixture bad action',
+  version: 1,
+  resources: [],
+  actions: [null],
+};
+`);
+
+  const { exitCode, report } = await packageTestCommand({
+    packagePath,
+    rootDir: root,
+    capture: true,
+  });
+  assert.equal(exitCode, 1);
+  assert.equal(report.checks.find((entry) => entry.id === 'declaration.valid').status, 'failed');
+  const problem = report.problems.find((entry) => entry.code === 'PACKAGE_INVALID');
+  assert.ok(problem, JSON.stringify(report.problems));
+  assert.match(problem.message, /actions entry must be a plain object/);
+  assert.equal(/TypeError|Cannot read properties/.test(JSON.stringify(report)), false,
+    'the invalid declaration remains a bounded contract failure');
+});
+
 test('every first-party package conforms, and the report says how', async (t) => {
   for (const [path, name] of OFFICIAL) {
     const { exitCode, report } = await run(path);

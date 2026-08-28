@@ -124,7 +124,17 @@ export async function validatePackageCommand({ packagePath }) {
     version: definition.version,
     packageContract: definition.packageContract,
     resources: [...(definition.resources ?? [])].sort(),
-    actions: (definition.actions ?? []).map((action) => `${action.module}.${action.name}`).sort(),
+    // Validation above owns malformed entries. Presentation must still return
+    // the established report instead of dereferencing the same invalid value
+    // after its bounded problem was already recorded.
+    actions: (Array.isArray(definition.actions) ? definition.actions : [])
+      .flatMap((action) => (action
+        && typeof action === 'object'
+        && typeof action.module === 'string'
+        && typeof action.name === 'string'
+        ? [`${action.module}.${action.name}`]
+        : []))
+      .sort(),
     policies: (definition.policies ?? []).map((entry) => `${entry.kind}/${entry.definition?.name}@${entry.definition?.version}`).sort(),
     requires: (definition.requires ?? []).map((entry) => `${entry.package}/${entry.capability}@${entry.version}`).sort(),
     provides: (definition.capabilities ?? []).map((entry) => `${entry.name}@${entry.version}`).sort(),

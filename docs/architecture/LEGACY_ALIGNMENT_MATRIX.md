@@ -71,6 +71,7 @@ Verified against the working tree, 2026-08-19.
 | Lifecycle | `packages/lifecycle/` — `src/`, `modules/`, `README.md` | **yes** — package-native (M16a, M16b) |
 | Customer Data | `packages/customer-data/` — `src/`, `modules/`, `README.md` | **yes** — package-native (ADR-037). It **requires nothing**, adds no master customer table, and links and projects rather than duplicating |
 | Custom-package fixture | `examples/custom-packages/partner-scorecard/` | **yes** — the customer-authoring proof |
+| Custom-package capability-consumer fixture | `examples/custom-packages/score-disclosure/` | **yes** — the customer-authored proof that a package can consume `intelligence@1` |
 | Marketing & Growth | documentation only (`docs/strategy/`) | — |
 
 Each of the four has a `packages/<name>/generated/` directory and nothing else:
@@ -201,6 +202,7 @@ does not mean its current v1 graph is invalid. M2E-3 owns every promotion.
 | Lifecycle | `deferred` | it consumes domain capability version 2 on synchronous execution contract 1; M2E-3 owns the async graph |
 | Customer Data | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
 | Custom-package fixture | `deferred` | it remains the unchanged customer-authored contract-1 compatibility proof; M2E-3 adds a separate v2 fixture without rewriting it |
+| Custom-package score-disclosure fixture | `deferred` | its contract-1 graph and `intelligence@1` dependency remain the customer-authored capability-consumer proof; M2E-3 owns any v2 companion rather than silently rewriting this v1 fixture |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
 
 ### Hosted Docs MCP transport assessment

@@ -171,6 +171,31 @@ test('inspection reports the accepted v2 graph rather than the v1 scaffold defau
     'an invalid mixed graph has no single application contract to publish');
 });
 
+test('inspection reports malformed package actions as PACKAGE_INVALID instead of crashing', async (t) => {
+  const rawPackage = `export function createbrokenactionPackage() {
+  return {
+    packageContract: 1,
+    name: 'broken-action',
+    version: 1,
+    label: 'broken-action',
+    resources: [],
+    actions: [null],
+  };
+}
+`;
+  const root = fixtureProject(t, {
+    files: { 'fixtures/broken-action.js': rawPackage },
+    packages: composition(['broken-action']),
+  });
+
+  const { report, valid } = await inspectApplication({ rootDir: root });
+  assert.equal(valid, false);
+  const problem = report.problems.find((entry) => entry.code === 'PACKAGE_INVALID');
+  assert.ok(problem, JSON.stringify(report.problems));
+  assert.match(problem.message, /actions entry must be a plain object/);
+  assert.equal(report.actions.length, 0, 'no malformed action reaches action metadata');
+});
+
 test('the report is byte-identical between runs and between processes', async (t) => {
   const root = projectWith(t, [
     { name: 'billing', provides: [{ name: 'invoice-facts', version: 1 }] },

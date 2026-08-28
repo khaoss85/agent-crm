@@ -58,6 +58,21 @@ function isKnownContract(value) {
   return SUPPORTED_PACKAGE_CONTRACTS.includes(value);
 }
 
+const MAX_CONTRACT_DIAGNOSTIC_IDENTITY = 160;
+
+/**
+ * A declared identity is data in diagnostics, never an unbounded response.
+ * Action and capability names remain length-compatible with v1 and rely on
+ * this boundary. Operation names already have a 64-character declaration
+ * limit; rendering them here too keeps the response bounded in depth.
+ */
+function contractDiagnosticIdentity(value) {
+  const text = String(value);
+  return text.length <= MAX_CONTRACT_DIAGNOSTIC_IDENTITY
+    ? text
+    : `${text.slice(0, MAX_CONTRACT_DIAGNOSTIC_IDENTITY)}…`;
+}
+
 function asyncContractError(message, details) {
   return new AppError(message, {
     code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED',
@@ -196,13 +211,19 @@ export function resolvePackageComposition(list = []) {
   for (const pkg of packages.values()) {
     const members = [
       ...(pkg.actions ?? []).map((entry) => ({
-        kind: 'action', name: `${entry.module}.${entry.name}`, contract: entry.actionContract,
+        kind: 'action',
+        name: contractDiagnosticIdentity(`${entry.module}.${entry.name}`),
+        contract: entry.actionContract,
       })),
       ...(pkg.operations ?? []).map((entry) => ({
-        kind: 'operation', name: entry.name, contract: entry.operationContract,
+        kind: 'operation',
+        name: contractDiagnosticIdentity(entry.name),
+        contract: entry.operationContract,
       })),
       ...(pkg.capabilities ?? []).map((entry) => ({
-        kind: 'capability', name: `${entry.name}@${entry.version}`, contract: entry.capabilityContract,
+        kind: 'capability',
+        name: contractDiagnosticIdentity(`${entry.name}@${entry.version}`),
+        contract: entry.capabilityContract,
       })),
     ];
     for (const member of members) {
@@ -252,19 +273,20 @@ export function resolvePackageComposition(list = []) {
         continue;
       }
       if (pkg.packageContract !== offered.entry.capabilityContract) {
+        const capability = contractDiagnosticIdentity(`${entry.capability}@${entry.version}`);
         const message = `Package "${pkg.name}" uses packageContract ${pkg.packageContract}, but requires `
-          + `"${entry.package}" capability ${entry.capability}@${entry.version} with capabilityContract `
+          + `"${entry.package}" capability ${capability} with capabilityContract `
           + `${offered.entry.capabilityContract}; sync-v1 and async-v2 contracts cannot share one dependency edge`;
         fail({
           code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED',
           package: pkg.name,
-          capability: `${entry.capability}@${entry.version}`,
+          capability,
           message,
           error: asyncContractError(message, {
             package: pkg.name,
             packageContract: pkg.packageContract,
             provider: entry.package,
-            capability: entry.capability,
+            capability: contractDiagnosticIdentity(entry.capability),
             capabilityVersion: entry.version,
             capabilityContract: offered.entry.capabilityContract,
           }),

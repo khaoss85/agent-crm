@@ -215,8 +215,10 @@ Execution contract 2 is an all-or-nothing graph choice, not a way to make one
 action async inside a v1 package. A v2 package declares `actionContract: 2` on
 every action, `operationContract: 2` on every operation and
 `capabilityContract: 2` on every offered capability. Its dependency edges must
-also resolve to v2 capabilities. Inspection publishes the accepted versions so
-an agent never has to infer them from the scaffold default.
+also resolve to v2 capabilities. Inspection publishes the selected, normalized
+version on every package, action, operation and capability, so an agent never
+has to infer the running graph from the scaffold default. The kernel-private
+accepted-version sets are validation vocabulary, not inspection output.
 
 A versioned decision belongs in a policy with declared JSON-safe `config`, so
 its fingerprint (ADR-015) covers the thresholds as well as the code:
