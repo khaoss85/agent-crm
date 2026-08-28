@@ -65,9 +65,11 @@ test('public surfaces do not grow a second factory or leak lifecycle symbols', (
   assert.equal(Object.hasOwn(publicApp, 'createAccordoAppAsync'), false);
   assert.equal(Object.hasOwn(publicApp, 'preflightSelectedGraph'), false);
   assert.equal(Object.hasOwn(publicApp, 'startSqliteLifecycle'), false);
+  assert.equal(Object.hasOwn(publicApp, 'startPortableSqliteApp'), false);
   assert.equal(Object.hasOwn(publicKernel, 'createAccordoAppAsync'), false);
   assert.equal(Object.hasOwn(publicKernel, 'preflightSelectedGraph'), false);
   assert.equal(Object.hasOwn(publicKernel, 'startSqliteLifecycle'), false);
+  assert.equal(Object.hasOwn(publicKernel, 'startPortableSqliteApp'), false);
   assert.equal(Object.hasOwn(publicKernel, 'SUPPORTED_PACKAGE_CONTRACTS'), false);
 });
 
