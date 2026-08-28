@@ -192,7 +192,7 @@ export function actionMetadata(action) {
     name: action.name,
     label: action.label ?? action.name,
     description: action.description ?? null,
-    actionContract: SUPPORTED_ACTION_CONTRACT,
+    actionContract: action.actionContract,
     input: (action.input ?? []).map((field) => ({
       name: field.name,
       type: field.type,

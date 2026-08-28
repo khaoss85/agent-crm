@@ -21,11 +21,11 @@ v2 graph and refuse a mixed one.
 
 ## Progress
 
-- [ ] Survey the four contract populations at the exact head. **(done, below)**
-- [ ] Resolve the `capabilityContract` contradiction against merged code.
-- [ ] Add the v2 vocabulary and mixed-graph refusal to core.
-- [ ] Prove with fixtures, not with migrated packages.
-- [ ] Record the alignment-matrix row and reconcile truth.
+- [x] Survey the four contract populations at the exact head. **(done, below)**
+- [x] Resolve the `capabilityContract` contradiction against merged code.
+- [x] Add the v2 vocabulary and mixed-graph refusal to core.
+- [x] Prove with fixtures, not with migrated packages.
+- [x] Record the alignment-matrix row and reconcile the M2 ownership index.
 - [ ] Complete exact-head CI and review gates.
 
 ## Current repository context, surveyed at `b5501c8`
@@ -286,10 +286,12 @@ failure this campaign keeps finding.
 
 1. **Resolve and record.** The `capabilityContract` resolution above, the plan
    amendment, and the alignment-matrix row — before any validation code.
-2. **Widen the vocabulary.** The three `SUPPORTED_*` constants become supported
-   *sets* accepting 1 and 2, each refusal keeping its existing message shape for
-   an unsupported value. `capabilityContract` gains its first validation, with
-   absence meaning 1.
+2. **Widen the vocabulary.** The existing singular `SUPPORTED_*` values remain
+   `1`, because scaffolding interpolates them as the synchronous contract it
+   emits. Private accepted-version sets admit 1 and 2, and each refusal names
+   both accepted values. `capabilityContract` gains its first validation, with
+   absence meaning 1. The accepted sets and default are not new package-author
+   exports: declaration authors choose one version; they do not negotiate one.
 3. **Make the capability contract declarable, then refuse a mixed graph.**
    `capabilityContract` moves onto the capability declaration so composition can
    read it at all; absence means 1. Then, in `resolvePackageComposition`, a graph
@@ -313,15 +315,16 @@ failure this campaign keeps finding.
   With absence defaulting to 1 and the set being `{1, 2}`, anything that can
   tell "absent" from "declared 1" leaks a third state the contract does not
   have. Stated as an invariant so a later `?? null` does not quietly create it.
-- **An unrecognised contract-ish key on a capability entry is refused.** A
+- **An unrecognised capability-contract key on a capability entry is refused.** A
   default protects the *value* and not the *key*: `capabilitiesContract: 2` or
   `capabilityContractVersion: 2` would silently read as absent, mean 1, and
   compose a v2 capability as v1 — producing precisely the Promise-as-domain-value
   failure this contract exists to prevent. This is the discriminator M2C
   settled, applied in the other direction: refusing an unnamed key is justified
   exactly when accepting it would be **silently misread**, and a typo'd contract
-  key is the clearest possible case. The capability entry is a shape the
-  framework owns, so it is closed.
+  key is the clearest possible case. The check tokenizes the key and requires
+  both `capability|capabilities` and `contract`; ordinary metadata such as
+  `contractor`, `contractNotes` and `capabilityContractor` remains allowed.
 - **A Promise-shaped service entering v1 execution is refused**, and the refusal
   belongs where v1 execution begins rather than at composition, because a
   service can only be observed to be Promise-shaped when it is called. Where
@@ -329,6 +332,22 @@ failure this campaign keeps finding.
 - **`createAccordoApp()` is not touched**, not even to add a parameter. One
   function must never conditionally return an app or a Promise; the portable
   path is a separate unconditional async factory in M2E-2.
+
+### M2E-2 object-graph boundary discovered by the M2F audit
+
+The synchronous factory exposes SQLite handles through more than its three
+obvious top-level properties. The exact v1 graph also contains handles at
+`app.audit.database`, `app.services.{companies,contacts,opportunities,approvals}.database`,
+`app.workflows.database`, and
+`app.modules.modules.<map entry>.service.database`. Keeping that v1 graph is a
+compatibility requirement; returning it from the portable factory would make a
+top-level `{adapter, available}` descriptor cosmetic while nested driver
+handles remained reachable.
+
+M2E-2 therefore owns an adversarial whole-object-graph leak test and a portable
+facade/private-field boundary. A top-level descriptor alone is not acceptance
+evidence. This finding changes no M2E-1 source and does not authorize an edit to
+`create-app.js` in this slice.
 
 ## Compatibility Backfill Rule (AGENTS.md §14)
 
@@ -358,6 +377,19 @@ npm run verify
 ```
 
 ## Progress log
+
+- **2026-08-28:** Merged current `origin/main` regularly into the writer branch
+  after M2D. Implemented private accepted-version sets, declaration-time
+  capability normalization, uniform v1/v2 graph validation, the stable
+  `PACKAGE_ASYNC_CONTRACT_REQUIRED` refusal, truthful registry/action/inspection
+  metadata, and the Option 4 lifecycle correction. Fixture coverage now proves
+  v1-only, v2-only, every internal mixed permutation, disconnected mixed
+  packages, and the exact v2-consumer/v1-capability edge. No bundled package or
+  synchronous factory moved.
+- **2026-08-28:** M2F's independent audit found nested SQLite handle exposure in
+  the v1 application object graph. Recorded it as an M2E-2 facade and
+  adversarial-leak-test obligation; M2E-1 deliberately does not touch the app
+  factory.
 
 - **2026-08-28:** Red-team returned four confirmations and one material
   correction: the survey table conflated interface fields with entry
@@ -412,4 +444,15 @@ npm run verify
 
 ## Outcome and follow-up
 
-_Filled in on completion._
+M2E-1 makes both contract graphs expressible and makes mixed composition fail
+at startup. Contract 1 remains the emitted/scaffolded synchronous contract;
+contract 2 is accepted only as a uniform package/action/operation/capability
+graph. Capability absence is normalized to 1 before registry, metadata or
+inspection consumers see it. The existing lifecycle capability's synchronous
+interface now says contract 1; its domain capability version remains 2.
+
+No bundled package was migrated and `createAccordoApp()` was not touched.
+M2E-2 owns the unconditional async factory, interface-echo verification and the
+portable object-graph facade. M2E-3 owns dual bundled definitions and actual v2
+package migration. Exact-head CI and the campaign's review/integration record
+remain to be filled by the merge train.

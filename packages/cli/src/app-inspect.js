@@ -8,6 +8,7 @@ import { actionMetadata } from '../../core/src/action-registry.js';
 import { resolvePackageComposition } from '../../core/src/package-composition.js';
 import { readModuleState } from '../../core/src/module-evolution.js';
 import { SUPPORTED_PACKAGE_CONTRACT } from '../../core/src/package-registry.js';
+import { DEFAULT_CAPABILITY_CONTRACT } from '../../core/src/package-contract-versions.js';
 import { repoRelative, safeMessage } from './safe-text.js';
 
 /**
@@ -249,12 +250,21 @@ export async function inspectApplication({ rootDir: requested }) {
         .map((entry) => ({ package: entry.package, capability: entry.capability, version: entry.version }))
         .sort((a, b) => compare(`${a.package}/${a.capability}@${a.version}`, `${b.package}/${b.capability}@${b.version}`)),
       provides: (pkg.capabilities ?? [])
-        .map((entry) => ({ name: entry.name, version: entry.version, description: entry.description ?? null }))
+        .map((entry) => ({
+          name: entry.name,
+          version: entry.version,
+          capabilityContract: entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
+          description: entry.description ?? null,
+        }))
         .sort((a, b) => compare(`${a.name}@${a.version}`, `${b.name}@${b.version}`)),
       // Declared application-scoped operations (ADR-032): additive, and gone
       // when the package detaches.
       operations: (pkg.operations ?? [])
-        .map((entry) => ({ name: entry.name, ...(entry.appMethod ? { appMethod: entry.appMethod } : {}) }))
+        .map((entry) => ({
+          name: entry.name,
+          operationContract: entry.operationContract,
+          ...(entry.appMethod ? { appMethod: entry.appMethod } : {}),
+        }))
         .sort((a, b) => compare(a.name, b.name)),
       policies: [...composition.policies.values()]
         .filter((entry) => entry.domain === pkg.name)
@@ -263,6 +273,7 @@ export async function inspectApplication({ rootDir: requested }) {
       metadata: safeMetadata(pkg, problems, rootDir),
     }))
     .sort((a, b) => compare(a.name, b.name));
+  const packageContracts = [...new Set(packages.map((pkg) => pkg.packageContract))];
 
   // The capability graph, from both ends: who offers it and who consumes it.
   /** @type {Map<string, any>} */
@@ -271,6 +282,7 @@ export async function inspectApplication({ rootDir: requested }) {
     capabilityRows.set(key, {
       name: value.entry.name,
       version: value.entry.version,
+      capabilityContract: value.entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
       provider: value.package,
       consumers: [],
       status: 'resolved',
@@ -350,7 +362,9 @@ export async function inspectApplication({ rootDir: requested }) {
     valid: problems.length === 0,
     application: {
       name: readProjectName(rootDir, problems),
-      packageContract: SUPPORTED_PACKAGE_CONTRACT,
+      packageContract: packageContracts.length === 0
+        ? SUPPORTED_PACKAGE_CONTRACT
+        : packageContracts.length === 1 ? packageContracts[0] : null,
       composition: COMPOSITION.map((entry) => entry.path),
       // Declared statically by the framework, not read from a running system.
       databaseBackend: 'sqlite (node:sqlite)',

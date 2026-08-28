@@ -2,9 +2,12 @@
 
 import { readFileSync } from 'node:fs';
 import {
-  PackageRegistry, SUPPORTED_PACKAGE_CONTRACT, SUPPORTED_PACKAGE_CONTRACTS, validatePackageDefinition,
+  PackageRegistry, validatePackageDefinition,
 } from '../../core/index.js';
 import { resolvePackageComposition } from '../../core/src/package-composition.js';
+import {
+  DEFAULT_CAPABILITY_CONTRACT, SUPPORTED_PACKAGE_CONTRACTS,
+} from '../../core/src/package-contract-versions.js';
 import { importSpecifiers, importsPrivateKernelPath, packageSources } from './package-sources.js';
 
 /**
@@ -252,7 +255,7 @@ export function runCompositionChecks({ definition, providers }) {
       new PackageRegistry({
         packages: [
           { ...definition, requires: [] },
-          { packageContract: SUPPORTED_PACKAGE_CONTRACT, name: 'conformance-probe', version: 1, resources: [resources[0]] },
+          { packageContract: definition.packageContract, name: 'conformance-probe', version: 1, resources: [resources[0]] },
         ],
       });
     } catch (error) {
@@ -275,8 +278,13 @@ export function runCompositionChecks({ definition, providers }) {
         packages: [
           { ...definition, requires: [] },
           {
-            packageContract: SUPPORTED_PACKAGE_CONTRACT, name: 'conformance-probe', version: 1,
-            capabilities: [{ name: offered[0].name, version: offered[0].version, create: () => ({}) }],
+            packageContract: definition.packageContract, name: 'conformance-probe', version: 1,
+            capabilities: [{
+              name: offered[0].name,
+              version: offered[0].version,
+              capabilityContract: offered[0].capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
+              create: () => ({}),
+            }],
           },
         ],
       });

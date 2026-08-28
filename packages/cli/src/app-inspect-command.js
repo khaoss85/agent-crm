@@ -121,14 +121,19 @@ function renderText(report) {
     if (pkg.requires.length) {
       lines.push(`    requires  ${pkg.requires.map((r) => `${r.package}/${r.capability}@${r.version}`).join(', ')}`);
     }
-    if (pkg.provides.length) lines.push(`    provides  ${pkg.provides.map((p) => `${p.name}@${p.version}`).join(', ')}`);
+    if (pkg.provides.length) {
+      lines.push(`    provides  ${pkg.provides.map((p) => `${p.name}@${p.version} (capabilityContract ${p.capabilityContract})`).join(', ')}`);
+    }
+    if (pkg.operations.length) {
+      lines.push(`    operations ${pkg.operations.map((entry) => `${entry.name} (operationContract ${entry.operationContract})`).join(', ')}`);
+    }
     if (pkg.resources.length) lines.push(`    resources ${pkg.resources.join(', ')}`);
   }
 
   heading(`Capabilities (${report.capabilities.length})`);
   if (report.capabilities.length === 0) lines.push('  none declared');
   for (const entry of report.capabilities) {
-    lines.push(`  ${entry.name}@${entry.version}  ${entry.status}  provider=${entry.provider ?? '(none)'}  consumers=${entry.consumers.join(', ') || '(none)'}`);
+    lines.push(`  ${entry.name}@${entry.version}  capabilityContract ${entry.capabilityContract ?? '(unknown)'}  ${entry.status}  provider=${entry.provider ?? '(none)'}  consumers=${entry.consumers.join(', ') || '(none)'}`);
   }
 
   heading(`Records (${report.modules.length})`);
@@ -140,7 +145,7 @@ function renderText(report) {
   heading(`Actions (${report.actions.length})`);
   for (const action of report.actions) {
     const states = action.fromStates ? `  from ${action.fromStates.join('|')}` : '  (declares no state restriction)';
-    lines.push(`  ${action.module}.${action.name}${states}`);
+    lines.push(`  ${action.module}.${action.name}  actionContract ${action.actionContract}${states}`);
   }
 
   heading(`Policies (${report.policies.length})`);

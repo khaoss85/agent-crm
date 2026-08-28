@@ -4,6 +4,18 @@ import { ValidationError, NotFoundError, AppError } from './errors.js';
 import { validateDeclaredConfig } from './definition-fingerprint.js';
 import { createDefinitionVersionStore } from './definition-version-store.js';
 import { resolvePackageComposition } from './package-composition.js';
+import {
+  DEFAULT_CAPABILITY_CONTRACT,
+  SUPPORTED_CAPABILITY_CONTRACTS,
+  SUPPORTED_OPERATION_CONTRACTS,
+  SUPPORTED_PACKAGE_CONTRACT,
+  SUPPORTED_PACKAGE_CONTRACTS,
+} from './package-contract-versions.js';
+
+// Historical scalar exports remain public: scaffolding and existing packages
+// use them as the v1 values to emit. Accepted sets are kernel-private because
+// packages declare a version; they do not negotiate one.
+export { SUPPORTED_OPERATION_CONTRACT, SUPPORTED_PACKAGE_CONTRACT } from './package-contract-versions.js';
 
 /**
  * The public **domain-package contract** (ADR-018, addendum 3).
@@ -51,47 +63,6 @@ const MAX_NAME = 64;
 const MAX_LABEL = 80;
 const MAX_DESCRIPTION = 400;
 const MAX_VERSION = 1_000_000;
-/**
- * **The contract version this framework emits**, unchanged. It is what
- * scaffolding writes into a new package and what `package test` reports as
- * current, so it stays a single number: a consumer that reads it wants "the
- * one to declare", not "the ones accepted".
- */
-export const SUPPORTED_PACKAGE_CONTRACT = 1;
-export const SUPPORTED_OPERATION_CONTRACT = 1;
-
-/**
- * **The contract versions this framework accepts** (Spine v2 M2E-1). Separate
- * constants rather than widening the singular ones, for two reasons found by
- * reading the consumers rather than assuming them.
- *
- * The first is that the singular constants are *values*: scaffolding writes
- * `packageContract: SUPPORTED_PACKAGE_CONTRACT` into a generated package, and
- * a set there would emit an array as a contract version.
- *
- * The second is sharper. `action-registry.js` validates a **different** field —
- * `externalOperation`, the ADR-017 phase-shape marker — against
- * `SUPPORTED_ACTION_CONTRACT`. Widening that constant in place would silently
- * make `externalOperation: 2` valid: a fifth contract nobody has designed,
- * accepted by an edit that never mentioned it. Enumerating the accepted set
- * separately leaves every piggybacking check exactly where it was.
- *
- * Enumerated, never a range: `>= 1` would accept a 3 nobody has defined.
- */
-export const SUPPORTED_PACKAGE_CONTRACTS = Object.freeze([1, 2]);
-export const SUPPORTED_OPERATION_CONTRACTS = Object.freeze([1, 2]);
-export const SUPPORTED_CAPABILITY_CONTRACTS = Object.freeze([1, 2]);
-
-/**
- * A capability entry that declares no contract is contract 1.
- *
- * Absence and an explicit `1` must stay **indistinguishable everywhere
- * downstream**. Anything that can tell them apart leaks a third state the
- * contract does not have, so this default is resolved once, here, and the
- * resolved value is what travels.
- */
-export const DEFAULT_CAPABILITY_CONTRACT = 1;
-
 /**
  * Declare a domain package. This is a validating identity function: it returns
  * the definition it was given, having refused anything the runtime could not
@@ -243,9 +214,19 @@ export function validatePackageDefinition(pkg) {
     // Refusing an unnamed key is justified precisely when accepting it would be
     // silently *misread*, which is what distinguishes this from the fields a
     // caller may harmlessly carry past an evidence writer.
-    const strayContract = Object.keys(entry).find(
-      (key) => key !== 'capabilityContract' && /contract/i.test(key),
-    );
+    const strayContract = Object.keys(entry).find((key) => {
+      if (key === 'capabilityContract') return false;
+      const tokens = key
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .split(/[^a-zA-Z0-9]+/)
+        .filter(Boolean)
+        .map((token) => token.toLowerCase());
+      const compact = tokens.join('');
+      return (tokens.includes('contract')
+        && (tokens.includes('capability') || tokens.includes('capabilities')))
+        || compact === 'capabilitycontract'
+        || compact === 'capabilitiescontract';
+    });
     if (strayContract !== undefined) {
       throw new ValidationError(
         `${label}: capability "${entry.name}" declares "${strayContract}"; did you mean capabilityContract?`,
@@ -474,16 +455,25 @@ export class PackageRegistry {
     return Object.freeze({
       name: pkg.name,
       version: pkg.version,
+      packageContract: pkg.packageContract,
       label: pkg.label ?? pkg.name,
       ...(pkg.description ? { description: pkg.description } : {}),
       resources: Object.freeze([...(pkg.resources ?? [])].sort()),
       requires: Object.freeze((pkg.requires ?? [])
         .map((entry) => Object.freeze({ package: entry.package, capability: entry.capability, version: entry.version }))),
       provides: Object.freeze((pkg.capabilities ?? [])
-        .map((entry) => Object.freeze({ name: entry.name, version: entry.version }))),
+        .map((entry) => Object.freeze({
+          name: entry.name,
+          version: entry.version,
+          capabilityContract: entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
+        }))),
       actions: Object.freeze((pkg.actions ?? []).map((action) => `${action.module}.${action.name}`).sort()),
       operations: Object.freeze((pkg.operations ?? [])
-        .map((entry) => Object.freeze({ name: entry.name, ...(entry.appMethod ? { appMethod: entry.appMethod } : {}) }))),
+        .map((entry) => Object.freeze({
+          name: entry.name,
+          operationContract: entry.operationContract,
+          ...(entry.appMethod ? { appMethod: entry.appMethod } : {}),
+        }))),
     });
   }
 
@@ -609,7 +599,7 @@ export class PackageRegistry {
       }
       out[name] = {
         ...declared,
-        packageContract: SUPPORTED_PACKAGE_CONTRACT,
+        packageContract: pkg.packageContract,
         version: pkg.version,
         label: pkg.label ?? name,
         ...(pkg.description ? { description: pkg.description } : {}),
@@ -621,6 +611,7 @@ export class PackageRegistry {
           .map((entry) => ({
             name: entry.name,
             version: entry.version,
+            capabilityContract: entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
             ...(entry.description ? { description: entry.description } : {}),
           }))
           .sort((a, b) => (a.name === b.name ? a.version - b.version : a.name < b.name ? -1 : 1)),
@@ -630,6 +621,7 @@ export class PackageRegistry {
         operations: (pkg.operations ?? [])
           .map((entry) => ({
             name: entry.name,
+            operationContract: entry.operationContract,
             ...(entry.label ? { label: entry.label } : {}),
             ...(entry.appMethod ? { appMethod: entry.appMethod } : {}),
           }))
@@ -656,11 +648,14 @@ export class PackageRegistry {
    */
   report() {
     return {
-      packageContract: SUPPORTED_PACKAGE_CONTRACT,
+      packageContract: this.#packages.size === 0
+        ? SUPPORTED_PACKAGE_CONTRACT
+        : this.#packages.values().next().value.packageContract,
       packages: [...this.#packages.values()]
         .map((pkg) => ({
           name: pkg.name,
           version: pkg.version,
+          packageContract: pkg.packageContract,
           label: pkg.label ?? pkg.name,
           resources: [...(pkg.resources ?? [])].sort(),
           actions: (pkg.actions ?? []).map((action) => `${action.module}.${action.name}`).sort(),

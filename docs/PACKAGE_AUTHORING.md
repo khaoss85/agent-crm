@@ -94,6 +94,15 @@ The name is a Map key in the registry and a key in `/api/schema`. It is also
 what a collision is reported against, so choose something a stranger reading a
 stack trace would recognise.
 
+The scaffold still emits contract 1 because the public factory and SQLite
+services are synchronous. Core can validate a uniform contract-2 fixture for
+the portable async path, but M2E-1 does not ship that path and does not migrate
+customer packages. Do not change this number in isolation: package, every
+action, every declared operation and every offered capability must select the
+same version, and a mixed graph refuses startup with
+`PACKAGE_ASYNC_CONTRACT_REQUIRED`. The async factory and bundled dual graphs are
+the sequenced M2E-2/M2E-3 work.
+
 ## 3. Declare what you need from other packages
 
 A package may reach another package **only** through a declared capability:
@@ -134,6 +143,7 @@ Offering one is the mirror image:
 capabilities: [{
   name: 'delivery-obligations',
   version: 1,
+  capabilityContract: 1,
   description: 'Read pending delivery obligations and mark them handed over.',
   create({ modules, actor, now }) { return { /* the bounded interface */ }; },
 }],
@@ -141,6 +151,10 @@ capabilities: [{
 
 Expose the smallest interface that does the job. `packages/contracts` offers
 three methods and no service, table or query handle — that is the standard.
+For compatibility, an omitted `capabilityContract` means 1; registry summaries,
+schema metadata and inspection publish the normalized value explicitly. The
+capability's `version` describes its domain interface, while
+`capabilityContract` describes synchronous-v1 versus awaitable-v2 execution.
 
 ## 4. Create package-owned resources
 
@@ -196,6 +210,13 @@ proved in `tests/intelligence-package-absence.test.js`.
 An action is an ordinary action definition (`docs/ACTIONS.md`): the same
 runtime, transaction, audit, events and trace. Nothing about it is special
 because it came from a package.
+
+Execution contract 2 is an all-or-nothing graph choice, not a way to make one
+action async inside a v1 package. A v2 package declares `actionContract: 2` on
+every action, `operationContract: 2` on every operation and
+`capabilityContract: 2` on every offered capability. Its dependency edges must
+also resolve to v2 capabilities. Inspection publishes the accepted versions so
+an agent never has to infer them from the scaffold default.
 
 A versioned decision belongs in a policy with declared JSON-safe `config`, so
 its fingerprint (ADR-015) covers the thresholds as well as the code:

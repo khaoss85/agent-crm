@@ -1,8 +1,11 @@
 // @ts-check
 
-import { ValidationError } from './errors.js';
+import { AppError, ValidationError } from './errors.js';
 import { computeDefinitionFingerprint } from './definition-fingerprint.js';
 import { validatePackageDefinition } from './package-registry.js';
+import {
+  DEFAULT_CAPABILITY_CONTRACT, SUPPORTED_PACKAGE_CONTRACTS,
+} from './package-contract-versions.js';
 
 /**
  * **Composition resolution** — the rules that decide whether a set of package
@@ -40,6 +43,29 @@ function safeName(pkg) {
   return typeof name === 'string' ? name.slice(0, 64) : '(unnamed)';
 }
 
+/** Resolve the capability default before anything downstream can observe it. */
+function normalizePackageContracts(pkg) {
+  return {
+    ...pkg,
+    capabilities: (pkg.capabilities ?? []).map((entry) => ({
+      ...entry,
+      capabilityContract: entry.capabilityContract ?? DEFAULT_CAPABILITY_CONTRACT,
+    })),
+  };
+}
+
+function isKnownContract(value) {
+  return SUPPORTED_PACKAGE_CONTRACTS.includes(value);
+}
+
+function asyncContractError(message, details) {
+  return new AppError(message, {
+    code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED',
+    status: 400,
+    details,
+  });
+}
+
 /**
  * Resolve a composition and report everything wrong with it.
  *
@@ -70,21 +96,22 @@ export function resolvePackageComposition(list = []) {
     problems.push({ ...problem, error: problem.error ?? new ValidationError(problem.message) });
   };
 
-  for (const pkg of list ?? []) {
+  for (const declared of list ?? []) {
     try {
-      validatePackageDefinition(pkg);
+      validatePackageDefinition(declared);
     } catch (error) {
       // A definition that does not satisfy the contract is not registered at
       // all: every later rule would be asking questions of a shape that has
       // already failed to be a package.
       fail({
         code: 'PACKAGE_INVALID',
-        package: safeName(pkg),
+        package: safeName(declared),
         message: error instanceof Error ? error.message : String(error),
         error: error instanceof Error ? error : undefined,
       });
       continue;
     }
+    const pkg = normalizePackageContracts(declared);
     if (packages.has(pkg.name)) {
       fail({ code: 'PACKAGE_DUPLICATE', package: pkg.name, message: `Duplicate domain package name: ${pkg.name}` });
       continue;
@@ -162,6 +189,43 @@ export function resolvePackageComposition(list = []) {
     }
   }
 
+  // Contract 1 is the synchronous graph and contract 2 is the awaitable graph.
+  // Accepting both *declarations* does not make them interoperable: a Promise
+  // crossing into a v1 consumer looks like an ordinary domain value until the
+  // first runtime call. Refuse every mixed edge at composition instead.
+  for (const pkg of packages.values()) {
+    const members = [
+      ...(pkg.actions ?? []).map((entry) => ({
+        kind: 'action', name: `${entry.module}.${entry.name}`, contract: entry.actionContract,
+      })),
+      ...(pkg.operations ?? []).map((entry) => ({
+        kind: 'operation', name: entry.name, contract: entry.operationContract,
+      })),
+      ...(pkg.capabilities ?? []).map((entry) => ({
+        kind: 'capability', name: `${entry.name}@${entry.version}`, contract: entry.capabilityContract,
+      })),
+    ];
+    for (const member of members) {
+      // The member's own validator owns missing and unknown versions. This
+      // check owns only a graph made of individually understood contracts.
+      if (!isKnownContract(member.contract) || member.contract === pkg.packageContract) continue;
+      const message = `Package "${pkg.name}" declares packageContract ${pkg.packageContract}, but its `
+        + `${member.kind} "${member.name}" declares contract ${member.contract}; sync-v1 and async-v2 contracts cannot share one package graph`;
+      fail({
+        code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED',
+        package: pkg.name,
+        message,
+        error: asyncContractError(message, {
+          package: pkg.name,
+          packageContract: pkg.packageContract,
+          memberKind: member.kind,
+          member: member.name,
+          memberContract: member.contract,
+        }),
+      });
+    }
+  }
+
   // Every declared requirement must be offered by a registered package at the
   // declared version. A package that silently loses a dependency would fail
   // later, inside a transaction.
@@ -185,8 +249,45 @@ export function resolvePackageComposition(list = []) {
           message: `Package "${pkg.name}" requires "${entry.package}" capability ${entry.capability}@${entry.version}, `
             + `which it does not offer (offers: ${available.join(', ') || 'none'})`,
         });
+        continue;
+      }
+      if (pkg.packageContract !== offered.entry.capabilityContract) {
+        const message = `Package "${pkg.name}" uses packageContract ${pkg.packageContract}, but requires `
+          + `"${entry.package}" capability ${entry.capability}@${entry.version} with capabilityContract `
+          + `${offered.entry.capabilityContract}; sync-v1 and async-v2 contracts cannot share one dependency edge`;
+        fail({
+          code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED',
+          package: pkg.name,
+          capability: `${entry.capability}@${entry.version}`,
+          message,
+          error: asyncContractError(message, {
+            package: pkg.name,
+            packageContract: pkg.packageContract,
+            provider: entry.package,
+            capability: entry.capability,
+            capabilityVersion: entry.version,
+            capabilityContract: offered.entry.capabilityContract,
+          }),
+        });
       }
     }
+  }
+
+  const graphContracts = new Map();
+  for (const pkg of packages.values()) {
+    if (!graphContracts.has(pkg.packageContract)) graphContracts.set(pkg.packageContract, pkg.name);
+  }
+  if (graphContracts.size > 1) {
+    const entries = [...graphContracts.entries()].sort(([a], [b]) => a - b);
+    const message = `Package graph mixes ${entries.map(([contract, name]) => `packageContract ${contract} ("${name}")`).join(' and ')}; `
+      + 'sync-v1 and async-v2 packages must be composed in separate application graphs';
+    fail({
+      code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED',
+      message,
+      error: asyncContractError(message, {
+        packages: [...packages.values()].map((pkg) => ({ name: pkg.name, packageContract: pkg.packageContract })),
+      }),
+    });
   }
 
   // Depth-first cycle detection over the declared graph. Each cycle is reported

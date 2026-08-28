@@ -36,11 +36,11 @@ function fixtureProject(t, { packages = '', files = {}, spaces = false } = {}) {
 }
 
 /** One fixture package, written into the project as a customer's package would be. */
-function packageSource({ name, version = 1, requires = [], provides = [], resources = [], extra = '' }) {
+function packageSource({ name, version = 1, packageContract = 1, requires = [], provides = [], resources = [], extra = '' }) {
   return `import { definePackage } from '../packages/core/index.js';
 export function create${name.replaceAll('-', '')}Package() {
   return definePackage({
-    packageContract: 1,
+    packageContract: ${packageContract},
     name: ${JSON.stringify(name)},
     version: ${version},
     label: ${JSON.stringify(name)},
@@ -119,9 +119,11 @@ test('a composed application is reported completely, and the report is the contr
   assert.equal(billing.version, 1, 'package version');
   assert.equal(billing.packageContract, 1, 'package-contract version');
   assert.equal(billing.provides[0].version, 1, 'capability version');
+  assert.equal(billing.provides[0].capabilityContract, 1, 'capability-contract version');
   assert.equal(report.modules.find((entry) => entry.kind !== 'core')?.revision ?? null, null, 'no generated records in this fixture');
 
   const capability = report.capabilities.find((entry) => entry.name === 'invoice-facts');
+  assert.equal(capability.capabilityContract, 1);
   assert.deepEqual(
     { provider: capability.provider, consumers: capability.consumers, status: capability.status },
     { provider: 'billing', consumers: ['reporting'], status: 'resolved' },
@@ -140,6 +142,33 @@ test('a composed application is reported completely, and the report is the contr
   );
   assert.equal(report.evidence.status, 'not_aggregated');
   assert.equal(report.evidence.jtbdMatrixPath, 'docs/benchmarks/CRM_JTBD_MATRIX.md');
+});
+
+test('inspection reports the accepted v2 graph rather than the v1 scaffold default', async (t) => {
+  const root = projectWith(t, [{
+    name: 'async-only',
+    packageContract: 2,
+    provides: [{ name: 'async-facts', version: 1, capabilityContract: 2 }],
+    extra: "operations: [{ operationContract: 2, name: 'load-facts', create: () => async () => ({}) }],",
+  }]);
+  const { report, valid } = await inspectApplication({ rootDir: root });
+
+  assert.equal(valid, true);
+  assert.equal(report.application.packageContract, 2);
+  assert.equal(report.packages[0].packageContract, 2);
+  assert.equal(report.packages[0].provides[0].capabilityContract, 2);
+  assert.equal(report.packages[0].operations[0].operationContract, 2);
+  assert.equal(report.capabilities[0].capabilityContract, 2);
+
+  const mixedRoot = projectWith(t, [
+    { name: 'sync-only' },
+    { name: 'async-only', packageContract: 2 },
+  ]);
+  const mixed = await inspectApplication({ rootDir: mixedRoot });
+  assert.equal(mixed.valid, false);
+  assert.ok(mixed.report.problems.some((problem) => problem.code === 'PACKAGE_ASYNC_CONTRACT_REQUIRED'));
+  assert.equal(mixed.report.application.packageContract, null,
+    'an invalid mixed graph has no single application contract to publish');
 });
 
 test('the report is byte-identical between runs and between processes', async (t) => {
@@ -377,7 +406,7 @@ test('the human view and the JSON view state the same facts', async (t) => {
   assert.equal(text.status, 0);
   assert.match(text.stdout, /Composition: valid/);
   assert.match(text.stdout, /billing@1 \(packageContract 1\)/);
-  assert.match(text.stdout, /invoice-facts@1\s+resolved\s+provider=billing\s+consumers=reporting/);
+  assert.match(text.stdout, /invoice-facts@1\s+capabilityContract 1\s+resolved\s+provider=billing\s+consumers=reporting/);
   for (const limitation of json.json().limitations) {
     assert.ok(text.stdout.includes(limitation.code), `${limitation.code} is stated in the human view too`);
   }

@@ -423,7 +423,7 @@ test('the registry keeps its own state private and hands out no executable defin
   const summary = registry.get('provider');
   assert.equal(summary.capabilities, undefined, 'get() must not return capability factories');
   assert.equal(typeof summary.metadata, 'undefined', 'get() must not return functions');
-  assert.deepEqual(summary.provides, [{ name: 'cap', version: 1 }]);
+  assert.deepEqual(summary.provides, [{ name: 'cap', version: 1, capabilityContract: 1 }]);
   assert.ok(Object.isFrozen(summary), 'the summary is frozen');
 
   // The registry's own indexes are not a public mutation surface. `resources()`
