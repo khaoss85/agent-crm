@@ -6,6 +6,7 @@ import {
   chmodSync,
   closeSync,
   existsSync,
+  fstatSync as realFstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -14,10 +15,14 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import net from 'node:net';
+import { mock } from 'node:test';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import {
   DEPLOYMENT_STORAGE_CONTRACT,
@@ -340,6 +345,127 @@ test('M2-20 diagnostics never contain the path or the file bytes', () => {
   assert.equal(leakHaystack(error).includes('leaky.json'), false);
 });
 
+function mkfifo(filePath, mode = 0o600) {
+  const result = spawnSync('mkfifo', ['-m', mode.toString(8), filePath], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr || 'mkfifo failed');
+}
+
+test('M2-20 FIFO does not hang and refuses stably', { timeout: 2000 }, () => {
+  const root = scratch();
+  const fifoPath = join(root, 'config.fifo');
+  mkfifo(fifoPath, 0o600);
+  const started = Date.now();
+  const error = assertCode(
+    () => loadDeploymentStorage({ configPath: fifoPath, env: {} }),
+    'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED',
+    [fifoPath, root, SENTINEL_TOKEN, SENTINEL_PASSWORD],
+  );
+  assert.ok(Date.now() - started < 500, 'FIFO open hung the loader');
+  assert.equal(leakHaystack(error).includes('fifo'), false);
+});
+
+test('M2-20 directory, socket and character device refuse as non-regular', async () => {
+  const root = scratch();
+  const extras = [root, SENTINEL_TOKEN];
+
+  const directory = join(root, 'dir.json');
+  mkdirSync(directory);
+  extras.push(directory);
+  assertCode(() => loadDeploymentStorage({ configPath: directory, env: {} }), 'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED', extras);
+
+  const socketPath = join(root, 'device.sock');
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(socketPath, resolve);
+  });
+  try {
+    extras.push(socketPath);
+    const started = Date.now();
+    assertCode(
+      () => loadDeploymentStorage({ configPath: socketPath, env: {} }),
+      'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED',
+      extras,
+    );
+    assert.ok(Date.now() - started < 500, 'socket open hung the loader');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+
+  const startedNull = Date.now();
+  const error = assertCode(
+    () => loadDeploymentStorage({ configPath: '/dev/null', env: {} }),
+    'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED',
+    ['/dev/null', 'dev/null'],
+  );
+  assert.ok(Date.now() - startedNull < 500, '/dev/null hung the loader');
+  assert.equal(leakHaystack(error).includes('/dev/null'), false);
+});
+
+test('M2-20 same-fd open/fstat/read refuses a replacement that changes the inode bytes', () => {
+  const root = scratch();
+  const configPath = writeConfig(root, sqliteEnvelope());
+  const original = readFileSync(configPath);
+  const evil = Buffer.from(`${JSON.stringify(sqliteEnvelope({ extra: true }), null, 2)}\n`);
+
+  let flipped = false;
+  const mocked = mock.method(fs, 'fstatSync', function mockedFstat(fd, options) {
+    const stat = arguments.length > 1 ? realFstatSync(fd, options) : realFstatSync(fd);
+    if (!flipped && stat.isFile() && stat.size === original.length) {
+      flipped = true;
+      rmSync(configPath);
+      writeFileSync(configPath, evil);
+      chmodSync(configPath, 0o600);
+    }
+    return stat;
+  });
+  try {
+    const selected = loadDeploymentStorage({ configPath, env: {} });
+    assert.equal(flipped, true, 'fstat hook did not run; same-fd contract is untested');
+    assert.equal(selected.adapter, 'sqlite');
+    assert.equal(selected.connection.path, './data/tenant.sqlite');
+  } finally {
+    mocked.mock.restore();
+  }
+});
+
+test('M2-20 truncating the opened inode between fstat and read cannot bypass trust', () => {
+  const root = scratch();
+  const configPath = writeConfig(root, sqliteEnvelope());
+  const originalSize = readFileSync(configPath).length;
+
+  let flipped = false;
+  const mocked = mock.method(fs, 'fstatSync', function mockedFstat(fd, options) {
+    const stat = arguments.length > 1 ? realFstatSync(fd, options) : realFstatSync(fd);
+    if (!flipped && stat.isFile() && stat.size === originalSize) {
+      flipped = true;
+      fs.ftruncateSync(fd, 0);
+    }
+    return stat;
+  });
+  try {
+    assertCode(
+      () => loadDeploymentStorage({ configPath, env: {} }),
+      'DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED',
+      [configPath, root],
+    );
+    assert.equal(flipped, true, 'fstat hook did not run; truncate contract is untested');
+  } finally {
+    mocked.mock.restore();
+  }
+});
+
+test('M2-20 trusted-file open uses O_RDONLY|O_NOFOLLOW|O_NONBLOCK on the same fd', () => {
+  const source = readFileSync(join(repoRoot, 'packages/core/src/trusted-file.js'), 'utf8');
+  assert.equal(source.includes('O_NONBLOCK'), true);
+  assert.equal(source.includes('O_NOFOLLOW'), true);
+  assert.equal(source.includes('O_RDONLY'), true);
+  assert.equal(/\bstatSync\b/.test(source), false);
+  assert.equal(/\blstatSync\b/.test(source), false);
+  assert.equal(/\breadFileSync\b/.test(source), false);
+  assert.equal(source.includes('using '), false);
+});
+
 test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and missing TLS', () => {
   const root = scratch();
   const extras = [root, SENTINEL_PASSWORD];
@@ -506,7 +632,7 @@ test('M2-17 loading the same trusted document twice is identical', () => {
   assert.deepEqual(describeDeploymentStorage(first), describeDeploymentStorage(second));
 });
 
-test('M2-22 is not started: identityVerifier remains an opaque relative path', () => {
+test('M2-22 parser still stores an opaque relative path and does not import it', () => {
   const root = scratch();
   const configPath = writeConfig(root, sqliteEnvelope({
     identityVerifier: './does-not-exist-and-must-not-be-imported.js',

@@ -109,6 +109,29 @@ named follow-ups.
 Closing the consumer gap (factory/CLI/MCP and public `{adapter, available}`
 surfaces) is later M2F work, not a per-domain backfill.
 
+### Identity-verifier pre-connect contract v2 assessment (Production Spine v2 M2F)
+
+The verifier resolver is a horizontal *runtime* capability: every executable
+will eventually import one repository-relative ESM provider before it connects.
+Domains do not resolve verifiers and must not import the resolver. This PR
+ships the pre-connect contract only; CLI/serve/MCP wiring and live
+discover/attest (M3) are named follow-ups.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project records do not resolve the identity verifier |
+| Pipeline | `not_applicable` | pipeline composition does not import verifier modules |
+| Lead Intelligence | `not_applicable` | package behaviour does not select the verifier provider |
+| Commercial Operations | `not_applicable` | package behaviour does not select the verifier provider |
+| Signature & Order | `not_applicable` | package behaviour does not select the verifier provider |
+| Contract Activation | `not_applicable` | package behaviour does not select the verifier provider |
+| Delivery | `not_applicable` | package behaviour does not select the verifier provider |
+| Service | `not_applicable` | package behaviour does not select the verifier provider |
+| Work | `not_applicable` | package behaviour does not select the verifier provider |
+| Lifecycle | `not_applicable` | package behaviour does not select the verifier provider |
+| Customer Data | `not_applicable` | package behaviour does not select the verifier provider |
+| Custom-package fixture | `not_applicable` | customer packages receive no identityVerifier document |
+
 ### Public site provenance contract v2 assessment
 
 `/version.json` v2 is a horizontal discovery contract for the generated public

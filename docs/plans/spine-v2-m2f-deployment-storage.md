@@ -261,7 +261,8 @@ Follow-up PRs, not this one:
 
 - Wire `configPath` / `ACCORDO_DEPLOYMENT_STORAGE` into CLI/serve/MCP and
   refuse inline credential argv (remainder of M2-17 consumers; M2-11, M2-32).
-- identityVerifier ESM resolution, deadline, hanging fixture (M2-22).
+- identityVerifier ESM resolution, deadline, hanging fixture (M2-22) — owned
+  by `docs/plans/spine-v2-m2f-verifier-preconnect.md`.
 - Replace locators on every public surface with the descriptor (remainder of
   M2-08).
 - Live PostgreSQL adapter and real TLS endpoints (M3 / M2-19).
