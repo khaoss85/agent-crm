@@ -15,7 +15,7 @@ import {
 import { openTransactionScope } from './transaction-minter.js';
 import { currentTransactionWitness } from './transaction-witness.js';
 
-const { Pool } = pg;
+const { Pool, Client } = pg;
 
 const DEFAULT_ACQUISITION_MS = 2_000;
 const DEFAULT_QUERY_MS = 5_000;
@@ -197,8 +197,16 @@ function destroyClient(client) {
   try {
     client.release(new Error('accordo-postgresql-client-destroyed'));
   } catch {
-    try { client.release(true); } catch { /* already gone */ }
+    try { client.release(true); } catch {
+      try { client.end(); } catch { /* already gone */ }
+    }
   }
+}
+
+function isPoolCheckoutTimeout(error) {
+  if (error instanceof AppError && error.code === 'STORAGE_TIMEOUT') return true;
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /timeout exceeded when trying to connect/i.test(message);
 }
 
 function releaseClient(client) {
@@ -232,9 +240,29 @@ export function createPostgresqlStorage(pool, options = {}) {
   const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
   const statementTimeoutMs = options.statementTimeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS;
   const quotedSchema = schema ? quoteStorageIdentifier(schema, 'schema') : null;
+  const checkedOut = new Set();
 
   /** @type {object} */
   const poolStorage = {};
+
+  function track(client) {
+    checkedOut.add(client);
+    return client;
+  }
+
+  function forget(client) {
+    checkedOut.delete(client);
+  }
+
+  function destroyTracked(client) {
+    forget(client);
+    destroyClient(client);
+  }
+
+  function releaseTracked(client) {
+    forget(client);
+    releaseClient(client);
+  }
 
   async function acquire() {
     let timedOut = false;
@@ -242,16 +270,17 @@ export function createPostgresqlStorage(pool, options = {}) {
     const pending = pool.connect();
     pending.then(
       (client) => {
-        if (settled && timedOut) destroyClient(client);
+        if (settled && timedOut) destroyTracked(client);
       },
       () => {},
     );
     try {
       const client = await withDeadline(pending, acquisitionDeadlineMs, 'acquisition');
       settled = true;
+      track(client);
       if (client.listenerCount('error') === 0) {
         client.on('error', () => {
-          destroyClient(client);
+          destroyTracked(client);
         });
       }
       if (quotedSchema) {
@@ -259,8 +288,9 @@ export function createPostgresqlStorage(pool, options = {}) {
       }
       return client;
     } catch (error) {
-      timedOut = error instanceof AppError && error.code === 'STORAGE_TIMEOUT';
+      timedOut = isPoolCheckoutTimeout(error);
       settled = true;
+      if (timedOut) throw publicTimeout('acquisition');
       throw error instanceof AppError ? error : sanitizePgError(error);
     }
   }
@@ -276,7 +306,7 @@ export function createPostgresqlStorage(pool, options = {}) {
     } catch (error) {
       const mapped = error instanceof AppError ? error : sanitizePgError(error);
       if (mapped.code === 'STORAGE_TIMEOUT' || mapped.code === 'STORAGE_UNAVAILABLE') {
-        destroyClient(client);
+        destroyTracked(client);
         const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
         if (bind && bind.client === client) bind.destroyed = true;
       }
@@ -327,7 +357,7 @@ export function createPostgresqlStorage(pool, options = {}) {
     } catch (error) {
       const mapped = error instanceof AppError ? error : sanitizePgError(error);
       if (mapped.code === 'STORAGE_TIMEOUT' || mapped.code === 'STORAGE_UNAVAILABLE') {
-        destroyClient(client);
+        destroyTracked(client);
         const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
         if (bind && bind.client === client) bind.destroyed = true;
         throw new AppError('PostgreSQL commit outcome is unknown', {
@@ -442,7 +472,7 @@ export function createPostgresqlStorage(pool, options = {}) {
       throw error instanceof AppError ? error : sanitizePgError(error);
     } finally {
       const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
-      if (!(bind && bind.destroyed && bind.client === client)) releaseClient(client);
+      if (!(bind && bind.destroyed && bind.client === client)) releaseTracked(client);
     }
   }
 
@@ -455,7 +485,7 @@ export function createPostgresqlStorage(pool, options = {}) {
       throw error instanceof AppError ? error : sanitizePgError(error);
     } finally {
       const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
-      if (!(bind && bind.destroyed && bind.client === client)) releaseClient(client);
+      if (!(bind && bind.destroyed && bind.client === client)) releaseTracked(client);
     }
   }
 
@@ -489,8 +519,12 @@ export function createPostgresqlStorage(pool, options = {}) {
       });
     } finally {
       bind.closed = true;
-      if (!bind.destroyed) releaseClient(client);
+      if (!bind.destroyed) releaseTracked(client);
     }
+  }
+
+  function abandonCheckedOut() {
+    for (const client of [...checkedOut]) destroyTracked(client);
   }
 
   Object.assign(poolStorage, {
@@ -512,12 +546,15 @@ export function createPostgresqlStorage(pool, options = {}) {
     },
     transaction: runTransaction,
     async close() {
+      abandonCheckedOut();
       await pool.end();
     },
   });
   Object.freeze(poolStorage);
 
-  PROBES.set(poolStorage, { pool, acquire, queryOn, destroyClient });
+  PROBES.set(poolStorage, {
+    pool, acquire, queryOn, destroyClient: destroyTracked, releaseClient: releaseTracked, abandonCheckedOut,
+  });
   return poolStorage;
 }
 
@@ -559,12 +596,19 @@ export async function createPostgresqlDatabase(options = {}) {
     /* never log connection details */
   });
   let setup;
+  const setupPending = pool.connect();
+  let setupTimedOut = false;
+  setupPending.then(
+    (client) => { if (setupTimedOut) destroyClient(client); },
+    () => {},
+  );
   try {
-    setup = await withDeadline(pool.connect(), options.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS, 'acquisition');
+    setup = await withDeadline(setupPending, options.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS, 'acquisition');
     await setup.query(`CREATE SCHEMA ${quoted}`);
     await setup.query(`SET search_path TO ${quoted}`);
     for (const sql of options.ddl ?? []) await setup.query(sql);
   } catch (error) {
+    setupTimedOut = isPoolCheckoutTimeout(error);
     try { if (setup) setup.release(); } catch { /* ignore */ }
     try { await pool.end(); } catch { /* ignore */ }
     throw error instanceof AppError ? error : sanitizePgError(error);
@@ -579,20 +623,27 @@ export async function createPostgresqlDatabase(options = {}) {
     statementTimeoutMs: options.statementTimeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS,
   });
 
+  let closed = false;
   return Object.freeze({
     storage,
     adapter: 'postgresql',
     schema,
     async close() {
-      let client;
+      if (closed) return;
+      closed = true;
+      const probe = PROBES.get(storage);
+      try { probe?.abandonCheckedOut?.(); } catch { /* already gone */ }
+      const admin = new Client({ connectionString: connection, connectionTimeoutMillis: 2000 });
       try {
-        client = await pool.connect();
-        await client.query(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`);
+        await withDeadline(admin.connect(), 2000, 'acquisition');
+        await admin.query(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`);
       } catch {
         /* teardown is best-effort */
       } finally {
-        if (client) releaseClient(client);
-        await pool.end().catch(() => {});
+        try { await admin.end(); } catch { /* ignore */ }
+      }
+      try { await storage.close(); } catch {
+        try { await pool.end(); } catch { /* ignore */ }
       }
     },
   });
@@ -628,7 +679,8 @@ export async function probePostgresqlQuery(storage, sql, params = []) {
     } finally {
       const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
       if (!(bind && bind.destroyed && bind.client === client)) {
-        try { client.release(); } catch { /* ignore */ }
+        if (probe.releaseClient) probe.releaseClient(client);
+        else try { client.release(); } catch { /* ignore */ }
       }
     }
   }
@@ -648,7 +700,8 @@ export async function probePostgresqlQueryDeadline(storage, seconds) {
   } finally {
     const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
     if (!(bind && bind.destroyed && bind.client === client)) {
-      try { client.release(); } catch { /* ignore */ }
+      if (probe.releaseClient) probe.releaseClient(client);
+      else try { client.release(); } catch { /* ignore */ }
     }
   }
 }

@@ -273,7 +273,6 @@ test('M3B live PostgreSQL adapter', { timeout: 30_000 }, async (t) => {
     const firstReady = new Promise((resolve) => { releaseFirst = resolve; });
     let holdFirst;
     const firstHold = new Promise((resolve) => { holdFirst = resolve; });
-    t.after(() => { try { holdFirst(); } catch { /* already released */ } });
     const first = storage.transaction(async (tx) => {
       await tx.maybeOne(selectName('race'));
       releaseFirst();
@@ -283,25 +282,30 @@ test('M3B live PostgreSQL adapter', { timeout: 30_000 }, async (t) => {
         where: [{ column: 'id', op: 'eq', value: 'race' }],
       });
     });
-    await firstReady;
-    const second = storage.transaction(async (tx) => {
-      await tx.maybeOne(selectName('race'));
-      await tx.execute({
-        kind: 'update', table: 'companies', values: [{ column: 'name', value: 'Second' }],
-        where: [{ column: 'id', op: 'eq', value: 'race' }],
+    try {
+      await firstReady;
+      const second = storage.transaction(async (tx) => {
+        await tx.maybeOne(selectName('race'));
+        await tx.execute({
+          kind: 'update', table: 'companies', values: [{ column: 'name', value: 'Second' }],
+          where: [{ column: 'id', op: 'eq', value: 'race' }],
+        });
       });
-    });
-    const secondResult = second.then((value) => ({ status: 'fulfilled', value }), (reason) => ({ status: 'rejected', reason }));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    holdFirst();
-    const firstResult = await first.then((value) => ({ status: 'fulfilled', value }), (reason) => ({ status: 'rejected', reason }));
-    const other = await secondResult;
-    const rejected = [firstResult, other].filter((entry) => entry.status === 'rejected');
-    assert.ok(rejected.length >= 1, 'SERIALIZABLE must refuse at least one overlapping writer');
-    for (const entry of rejected) {
-      assert.equal(entry.reason.code, 'CONFLICT');
-      assert.equal(entry.reason.details?.transient, true);
-      assertNoSecrets(entry.reason);
+      const secondResult = second.then((value) => ({ status: 'fulfilled', value }), (reason) => ({ status: 'rejected', reason }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      holdFirst();
+      const firstResult = await first.then((value) => ({ status: 'fulfilled', value }), (reason) => ({ status: 'rejected', reason }));
+      const other = await secondResult;
+      const rejected = [firstResult, other].filter((entry) => entry.status === 'rejected');
+      assert.ok(rejected.length >= 1, 'SERIALIZABLE must refuse at least one overlapping writer');
+      for (const entry of rejected) {
+        assert.equal(entry.reason.code, 'CONFLICT');
+        assert.equal(entry.reason.details?.transient, true);
+        assertNoSecrets(entry.reason);
+      }
+    } finally {
+      try { holdFirst(); } catch { /* already released */ }
+      await first.catch(() => {});
     }
   });
 
@@ -348,7 +352,32 @@ test('M3B acquisition deadline destroys the waiter and recovers the pool', { tim
   if (!db) return;
   let release;
   const hold = new Promise((resolve) => { release = resolve; });
-  t.after(() => { try { release(); } catch { /* already released */ } });
+  let acquired;
+  const started = new Promise((resolve) => { acquired = resolve; });
+  const first = db.storage.transaction(async () => {
+    acquired();
+    await hold;
+  });
+  try {
+    await started;
+    await assert.rejects(db.storage.transaction(async () => {}), (error) => {
+      assert.equal(error.code, 'STORAGE_TIMEOUT');
+      assertNoSecrets(error);
+      return true;
+    });
+  } finally {
+    try { release(); } catch { /* already released */ }
+    await first.catch(() => {});
+  }
+  await db.storage.execute(insertCompany('recovered', 'Recovered'));
+  assert.equal((await db.storage.maybeOne(selectName('recovered'))).name, 'Recovered');
+});
+
+test('M3B close returns while a max:1 transaction still holds its client', { timeout: 15_000 }, async (t) => {
+  const db = await openPostgresqlFixture(t, { max: 1, acquisitionDeadlineMs: 200 });
+  if (!db) return;
+  let release;
+  const hold = new Promise((resolve) => { release = resolve; });
   let acquired;
   const started = new Promise((resolve) => { acquired = resolve; });
   const first = db.storage.transaction(async () => {
@@ -356,15 +385,9 @@ test('M3B acquisition deadline destroys the waiter and recovers the pool', { tim
     await hold;
   });
   await started;
-  await assert.rejects(db.storage.transaction(async () => {}), (error) => {
-    assert.equal(error.code, 'STORAGE_TIMEOUT');
-    assertNoSecrets(error);
-    return true;
-  });
-  release();
-  await first;
-  await db.storage.execute(insertCompany('recovered', 'Recovered'));
-  assert.equal((await db.storage.maybeOne(selectName('recovered'))).name, 'Recovered');
+  await db.close();
+  try { release(); } catch { /* already released */ }
+  await first.catch(() => {});
 });
 
 test('M3B query deadline destroys a black-holed client and recovers', { timeout: 15_000 }, async (t) => {
@@ -385,7 +408,6 @@ test('M3B lock_timeout maps to STORAGE_TIMEOUT without leaking the URL', { timeo
   await db.storage.execute(insertCompany('locked', 'Lock'));
   let release;
   const hold = new Promise((resolve) => { release = resolve; });
-  t.after(() => { try { release(); } catch { /* already released */ } });
   let ready;
   const started = new Promise((resolve) => { ready = resolve; });
   const holder = db.storage.transaction(async (tx) => {
@@ -396,19 +418,22 @@ test('M3B lock_timeout maps to STORAGE_TIMEOUT without leaking the URL', { timeo
     ready();
     await hold;
   });
-  await started;
-  await assert.rejects(db.storage.transaction(async (tx) => {
-    await tx.execute({
-      kind: 'update', table: 'companies', values: [{ column: 'name', value: 'Waiter' }],
-      where: [{ column: 'id', op: 'eq', value: 'locked' }],
+  try {
+    await started;
+    await assert.rejects(db.storage.transaction(async (tx) => {
+      await tx.execute({
+        kind: 'update', table: 'companies', values: [{ column: 'name', value: 'Waiter' }],
+        where: [{ column: 'id', op: 'eq', value: 'locked' }],
+      });
+    }), (error) => {
+      assert.ok(error.code === 'STORAGE_TIMEOUT' || error.code === 'CONFLICT');
+      assertNoSecrets(error);
+      return true;
     });
-  }), (error) => {
-    assert.ok(error.code === 'STORAGE_TIMEOUT' || error.code === 'CONFLICT');
-    assertNoSecrets(error);
-    return true;
-  });
-  release();
-  await holder;
+  } finally {
+    try { release(); } catch { /* already released */ }
+    await holder.catch(() => {});
+  }
 });
 
 test('M3B connection failure with sentinel credentials never echoes them', async () => {
