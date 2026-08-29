@@ -125,6 +125,9 @@ test('selectPackageGraph preserves v1 identity and wraps only the v2 seams', asy
   assert.deepEqual(settled, { ok: true });
   const iface = await v2.capabilities[0].create();
   assert.equal(iface.ping(), 'pong');
+
+  assert.throws(() => selectPackageGraph(v2, 1), isAsyncContract);
+  assert.equal(types.isAsyncFunction(v1.actions[0].execute), false);
 });
 
 test('every bundled package exports a v1 graph and a distinct v2 graph', () => {

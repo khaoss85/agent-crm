@@ -188,6 +188,15 @@ export function selectPackageGraph(definition, contract) {
   }
   if (selected === 1 && definition.packageContract === 1) return definition;
   if (selected === 2 && definition.packageContract === 2) return definition;
+  if (selected === 1 && definition.packageContract === 2) {
+    const name = typeof definition.name === 'string' && definition.name !== ''
+      ? definition.name
+      : '(unnamed)';
+    throw asyncContractError(
+      `Cannot down-convert package "${name}" from packageContract 2 to 1; v2 execute seams are not the synchronous v1 functions`,
+      { package: name, packageContract: 2, selectedContract: 1 },
+    );
+  }
   return definePackage(cloneGraph(definition, selected));
 }
 
