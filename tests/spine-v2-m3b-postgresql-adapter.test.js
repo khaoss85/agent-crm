@@ -273,6 +273,7 @@ test('M3B live PostgreSQL adapter', { timeout: 30_000 }, async (t) => {
     const firstReady = new Promise((resolve) => { releaseFirst = resolve; });
     let holdFirst;
     const firstHold = new Promise((resolve) => { holdFirst = resolve; });
+    t.after(() => { try { holdFirst(); } catch { /* already released */ } });
     const first = storage.transaction(async (tx) => {
       await tx.maybeOne(selectName('race'));
       releaseFirst();
@@ -347,6 +348,7 @@ test('M3B acquisition deadline destroys the waiter and recovers the pool', { tim
   if (!db) return;
   let release;
   const hold = new Promise((resolve) => { release = resolve; });
+  t.after(() => { try { release(); } catch { /* already released */ } });
   let acquired;
   const started = new Promise((resolve) => { acquired = resolve; });
   const first = db.storage.transaction(async () => {
@@ -383,6 +385,7 @@ test('M3B lock_timeout maps to STORAGE_TIMEOUT without leaking the URL', { timeo
   await db.storage.execute(insertCompany('locked', 'Lock'));
   let release;
   const hold = new Promise((resolve) => { release = resolve; });
+  t.after(() => { try { release(); } catch { /* already released */ } });
   let ready;
   const started = new Promise((resolve) => { ready = resolve; });
   const holder = db.storage.transaction(async (tx) => {
