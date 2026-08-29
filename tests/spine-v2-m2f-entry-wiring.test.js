@@ -378,6 +378,7 @@ test('M2-17 serve --db still discloses the ratified SQLite path and listens', { 
       }, 10_000);
       child.stdout.on('data', () => {
         if (!stdout.includes('Accordo running at')) return;
+        if (!stdout.includes(`Database: ${dbPath}`)) return;
         clearTimeout(timeout);
         resolve(undefined);
       });
@@ -428,6 +429,7 @@ test('M2-17 serve document-selected stdout is {adapter,available} not a path', {
       }, 10_000);
       child.stdout.on('data', () => {
         if (!stdout.includes('Accordo running at')) return;
+        if (!stdout.includes('"adapter":"sqlite"')) return;
         clearTimeout(timeout);
         resolve(undefined);
       });
