@@ -385,4 +385,6 @@ security, package startup and capability echoes settle before listen; HTTP
 handlers await service/action/operation/capability execution; a thenable is
 never a domain value at the dispatcher. It does not compose generated project
 modules, bundled v1 domains, dual-plane Spine, or change default serve.
-M2E-3 owns dual bundled definitions plus any honest public factory export.
+M2E-3 published `createAccordoAppAsync()` over an explicit empty contract-2
+kernel graph (`docs/plans/spine-v2-m2e3-public-async-factory.md`). Dual bundled
+v1/v2 package definitions remain later compatibility work.

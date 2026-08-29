@@ -94,18 +94,20 @@ The name is a Map key in the registry and a key in `/api/schema`. It is also
 what a collision is reported against, so choose something a stranger reading a
 stack trace would recognise.
 
-The scaffold still emits contract 1 because the public factory and SQLite
-services are synchronous. Core can validate a uniform contract-2 fixture for
-the portable async path, but M2E-1 does not ship that path and does not migrate
-customer packages. Do not change this number in isolation: package, every
-action, every declared operation and every offered capability must select the
-same version, and a mixed graph refuses startup with
-`PACKAGE_ASYNC_CONTRACT_REQUIRED`. The portable async path (M2E-2) is
-source-private until M2E-3 ships dual bundled graphs; M2E-2C verifies an
-offered capability's optional interface `capabilityContract` against the
-declaration before a portable HTTP listener binds, and refuses a thenable
-standing in for that interface. The public factory and default `accordo serve`
-remain the synchronous v1 path.
+The scaffold still emits contract 1 because the released SQLite factory and
+default `accordo serve` are synchronous. `createAccordoAppAsync()` is the
+portable SQLite factory: its default graph is an explicit `packageContract: 2`
+with no packages, so kernel CRM starts without selecting a customer v1
+package as v2. Core can validate a uniform contract-2 fixture, and a v1
+package passed onto the portable path refuses with
+`PACKAGE_ASYNC_CONTRACT_REQUIRED` before SQLite opens. Do not change this
+number in isolation: package, every action, every declared operation and
+every offered capability must select the same version, and a mixed graph
+refuses startup with the same code. Dual bundled v1/v2 definitions are not
+this factory. M2E-2C verifies an offered capability's optional interface
+`capabilityContract` against the declaration before a portable HTTP listener
+binds, and refuses a thenable standing in for that interface. Default
+`accordo serve` remains the synchronous v1 path.
 
 ## 3. Declare what you need from other packages
 
