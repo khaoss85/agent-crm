@@ -151,7 +151,7 @@ have been caught surviving its own fix.
 
 ## JTBD-13 — Report pipeline
 - **Status**: **partially supported** — data is queryable via API/SDK and the dashboard shows counts; no reporting/aggregation surface for generated modules.
-- **Evidence**: `/health` counts, dashboard.
+- **Evidence**: authenticated `/api/admin/metrics` counts, dashboard. Unauthenticated `GET /health` is liveness/readiness only and does not carry counts.
 
 ## JTBD-14 — Integrate email / calendar / marketing
 - **Status**: **not supported** — only an in-memory notification provider contract exists; no email/calendar/marketing adapters.
