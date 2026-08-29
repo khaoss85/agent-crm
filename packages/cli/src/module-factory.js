@@ -15,6 +15,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { ConflictError, ValidationError } from '../../core/src/errors.js';
 import {
   generateModuleEvolution,
+  generatePostgresModuleEvolution,
   inboundReferences,
   moduleStateFingerprint,
   readModuleState,
@@ -198,7 +199,11 @@ export function planModule(input) {
       // source that does not depend on any particular database.
       path: join(moduleDir, 'module.state.json'),
       action: evolving ? 'update' : 'create',
-      content: renderModuleState({ manifest, migrations: history }),
+      content: renderModuleState({
+        manifest,
+        migrations: history,
+        postgres: nextPostgresState(previousState, manifest, evolution),
+      }),
     },
     {
       path: join(moduleDir, 'src', 'migration.js'),
@@ -425,6 +430,34 @@ function collectGeneratedModuleNames(rootDir, includeName) {
 /** @param {string} moduleName */
 function sanitizeSavepoint(moduleName) {
   return moduleName.replaceAll('-', '_');
+}
+
+/**
+ * Preserve a checked-in PostgreSQL bootstrap and append dialect-specific
+ * evolutions. A v1 or pre-state module has no bootstrap yet; render writes one
+ * from the current manifest.
+ *
+ * @param {any} previousState
+ * @param {any} manifest
+ * @param {any} evolution
+ */
+function nextPostgresState(previousState, manifest, evolution) {
+  if (!previousState?.postgres?.bootstrap) return null;
+  const evolutions = [...(previousState.postgres.evolutions ?? [])];
+  if (evolution?.migrationName) {
+    const postgresEvolution = generatePostgresModuleEvolution({
+      previous: previousState.manifest,
+      next: manifest,
+    });
+    if (postgresEvolution.migrationName) {
+      evolutions.push({
+        name: postgresEvolution.migrationName,
+        sql: postgresEvolution.sql,
+        checksum: createHash('sha256').update(postgresEvolution.sql).digest('hex'),
+      });
+    }
+  }
+  return { bootstrap: previousState.postgres.bootstrap, evolutions };
 }
 
 /**
