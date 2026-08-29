@@ -25,6 +25,7 @@ const SCHEMA_NAME = /^[a-z][a-z0-9_]{0,62}$/;
 const CANONICAL_INT = /^-?(?:0|[1-9]\d+)$/;
 const INT_OIDS = new Set([20, 21, 23, 26]);
 const BOOL_OID = 16;
+const TIMESTAMP_OIDS = new Set([1082, 1114, 1184]);
 const PROBES = new WeakMap();
 const TX_BIND = new AsyncLocalStorage();
 const DESTROYED = new WeakSet();
@@ -135,8 +136,24 @@ function fromDriverInteger(value) {
   throw integerUnsafe();
 }
 
+function fromDriverTimestamp(value) {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new AppError('PostgreSQL timestamp is not a valid date', {
+        code: 'STORAGE_UNAVAILABLE', status: 500,
+      });
+    }
+    return value.toISOString();
+  }
+  if (typeof value === 'string') return value;
+  throw new AppError('PostgreSQL timestamp is not a valid date', {
+    code: 'STORAGE_UNAVAILABLE', status: 500,
+  });
+}
+
 function normalizeValue(value, oid) {
   if (value === null || value === undefined) return null;
+  if (value instanceof Date || TIMESTAMP_OIDS.has(oid)) return fromDriverTimestamp(value);
   if (oid === BOOL_OID || typeof value === 'boolean') return value ? 1 : 0;
   if (INT_OIDS.has(oid) || typeof value === 'bigint') return fromDriverInteger(value);
   return value;
@@ -244,12 +261,13 @@ export function createPostgresqlStorage(pool, options = {}) {
     try {
       return await withDeadline(client.query(sql, params), queryDeadlineMs, 'query');
     } catch (error) {
-      if (error instanceof AppError && error.code === 'STORAGE_TIMEOUT') {
+      const mapped = error instanceof AppError ? error : sanitizePgError(error);
+      if (mapped.code === 'STORAGE_TIMEOUT' || mapped.code === 'STORAGE_UNAVAILABLE') {
         destroyClient(client);
         const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
         if (bind && bind.client === client) bind.destroyed = true;
       }
-      throw error instanceof AppError ? error : sanitizePgError(error);
+      throw mapped;
     }
   }
 
@@ -294,18 +312,16 @@ export function createPostgresqlStorage(pool, options = {}) {
     try {
       await queryOn(client, 'COMMIT');
     } catch (error) {
-      if (error instanceof AppError && error.code === 'STORAGE_TIMEOUT') {
+      const mapped = error instanceof AppError ? error : sanitizePgError(error);
+      if (mapped.code === 'STORAGE_TIMEOUT' || mapped.code === 'STORAGE_UNAVAILABLE') {
+        destroyClient(client);
+        const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+        if (bind && bind.client === client) bind.destroyed = true;
         throw new AppError('PostgreSQL commit outcome is unknown', {
           code: 'COMMIT_OUTCOME_UNKNOWN', status: 503,
         });
       }
-      const original = error instanceof AppError ? error : sanitizePgError(error);
-      if (connectionLost(error) || (error instanceof AppError && error.code === 'STORAGE_UNAVAILABLE')) {
-        throw new AppError('PostgreSQL commit outcome is unknown', {
-          code: 'COMMIT_OUTCOME_UNKNOWN', status: 503,
-        });
-      }
-      throw original;
+      throw mapped;
     }
   }
 
@@ -382,7 +398,9 @@ export function createPostgresqlStorage(pool, options = {}) {
       savepoint: run.savepoint,
       transaction: run.transaction,
     });
-    return Object.freeze(affine);
+    Object.freeze(affine);
+    PROBES.set(affine, { queryOn: (sql, params) => queryOn(client, sql, params), client });
+    return affine;
   }
 
   function refusePoolDuringTx() {
@@ -575,6 +593,35 @@ export async function createPostgresqlDatabase(options = {}) {
  * @param {object} storage
  * @param {number} seconds
  */
+/**
+ * Test-only probe: run one SQL string on the affine client. Not a statement
+ * vocabulary escape hatch and not exported from the public kernel.
+ *
+ * @param {object} storage
+ * @param {string} sql
+ * @param {unknown[]} [params]
+ */
+export async function probePostgresqlQuery(storage, sql, params = []) {
+  const probe = PROBES.get(storage);
+  if (!probe?.queryOn) {
+    throw new AppError('PostgreSQL query probe requires an adapter handle', {
+      code: 'STORAGE_UNAVAILABLE', status: 500,
+    });
+  }
+  if (probe.acquire) {
+    const client = await probe.acquire();
+    try {
+      return await probe.queryOn(client, sql, params);
+    } finally {
+      const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+      if (!(bind && bind.destroyed && bind.client === client)) {
+        try { client.release(); } catch { /* ignore */ }
+      }
+    }
+  }
+  return probe.queryOn(sql, params);
+}
+
 export async function probePostgresqlQueryDeadline(storage, seconds) {
   const probe = PROBES.get(storage);
   if (!probe) {

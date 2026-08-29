@@ -9,6 +9,7 @@ import { TRANSACTION_PROOF, proveCallerTransaction } from '../packages/core/inde
 import {
   createPostgresqlDatabase,
   POSTGRESQL_DRIVER,
+  probePostgresqlQuery,
   probePostgresqlQueryDeadline,
 } from '../packages/core/src/postgresql-storage.js';
 import { STORAGE_CONTRACT } from '../packages/core/src/storage-contract.js';
@@ -127,12 +128,14 @@ test('M3B live PostgreSQL adapter', async (t) => {
       kind: 'insert', table: 'flags', values: [
         { column: 'id', value: 'flag-true' }, { column: 'flag', value: true },
         { column: 'stamped', value: '2026-01-01T00:00:00.000Z' },
+        { column: 'stamped_at', value: '2026-01-01T00:00:00.000Z' },
       ],
     });
     await storage.execute({
       kind: 'insert', table: 'flags', values: [
         { column: 'id', value: 'flag-false' }, { column: 'flag', value: false },
         { column: 'stamped', value: null },
+        { column: 'stamped_at', value: null },
       ],
     });
     const truthy = await storage.maybeOne({
@@ -146,7 +149,11 @@ test('M3B live PostgreSQL adapter', async (t) => {
     assert.equal(truthy.flag, 1);
     assert.equal(falsy.flag, 0);
     assert.equal(truthy.stamped, '2026-01-01T00:00:00.000Z');
+    assert.equal(typeof truthy.stamped_at, 'string');
+    assert.equal(truthy.stamped_at, '2026-01-01T00:00:00.000Z');
+    assert.equal(truthy.stamped_at instanceof Date, false);
     assert.equal(falsy.stamped, null);
+    assert.equal(falsy.stamped_at, null);
     assertNoSecrets(truthy);
     assertNoSecrets(falsy);
   });
@@ -300,6 +307,30 @@ test('M3B live PostgreSQL adapter', async (t) => {
       kind: 'count', table: 'companies', where: [],
     })).n, 3);
   });
+});
+
+test('M3B connection loss during COMMIT is unknown and the client is not recycled', async (t) => {
+  const db = await openPostgresqlFixture(t, { max: 1 });
+  if (!db) return;
+  const admin = new Pool({ connectionString: PG_TEST_URL, max: 1, connectionTimeoutMillis: 2000 });
+  t.after(() => admin.end());
+  await assert.rejects(db.storage.transaction(async (tx) => {
+    await tx.execute(insertCompany('terminated', 'Doomed'));
+    const pid = await probePostgresqlQuery(tx, 'SELECT pg_backend_pid() AS pid');
+    const backend = Number(pid.rows[0].pid);
+    const killer = await admin.connect();
+    try {
+      await killer.query('SELECT pg_terminate_backend($1)', [backend]);
+    } finally {
+      killer.release();
+    }
+  }), (error) => {
+    assert.equal(error.code, 'COMMIT_OUTCOME_UNKNOWN');
+    assertNoSecrets(error);
+    return true;
+  });
+  await db.storage.execute(insertCompany('after-kill', 'Alive'));
+  assert.equal((await db.storage.maybeOne(selectName('after-kill'))).name, 'Alive');
 });
 
 test('M3B acquisition deadline destroys the waiter and recovers the pool', async (t) => {

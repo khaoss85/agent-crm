@@ -23,7 +23,8 @@ export const PG_TEST_DDL = Object.freeze([
   `CREATE TABLE flags (
     id TEXT PRIMARY KEY,
     flag BOOLEAN,
-    stamped TEXT
+    stamped TEXT,
+    stamped_at TIMESTAMPTZ
   )`,
 ]);
 
