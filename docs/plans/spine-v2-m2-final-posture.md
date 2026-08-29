@@ -299,11 +299,11 @@ portable factory is the SQLite exit proof.
 
 ### 3. Raw-driver guard + portable exit proof (Worker B)
 
-- [ ] Migrate `createCoreAdapters` off `database.raw`.
-- [ ] Inventory remaining production spellings; classify; document in this plan.
-- [ ] Final production business/package/application guard with plant-and-restore.
-- [ ] Child-process `createAccordoAppAsync()` restart scenario.
-- [ ] Tests in `tests/spine-v2-m2-final-raw-boundary.test.js` and
+- [x] Migrate `createCoreAdapters` off `database.raw`.
+- [x] Inventory remaining production spellings; classify; document in this plan.
+- [x] Final production business/package/application guard with plant-and-restore.
+- [x] Child-process `createAccordoAppAsync()` restart scenario.
+- [x] Tests in `tests/spine-v2-m2-final-raw-boundary.test.js` and
       `tests/spine-v2-m2-final-portable-exit.test.js`.
 
 ### 4. Status, TASKS, matrix, ADR, Repository Truth (Lead, same PR)
@@ -355,12 +355,74 @@ assertion is not weakened.
 - JTBD promotions
 - “Production ready”
 
+## Raw-driver remaining locations
+
+Worker B inventory after migrating `createCoreAdapters` onto
+`database.storage.sync`. Classes are exactly the M2-05 set. The production
+guard walks `packages/` + `apps/` JavaScript, strips comments, and allowlists
+only `packages/core/src/database.js`. A token scan is not semantic
+unreachability.
+
+### Production (`packages/`, `apps/`)
+
+| Location | Class | Reason |
+|---|---|---|
+| `packages/core/src/database.js` | `SQLITE_ADAPTER_INTERNAL` | Owns `import { DatabaseSync }`, `new DatabaseSync`, the `raw` closure, PRAGMAs and the v1 compatibility handle. The only production-source allowlist entry. Control-plane files use this same factory (`plane: 'control'`); there is no separate control-plane driver. |
+| `packages/core/src/storage-contract.js` `createSqliteStorage(raw, …)` | `SQLITE_ADAPTER_INTERNAL` | Receives the driver handle from `database.js` and calls `raw.prepare` / `raw.exec` inside the SQLite adapter. The M2C/M2D token set does not match a parameter named `raw` (no `database.raw`, no `.raw.prepare(`). Adapter-internal, not a business consumer. |
+| `packages/core/src/core-adapters.js` | *(none)* | Migrated. `findCompaniesByNormalizedName` / `findContactByEmail` use `database.storage.sync.many` / `maybeOne`. Zero raw spellings. Signature remains `createCoreAdapters({ database, services, pipelines })`. |
+| `packages/app/src/create-app.js` | *(none)* | Calls `createCoreAdapters({ database, services, pipelines })`. No `database.raw` spelling. v1 still returns `app.database` (compatibility surface, characterized v1). |
+| `packages/app/src/portable-app.js` | *(none)* | `createPortableCoreAdapters` already used `storage.sync`. Comment updated so it no longer names the old raw reach. |
+| `packages/core/index.js` | `PROSE_ONLY` | Historical M2D comment that `database.raw` used to carry `isTransaction`. Comment-stripped scan does not fail. |
+| `apps/**` | *(none)* | No `DatabaseSync`, `database.raw`, `.raw.prepare(`, `.raw.exec(`, or destructured-raw assignment. |
+| `api/mcp.js` | *(none)* | Outside the guard's `packages/`+`apps/` walk; no driver spelling. |
+
+No remaining `BUSINESS_CONSUMER_BLOCKER`. No `CONTROL_PLANE_ADAPTER_INTERNAL` file distinct from `database.js`.
+
+v1 `createAccordoApp().database.raw` remains the compatibility handle on the
+synchronous factory. That is characterized v1, not a new leak, and is not
+removed. The guard is about production business/package/application *source*
+not reaching the driver. Public `createAccordoAppAsync()` still exposes no
+`database` / `raw` field.
+
+### Scripts
+
+| Location | Class | Reason |
+|---|---|---|
+| `scripts/repo-truth.js` | `AUTHORITY_PROBE` | Opens `new DatabaseSync(':memory:')` to probe Company storage-contract rendering for repository truth. Maintenance script, not production runtime. Outside the guard. |
+
+### Characterization / tests / journeys (not production)
+
+| Location | Class | Reason |
+|---|---|---|
+| `tests/**` (many files, including v1 e2e, M2C/M2D guards, upgrade fixtures) | `CHARACTERIZATION_OR_TEST` | Tests may read `app.database.raw` on the v1 handle. Not migrated. |
+| `examples/journeys/customer-identity-governance/journey.mjs` | `CHARACTERIZATION_OR_TEST` | `new DatabaseSync(dbPath, { readOnly: true })` for a journey assertion. |
+| `examples/journeys/tenant-isolation-and-authorization/journey.mjs` | `CHARACTERIZATION_OR_TEST` | `tenantA.database.raw.prepare(...)` to prove the tenant cannot see control tables. |
+
+### Guard scope, allowlist, blind spots
+
+- Scope: `packages/` and `apps/` production `.js`, excluding `node_modules`,
+  `tests/`, dot-directories. Comments stripped before matching.
+- Allowlist: `packages/core/src/database.js` only.
+- Plant-and-restore: every M2C/M2D spelling is written into
+  `packages/core/src/core-adapters.js`, the walk is watched failing, the file
+  is restored.
+- Blind spots (pinned tests, not claims): `d['r'+'aw']`, `handle[key]` with
+  `key = "raw"`, `Reflect.get(database, "ra"+"w")`. Local adapter parameter
+  `raw.prepare` in `storage-contract.js` is also outside the token set.
+
 ## Progress log
 
 - **2026-08-29:** Live baseline `5368211`. Open PR only #134 (untouched).
   Stale measurement `27cc663` / 1685 / 140. Classified M2-05, M2-08, M2-23,
   M2-34 as M2_BLOCKER; dual bundled graphs and default serve as
   LATER_COMPATIBILITY_WORK; lease health as M4; PostgreSQL as M3.
+- **2026-08-29 (Worker B):** M2-05 migrated `createCoreAdapters` onto
+  `database.storage.sync`. Remaining production driver ownership is
+  `packages/core/src/database.js` (plus adapter-internal `createSqliteStorage`).
+  Guard: `tests/spine-v2-m2-final-raw-boundary.test.js`. M2-23 portable SQLite
+  exit: `tests/spine-v2-m2-final-portable-exit.test.js` (public
+  `createAccordoAppAsync`, real file, restart, close-once). No PostgreSQL / M3,
+  no dual bundled graphs, no default-serve change.
 
 ## Decision log
 

@@ -85,8 +85,9 @@ function portableService(service) {
 }
 
 /**
- * Storage-contract adapters. The v1 `createCoreAdapters` still reaches
- * `database.raw`; the portable path must not.
+ * Storage-contract adapters. The v1 `createCoreAdapters` reads through
+ * `database.storage.sync`; this portable copy uses the owned `storage.sync`
+ * handle. Neither path reaches the SQLite driver.
  *
  * @param {{storage: any, services: {companies: any, contacts: any, opportunities: any}, pipelines?: {forModule: (name: string) => any}}} deps
  */

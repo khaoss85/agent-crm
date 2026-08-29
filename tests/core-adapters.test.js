@@ -58,3 +58,31 @@ test('the adapter registry is frozen and per-app instances are isolated', async 
   assert.deepEqual(first, second, 'identical result set and order regardless of query casing');
   assert.deepEqual(adaptersA.findCompaniesByNormalizedName('DUP CO'), first, 'stable across repeated lookups');
 });
+
+test('normalized-match reads go through database.storage.sync and never read database.raw', async (t) => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+
+  const company = await app.services.companies.create({ name: 'No Raw Co', domain: 'noraw.example' }, { actor });
+  await app.services.contacts.create({
+    companyId: company.id,
+    firstName: 'Ada',
+    lastName: 'Lovelace',
+    email: 'ada@noraw.example',
+  }, { actor });
+
+  const database = {
+    storage: app.database.storage,
+    get raw() {
+      throw new Error('core adapters must not read database.raw');
+    },
+  };
+  const adapters = createCoreAdapters({ database, services: app.services });
+  const matches = adapters.findCompaniesByNormalizedName('no raw co');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].name, 'No Raw Co');
+  assert.equal(matches[0].domain, 'noraw.example');
+  const contact = adapters.findContactByEmail('Ada@Noraw.example');
+  assert.equal(contact?.companyId, company.id);
+  assert.equal(contact?.email, 'ada@noraw.example');
+});
