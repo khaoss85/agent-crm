@@ -419,7 +419,10 @@ test('capability declaration/interface contract echoes are verified before servi
   const health = await jsonRequest(`${runtime.url}/health`);
   assert.equal(health.status, 200);
   assert.equal(health.body.ok, true);
-  assert.equal(health.body.packageContract, 2);
+  assert.equal(health.body.ready, true);
+  assert.deepEqual(health.body.storage, { adapter: 'sqlite', available: true });
+  assert.equal(Object.hasOwn(health.body, 'packageContract'), false);
+  assert.equal(Object.hasOwn(health.body, 'counts'), false);
 });
 
 test('portable HTTP awaits service, action and operation execution on the portable graph', async (t) => {
@@ -512,7 +515,14 @@ const runtime = await startPortableHttpServer({
   host: '127.0.0.1',
 });
 const health = await fetch(runtime.url + '/health').then((response) => response.json());
-if (health.ok !== true || health.packageContract !== 2) {
+if (
+  health.ok !== true
+  || health.ready !== true
+  || health.storage?.adapter !== 'sqlite'
+  || health.storage?.available !== true
+  || health.packageContract !== undefined
+  || health.counts !== undefined
+) {
   console.error(JSON.stringify(health));
   process.exit(2);
 }

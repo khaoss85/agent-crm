@@ -38,6 +38,28 @@ import {
 } from '../../providers/src/index.js';
 
 /**
+ * Authenticated Admin counts. Uses Storage Contract `kind: 'count'` only.
+ *
+ * @param {{ sync: { maybeOne: (statement: object) => { n?: unknown } | null } }} storage
+ */
+function countAdminMetrics(storage) {
+  const count = (table, where) => {
+    const statement = where === undefined
+      ? { kind: 'count', table }
+      : { kind: 'count', table, where };
+    return Number(storage.sync.maybeOne(statement)?.n ?? 0);
+  };
+  return Object.freeze({
+    companies: count('companies'),
+    contacts: count('contacts'),
+    opportunities: count('opportunities'),
+    pendingApprovals: count('approvals', [{ column: 'status', op: 'eq', value: 'pending' }]),
+    workflowRuns: count('workflow_runs'),
+    auditEvents: count('audit_events'),
+  });
+}
+
+/**
  * @param {{dbPath?: string, approvalThresholdCents?: number, busyTimeoutMs?: number}} [options]
  */
 export function createAccordoApp(options = {}) {
@@ -287,8 +309,11 @@ export function createAccordoApp(options = {}) {
     });
   });
 
+  const publicStorage = Object.freeze({ adapter: 'sqlite', available: true });
+
   const app = {
     database,
+    storage: publicStorage,
     events,
     audit,
     spine,
@@ -378,6 +403,16 @@ export function createAccordoApp(options = {}) {
           auditEvents: audit.list({ limit: 500 }).length,
         },
       };
+    },
+    health() {
+      return Object.freeze({
+        ok: true,
+        ready: publicStorage.available === true,
+        storage: publicStorage,
+      });
+    },
+    metrics() {
+      return countAdminMetrics(database.storage);
     },
     async seedDemo() {
       const actor = { type: 'system', id: 'demo-seed' };

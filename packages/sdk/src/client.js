@@ -34,6 +34,7 @@ export class AccordoClient {
   }
 
   health() { return this.request('/health'); }
+  metrics() { return this.request('/api/admin/metrics'); }
   schema() { return this.request('/api/schema'); }
   listCompanies() { return this.request('/api/companies'); }
   createCompany(input) { return this.request('/api/companies', { method: 'POST', body: input }); }

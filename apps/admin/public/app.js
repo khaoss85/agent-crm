@@ -66,13 +66,20 @@ const moduleClient = {
 async function refresh() {
   toggleBusy(elements.refreshButton, true);
   try {
-    const [health, opportunities, approvals, traces] = await Promise.all([
+    const metricsPromise = api('/api/admin/metrics').then(
+      (body) => ({ available: true, counts: body.counts }),
+      () => ({ available: false, counts: null }),
+    );
+    const [health, metrics, opportunities, approvals, traces] = await Promise.all([
       api('/health'),
+      metricsPromise,
       api('/api/opportunities'),
       api('/api/approvals?status=pending'),
       api('/api/traces?limit=8'),
     ]);
-    renderMetrics(health.counts);
+    if (health.ok !== true) throw new Error('Runtime health check failed');
+    if (metrics.available) renderMetrics(metrics.counts);
+    else renderMetricsUnavailable();
     renderOpportunities(opportunities.items);
     renderApprovals(approvals.items);
     renderTraces(traces.items);
@@ -83,12 +90,27 @@ async function refresh() {
   }
 }
 
-function renderMetrics(counts) {
-  const items = [
+function metricItems(counts) {
+  return [
     ['Companies', counts.companies],
     ['Opportunities', counts.opportunities],
     ['Pending approvals', counts.pendingApprovals],
     ['Traced runs', counts.workflowRuns],
+  ];
+}
+
+function renderMetrics(counts) {
+  elements.metrics.innerHTML = metricItems(counts).map(([label, value]) => `
+    <div class="metric"><strong>${value}</strong><span>${label}</span></div>
+  `).join('');
+}
+
+function renderMetricsUnavailable() {
+  const items = [
+    ['Companies', '—'],
+    ['Opportunities', '—'],
+    ['Pending approvals', '—'],
+    ['Traced runs', '—'],
   ];
   elements.metrics.innerHTML = items.map(([label, value]) => `
     <div class="metric"><strong>${value}</strong><span>${label}</span></div>

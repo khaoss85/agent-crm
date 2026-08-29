@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 import { createAccordoApp } from '../../app/src/index.js';
 import {
   DEPLOYMENT_STORAGE_ENV,
+  describeDeploymentStorage,
 } from '../../core/src/deployment-storage.js';
 import { prepareDeploymentPreconnect } from '../../core/src/identity-verifier.js';
 import { MODE_ENV } from '../../core/src/runtime-mode.js';
@@ -41,8 +42,16 @@ export async function startMcpStdio(options = {}) {
 
   const dbPath = sqliteFactoryPath(prepared.selection);
   const app = createAccordoApp({ dbPath });
-  const server = createMcpServer({ app });
+  const publicStorage = documentSelected(prepared.selection)
+    ? describeDeploymentStorage(prepared.selection)
+    : null;
+  const server = createMcpServer({ app, publicStorage });
   await serveStdio(server, app);
+}
+
+/** @param {{ source?: unknown }} selection */
+function documentSelected(selection) {
+  return selection.source === 'config' || selection.source === 'env';
 }
 
 /**

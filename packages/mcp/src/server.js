@@ -18,11 +18,11 @@ const LEGACY_PROTOCOL = '2025-11-25';
 const SUPPORTED_PROTOCOLS = [CURRENT_PROTOCOL, LEGACY_PROTOCOL, '2025-06-18', '2024-11-05'];
 const DEFAULT_ROOT = resolve(fileURLToPath(new URL('../../../', import.meta.url)));
 
-/** @param {{app?: any, rootDir?: string, productionStatic?: boolean}} dependencies */
-export function createMcpServer({ app, rootDir = DEFAULT_ROOT, productionStatic = false } = {}) {
+/** @param {{app?: any, rootDir?: string, productionStatic?: boolean, publicStorage?: { adapter: string, available: boolean } | null}} dependencies */
+export function createMcpServer({ app, rootDir = DEFAULT_ROOT, productionStatic = false, publicStorage = null } = {}) {
   const tools = productionStatic
     ? createProductionToolRegistry()
-    : createToolRegistry({ app, rootDir });
+    : createToolRegistry({ app, rootDir, publicStorage });
   const resources = productionStatic
     ? createProductionResourceRegistry({ rootDir })
     : createResourceRegistry({ app, rootDir });
