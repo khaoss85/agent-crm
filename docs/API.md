@@ -4,8 +4,9 @@ Base URL: `http://localhost:4000`
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/health` | Runtime and module health |
-| GET | `/api/schema` | Agent-readable CRM schema |
+| GET | `/health` | Bounded process liveness and storage adapter posture. Does not read tenant records. |
+| GET | `/api/admin/metrics` | Authenticated tenant record counts (`records.read`). Not present on `/health`. |
+| GET | `/api/schema` | Agent-readable CRM schema, including bounded `storage: {adapter, available}` |
 | GET/POST | `/api/companies` | List/create companies |
 | GET/POST | `/api/contacts` | List/create contacts |
 | GET/POST | `/api/opportunities` | List/create opportunities |
@@ -23,6 +24,36 @@ Base URL: `http://localhost:4000`
 | GET | `/api/traces/:id` | Run with step spans |
 | GET | `/api/audit` | List audit events |
 | POST | `/api/demo/seed` | Seed the demonstration data |
+
+## Operational health and Admin metrics
+
+`GET /health` is unauthenticated process liveness. It reports whether the
+application is composed, the owned runtime is initialized, and the storage
+adapter posture is available:
+
+```json
+{
+  "ok": true,
+  "ready": true,
+  "storage": { "adapter": "sqlite", "available": true }
+}
+```
+
+It does not call `app.doctor()`, tenant services, CRM modules or business
+tables. It never returns a filesystem path, connection locator, credential,
+tenant counts or `packageContract`.
+
+`GET /api/admin/metrics` is the authenticated counts that used to live on
+`/health`. It is gated with existing `records.read` (the same permission as
+`GET /api/companies`). When no Production Spine is composed, that gate is a
+documented no-op. Counts use Storage Contract `kind: 'count'` and include
+`companies`, `contacts`, `opportunities`, `pendingApprovals`, `workflowRuns`
+and `auditEvents`. A caller without `records.read` receives 401 or 403; the
+Admin dashboard still renders opportunities, approvals and traces.
+
+`GET /api/schema` publishes the same bounded `storage: {adapter, available}`
+descriptor. Compatibility `accordo doctor --db` still discloses the SQLite
+path on its characterized CLI surface.
 
 ## Generated-module resource surface (ADR-008)
 

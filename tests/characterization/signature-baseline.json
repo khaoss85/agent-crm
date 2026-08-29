@@ -2765,10 +2765,10 @@
     }
   ],
   "source": {
-    "apps/server/src/http-server.js": "319796040e7c0888e1dabc1c3b824c70ab60277958e398cd27afe2bf65227ec1",
+    "apps/server/src/http-server.js": "b9d20e6d2c6b4808e913077819eb64a4b627214b6157a3ad92d7f62cf8f6c231",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
     "examples/starters/b2b-lead-qualification/signature.js": "e2f34c4e71f9a03f8ced77ba23b9a09c3da8ab6b9731db91cee12cf778ba4765",
-    "packages/app/src/create-app.js": "76a7bbaa6c69178e4b55e71c25c45676cf4a63f99c1ece3c7c553bc9bf3ec320",
+    "packages/app/src/create-app.js": "33e2e1b23746e5f33914724f3240d4ade1f692bf6ce378301e5a949e034b2a26",
     "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",
     "packages/commercial/modules/offer.module.json": "3eb3c85338d22f8a8962ed0c0c0fe79da0007e8c4e66a44aad14d9b8bbca22c4",
     "packages/commercial/modules/price-book.module.json": "35793cdd5dca999c30760f055622b607d1e68b215b4f9ceaf8fac63ce1b0a670",

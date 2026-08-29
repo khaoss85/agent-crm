@@ -39,6 +39,28 @@ import {
 const ACTION_ELIGIBLE_CORE_MODULES = new Set(['opportunity']);
 
 /**
+ * Authenticated Admin counts. Uses Storage Contract `kind: 'count'` only.
+ *
+ * @param {{ sync: { maybeOne: (statement: object) => { n?: unknown } | null } }} storage
+ */
+function countAdminMetrics(storage) {
+  const count = (table, where) => {
+    const statement = where === undefined
+      ? { kind: 'count', table }
+      : { kind: 'count', table, where };
+    return Number(storage.sync.maybeOne(statement)?.n ?? 0);
+  };
+  return Object.freeze({
+    companies: count('companies'),
+    contacts: count('contacts'),
+    opportunities: count('opportunities'),
+    pendingApprovals: count('approvals', [{ column: 'status', op: 'eq', value: 'pending' }]),
+    workflowRuns: count('workflow_runs'),
+    auditEvents: count('audit_events'),
+  });
+}
+
+/**
  * Close over selected methods so the inner object (and any `database` field it
  * holds) is not an own property of the returned facade.
  *
@@ -85,8 +107,9 @@ function portableService(service) {
 }
 
 /**
- * Storage-contract adapters. The v1 `createCoreAdapters` still reaches
- * `database.raw`; the portable path must not.
+ * Storage-contract adapters. The v1 `createCoreAdapters` reads through
+ * `database.storage.sync`; this portable copy uses the owned `storage.sync`
+ * handle. Neither path reaches the SQLite driver.
  *
  * @param {{storage: any, services: {companies: any, contacts: any, opportunities: any}, pipelines?: {forModule: (name: string) => any}}} deps
  */
@@ -383,6 +406,17 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
     now,
     schema: CRM_SCHEMA,
     config,
+    health() {
+      const storage = Object.freeze({ adapter: 'sqlite', available: true });
+      return Object.freeze({
+        ok: true,
+        ready: storage.available === true,
+        storage,
+      });
+    },
+    metrics() {
+      return countAdminMetrics(storage);
+    },
   };
 }
 
@@ -417,6 +451,8 @@ export async function startPortableSqliteApp(options = {}) {
   return Object.freeze({
     storage: Object.freeze({ adapter: 'sqlite', available: true }),
     packageContract: graph.packageContract,
+    health: graph.health,
+    metrics: graph.metrics,
     services: graph.services,
     modules: graph.modules,
     actions: graph.actions,

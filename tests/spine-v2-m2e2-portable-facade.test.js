@@ -26,6 +26,8 @@ const FACADE_KEYS = Object.freeze([
   'config',
   'domains',
   'events',
+  'health',
+  'metrics',
   'modules',
   'notifications',
   'now',

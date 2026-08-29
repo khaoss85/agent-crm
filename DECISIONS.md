@@ -664,6 +664,42 @@ lifecycle test seams are `PORTABLE_OPTION_UNSUPPORTED` rather than silently
 dropped. Default `accordo serve` and bundled package dual definitions are not
 this addendum.
 
+### ADR-018 addendum 11 — M2 public storage posture, health boundary and raw-driver exit
+
+Production Spine v2 M2 closes on SQLite through the portable contract.
+
+**Decision: production `GET /health` is not `app.doctor()`.** The unauthenticated
+route returns only `{ ok, ready, storage: { adapter, available } }`. It does not
+run request identity, read tenant services, CRM modules or business tables.
+Local-development spine identity can bootstrap memberships and write audit; a
+liveness probe must not. Lease-driven readiness remains M4.
+
+**Decision: Admin counts are a separate authenticated read.** `GET /api/admin/metrics`
+uses existing `records.read` and Storage Contract `kind: 'count'`. Missing
+permission yields a bounded unavailable metrics state; the rest of the dashboard
+still renders. No new permission and no public metrics platform. In-process
+`app.doctor().counts` and the v1 `--db` `doctor.database` path stay.
+
+**Decision: portable/document-selected public output is `{ adapter, available }`.**
+`describeDeploymentStorage()` remains the named shape. `/api/schema` publishes
+the same descriptor and never a filesystem path. Local `--db` MCP `crm_doctor`
+may keep the v1 path; document-selected MCP projects `storage`.
+
+**Decision: `createCoreAdapters` is application logic, not adapter-internal.**
+Company-name and contact-email lookups use `database.storage.sync`. The raw
+SQLite driver stays private to `packages/core/src/database.js`. A token-scan
+guard over production `packages/` and `apps/` is a spelling guard, not semantic
+unreachability.
+
+**Decision: dual bundled v1/v2 package graphs are later compatibility work.**
+M2-23 is proved by a representative public `createAccordoAppAsync()` child
+process over kernel CRM plus a uniform v2 selected graph. Full dual graphs are
+required before default `accordo serve` migrates to the async factory and before
+bundled packages can compose on PostgreSQL. They are not completed here.
+<!-- truth: spine.postgresql.implemented=absent -->
+
+Plan: `docs/plans/spine-v2-m2-final-posture.md`.
+
 ## ADR-019 — Safe generated-module evolution through explicit revisions and append-only named migrations
 
 **Status:** accepted (Module Evolution v1).

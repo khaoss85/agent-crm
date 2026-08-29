@@ -88,8 +88,9 @@ horizontal capability the way the contract intends?*
 The shared deployment-storage loader is a horizontal *runtime* capability: every
 executable will eventually select adapter and spine binding through one closed
 document. Domains do not select storage and must not import the loader. CLI,
-serve and MCP now call `prepareDeploymentPreconnect`; public-locator replacement
-on `app.doctor()` / `/api/schema` remains the rest of M2-08.
+serve and MCP now call `prepareDeploymentPreconnect`. Public HTTP `/health` and
+`/api/schema` project `{adapter, available}` only. CLI `app.doctor().database`
+on `--db` remains the characterized v1 path disclosure.
 
 | Domain | Status | Reason |
 |---|---|---|
@@ -106,9 +107,10 @@ on `app.doctor()` / `/api/schema` remains the rest of M2-08.
 | Customer Data | `not_applicable` | package behaviour does not select the storage adapter |
 | Custom-package fixture | `not_applicable` | customer packages receive no deployment-storage document |
 
-Closing the remaining public-locator gap (`app.doctor().database`, `/api/schema`)
-is later M2F work (remainder of M2-08), not a per-domain backfill. The factory
-does not import the loader; entries call `prepareDeploymentPreconnect`.
+Public HTTP locators on `/health` and `/api/schema` are closed by the final M2
+posture slice. The factory does not import the loader; entries call
+`prepareDeploymentPreconnect`. v1 `--db` `doctor.database` is retained. Dual
+bundled v1/v2 package graphs remain later compatibility work.
 
 ### Identity-verifier pre-connect contract v2 assessment (Production Spine v2 M2F)
 
@@ -218,20 +220,23 @@ A `deferred` row therefore means this domain's own records, not its policy
 identity and not the evidence recorded about its runs. What still keeps a
 domain off `aligned` is exactly what it always was: its own persistence.
 
-**The kernel's remaining raw residue, after M2C, M2D and the M2F Spine-store
-closure.** M2C moved the workflow engine's run and span lifecycle onto the
-store; M2D moved `packages/work/src/follow-up.js#requireCallerTransaction` off
-the driver's transaction flag; M2F then moved the Organization/Membership store
-itself onto the same seam. **No application-runtime business or Spine-store
-consumer is left in `packages/`.** `packages/core/src/core-adapters.js` still
-prepares Company/Contact lookup SQL against `database.raw`; it is a composed
-adapter internal, not Spine-store, and is not closed by this slice.
+**The kernel's remaining raw residue, after M2C, M2D, the M2F Spine-store
+closure and the M2 final raw-driver exit.** M2C moved the workflow engine's
+run and span lifecycle onto the store; M2D moved
+`packages/work/src/follow-up.js#requireCallerTransaction` off the driver's
+transaction flag; M2F then moved the Organization/Membership store itself onto
+the same seam. The M2 final posture slice then moved
+`packages/core/src/core-adapters.js` Company/Contact lookups onto
+`database.storage.sync`. **No application-runtime business or Spine-store
+consumer is left in `packages/`.**
 
-Scanned on the M2F tree, no application-runtime business or Spine-store consumer
-in `packages/` reaches the driver. Known driver spellings remain in
-`packages/core/src/database.js`, `core-adapters.js` and the deep-internal
-`spine-store-storage-adapter.js`, which own SQLite adaptation by design, plus a
-prose mention in `packages/core/index.js` describing what M2D replaced.
+Scanned after that slice, no application-runtime business consumer in
+`packages/` or `apps/` reaches the driver. Known driver spellings remain in
+`packages/core/src/database.js`, which owns `DatabaseSync` and the raw
+closure, and in adapter-internal `createSqliteStorage` (a parameter named
+`raw`, outside the token set). `spine-store-storage-adapter.js` resolves the
+closed storage seam and does not spell `database.raw`. A prose mention in
+`packages/core/index.js` describes what M2D replaced.
 **PostgreSQL remains absent: the only adapter is SQLite.**
 
 This paragraph was true when M2C wrote it and false the moment M2D merged into
@@ -247,23 +252,23 @@ contract-2 package graphs expressible, normalizes an absent capability contract
 to 1, publishes the resolved versions, and refuses a mixed graph before any
 service is called. It deliberately migrates no package. A `deferred` row below
 therefore means the domain still ships only its synchronous v1 definition; it
-does not mean its current v1 graph is invalid. M2E-3 owns every promotion.
+does not mean its current v1 graph is invalid. Dual bundled v1/v2 graphs remain later compatibility work, not M2E-3.
 
 | Domain | Status | Reason |
 |---|---|---|
 | Core CRM (Sales) | `not_applicable` | project-owned records are not package definitions; their async service composition belongs to M2E-2 |
 | Pipeline | `not_applicable` | a kernel workflow capability, not a domain package |
-| Lead Intelligence | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Commercial Operations | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Signature & Order | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Contract Activation | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Delivery | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Service | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Work | `deferred` | its capability declaration still omits the field by compatibility and resolves to contract 1; M2E-3 owns the explicit dual graph |
-| Lifecycle | `deferred` | it consumes domain capability version 2 on synchronous execution contract 1; M2E-3 owns the async graph |
-| Customer Data | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Custom-package fixture | `deferred` | it remains the unchanged customer-authored contract-1 compatibility proof; M2E-3 adds a separate v2 fixture without rewriting it |
-| Custom-package score-disclosure fixture | `deferred` | its contract-1 graph and `intelligence@1` dependency remain the customer-authored capability-consumer proof; M2E-3 owns any v2 companion rather than silently rewriting this v1 fixture |
+| Lead Intelligence | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Work | `deferred` | its capability declaration still omits the field by compatibility and resolves to contract 1; an explicit dual graph remains later compatibility work |
+| Lifecycle | `deferred` | it consumes domain capability version 2 on synchronous execution contract 1; an async graph remains later compatibility work |
+| Customer Data | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Custom-package fixture | `deferred` | it remains the unchanged customer-authored contract-1 compatibility proof; a separate v2 fixture is later compatibility work and must not silently rewrite this v1 fixture |
+| Custom-package score-disclosure fixture | `deferred` | its contract-1 graph and `intelligence@1` dependency remain the customer-authored capability-consumer proof; a v2 companion is later compatibility work rather than a silent rewrite of this v1 fixture |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
 
 ### Private async SQLite lifecycle assessment (Production Spine v2 M2E-2A)
@@ -282,15 +287,15 @@ this private lifecycle; it does not mean its released v1 graph is invalid.
 |---|---|---|
 | Core CRM (Sales) | `not_applicable` | project-owned records are not selected through this private lifecycle; 2B owns any portable service graph over it |
 | Pipeline | `not_applicable` | a kernel workflow capability, not a selected package graph |
-| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
-| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
-| Signature & Order | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
-| Contract Activation | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
-| Delivery | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
-| Service | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
 | Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto the private lifecycle |
 | Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
-| Customer Data | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Customer Data | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
 | Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; this slice adds no v2 fixture |
 | Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime lifecycle |
@@ -310,15 +315,15 @@ through this private facade; it does not mean that v1 graph is invalid.
 |---|---|---|
 | Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval compose over 2A storage and are reachable through the leak-free facade; generated project modules and Spine are not |
 | Pipeline | `not_applicable` | a kernel workflow capability; this slice registers an empty pipeline registry and does not migrate pipeline contract 1 |
-| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Signature & Order | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Contract Activation | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Delivery | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Service | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
 | Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto the portable facade |
 | Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
-| Customer Data | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Customer Data | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
 | Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; this slice adds no v2 fixture |
 | Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime facade |
@@ -339,15 +344,15 @@ through this private HTTP entry; it does not mean that v1 graph is invalid.
 |---|---|---|
 | Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval writes and reads are awaited over portable HTTP; generated project modules and dual-plane Spine are not composed here |
 | Pipeline | `not_applicable` | a kernel workflow capability; this slice does not migrate pipeline contract 1 |
-| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Signature & Order | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Contract Activation | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Delivery | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Service | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
 | Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto portable HTTP |
 | Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
-| Customer Data | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Customer Data | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
 | Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; this slice adds no v2 fixture |
 | Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime HTTP graph |
@@ -416,6 +421,34 @@ per-domain dispositions below remain unchanged.
 | Custom-package fixture | `not_applicable` | customer packages receive neither audit-intent construction nor reconciliation authority |
 | Custom-package score-disclosure fixture | `not_applicable` | it consumes `intelligence@1` as a customer-authored capability proof and never writes Organization or Membership rows |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime mutation |
+
+### Public storage posture, health boundary and raw-driver exit (Production Spine v2 M2 final)
+
+This slice is horizontal kernel machinery, not a domain capability. Portable
+and document-selected public surfaces project `{adapter, available}` only;
+`GET /health` is process liveness and does not run request identity, doctor,
+tenant services or business tables; Admin counts live on authenticated
+`GET /api/admin/metrics`; `createCoreAdapters` reads through Storage Contract
+v1. Dual bundled v1/v2 package graphs remain later compatibility work, not
+completed. A `deferred` row means the domain still ships only its contract-1
+definition and is not selected by the portable factory's default graph.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval compose through v1 HTTP health/metrics and the portable factory; generated project modules and dual-plane Spine are not the default portable graph |
+| Pipeline | `not_applicable` | a kernel workflow capability; this slice does not migrate pipeline contract 1 |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Delivery | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Service | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto the portable factory |
+| Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
+| Customer Data | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; the public async path refuses it with `PACKAGE_ASYNC_CONTRACT_REQUIRED` rather than rewriting it |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime health or storage-posture graph |
 
 ### Hosted Docs MCP transport assessment
 
