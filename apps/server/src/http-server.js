@@ -71,8 +71,10 @@ export function createHttpServer(app, options = {}) {
         // GET /health is process liveness. Shared request identity in
         // local-development spine mode reads memberships and can bootstrap an
         // owner plus audit — a liveness probe must not mutate tenant or
-        // control-plane state.
-        const skipIdentity = (request.method ?? 'GET') === 'GET' && url.pathname === '/health';
+        // control-plane state. Bound to the matched route so `/health/` and
+        // `/health?…` follow the same skip as `/health` (the router already
+        // treats a trailing slash as the same path).
+        const skipIdentity = route.options?.skipIdentity === true;
         const result = await route.handler({
           request,
           response,
@@ -263,7 +265,7 @@ function publicStorageDescriptor(app) {
 function buildRouter(app) {
   const router = new Router();
 
-  router.add('GET', '/health', async () => operationalHealth(app));
+  router.add('GET', '/health', async () => operationalHealth(app), { skipIdentity: true });
 
   router.add('GET', '/api/admin/metrics', async ({ identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');

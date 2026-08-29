@@ -554,21 +554,29 @@ test('GET /health with a local-development spine and Admin user headers does not
   const before = app.spine.memberships.listFor({ organizationId: org.id, limit: 50 });
   const dataQueries = instrumentPrepare(app.database.raw);
   const controlQueries = instrumentPrepare(app.controlPlaneDatabase.raw);
-  const health = await jsonRequest(`${url}/health`, {
-    headers: { 'x-actor-type': 'user', 'x-actor-id': 'admin-demo' },
-  });
-  assert.equal(health.status, 200);
-  assertHealthContract(health.body);
-  assert.equal(
-    dataQueries.count,
-    0,
-    `data-plane health queries: ${dataQueries.sql().join(' | ')}`,
-  );
-  assert.equal(
-    controlQueries.count,
-    0,
-    `control-plane health queries: ${controlQueries.sql().join(' | ')}`,
-  );
+  const adminHeaders = { 'x-actor-type': 'user', 'x-actor-id': 'admin-demo' };
+  const variants = [
+    `${url}/health`,
+    `${url}/health/`,
+    `${url}/health?probe=1`,
+  ];
+  for (const target of variants) {
+    dataQueries.reset();
+    controlQueries.reset();
+    const health = await jsonRequest(target, { headers: adminHeaders });
+    assert.equal(health.status, 200, target);
+    assertHealthContract(health.body);
+    assert.equal(
+      dataQueries.count,
+      0,
+      `${target} data-plane health queries: ${dataQueries.sql().join(' | ')}`,
+    );
+    assert.equal(
+      controlQueries.count,
+      0,
+      `${target} control-plane health queries: ${controlQueries.sql().join(' | ')}`,
+    );
+  }
   const after = app.spine.memberships.listFor({ organizationId: org.id, limit: 50 });
   assert.deepEqual(
     after.map((row) => row.subject),
