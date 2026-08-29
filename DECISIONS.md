@@ -844,6 +844,25 @@ regenerating modules that did not change.
 Adoption is generic. It names no domain, and nothing in it knows that Delivery
 was the milestone that needed it first.
 
+### ADR-019 Addendum 2 — Additive stateVersion 2 and PostgreSQL bootstrap
+
+Spine v2 M3A. v1 `{name, checksum, sql}` SQLite history stays the authority for
+every database that already ran it. Writes emit `stateVersion: 2` with a
+`postgres.bootstrap` generated from the **current** normalized manifest, used
+only on an empty PostgreSQL data plane, with its own checksum and provenance
+pointing at the v1-style state fingerprint. Later dialect-specific evolutions
+append under `postgres.evolutions`. Reads still accept v1.
+
+A generated registry entry that predates `module.state.json` remains a
+supported legacy input. Adoption is an explicit source-authoring step through
+the existing module-evolution authority (`module create --apply`, or
+`adoptLegacyModuleState` for fixtures). Runtime PostgreSQL composition refuses
+`LEGACY_MODULE_STATE_REQUIRED` until that state is checked in. It never
+synthesizes or writes source state during deployment. A non-empty data plane
+and a bootstrap the current manifest cannot reproduce also refuse.
+
+No new CLI command. The existing apply is the authoring write.
+
 ## ADR-020 — A Solution Plan is a bounded document contract, never an executable one
 
 **Status:** accepted (AX2).
@@ -3473,6 +3492,44 @@ combined database path after the verifier passes.** The envelope tenant is
 there). This PR does not invent a storage root from a locator.
 
 Plan: `docs/plans/spine-v2-m2f-entry-wiring.md`.
+
+#### Amendment 8 — Spine v2 M3A: dialect migration intent, checksum ledger, driver pin
+
+PostgreSQL storage is still unimplemented. This amendment records the
+authoritative migration shape M3B will execute, without adding a driver or
+claiming the application runs on PostgreSQL.
+<!-- truth: spine.postgresql.implemented=absent -->
+
+**Decision: migration intent is an explicit structure, not a SQL translator.**
+Core schema is described under `packages/core/src/core-schema-intent.js` and
+rendered per dialect. SQLite render is byte-identical to the released
+`DATA_PLANE_MIGRATIONS` / `CONTROL_PLANE_MIGRATIONS` strings, which stay the
+SQLite migrator’s input. PostgreSQL SQL is authored from the same structure:
+persisted integers and cents are `BIGINT`, booleans `BOOLEAN`, timestamps
+`TIMESTAMPTZ`, tables in schema `accordo`, identifiers quoted through the
+physical-name map. Arbitrary SQLite SQL is never parsed at runtime.
+
+**Decision: physical names are mapped before DDL.** PostgreSQL identifiers are
+capped at 63 bytes. Safe `[a-z][a-z0-9_]*` names at or under that length stay
+unchanged; otherwise a bounded prefix plus a collision-resistant digest is
+recorded. The complete namespace is validated before DDL. Server truncation is
+not a strategy.
+
+**Decision: `schema_migrations` grows a checksum through version 8.** Every
+plane receives `schema_migrations_checksum` once. Backfill writes the **pinned**
+released checksums (M0 v1–v5 plus the subsequently released v6–v7 identities),
+never `hash(current source)`. An unknown `(version, name)`, a missing object or
+a divergent schema fails closed. New migrations record `hash(sql)` normally.
+Existing SQLite files with exact M0 identity still boot.
+
+**Decision: the production PostgreSQL driver is `pg` exactly 8.23.0,
+PostgreSQL server major 16, no `pg-native`.** Agreed with M3B. A home-grown
+wire protocol would duplicate TLS, auth, prepared statements, COPY, error
+fields and cancellation; `pg` is the audited client. Pin exact, never float
+latest, never `try/catch` the import. This PR does **not** add the npm
+dependency. SQLite remains Node built-in.
+
+Plan: `docs/plans/spine-v2-m3a-postgresql-migration-intent.md`.
 
 
 ### The spine is opt-in, and its absence is loud

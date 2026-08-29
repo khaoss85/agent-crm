@@ -588,9 +588,10 @@ test('core migration v2 upgrades an existing v1 database in place', async (t) =>
   // Every declared core migration is recorded on a fresh database. The list
   // grows when a real migration is added — v5 is the Production Spine's
   // organization and membership tables, v6 is the data-plane binding marker,
-  // and v7 is the control-plane audit-intent ledger (ADR-038). The point of
-  // pinning the complete global order is that an append cannot go unnoticed.
-  assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7]);
+  // v7 is the control-plane audit-intent ledger (ADR-038), and v8 is the
+  // schema_migrations checksum column. The point of pinning the complete
+  // global order is that an append cannot go unnoticed.
+  assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8]);
   const legacy = database.raw.prepare('SELECT source_key, pipeline_key, pipeline_stage FROM opportunities WHERE id = ?').get('o1');
   assert.equal(legacy.source_key, null, 'pre-existing rows keep a NULL source key');
   assert.equal(legacy.pipeline_key, null, 'pre-existing rows keep NULL pipeline state (v3)');
