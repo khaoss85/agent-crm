@@ -531,7 +531,7 @@ test('M2-22 parser still does not import the verifier; resolution lives in the s
   assert.equal(resolver.includes('using '), false);
 });
 
-test('M2-22 factory stays unwired and this slice does not depend on a PostgreSQL driver', () => {
+test('M2-22 factory stays unwired; extra PostgreSQL drivers stay absent', () => {
   const factory = readFileSync(join(repoRoot, 'packages/app/src/create-app.js'), 'utf8');
   assert.equal(factory.includes('deployment-storage'), false, 'create-app imported the loader');
   assert.equal(factory.includes('identity-verifier'), false, 'create-app imported the resolver');
@@ -539,13 +539,13 @@ test('M2-22 factory stays unwired and this slice does not depend on a PostgreSQL
   assert.equal(factory.includes('--deployment-storage'), false, 'create-app grew a flag');
 
   const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
-  const names = [
-    ...Object.keys(pkg.dependencies ?? {}),
+  assert.deepEqual(pkg.dependencies, { pg: '8.23.0' });
+  const extra = [
     ...Object.keys(pkg.optionalDependencies ?? {}),
     ...Object.keys(pkg.peerDependencies ?? {}),
   ];
-  for (const name of ['pg', 'postgres', 'postgresql', 'pg-native']) {
-    assert.equal(names.includes(name), false, `unexpected production dependency ${name}`);
+  for (const name of ['postgres', 'postgresql', 'pg-native']) {
+    assert.equal(extra.includes(name), false, `unexpected extra production dependency ${name}`);
     assert.throws(() => require.resolve(name, { paths: [repoRoot] }), { code: 'MODULE_NOT_FOUND' });
   }
 });

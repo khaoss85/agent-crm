@@ -72,8 +72,8 @@ both cost something:
 This framework is the third option: an agent generates the application, and the framework
 supplies the parts teams always get wrong under deadline. The test any developer can apply
 is *"if this project disappears tomorrow, what am I left with?"* Here the answer is: a Node
-application in your repository, with no third-party runtime dependencies and a SQLite file
-any client can open.
+application in your repository, with SQLite as a Node built-in, one pinned `pg@8.23.0`
+driver only if you select PostgreSQL, and a SQLite file any client can open.
 
 ## What is proven
 
@@ -105,7 +105,9 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 
 ## Run it
 
-Node.js 22.16 or newer. There are no third-party runtime dependencies and no build step.
+Node.js 22.16 or newer. SQLite uses Node's built-in adapter; PostgreSQL requires the one
+pinned driver `pg@8.23.0` (`tests/spine-v2-m3b-postgresql-adapter.test.js`). No ORM, no
+build step.
 
 ```bash
 npm run tour     # compose the whole application and inspect it
@@ -208,7 +210,9 @@ something nobody checked. No number in any of these sentences is checked either
   <!-- truth: spine.tenant.isolation.mode=one_tenant_per_instance -->
   <!-- truth: spine.tenant.crm_data_plane_enforced=enforced_by_binding -->
   <!-- truth: spine.multi_tenant_single_instance=refused_at_startup -->
-- **SQLite only.** PostgreSQL is on the Production Spine track and is not implemented.
+- **Application composition is SQLite only.** A PostgreSQL storage adapter exists behind
+  Storage Contract v1; the application factories still refuse PostgreSQL. Shared-database
+  tenancy is not implemented.
   <!-- truth: spine.postgresql.implemented=absent -->
 - **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any
   percentage attributed to this project is fabricated —

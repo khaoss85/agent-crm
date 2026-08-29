@@ -174,15 +174,15 @@
       "title": "What ownership actually means here, and where it stops",
       "plainName": "Ownership means vendored source",
       "intent": "own the CRM source my coding agent builds, without a vendor runtime underneath",
-      "summary": "Ownership here means the source is yours to keep, read and change. `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a project with the framework source vendored in, and the same bootstrap runs from a checkout. Either way upgrading means merging rather than bumping a version, because a versioned framework dependency does not exist. What you get is MIT, Node 22 and zero third-party runtime dependencies. What you do not get is a framework library on npm — the `accordo` name is an empty reservation — and that boundary is L-08 on every surface rather than sold around.",
+      "summary": "Ownership here means the source is yours to keep, read and change. `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a project with the framework source vendored in, and the same bootstrap runs from a checkout. Either way upgrading means merging rather than bumping a version, because a versioned framework dependency does not exist. What you get is MIT, Node 22, SQLite as a Node built-in, and one pinned pg@8.23.0 driver only if you select PostgreSQL. What you do not get is a framework library on npm — the `accordo` name is an empty reservation — and that boundary is L-08 on every surface rather than sold around.",
       "metaDescription": "Ownership means MIT source you keep and change. npm create accordo scaffolds a project with the framework vendored in, and upgrading means merging.",
       "sections": [
         {
           "heading": "What you are left with if this project disappears",
           "body": [
-            "The ownership test in GO_TO_MARKET.md §2.6 is one question: if this project disappears tomorrow, what am I left with? Here the answer is a Node application in your repository, no third-party runtime dependencies, and a SQLite file any client can open. That last part is measurable: package.json has no dependencies field, persistence is node:sqlite, and the HTTP server, the test runner and the database adapter are all Node built-ins (C-17). The comparison it is drawn against answers the same question with a runtime you must keep operating.",
+            "The ownership test in GO_TO_MARKET.md §2.6 is one question: if this project disappears tomorrow, what am I left with? Here the answer is a Node application in your repository, SQLite as a Node built-in, one pinned pg@8.23.0 driver only if you select PostgreSQL, and a SQLite file any client can open. That last part is measurable: package.json.dependencies is exactly { pg: \"8.23.0\" }, persistence is node:sqlite or that pinned driver, and the HTTP server and the test runner are Node built-ins (C-17). The comparison it is drawn against answers the same question with a runtime you must keep operating.",
             "The licence is MIT, and ADR-023 confirmed it rather than assuming it. Nothing about the file changed; what changed is the kind of statement being made, because three distribution manifests carry a licence field and a licence in a manifest is an assertion to everyone who installs from it. scripts/distribution-check.js reads brand.json before it will let a manifest state a licence to a third party. The ADR is explicit about what it does not decide: nothing about a future managed offering, and nothing about the licence of anything a customer generates — generated code belongs to the customer under whatever terms they choose, which is the point of generating it.",
-            "The property is also bounded. Zero runtime dependencies is a property of the framework, not of whatever you add on top of it; the first library you install is yours to carry."
+            "The property is also bounded. The SQLite path needs no third-party driver; applications that select PostgreSQL carry pg@8.23.0. Everything else you add, you carry."
           ]
         },
         {
@@ -211,7 +211,7 @@
       "boundaries": [
         "Ownership is not installation. `npm create accordo` installs a scaffolder, not the framework: the framework source is copied into the project, and there is no versioned framework dependency — upgrading means merging changes into a copy.",
         "Neither half of the ejection proof exists yet: there is no examples/ejected application and no test asserting a project still verifies green once the framework dependency is deleted.",
-        "Zero third-party runtime dependencies describes the framework, not your application. Everything you add, you carry.",
+        "SQLite needs no third-party driver; PostgreSQL carries the pinned pg@8.23.0. Everything else you add, you carry.",
         "The MIT confirmation covers this framework only. It decides nothing about a future managed offering and nothing about the licence of the code you generate.",
         "Owning the source does not make it safe to deploy. No authentication ships, persistence is SQLite, and there is no path to service a data-subject request.",
         "A package detaches without touching the kernel, but its data stays behind and there is no export to take it with you.",

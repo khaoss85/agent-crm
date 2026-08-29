@@ -64,5 +64,8 @@
         "examples/solution-plans/lead-to-won.plan.json"
       ]
     }
+  },
+  "dependencies": {
+    "pg": "8.23.0"
   }
 }

@@ -18,12 +18,21 @@ domain package.
 ## Before you write code
 
 ```bash
-npm run verify   # syntax check + the full test suite; no install step, no dependencies
+npm run verify   # syntax check + the full test suite
 npm run smoke    # the approval slice, end to end
 ```
 
-Node 22.16 or newer. There are no third-party runtime dependencies, and adding one is a decision
-that needs recording in `DECISIONS.md` with a reason it removes more complexity than it adds.
+Node 22.16 or newer. SQLite uses Node's built-in adapter. PostgreSQL requires the one pinned
+runtime driver `pg@8.23.0` (C-17). Adding another production dependency is a decision that
+needs recording in `DECISIONS.md` with a reason it removes more complexity than it adds.
+
+Live PostgreSQL storage-contract tests run in CI against `postgres:16`. Locally they skip
+unless PostgreSQL is reachable or `ACCORDO_TEST_POSTGRES=1` is set:
+
+```bash
+docker run --rm -e POSTGRES_PASSWORD=postgres -e POSTGRES_USER=postgres \
+  -e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16
+```
 
 Read `PRODUCT.md` for what this is, `ARCHITECTURE.md` for how it fits together, and the relevant
 skill under `.claude/skills/` for the kind of change you are making. For anything spanning more

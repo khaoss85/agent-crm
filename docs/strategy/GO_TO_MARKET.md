@@ -124,8 +124,9 @@ type size. That rule is the credibility architecture — see §7.
    *Limit:* every provider underneath is an offline fixture, and nothing bills, renews or fires
    on a schedule because there is no scheduler. Avoid the word *complete*: it is unfalsifiable
    and four ledger limitations contradict it.
-4. **Nothing underneath you.** Zero third-party runtime dependencies. [C-17] · *Limit:* a
-   property of the framework, not of what you add on top.
+4. **Nothing underneath you.** SQLite is Node built-in; PostgreSQL is one pinned
+   `pg@8.23.0` driver; no ORM. [C-17] · *Limit:* applications that select PostgreSQL
+   carry this driver; the SQLite path does not.
 
 ### 2.5 The disqualifier, placed before any capability claim
 
@@ -146,7 +147,8 @@ type size. That rule is the credibility architecture — see §7.
 > runtime*. Ours writes an application that runs *without us*.
 >
 > **The test:** *"if this project disappears tomorrow, what am I left with?"* Here: a Node
-> application in your repository, no third-party runtime dependencies, and a SQLite file any
+> application in your repository, SQLite as a Node built-in, one pinned `pg@8.23.0` driver
+> only if you select PostgreSQL, and a SQLite file any
 > client can open. With a platform, the answer is a runtime you must keep operating.
 >
 > Say it that way and not *"the framework is a dependency you could remove"* — today you get the

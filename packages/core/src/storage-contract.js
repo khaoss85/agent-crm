@@ -45,7 +45,12 @@ function values(entries, label) {
   return bound;
 }
 
-function predicates(where = []) {
+function placeholders(dialect) {
+  let index = 0;
+  return () => (dialect === 'postgresql' ? `$${++index}` : '?');
+}
+
+function predicates(where = [], placeholder) {
   if (!Array.isArray(where)) refuse('Storage where must be an array');
   const params = [];
   const sql = where.map((entry) => {
@@ -53,7 +58,7 @@ function predicates(where = []) {
     if (entry.op === 'eq') {
       closed(entry, ['column', 'op', 'value'], 'equality predicate', ['column', 'op', 'value']);
       const column = identifier(entry.column, 'predicate column');
-      params.push(entry.value); return `${column} = ?`;
+      params.push(entry.value); return `${column} = ${placeholder()}`;
     }
     if (entry.op === 'is-null') {
       closed(entry, ['column', 'op'], 'null predicate', ['column', 'op']);
@@ -63,25 +68,41 @@ function predicates(where = []) {
       closed(entry, ['column', 'op', 'values'], 'membership predicate', ['column', 'op', 'values']);
       const column = identifier(entry.column, 'predicate column');
       params.push(...entry.values);
-      return `${column} IN (${entry.values.map(() => '?').join(', ')})`;
+      return `${column} IN (${entry.values.map(() => placeholder()).join(', ')})`;
     }
     refuse('Unsupported storage predicate operator', { op: entry.op });
   });
   return { sql: sql.length ? ` WHERE ${sql.join(' AND ')}` : '', params };
 }
 
-/** Render the closed M1 statement vocabulary for the SQLite adapter. */
-export function renderSqliteStatement(statement) {
+/**
+ * Quote a closed storage identifier. Shared by both adapters for savepoint names
+ * so PostgreSQL cannot accept a spelling SQLite would have refused.
+ */
+export function quoteStorageIdentifier(value, label) {
+  return identifier(value, label);
+}
+
+/** Refuse a statement kind the named storage method is not allowed to run. */
+export function requireStorageMethodKind(method, statement, allowed) {
+  requireMethodKind(method, statement, allowed);
+}
+
+export const STORAGE_WRITE_KINDS = WRITE_KINDS;
+export const STORAGE_READ_KINDS = READ_KINDS;
+
+function renderStatement(statement, dialect) {
   if (!statement || typeof statement !== 'object' || !Object.hasOwn(statement, 'kind') || typeof statement.kind !== 'string') {
     refuse('Storage statement must be a structured object');
   }
+  const placeholder = placeholders(dialect);
   const table = identifier(statement.table, 'table');
   if (statement.kind === 'insert') {
     closed(statement, ['kind', 'table', 'values'], 'insert statement', ['kind', 'table', 'values']);
     const bound = values(statement.values, 'Insert');
     const columns = bound.map((entry) => entry.column);
     return {
-      sql: `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+      sql: `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => placeholder()).join(', ')})`,
       params: bound.map((entry) => entry.value),
     };
   }
@@ -90,7 +111,7 @@ export function renderSqliteStatement(statement) {
       ? ['kind', 'table', 'where']
       : ['kind', 'table', 'columns', 'where', 'orderBy', 'limit'], `${statement.kind} statement`,
       statement.kind === 'count' ? ['kind', 'table'] : ['kind', 'table', 'columns']);
-    const where = predicates(statement.where);
+    const where = predicates(statement.where, placeholder);
     const selection = statement.kind === 'count'
       ? 'COUNT(*) AS "n"'
       : statement.columns === '*'
@@ -112,22 +133,32 @@ export function renderSqliteStatement(statement) {
     const params = [...where.params];
     if (statement.kind === 'select' && statement.limit !== undefined) {
       if (!Number.isInteger(statement.limit) || statement.limit < 1) refuse('Storage limit must be a positive integer');
-      sql += ' LIMIT ?'; params.push(statement.limit);
+      sql += ` LIMIT ${placeholder()}`; params.push(statement.limit);
     }
     return { sql, params };
   }
   if (statement.kind === 'update') {
     closed(statement, ['kind', 'table', 'values', 'where'], 'update statement', ['kind', 'table', 'values', 'where']);
     const bound = values(statement.values, 'Update');
-    const where = predicates(statement.where);
+    const assignments = bound.map((entry) => `${entry.column} = ${placeholder()}`);
+    const where = predicates(statement.where, placeholder);
     if (!where.sql) refuse('Update requires a predicate');
-    const assignments = bound.map((entry) => `${entry.column} = ?`);
     return {
       sql: `UPDATE ${table} SET ${assignments.join(', ')}${where.sql}`,
       params: [...bound.map((entry) => entry.value), ...where.params],
     };
   }
   refuse('Unsupported storage statement kind', { kind: statement.kind });
+}
+
+/** Render the closed M1 statement vocabulary for the SQLite adapter. */
+export function renderSqliteStatement(statement) {
+  return renderStatement(statement, 'sqlite');
+}
+
+/** Render the closed M1 statement vocabulary for the PostgreSQL adapter (`$1..$n`). */
+export function renderPostgresqlStatement(statement) {
+  return renderStatement(statement, 'postgresql');
 }
 
 /**
