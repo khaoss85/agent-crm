@@ -112,6 +112,33 @@ posture slice. The factory does not import the loader; entries call
 `prepareDeploymentPreconnect`. v1 `--db` `doctor.database` is retained. Dual
 bundled v1/v2 package graphs remain later compatibility work.
 
+### Dialect migration intent and module-state v2 assessment (Production Spine v2 M3A)
+
+Horizontal runtime capability: every generated module and every domain that
+owns module manifests will eventually need a checked-in PostgreSQL bootstrap
+beside its SQLite history. Core CRM handwritten tables are described by core
+schema intent, not by `module.state.json`. Bundled package modules remain
+pre-state; adopting them is sequenced authoring, not this PR. No domain
+selects PostgreSQL and none imports the intent renderer.
+<!-- truth: spine.postgresql.implemented=absent -->
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | handwritten Company/Contact/Opportunity/Approval schema is in core intent; project-generated modules gain v2 state only after `module create --apply` |
+| Pipeline | `not_applicable` | pipeline composition does not own persisted tables |
+| Lead Intelligence | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Commercial Operations | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Signature & Order | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Contract Activation | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Delivery | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Service | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Work | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Lifecycle | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Customer Data | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Custom-package fixture | `deferred` | customer packages remain pre-state until their authors apply adoption |
+
+Closing milestone for every `deferred` row: package-module state adoption before a composition is selected for PostgreSQL (M3B/dual-graph follow-up), not a silent rewrite in this PR.
+
 ### Identity-verifier pre-connect contract v2 assessment (Production Spine v2 M2F)
 
 The verifier resolver is a horizontal *runtime* capability: every executable

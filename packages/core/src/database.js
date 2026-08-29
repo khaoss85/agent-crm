@@ -7,6 +7,13 @@ import { mkdirSync } from 'node:fs';
 import { AppError, ConflictError } from './errors.js';
 import { createSqliteStorage } from './storage-contract.js';
 import { claimTransactionMinter, currentTransactionWitness } from './transaction-witness.js';
+import {
+  SCHEMA_MIGRATIONS_CHECKSUM_NAME,
+  SCHEMA_MIGRATIONS_CHECKSUM_VERSION,
+  applySchemaMigrationsChecksumUpgrade,
+  checksumForReleasedMigration,
+  ledgerHasChecksumColumn,
+} from './schema-migrations-ledger.js';
 
 /**
  * The right to open an owned transaction scope, claimed once at module load so
@@ -386,6 +393,21 @@ const CONTROL_PLANE_MIGRATIONS = [
 ];
 
 /**
+ * Checksum column on `schema_migrations`. Every plane receives it once so a
+ * dedicated data file, a dedicated control file and a combined legacy file
+ * all grow the same ledger. Not a CRM table.
+ */
+const LEDGER_MIGRATIONS = [
+  {
+    version: SCHEMA_MIGRATIONS_CHECKSUM_VERSION,
+    name: SCHEMA_MIGRATIONS_CHECKSUM_NAME,
+    sql: `
+      ALTER TABLE schema_migrations ADD COLUMN checksum TEXT;
+    `,
+  },
+];
+
+/**
  * Which migrations a database receives.
  *
  * `combined` is the historical single-file shape and remains the default, so
@@ -396,10 +418,12 @@ const MIGRATION_PLANES = Object.freeze({
   // The plane subsets have holes by design (data owns v6, control owns v7).
   // A combined legacy database must retain the globally ordered v1-v5 prefix,
   // so concatenating the subsets would incorrectly run v6 before v5.
-  combined: [...DATA_PLANE_MIGRATIONS, ...CONTROL_PLANE_MIGRATIONS]
+  combined: [...DATA_PLANE_MIGRATIONS, ...CONTROL_PLANE_MIGRATIONS, ...LEDGER_MIGRATIONS]
     .sort((left, right) => left.version - right.version),
-  data: DATA_PLANE_MIGRATIONS,
-  control: CONTROL_PLANE_MIGRATIONS,
+  data: [...DATA_PLANE_MIGRATIONS, ...LEDGER_MIGRATIONS]
+    .sort((left, right) => left.version - right.version),
+  control: [...CONTROL_PLANE_MIGRATIONS, ...LEDGER_MIGRATIONS]
+    .sort((left, right) => left.version - right.version),
 });
 
 /**
@@ -411,13 +435,14 @@ const MIGRATION_PLANES = Object.freeze({
 export const CORE_MIGRATIONS_FOR_CHARACTERIZATION = Object.freeze([
   ...DATA_PLANE_MIGRATIONS.map((migration) => Object.freeze({ plane: 'data', ...migration })),
   ...CONTROL_PLANE_MIGRATIONS.map((migration) => Object.freeze({ plane: 'control', ...migration })),
+  ...LEDGER_MIGRATIONS.map((migration) => Object.freeze({ plane: 'ledger', ...migration })),
 ].sort((left, right) => left.version - right.version));
 
 /** The migration versions each plane owns, published so a test can pin them. */
 export const MIGRATION_VERSIONS = Object.freeze({
   combined: Object.freeze(MIGRATION_PLANES.combined.map((m) => m.version)),
-  data: Object.freeze(DATA_PLANE_MIGRATIONS.map((m) => m.version)),
-  control: Object.freeze(CONTROL_PLANE_MIGRATIONS.map((m) => m.version)),
+  data: Object.freeze(MIGRATION_PLANES.data.map((m) => m.version)),
+  control: Object.freeze(MIGRATION_PLANES.control.map((m) => m.version)),
 });
 
 /**
@@ -461,7 +486,31 @@ function withStartupBusyRetry(operation) {
   }
 }
 
-function assertCoreMigrationIdentity(applied) {
+function expectedMigrationChecksum(migration) {
+  return checksumForReleasedMigration(migration);
+}
+
+function assertRecordedChecksum(version, name, recordedChecksum) {
+  if (recordedChecksum === undefined || recordedChecksum === null) {
+    throw new AppError('schema_migrations checksum is missing after the ledger upgrade', {
+      code: 'CORE_MIGRATION_CHECKSUM_MISSING',
+      status: 500,
+      details: { version, name },
+    });
+  }
+  const known = CORE_MIGRATION_BY_VERSION.get(version);
+  if (!known) return;
+  const expected = expectedMigrationChecksum(known);
+  if (String(recordedChecksum) !== expected) {
+    throw new AppError('schema_migrations checksum does not match the pinned released identity', {
+      code: 'CORE_MIGRATION_CHECKSUM_MISMATCH',
+      status: 500,
+      details: { version, name },
+    });
+  }
+}
+
+function assertCoreMigrationIdentity(applied, checksums) {
   for (const [version, recordedName] of applied) {
     const known = CORE_MIGRATION_BY_VERSION.get(version);
     if (known && recordedName !== known.name) {
@@ -472,6 +521,9 @@ function assertCoreMigrationIdentity(applied) {
           details: { version, expectedName: known.name },
         },
       );
+    }
+    if (checksums?.has(version)) {
+      assertRecordedChecksum(version, recordedName, checksums.get(version));
     }
   }
 }
@@ -538,18 +590,30 @@ export function createDatabase(options = {}) {
       ) STRICT;
     `));
 
+    const checksumColumn = () => ledgerHasChecksumColumn(raw);
     const readCoreMigration = (version) => raw
-      .prepare('SELECT version, name FROM schema_migrations WHERE version = ?')
+      .prepare(checksumColumn()
+        ? 'SELECT version, name, checksum FROM schema_migrations WHERE version = ?'
+        : 'SELECT version, name FROM schema_migrations WHERE version = ?')
       .get(version);
     const readCoreMigrations = () => new Map(
-      raw.prepare('SELECT version, name FROM schema_migrations').all()
+      raw.prepare(checksumColumn()
+        ? 'SELECT version, name, checksum FROM schema_migrations'
+        : 'SELECT version, name FROM schema_migrations').all()
         .map((row) => [Number(row.version), String(row.name)]),
     );
+    const readCoreChecksums = () => {
+      if (!checksumColumn()) return null;
+      return new Map(
+        raw.prepare('SELECT version, checksum FROM schema_migrations').all()
+          .map((row) => [Number(row.version), row.checksum === null ? null : String(row.checksum)]),
+      );
+    };
     const applied = withStartupBusyRetry(readCoreMigrations);
     // Identity is global, not selected-plane-local. A data file carrying a
     // wrong control migration name (or the reverse) must never pass merely
     // because this boot would not execute that migration family.
-    assertCoreMigrationIdentity(applied);
+    assertCoreMigrationIdentity(applied, withStartupBusyRetry(readCoreChecksums) ?? undefined);
     assertMigrationPlane(applied, plane);
 
     const startupTransaction = (fn) => withStartupBusyRetry(() => {
@@ -576,13 +640,34 @@ export function createDatabase(options = {}) {
         // first process's committed migration, not rerun it or race its INSERT.
         const recorded = readCoreMigration(migration.version);
         if (recorded) {
-          assertCoreMigrationIdentity(new Map([[Number(recorded.version), String(recorded.name)]]));
+          const checksums = recorded.checksum !== undefined
+            ? new Map([[Number(recorded.version), recorded.checksum === null ? null : String(recorded.checksum)]])
+            : undefined;
+          assertCoreMigrationIdentity(new Map([[Number(recorded.version), String(recorded.name)]]), checksums);
           return;
         }
-        raw.exec(migration.sql);
-        raw.prepare(
-          'INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)',
-        ).run(migration.version, migration.name, new Date().toISOString());
+        const isLedgerUpgrade = migration.version === SCHEMA_MIGRATIONS_CHECKSUM_VERSION
+          && migration.name === SCHEMA_MIGRATIONS_CHECKSUM_NAME;
+        if (isLedgerUpgrade) {
+          applySchemaMigrationsChecksumUpgrade(raw, {
+            alterSql: migration.sql,
+            releasedMigrations: CORE_MIGRATIONS_FOR_CHARACTERIZATION.filter(
+              (entry) => entry.version < SCHEMA_MIGRATIONS_CHECKSUM_VERSION,
+            ),
+          });
+        } else {
+          raw.exec(migration.sql);
+        }
+        const checksum = expectedMigrationChecksum(migration);
+        if (ledgerHasChecksumColumn(raw)) {
+          raw.prepare(
+            'INSERT INTO schema_migrations(version, name, applied_at, checksum) VALUES (?, ?, ?, ?)',
+          ).run(migration.version, migration.name, new Date().toISOString(), checksum);
+        } else {
+          raw.prepare(
+            'INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)',
+          ).run(migration.version, migration.name, new Date().toISOString());
+        }
       });
     }
 

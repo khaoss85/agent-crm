@@ -3,8 +3,13 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ValidationError } from './errors.js';
+import { AppError, ValidationError } from './errors.js';
 import { validateModuleManifest, generateModuleMigration } from './module-manifest.js';
+import {
+  manifestFieldToColumn,
+  renderPostgresMigration,
+} from './dialect-sql.js';
+import { POSTGRES_SCHEMA_NAME, mapPhysicalName, qualifyPostgresIdent, quotePostgresIdent } from './physical-name.js';
 
 /**
  * **Module manifest evolution** — a generic runtime capability (ADR-019).
@@ -311,8 +316,18 @@ function indexSql(table, field) {
 }
 
 
-/** The state-file contract version. */
-export const MODULE_STATE_VERSION = 1;
+/** The state-file contract version written by this runtime. */
+export const MODULE_STATE_VERSION = 2;
+/** v1 SQLite-only history remains readable; writes emit v2. */
+export const SUPPORTED_MODULE_STATE_VERSIONS = Object.freeze([1, 2]);
+export const LEGACY_MODULE_STATE_REQUIRED = 'LEGACY_MODULE_STATE_REQUIRED';
+export const MODULE_POSTGRES_BOOTSTRAP_REQUIRED = 'MODULE_POSTGRES_BOOTSTRAP_REQUIRED';
+export const POSTGRES_BOOTSTRAP_TARGET_NONEMPTY = 'POSTGRES_BOOTSTRAP_TARGET_NONEMPTY';
+export const MODULE_POSTGRES_BOOTSTRAP_MISMATCH = 'MODULE_POSTGRES_BOOTSTRAP_MISMATCH';
+
+function sqlChecksum(sql) {
+  return createHash('sha256').update(sql).digest('hex');
+}
 
 /**
  * The fingerprint of a module's *normalized* definition. Canonical, so a
@@ -344,29 +359,141 @@ export function moduleStateFingerprint(manifest) {
 }
 
 /**
+ * PostgreSQL CREATE for the current manifest. Used only on an empty data plane;
+ * it is not a replay of SQLite revision history.
+ *
+ * @param {any} manifest
+ */
+export function generatePostgresModuleBootstrap(manifest) {
+  const normalized = validateModuleManifest(manifest);
+  const columns = [
+    { name: 'id', affinity: 'text', primaryKey: true },
+    ...normalized.fields.map((field) => manifestFieldToColumn(field)),
+    { name: 'created_at', affinity: 'timestamp', notNull: true },
+    { name: 'updated_at', affinity: 'timestamp', notNull: true },
+  ];
+  /** @type {any[]} */
+  const statements = [{ kind: 'createTable', name: normalized.table, columns }];
+  for (const field of normalized.fields) {
+    if (field.type === 'reference' || field.index === true) {
+      statements.push({
+        kind: 'createIndex',
+        name: `${normalized.table}_${field.column}`,
+        table: normalized.table,
+        columns: [field.column],
+      });
+    }
+  }
+  const rendered = renderPostgresMigration(statements);
+  return {
+    module: normalized.name,
+    table: normalized.table,
+    name: `pg_bootstrap_${normalized.table}`,
+    sql: rendered.sql,
+    names: rendered.names,
+  };
+}
+
+/**
+ * Dialect-specific PostgreSQL evolution for a later revision. Never translated
+ * from the SQLite migration string.
+ *
+ * @param {{previous: any, next: any, referencedBy?: string[]}} input
+ */
+export function generatePostgresModuleEvolution(input) {
+  const plan = planModuleEvolution(input);
+  const after = validateModuleManifest(input.next);
+  if (plan.strategy === 'none' || plan.strategy === 'metadata') {
+    return { ...plan, migrationName: null, sql: '' };
+  }
+  const migrationName = `pg_evolve_${plan.table}_r${plan.toRevision}`;
+  /** @type {any[]} */
+  const statements = [];
+  for (const name of plan.addedFields) {
+    const field = after.fields.find((entry) => entry.name === name);
+    statements.push({ kind: 'addColumn', table: plan.table, column: manifestFieldToColumn(field) });
+  }
+  for (const name of plan.addedIndexes) {
+    const field = after.fields.find((entry) => entry.name === name);
+    statements.push({
+      kind: 'createIndex',
+      name: `${plan.table}_${field.column}`,
+      table: plan.table,
+      columns: [field.column],
+    });
+  }
+  const rendered = statements.length > 0
+    ? renderPostgresMigration(statements)
+    : { sql: `CREATE SCHEMA IF NOT EXISTS ${quotePostgresIdent(POSTGRES_SCHEMA_NAME)};\n` };
+  const tablePhysical = mapPhysicalName(plan.table).physical;
+  const tableSql = qualifyPostgresIdent(POSTGRES_SCHEMA_NAME, tablePhysical);
+  /** @type {string[]} */
+  const enumSql = [];
+  for (const widened of plan.widenedEnums) {
+    const field = after.fields.find((entry) => entry.name === widened.field);
+    const constraintPhysical = mapPhysicalName(`${plan.table}_${field.column}_check`).physical;
+    const columnPhysical = mapPhysicalName(field.column).physical;
+    const values = field.values.map((value) => `'${String(value).replaceAll("'", "''")}'`).join(', ');
+    enumSql.push(
+      `ALTER TABLE ${tableSql} DROP CONSTRAINT IF EXISTS ${quotePostgresIdent(constraintPhysical)};`,
+      `ALTER TABLE ${tableSql} ADD CONSTRAINT ${quotePostgresIdent(constraintPhysical)} CHECK (${quotePostgresIdent(columnPhysical)} IN (${values}));`,
+    );
+  }
+  const sql = enumSql.length > 0 ? `${rendered.sql}\n${enumSql.join('\n')}\n` : rendered.sql;
+  return { ...plan, migrationName, sql };
+}
+
+function postgresBootstrapRecord(manifest, fingerprint) {
+  const bootstrap = generatePostgresModuleBootstrap(manifest);
+  return {
+    name: bootstrap.name,
+    checksum: sqlChecksum(bootstrap.sql),
+    sql: bootstrap.sql,
+    provenance: {
+      kind: 'v1-state-fingerprint',
+      fingerprint,
+    },
+  };
+}
+
+/**
  * Render the checked-in state file: the last generated definition, its
  * fingerprint, and every migration generated for this module in order.
  *
  * It is data only — no executable code, no absolute path, no environment.
+ * v2 adds a PostgreSQL bootstrap; v1 `{name, checksum, sql}` history is
+ * preserved byte-for-byte in `migrations`.
  *
- * @param {{manifest: any, migrations: {migrationName: string, sql: string}[]}} input
+ * @param {{
+ *   manifest: any,
+ *   migrations: {migrationName: string, sql: string}[],
+ *   postgres?: {bootstrap?: any, evolutions?: any[]} | null,
+ * }} input
  */
-export function renderModuleState({ manifest, migrations }) {
+export function renderModuleState({ manifest, migrations, postgres = null }) {
   const normalized = validateModuleManifest(manifest);
+  const fingerprint = moduleStateFingerprint(normalized);
+  const sqliteMigrations = migrations.map((entry) => ({
+    name: entry.migrationName,
+    checksum: sqlChecksum(entry.sql),
+    sql: entry.sql,
+  }));
+  const bootstrap = postgres?.bootstrap ?? postgresBootstrapRecord(normalized, fingerprint);
+  const evolutions = postgres?.evolutions ?? [];
   const state = {
     stateVersion: MODULE_STATE_VERSION,
     module: normalized.name,
     revision: normalized.revision,
-    fingerprint: moduleStateFingerprint(normalized),
+    fingerprint,
     manifest: normalized,
-    // The complete, ordered migration history — SQL included. An applied
+    // The complete, ordered SQLite migration history — SQL included. An applied
     // migration is never regenerated from a newer manifest: doing so would
     // change its checksum and break every database that already ran it.
-    migrations: migrations.map((entry) => ({
-      name: entry.migrationName,
-      checksum: createHash('sha256').update(entry.sql).digest('hex'),
-      sql: entry.sql,
-    })),
+    migrations: sqliteMigrations,
+    postgres: {
+      bootstrap,
+      evolutions,
+    },
   };
   return `${JSON.stringify(state, null, 2)}\n`;
 }
@@ -397,10 +524,10 @@ export function readModuleState(rootDir, moduleName) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new ValidationError(`Module "${moduleName}": module.state.json must be a JSON object`);
   }
-  if (parsed.stateVersion !== MODULE_STATE_VERSION) {
+  if (!SUPPORTED_MODULE_STATE_VERSIONS.includes(parsed.stateVersion)) {
     throw new ValidationError(
       `Module "${moduleName}": module.state.json is stateVersion ${JSON.stringify(parsed.stateVersion)}; `
-        + `this version of accordo reads ${MODULE_STATE_VERSION}`,
+        + `this version of accordo reads ${SUPPORTED_MODULE_STATE_VERSIONS.join(', ')}`,
     );
   }
   if (parsed.module !== moduleName) {
@@ -421,26 +548,71 @@ export function readModuleState(rootDir, moduleName) {
       `Module "${moduleName}": module.state.json revision ${parsed.revision} disagrees with its manifest revision ${manifest.revision}`,
     );
   }
+  const migrations = (parsed.migrations ?? []).map((entry) => {
+    if (typeof entry?.name !== 'string' || typeof entry?.sql !== 'string') {
+      throw new ValidationError(`Module "${moduleName}": module.state.json has a malformed migration entry`);
+    }
+    const checksum = sqlChecksum(entry.sql);
+    if (checksum !== entry.checksum) {
+      throw new ValidationError(
+        `Module "${moduleName}": migration "${entry.name}" in module.state.json was edited — its checksum does not `
+          + 'match its SQL. Applied migrations are immutable; restore the file from version control.',
+      );
+    }
+    return { migrationName: entry.name, sql: entry.sql };
+  });
+  const postgres = parsed.stateVersion === 1 ? null : readPostgresState(moduleName, parsed, fingerprint);
   return {
     revision: manifest.revision,
     fingerprint,
     manifest,
     adopted: false,
+    stateVersion: parsed.stateVersion,
     // The whole history, in order: index 0 is the create migration.
-    migrations: (parsed.migrations ?? []).map((entry) => {
-      if (typeof entry?.name !== 'string' || typeof entry?.sql !== 'string') {
-        throw new ValidationError(`Module "${moduleName}": module.state.json has a malformed migration entry`);
-      }
-      const checksum = createHash('sha256').update(entry.sql).digest('hex');
-      if (checksum !== entry.checksum) {
-        throw new ValidationError(
-          `Module "${moduleName}": migration "${entry.name}" in module.state.json was edited — its checksum does not `
-            + 'match its SQL. Applied migrations are immutable; restore the file from version control.',
-        );
-      }
-      return { migrationName: entry.name, sql: entry.sql };
-    }),
+    migrations,
+    postgres,
   };
+}
+
+/**
+ * @param {string} moduleName
+ * @param {any} parsed
+ * @param {string} fingerprint
+ */
+function readPostgresState(moduleName, parsed, fingerprint) {
+  const postgres = parsed.postgres;
+  if (!postgres || typeof postgres !== 'object' || Array.isArray(postgres) || !postgres.bootstrap) {
+    throw new ValidationError(
+      `Module "${moduleName}": stateVersion 2 requires postgres.bootstrap`,
+    );
+  }
+  const bootstrap = postgres.bootstrap;
+  if (typeof bootstrap.name !== 'string' || typeof bootstrap.sql !== 'string' || typeof bootstrap.checksum !== 'string') {
+    throw new ValidationError(`Module "${moduleName}": postgres.bootstrap is malformed`);
+  }
+  if (sqlChecksum(bootstrap.sql) !== bootstrap.checksum) {
+    throw new ValidationError(
+      `Module "${moduleName}": postgres.bootstrap was edited — its checksum does not match its SQL`,
+    );
+  }
+  if (bootstrap.provenance?.kind !== 'v1-state-fingerprint' || typeof bootstrap.provenance?.fingerprint !== 'string') {
+    throw new ValidationError(
+      `Module "${moduleName}": postgres.bootstrap provenance must point at a v1 state fingerprint`,
+    );
+  }
+  void fingerprint;
+  const evolutions = Array.isArray(postgres.evolutions) ? postgres.evolutions.map((entry) => {
+    if (typeof entry?.name !== 'string' || typeof entry?.sql !== 'string' || typeof entry?.checksum !== 'string') {
+      throw new ValidationError(`Module "${moduleName}": postgres.evolutions has a malformed entry`);
+    }
+    if (sqlChecksum(entry.sql) !== entry.checksum) {
+      throw new ValidationError(
+        `Module "${moduleName}": postgres evolution "${entry.name}" was edited — its checksum does not match its SQL`,
+      );
+    }
+    return { name: entry.name, sql: entry.sql, checksum: entry.checksum };
+  }) : [];
+  return { bootstrap, evolutions };
 }
 
 /**
@@ -474,7 +646,17 @@ export function readModuleState(rootDir, moduleName) {
  * @param {string} rootDir @param {string} moduleName
  */
 function adoptModuleState(rootDir, moduleName) {
-  const moduleDir = join(rootDir, 'packages', 'modules', moduleName);
+  return adoptModuleStateFromDir(join(rootDir, 'packages', 'modules', moduleName), moduleName);
+}
+
+/**
+ * Reconstruct revision-1 SQLite history from a generated module directory that
+ * predates `module.state.json`. Does not write files.
+ *
+ * @param {string} moduleDir
+ * @param {string} moduleName
+ */
+export function adoptModuleStateFromDir(moduleDir, moduleName) {
   const manifestPath = join(moduleDir, 'module.manifest.json');
   // Genuinely never generated: there is nothing to evolve from, and the caller
   // treats this as a first generation.
@@ -534,8 +716,101 @@ function adoptModuleState(rootDir, moduleName) {
     // from a checked-in state file. The apply writes the state file, so a
     // module is adopted at most once.
     adopted: true,
+    stateVersion: 1,
+    postgres: null,
     migrations: [{ migrationName: create.migrationName, sql: create.sql }],
   };
+}
+
+/**
+ * Authoring adoption: reconstruct SQLite history and derive the PostgreSQL
+ * bootstrap from the current normalized manifest. Runtime composition must
+ * not call this; it writes nothing.
+ *
+ * @param {string} moduleDir
+ * @param {string} moduleName
+ */
+export function adoptLegacyModuleState(moduleDir, moduleName) {
+  const adopted = adoptModuleStateFromDir(moduleDir, moduleName);
+  if (!adopted) return null;
+  const postgres = {
+    bootstrap: postgresBootstrapRecord(adopted.manifest, adopted.fingerprint),
+    evolutions: [],
+  };
+  const document = JSON.parse(renderModuleState({
+    manifest: adopted.manifest,
+    migrations: adopted.migrations,
+    postgres,
+  }));
+  return { ...adopted, stateVersion: MODULE_STATE_VERSION, postgres, document };
+}
+
+/**
+ * Runtime PostgreSQL composition refuses a generated module that still has no
+ * checked-in state. It never synthesizes or writes one.
+ *
+ * @param {{moduleName: string, stateFileExists: boolean, state?: any}} input
+ */
+export function requireAdoptedModuleStateForPostgres({ moduleName, stateFileExists, state }) {
+  if (!stateFileExists) {
+    throw new AppError(
+      `PostgreSQL composition requires a checked-in module.state.json for "${moduleName}"`,
+      { code: LEGACY_MODULE_STATE_REQUIRED, status: 500, details: { module: moduleName } },
+    );
+  }
+  if (!state?.postgres?.bootstrap) {
+    throw new AppError(
+      `PostgreSQL composition requires a checked-in postgres bootstrap for "${moduleName}"`,
+      { code: MODULE_POSTGRES_BOOTSTRAP_REQUIRED, status: 500, details: { module: moduleName } },
+    );
+  }
+}
+
+/**
+ * @param {{tableNames?: string[]}} input
+ */
+export function assertPostgresBootstrapTargetEmpty({ tableNames = [] } = {}) {
+  const occupied = tableNames.filter((name) => name !== 'schema_migrations' && name !== 'module_migrations');
+  if (occupied.length > 0) {
+    throw new AppError('PostgreSQL module bootstrap requires an empty data plane', {
+      code: POSTGRES_BOOTSTRAP_TARGET_NONEMPTY,
+      status: 500,
+    });
+  }
+}
+
+/**
+ * A bootstrap checked in for the current manifest must be reproducible from it.
+ * States with later dialect-specific evolutions compare after those append.
+ *
+ * @param {{manifest: any, postgres: {bootstrap: {sql: string}, evolutions?: any[]}}} state
+ */
+export function assertPostgresBootstrapMatchesManifest(state) {
+  const bootstrap = state.postgres?.bootstrap;
+  if (!bootstrap?.sql || !bootstrap.checksum) {
+    throw new AppError('PostgreSQL bootstrap does not match the current module manifest', {
+      code: MODULE_POSTGRES_BOOTSTRAP_MISMATCH,
+      status: 500,
+      details: { module: state.manifest?.name },
+    });
+  }
+  if (sqlChecksum(bootstrap.sql) !== bootstrap.checksum) {
+    throw new AppError('PostgreSQL bootstrap does not match the current module manifest', {
+      code: MODULE_POSTGRES_BOOTSTRAP_MISMATCH,
+      status: 500,
+      details: { module: state.manifest?.name },
+    });
+  }
+  const evolutions = state.postgres?.evolutions ?? [];
+  if (evolutions.length > 0) return;
+  const expected = generatePostgresModuleBootstrap(state.manifest);
+  if (expected.sql !== bootstrap.sql) {
+    throw new AppError('PostgreSQL bootstrap does not match the current module manifest', {
+      code: MODULE_POSTGRES_BOOTSTRAP_MISMATCH,
+      status: 500,
+      details: { module: state.manifest?.name },
+    });
+  }
 }
 
 /**
