@@ -247,23 +247,23 @@ contract-2 package graphs expressible, normalizes an absent capability contract
 to 1, publishes the resolved versions, and refuses a mixed graph before any
 service is called. It deliberately migrates no package. A `deferred` row below
 therefore means the domain still ships only its synchronous v1 definition; it
-does not mean its current v1 graph is invalid. M2E-3 owns every promotion.
+does not mean its current v1 graph is invalid. Dual bundled v1/v2 graphs remain later compatibility work, not M2E-3.
 
 | Domain | Status | Reason |
 |---|---|---|
 | Core CRM (Sales) | `not_applicable` | project-owned records are not package definitions; their async service composition belongs to M2E-2 |
 | Pipeline | `not_applicable` | a kernel workflow capability, not a domain package |
-| Lead Intelligence | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Commercial Operations | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Signature & Order | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Contract Activation | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Delivery | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Service | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Work | `deferred` | its capability declaration still omits the field by compatibility and resolves to contract 1; M2E-3 owns the explicit dual graph |
-| Lifecycle | `deferred` | it consumes domain capability version 2 on synchronous execution contract 1; M2E-3 owns the async graph |
-| Customer Data | `deferred` | its contract-1 graph remains selected; M2E-3 owns the dual v1/v2 definition |
-| Custom-package fixture | `deferred` | it remains the unchanged customer-authored contract-1 compatibility proof; M2E-3 adds a separate v2 fixture without rewriting it |
-| Custom-package score-disclosure fixture | `deferred` | its contract-1 graph and `intelligence@1` dependency remain the customer-authored capability-consumer proof; M2E-3 owns any v2 companion rather than silently rewriting this v1 fixture |
+| Lead Intelligence | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Work | `deferred` | its capability declaration still omits the field by compatibility and resolves to contract 1; an explicit dual graph remains later compatibility work |
+| Lifecycle | `deferred` | it consumes domain capability version 2 on synchronous execution contract 1; an async graph remains later compatibility work |
+| Customer Data | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Custom-package fixture | `deferred` | it remains the unchanged customer-authored contract-1 compatibility proof; a separate v2 fixture is later compatibility work and must not silently rewrite this v1 fixture |
+| Custom-package score-disclosure fixture | `deferred` | its contract-1 graph and `intelligence@1` dependency remain the customer-authored capability-consumer proof; a v2 companion is later compatibility work rather than a silent rewrite of this v1 fixture |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
 
 ### Private async SQLite lifecycle assessment (Production Spine v2 M2E-2A)
@@ -282,15 +282,15 @@ this private lifecycle; it does not mean its released v1 graph is invalid.
 |---|---|---|
 | Core CRM (Sales) | `not_applicable` | project-owned records are not selected through this private lifecycle; 2B owns any portable service graph over it |
 | Pipeline | `not_applicable` | a kernel workflow capability, not a selected package graph |
-| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
-| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
-| Signature & Order | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
-| Contract Activation | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
-| Delivery | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
-| Service | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and M2E-3 owns any dual definition |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
 | Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto the private lifecycle |
 | Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
-| Customer Data | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Customer Data | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
 | Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; this slice adds no v2 fixture |
 | Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime lifecycle |
@@ -310,15 +310,15 @@ through this private facade; it does not mean that v1 graph is invalid.
 |---|---|---|
 | Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval compose over 2A storage and are reachable through the leak-free facade; generated project modules and Spine are not |
 | Pipeline | `not_applicable` | a kernel workflow capability; this slice registers an empty pipeline registry and does not migrate pipeline contract 1 |
-| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Signature & Order | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Contract Activation | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Delivery | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Service | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
 | Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto the portable facade |
 | Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
-| Customer Data | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Customer Data | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
 | Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; this slice adds no v2 fixture |
 | Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime facade |
@@ -339,15 +339,15 @@ through this private HTTP entry; it does not mean that v1 graph is invalid.
 |---|---|---|
 | Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval writes and reads are awaited over portable HTTP; generated project modules and dual-plane Spine are not composed here |
 | Pipeline | `not_applicable` | a kernel workflow capability; this slice does not migrate pipeline contract 1 |
-| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Signature & Order | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Contract Activation | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Delivery | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
-| Service | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
 | Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto portable HTTP |
 | Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
-| Customer Data | `deferred` | its contract-1 graph remains the released selection; M2E-3 owns any dual definition |
+| Customer Data | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
 | Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; this slice adds no v2 fixture |
 | Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime HTTP graph |
