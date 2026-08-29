@@ -406,7 +406,7 @@ test('PostgreSQL-shaped options refuse before any path is created and never echo
     { adapter: 'postgres', dbPath: missingParent },
     { dbPath: sentinel },
     { connectionString: sentinel, dbPath: missingParent },
-    { connection: { host: 'localhost', user: 'm2e3-user', password: 's3cret-value' }, dbPath: missingParent },
+    { connection: { host: 'localhost', user: 'm2e3-user', password: 'unavailable' }, dbPath: missingParent },
   ];
 
   for (const options of cases) {
