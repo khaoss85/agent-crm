@@ -1,6 +1,6 @@
 // @ts-check
 
-import { definePackage } from '../../core/index.js';
+import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { CommercialRegistries } from './registry.js';
 import { buildCommercialActions } from './actions.js';
 import { createCatalogSync } from './catalog-sync.js';
@@ -171,7 +171,12 @@ export function createCommercialDomain(options = {}) {
 
   /** The registries, for the composition that owns this package instance. */
   pkg.registries = registries;
-  return pkg;
+  return selectPackageGraph(pkg, options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createCommercialDomain()` callers keep v1. */
+export function createCommercialDomainV2(options = {}) {
+  return createCommercialDomain({ ...options, packageContract: 2 });
 }
 
 export { CommercialRegistries } from './registry.js';

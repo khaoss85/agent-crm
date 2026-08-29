@@ -235,7 +235,10 @@ export function createAccordoApp(options = {}) {
   // Optional domain packages (ADR-018 addendum). The kernel knows only the
   // generic contract: a package contributes actions and versioned policies,
   // and the application composes it here. With none registered, everything
-  // below behaves exactly as it did before this seam existed.
+  // below behaves exactly as it did before this seam existed. Bundled v2
+  // graphs are not imported here: `generatedDomains` is the checked-in v1
+  // selection. A uniform contract-2 list still registers (package-test uses
+  // that path); a mixed v1/v2 list refuses at composition.
   const domains = new PackageRegistry({ packages: generatedDomains });
   domains.persistFingerprints(database);
   // A package extracted from the kernel may already have `definition_versions`

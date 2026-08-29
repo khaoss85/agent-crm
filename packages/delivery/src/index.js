@@ -1,6 +1,6 @@
 // @ts-check
 
-import { definePackage } from '../../core/index.js';
+import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { buildDeliveryActions } from './handover.js';
 import { buildExecutionActions, executionMetadata } from './execution.js';
 import {
@@ -66,7 +66,7 @@ export function createDeliveryPackage(options = {}) {
     definition: defineDeliveryCostPolicy(definition),
   }));
 
-  return definePackage({
+  return selectPackageGraph(definePackage({
     packageContract: 1,
     name: DELIVERY_PACKAGE,
     label: 'Delivery handover',
@@ -124,7 +124,12 @@ export function createDeliveryPackage(options = {}) {
         ],
       };
     },
-  });
+  }), options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createDeliveryPackage()` callers keep v1. */
+export function createDeliveryPackageV2(options = {}) {
+  return createDeliveryPackage({ ...options, packageContract: 2 });
 }
 
 export { defineDeliveryHandoverPolicy, DELIVERY_MODES, OVERRIDABLE_MODES };

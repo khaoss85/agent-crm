@@ -3,7 +3,11 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { PackageRegistry, validatePackageDefinition } from '../../core/index.js';
+import {
+  PackageRegistry,
+  describePackageGraphContracts,
+  validatePackageDefinition,
+} from '../../core/index.js';
 import { importsPrivateKernelPath, packageSources } from './package-sources.js';
 
 /**
@@ -78,6 +82,43 @@ export async function loadDefinitions(entry) {
 }
 
 /**
+ * The selected v1 factory plus any explicit contract-2 companion (`createXPackageV2`).
+ * Package test / composition keep the single selected definition; inspect reports
+ * every graph a directory actually exports.
+ *
+ * @param {string} entry
+ */
+export async function loadPackageGraphs(entry) {
+  const module = await import(pathToFileURL(entry).href);
+  /** @type {any[]} */
+  const graphs = [];
+  const seen = new Set();
+  for (const [name, value] of Object.entries(module)) {
+    if (typeof value !== 'function' || !/^create[A-Za-z0-9]*(Package|Domain)$/.test(name)) continue;
+    let definition;
+    try {
+      definition = value({});
+    } catch (error) {
+      throw new Error(`${name}() threw while building the package definition: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    graphs.push({ export: name, definition });
+    seen.add(name);
+    const v2Name = `${name}V2`;
+    const v2Factory = module[v2Name];
+    if (typeof v2Factory !== 'function' || seen.has(v2Name)) continue;
+    let v2;
+    try {
+      v2 = v2Factory({});
+    } catch (error) {
+      throw new Error(`${v2Name}() threw while building the package definition: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    graphs.push({ export: v2Name, definition: v2 });
+    seen.add(v2Name);
+  }
+  return graphs.length > 0 ? graphs : loadDefinitions(entry);
+}
+
+/**
  * Validate one package directory. The result is the same shape whether it
  * passed or failed, so a machine reads one contract either way.
  *
@@ -90,6 +131,15 @@ export async function validatePackageCommand({ packagePath }) {
   const problems = [];
 
   for (const { export: exportName, definition } of definitions) {
+    try {
+      validatePackageDefinition(definition);
+    } catch (error) {
+      problems.push(`${exportName}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const graphs = await loadPackageGraphs(entry);
+  for (const { export: exportName, definition } of graphs) {
+    if (definitions.some((item) => item.export === exportName)) continue;
     try {
       validatePackageDefinition(definition);
     } catch (error) {
@@ -162,11 +212,21 @@ export async function validatePackageCommand({ packagePath }) {
  */
 export async function inspectPackageCommand({ packagePath }) {
   const result = await validatePackageCommand({ packagePath });
+  const { entry } = resolvePackageDir(packagePath);
+  const graphs = await loadPackageGraphs(entry);
+  const selected = graphs[0];
   return {
     ...result,
     command: 'package:inspect',
     // Metadata is what the schema would publish: function-free by contract.
     metadata: await packageMetadata(packagePath),
+    selectedGraph: selected
+      ? { export: selected.export, ...describePackageGraphContracts(selected.definition) }
+      : null,
+    graphs: graphs.map(({ export: exportName, definition }) => ({
+      export: exportName,
+      ...describePackageGraphContracts(definition),
+    })),
   };
 }
 

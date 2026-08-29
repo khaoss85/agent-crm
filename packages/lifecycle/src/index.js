@@ -2,6 +2,7 @@
 
 import {
   AppError, ValidationError, calendarDaysBetween, definePackage, requireCalendarDate,
+  selectPackageGraph,
 } from '../../core/index.js';
 import {
   AMENDMENT_LIMITATIONS,
@@ -698,7 +699,7 @@ export function buildResolveCommercialFollowupAction(moduleNames) {
  */
 export function createLifecyclePackage(options = {}) {
   const followUp = options.followUp === true;
-  return definePackage({
+  return selectPackageGraph(definePackage({
     packageContract: 1,
     name: LIFECYCLE_PACKAGE,
     // 2: M16b amendment execution. One new record (`amendment-run`), five new
@@ -802,7 +803,12 @@ export function createLifecyclePackage(options = {}) {
           + 'renewalNoticeDays are recorded only, and nobody is notified',
       };
     },
-  });
+  }), options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createLifecyclePackage()` callers keep v1. */
+export function createLifecyclePackageV2(options = {}) {
+  return createLifecyclePackage({ ...options, packageContract: 2 });
 }
 
 export {

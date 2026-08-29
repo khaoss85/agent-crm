@@ -9,7 +9,7 @@ import {
 } from './activation-policy.js';
 import { buildContractActions } from './activation.js';
 import { MAX_NOTICE_DAYS, MAX_TERM_DAYS, SIGNED_TERMS_NOTE, SIGNED_TERMS_SOURCE, TERMS_NOTE, TERMS_SOURCE } from './dates.js';
-import { definePackage } from '../../core/index.js';
+import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { createDeliveryObligationsCapability } from './capabilities.js';
 import { createServiceObligationsCapability } from './service-capability.js';
 import { createContractLifecycleSourceCapability } from './lifecycle-capability.js';
@@ -57,7 +57,7 @@ export function createContractsDomain(options = {}) {
     definition: defineOrderActivationPolicy(definition),
   }));
 
-  return definePackage({
+  return selectPackageGraph(definePackage({
     packageContract: 1,
     name: CONTRACTS_DOMAIN,
     // 4: `contract-lifecycle-source` moved to @2. It now refuses to open while
@@ -213,7 +213,12 @@ export function createContractsDomain(options = {}) {
         ],
       };
     },
-  });
+  }), options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createContractsDomain()` callers keep v1. */
+export function createContractsDomainV2(options = {}) {
+  return createContractsDomain({ ...options, packageContract: 2 });
 }
 
 export { defineOrderActivationPolicy, COMMERCIAL_ACTIVATIONS, OBLIGATION_TYPES, OVERRIDABLE_COMMERCIAL, DIMENSIONS };

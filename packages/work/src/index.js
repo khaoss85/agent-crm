@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, definePackage } from '../../core/index.js';
+import { AppError, definePackage, selectPackageGraph } from '../../core/index.js';
 import {
   ACTIVITY_KINDS,
   ACTIVITY_MODULE,
@@ -302,7 +302,7 @@ export function createFollowUpCapability(moduleNames) {
 
 /** @param {{modules?: Record<string, string>}} [options] */
 export function createWorkPackage(options = {}) {
-  return definePackage({
+  return selectPackageGraph(definePackage({
     packageContract: 1,
     name: WORK_PACKAGE,
     version: 1,
@@ -399,7 +399,12 @@ export function createWorkPackage(options = {}) {
           'Work v1 records human follow-up work and what happened to it. Nothing in it runs on a timer, sends anything, or tells anybody. A task is only ever moved by a person.',
       };
     },
-  });
+  }), options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createWorkPackage()` callers keep v1. */
+export function createWorkPackageV2(options = {}) {
+  return createWorkPackage({ ...options, packageContract: 2 });
 }
 
 export default createWorkPackage;
