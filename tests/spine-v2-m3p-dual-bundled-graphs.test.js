@@ -228,7 +228,7 @@ test('createAccordoApp stays synchronous and does not import bundled v2 graphs',
   assert.match(v1Source, /^export function createAccordoApp/m);
   assert.equal(/export async function createAccordoApp/.test(v1Source), false);
   assert.equal(/createWorkPackageV2|createCommercialDomainV2|packageContract:\s*2/.test(v1Source), false);
-  assert.equal(/refuseAsyncPackagesOnSynchronousFactory/.test(v1Source), false);
+  assert.match(v1Source, /refuseAsyncPackagesOnSynchronousFactory\(generatedDomains\)/);
 
   const asyncSource = readFileSync(new URL('../packages/app/src/create-app-async.js', import.meta.url), 'utf8');
   assert.equal(/from ['"].*create-app\.js['"]/.test(asyncSource), false);

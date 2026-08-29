@@ -19,6 +19,7 @@ import { generatedPipelines } from '../../pipelines/generated/index.js';
 import { generatedDomains } from '../../domains/generated/index.js';
 import { PipelineRegistry } from '../../core/src/pipeline-registry.js';
 import { PackageRegistry } from '../../core/src/package-registry.js';
+import { refuseAsyncPackagesOnSynchronousFactory } from '../../core/src/package-graph.js';
 import { createOperationRuntime, composePackageOperations } from '../../core/src/operation-runtime.js';
 import { ValidationError } from '../../core/src/errors.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
@@ -237,8 +238,9 @@ export function createAccordoApp(options = {}) {
   // and the application composes it here. With none registered, everything
   // below behaves exactly as it did before this seam existed. Bundled v2
   // graphs are not imported here: `generatedDomains` is the checked-in v1
-  // selection. A uniform contract-2 list still registers (package-test uses
-  // that path); a mixed v1/v2 list refuses at composition.
+  // selection. A contract-2 package in that list is refused before the
+  // registry runs, so promise-returning v2 seams never enter the sync factory.
+  refuseAsyncPackagesOnSynchronousFactory(generatedDomains);
   const domains = new PackageRegistry({ packages: generatedDomains });
   domains.persistFingerprints(database);
   // A package extracted from the kernel may already have `definition_versions`
