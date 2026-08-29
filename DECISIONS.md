@@ -637,8 +637,32 @@ capability contract 1; the capability's domain version remains 2.
 Existing singular constants remain the v1 values emitted by scaffolding. The
 accepted sets and capability default stay private to core: package authors
 declare one version and do not negotiate one through a public constant. The
-bundled packages remain v1 in this addendum; M2E-3 owns their dual graphs, and
-retiring v1 remains a separate compatibility decision.
+bundled packages remain v1 in this addendum; dual v1/v2 graphs remain a later
+compatibility slice, and retiring v1 remains a separate compatibility decision.
+
+### ADR-018 addendum 10 — public portable factory defaults to explicit empty contract-2
+
+Production Spine v2 M2E-3 publishes `createAccordoAppAsync()` as the portable
+SQLite composition contract. `createAccordoApp()` remains the characterized
+synchronous factory and never returns a Promise. The two factories share no
+object graph: the async path composes over 2A/2B and does not wrap, redact or
+`Promise.resolve` the v1 application.
+
+The default selected graph is an explicit `{ packageContract: 2, packages: [],
+actions: [], modules: [] }`. Empty generated registries still carry no version,
+so they are not read as v2. Kernel Company, Contact, Opportunity and Approval
+compose on that graph. A caller-supplied selected graph still goes through
+preflight: v1 and mixed graphs refuse with `PACKAGE_ASYNC_CONTRACT_REQUIRED`
+before SQLite opens. The customer-authored contract-1 fixture stays
+sync-compatible and fail-closed on the portable path.
+
+PostgreSQL-shaped options refuse with `STORAGE_ADAPTER_UNAVAILABLE` before any
+opener or path is created; diagnostics carry no credential.
+<!-- truth: spine.postgresql.implemented=absent -->
+Dual-plane Spine, identity-verifier, deployment-storage and the private
+lifecycle test seams are `PORTABLE_OPTION_UNSUPPORTED` rather than silently
+dropped. Default `accordo serve` and bundled package dual definitions are not
+this addendum.
 
 ## ADR-019 — Safe generated-module evolution through explicit revisions and append-only named migrations
 

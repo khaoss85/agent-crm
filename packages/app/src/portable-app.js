@@ -29,8 +29,8 @@ import {
 
 /**
  * Source-private M2E-2B machinery. Not exported from `packages/app/src/index.js`
- * or `packages/core/index.js`. The released synchronous factory stays the only
- * public application constructor.
+ * or `packages/core/index.js`. The public async factory composes through this
+ * module; the released synchronous factory stays a separate v1 constructor.
  *
  * The portable graph is assembled over 2A's owned storage handle. It is never
  * derived from a constructed v1 application object.

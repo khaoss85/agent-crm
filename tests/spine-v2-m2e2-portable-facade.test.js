@@ -263,9 +263,8 @@ async function portableAppFor(t, options = {}) {
   return { app, workspace };
 }
 
-test('public surfaces do not grow a second factory or leak the portable facade', () => {
-  assert.deepEqual(Object.keys(publicApp).sort(), ['createAccordoApp']);
-  assert.equal(Object.hasOwn(publicApp, 'createAccordoAppAsync'), false);
+test('public surfaces do not leak the portable facade', () => {
+  assert.deepEqual(Object.keys(publicApp).sort(), ['createAccordoApp', 'createAccordoAppAsync']);
   assert.equal(Object.hasOwn(publicApp, 'startPortableSqliteApp'), false);
   assert.equal(Object.hasOwn(publicApp, 'startPortableHttpServer'), false);
   assert.equal(Object.hasOwn(publicApp, 'preflightSelectedGraph'), false);
