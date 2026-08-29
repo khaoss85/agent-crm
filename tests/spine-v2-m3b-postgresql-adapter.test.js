@@ -96,6 +96,19 @@ test('M3B live PostgreSQL adapter', async (t) => {
       where: [{ column: 'id', op: 'eq', value: 'zero' }],
     })).amount, 0);
 
+    await storage.execute({
+      kind: 'insert', table: 'integer_values', values: [
+        { column: 'id', value: 'one' }, { column: 'amount', value: 1 },
+      ],
+    });
+    assert.equal((await storage.maybeOne({
+      kind: 'select', table: 'integer_values', columns: ['amount'],
+      where: [{ column: 'id', op: 'eq', value: 'one' }],
+    })).amount, 1);
+    assert.equal((await storage.maybeOne({
+      kind: 'count', table: 'integer_values', where: [],
+    })).n, 3);
+
     await assert.rejects(storage.execute({
       kind: 'insert', table: 'integer_values', values: [
         { column: 'id', value: 'unsafe' }, { column: 'amount', value: Number.MAX_SAFE_INTEGER + 1 },

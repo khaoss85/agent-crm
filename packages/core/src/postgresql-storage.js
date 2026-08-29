@@ -22,7 +22,7 @@ const DEFAULT_QUERY_MS = 5_000;
 const DEFAULT_LOCK_TIMEOUT_MS = 1_000;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 5_000;
 const SCHEMA_NAME = /^[a-z][a-z0-9_]{0,62}$/;
-const CANONICAL_INT = /^-?(?:0|[1-9]\d+)$/;
+const CANONICAL_INT = /^-?(?:0|[1-9]\d*)$/;
 const INT_OIDS = new Set([20, 21, 23, 26]);
 const BOOL_OID = 16;
 const TIMESTAMP_OIDS = new Set([1082, 1114, 1184]);
@@ -249,9 +249,11 @@ export function createPostgresqlStorage(pool, options = {}) {
     try {
       const client = await withDeadline(pending, acquisitionDeadlineMs, 'acquisition');
       settled = true;
-      client.on('error', () => {
-        destroyClient(client);
-      });
+      if (client.listenerCount('error') === 0) {
+        client.on('error', () => {
+          destroyClient(client);
+        });
+      }
       if (quotedSchema) {
         await queryOn(client, `SET search_path TO ${quotedSchema}`, []);
       }
