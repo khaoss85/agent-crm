@@ -290,12 +290,12 @@ portable factory is the SQLite exit proof.
 
 ### 2. Public posture + health (Worker A)
 
-- [ ] Bounded `GET /health` independent of `doctor` / tenant services / business tables.
-- [ ] Authenticated `GET /api/admin/metrics` via `records.read` and `kind: 'count'`.
-- [ ] Admin dashboard: metrics unavailable without authorization; rest still renders;
+- [x] Bounded `GET /health` independent of `doctor` / tenant services / business tables.
+- [x] Authenticated `GET /api/admin/metrics` via `records.read` and `kind: 'count'`.
+- [x] Admin dashboard: metrics unavailable without authorization; rest still renders;
       authorized behaviour preserved.
-- [ ] `/api/schema` storage projection; nested leak walks on doctor/serve/facade/schema/errors/MCP.
-- [ ] Tests in `tests/spine-v2-m2-final-posture.test.js` (or split health file if clearer).
+- [x] `/api/schema` storage projection; nested leak walks on doctor/serve/facade/schema/errors/MCP.
+- [x] Tests in `tests/spine-v2-m2-final-posture.test.js` (or split health file if clearer).
 
 ### 3. Raw-driver guard + portable exit proof (Worker B)
 
@@ -308,8 +308,8 @@ portable factory is the SQLite exit proof.
 
 ### 4. Status, TASKS, matrix, ADR, Repository Truth (Lead, same PR)
 
-- [ ] PROJECT_STATUS, TASKS, LEGACY_ALIGNMENT_MATRIX, DECISIONS addendum.
-- [ ] `npm run repo:truth` (generated; never hand-typed counts).
+- [x] PROJECT_STATUS, TASKS, LEGACY_ALIGNMENT_MATRIX, DECISIONS addendum.
+- [x] `npm run repo:truth` (generated; never hand-typed counts).
 
 ## Validation
 
@@ -440,7 +440,11 @@ not reaching the driver. Public `createAccordoAppAsync()` still exposes no
 
 ## Outcome and follow-up
 
-Filled when implementation lands.
+M2 public operational surfaces expose `{adapter, available}` only.
+`GET /health` is process/runtime/storage-posture liveness, not doctor and not
+tenant metrics. `createCoreAdapters` no longer reaches `database.raw`. A
+representative public `createAccordoAppAsync()` child process proves portable
+SQLite persist/restart. Dual bundled graphs remain later compatibility work.
 
 Follow-up, not this PR:
 

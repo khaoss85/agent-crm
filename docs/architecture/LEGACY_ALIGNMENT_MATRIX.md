@@ -88,8 +88,9 @@ horizontal capability the way the contract intends?*
 The shared deployment-storage loader is a horizontal *runtime* capability: every
 executable will eventually select adapter and spine binding through one closed
 document. Domains do not select storage and must not import the loader. CLI,
-serve and MCP now call `prepareDeploymentPreconnect`; public-locator replacement
-on `app.doctor()` / `/api/schema` remains the rest of M2-08.
+serve and MCP now call `prepareDeploymentPreconnect`. Public HTTP `/health` and
+`/api/schema` project `{adapter, available}` only. CLI `app.doctor().database`
+on `--db` remains the characterized v1 path disclosure.
 
 | Domain | Status | Reason |
 |---|---|---|
@@ -106,9 +107,10 @@ on `app.doctor()` / `/api/schema` remains the rest of M2-08.
 | Customer Data | `not_applicable` | package behaviour does not select the storage adapter |
 | Custom-package fixture | `not_applicable` | customer packages receive no deployment-storage document |
 
-Closing the remaining public-locator gap (`app.doctor().database`, `/api/schema`)
-is later M2F work (remainder of M2-08), not a per-domain backfill. The factory
-does not import the loader; entries call `prepareDeploymentPreconnect`.
+Public HTTP locators on `/health` and `/api/schema` are closed by the final M2
+posture slice. The factory does not import the loader; entries call
+`prepareDeploymentPreconnect`. v1 `--db` `doctor.database` is retained. Dual
+bundled v1/v2 package graphs remain later compatibility work.
 
 ### Identity-verifier pre-connect contract v2 assessment (Production Spine v2 M2F)
 
