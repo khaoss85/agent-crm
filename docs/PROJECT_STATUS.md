@@ -26,14 +26,14 @@ Generated: **2026-08-29**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **Production Spine v2 M2 final public storage posture, health boundary and raw-driver exit.** M2A–M2F and M2E-1/2/3 are merged. `createAccordoAppAsync()` is the public portable SQLite factory over an explicit empty contract-2 kernel graph and does not wrap `createAccordoApp()`. Production `GET /health` is bounded `{ok, ready, storage:{adapter,available}}` and does not run request identity, call `app.doctor()`, tenant services or business tables; Admin counts live on authenticated `GET /api/admin/metrics` behind existing `records.read`. Portable and document-selected public surfaces project `{adapter, available}` only; the characterized v1 `--db` path disclosure on `doctor.database` / `Database: …` / `db:migrate.database` is unchanged. `createCoreAdapters` reads through Storage Contract v1; a token-scan guard keeps production business/package/application source off `DatabaseSync` / `database.raw` except `packages/core/src/database.js`. Dual bundled v1/v2 package graphs and default `accordo serve` on the async factory remain later compatibility work, not completed. None of this adds a PostgreSQL adapter. <!-- truth: spine.storage.contract=1 --><!-- truth: spine.storage.company_runtime=implemented --><!-- truth: spine.storage.generated_runtime=implemented --><!-- truth: spine.storage.work_legacy_raw=absent --><!-- truth: spine.postgresql.implemented=absent --> |
+| Latest merged milestone | **Production Spine v2 M2 final public storage posture, health boundary and raw-driver exit.** M2A–M2F and M2E-1/2/3 are merged. `createAccordoAppAsync()` is the public portable SQLite factory over an explicit empty contract-2 kernel graph and does not wrap `createAccordoApp()`. Production `GET /health` is bounded `{ok, ready, storage:{adapter,available}}` and does not run request identity, call `app.doctor()`, tenant services or business tables; Admin counts live on authenticated `GET /api/admin/metrics` behind existing `records.read`. Portable and document-selected public surfaces project `{adapter, available}` only; the characterized v1 `--db` path disclosure on `doctor.database` / `Database: …` / `db:migrate.database` is unchanged. `createCoreAdapters` reads through Storage Contract v1; a token-scan guard keeps production business/package/application source off `DatabaseSync` / `database.raw` except `packages/core/src/database.js`. Bundled packages now export dual v1/v2 graphs; default `accordo serve` on the async factory remains later compatibility work, not completed. None of this adds a PostgreSQL adapter. <!-- truth: spine.storage.contract=1 --><!-- truth: spine.storage.company_runtime=implemented --><!-- truth: spine.storage.generated_runtime=implemented --><!-- truth: spine.storage.work_legacy_raw=absent --><!-- truth: spine.postgresql.implemented=absent --> |
 | Measured at | `58cf4ec` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
 | Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
 | Browser smoke | Real-Chromium checks remain manual and are **not in CI** — no workflow launches a browser, and `npm run smoke` is an in-process application smoke (`docs/ADMIN_SMOKE.md`). The Work v1 section has a **30-check** block, all passing, driven twice at `184e543`; it covers that section only and re-runs none of the earlier blocks. PR #58's desktop and mobile receipts still describe `ef8487a`, and nothing since has re-run them. |
 | CI | The latest completed integration run concluded `success` on both jobs, `verify` and `public-claims`, at its own exact head. This row records that a run passed; it does not claim any particular commit is still the head. GitHub Actions holds the current answer. |
-| Open PRs | GitHub's live PR list is authoritative. PR #134 is unrelated strategic-roadmap work and is not part of this infrastructure campaign; do not modify, close, rebase or merge it here. Dual bundled v1/v2 package graphs remain later compatibility work and have no open implementation PR from this campaign. `Measured at` and `site/claims.json` now name the exact post-M2 `main` this file was measured on. |
+| Open PRs | GitHub's live PR list is authoritative. PR #134 is unrelated strategic-roadmap work and is not part of this infrastructure campaign; do not modify, close, rebase or merge it here. Bundled packages export dual v1/v2 graphs in this checkout; default `accordo serve` on the async factory remains later work. `Measured at` and `site/claims.json` now name the exact post-M2 `main` this file was measured on. |
 | Public discovery | GitHub About and all 20 intent topics are live. Smithery `khaoss85/accordo` returns 200 and exposes the three production Docs MCP tools. The GitHub social preview is live and **stale**: it was rendered from a much older measurement and its replacement still needs a manual Settings upload, which is a human step no branch can take. |
 | npm | **`create-accordo@0.1.0` is live since 2026-08-19** — staged from CI through OIDC trusted publishing (run 32224731197, Sigstore provenance), approved by the maintainer with 2FA, and confirmed against the registry: the published shasum matches the CI assembly, `latest` resolves to `0.1.0`, and a clean-directory `npm create accordo` scaffolds a verifying project. `accordo@0.0.1` remains an **empty name reservation by design** (no framework library). The `@accordo` organization exists since 2026-08-19 and its scope is **deliberately empty**: `@accordo/mcp` was investigated and refused, because the project MCP server composes from the generated indexes of the tree it runs in and a published copy would answer about the wrong application (ADR-034). The MCP-registry submission is no longer blocked by it — `server.json` registers the remote documentation endpoint instead. `site/brand.json` records `npm.status: published`. |
 | Project bootstrap | **`create-accordo` is real source and its publication is live**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates the bounded publishable directory while the source manifest stays `private: true` — publication never lowered that wall, because what npm published is the assembly, which strips `private`. The staged path proved itself the hard way: one dispatch died `E401` (a `registry-url` placeholder token preempting OIDC), the next `ENEEDAUTH` (no matching trusted-publisher config), and run `32224731197` staged clean once the publisher allowed `npm stage publish`. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
@@ -113,9 +113,8 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 1. **M3 PostgreSQL adapter** — driver, conformance, migration intent/ledger,
    async app/serve integration, and a real PostgreSQL service in CI.
-   Dual bundled v1/v2 package graphs remain later compatibility work required
-   before default `accordo serve` migrates to the async factory and before
-   bundled packages can compose on PostgreSQL. They are not marked completed.
+   Bundled packages already export dual v1/v2 graphs; default `accordo serve`
+   still stays on the synchronous factory until that migration is sequenced.
    Cloud C0, shared-database row tenancy, M4 leases, Spine v3 jobs and Spine v4
    secrets/backups/observability remain outside this sequence.
 
@@ -172,14 +171,15 @@ the synchronous application factory on v1. M2E-3 published
 `createAccordoAppAsync()` over an explicit empty contract-2 kernel graph.
 The final M2 posture slice bounded public storage descriptors and
 `GET /health`, moved Admin counts behind `records.read`, and moved
-`createCoreAdapters` off `database.raw`.
+`createCoreAdapters` off `database.raw`. Bundled packages now keep two
+explicit graphs: `createX()` for `createAccordoApp()` and `createXV2()` for a
+caller-supplied portable selected graph.
 <!-- truth: spine.storage.contract=1 -->
-None of them adds PostgreSQL storage. Dual bundled v1/v2 package graphs are
-later compatibility work, not completed.
+None of them adds PostgreSQL storage.
 
 **Not implemented:** the PostgreSQL production adapter (M3); M4 reliability
 (leases, idempotency, webhook keys); Spine v3 jobs/outbox/scheduler; Spine v4
-secrets/backups/observability; Cloud; dual bundled v1/v2 package graphs;
+secrets/backups/observability; Cloud; default `accordo serve` on the async factory;
 deployment authentication; billing, invoicing and revenue
 recognition; Interactions; Marketing/Analytics; remote package registry
 install/update/uninstall; shared-database row tenancy. The AX3

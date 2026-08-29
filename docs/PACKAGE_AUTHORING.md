@@ -103,8 +103,11 @@ package passed onto the portable path refuses with
 `PACKAGE_ASYNC_CONTRACT_REQUIRED` before SQLite opens. Do not change this
 number in isolation: package, every action, every declared operation and
 every offered capability must select the same version, and a mixed graph
-refuses startup with the same code. Dual bundled v1/v2 definitions are not
-this factory. M2E-2C verifies an offered capability's optional interface
+refuses startup with the same code. Bundled first-party packages export both
+graphs: `createX()` stays contract 1 for `createAccordoApp()`, and
+`createXV2()` / `createX({ packageContract: 2 })` is the contract-2 object a
+portable caller passes in `selected.packages`. Do not silently treat a v1
+factory as v2. M2E-2C verifies an offered capability's optional interface
 `capabilityContract` against the declaration before a portable HTTP listener
 binds, and refuses a thenable standing in for that interface. Default
 `accordo serve` remains the synchronous v1 path.
