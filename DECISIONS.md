@@ -3386,6 +3386,40 @@ still do not import them. Live discover/attest is M3.
 
 Plan: `docs/plans/spine-v2-m2f-verifier-preconnect.md`.
 
+#### Amendment 7 — CLI/serve/MCP consume the shared pre-connect loader
+
+The loader and verifier resolver were published unwired so a parser defect could
+not become a production boot defect. The consumers now exist.
+
+**Decision: every application executable calls `prepareDeploymentPreconnect`.**
+The ratified flag is `--deployment-storage`; the env is
+`ACCORDO_DEPLOYMENT_STORAGE`; `--db` stays SQLite-only and refuses when combined
+with the document. No executable invents `--adapter`, `--pg-url` or a second
+envelope parser. `createAccordoApp` does not import the loader.
+
+**Decision: PostgreSQL documents refuse at the loader before composition.**
+`APP_COMMANDS` is exported as the canonical authority. Each entry is classified;
+`serve` is `READ_ONLY_SUPPORTED` once an adapter exists, and every other
+application command is `STABLE_REFUSAL_ON_POSTGRESQL`. At M2 the loader code
+`DEPLOYMENT_STORAGE_POSTGRESQL_UNSUPPORTED` fires first because there is no
+driver.
+
+**Decision: document-selected public output is `{ adapter, available }`.**
+SQLite `--db` path disclosure remains where M0 ratified it. Replacing
+`app.doctor().database` is the remainder of M2-08.
+
+**Decision: production MCP (`ACCORDO_MODE=production`) does not load the
+document, compose, connect or migrate.** Allowlisted resources are checked
+source only. Data-bearing tools, traces, doctor, runtime prompts and scaffolding
+refuse `MCP_PRODUCTION_SURFACE_UNAVAILABLE`. Local `--db` MCP is unchanged.
+
+**Decision: a SQLite document selects `connection.path` as the historical
+combined database path after the verifier passes.** The envelope tenant is
+`{ id }` and is not a full ADR-038 binding (`storageRoot` is still required
+there). This PR does not invent a storage root from a locator.
+
+Plan: `docs/plans/spine-v2-m2f-entry-wiring.md`.
+
 
 ### The spine is opt-in, and its absence is loud
 
