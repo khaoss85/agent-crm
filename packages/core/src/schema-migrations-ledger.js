@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { AppError } from './errors.js';
 import { CORE_SCHEMA_INTENT } from './core-schema-intent.js';
 
@@ -92,9 +93,9 @@ export function captureBusinessSchema(database) {
 }
 
 /**
- * Expected business tables/indexes/columns from core schema intent for the
- * applied version set. Intentionally does not open a second SQLite handle —
- * startup already owns the file being upgraded.
+ * Core tables/indexes/columns named by intent for the applied version set.
+ * Used to decide which observed objects are the released identity versus
+ * legitimate later module/package tables.
  *
  * @param {Array<{version: number, name: string}>} applied
  */
@@ -125,6 +126,62 @@ export function expectedSchemaFromIntent(applied) {
 }
 
 /**
+ * Reconstruct the schema the pinned released SQL would produce. Callers have
+ * already proved each applied row's source SQL hashes to the pinned checksum,
+ * so this is the pinned identity, not mutable current source as a blessing.
+ *
+ * @param {Array<{version: number, name: string, sql: string, plane?: string}>} releasedMigrations
+ * @param {Array<{version: number, name: string}>} applied
+ * @param {{DatabaseSync: typeof import('node:sqlite').DatabaseSync}} sqlite
+ */
+export function expectedBusinessSchema(releasedMigrations, applied, sqlite) {
+  const database = new sqlite.DatabaseSync(':memory:');
+  try {
+    const appliedVersions = new Map(applied.map((row) => [Number(row.version), String(row.name)]));
+    for (const migration of [...releasedMigrations].sort((left, right) => left.version - right.version)) {
+      const recordedName = appliedVersions.get(migration.version);
+      if (recordedName === undefined) continue;
+      if (recordedName !== migration.name) throw ledgerUnknown(migration.version, recordedName);
+      database.exec(migration.sql);
+    }
+    return captureBusinessSchema(database);
+  } finally {
+    database.close();
+  }
+}
+
+/**
+ * Physical facts compared for a core table. Extra module/package tables are
+ * not projected into this shape.
+ *
+ * @param {{columns: any[], foreignKeys: any[], indexes: any[]}} details
+ */
+function coreTableShape(details) {
+  return {
+    columns: (details.columns ?? []).map((column) => ({
+      name: String(column.name),
+      type: String(column.type ?? ''),
+      notnull: Number(column.notnull ?? 0),
+      pk: Number(column.pk ?? 0),
+    })),
+    foreignKeys: (details.foreignKeys ?? []).map((fk) => ({
+      table: String(fk.table),
+      from: String(fk.from),
+      to: String(fk.to),
+      on_delete: String(fk.on_delete ?? ''),
+    })),
+    indexes: (details.indexes ?? []).map((index) => ({
+      name: String(index.name),
+      unique: Number(index.unique ?? 0),
+      origin: String(index.origin ?? ''),
+      columns: (index.columns ?? [])
+        .filter((column) => Number(column.cid) >= 0)
+        .map((column) => ({ name: String(column.name), desc: Number(column.desc ?? 0) })),
+    })),
+  };
+}
+
+/**
  * @param {number} version
  * @param {string} name
  */
@@ -147,10 +204,8 @@ export function diffObservedToIntent(observed, expected) {
     ...[...expected.tables.keys()].filter((name) => !observedTables.has(name)).map((name) => `table:${name}`),
     ...[...expected.indexes].filter((name) => !observedIndexes.has(name)).map((name) => `index:${name}`),
   ];
-  const extraTables = [...observedTables].filter((name) => !expected.tables.has(name));
-  const extraIndexes = [...observedIndexes].filter((name) => !expected.indexes.has(name));
   /** @type {string[]} */
-  const extraColumns = [];
+  const extra = [];
   for (const [table, columns] of expected.tables) {
     const observedColumns = (observed.tables[table]?.columns ?? []).map((column) => column.name);
     for (const column of columns) {
@@ -159,10 +214,33 @@ export function diffObservedToIntent(observed, expected) {
       }
     }
     for (const column of observedColumns) {
-      if (!columns.includes(column)) extraColumns.push(`${table}.${column}`);
+      if (!columns.includes(column)) extra.push(`column:${table}.${column}`);
     }
   }
-  return { missing, extra: [...extraTables.map((name) => `table:${name}`), ...extraIndexes.map((name) => `index:${name}`), ...extraColumns] };
+  return { missing, extra };
+}
+
+/**
+ * Compare only the released core identity. Extra tables/indexes from generated
+ * modules or packages are not divergence; missing or mutated core objects are.
+ *
+ * @param {{objects: any[], tables: Record<string, any>}} observed
+ * @param {{objects: any[], tables: Record<string, any>}} expected
+ */
+export function diffCoreBusinessSchema(observed, expected) {
+  const expectedKeys = new Set(expected.objects.map((entry) => `${entry.type}:${entry.name}`));
+  const observedKeys = new Set(observed.objects.map((entry) => `${entry.type}:${entry.name}`));
+  const missing = [...expectedKeys].filter((key) => !observedKeys.has(key));
+  /** @type {string[]} */
+  const extra = [];
+  const diverged = [];
+  for (const [table, details] of Object.entries(expected.tables)) {
+    if (!observed.tables[table]) continue;
+    if (JSON.stringify(coreTableShape(observed.tables[table])) !== JSON.stringify(coreTableShape(details))) {
+      diverged.push(`table:${table}`);
+    }
+  }
+  return { missing, extra, diverged };
 }
 
 /**
@@ -171,7 +249,7 @@ export function diffObservedToIntent(observed, expected) {
  * transaction.
  *
  * @param {any} raw
- * @param {{alterSql: string, releasedMigrations: Array<{version: number, name: string, sql: string}>}} input
+ * @param {{alterSql: string, releasedMigrations: Array<{version: number, name: string, sql: string}>, sqlite?: {DatabaseSync: typeof import('node:sqlite').DatabaseSync}}} input
  */
 export function applySchemaMigrationsChecksumUpgrade(raw, input) {
   const applied = raw.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all()
@@ -191,9 +269,15 @@ export function applySchemaMigrationsChecksumUpgrade(raw, input) {
     }
   }
 
+  const sqlite = input.sqlite ?? { DatabaseSync };
   const observed = captureBusinessSchema(raw);
-  const expected = expectedSchemaFromIntent(applied);
-  const { missing, extra } = diffObservedToIntent(observed, expected);
+  const expected = expectedBusinessSchema(input.releasedMigrations, applied, sqlite);
+  const named = expectedSchemaFromIntent(applied);
+  const namedDiff = diffObservedToIntent(observed, named);
+  const coreDiff = diffCoreBusinessSchema(observed, expected);
+  const missing = [...new Set([...namedDiff.missing, ...coreDiff.missing])];
+  const extra = namedDiff.extra;
+  const diverged = coreDiff.diverged;
   if (missing.length > 0) {
     throw new AppError('Observed schema is missing objects from the pinned released identity', {
       code: 'CORE_MIGRATION_SCHEMA_MISSING_OBJECT',
@@ -201,10 +285,11 @@ export function applySchemaMigrationsChecksumUpgrade(raw, input) {
       details: { missing: missing.slice(0, 8) },
     });
   }
-  if (extra.length > 0) {
+  if (extra.length > 0 || diverged.length > 0) {
     throw new AppError('Observed schema diverges from the pinned released identity', {
       code: 'CORE_MIGRATION_SCHEMA_DIVERGED',
       status: 500,
+      details: { extra: extra.slice(0, 8), diverged: diverged.slice(0, 8) },
     });
   }
 

@@ -786,10 +786,25 @@ export function assertPostgresBootstrapTargetEmpty({ tableNames = [] } = {}) {
  * @param {{manifest: any, postgres: {bootstrap: {sql: string}, evolutions?: any[]}}} state
  */
 export function assertPostgresBootstrapMatchesManifest(state) {
+  const bootstrap = state.postgres?.bootstrap;
+  if (!bootstrap?.sql || !bootstrap.checksum) {
+    throw new AppError('PostgreSQL bootstrap does not match the current module manifest', {
+      code: MODULE_POSTGRES_BOOTSTRAP_MISMATCH,
+      status: 500,
+      details: { module: state.manifest?.name },
+    });
+  }
+  if (sqlChecksum(bootstrap.sql) !== bootstrap.checksum) {
+    throw new AppError('PostgreSQL bootstrap does not match the current module manifest', {
+      code: MODULE_POSTGRES_BOOTSTRAP_MISMATCH,
+      status: 500,
+      details: { module: state.manifest?.name },
+    });
+  }
   const evolutions = state.postgres?.evolutions ?? [];
   if (evolutions.length > 0) return;
   const expected = generatePostgresModuleBootstrap(state.manifest);
-  if (expected.sql !== state.postgres.bootstrap.sql) {
+  if (expected.sql !== bootstrap.sql) {
     throw new AppError('PostgreSQL bootstrap does not match the current module manifest', {
       code: MODULE_POSTGRES_BOOTSTRAP_MISMATCH,
       status: 500,

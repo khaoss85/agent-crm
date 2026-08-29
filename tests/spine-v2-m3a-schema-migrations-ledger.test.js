@@ -137,3 +137,54 @@ test('ledger backfill refuses a divergent schema', (t) => {
       && !JSON.stringify(error).includes('postgresql://user:secret@sentinel.invalid/accordo'),
   );
 });
+
+test('ledger backfill still boots a pre-v8 file that already has module tables', (t) => {
+  const dir = workspaceFor(t);
+  const path = join(dir, 'with-modules.sqlite');
+  seedReleasedPrefix(path, 7);
+  const raw = new DatabaseSync(path);
+  raw.exec(`
+    CREATE TABLE module_migrations (
+      name TEXT PRIMARY KEY,
+      checksum TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE notes (
+      id TEXT PRIMARY KEY,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX notes_body ON notes(body);
+  `);
+  raw.prepare('INSERT INTO module_migrations(name, checksum, applied_at) VALUES (?, ?, ?)')
+    .run('create_notes', 'not-a-core-checksum', '2026-01-01T00:00:00.000Z');
+  raw.close();
+  const adopted = createDatabase({ path });
+  t.after(() => adopted.close());
+  const rows = adopted.raw.prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version').all();
+  assert.deepEqual(rows.map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal(
+    adopted.raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'notes'").get()?.name,
+    'notes',
+  );
+  assert.equal(adopted.raw.prepare('SELECT COUNT(*) AS n FROM notes').get().n, 0);
+});
+
+test('ledger backfill refuses a core column type change', (t) => {
+  const dir = workspaceFor(t);
+  const path = join(dir, 'type-drift.sqlite');
+  seedReleasedPrefix(path, 5);
+  const raw = new DatabaseSync(path);
+  const rewritten = raw.prepare("SELECT sql FROM sqlite_schema WHERE name = 'opportunities'").get().sql
+    .replace('value_cents INTEGER NOT NULL', 'value_cents TEXT NOT NULL');
+  raw.exec('PRAGMA writable_schema = ON');
+  raw.prepare("UPDATE sqlite_schema SET sql = ? WHERE name = 'opportunities'").run(rewritten);
+  raw.exec('PRAGMA writable_schema = OFF');
+  raw.close();
+  assert.throws(
+    () => createDatabase({ path, plane: 'combined' }),
+    (error) => error.code === 'CORE_MIGRATION_SCHEMA_DIVERGED'
+      && !JSON.stringify(error).includes(path),
+  );
+});
