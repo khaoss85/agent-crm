@@ -352,6 +352,36 @@ through this private HTTP entry; it does not mean that v1 graph is invalid.
 | Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime HTTP graph |
 
+### Public portable async factory assessment (Production Spine v2 M2E-3)
+
+M2E-3 is horizontal kernel machinery: it publishes `createAccordoAppAsync()`
+over 2A/2B so a portable SQLite caller has one unconditional `await` path.
+The default selected graph is an explicit `packageContract: 2` with empty
+package/action/module lists, so kernel Company/Contact/Opportunity/Approval
+compose without silently treating bundled v1 packages as v2. It is **not**
+dual bundled package graphs, **not** default `accordo serve`, and **not** a
+PostgreSQL adapter. `createAccordoApp()` remains the synchronous v1 factory.
+A `deferred` row means the domain still ships only its contract-1 definition
+and is not selected by this factory's default graph; it does not mean that v1
+graph is invalid.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval compose through the public async factory over explicit empty contract-2; generated project modules and dual-plane Spine are not |
+| Pipeline | `not_applicable` | a kernel workflow capability; this slice does not migrate pipeline contract 1 |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Delivery | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Service | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Work | `deferred` | its capability still resolves to synchronous contract 1; this factory does not compose Work |
+| Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this factory does not change that |
+| Customer Data | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; the public async path refuses it with `PACKAGE_ASYNC_CONTRACT_REQUIRED` rather than rewriting it |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime factory graph |
+
 ### Cross-plane Spine audit recovery assessment (Production Spine v2 M2F)
 
 The immutable audit-intent and explicit-reconciliation contract applies only to

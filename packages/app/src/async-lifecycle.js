@@ -7,7 +7,9 @@ import { resolvePackageComposition } from '../../core/src/package-composition.js
 
 /**
  * Source-private M2E-2A machinery. Not exported from `packages/app/src/index.js`
- * or `packages/core/index.js`. The released factory stays `createAccordoApp()`.
+ * or `packages/core/index.js`. The released synchronous factory stays
+ * `createAccordoApp()`; the public async factory composes through 2B over this
+ * lifecycle.
  */
 
 function asyncContractError(message, details) {

@@ -13,7 +13,8 @@ import { startPortableSqliteApp } from './portable-app.js';
 
 /**
  * Source-private M2E-2C machinery. Not exported from `packages/app/src/index.js`
- * or `packages/core/index.js`. The released serve path stays the synchronous factory.
+ * or `packages/core/index.js`. The released serve path stays the synchronous
+ * factory; the public async factory does not start HTTP.
  *
  * Portable composition, security/identity/authorization assembly, package
  * startup hooks and capability-contract echoes all settle before the HTTP

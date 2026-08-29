@@ -60,9 +60,8 @@ function isAsyncContract(error) {
   return error?.code === 'PACKAGE_ASYNC_CONTRACT_REQUIRED' && error.status === 400;
 }
 
-test('public surfaces do not grow a second factory or leak lifecycle symbols', () => {
-  assert.deepEqual(Object.keys(publicApp).sort(), ['createAccordoApp']);
-  assert.equal(Object.hasOwn(publicApp, 'createAccordoAppAsync'), false);
+test('public surfaces do not leak lifecycle symbols', () => {
+  assert.deepEqual(Object.keys(publicApp).sort(), ['createAccordoApp', 'createAccordoAppAsync']);
   assert.equal(Object.hasOwn(publicApp, 'preflightSelectedGraph'), false);
   assert.equal(Object.hasOwn(publicApp, 'startSqliteLifecycle'), false);
   assert.equal(Object.hasOwn(publicApp, 'startPortableSqliteApp'), false);
