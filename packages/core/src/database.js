@@ -654,7 +654,6 @@ export function createDatabase(options = {}) {
             releasedMigrations: CORE_MIGRATIONS_FOR_CHARACTERIZATION.filter(
               (entry) => entry.version < SCHEMA_MIGRATIONS_CHECKSUM_VERSION,
             ),
-            openMemory: () => new DatabaseSync(':memory:'),
           });
         } else {
           raw.exec(migration.sql);

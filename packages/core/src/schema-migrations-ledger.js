@@ -98,12 +98,41 @@ export function captureBusinessSchema(database) {
  *
  * @param {Array<{version: number, name: string}>} applied
  */
+function sqliteType(affinity) {
+  return affinity === 'integer' || affinity === 'boolean' ? 'INTEGER' : 'TEXT';
+}
+
+function columnCheckSnippet(column) {
+  if (column.affinity === 'boolean') return `CHECK(${column.name} IN (0, 1))`;
+  const check = column.check;
+  if (!check) return '';
+  if (check.kind === 'in') {
+    return `CHECK(${column.name} IN (${check.values.map((value) => `'${String(value).replaceAll("'", "''")}'`).join(', ')}))`;
+  }
+  if (check.kind === 'gte') return `CHECK(${column.name} >= ${check.value})`;
+  if (check.kind === 'eq') {
+    const value = typeof check.value === 'number' ? String(check.value) : `'${String(check.value).replaceAll("'", "''")}'`;
+    return `CHECK(${column.name} = ${value})`;
+  }
+  if (check.kind === 'between') return `CHECK(${column.name} BETWEEN ${check.min} AND ${check.max})`;
+  return '';
+}
+
+/**
+ * Core tables/indexes/triggers/columns named by intent for the applied version
+ * set. Extra module/package objects are not in this set. Comparison does not
+ * open a second database handle: startup already owns the file being upgraded.
+ *
+ * @param {Array<{version: number, name: string}>} applied
+ */
 export function expectedSchemaFromIntent(applied) {
   const appliedVersions = new Map(applied.map((row) => [Number(row.version), String(row.name)]));
-  /** @type {Map<string, string[]>} */
+  /** @type {Map<string, {name: string, type: string, notnull: number, pk: number, check: string}[]>} */
   const tables = new Map();
   /** @type {Set<string>} */
   const indexes = new Set();
+  /** @type {Set<string>} */
+  const triggers = new Set();
   for (const intent of CORE_SCHEMA_INTENT) {
     if (intent.version >= SCHEMA_MIGRATIONS_CHECKSUM_VERSION) continue;
     const recordedName = appliedVersions.get(intent.version);
@@ -111,74 +140,30 @@ export function expectedSchemaFromIntent(applied) {
     if (recordedName !== intent.name) throw ledgerUnknown(intent.version, recordedName);
     for (const statement of intent.statements) {
       if (statement.kind === 'createTable') {
-        tables.set(statement.name, statement.columns.map((column) => column.name));
+        tables.set(statement.name, statement.columns.map((column) => ({
+          name: column.name,
+          type: sqliteType(column.affinity),
+          requireNotNull: column.notNull === true,
+          pk: column.primaryKey ? 1 : 0,
+          check: columnCheckSnippet(column),
+        })));
       }
       if (statement.kind === 'addColumn') {
         const columns = tables.get(statement.table) ?? [];
-        columns.push(statement.column.name);
+        columns.push({
+          name: statement.column.name,
+          type: sqliteType(statement.column.affinity),
+          requireNotNull: statement.column.notNull === true,
+          pk: 0,
+          check: columnCheckSnippet(statement.column),
+        });
         tables.set(statement.table, columns);
       }
       if (statement.kind === 'createIndex') indexes.add(statement.name);
+      if (statement.kind === 'createTrigger') triggers.add(statement.name);
     }
   }
-  return { tables, indexes };
-}
-
-/**
- * Reconstruct the schema the pinned released SQL would produce. Callers have
- * already proved each applied row's source SQL hashes to the pinned checksum,
- * so this is the pinned identity, not mutable current source as a blessing.
- * The memory database is opened by the SQLite adapter owner, never here.
- *
- * @param {Array<{version: number, name: string, sql: string, plane?: string}>} releasedMigrations
- * @param {Array<{version: number, name: string}>} applied
- * @param {() => {exec: Function, prepare: Function, close: Function}} openMemory
- */
-export function expectedBusinessSchema(releasedMigrations, applied, openMemory) {
-  const database = openMemory();
-  try {
-    const appliedVersions = new Map(applied.map((row) => [Number(row.version), String(row.name)]));
-    for (const migration of [...releasedMigrations].sort((left, right) => left.version - right.version)) {
-      const recordedName = appliedVersions.get(migration.version);
-      if (recordedName === undefined) continue;
-      if (recordedName !== migration.name) throw ledgerUnknown(migration.version, recordedName);
-      database.exec(migration.sql);
-    }
-    return captureBusinessSchema(database);
-  } finally {
-    database.close();
-  }
-}
-
-/**
- * Physical facts compared for a core table. Extra module/package tables are
- * not projected into this shape.
- *
- * @param {{columns: any[], foreignKeys: any[], indexes: any[]}} details
- */
-function coreTableShape(details) {
-  return {
-    columns: (details.columns ?? []).map((column) => ({
-      name: String(column.name),
-      type: String(column.type ?? ''),
-      notnull: Number(column.notnull ?? 0),
-      pk: Number(column.pk ?? 0),
-    })),
-    foreignKeys: (details.foreignKeys ?? []).map((fk) => ({
-      table: String(fk.table),
-      from: String(fk.from),
-      to: String(fk.to),
-      on_delete: String(fk.on_delete ?? ''),
-    })),
-    indexes: (details.indexes ?? []).map((index) => ({
-      name: String(index.name),
-      unique: Number(index.unique ?? 0),
-      origin: String(index.origin ?? ''),
-      columns: (index.columns ?? [])
-        .filter((column) => Number(column.cid) >= 0)
-        .map((column) => ({ name: String(column.name), desc: Number(column.desc ?? 0) })),
-    })),
-  };
+  return { tables, indexes, triggers };
 }
 
 /**
@@ -200,53 +185,42 @@ function ledgerUnknown(version, name) {
 export function diffObservedToIntent(observed, expected) {
   const observedTables = new Set(observed.objects.filter((entry) => entry.type === 'table').map((entry) => entry.name));
   const observedIndexes = new Set(observed.objects.filter((entry) => entry.type === 'index').map((entry) => entry.name));
+  const observedTriggers = new Set(observed.objects.filter((entry) => entry.type === 'trigger').map((entry) => entry.name));
+  const tableSql = Object.fromEntries(
+    observed.objects.filter((entry) => entry.type === 'table').map((entry) => [entry.name, String(entry.sql ?? '')]),
+  );
   const missing = [
     ...[...expected.tables.keys()].filter((name) => !observedTables.has(name)).map((name) => `table:${name}`),
     ...[...expected.indexes].filter((name) => !observedIndexes.has(name)).map((name) => `index:${name}`),
+    ...[...expected.triggers].filter((name) => !observedTriggers.has(name)).map((name) => `trigger:${name}`),
   ];
   /** @type {string[]} */
   const extra = [];
+  /** @type {string[]} */
+  const diverged = [];
   for (const [table, columns] of expected.tables) {
-    const observedColumns = (observed.tables[table]?.columns ?? []).map((column) => column.name);
+    const observedColumns = observed.tables[table]?.columns ?? [];
+    const byName = new Map(observedColumns.map((column) => [String(column.name), column]));
     for (const column of columns) {
-      if (!observedColumns.includes(column) && !missing.includes(`table:${table}`)) {
-        missing.push(`column:${table}.${column}`);
+      const live = byName.get(column.name);
+      if (!live) {
+        if (!missing.includes(`table:${table}`)) missing.push(`column:${table}.${column.name}`);
+        continue;
+      }
+      if (String(live.type ?? '') !== column.type) {
+        diverged.push(`column:${table}.${column.name}`);
+      } else if (column.requireNotNull && Number(live.notnull ?? 0) !== 1) {
+        diverged.push(`column:${table}.${column.name}`);
+      }
+      if (column.check && !tableSql[table].includes(column.check)) {
+        diverged.push(`check:${table}.${column.name}`);
       }
     }
-    for (const column of observedColumns) {
-      if (!columns.includes(column)) extra.push(`column:${table}.${column}`);
+    for (const live of observedColumns) {
+      if (!columns.some((column) => column.name === live.name)) extra.push(`column:${table}.${live.name}`);
     }
   }
-  return { missing, extra };
-}
-
-/**
- * Compare only the released core identity. Extra tables/indexes from generated
- * modules or packages are not divergence; missing or mutated core objects are.
- *
- * @param {{objects: any[], tables: Record<string, any>}} observed
- * @param {{objects: any[], tables: Record<string, any>}} expected
- */
-export function diffCoreBusinessSchema(observed, expected) {
-  const expectedKeys = new Set(expected.objects.map((entry) => `${entry.type}:${entry.name}`));
-  const observedByKey = new Map(observed.objects.map((entry) => [`${entry.type}:${entry.name}`, entry]));
-  const missing = [...expectedKeys].filter((key) => !observedByKey.has(key));
-  /** @type {string[]} */
-  const extra = [];
-  const diverged = [];
-  for (const entry of expected.objects) {
-    const key = `${entry.type}:${entry.name}`;
-    const live = observedByKey.get(key);
-    if (!live) continue;
-    if (String(live.sql ?? '') !== String(entry.sql ?? '')) diverged.push(key);
-  }
-  for (const [table, details] of Object.entries(expected.tables)) {
-    if (!observed.tables[table]) continue;
-    if (JSON.stringify(coreTableShape(observed.tables[table])) !== JSON.stringify(coreTableShape(details))) {
-      diverged.push(`table:${table}`);
-    }
-  }
-  return { missing, extra, diverged: [...new Set(diverged)] };
+  return { missing, extra, diverged };
 }
 
 /**
@@ -255,7 +229,7 @@ export function diffCoreBusinessSchema(observed, expected) {
  * transaction.
  *
  * @param {any} raw
- * @param {{alterSql: string, releasedMigrations: Array<{version: number, name: string, sql: string}>, openMemory: () => {exec: Function, prepare: Function, close: Function}}} input
+ * @param {{alterSql: string, releasedMigrations: Array<{version: number, name: string, sql: string}>}} input
  */
 export function applySchemaMigrationsChecksumUpgrade(raw, input) {
   const applied = raw.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all()
@@ -275,20 +249,9 @@ export function applySchemaMigrationsChecksumUpgrade(raw, input) {
     }
   }
 
-  if (typeof input.openMemory !== 'function') {
-    throw new AppError('Checksum ledger upgrade requires the SQLite adapter to open the comparison database', {
-      code: 'CORE_MIGRATION_LEDGER_UNKNOWN',
-      status: 500,
-    });
-  }
   const observed = captureBusinessSchema(raw);
-  const expected = expectedBusinessSchema(input.releasedMigrations, applied, input.openMemory);
-  const named = expectedSchemaFromIntent(applied);
-  const namedDiff = diffObservedToIntent(observed, named);
-  const coreDiff = diffCoreBusinessSchema(observed, expected);
-  const missing = [...new Set([...namedDiff.missing, ...coreDiff.missing])];
-  const extra = namedDiff.extra;
-  const diverged = coreDiff.diverged;
+  const expected = expectedSchemaFromIntent(applied);
+  const { missing, extra, diverged } = diffObservedToIntent(observed, expected);
   if (missing.length > 0) {
     throw new AppError('Observed schema is missing objects from the pinned released identity', {
       code: 'CORE_MIGRATION_SCHEMA_MISSING_OBJECT',
