@@ -157,6 +157,14 @@ function createPortableHttpApp(app, security) {
     config: app.config,
     actionEligibleCoreModules: ACTION_ELIGIBLE_CORE_MODULES,
     spine: security.spine ?? null,
+    health: () => (typeof app.health === 'function'
+      ? app.health()
+      : Object.freeze({
+        ok: true,
+        ready: app.storage?.available === true,
+        storage: app.storage,
+      })),
+    metrics: () => app.metrics(),
     doctor() {
       return {
         ok: true,

@@ -215,14 +215,60 @@ function reapIdleConnection(socket) {
   });
 }
 
+/**
+ * Bounded process liveness. Never doctor, never tenant services, never
+ * business tables. Storage posture is `{adapter, available}` only.
+ *
+ * @param {any} app
+ */
+function operationalHealth(app) {
+  if (typeof app?.health === 'function') return app.health();
+  return {
+    ok: true,
+    ready: true,
+    storage: publicStorageDescriptor(app),
+  };
+}
+
+/**
+ * Project the frozen public storage descriptor. Never a path, URL, handle or
+ * credential. HTTP must not inspect `app.database`.
+ *
+ * @param {any} app
+ * @returns {{ adapter: 'sqlite' | 'postgresql', available: boolean }}
+ */
+function publicStorageDescriptor(app) {
+  const project = (value) => {
+    if (!value || typeof value !== 'object') return null;
+    const adapter = value.adapter;
+    const available = value.available;
+    if ((adapter === 'sqlite' || adapter === 'postgresql') && typeof available === 'boolean') {
+      return { adapter, available };
+    }
+    return null;
+  };
+  return project(app?.storage)
+    ?? project(typeof app?.health === 'function' ? app.health()?.storage : null)
+    ?? { adapter: 'sqlite', available: true };
+}
+
 /** @param {any} app */
 function buildRouter(app) {
   const router = new Router();
 
-  router.add('GET', '/health', async () => app.doctor());
+  router.add('GET', '/health', async () => operationalHealth(app));
+
+  router.add('GET', '/api/admin/metrics', async ({ identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.metrics !== 'function') {
+      throw new NotFoundError('Operation', 'admin metrics');
+    }
+    return { counts: app.metrics() };
+  });
 
   router.add('GET', '/api/schema', async () => ({
     schema: app.schema,
+    storage: publicStorageDescriptor(app),
     generatedResourceContract: 1,
     // Production Spine v1 (ADR-038). Published in BOTH states on purpose: an
     // application with no spine says so, in the same field, rather than simply
