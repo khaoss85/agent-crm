@@ -220,20 +220,23 @@ A `deferred` row therefore means this domain's own records, not its policy
 identity and not the evidence recorded about its runs. What still keeps a
 domain off `aligned` is exactly what it always was: its own persistence.
 
-**The kernel's remaining raw residue, after M2C, M2D and the M2F Spine-store
-closure.** M2C moved the workflow engine's run and span lifecycle onto the
-store; M2D moved `packages/work/src/follow-up.js#requireCallerTransaction` off
-the driver's transaction flag; M2F then moved the Organization/Membership store
-itself onto the same seam. **No application-runtime business or Spine-store
-consumer is left in `packages/`.** `packages/core/src/core-adapters.js` still
-prepares Company/Contact lookup SQL against `database.raw`; it is a composed
-adapter internal, not Spine-store, and is not closed by this slice.
+**The kernel's remaining raw residue, after M2C, M2D, the M2F Spine-store
+closure and the M2 final raw-driver exit.** M2C moved the workflow engine's
+run and span lifecycle onto the store; M2D moved
+`packages/work/src/follow-up.js#requireCallerTransaction` off the driver's
+transaction flag; M2F then moved the Organization/Membership store itself onto
+the same seam. The M2 final posture slice then moved
+`packages/core/src/core-adapters.js` Company/Contact lookups onto
+`database.storage.sync`. **No application-runtime business or Spine-store
+consumer is left in `packages/`.**
 
-Scanned on the M2F tree, no application-runtime business or Spine-store consumer
-in `packages/` reaches the driver. Known driver spellings remain in
-`packages/core/src/database.js`, `core-adapters.js` and the deep-internal
-`spine-store-storage-adapter.js`, which own SQLite adaptation by design, plus a
-prose mention in `packages/core/index.js` describing what M2D replaced.
+Scanned after that slice, no application-runtime business consumer in
+`packages/` or `apps/` reaches the driver. Known driver spellings remain in
+`packages/core/src/database.js`, which owns `DatabaseSync` and the raw
+closure, and in adapter-internal `createSqliteStorage` (a parameter named
+`raw`, outside the token set). `spine-store-storage-adapter.js` resolves the
+closed storage seam and does not spell `database.raw`. A prose mention in
+`packages/core/index.js` describes what M2D replaced.
 **PostgreSQL remains absent: the only adapter is SQLite.**
 
 This paragraph was true when M2C wrote it and false the moment M2D merged into
@@ -418,6 +421,34 @@ per-domain dispositions below remain unchanged.
 | Custom-package fixture | `not_applicable` | customer packages receive neither audit-intent construction nor reconciliation authority |
 | Custom-package score-disclosure fixture | `not_applicable` | it consumes `intelligence@1` as a customer-authored capability proof and never writes Organization or Membership rows |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime mutation |
+
+### Public storage posture, health boundary and raw-driver exit (Production Spine v2 M2 final)
+
+This slice is horizontal kernel machinery, not a domain capability. Portable
+and document-selected public surfaces project `{adapter, available}` only;
+`GET /health` is process liveness and does not run request identity, doctor,
+tenant services or business tables; Admin counts live on authenticated
+`GET /api/admin/metrics`; `createCoreAdapters` reads through Storage Contract
+v1. Dual bundled v1/v2 package graphs remain later compatibility work, not
+completed. A `deferred` row means the domain still ships only its contract-1
+definition and is not selected by the portable factory's default graph.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval compose through v1 HTTP health/metrics and the portable factory; generated project modules and dual-plane Spine are not the default portable graph |
+| Pipeline | `not_applicable` | a kernel workflow capability; this slice does not migrate pipeline contract 1 |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Delivery | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Service | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto the portable factory |
+| Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
+| Customer Data | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; the public async path refuses it with `PACKAGE_ASYNC_CONTRACT_REQUIRED` rather than rewriting it |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime health or storage-posture graph |
 
 ### Hosted Docs MCP transport assessment
 

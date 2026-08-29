@@ -216,6 +216,20 @@ test('createCoreAdapters source carries no known spelling of direct driver acces
   );
 });
 
+test('the living alignment matrix does not claim core-adapters still uses database.raw', () => {
+  const matrix = readFileSync(join(repoRoot, 'docs/architecture/LEGACY_ALIGNMENT_MATRIX.md'), 'utf8');
+  assert.equal(
+    /core-adapters\.js[`']?\s+still\s+prepares Company\/Contact lookup SQL against `database\.raw`/s.test(matrix),
+    false,
+    'LEGACY_ALIGNMENT_MATRIX still describes the pre-migration core-adapters raw reach',
+  );
+  assert.equal(
+    /Known driver spellings remain in[\s\S]*core-adapters\.js/.test(matrix),
+    false,
+    'LEGACY_ALIGNMENT_MATRIX still lists core-adapters.js as a remaining driver spelling',
+  );
+});
+
 test('production business, package and application source does not reach the raw driver', () => {
   const hits = scanProductionRawDriver();
   assert.deepEqual(

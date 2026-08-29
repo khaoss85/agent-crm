@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createAccordoApp, createAccordoAppAsync } from '../packages/app/src/index.js';
+import { PackageRegistry } from '../packages/core/src/package-registry.js';
 import { createPartnerScorecardPackage } from '../examples/custom-packages/partner-scorecard/src/index.js';
 
 /**
@@ -106,7 +107,14 @@ test('legacy v1 custom package partner-scorecard still works on v1', () => {
   try {
     assert.equal(app instanceof Promise, false);
     assert.equal(typeof app.then, 'undefined');
-    assert.deepEqual(app.services.companies.list(), []);
+    const registry = new PackageRegistry({ packages: [custom] });
+    registry.persistFingerprints(app.database);
+    assert.deepEqual([...registry.names()], ['partner-scorecard']);
+    assert.equal(registry.get('partner-scorecard').packageContract, 1);
+    assert.deepEqual(
+      registry.get('partner-scorecard').actions,
+      ['delivery-partner-engagement.rate-partner'],
+    );
     assert.equal('database' in app, true);
   } finally {
     app.close();
