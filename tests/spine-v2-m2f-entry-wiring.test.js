@@ -627,12 +627,10 @@ test('no-business-raw inventory: production packages keep raw SQLite adapter-int
       const source = readFileSync(full, 'utf8');
       const relative = full.slice(repoRoot.length + 1);
       if (source.includes('database.raw')) {
-        const adapterInternal = relative === 'packages/core/src/core-adapters.js';
-        const commentOnly = relative === 'packages/app/src/portable-app.js'
-          || relative === 'packages/core/index.js';
+        const commentOnly = relative === 'packages/core/index.js';
         hits.push({
           file: relative,
-          kind: adapterInternal ? 'adapter-internal' : commentOnly ? 'comment' : 'business-consumer',
+          kind: commentOnly ? 'comment' : 'business-consumer',
           detail: 'database.raw',
         });
       }
@@ -659,11 +657,13 @@ test('no-business-raw inventory: production packages keep raw SQLite adapter-int
   );
 
   const adapters = hits.filter((hit) => hit.kind === 'adapter-internal');
-  assert.ok(adapters.some((hit) => hit.file === 'packages/core/src/core-adapters.js' && hit.detail === 'database.raw'));
-  assert.ok(adapters.some((hit) => hit.file === 'packages/core/src/database.js' && hit.detail === 'DatabaseSync'));
+  assert.deepEqual(
+    adapters.map((hit) => `${hit.file} ${hit.detail}`),
+    ['packages/core/src/database.js DatabaseSync'],
+  );
   assert.equal(
-    adapters.filter((hit) => hit.file === 'packages/core/src/core-adapters.js').length,
-    1,
-    'core-adapters.js is adapter-internal: ADR-013 core-module adapters, not a domain package',
+    hits.some((hit) => hit.file === 'packages/core/src/core-adapters.js'),
+    false,
+    'core-adapters.js is lead-conversion application logic; after M2-05 it must not reach the raw driver',
   );
 });
