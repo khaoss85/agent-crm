@@ -30,7 +30,7 @@ Live PostgreSQL storage-contract tests run in CI against `postgres:16`. Locally 
 unless PostgreSQL is reachable or `ACCORDO_TEST_POSTGRES=1` is set:
 
 ```bash
-docker run --rm -e POSTGRES_PASSWORD=postgres -e POSTGRES_USER=postgres \
+docker run --rm -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres \
   -e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16
 ```
 

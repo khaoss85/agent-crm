@@ -136,7 +136,7 @@ must run; inability to connect fails with `ACCORDO_PG_TEST_REQUIRED`, never
 skip. Locally, if no server is reachable, the live suite may skip with an
 explicit message. Rendering tests always run.
 
-Default URL: `postgres://postgres:postgres@127.0.0.1:5432/accordo_test`,
+Default URL: `postgres://postgres@127.0.0.1:5432/accordo_test`,
 overridable by `ACCORDO_PG_TEST_URL`. Isolated schema per case; clean
 teardown. Credentials, host and URL never appear in results or errors.
 Sentinels in tests: `pg-user` / `s3cret-unavailable` (never `s3cret-value`).

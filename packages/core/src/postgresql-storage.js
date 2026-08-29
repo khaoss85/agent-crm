@@ -509,7 +509,7 @@ export function createPostgresqlStorage(pool, options = {}) {
 export async function createPostgresqlDatabase(options = {}) {
   const connection = options.connection
     ?? process.env.ACCORDO_PG_TEST_URL
-    ?? 'postgres://postgres:postgres@127.0.0.1:5432/accordo_test';
+    ?? 'postgres://postgres@127.0.0.1:5432/accordo_test';
   const schema = options.schema ?? `accordo_${randomUUID().replace(/-/g, '').slice(0, 24)}`;
   if (!SCHEMA_NAME.test(schema)) {
     throw new AppError('PostgreSQL schema name is not a closed identifier', {

@@ -5,7 +5,7 @@ import { AppError } from '../../packages/core/src/errors.js';
 import { createPostgresqlDatabase } from '../../packages/core/src/postgresql-storage.js';
 
 export const PG_TEST_URL = process.env.ACCORDO_PG_TEST_URL
-  || 'postgres://postgres:postgres@127.0.0.1:5432/accordo_test';
+  || 'postgres://postgres@127.0.0.1:5432/accordo_test';
 export const PG_REQUIRED = process.env.CI === 'true' || process.env.ACCORDO_TEST_POSTGRES === '1';
 
 export const PG_TEST_DDL = Object.freeze([
@@ -211,7 +211,7 @@ export async function openPostgresqlFixture(t, options = {}) {
     if (PG_REQUIRED) {
       throw new AppError(
         'ACCORDO_PG_TEST_REQUIRED: PostgreSQL 16 is required for this suite. '
-          + 'Start with: docker run --rm -e POSTGRES_PASSWORD=postgres -e POSTGRES_USER=postgres '
+          + 'Start with: docker run --rm -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres '
           + '-e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16',
         { code: 'ACCORDO_PG_TEST_REQUIRED', status: 503 },
       );

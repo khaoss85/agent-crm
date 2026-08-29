@@ -24,7 +24,7 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_USER: postgres
           POSTGRES_DB: accordo_test
         ports:
@@ -36,7 +36,7 @@ jobs:
           --health-retries 10
     env:
       ACCORDO_TEST_POSTGRES: '1'
-      ACCORDO_PG_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/accordo_test
+      ACCORDO_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/accordo_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
