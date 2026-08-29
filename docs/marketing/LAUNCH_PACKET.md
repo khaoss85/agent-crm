@@ -97,7 +97,8 @@ before a commenter gets to say them.
 >
 > What does work, and what I would like broken: every mutation goes through a module service or
 > a named workflow and leaves an audit event and a step-level trace [C-16]; there are no
-> third-party runtime dependencies, so it is Node 22 and a checkout [C-17]; and one command
+> ORM and no framework underneath: SQLite is Node built-in, PostgreSQL is one pinned
+> `pg@8.23.0` driver, and it is Node 22 and a checkout [C-17]; and one command
 > reports what an application actually contains, including a machine-readable list of what the
 > inspector itself cannot see [C-14].
 >
@@ -119,7 +120,7 @@ command rather than an assertion.
 | "Is this just a wrapper around an LLM?" | There is no model in the runtime at all. The framework is deterministic code; the agent is the thing that writes against it, at development time. Nothing calls a model at request time. |
 | "Why SQLite?" | Because the production spine is not built, and shipping PostgreSQL support before auth and tenancy would imply a deployability that does not exist. It is a real limitation, listed as one. |
 | "This is a solution looking for a problem." | Possibly. The honest test is the jobs-to-be-done matrix in the repository, where "not supported" is the default status and seventeen core jobs are tracked with evidence. Five are still marked not supported. If the ones you need are in that column, this is not for you yet. |
-| "Show me it working." | `npm run verify` then `npm run demo`, no install step and no third-party dependencies. The demo is asserted by `scripts/smoke.js` on every push, so if it does not do what I said, CI is lying. |
+| "Show me it working." | `npm run verify` then `npm run demo`. SQLite needs no extra driver; PostgreSQL is the one pinned `pg@8.23.0`. The demo is asserted by `scripts/smoke.js` on every push, so if it does not do what I said, CI is lying. |
 
 ---
 

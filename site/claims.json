@@ -433,14 +433,16 @@
     },
     {
       "id": "C-17",
-      "text": "Zero third-party runtime dependencies. Node 22 and a checkout — no build step, no bundler, no framework underneath your framework.",
+      "text": "SQLite is Node's built-in node:sqlite. PostgreSQL requires one pinned runtime driver, pg@8.23.0. There is no ORM, no query builder, no build step and no framework underneath your framework.",
       "evidence": {
         "repoFacts": [
-          "package.json has no dependencies field",
+          "package.json.dependencies is exactly { pg: \"8.23.0\" }",
           "SQLite via node:sqlite",
-          "the HTTP server, test runner and database adapter are all Node built-ins"
+          "the HTTP server and test runner are Node built-ins",
+          "PostgreSQL uses the pinned pg@8.23.0 driver; there is no ORM"
         ],
         "tests": [
+          "tests/spine-v2-m3b-postgresql-adapter.test.js",
           "tests/api.test.js"
         ],
         "docs": [
@@ -448,7 +450,7 @@
           "AGENTS.md"
         ]
       },
-      "limitation": "Development dependencies and the eventual PostgreSQL adapter are separate questions. Having no runtime dependencies is a property of the framework, not of whatever you add on top of it.",
+      "limitation": "Applications that select PostgreSQL carry pg@8.23.0. The SQLite path still needs no third-party driver. This is not a production-readiness claim and not shared-database tenancy; the application factories still refuse PostgreSQL composition.",
       "surfaces": [
         "site",
         "readme",

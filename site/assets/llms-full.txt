@@ -29,7 +29,7 @@ documents on disk — nothing in it is written by hand, and `--check` fails when
 
 ## What it is, and what it is not
 
-A Node.js framework, ESM, zero third-party runtime dependencies, requiring Node 22.16+.
+A Node.js framework, ESM, requiring Node 22.16+. SQLite is Node built-in; PostgreSQL is one pinned pg@8.23.0 driver with no ORM.
 It provides CRM primitives (companies, contacts, opportunities, leads, quotes, orders,
 contracts, subscriptions, delivery projects), a declarative module manifest that generates
 migrations and services deterministically, code-first record actions, versioned policies,
@@ -109,7 +109,7 @@ The complete evidence for every id is listed further down this file, always.
 - [C-21 · JTBD-CO-03]({{brand.repository}}/blob/main/docs/COMMERCIAL_OPERATIONS.md) — The same refusal holds where the money is: an agent actor asking to approve a discounted quote is refused with a 403, and only a human user actor can decide. **Limit:** The assertion lives inside a composite end-to-end test rather than a test named for it, so the citation is a file and a line rather than a test name. Extracting it into a named test is tracked in docs/strategy/GO_TO_MARKET.md; until then, cite the line.
 - [C-15 · JTBD-AX-03]({{brand.repository}}/blob/main/docs/SOLUTION_PLAN.md) — A Solution Plan is a checked-in file with a contract and a canonical fingerprint, validated against a real inspection — so a plan written against a composition that has since moved reports itself stale. **Limit:** A document contract, not a planner and not a runtime. Nothing executes a plan, and the validator refuses a plan that carries a command.
 - [C-16 · JTBD-02]({{brand.repository}}/blob/main/ARCHITECTURE.md) — Every mutation goes through a module service or a named workflow, and leaves an audit event and a step-level trace behind it. **Limit:** Audit records what the process did under an asserted actor. It is not a tamper-evident or externally attestable log, and it is not a compliance control.
-- [C-17]({{brand.repository}}/blob/main/ARCHITECTURE.md) — Zero third-party runtime dependencies. Node 22 and a checkout — no build step, no bundler, no framework underneath your framework. **Limit:** Development dependencies and the eventual PostgreSQL adapter are separate questions. Having no runtime dependencies is a property of the framework, not of whatever you add on top of it.
+- [C-17]({{brand.repository}}/blob/main/ARCHITECTURE.md) — SQLite is Node's built-in node:sqlite. PostgreSQL requires one pinned runtime driver, pg@8.23.0. There is no ORM, no query builder, no build step and no framework underneath your framework. **Limit:** Applications that select PostgreSQL carry pg@8.23.0. The SQLite path still needs no third-party driver. This is not a production-readiness claim and not shared-database tenancy; the application factories still refuse PostgreSQL composition.
 - [C-18 · JTBD-AX-02]({{brand.repository}}/blob/main/docs/MCP.md) — The MCP server exposes project context and narrow write tools to a coding agent; anything that generates code or destroys state is dry-run unless you pass an explicit apply flag. **Limit:** Stdio only, local only. There is no hosted or authenticated MCP endpoint, and the server inherits the local process's authority.
 - [C-19]({{brand.repository}}/blob/main/docs/MODULE_EVOLUTION.md) — Generated modules evolve without rewriting history: explicit revisions, a checked-in state file and append-only named migrations. **Limit:** The view is source-only: what the checked-in revisions and migrations say is knowable; what a particular database has actually applied is not.
 - [C-20]({{brand.repository}}/blob/main/docs/QUALITY_GATES.md) — The verification gate runs on every push — source checks and then the whole test suite — covering happy paths and the policy boundaries that matter: hostile input, transaction rollback, idempotency, concurrency and immutability among them. **Limit:** A test count measures effort, not correctness — read the adversarial-review categories in docs/QUALITY_GATES.md to see what is actually attacked. Real-browser tests are run manually and are not in CI.
@@ -335,7 +335,7 @@ says above; those are in `site/claims.json`.
 - **C-21** `JTBD-CO-03`, `tests/commercial-e2e.test.js`, `docs/COMMERCIAL_OPERATIONS.md`
 - **C-15** `JTBD-AX-03`, `tests/solution-plan.test.js`, `docs/SOLUTION_PLAN.md`
 - **C-16** `JTBD-02`, `tests/workflow.test.js`, `tests/action-runtime-semantics.test.js`, `tests/event-bus-outbox.test.js`, `ARCHITECTURE.md`, `docs/ACTIONS.md`
-- **C-17** `tests/api.test.js`, `ARCHITECTURE.md`, `AGENTS.md`
+- **C-17** `tests/spine-v2-m3b-postgresql-adapter.test.js`, `tests/api.test.js`, `ARCHITECTURE.md`, `AGENTS.md`
 - **C-18** `JTBD-AX-02`, `tests/mcp.test.js`, `tests/scaffold.test.js`, `docs/MCP.md`
 - **C-19** `tests/module-evolution.test.js`, `tests/module-evolution-factory.test.js`, `tests/module-migrations.test.js`, `docs/MODULE_EVOLUTION.md`
 - **C-20** `docs/QUALITY_GATES.md`
@@ -359,7 +359,7 @@ An id that appears above but not here has lost its evidence, and `npm run site:c
 
 ## What this file omits
 
-Held under 44,000 characters so it fits a context window whole. Everything below is
+Held under 44,300 characters so it fits a context window whole. Everything below is
 optional and reachable at the path given; the claims ledger's evidence is never in this list,
 because the generator refuses to publish a file missing it rather than shortening one. Not inlined:
 

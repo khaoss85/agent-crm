@@ -237,13 +237,51 @@ closure, and in adapter-internal `createSqliteStorage` (a parameter named
 `raw`, outside the token set). `spine-store-storage-adapter.js` resolves the
 closed storage seam and does not spell `database.raw`. A prose mention in
 `packages/core/index.js` describes what M2D replaced.
-**PostgreSQL remains absent: the only adapter is SQLite.**
+**A PostgreSQL adapter now exists behind Storage Contract v1 (M3B).** The
+application factories still refuse PostgreSQL composition; shared-database
+tenancy is not implemented. Domain rows against that adapter are assessed in
+the M3B section below.
 
 This paragraph was true when M2C wrote it and false the moment M2D merged into
 it, with no conflict marker to say so: git merged the two edits cleanly because
 neither touched the other's lines. It is corrected here rather than in a later
 reconciliation, because a sentence naming a consumer that no longer exists is
 the kind of stale claim this matrix exists to catch.
+
+### PostgreSQL Storage Contract v1 adapter (Production Spine v2 M3B)
+
+M3B is a horizontal kernel seam: Storage Contract v1 gains `renderPostgresqlStatement`
+and a connection-affine `pg@8.23.0` adapter. The same contract tests run against
+SQLite and PostgreSQL. It does **not** compose the application on PostgreSQL,
+does not migrate domain schemas, and does not claim shared-database tenancy.
+A `deferred` row below means the domain's own records have not been exercised
+on this adapter; declaring them aligned here would be the silent backfill this
+matrix exists to prevent. Closing the gap is M3C.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `deferred` | Company/Contact/Opportunity/Approval speak Storage Contract v1 on SQLite; application composition on PostgreSQL is M3C |
+| Work | `deferred` | Work uses the storage seam on SQLite; PostgreSQL application composition is M3C |
+| Pipeline | `deferred` | pipeline persistence is not on this adapter; M3C |
+| Lead Intelligence | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Commercial Operations | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Signature & Order | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Contract Activation | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Delivery | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Service | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Lifecycle | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Customer Data | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Custom-package fixture | `deferred` | the v1 fixture remains SQLite; PostgreSQL composition is M3C |
+| Custom-package score-disclosure fixture | `deferred` | the v1 fixture remains SQLite; PostgreSQL composition is M3C |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime persistence consumer |
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | None at runtime. The adapter is kernel-only; no domain service is composed on PostgreSQL |
+| Which are already aligned? | None — alignment here would mean the domain's own records proven on PostgreSQL |
+| Which need metadata only? | Every domain row above: declared `deferred` until M3C |
+| Which need a code backfill? | Closing the rows is M3C application composition, not a domain rewrite in this PR |
+| Was the matrix updated? | Yes — this section |
 
 ### Async package-contract v2 assessment (Production Spine v2 M2E-1)
 
