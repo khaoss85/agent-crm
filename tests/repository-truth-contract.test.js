@@ -858,13 +858,35 @@ test('a journey limitation code that is retired refuses the fact resting on it',
   problemNaming(problems, 'THE_PROFILE_IS_A_PROJECTION_NOT_A_TIMELINE');
 });
 
-test('a production dependency contradicts the declared PostgreSQL absence', async () => {
+test('an unexpected production dependency contradicts the declared PostgreSQL absence', async () => {
   const mutated = await bundle();
-  mutated.productionDependencies = ['pg'];
+  mutated.productionDependencies = ['orm'];
   const { facts, problems } = buildFacts(mutated);
   assert.deepEqual(codes(problems), ['TRUTH_AUTHORITIES_CONTRADICT']);
   assert.equal(facts.some((fact) => fact.id === 'spine.postgresql.implemented'), false);
-  problemNaming(problems, 'production dependencies (pg)');
+  problemNaming(problems, 'production dependencies (orm)');
+});
+
+test('the pinned pg adapter does not flip spine.postgresql.implemented while the factory still refuses', async () => {
+  const mutated = await bundle();
+  mutated.productionDependencies = ['pg'];
+  mutated.postgresqlApplicationRefused = true;
+  const { facts, problems } = buildFacts(mutated);
+  assert.equal(problems.some((problem) => problem.message.includes('spine.postgresql.implemented')), false);
+  const postgres = facts.find((fact) => fact.id === 'spine.postgresql.implemented');
+  assert.equal(postgres.value, 'absent');
+  assert.ok(postgres.evidence.includes('package.json#dependencies:pg@adapter-only'));
+  assert.ok(postgres.evidence.includes('createAccordoAppAsync#STORAGE_ADAPTER_UNAVAILABLE'));
+});
+
+test('a public factory that accepts PostgreSQL contradicts declared absence', async () => {
+  const mutated = await bundle();
+  mutated.productionDependencies = ['pg'];
+  mutated.postgresqlApplicationRefused = false;
+  const { facts, problems } = buildFacts(mutated);
+  assert.deepEqual(codes(problems), ['TRUTH_AUTHORITIES_CONTRADICT']);
+  assert.equal(facts.some((fact) => fact.id === 'spine.postgresql.implemented'), false);
+  problemNaming(problems, 'createAccordoAppAsync no longer refuses PostgreSQL');
 });
 
 // ──────────────────────────── negative: a receipt is verified, never trusted
@@ -1166,6 +1188,7 @@ const BLANK_BUNDLE = Object.freeze({
   rails: {},
   journeyCodes: [],
   productionDependencies: [],
+  postgresqlApplicationRefused: true,
   benchmark: null,
   measurement: null,
 });

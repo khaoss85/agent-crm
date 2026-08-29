@@ -107,8 +107,10 @@ anything on top of it that touches money.
 
 ## Run it
 
-No install step is required: the framework has no third-party runtime
-dependencies, so Node 22.16+ and this directory are the whole toolchain.
+SQLite is Node's built-in adapter and needs no extra install. PostgreSQL
+requires the pinned \`pg@8.23.0\` driver; this generated project does not
+select PostgreSQL, so Node 22.16+ and this directory are the whole SQLite
+toolchain.
 
 \`\`\`bash
 npm run verify     # syntax check, then this project's own tests

@@ -75,9 +75,10 @@ regression test is a fix that comes back.
 
 ## Supply chain
 
-The framework has **no third-party runtime dependencies**: `package.json` declares none, and
-persistence, HTTP and testing all use Node built-ins. This is a deliberate constraint
+SQLite persistence, HTTP and testing use Node built-ins. PostgreSQL is the one
+exception: `package.json` pins exactly `pg@8.23.0`, with no ORM and no `pg-native`
+(C-17). Adding another production dependency is a deliberate constraint
 (`AGENTS.md`: a production dependency must remove more complexity than it adds, with the
-reason recorded in `DECISIONS.md`). It removes a large class of supply-chain exposure from
-the framework itself. It says nothing about what you add on top of it, or about your own
-generated application's dependencies.
+reason recorded in `DECISIONS.md`). Applications that select PostgreSQL carry this
+driver; the SQLite path does not load it. It says nothing about what you add on top of
+the framework, or about your own generated application's other dependencies.

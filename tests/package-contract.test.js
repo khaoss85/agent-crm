@@ -334,8 +334,9 @@ test('the kernel never depends on a package, in either direction', () => {
     if (!name.endsWith('.js')) continue;
     const source = readFileSync(join(kernelDir, name), 'utf8');
     for (const specifier of [...source.matchAll(/from '([^']+)'/g)].map((match) => match[1])) {
+      const pinnedDriver = name === 'postgresql-storage.js' && specifier === 'pg';
       assert.ok(
-        specifier.startsWith('./') || specifier.startsWith('node:'),
+        specifier.startsWith('./') || specifier.startsWith('node:') || pinnedDriver,
         `packages/core/src/${name} imports ${specifier}`,
       );
     }

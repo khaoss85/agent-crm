@@ -7,40 +7,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createDatabase } from '../packages/core/src/database.js';
-import { renderSqliteStatement, STORAGE_CONTRACT } from '../packages/core/src/storage-contract.js';
+import { renderPostgresqlStatement, renderSqliteStatement, STORAGE_CONTRACT } from '../packages/core/src/storage-contract.js';
+import { assertAsyncStorageContract, assertClosedVocabulary, openPostgresqlFixture } from './helpers/storage-contract-cases.js';
 
 test('M1 renders only its closed statement vocabulary with ordered bindings', () => {
-  assert.deepEqual(renderSqliteStatement({
-    kind: 'select', table: 'work_task', columns: '*',
-    where: [
-      { column: 'subject_id', op: 'eq', value: 'subject-1' },
-      { column: 'status', op: 'in', values: ['open', 'completed'] },
-      { column: 'completed_at', op: 'is-null' },
-    ],
-    orderBy: [{ column: 'created_at', direction: 'desc' }, { column: 'id', direction: 'asc' }],
-    limit: 25,
-  }), {
-    sql: 'SELECT * FROM "work_task" WHERE "subject_id" = ? AND "status" IN (?, ?) AND "completed_at" IS NULL ORDER BY "created_at" DESC, "id" ASC LIMIT ?',
-    params: ['subject-1', 'open', 'completed', 25],
-  });
-  for (const statement of [
-    'SELECT * FROM companies',
-    { kind: 'delete', table: 'companies' },
-    { kind: 'select', table: 'companies; DROP TABLE companies', columns: '*' },
-    { kind: 'select', table: 'companies', columns: '*', where: [{ column: 'id', op: 'like', value: '%' }] },
-  ]) {
-    assert.throws(() => renderSqliteStatement(statement), (error) => error?.code === 'STORAGE_STATEMENT_UNSUPPORTED');
-  }
-  const inheritedStatement = Object.create({ kind: 'insert', table: 'companies', values: [] });
-  const inheritedValue = Object.assign(Object.create({ column: 'id', value: 'polluted' }), {});
-  assert.throws(() => renderSqliteStatement(inheritedStatement), (error) => error?.code === 'STORAGE_STATEMENT_UNSUPPORTED');
-  assert.throws(() => renderSqliteStatement({
-    kind: 'insert', table: 'companies', values: [inheritedValue],
-  }), (error) => error?.code === 'STORAGE_STATEMENT_UNSUPPORTED');
-  assert.throws(() => renderSqliteStatement({
-    kind: 'update', table: 'companies', values: [{ column: 'name', value: 'Wrong' }],
-    where: [Object.create({ column: 'domain', op: 'is-null' })],
-  }), (error) => error?.code === 'STORAGE_STATEMENT_UNSUPPORTED');
+  assertClosedVocabulary(renderSqliteStatement, 'sqlite');
+});
+
+test('M1 PostgreSQL renderer uses $1..$n placeholders in the same parameter order', () => {
+  assertClosedVocabulary(renderPostgresqlStatement, 'postgresql');
 });
 
 test('M1 SQLite adapter exposes async writes, synchronous compatibility reads and rollback', async () => {
@@ -192,4 +167,21 @@ test('the two migrated consumer sources have no raw-driver escape', () => {
   for (const [label, source] of [['Company', company], ['generated/package-owned service template', generated], ['shared audit dependency', audit]]) {
     assert.doesNotMatch(source, /database\.raw|\.raw\.prepare|\.raw\.exec|DatabaseSync/, `${label} must cross only the M1 storage contract`);
   }
+});
+
+test('M1 SQLite adapter satisfies the shared async storage contract', async () => {
+  const database = createDatabase({ path: ':memory:' });
+  try {
+    assert.equal(database.storage.contract, STORAGE_CONTRACT);
+    await assertAsyncStorageContract(database.storage);
+  } finally {
+    database.close();
+  }
+});
+
+test('M1 PostgreSQL adapter satisfies the same async storage contract', { timeout: 15_000 }, async (t) => {
+  const db = await openPostgresqlFixture(t);
+  if (!db) return;
+  assert.equal(db.storage.contract, STORAGE_CONTRACT);
+  await assertAsyncStorageContract(db.storage);
 });

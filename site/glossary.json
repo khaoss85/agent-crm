@@ -9,7 +9,7 @@
       "metaTitle": "What is a CRM framework? Definition | Accordo",
       "plainName": "CRM framework, defined",
       "intent": "what is a crm framework, open source crm framework for developers",
-      "summary": "A CRM framework is source code a development team composes into its own CRM application: the framework supplies the runtime contracts — records, services, workflows, policies — and the team supplies the domain. A CRM product is configured; a CRM framework is programmed, and the resulting application belongs to whoever wrote it rather than to a vendor. Accordo is an open source CRM framework for developers and their coding agents, MIT-licensed with zero third-party runtime dependencies — and nothing about the term makes the result deployable: this one ships no authentication, stores to SQLite and has no hosted offering.",
+      "summary": "A CRM framework is source code a development team composes into its own CRM application: the framework supplies the runtime contracts — records, services, workflows, policies — and the team supplies the domain. A CRM product is configured; a CRM framework is programmed, and the resulting application belongs to whoever wrote it rather than to a vendor. Accordo is an open source CRM framework for developers and their coding agents, MIT-licensed, with SQLite as a Node built-in and one pinned pg@8.23.0 driver for PostgreSQL — and nothing about the term makes the result deployable: this one ships no authentication, application composition is still SQLite, and it has no hosted offering.",
       "metaDescription": "A CRM framework is source code developers compose into their own CRM application, not a hosted product they configure. The definition, and where this one stops.",
       "sections": [
         {
@@ -25,7 +25,7 @@
           "body": [
             "Accordo's unit of composition is a module manifest: the author declares a record's fields once, and the framework turns the declaration into a migration, a service, a REST resource, an SDK method and Admin screens, with no page code written by hand (C-01). Business behaviour is not generated — services, workflows and policies stay explicit, reviewable source, which is the property that makes the framework usable by a coding agent under human review.",
             "Domains larger than one record live in packages. A customer-authored domain package attaches with one static import and detaches with the kernel's fingerprint unchanged, reaching other packages only through capabilities it declares (C-13) — so extending the CRM means adding a package, not forking a platform. Every mutation in the composed application goes through a module service or a named workflow and leaves an audit event and a step-level trace behind it (C-16).",
-            "The dependency posture is part of the definition here: the framework itself has zero third-party runtime dependencies — Node 22, its built-in SQLite adapter, its built-in HTTP server and test runner (C-17). That is a property of the framework, not of your application; the first library you add is yours to carry."
+            "The dependency posture is part of the definition here: Node 22, its built-in SQLite adapter, its built-in HTTP server and test runner, and one pinned pg@8.23.0 driver if you select PostgreSQL — no ORM (C-17). That is a property of the framework, not of your application; the next library you add is yours to carry."
           ]
         },
         {
@@ -47,7 +47,7 @@
         "A CRM framework is not a CRM product. There is nothing to sign up for here — no hosted CRM, no account, no free tier; the output is an application in your repository (L-07).",
         "'Open source CRM framework' describes the licence and the source, not a distribution channel. Nothing installs from npm: the bootstrap scaffolds from a checkout and upgrading means merging (L-08).",
         "'CRM for developers' does not make the result deployable. No authentication ships (L-01), and persistence is local SQLite (L-02).",
-        "Zero third-party runtime dependencies is a property of the framework, not of the application you build on it.",
+        "SQLite needs no third-party driver; PostgreSQL carries the pinned pg@8.23.0. That is a property of the framework, not of the application you build on it.",
         "The definition on this page is not a measured comparison. No benchmark has been run against building from scratch or against any product (L-03)."
       ],
       "claims": [

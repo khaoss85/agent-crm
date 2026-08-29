@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "849b5acb2e090ac5fb600e38c6ae9a791fa70af41b16aadec48c46717cc494db",
+  "sourceSha": "304aa28efa21bbec0ac938fcf21e84acdab82113ce343b1d993a62a1e9d962f9",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -692,8 +692,9 @@
       "value": "absent",
       "authority": "spine.contract",
       "evidence": [
-        "declared:PostgreSQL or shared-database row-level tenancy (Spine v2)",
-        "package.json#dependencies:none",
+        "createAccordoAppAsync#STORAGE_ADAPTER_UNAVAILABLE",
+        "declared:PostgreSQL application composition or shared-database row-level tenancy (Spine v2)",
+        "package.json#dependencies:pg@adapter-only",
         "packages/app/src/spine.js#SPINE_NOT_MODELED"
       ],
       "scope": "framework",
@@ -851,5 +852,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "501115a4dfae3a72fbe579096a1910fd02e68dd011cdd3852c900210b1a8d15d"
+  "fingerprint": "dae1f11506c13f938aea1249c154074ecb3d5673fc596d0ef67772776a1004e0"
 }

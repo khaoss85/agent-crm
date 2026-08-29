@@ -6,7 +6,8 @@ import { dirname, resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { AppError, ConflictError } from './errors.js';
 import { createSqliteStorage } from './storage-contract.js';
-import { claimTransactionMinter, currentTransactionWitness } from './transaction-witness.js';
+import { currentTransactionWitness } from './transaction-witness.js';
+import { openTransactionScope } from './transaction-minter.js';
 import {
   SCHEMA_MIGRATIONS_CHECKSUM_NAME,
   SCHEMA_MIGRATIONS_CHECKSUM_VERSION,
@@ -14,15 +15,6 @@ import {
   checksumForReleasedMigration,
   ledgerHasChecksumColumn,
 } from './schema-migrations-ledger.js';
-
-/**
- * The right to open an owned transaction scope, claimed once at module load so
- * that nothing else in the process can take it (Spine v2 M2D). Claiming here
- * rather than inside `createDatabase` is deliberate: the capability must be
- * gone before any package's code can run, not merely before the first
- * database is opened.
- */
-const openTransactionScope = claimTransactionMinter();
 
 /**
  * @typedef {{

@@ -65,7 +65,9 @@ const assetsDir = join(siteDir, 'assets');
  * citation. Resolvable links cost ~1.6k characters across ~44 links; that is content doing
  * its job, not drift, and trimming evidence to pay for it would invert the file's priorities.
  */
-const FULL_BUDGET = 44000;
+// 44,300: C-17 now names the pg@8.23.0 pin and its limitation in the same
+// breath, which lengthens the mandatory inlined claims ledger.
+const FULL_BUDGET = 44300;
 
 /**
  * Characters held back for the closing "what this file omits" section, which is written
@@ -407,7 +409,7 @@ function whatItIsSection() {
   return [
     '## What it is, and what it is not',
     '',
-    'A Node.js framework, ESM, zero third-party runtime dependencies, requiring Node 22.16+.',
+    'A Node.js framework, ESM, requiring Node 22.16+. SQLite is Node built-in; PostgreSQL is one pinned pg@8.23.0 driver with no ORM.',
     'It provides CRM primitives (companies, contacts, opportunities, leads, quotes, orders,',
     'contracts, subscriptions, delivery projects), a declarative module manifest that generates',
     'migrations and services deterministically, code-first record actions, versioned policies,',

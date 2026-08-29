@@ -595,13 +595,13 @@ test('no executable invents adapter parsing; factory stays unwired', () => {
   assert.equal(kernel.includes('identity-verifier'), false);
 
   const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
-  const names = [
-    ...Object.keys(pkg.dependencies ?? {}),
+  assert.deepEqual(pkg.dependencies, { pg: '8.23.0' });
+  const extra = [
     ...Object.keys(pkg.optionalDependencies ?? {}),
     ...Object.keys(pkg.peerDependencies ?? {}),
   ];
-  for (const name of ['pg', 'postgres', 'postgresql', 'pg-native']) {
-    assert.equal(names.includes(name), false, `unexpected production dependency ${name}`);
+  for (const name of ['postgres', 'postgresql', 'pg-native']) {
+    assert.equal(extra.includes(name), false, `unexpected extra production dependency ${name}`);
     assert.throws(() => require.resolve(name, { paths: [repoRoot] }), { code: 'MODULE_NOT_FOUND' });
   }
 });
