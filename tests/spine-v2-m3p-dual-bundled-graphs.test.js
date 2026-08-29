@@ -253,6 +253,12 @@ test('createAccordoApp stays synchronous and does not import bundled v2 graphs',
     isAsyncContract,
   );
   assert.doesNotThrow(() => refuseAsyncPackagesOnSynchronousFactory([createWorkPackage()]));
+  assert.throws(
+    () => refuseAsyncPackagesOnSynchronousFactory([Object.defineProperty({}, 'packageContract', {
+      get() { throw new Error('hostile'); },
+    })]),
+    isAsyncContract,
+  );
 });
 
 test('legacy custom v1 package stays green on sync SQLite and fail-closed on portable v2', async () => {

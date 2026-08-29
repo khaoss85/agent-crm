@@ -141,7 +141,7 @@ boundaries prevent a production PostgreSQL deployment from being claimed:
 | Blocker | Consequence today |
 |---|---|
 | No deployment authentication verifier | identity is only as trustworthy as the deployment adapter; the framework ships no verifier |
-| No PostgreSQL adapter | runtime storage remains SQLite-only; M0 is characterization and M1 is a SQLite seam |
+| PostgreSQL application composition | the M3B adapter exists behind Storage Contract v1; `createAccordoApp()` stays SQLite-only and portable factories still refuse PostgreSQL composition until M3C |
 | No durable outbox or scheduler | post-commit delivery, renewal triggers, SLA timers and unattended work do not survive process loss |
 | No secret, backup or production-observability system | real provider credentials and recoverability cannot be operated safely |
 | Browser E2E remains outside CI | current Chromium receipts are manual and Admin regressions are not browser-gated on every push |
@@ -175,9 +175,9 @@ The final M2 posture slice bounded public storage descriptors and
 explicit graphs: `createX()` for `createAccordoApp()` and `createXV2()` for a
 caller-supplied portable selected graph.
 <!-- truth: spine.storage.contract=1 -->
-None of them adds PostgreSQL storage.
+The M3B adapter exists; application factories still refuse PostgreSQL composition.
 
-**Not implemented:** the PostgreSQL production adapter (M3); M4 reliability
+**Not implemented:** PostgreSQL application boot and `accordo serve` on PostgreSQL (M3C); M4 reliability
 (leases, idempotency, webhook keys); Spine v3 jobs/outbox/scheduler; Spine v4
 secrets/backups/observability; Cloud; default `accordo serve` on the async factory;
 deployment authentication; billing, invoicing and revenue

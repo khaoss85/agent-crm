@@ -230,7 +230,10 @@ export function refuseAsyncPackagesOnSynchronousFactory(packages = []) {
     try {
       packageContract = pkg?.packageContract;
     } catch {
-      continue;
+      throw asyncContractError(
+        'createAccordoApp() could not read packageContract from a selected package',
+        { package: '(unreadable)' },
+      );
     }
     if (packageContract !== 2) continue;
     let name = '(unnamed)';
