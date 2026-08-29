@@ -6,6 +6,11 @@ import { normalizeError } from '../../core/src/errors.js';
 import { createToolRegistry } from './tools.js';
 import { createResourceRegistry } from './resources.js';
 import { createPromptRegistry } from './prompts.js';
+import {
+  createProductionPromptRegistry,
+  createProductionResourceRegistry,
+  createProductionToolRegistry,
+} from './production-surface.js';
 
 const SERVER_INFO = Object.freeze({ name: 'accordo', version: '0.1.0' });
 const CURRENT_PROTOCOL = '2026-07-28';
@@ -13,11 +18,17 @@ const LEGACY_PROTOCOL = '2025-11-25';
 const SUPPORTED_PROTOCOLS = [CURRENT_PROTOCOL, LEGACY_PROTOCOL, '2025-06-18', '2024-11-05'];
 const DEFAULT_ROOT = resolve(fileURLToPath(new URL('../../../', import.meta.url)));
 
-/** @param {{app: any, rootDir?: string}} dependencies */
-export function createMcpServer({ app, rootDir = DEFAULT_ROOT }) {
-  const tools = createToolRegistry({ app, rootDir });
-  const resources = createResourceRegistry({ app, rootDir });
-  const prompts = createPromptRegistry({ app });
+/** @param {{app?: any, rootDir?: string, productionStatic?: boolean}} dependencies */
+export function createMcpServer({ app, rootDir = DEFAULT_ROOT, productionStatic = false } = {}) {
+  const tools = productionStatic
+    ? createProductionToolRegistry()
+    : createToolRegistry({ app, rootDir });
+  const resources = productionStatic
+    ? createProductionResourceRegistry({ rootDir })
+    : createResourceRegistry({ app, rootDir });
+  const prompts = productionStatic
+    ? createProductionPromptRegistry()
+    : createPromptRegistry({ app });
 
   return {
     /** @param {any} request */

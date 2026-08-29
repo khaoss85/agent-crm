@@ -614,20 +614,20 @@ test('M2-17 does not import or depend on a PostgreSQL driver', () => {
   assert.equal(/net\.connect|tls\.connect|createConnection/.test(source), false);
 });
 
-test('M2-17 does not wire CLI, serve or MCP in this slice', () => {
-  const surfaces = [
-    'packages/app/src/create-app.js',
-    'packages/cli/src/commands.js',
-    'packages/mcp/src/stdio.js',
-  ];
-  for (const relative of surfaces) {
-    const source = readFileSync(join(repoRoot, relative), 'utf8');
-    assert.equal(source.includes('deployment-storage'), false, `${relative} imported the loader`);
-    assert.equal(source.includes('DEPLOYMENT_STORAGE'), false, `${relative} named the contract`);
-    assert.equal(source.includes('--deployment-storage'), false, `${relative} grew a flag`);
-  }
+test('M2-17 parser and factory stay unwired; flag mapping is not invented here', () => {
+  const factory = readFileSync(join(repoRoot, 'packages/app/src/create-app.js'), 'utf8');
+  assert.equal(factory.includes('deployment-storage'), false, 'create-app imported the loader');
+  assert.equal(factory.includes('DEPLOYMENT_STORAGE'), false, 'create-app named the contract');
+  assert.equal(factory.includes('--deployment-storage'), false, 'create-app grew a flag');
+  assert.equal(factory.includes('prepareDeploymentPreconnect'), false);
+
+  const parser = readFileSync(join(repoRoot, 'packages/core/src/deployment-storage.js'), 'utf8');
+  assert.equal(parser.includes('--deployment-storage'), false, 'parser grew a CLI flag');
+  assert.equal(parser.includes('--adapter'), false);
+  assert.equal(parser.includes('--pg-url'), false);
+
   const help = readFileSync(join(repoRoot, 'packages/cli/src/commands.js'), 'utf8');
-  assert.equal(help.includes('accordo serve [--port 4000] [--db ./data/accordo.sqlite]'), true);
+  assert.equal(help.includes('accordo serve [--port 4000] [--db ./data/accordo.sqlite] [--deployment-storage path]'), true);
 });
 
 test('M2-17 loading the same trusted document twice is identical', () => {
