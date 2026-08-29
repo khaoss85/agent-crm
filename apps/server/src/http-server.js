@@ -68,6 +68,11 @@ export function createHttpServer(app, options = {}) {
           ? await readRawBody(request, route.options.maxBodyBytes ?? 65_536)
           : null;
         const body = writesBody && !route.options?.rawBody ? await readJson(request) : null;
+        // GET /health is process liveness. Shared request identity in
+        // local-development spine mode reads memberships and can bootstrap an
+        // owner plus audit — a liveness probe must not mutate tenant or
+        // control-plane state.
+        const skipIdentity = (request.method ?? 'GET') === 'GET' && url.pathname === '/health';
         const result = await route.handler({
           request,
           response,
@@ -77,7 +82,9 @@ export function createHttpServer(app, options = {}) {
           body,
           rawBody,
           headers: request.headers,
-          ...await requestIdentity(app, request),
+          ...(skipIdentity
+            ? { actor: null, identity: null, organizationId: null }
+            : await requestIdentity(app, request)),
         });
         if (!response.writableEnded) {
           // A handler either returns a tagged envelope (explicit status) or a
