@@ -65,7 +65,7 @@ test('M3B PostgreSQL adapter never wraps import pg in try/catch', () => {
   assert.doesNotMatch(source, /try\s*\{[\s\S]*from 'pg'/);
 });
 
-test('M3B live PostgreSQL adapter', async (t) => {
+test('M3B live PostgreSQL adapter', { timeout: 30_000 }, async (t) => {
   const db = await openPostgresqlFixture(t, { max: 4 });
   if (!db) return;
   const { storage } = db;
@@ -318,7 +318,7 @@ test('M3B live PostgreSQL adapter', async (t) => {
   });
 });
 
-test('M3B connection loss during COMMIT is unknown and the client is not recycled', async (t) => {
+test('M3B connection loss during COMMIT is unknown and the client is not recycled', { timeout: 15_000 }, async (t) => {
   const db = await openPostgresqlFixture(t, { max: 1 });
   if (!db) return;
   const admin = new Pool({ connectionString: PG_TEST_URL, max: 1, connectionTimeoutMillis: 2000 });
@@ -342,7 +342,7 @@ test('M3B connection loss during COMMIT is unknown and the client is not recycle
   assert.equal((await db.storage.maybeOne(selectName('after-kill'))).name, 'Alive');
 });
 
-test('M3B acquisition deadline destroys the waiter and recovers the pool', async (t) => {
+test('M3B acquisition deadline destroys the waiter and recovers the pool', { timeout: 15_000 }, async (t) => {
   const db = await openPostgresqlFixture(t, { max: 1, acquisitionDeadlineMs: 200 });
   if (!db) return;
   let release;
@@ -365,7 +365,7 @@ test('M3B acquisition deadline destroys the waiter and recovers the pool', async
   assert.equal((await db.storage.maybeOne(selectName('recovered'))).name, 'Recovered');
 });
 
-test('M3B query deadline destroys a black-holed client and recovers', async (t) => {
+test('M3B query deadline destroys a black-holed client and recovers', { timeout: 15_000 }, async (t) => {
   const db = await openPostgresqlFixture(t, { queryDeadlineMs: 80, max: 2 });
   if (!db) return;
   await assert.rejects(probePostgresqlQueryDeadline(db.storage, 2), (error) => {
@@ -377,7 +377,7 @@ test('M3B query deadline destroys a black-holed client and recovers', async (t) 
   assert.equal((await db.storage.maybeOne(selectName('after-timeout'))).name, 'Alive');
 });
 
-test('M3B lock_timeout maps to STORAGE_TIMEOUT without leaking the URL', async (t) => {
+test('M3B lock_timeout maps to STORAGE_TIMEOUT without leaking the URL', { timeout: 15_000 }, async (t) => {
   const db = await openPostgresqlFixture(t, { lockTimeoutMs: 150, max: 2 });
   if (!db) return;
   await db.storage.execute(insertCompany('locked', 'Lock'));

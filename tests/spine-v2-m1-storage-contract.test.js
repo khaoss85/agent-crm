@@ -179,7 +179,7 @@ test('M1 SQLite adapter satisfies the shared async storage contract', async () =
   }
 });
 
-test('M1 PostgreSQL adapter satisfies the same async storage contract', async (t) => {
+test('M1 PostgreSQL adapter satisfies the same async storage contract', { timeout: 15_000 }, async (t) => {
   const db = await openPostgresqlFixture(t);
   if (!db) return;
   assert.equal(db.storage.contract, STORAGE_CONTRACT);
