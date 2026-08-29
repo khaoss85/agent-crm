@@ -206,6 +206,56 @@ test('ledger backfill refuses a rewritten core CHECK constraint', (t) => {
   );
 });
 
+test('ledger backfill refuses a rewritten core foreign key action', (t) => {
+  const dir = workspaceFor(t);
+  const path = join(dir, 'fk-drift.sqlite');
+  seedReleasedPrefix(path, 5);
+  const raw = new DatabaseSync(path);
+  const rewritten = raw.prepare("SELECT sql FROM sqlite_schema WHERE name = 'contacts'").get().sql
+    .replace('ON DELETE CASCADE', 'ON DELETE RESTRICT');
+  raw.exec('PRAGMA writable_schema = ON');
+  raw.prepare("UPDATE sqlite_schema SET sql = ? WHERE name = 'contacts'").run(rewritten);
+  raw.exec('PRAGMA writable_schema = OFF');
+  raw.close();
+  assert.throws(
+    () => createDatabase({ path, plane: 'combined' }),
+    (error) => error.code === 'CORE_MIGRATION_SCHEMA_DIVERGED'
+      && !JSON.stringify(error).includes(path),
+  );
+});
+
+test('ledger backfill refuses an extra index on a core table', (t) => {
+  const dir = workspaceFor(t);
+  const path = join(dir, 'extra-index.sqlite');
+  seedReleasedPrefix(path, 7);
+  const raw = new DatabaseSync(path);
+  raw.exec('CREATE INDEX companies_name ON companies(name)');
+  raw.close();
+  assert.throws(
+    () => createDatabase({ path }),
+    (error) => error.code === 'CORE_MIGRATION_SCHEMA_DIVERGED'
+      && !JSON.stringify(error).includes(path),
+  );
+});
+
+test('ledger backfill refuses a rewritten core trigger body', (t) => {
+  const dir = workspaceFor(t);
+  const path = join(dir, 'trigger-body.sqlite');
+  seedReleasedPrefix(path, 7);
+  const raw = new DatabaseSync(path);
+  const rewritten = raw.prepare("SELECT sql FROM sqlite_schema WHERE name = 'spine_data_plane_binding_no_update'").get().sql
+    .replace('spine data-plane binding is immutable', 'smuggled trigger body');
+  raw.exec('PRAGMA writable_schema = ON');
+  raw.prepare("UPDATE sqlite_schema SET sql = ? WHERE name = 'spine_data_plane_binding_no_update'").run(rewritten);
+  raw.exec('PRAGMA writable_schema = OFF');
+  raw.close();
+  assert.throws(
+    () => createDatabase({ path }),
+    (error) => error.code === 'CORE_MIGRATION_SCHEMA_DIVERGED'
+      && !JSON.stringify(error).includes(path),
+  );
+});
+
 test('ledger backfill refuses a core column type change', (t) => {
   const dir = workspaceFor(t);
   const path = join(dir, 'type-drift.sqlite');

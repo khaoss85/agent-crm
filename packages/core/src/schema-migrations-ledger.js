@@ -131,8 +131,8 @@ export function expectedSchemaFromIntent(applied) {
   const tables = new Map();
   /** @type {Set<string>} */
   const indexes = new Set();
-  /** @type {Set<string>} */
-  const triggers = new Set();
+  /** @type {Map<string, string>} */
+  const triggers = new Map();
   for (const intent of CORE_SCHEMA_INTENT) {
     if (intent.version >= SCHEMA_MIGRATIONS_CHECKSUM_VERSION) continue;
     const recordedName = appliedVersions.get(intent.version);
@@ -146,6 +146,9 @@ export function expectedSchemaFromIntent(applied) {
           requireNotNull: column.notNull === true,
           pk: column.primaryKey ? 1 : 0,
           check: columnCheckSnippet(column),
+          references: column.references
+            ? { table: column.references.table, onDelete: column.references.onDelete ?? 'restrict' }
+            : null,
         })));
       }
       if (statement.kind === 'addColumn') {
@@ -156,11 +159,14 @@ export function expectedSchemaFromIntent(applied) {
           requireNotNull: statement.column.notNull === true,
           pk: 0,
           check: columnCheckSnippet(statement.column),
+          references: statement.column.references
+            ? { table: statement.column.references.table, onDelete: statement.column.references.onDelete ?? 'restrict' }
+            : null,
         });
         tables.set(statement.table, columns);
       }
       if (statement.kind === 'createIndex') indexes.add(statement.name);
-      if (statement.kind === 'createTrigger') triggers.add(statement.name);
+      if (statement.kind === 'createTrigger') triggers.set(statement.name, String(statement.abortMessage ?? ''));
     }
   }
   return { tables, indexes, triggers };
@@ -185,14 +191,16 @@ function ledgerUnknown(version, name) {
 export function diffObservedToIntent(observed, expected) {
   const observedTables = new Set(observed.objects.filter((entry) => entry.type === 'table').map((entry) => entry.name));
   const observedIndexes = new Set(observed.objects.filter((entry) => entry.type === 'index').map((entry) => entry.name));
-  const observedTriggers = new Set(observed.objects.filter((entry) => entry.type === 'trigger').map((entry) => entry.name));
+  const observedTriggers = new Map(
+    observed.objects.filter((entry) => entry.type === 'trigger').map((entry) => [entry.name, String(entry.sql ?? '')]),
+  );
   const tableSql = Object.fromEntries(
     observed.objects.filter((entry) => entry.type === 'table').map((entry) => [entry.name, String(entry.sql ?? '')]),
   );
   const missing = [
     ...[...expected.tables.keys()].filter((name) => !observedTables.has(name)).map((name) => `table:${name}`),
     ...[...expected.indexes].filter((name) => !observedIndexes.has(name)).map((name) => `index:${name}`),
-    ...[...expected.triggers].filter((name) => !observedTriggers.has(name)).map((name) => `trigger:${name}`),
+    ...[...expected.triggers.keys()].filter((name) => !observedTriggers.has(name)).map((name) => `trigger:${name}`),
   ];
   /** @type {string[]} */
   const extra = [];
@@ -215,10 +223,26 @@ export function diffObservedToIntent(observed, expected) {
       if (column.check && !tableSql[table].includes(column.check)) {
         diverged.push(`check:${table}.${column.name}`);
       }
+      if (column.references) {
+        const fks = observed.tables[table]?.foreignKeys ?? [];
+        const match = fks.find((fk) => String(fk.from) === column.name && String(fk.table) === column.references.table);
+        const expectedDelete = String(column.references.onDelete).replace('_', ' ').toUpperCase();
+        if (!match || String(match.on_delete).toUpperCase() !== expectedDelete) {
+          diverged.push(`fk:${table}.${column.name}`);
+        }
+      }
     }
     for (const live of observedColumns) {
       if (!columns.some((column) => column.name === live.name)) extra.push(`column:${table}.${live.name}`);
     }
+    for (const index of observed.tables[table]?.indexes ?? []) {
+      if (String(index.origin) !== 'c') continue;
+      if (!expected.indexes.has(String(index.name))) extra.push(`index:${index.name}`);
+    }
+  }
+  for (const [name, abortMessage] of expected.triggers) {
+    const sql = observedTriggers.get(name);
+    if (sql && abortMessage && !sql.includes(abortMessage)) diverged.push(`trigger:${name}`);
   }
   return { missing, extra, diverged };
 }
