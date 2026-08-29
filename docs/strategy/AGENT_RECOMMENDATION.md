@@ -236,7 +236,7 @@ it to be code I own."**
 
 Proof: `C-01`, `C-02`, `C-19`, `C-17` — manifest to migration, service, REST resource, SDK
 method and Admin screens with no page code; references between generated objects; evolution
-through append-only named migrations; zero third-party runtime dependencies. Honest caveat: this
+through append-only named migrations; SQLite is Node built-in and PostgreSQL is one pinned `pg@8.23.0` driver with no ORM. Honest caveat: this
 job is **contested** (Refine, Directus, Payload, Django admin, and every Supabase-plus-generator
 combination). We win it only inside "CRM-shaped, with process semantics", never as a general
 admin-panel generator. Narrowing is what makes the mapping automatic; widening is what makes it

@@ -43,10 +43,11 @@ an `AGENTS.md` written for that project, `.gitignore`, `.env.example`,
 `.mcp.json`, `data/.gitkeep`, and the project's own `scripts/check.js`,
 `scripts/smoke.js` and `tests/project.test.js`.
 
-The generated project needs **no `npm install`** — the framework has no
-third-party runtime dependencies — and its own tests assert that it boots, that
-an agent actor still cannot take a human approval decision, and that it composes
-zero domain packages.
+The generated project needs **no `npm install` for SQLite** — Node's built-in
+adapter — and its own tests assert that it boots, that an agent actor still
+cannot take a human approval decision, and that it composes zero domain
+packages. PostgreSQL requires the pinned `pg@8.23.0` driver and is not selected
+by the generated project.
 
 ## What it deliberately does not do
 

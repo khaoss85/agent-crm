@@ -63,7 +63,7 @@ Composed, that is what `npm run tour` builds and then inspects: 76 modules, 9 pa
 
 And the rules can be removed on purpose. `npm run falsify` deletes five named invariants one at a time and reports which test caught each: in the run saved at `docs/transcripts/2026-08-19-tour-and-falsify.txt`, 5 caught, 0 survived, 0 stale, in 2.3 seconds — a sixth rule is slow and runs only with `--all` [C-23]. It falsifies six named rules, not the claims in our ledger, and proves only that a test holds each one; a rule that is wrong but faithfully defended passes every mutation [C-23].
 
-The stack underneath is Node 22 and a checkout — no third-party runtime dependencies, no build step, no bundler [C-17]. That is a property of the framework, not of whatever you add on top of it [C-17].
+The stack underneath is Node 22 and a checkout — SQLite is Node's built-in adapter, PostgreSQL requires the one pinned `pg@8.23.0` driver, no ORM, no build step, no bundler [C-17]. Applications that select PostgreSQL carry that driver; the SQLite path does not [C-17].
 
 ## Exactly where this stops
 

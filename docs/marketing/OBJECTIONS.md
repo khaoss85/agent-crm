@@ -86,9 +86,11 @@ named rather than blurred.
 
 ### 9. "Why SQLite? That's not serious."
 
-Because the production spine is not built, and shipping a PostgreSQL adapter before auth and
-tenancy would imply a deployability that does not exist (`L-02`). Persistence is Node's built-in
-SQLite, which is also why there are no third-party runtime dependencies at all (`C-17`).
+Because the production spine is not built, and shipping a PostgreSQL *application* before
+auth and tenancy would imply a deployability that does not exist (`L-02`). Persistence for
+the composed application is Node's built-in SQLite. A PostgreSQL storage adapter exists
+behind Storage Contract v1 and requires the one pinned driver `pg@8.23.0`; the application
+factories still refuse PostgreSQL composition (`C-17`).
 
 ### 10. "Every framework says its generated code is readable."
 

@@ -6,6 +6,24 @@
 
 The first vertical slice uses Node.js built-ins, including `node:http`, `node:test` and `node:sqlite`. This keeps setup immediate for Codex/Claude and makes the framework mechanics visible. A production adapter may later replace SQLite without changing module service contracts.
 
+### ADR-001 addendum — Production Spine v2 M3B pins `pg@8.23.0`
+
+**Status:** accepted (implementation pin). The protocol-versus-driver rationale
+for adopting a production PostgreSQL client is M3A's DECISIONS.md prose.
+
+This is the first third-party runtime dependency. The pin is exact `8.23.0`,
+with no `pg-native` and no floating range. The import is a static
+`import pg from 'pg'` inside `packages/core/src/postgresql-storage.js` and is
+never wrapped in `try/catch`. SQLite remains Node `node:sqlite` and does not
+load `pg`. There is no ORM, no query builder and no SQLite-to-PostgreSQL
+translator.
+
+Limitation: applications that select PostgreSQL carry this driver. The
+application factories still refuse PostgreSQL composition
+(`STORAGE_ADAPTER_UNAVAILABLE`). This is not shared-database tenancy and not a
+production-readiness claim.
+<!-- truth: spine.postgresql.implemented=absent -->
+
 ## ADR-002 — Services and workflows own mutations
 
 **Status:** accepted

@@ -46,7 +46,8 @@ The first unchecked item is the default next task for Codex.
 - [ ] Add tenant and role boundaries before exposing remote write tools.
 - [ ] Add Streamable HTTP transport for MCP with authorization.
 - [x] Add a separate stateless Streamable HTTP transport for the **read-only Docs MCP**. It serves public framework documentation only, accepts no customer/runtime data by design, and therefore adds no authorization surface; production promotion and directory submission remain human decisions (`docs/plans/hosted-docs-mcp.md`). This does not close the authenticated Project MCP item above.
-- [ ] Add PostgreSQL storage adapter behind the existing database contract.
+- [x] **Production Spine v2 M3B PostgreSQL adapter behind Storage Contract v1.** `renderPostgresqlStatement` and `createPostgresqlStorage` over pinned `pg@8.23.0`, connection-affine SERIALIZABLE transactions, nested savepoints, BIGINT safe-integer normalization, bounded errors and deadlines. The same storage-contract cases run against SQLite and PostgreSQL. `createAccordoApp()` stays synchronous and SQLite-only; the application does not boot on PostgreSQL. C-17 now states the pin and the limitation. Not shared-database tenancy and not production ready (`docs/plans/spine-v2-m3b-postgresql-adapter.md`).
+- [ ] Boot the full Accordo application on PostgreSQL (M3C) — dual bundled package graphs, migrations, `createAccordoAppAsync` PostgreSQL composition.
 
 - [ ] **MK0 — Marketing & Growth Operations roadmap (documentation only).** Strategy (`docs/strategy/MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md`), the MK0–MK7 track in `EXECUTION_ROADMAP.md`, 43 JTBD-MK rows (all **not supported**) and five planned E2E-M benchmark scenarios. Opened as a documentation-only PR (#18) targeting `main`. **No Marketing runtime is implemented, and MK1 does not start in it.**
 - [x] **Complete the first organic-content loop.** The refusal-surface article is

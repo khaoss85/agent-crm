@@ -216,6 +216,7 @@ export const AUTHORITY_SOURCES = Object.freeze([
   'packages/core/src/package-composition.js',
   'packages/core/src/package-registry.js',
   'packages/app/src/spine.js',
+  'packages/app/src/create-app-async.js',
   'packages/cli/src/commands.js',
   'packages/cli/src/scenario-journey.js',
   'package.json',
@@ -297,10 +298,11 @@ export const NAMESPACE_PROBES = Object.freeze({
  * always safe — but *implementing* the thing and leaving the sentence standing
  * moved nothing at all, which is a claim surviving the code it describes: the
  * exact failure this contract exists to close, inside the contract. So
- * PostgreSQL is checked against the manifest's production dependencies, and
- * durable jobs and secrets/backups against a namespace probe over the reference
- * composition, on the same rule as `billing.implemented`: two authorities must
- * agree, or neither answer is published.
+ * PostgreSQL is checked against the public factory still refusing composition
+ * and against production dependencies being empty or exactly the pinned `pg`
+ * adapter, and durable jobs and secrets/backups against a namespace probe over
+ * the reference composition, on the same rule as `billing.implemented`: two
+ * authorities must agree, or neither answer is published.
  */
 const DECLARED_ABSENCE = Object.freeze({
   'spine.postgresql.implemented': { in: 'SPINE_NOT_MODELED', match: /postgresql/i },
@@ -1525,6 +1527,27 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     return bundle;
   }
 
+  // The adapter pin is not application composition. The public factory must
+  // still refuse PostgreSQL or the declared-absence fact is a lie.
+  try {
+    const factory = await import(url('packages/app/src/create-app-async.js'));
+    try {
+      await factory.createAccordoAppAsync({
+        adapter: 'postgresql',
+        connection: 'postgres://pg-user:s3cret-unavailable@127.0.0.1:1/accordo',
+      });
+      bundle.postgresqlApplicationRefused = false;
+    } catch (error) {
+      bundle.postgresqlApplicationRefused = /** @type {any} */ (error)?.code === 'STORAGE_ADAPTER_UNAVAILABLE';
+    }
+  } catch (error) {
+    unavailable(
+      `createAccordoAppAsync could not be imported to prove PostgreSQL remains refused: `
+        + `${/** @type {any} */ (error)?.message ?? error}`,
+    );
+    return bundle;
+  }
+
   // ── the JTBD portfolio, counted rather than typed ────────────────────────
   //
   // Six **summary** facts, and deliberately not six hundred. ADR-039's
@@ -1927,21 +1950,35 @@ export function buildFacts(bundle) {
     });
   }
 
-  // PostgreSQL has a second, independent authority: this project declares no
-  // production dependency at all, and the only adapter is node:sqlite. If the
-  // two ever disagree the run fails rather than picking one.
+  // PostgreSQL has a second, independent authority: the public factory still
+  // refuses application composition, and production dependencies are empty or
+  // exactly the pinned `pg` adapter driver. An unexpected library, or a factory
+  // that accepts PostgreSQL, contradicts the declared absence.
   const postgres = facts.find((fact) => fact.id === 'spine.postgresql.implemented');
   if (postgres) {
-    const dependencyEvidence = (bundle.productionDependencies ?? []).length === 0;
-    if (!dependencyEvidence) {
+    const deps = bundle.productionDependencies ?? [];
+    const none = deps.length === 0;
+    const adapterOnly = deps.length === 1 && deps[0] === 'pg';
+    if (!none && !adapterOnly) {
       refuse(
         'spine.postgresql.implemented',
         `spine.postgresql.implemented reads 'absent' from SPINE_NOT_MODELED, but package.json now declares `
-          + `production dependencies (${(bundle.productionDependencies ?? []).join(', ')}). Two authorities must `
+          + `production dependencies (${deps.join(', ')}). Two authorities must `
           + 'agree before a boundary fact may stand',
       );
+    } else if (bundle.postgresqlApplicationRefused !== true) {
+      refuse(
+        'spine.postgresql.implemented',
+        "spine.postgresql.implemented reads 'absent' from SPINE_NOT_MODELED, but createAccordoAppAsync no longer "
+          + 'refuses PostgreSQL with STORAGE_ADAPTER_UNAVAILABLE. Two authorities must agree before a boundary '
+          + 'fact may stand',
+      );
     } else {
-      postgres.evidence = [...postgres.evidence, 'package.json#dependencies:none'].sort(compare);
+      postgres.evidence = [
+        ...postgres.evidence,
+        none ? 'package.json#dependencies:none' : 'package.json#dependencies:pg@adapter-only',
+        'createAccordoAppAsync#STORAGE_ADAPTER_UNAVAILABLE',
+      ].sort(compare);
     }
   }
 
