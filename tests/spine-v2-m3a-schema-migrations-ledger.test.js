@@ -171,6 +171,41 @@ test('ledger backfill still boots a pre-v8 file that already has module tables',
   assert.equal(adopted.raw.prepare('SELECT COUNT(*) AS n FROM notes').get().n, 0);
 });
 
+test('ledger backfill refuses a dropped core trigger', (t) => {
+  const dir = workspaceFor(t);
+  const path = join(dir, 'dropped-trigger.sqlite');
+  seedReleasedPrefix(path, 7);
+  const raw = new DatabaseSync(path);
+  raw.exec('DROP TRIGGER spine_data_plane_binding_no_update');
+  raw.close();
+  assert.throws(
+    () => createDatabase({ path }),
+    (error) => error.code === 'CORE_MIGRATION_SCHEMA_MISSING_OBJECT'
+      && !JSON.stringify(error).includes(path),
+  );
+});
+
+test('ledger backfill refuses a rewritten core CHECK constraint', (t) => {
+  const dir = workspaceFor(t);
+  const path = join(dir, 'check-drift.sqlite');
+  seedReleasedPrefix(path, 5);
+  const raw = new DatabaseSync(path);
+  const rewritten = raw.prepare("SELECT sql FROM sqlite_schema WHERE name = 'opportunities'").get().sql
+    .replace(
+      "CHECK(type IN ('new_business', 'renewal', 'upsell'))",
+      "CHECK(type IN ('new_business', 'renewal', 'upsell', 'smuggled'))",
+    );
+  raw.exec('PRAGMA writable_schema = ON');
+  raw.prepare("UPDATE sqlite_schema SET sql = ? WHERE name = 'opportunities'").run(rewritten);
+  raw.exec('PRAGMA writable_schema = OFF');
+  raw.close();
+  assert.throws(
+    () => createDatabase({ path, plane: 'combined' }),
+    (error) => error.code === 'CORE_MIGRATION_SCHEMA_DIVERGED'
+      && !JSON.stringify(error).includes(path),
+  );
+});
+
 test('ledger backfill refuses a core column type change', (t) => {
   const dir = workspaceFor(t);
   const path = join(dir, 'type-drift.sqlite');

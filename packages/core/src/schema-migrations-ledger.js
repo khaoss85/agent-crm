@@ -1,7 +1,6 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
 import { AppError } from './errors.js';
 import { CORE_SCHEMA_INTENT } from './core-schema-intent.js';
 
@@ -75,7 +74,7 @@ export function captureBusinessSchema(database) {
   const objects = database.prepare(`
     SELECT type, name, tbl_name AS tableName, sql
       FROM sqlite_schema
-     WHERE name NOT LIKE 'sqlite_%' AND type IN ('table', 'index')
+     WHERE name NOT LIKE 'sqlite_%' AND type IN ('table', 'index', 'trigger')
      ORDER BY type, name
   `).all()
     .map((row) => ({ ...row }))
@@ -129,13 +128,14 @@ export function expectedSchemaFromIntent(applied) {
  * Reconstruct the schema the pinned released SQL would produce. Callers have
  * already proved each applied row's source SQL hashes to the pinned checksum,
  * so this is the pinned identity, not mutable current source as a blessing.
+ * The memory database is opened by the SQLite adapter owner, never here.
  *
  * @param {Array<{version: number, name: string, sql: string, plane?: string}>} releasedMigrations
  * @param {Array<{version: number, name: string}>} applied
- * @param {{DatabaseSync: typeof import('node:sqlite').DatabaseSync}} sqlite
+ * @param {() => {exec: Function, prepare: Function, close: Function}} openMemory
  */
-export function expectedBusinessSchema(releasedMigrations, applied, sqlite) {
-  const database = new sqlite.DatabaseSync(':memory:');
+export function expectedBusinessSchema(releasedMigrations, applied, openMemory) {
+  const database = openMemory();
   try {
     const appliedVersions = new Map(applied.map((row) => [Number(row.version), String(row.name)]));
     for (const migration of [...releasedMigrations].sort((left, right) => left.version - right.version)) {
@@ -229,18 +229,24 @@ export function diffObservedToIntent(observed, expected) {
  */
 export function diffCoreBusinessSchema(observed, expected) {
   const expectedKeys = new Set(expected.objects.map((entry) => `${entry.type}:${entry.name}`));
-  const observedKeys = new Set(observed.objects.map((entry) => `${entry.type}:${entry.name}`));
-  const missing = [...expectedKeys].filter((key) => !observedKeys.has(key));
+  const observedByKey = new Map(observed.objects.map((entry) => [`${entry.type}:${entry.name}`, entry]));
+  const missing = [...expectedKeys].filter((key) => !observedByKey.has(key));
   /** @type {string[]} */
   const extra = [];
   const diverged = [];
+  for (const entry of expected.objects) {
+    const key = `${entry.type}:${entry.name}`;
+    const live = observedByKey.get(key);
+    if (!live) continue;
+    if (String(live.sql ?? '') !== String(entry.sql ?? '')) diverged.push(key);
+  }
   for (const [table, details] of Object.entries(expected.tables)) {
     if (!observed.tables[table]) continue;
     if (JSON.stringify(coreTableShape(observed.tables[table])) !== JSON.stringify(coreTableShape(details))) {
       diverged.push(`table:${table}`);
     }
   }
-  return { missing, extra, diverged };
+  return { missing, extra, diverged: [...new Set(diverged)] };
 }
 
 /**
@@ -249,7 +255,7 @@ export function diffCoreBusinessSchema(observed, expected) {
  * transaction.
  *
  * @param {any} raw
- * @param {{alterSql: string, releasedMigrations: Array<{version: number, name: string, sql: string}>, sqlite?: {DatabaseSync: typeof import('node:sqlite').DatabaseSync}}} input
+ * @param {{alterSql: string, releasedMigrations: Array<{version: number, name: string, sql: string}>, openMemory: () => {exec: Function, prepare: Function, close: Function}}} input
  */
 export function applySchemaMigrationsChecksumUpgrade(raw, input) {
   const applied = raw.prepare('SELECT version, name FROM schema_migrations ORDER BY version').all()
@@ -269,9 +275,14 @@ export function applySchemaMigrationsChecksumUpgrade(raw, input) {
     }
   }
 
-  const sqlite = input.sqlite ?? { DatabaseSync };
+  if (typeof input.openMemory !== 'function') {
+    throw new AppError('Checksum ledger upgrade requires the SQLite adapter to open the comparison database', {
+      code: 'CORE_MIGRATION_LEDGER_UNKNOWN',
+      status: 500,
+    });
+  }
   const observed = captureBusinessSchema(raw);
-  const expected = expectedBusinessSchema(input.releasedMigrations, applied, sqlite);
+  const expected = expectedBusinessSchema(input.releasedMigrations, applied, input.openMemory);
   const named = expectedSchemaFromIntent(applied);
   const namedDiff = diffObservedToIntent(observed, named);
   const coreDiff = diffCoreBusinessSchema(observed, expected);
