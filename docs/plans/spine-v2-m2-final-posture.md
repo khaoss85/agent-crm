@@ -423,6 +423,16 @@ not reaching the driver. Public `createAccordoAppAsync()` still exposes no
   exit: `tests/spine-v2-m2-final-portable-exit.test.js` (public
   `createAccordoAppAsync`, real file, restart, close-once). No PostgreSQL / M3,
   no dual bundled graphs, no default-serve change.
+- **2026-08-29 (adversarial review):** `GET /health` still ran shared
+  `requestIdentity`. In local-development spine mode with Admin `x-actor-type:
+  user` headers that read memberships, inserted a membership, and wrote
+  `audit_events` / audit intents. Existing query-counter tests were false-green:
+  no spine, system actor, data-plane `raw.prepare` only (`storage.sync` is
+  frozen). HTTP now skips identity on `GET /health`.
+  `LEGACY_ALIGNMENT_MATRIX` still claimed `core-adapters.js` prepared against
+  `database.raw`; corrected, with a Compatibility Backfill section for this
+  slice. The partner-scorecard v1 test now registers the package on a v1
+  `PackageRegistry` rather than booting a vanilla app.
 
 ## Decision log
 

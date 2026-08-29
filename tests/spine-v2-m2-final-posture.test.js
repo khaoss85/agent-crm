@@ -259,15 +259,22 @@ function documentScratch(t) {
 }
 
 function instrumentPrepare(raw) {
+  if (!raw || typeof raw.prepare !== 'function') {
+    return { get count() { return 0; }, reset() {}, sql: () => [] };
+  }
   const original = raw.prepare.bind(raw);
   let count = 0;
+  /** @type {string[]} */
+  const sql = [];
   raw.prepare = (...args) => {
     count += 1;
+    sql.push(String(args[0] ?? ''));
     return original(...args);
   };
   return {
     get count() { return count; },
-    reset() { count = 0; },
+    reset() { count = 0; sql.length = 0; },
+    sql: () => [...sql],
   };
 }
 
@@ -500,14 +507,14 @@ test('GET /health performs zero business-table queries', async (t) => {
   const app = createAccordoApp({ dbPath: workspace.dbPath });
   const actor = { type: 'system', id: 'seed' };
   await app.services.companies.create({ name: 'Counted Co', domain: 'counted.example' }, { actor });
-  const queries = instrumentPrepare(app.database.raw);
-  queries.reset();
+  // storage.sync is frozen at construction, so wrapping it is a TypeError.
+  // Instrument the driver after listen so startup prepares are not counted as health.
   const { url } = await listenApp(t, app);
-  queries.reset();
+  const queries = instrumentPrepare(app.database.raw);
   const health = await jsonRequest(`${url}/health`);
   assert.equal(health.status, 200);
   assertHealthContract(health.body);
-  assert.equal(queries.count, 0, `health issued ${queries.count} prepared statements`);
+  assert.equal(queries.count, 0, `health issued ${queries.count} prepared statements: ${queries.sql().join(' | ')}`);
   assert.equal(Object.hasOwn(health.body, 'counts'), false);
 
   let portableQueries = 0;
@@ -532,6 +539,43 @@ test('GET /health performs zero business-table queries', async (t) => {
   assert.equal(portableHealth.status, 200);
   assertHealthContract(portableHealth.body);
   assert.equal(portableQueries, 0, `portable health issued ${portableQueries} prepared statements`);
+});
+
+test('GET /health with a local-development spine and Admin user headers does not read or write tenant state', async (t) => {
+  const workspace = workspaceFor(t);
+  const app = createAccordoApp({
+    spine: {
+      mode: 'local-development',
+      tenant: { id: 'alpha', storageRoot: workspace.root, provision: { name: 'Alpha' } },
+    },
+  });
+  const { url } = await listenApp(t, app);
+  const org = app.spine.boundOrganization;
+  const before = app.spine.memberships.listFor({ organizationId: org.id, limit: 50 });
+  const dataQueries = instrumentPrepare(app.database.raw);
+  const controlQueries = instrumentPrepare(app.controlPlaneDatabase.raw);
+  const health = await jsonRequest(`${url}/health`, {
+    headers: { 'x-actor-type': 'user', 'x-actor-id': 'admin-demo' },
+  });
+  assert.equal(health.status, 200);
+  assertHealthContract(health.body);
+  assert.equal(
+    dataQueries.count,
+    0,
+    `data-plane health queries: ${dataQueries.sql().join(' | ')}`,
+  );
+  assert.equal(
+    controlQueries.count,
+    0,
+    `control-plane health queries: ${controlQueries.sql().join(' | ')}`,
+  );
+  const after = app.spine.memberships.listFor({ organizationId: org.id, limit: 50 });
+  assert.deepEqual(
+    after.map((row) => row.subject),
+    before.map((row) => row.subject),
+    'GET /health must not bootstrap memberships',
+  );
+  assert.equal(after.some((row) => row.subject === 'admin-demo'), false);
 });
 
 test('health output contains no locator or credential in the nested walk', async (t) => {

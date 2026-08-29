@@ -670,8 +670,9 @@ Production Spine v2 M2 closes on SQLite through the portable contract.
 
 **Decision: production `GET /health` is not `app.doctor()`.** The unauthenticated
 route returns only `{ ok, ready, storage: { adapter, available } }`. It does not
-read tenant services, CRM modules or business tables. Lease-driven readiness
-remains M4.
+run request identity, read tenant services, CRM modules or business tables.
+Local-development spine identity can bootstrap memberships and write audit; a
+liveness probe must not. Lease-driven readiness remains M4.
 
 **Decision: Admin counts are a separate authenticated read.** `GET /api/admin/metrics`
 uses existing `records.read` and Storage Contract `kind: 'count'`. Missing
