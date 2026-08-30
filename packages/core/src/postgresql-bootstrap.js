@@ -290,7 +290,14 @@ async function bootstrapPlane(pool, {
       prefix: plane,
     });
     const extra = afterSchema ? await afterSchema(client) : undefined;
-    await exec(client, 'COMMIT');
+    try {
+      await exec(client, 'COMMIT');
+    } catch (error) {
+      active = false;
+      throw new AppError('PostgreSQL commit outcome is unknown', {
+        code: 'COMMIT_OUTCOME_UNKNOWN', status: 503,
+      });
+    }
     active = false;
     return extra;
   } catch (error) {
@@ -335,40 +342,50 @@ export async function bootstrapPostgresqlApplication(options) {
   const dataMigrations = postgresqlDataMigrations();
   const moduleMigrations = options.moduleMigrations ?? [];
   const repositoryFingerprint = fingerprintPostgresqlRepository(options.selectedExtra ?? []);
-  const attestation = await attestPostgresqlStartup({
-    operations: options.identityVerifier.operations,
-    tenantId: options.tenantId,
-    repositoryFingerprint,
-    controlMigrations,
-    dataMigrations: [
-      ...dataMigrations,
-      ...moduleMigrations.map((migration) => ({ name: migration.name, checksum: sqlChecksum(migration.sql) })),
-    ],
-    now: options.now,
-  });
-
   const controlPool = createPostgresqlPool(options.control);
   const dataPool = createPostgresqlPool(options.data);
   let controlStorage;
   let dataStorage;
   try {
+    const controlAttestation = await attestPostgresqlStartup({
+      operations: options.identityVerifier.operations,
+      tenantId: options.tenantId,
+      repositoryFingerprint,
+      controlMigrations,
+      dataMigrations: [],
+      now: options.now,
+      phase: 'control',
+    });
     await bootstrapPlane(controlPool, {
       plane: 'control',
       lock: CONTROL_ADVISORY_LOCK,
       migrations: controlMigrations,
-      attestation: attestation.control,
+      attestation: controlAttestation.control,
       tenantId: options.tenantId,
       clock: options.clock,
       faultInject: options.faultInject,
     });
     controlStorage = createPostgresqlStorage(controlPool, { schema: POSTGRES_APPLICATION_SCHEMA });
 
+    const dataAttestation = await attestPostgresqlStartup({
+      operations: options.identityVerifier.operations,
+      tenantId: options.tenantId,
+      repositoryFingerprint,
+      controlMigrations,
+      dataMigrations: [
+        ...dataMigrations,
+        ...moduleMigrations.map((migration) => ({ name: migration.name, checksum: sqlChecksum(migration.sql) })),
+      ],
+      now: options.now,
+      phase: 'data',
+      priorControl: controlAttestation.control,
+    });
     const binding = await bootstrapPlane(dataPool, {
       plane: 'data',
       lock: DATA_ADVISORY_LOCK,
       migrations: dataMigrations,
       moduleMigrations,
-      attestation: attestation.data,
+      attestation: dataAttestation.data,
       tenantId: options.tenantId,
       clock: options.clock,
       faultInject: options.faultInject,
@@ -408,8 +425,8 @@ export async function bootstrapPostgresqlApplication(options) {
       dataStorage,
       binding,
       attestation: Object.freeze({
-        control: attestation.control.evidence,
-        data: attestation.data.evidence,
+        control: controlAttestation.control.evidence,
+        data: dataAttestation.data.evidence,
       }),
       async close() {
         if (closed) return;

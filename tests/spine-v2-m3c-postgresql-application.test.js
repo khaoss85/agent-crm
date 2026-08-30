@@ -202,7 +202,7 @@ test('request evidence cannot satisfy startup attestation', { timeout: 30_000 },
       spine: { mode: 'local-development', tenant: { id: 'acme' } },
       identityVerifier: createTestVerifier({ tenantId: 'acme', swapRequest: true }),
     }),
-    (error) => error.code === 'STARTUP_EVIDENCE_INTERCHANGEABLE' || error.code === 'STARTUP_OPERATION_MISMATCH',
+    (error) => error.code === 'STARTUP_EVIDENCE_INTERCHANGEABLE',
   );
 });
 

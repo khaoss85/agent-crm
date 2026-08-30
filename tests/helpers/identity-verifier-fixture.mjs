@@ -43,22 +43,30 @@ export function createTestVerifier(options = {}) {
   function attest(challenge, expectedOperation) {
     if (options.swapRequest) {
       return {
+        identityClass: 'request',
         identityFingerprint: fingerprint('request-identity'),
         evidenceFingerprint: fingerprint('request-evidence'),
         permission,
         expiresAt: new Date(Date.now() + expireMs).toISOString(),
         challengeNonce: challenge?.nonce,
-        operation: 'verifyRequest',
+        operation: expectedOperation,
+        tenantId: challenge?.tenantId,
+        resourceFingerprint: challenge?.resourceFingerprint,
+        migrationSetFingerprint: challenge?.migrationSetFingerprint,
       };
     }
     if (options.wrongOperation) {
       return {
+        identityClass: 'startup',
         identityFingerprint: fingerprint('id'),
         evidenceFingerprint: fingerprint('ev'),
         permission,
         expiresAt: new Date(Date.now() + expireMs).toISOString(),
         challengeNonce: challenge?.nonce,
         operation: expectedOperation === 'attestControlStartup' ? 'attestDataStartup' : 'attestControlStartup',
+        tenantId: challenge?.tenantId,
+        resourceFingerprint: challenge?.resourceFingerprint,
+        migrationSetFingerprint: challenge?.migrationSetFingerprint,
       };
     }
     if (typeof challenge !== 'object' || challenge === null) {
@@ -92,12 +100,16 @@ export function createTestVerifier(options = {}) {
     }
     if (!options.replay) seen.add(challenge.nonce);
     return {
+      identityClass: 'startup',
       identityFingerprint: fingerprint(`identity:${tenantId}:${expectedOperation}`),
       evidenceFingerprint: fingerprint(`evidence:${challenge.nonce}`),
       permission,
       expiresAt: new Date(Date.now() + (options.expireMs === 0 ? -1 : expireMs)).toISOString(),
       challengeNonce: challenge.nonce,
       operation: expectedOperation,
+      tenantId: challenge.tenantId,
+      resourceFingerprint: challenge.resourceFingerprint,
+      migrationSetFingerprint: challenge.migrationSetFingerprint,
     };
   }
 

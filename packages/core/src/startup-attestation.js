@@ -179,17 +179,28 @@ export function acceptStartupEvidence(input) {
   const { challenge } = input.challenge;
   const now = input.now ?? Date.now;
   if (!isPlainObject(input.evidence) || !closedNames(input.evidence, [
-    'identityFingerprint', 'evidenceFingerprint', 'permission', 'expiresAt', 'challengeNonce', 'operation',
+    'identityClass', 'identityFingerprint', 'evidenceFingerprint', 'permission', 'expiresAt',
+    'challengeNonce', 'operation', 'tenantId', 'resourceFingerprint', 'migrationSetFingerprint',
   ])) {
     refuse('STARTUP_ATTESTATION_REFUSED', 'startup attestation evidence is not a closed document');
   }
   const evidence = /** @type {Record<string, unknown>} */ (input.evidence);
+  if (evidence.identityClass !== 'startup'
+    || evidence.operation === 'verifyRequest'
+    || DISCOVER_OPERATIONS.includes(/** @type {string} */ (evidence.operation))) {
+    refuse('STARTUP_EVIDENCE_INTERCHANGEABLE', 'request or discovery evidence cannot satisfy startup attestation');
+  }
   if (evidence.operation !== challenge.operation) {
     refuse('STARTUP_OPERATION_MISMATCH', 'startup attestation evidence does not match the challenged operation');
   }
-  if (DISCOVER_OPERATIONS.includes(/** @type {string} */ (evidence.operation))
-    || evidence.operation === 'verifyRequest') {
-    refuse('STARTUP_EVIDENCE_INTERCHANGEABLE', 'request or discovery evidence cannot satisfy startup attestation');
+  if (evidence.tenantId !== challenge.tenantId) {
+    refuse('STARTUP_TENANT_MISMATCH', 'startup attestation tenant does not match the challenge');
+  }
+  if (evidence.resourceFingerprint !== challenge.resourceFingerprint) {
+    refuse('STARTUP_RESOURCE_MISMATCH', 'startup attestation resource does not match the challenge');
+  }
+  if (evidence.migrationSetFingerprint !== challenge.migrationSetFingerprint) {
+    refuse('STARTUP_MIGRATION_SET_MISMATCH', 'startup attestation migration set does not match the challenge');
   }
   if (evidence.permission !== STARTUP_MIGRATE_PERMISSION) {
     refuse('STARTUP_PERMISSION_MISSING', 'startup attestation lacks schema:migrate');
@@ -235,6 +246,8 @@ export function acceptStartupEvidence(input) {
  *   controlMigrations: Array<{version?: unknown, name?: unknown, checksum?: unknown}>,
  *   dataMigrations: Array<{version?: unknown, name?: unknown, checksum?: unknown}>,
  *   now?: () => number,
+ *   phase?: 'control' | 'data' | 'both',
+ *   priorControl?: { resource: { resourceId: string, resourceFingerprint: string }, evidence: { evidenceFingerprint: string } },
  * }} input
  */
 export async function attestPostgresqlStartup(input) {
@@ -245,27 +258,43 @@ export async function attestPostgresqlStartup(input) {
     refuse('STARTUP_ATTESTATION_REFUSED', 'startup verifier operations are incomplete');
   }
   const seenNonces = new Set();
+  const phase = input.phase ?? 'both';
   const controlHandle = Object.freeze({ plane: 'control', resourceClass: 'postgresql' });
   const dataHandle = Object.freeze({ plane: 'data', resourceClass: 'postgresql' });
-  const controlDiscovered = acceptDiscoveredResource(
-    await input.operations.discoverControlResource(controlHandle),
-    'control',
-  );
-  const controlMigrations = fingerprintMigrationSet(input.controlMigrations);
-  const controlChallenge = mintStartupChallenge({
-    operation: 'attestControlStartup',
-    tenantId: input.tenantId,
-    repositoryFingerprint: input.repositoryFingerprint,
-    resourceFingerprint: controlDiscovered.resourceFingerprint,
+  let controlDiscovered = input.priorControl?.resource ?? null;
+  let controlEvidence = input.priorControl?.evidence ?? null;
+  let controlMigrations = fingerprintMigrationSet(input.controlMigrations);
+  let controlChallengeFingerprint = null;
+  if (phase !== 'data') {
+    controlDiscovered = acceptDiscoveredResource(
+      await input.operations.discoverControlResource(controlHandle),
+      'control',
+    );
+    const controlChallenge = mintStartupChallenge({
+      operation: 'attestControlStartup',
+      tenantId: input.tenantId,
+      repositoryFingerprint: input.repositoryFingerprint,
+      resourceFingerprint: controlDiscovered.resourceFingerprint,
+      migrationSetFingerprint: controlMigrations,
+      now: input.now,
+    });
+    controlEvidence = acceptStartupEvidence({
+      challenge: controlChallenge,
+      evidence: await input.operations.attestControlStartup(controlChallenge.challenge),
+      seenNonces,
+      now: input.now,
+    });
+    controlChallengeFingerprint = controlChallenge.fingerprint;
+  }
+  const control = Object.freeze({
+    resource: controlDiscovered,
+    evidence: controlEvidence,
     migrationSetFingerprint: controlMigrations,
-    now: input.now,
+    challengeFingerprint: controlChallengeFingerprint,
   });
-  const controlEvidence = acceptStartupEvidence({
-    challenge: controlChallenge,
-    evidence: await input.operations.attestControlStartup(controlChallenge.challenge),
-    seenNonces,
-    now: input.now,
-  });
+  if (phase === 'control') {
+    return Object.freeze({ contract: STARTUP_ATTESTATION_CONTRACT, control, data: null });
+  }
 
   const dataDiscovered = acceptDiscoveredResource(
     await input.operations.discoverDataResource(dataHandle),
@@ -294,12 +323,7 @@ export async function attestPostgresqlStartup(input) {
 
   return Object.freeze({
     contract: STARTUP_ATTESTATION_CONTRACT,
-    control: Object.freeze({
-      resource: controlDiscovered,
-      evidence: controlEvidence,
-      migrationSetFingerprint: controlMigrations,
-      challengeFingerprint: controlChallenge.fingerprint,
-    }),
+    control,
     data: Object.freeze({
       resource: dataDiscovered,
       evidence: dataEvidence,

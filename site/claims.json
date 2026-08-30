@@ -450,7 +450,7 @@
           "AGENTS.md"
         ]
       },
-      "limitation": "Applications that select PostgreSQL carry pg@8.23.0. The SQLite path still needs no third-party driver. This is not a production-readiness claim and not shared-database tenancy; the application factories still refuse PostgreSQL composition.",
+      "limitation": "Applications that select PostgreSQL carry pg@8.23.0. The SQLite path still needs no third-party driver. This is not a production-readiness claim and not shared-database tenancy; composition is dedicated-database, not row tenancy.",
       "surfaces": [
         "site",
         "readme",
