@@ -363,6 +363,26 @@ export function createPostgresqlStorage(pool, options = {}) {
   }
 
   async function commitOrUnknown(client) {
+    const probe = PROBES.get(poolStorage);
+    const bound = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+    const inCallerTx = Boolean(bound && bound.client === client && !bound.closed);
+    let fault = probe?.commitFault ?? null;
+    if (fault && !inCallerTx) {
+      fault = null;
+    } else if (fault && (probe.commitFaultSkip ?? 0) > 0) {
+      probe.commitFaultSkip -= 1;
+      fault = null;
+    } else if (fault) {
+      probe.commitFault = null;
+    }
+    if (fault === 'pre-commit-drop') {
+      destroyTracked(client);
+      const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+      if (bind && bind.client === client) bind.destroyed = true;
+      throw new AppError('PostgreSQL commit outcome is unknown', {
+        code: 'COMMIT_OUTCOME_UNKNOWN', status: 503,
+      });
+    }
     try {
       await queryOn(client, 'COMMIT');
     } catch (error) {
@@ -380,6 +400,14 @@ export function createPostgresqlStorage(pool, options = {}) {
         });
       }
       throw mapped;
+    }
+    if (fault === 'post-commit-ack-drop') {
+      destroyTracked(client);
+      const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+      if (bind && bind.client === client) bind.destroyed = true;
+      throw new AppError('PostgreSQL commit outcome is unknown', {
+        code: 'COMMIT_OUTCOME_UNKNOWN', status: 503,
+      });
     }
   }
 
@@ -551,9 +579,11 @@ export function createPostgresqlStorage(pool, options = {}) {
       return withAutocommitWrite((client) => executeOn(client, statement));
     },
     async maybeOne(statement) {
+      assertWriter();
       return withAutocommitRead((client) => maybeOneOn(client, statement));
     },
     async many(statement) {
+      assertWriter();
       return withAutocommitRead((client) => manyOn(client, statement));
     },
     async savepoint() {
@@ -570,7 +600,14 @@ export function createPostgresqlStorage(pool, options = {}) {
   Object.freeze(poolStorage);
 
   PROBES.set(poolStorage, {
-    pool, acquire, queryOn, destroyClient: destroyTracked, releaseClient: releaseTracked, abandonCheckedOut,
+    pool,
+    acquire,
+    queryOn,
+    destroyClient: destroyTracked,
+    releaseClient: releaseTracked,
+    abandonCheckedOut,
+    commitFault: /** @type {string | null} */ (null),
+    commitFaultSkip: 0,
   });
   return poolStorage;
 }
@@ -702,6 +739,26 @@ export async function probePostgresqlQuery(storage, sql, params = []) {
     }
   }
   return probe.queryOn(sql, params);
+}
+
+/**
+ * Test-only one-shot COMMIT fault. `pre-commit-drop` destroys the client
+ * before COMMIT is sent; `post-commit-ack-drop` applies COMMIT then hides
+ * the acknowledgement. Not a public kernel export.
+ *
+ * @param {object} storage
+ * @param {'pre-commit-drop' | 'post-commit-ack-drop' | null} kind
+ * @param {{ skip?: number }} [options]
+ */
+export function injectPostgresqlCommitFault(storage, kind, options = {}) {
+  const probe = PROBES.get(storage);
+  if (!probe) {
+    throw new AppError('PostgreSQL commit-fault probe requires an adapter handle', {
+      code: 'STORAGE_UNAVAILABLE', status: 500,
+    });
+  }
+  probe.commitFault = kind;
+  probe.commitFaultSkip = Number.isInteger(options.skip) ? options.skip : 0;
 }
 
 export async function probePostgresqlQueryDeadline(storage, seconds) {

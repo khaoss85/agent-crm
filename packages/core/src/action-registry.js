@@ -14,6 +14,8 @@ export const SUPPORTED_ACTION_CONTRACT = 1;
  * `externalOperation: 2`.
  */
 export const SUPPORTED_ACTION_CONTRACTS = Object.freeze([1, 2]);
+/** ADR-017 phase-shape marker. 1 is the SQLite/legacy runner; 2 is PostgreSQL recovery. */
+export const SUPPORTED_EXTERNAL_OPERATION_CONTRACTS = Object.freeze([1, 2]);
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
 // `json` is bounded structured input (a signer list, ADR-017): the runtime
 // normalizes it to plain JSON-safe data, drops dangerous keys and bounds its
@@ -91,12 +93,14 @@ export function validateActionDefinition(definition, deps) {
   // local write transactions, which a single `execute` cannot express
   // honestly. Exactly one of the two shapes must be present.
   if (definition.externalOperation !== undefined) {
-    // Deliberately still the singular constant. This is the phase-shape marker,
-    // not the action contract; it shares the constant historically and M2E-1
-    // does not move it. Widening it here would create a fifth contract version
-    // nobody designed.
-    if (definition.externalOperation !== SUPPORTED_ACTION_CONTRACT) {
-      throw new ValidationError(`${label}: externalOperation must be ${SUPPORTED_ACTION_CONTRACT}`);
+    // Phase-shape marker, not the action contract. v1 is the original
+    // ADR-017 runner; v2 adds durable intent/finalize keys, a provider
+    // idempotency key and read-only reconcile. PostgreSQL composition
+    // refuses v1 separately — this validator accepts both.
+    if (!SUPPORTED_EXTERNAL_OPERATION_CONTRACTS.includes(definition.externalOperation)) {
+      throw new ValidationError(
+        `${label}: externalOperation must be one of ${SUPPORTED_EXTERNAL_OPERATION_CONTRACTS.join(', ')}`,
+      );
     }
     if (typeof definition.execute === 'function') {
       throw new ValidationError(`${label}: an external-operation action declares intent/external/finalize phases, not execute`);

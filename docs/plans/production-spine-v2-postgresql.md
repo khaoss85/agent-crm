@@ -1225,6 +1225,11 @@ than inheriting this one.
 - 2026-08-23: review closed inverse tenant split-brain with a control-plane
   tenant→binding UUID and required dual v1/v2 bundled definitions so synchronous
   SQLite composition remains executable compatibility evidence.
+- 2026-08-30: M4A implements PostgreSQL write-outcome idempotency, unknown
+  COMMIT reconciliation and external-operation v2 on kernel company.create and
+  record actions. Leases, TLS bind, HTTP/CLI key transport and shared-database
+  tenancy are not in this slice. Proven by
+  `tests/spine-v2-m4a-idempotency-recovery.test.js` against PostgreSQL 16.
 
 ## Decision log
 
@@ -1315,6 +1320,11 @@ than inheriting this one.
 - **Production database transport is authenticated.** Encryption without chain
   and hostname verification is not sufficient and cannot be configured as a
   permissive fallback.
+- **M4A (2026-08-30).** PostgreSQL write outcomes are tenant-local, request-bound
+  and recovered by key after unknown COMMIT; serialization losers of a
+  no-external-effect write retry with attempt-local buffers; bundled
+  `externalOperation: 1` remains SQLite-only and is a PostgreSQL composition
+  refusal. Leases, HTTP key transport and TLS bind stay M4B/M4C.
 
 ## Outcome and follow-up
 

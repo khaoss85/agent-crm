@@ -7,7 +7,7 @@
    "jtbdId": "ACC-JTBD-CRM-ADMIN-003",
    "jobName": "Configurare entità, campi, relazioni e layout",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "f14d64d",
+   "verifiedAtSha": "6c9c7dc32fde6eaf9b19bd86cfb0ee221fe6e56e",
    "evidence": [
     {
      "kind": "TEST",
@@ -50,7 +50,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-008",
    "jobName": "Instradare approvazioni",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "f14d64d",
+   "verifiedAtSha": "6c9c7dc32fde6eaf9b19bd86cfb0ee221fe6e56e",
    "evidence": [
     {
      "kind": "TEST",
@@ -87,7 +87,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-009",
    "jobName": "Generare quote e documenti",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "f14d64d",
+   "verifiedAtSha": "6c9c7dc32fde6eaf9b19bd86cfb0ee221fe6e56e",
    "evidence": [
     {
      "kind": "TEST",
@@ -123,7 +123,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-012",
    "jobName": "Portare contratto a firma e close",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "f14d64d",
+   "verifiedAtSha": "6c9c7dc32fde6eaf9b19bd86cfb0ee221fe6e56e",
    "evidence": [
     {
      "kind": "TEST",
@@ -135,7 +135,7 @@
      "kind": "TEST",
      "path": "tests/signature-contract.test.js",
      "claim": "the envelope state machine has an explicit transition table, terminal states never regress, and a replayed webhook creates no second effect",
-     "sha256": "3e0f632100f27a89345ead4f933ee18d8b8b5c346dabf02e3fa58262d0ee94cb"
+     "sha256": "94c313a1eacdfc4bc915a150557244797f76d93c38abc45a22de06673504ffae"
     }
    ],
    "factIds": [
@@ -153,7 +153,7 @@
    "jtbdId": "ACC-JTBD-DATA-SCI-005",
    "jobName": "Costruire lead e account scoring",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "f14d64d",
+   "verifiedAtSha": "6c9c7dc32fde6eaf9b19bd86cfb0ee221fe6e56e",
    "evidence": [
     {
      "kind": "TEST",

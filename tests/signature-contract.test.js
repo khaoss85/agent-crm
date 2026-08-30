@@ -335,7 +335,8 @@ test('external-operation actions declare phases, never execute or transactions',
   refuses(() => validateActionDefinition({ ...base, intent: undefined }, deps), /intent must be a function/);
   refuses(() => validateActionDefinition({ ...base, external: 'go' }, deps), /external must be a function/);
   refuses(() => validateActionDefinition({ ...base, prepare: () => ({}) }, deps), /cannot also declare a prepare phase/);
-  refuses(() => validateActionDefinition({ ...base, externalOperation: 2 }, deps), /externalOperation must be 1/);
+  assert.equal(validateActionDefinition({ ...base, externalOperation: 2 }, deps).externalOperation, 2);
+  refuses(() => validateActionDefinition({ ...base, externalOperation: 3 }, deps), /externalOperation must be one of 1, 2/);
   // The ordinary shape is untouched.
   assert.equal(validateActionDefinition({ module: 'quote', name: 'submit', actionContract: 1, execute: () => ({}) }, deps).name, 'submit');
 });

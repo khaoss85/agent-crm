@@ -5,6 +5,7 @@ import { assertIdentityTenant, describePortableTenantBinding } from '../../core/
 import { runWithAffineStorage, storageMany, storageMaybeOne } from '../../core/src/storage-runtime.js';
 import { AuditLog } from '../../core/src/audit.js';
 import { EventBus } from '../../core/src/event-bus.js';
+import { reconcileWriteOutcome } from '../../core/src/write-outcome-runtime.js';
 import { ModuleRegistry } from '../../core/src/module-registry.js';
 import { CRM_SCHEMA } from '../../core/src/schema.js';
 import { createCompanyModule } from '../../modules/company/src/index.js';
@@ -201,10 +202,21 @@ function createPortableCoreAdapters({ database, services, pipelines }) {
  *   options?: Record<string, any>,
  * }} input
  */
+/** Test-only mapping from a loopback app facade to its data-plane storage. */
+const POSTGRES_TEST_STORAGE = new WeakMap();
+
+/**
+ * @param {object} app
+ */
+export function postgresqlTestStorage(app) {
+  return POSTGRES_TEST_STORAGE.get(app) ?? null;
+}
+
 async function assemblePortableGraph({ accepted, storage, options = {} }) {
   const now = resolveClock(options.clock);
   const handle = {
     storage,
+    tenantId: options.tenantId ?? null,
     /**
      * Action/workflow runtimes call `database.transactionAsync`. 2A owns the
      * connection-affine wrapper on the storage handle; this forwards that
@@ -440,6 +452,22 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
         spine: null,
         identity: params.identity,
         organizationId: params.organizationId,
+        tenantId: params.tenantId ?? options.tenantId ?? handle.tenantId,
+        idempotencyKey: params.idempotencyKey,
+        provider: params.provider,
+      });
+    },
+    reconcileWrite(params) {
+      return reconcileWriteOutcome(handle, events, {
+        tenantId: params.tenantId ?? options.tenantId ?? handle.tenantId,
+        idempotencyKey: params.idempotencyKey,
+        identity: params.identity,
+        actor: params.actor,
+        operation: params.operation,
+        target: params.target ?? '',
+        contractVersion: params.contractVersion ?? 'write.v1',
+        input: params.input,
+        phase: params.phase ?? 'root',
       });
     },
     now,
@@ -565,7 +593,7 @@ export async function startPortablePostgresqlApp(options) {
     }),
   });
   const graph = lifecycle.assembled;
-  return Object.freeze({
+  const facade = Object.freeze({
     storage: Object.freeze({ adapter: 'postgresql', available: true }),
     listenMode: options.listenMode ?? 'local-development',
     tenantBinding: describePortableTenantBinding({
@@ -589,9 +617,14 @@ export async function startPortablePostgresqlApp(options) {
     providers: graph.providers,
     notifications: graph.notifications,
     runAction: graph.runAction,
+    reconcileWrite: graph.reconcileWrite,
     now: graph.now,
     schema: graph.schema,
     config: graph.config,
     close: lifecycle.close,
   });
+  if (lifecycle.bootstrap?.dataStorage) {
+    POSTGRES_TEST_STORAGE.set(facade, lifecycle.bootstrap.dataStorage);
+  }
+  return facade;
 }

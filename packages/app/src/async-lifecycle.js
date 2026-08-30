@@ -12,6 +12,35 @@ import { resolvePackageComposition } from '../../core/src/package-composition.js
  * lifecycle.
  */
 
+function refuseLegacyExternalOperations(accepted) {
+  const actions = [
+    ...(accepted.actions ?? []),
+    ...(accepted.packages ?? []).flatMap((pkg) => pkg.actions ?? []),
+  ];
+  for (const action of actions) {
+    if (action?.externalOperation === undefined) continue;
+    if (action.externalOperation !== 2) {
+      const identity = `${action.module ?? 'action'}.${action.name ?? 'unnamed'}`;
+      throw new AppError(
+        `PostgreSQL composition requires externalOperation 2 with provider idempotency and reconciliation (received ${identity} externalOperation ${String(action.externalOperation)})`,
+        {
+          code: 'EXTERNAL_OPERATION_V2_REQUIRED',
+          status: 400,
+          details: { action: identity, externalOperation: action.externalOperation },
+        },
+      );
+    }
+    const provider = action.provider;
+    if (provider && (typeof provider.call !== 'function' || typeof provider.reconcile !== 'function')) {
+      const identity = `${action.module ?? 'action'}.${action.name ?? 'unnamed'}`;
+      throw new AppError(
+        `PostgreSQL composition requires a provider with call and reconcile on ${identity}`,
+        { code: 'EXTERNAL_OPERATION_V2_REQUIRED', status: 400, details: { action: identity } },
+      );
+    }
+  }
+}
+
 function asyncContractError(message, details) {
   return new AppError(message, {
     code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED',
@@ -229,6 +258,7 @@ export async function startSqliteLifecycle(options = {}) {
  */
 export async function startPostgresqlLifecycle(options) {
   const accepted = preflightSelectedGraph(options.selected);
+  refuseLegacyExternalOperations(accepted);
   const assemble = options.assemble ?? (() => undefined);
   const { bootstrapPostgresqlApplication } = await import('../../core/src/postgresql-bootstrap.js');
   const bootstrap = await bootstrapPostgresqlApplication({

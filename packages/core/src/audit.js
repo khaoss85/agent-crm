@@ -1,11 +1,11 @@
 // @ts-check
 
-import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { normalizeActor } from './actor.js';
 import { AppError } from './errors.js';
 import { nowIso } from './time.js';
 import { isSyncStorage, storageApi, storageMany } from './storage-runtime.js';
+import { nextWriteId } from './write-ids.js';
 
 export class AuditLog {
   /** @param {import('./database.js').AccordoDatabase} database */
@@ -19,7 +19,7 @@ export class AuditLog {
   record(event, handle) {
     const actor = normalizeActor(event.actor);
     const item = {
-      id: randomUUID(),
+      id: nextWriteId('audit'),
       actorType: actor.type,
       actorId: actor.id,
       action: event.action,

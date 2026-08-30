@@ -4,6 +4,14 @@ import { randomUUID } from 'node:crypto';
 import { AppError, normalizeError } from './errors.js';
 import { nowIso } from './time.js';
 import { writeTrace, sanitizeJsonSafe } from './action-runtime.js';
+import { requestFingerprint, resolveIdempotencyKey, tenantNamespace } from './idempotency.js';
+import { deterministicUuid } from './write-ids.js';
+import {
+  isUnknownCommit,
+  runIdempotentWrite,
+  usesWriteOutcomes,
+} from './write-outcome-runtime.js';
+import { createWriteOutcomeStore, unknownCommitError } from './write-outcome-store.js';
 
 /**
  * The bounded external-operation contract (ADR-017).
@@ -92,6 +100,15 @@ function safeActor(actor) {
  * }} operation
  */
 export async function runExternalOperation(operation) {
+  if (usesWriteOutcomes(operation.database) || operation.externalOperation === 2) {
+    if (usesWriteOutcomes(operation.database) && operation.externalOperation === 1) {
+      throw new AppError(
+        'PostgreSQL composition requires externalOperation 2 with provider idempotency and reconciliation',
+        { code: 'EXTERNAL_OPERATION_V2_REQUIRED', status: 400 },
+      );
+    }
+    return runExternalOperationV2(operation);
+  }
   const { database, events, name, actor, input } = operation;
   const runId = operation.runId ?? randomUUID();
   // One clock per run, injectable like every other runtime capability.
@@ -200,4 +217,305 @@ export async function runExternalOperation(operation) {
     throw failure;
   }
   return { result, runId };
+}
+
+/**
+ * @param {any} provider
+ */
+function assertProviderV2(provider) {
+  if (!provider || typeof provider.call !== 'function' || typeof provider.reconcile !== 'function') {
+    throw new AppError(
+      'PostgreSQL external operations require a provider with call and reconcile',
+      { code: 'EXTERNAL_OPERATION_V2_REQUIRED', status: 400 },
+    );
+  }
+}
+
+function receiptMismatch() {
+  return new AppError('Provider receipt does not match the local intent', {
+    code: 'PROVIDER_RECEIPT_MISMATCH',
+    status: 409,
+  });
+}
+
+/**
+ * @param {any} remote
+ * @param {{
+ *   providerKey: string,
+ *   operation: string,
+ *   requestFingerprint: string,
+ *   tenantNsHint?: string,
+ * }} expected
+ */
+function assertProviderReceipt(remote, expected) {
+  if (!remote || typeof remote !== 'object') throw receiptMismatch();
+  const receipt = /** @type {any} */ (remote);
+  if (receipt.idempotencyKey !== expected.providerKey) throw receiptMismatch();
+  if (typeof receipt.operation === 'string' && receipt.operation !== expected.operation) throw receiptMismatch();
+  if (typeof receipt.requestFingerprint === 'string' && receipt.requestFingerprint !== expected.requestFingerprint) {
+    throw receiptMismatch();
+  }
+}
+
+/**
+ * External-operation v2: durable intent and finalize phase keys, one stable
+ * provider idempotency key, read-only reconcile, never an implicit provider
+ * replay. COMMIT_OUTCOME_UNKNOWN is never an automatic retry.
+ *
+ * @param {any} operation
+ */
+async function runExternalOperationV2(operation) {
+  const { database, events, name, actor, input } = operation;
+  const now = operation.now ?? nowIso;
+  const provider = operation.provider;
+  if (usesWriteOutcomes(database)) assertProviderV2(provider);
+
+  const rawKey = usesWriteOutcomes(database)
+    ? resolveIdempotencyKey(operation.idempotencyKey, now)
+    : operation.idempotencyKey;
+  const tenantId = operation.tenantId ?? database.tenantId;
+  const sharedRunId = usesWriteOutcomes(database)
+    ? deterministicUuid(`${tenantNamespace(tenantId)}\0${rawKey}\0run`)
+    : undefined;
+  const specBase = {
+    tenantId,
+    idempotencyKey: rawKey,
+    identity: operation.identity,
+    actor,
+    contractVersion: 'external.v2',
+    input,
+    now,
+    runId: sharedRunId,
+  };
+
+  const intentOutcome = await runIdempotentWrite(database, events, {
+    ...specBase,
+    operation: `${name}.intent`,
+    target: 'intent',
+    phase: 'intent',
+    settleTrace: false,
+  }, async ({ step, runId, idempotencyKey, providerIdempotencyKey }) => {
+    const value = freezePhaseValue(await operation.intent({
+      input, actor, now, step, runId, idempotencyKey, providerIdempotencyKey,
+    }));
+    return {
+      intent: value,
+      providerIdempotencyKey,
+      requestFingerprint: requestFingerprint({
+        operation: name,
+        target: 'intent',
+        contractVersion: 'external.v2',
+        input,
+      }),
+    };
+  });
+
+  const intentEnvelope = /** @type {any} */ (intentOutcome.result);
+  const intentValue = intentEnvelope.intent;
+  const providerKey = intentEnvelope.providerIdempotencyKey;
+  const requestFp = intentEnvelope.requestFingerprint;
+  /** @type {any} */
+  let receipt = null;
+
+  if (typeof operation.external === 'function' || provider) {
+    receipt = await obtainProviderReceipt({
+      database,
+      events,
+      specBase,
+      name,
+      provider,
+      providerKey,
+      requestFp,
+      intentValue,
+      input,
+      actor,
+      now,
+      external: operation.external,
+    });
+  }
+
+  if (typeof operation.finalize !== 'function') {
+    return {
+      result: intentValue,
+      runId: intentOutcome.runId,
+      idempotencyKey: intentOutcome.idempotencyKey,
+      replayed: intentOutcome.replayed,
+    };
+  }
+
+  const finalized = await runIdempotentWrite(database, events, {
+    ...specBase,
+    operation: `${name}.finalize`,
+    target: 'finalize',
+    phase: 'finalize',
+    settleTrace: true,
+  }, async ({ step, runId, idempotencyKey, providerIdempotencyKey }) => freezePhaseValue(
+    await operation.finalize({
+      input, actor, now, step, runId, idempotencyKey, providerIdempotencyKey,
+      intent: intentValue,
+      external: receipt,
+    }),
+  ));
+
+  return {
+    result: finalized.result,
+    runId: finalized.runId,
+    idempotencyKey: intentOutcome.idempotencyKey,
+    replayed: Boolean(intentOutcome.replayed && finalized.replayed),
+  };
+}
+
+/**
+ * @param {{
+ *   database: any,
+ *   events: any,
+ *   specBase: any,
+ *   name: string,
+ *   provider: any,
+ *   providerKey: string,
+ *   requestFp: string,
+ *   intentValue: any,
+ *   input: unknown,
+ *   actor: unknown,
+ *   now: () => string,
+ *   external?: Function | null,
+ * }} args
+ */
+async function obtainProviderReceipt(args) {
+  const {
+    database, events, specBase, name, provider, providerKey, requestFp,
+    intentValue, input, actor, now, external,
+  } = args;
+  const store = usesWriteOutcomes(database) ? createWriteOutcomeStore(database) : null;
+  const rawKey = specBase.idempotencyKey;
+  if (store) {
+    const stored = await store.lookup(tenantNamespace(specBase.tenantId), rawKey, 'receipt');
+    if (stored) return stored.response;
+    const attempted = await store.lookup(tenantNamespace(specBase.tenantId), rawKey, 'call');
+    if (attempted) {
+      if (provider && typeof provider.reconcile === 'function') {
+        const remote = await provider.reconcile({
+          idempotencyKey: providerKey,
+          intent: intentValue,
+        });
+        if (remote && remote.status !== 'absent' && remote !== null) {
+          assertProviderReceipt(remote, { providerKey, operation: name, requestFingerprint: requestFp });
+          return persistReceipt(args, freezePhaseValue(remote));
+        }
+      }
+      throw unknownCommitError(rawKey);
+    }
+  }
+
+  if (provider && typeof provider.reconcile === 'function') {
+    const remote = await provider.reconcile({
+      idempotencyKey: providerKey,
+      intent: intentValue,
+    });
+    if (remote && remote.status !== 'absent' && remote !== null) {
+      assertProviderReceipt(remote, { providerKey, operation: name, requestFingerprint: requestFp });
+      return persistReceipt(args, freezePhaseValue(remote));
+    }
+  }
+
+  if (typeof external !== 'function' && !(provider && typeof provider.call === 'function')) {
+    return null;
+  }
+
+  if (usesWriteOutcomes(database)) {
+    const callOutcome = await runIdempotentWrite(database, events, {
+      ...specBase,
+      operation: `${name}.call`,
+      target: 'call',
+      phase: 'call',
+      settleTrace: false,
+    }, async () => ({ attempted: true, providerIdempotencyKey: providerKey }));
+    if (callOutcome.replayed) {
+      if (provider && typeof provider.reconcile === 'function') {
+        const remote = await provider.reconcile({
+          idempotencyKey: providerKey,
+          intent: intentValue,
+        });
+        if (remote && remote.status !== 'absent' && remote !== null) {
+          assertProviderReceipt(remote, { providerKey, operation: name, requestFingerprint: requestFp });
+          return persistReceipt(args, freezePhaseValue(remote));
+        }
+      }
+      throw unknownCommitError(rawKey);
+    }
+  }
+
+  const timeoutMs = Number.isSafeInteger(args.specBase.timeoutMs) && args.specBase.timeoutMs > 0
+    ? args.specBase.timeoutMs
+    : DEFAULT_EXTERNAL_TIMEOUT_MS;
+  const called = freezePhaseValue(await withExternalTimeout(
+    Promise.resolve(
+      provider && typeof provider.call === 'function'
+        ? provider.call({
+          idempotencyKey: providerKey,
+          intent: intentValue,
+          input,
+          actor,
+          now,
+          requestFingerprint: requestFp,
+          operation: name,
+        })
+        : external({
+          intent: intentValue,
+          input,
+          actor,
+          now,
+          step: () => {},
+          providerIdempotencyKey: providerKey,
+        }),
+    ),
+    timeoutMs,
+    name,
+  ));
+  if (provider) {
+    assertProviderReceipt(called, { providerKey, operation: name, requestFingerprint: requestFp });
+  }
+  return persistReceipt(args, called);
+}
+
+/**
+ * @param {any} args
+ * @param {any} receipt
+ */
+async function persistReceipt(args, receipt) {
+  const { database, events, specBase, name } = args;
+  try {
+    const outcome = await runIdempotentWrite(database, events, {
+      ...specBase,
+      operation: `${name}.receipt`,
+      target: 'receipt',
+      phase: 'receipt',
+      settleTrace: false,
+    }, async () => receipt);
+    return outcome.result;
+  } catch (error) {
+    if (!isUnknownCommit(error)) throw error;
+    const store = createWriteOutcomeStore(database);
+    const existing = await store.lookup(
+      tenantNamespace(specBase.tenantId),
+      resolveIdempotencyKey(specBase.idempotencyKey, specBase.now),
+      'receipt',
+    );
+    if (existing) return existing.response;
+    if (args.provider && typeof args.provider.reconcile === 'function') {
+      const remote = await args.provider.reconcile({
+        idempotencyKey: args.providerKey,
+        intent: args.intentValue,
+      });
+      if (remote && remote.status !== 'absent') {
+        assertProviderReceipt(remote, {
+          providerKey: args.providerKey,
+          operation: name,
+          requestFingerprint: args.requestFp,
+        });
+        return remote;
+      }
+    }
+    throw unknownCommitError(specBase.idempotencyKey);
+  }
 }

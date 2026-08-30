@@ -7,6 +7,9 @@ import { createExecutionRunStore } from './execution-run-store.js';
 // Cycle-safe: both modules export hoisted function declarations only, and
 // neither touches the other at module-evaluation time (ADR-017).
 import { runExternalOperation } from './external-operation.js';
+import { isUnknownCommit, runIdempotentWrite, usesWriteOutcomes } from './write-outcome-runtime.js';
+import { createWriteOutcomeStore } from './write-outcome-store.js';
+import { resolveIdempotencyKey, tenantNamespace } from './idempotency.js';
 
 /**
  * Stable error for an action attempted from an invalid lifecycle state.
@@ -159,7 +162,11 @@ export async function runRecordAction(params) {
   // represent honestly. They are routed to the bounded external-operation
   // runner instead — the action still declares phases, never transactions.
   if (definition.externalOperation) {
-    return runExternalRecordAction(params, definition, validatedInput);
+    return runExternalRecordAction(params, definition, validatedInput, authorization);
+  }
+
+  if (usesWriteOutcomes(database)) {
+    return runPostgresqlRecordAction(params, definition, validatedInput, authorization);
   }
 
   const runId = randomUUID();
@@ -325,8 +332,148 @@ export async function runRecordAction(params) {
  * provider registries it needs — no database, no modules, no managed writes.
  *
  * @param {any} params @param {any} definition @param {Record<string, unknown>} validatedInput
+ * @param {any} [authorization]
  */
-async function runExternalRecordAction(params, definition, validatedInput) {
+async function runPostgresqlRecordAction(params, definition, validatedInput, authorization) {
+  const { database, events, services, modules, module, action, recordId, actor } = params;
+  const now = params.now ?? nowIso;
+  const service = modules.get(module).service;
+  const writeSpec = {
+    tenantId: params.tenantId ?? database.tenantId,
+    idempotencyKey: usesWriteOutcomes(database)
+      ? resolveIdempotencyKey(params.idempotencyKey, now)
+      : params.idempotencyKey,
+    identity: params.identity,
+    actor,
+    operation: `${module}.${action}`,
+    target: recordId,
+    contractVersion: String(definition.actionContract ?? 1),
+    input: { recordId, input: validatedInput },
+    now,
+  };
+  if (usesWriteOutcomes(database)) {
+    const existing = await createWriteOutcomeStore(database).lookup(
+      tenantNamespace(writeSpec.tenantId),
+      resolveIdempotencyKey(writeSpec.idempotencyKey, now),
+      'root',
+    );
+    if (existing) {
+      const outcome = await runIdempotentWrite(database, events, writeSpec, async () => existing.response);
+      return {
+        ok: true, module, action, recordId, runId: outcome.runId, result: outcome.result,
+        idempotencyKey: outcome.idempotencyKey, replayed: true,
+      };
+    }
+  }
+  /** @type {any} */
+  let prepared;
+  if (typeof definition.prepare === 'function') {
+    const previewRecord = await Promise.resolve(service.get(recordId));
+    prepared = sanitizeJsonSafe(
+      await definition.prepare({
+        record: previewRecord,
+        input: validatedInput,
+        actor,
+        modules: readOnlyModulesView(modules),
+        config: params.config ?? {},
+        now,
+        step: () => {},
+      }),
+    );
+  }
+
+  try {
+    const outcome = await runIdempotentWrite(database, events, writeSpec, async ({ step }) => {
+      const record = await Promise.resolve(service.get(recordId));
+      if (Array.isArray(definition.fromStates) && !definition.fromStates.includes(record[definition.stateField ?? 'status'])) {
+        throw new InvalidStateError(
+          `${module}.${action} is not allowed from state "${record[definition.stateField ?? 'status']}"`,
+          { field: definition.stateField ?? 'status', from: record[definition.stateField ?? 'status'], action },
+        );
+      }
+      const result = await definition.execute({
+        record,
+        input: validatedInput,
+        actor,
+        services,
+        modules,
+        database,
+        core: params.core ?? Object.freeze({}),
+        pipelines: params.pipelines ?? Object.freeze({ forModule: () => null, get: () => null, list: () => [] }),
+        domains: params.domains ?? Object.freeze({
+          getPolicy: () => { throw new NotFoundError('Domain policy', 'none registered'); },
+          has: () => false,
+        }),
+        prepared,
+        config: params.config ?? {},
+        now,
+        managed: (id, patch) => service.applyManaged(id, patch, { actor }),
+        step,
+      });
+      step(`${module}.${action}`, result);
+      return result;
+    });
+    return {
+      ok: true,
+      module,
+      action,
+      recordId,
+      runId: outcome.runId,
+      idempotencyKey: outcome.idempotencyKey,
+      replayed: outcome.replayed,
+      result: outcome.result,
+    };
+  } catch (error) {
+    const failure = normalizeError(error);
+    if (!isUnknownCommit(failure)) {
+      const runId = failure.details && typeof failure.details === 'object'
+        ? /** @type {any} */ (failure.details).runId
+        : undefined;
+      try {
+        await Promise.resolve(writeTrace(database, {
+          runId: typeof runId === 'string' ? runId : randomUUID(),
+          workflowName: `${module}.${action}`,
+          status: 'failed',
+          input: {
+            recordId,
+            input: validatedInput,
+            actor: safeActor(actor),
+            ...(authorization
+              ? {
+                authorization: {
+                  permission: authorization.permission,
+                  organizationId: authorization.organizationId,
+                  subject: authorization.subject,
+                  kind: authorization.kind,
+                  role: authorization.role,
+                },
+              }
+              : {}),
+          },
+          output: null,
+          error: failure.message,
+          startedAt: now(),
+          steps: [{ name: `${module}.${action}`, status: 'failed', error: failure.message }],
+        }));
+      } catch (traceError) {
+        console.error(
+          `[accordo] ${module}.${action}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`,
+        );
+      }
+    }
+    failure.details = {
+      ...(failure.details && typeof failure.details === 'object' ? failure.details : {}),
+      ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
+    };
+    throw failure;
+  }
+}
+
+/**
+ * @param {any} params @param {any} definition @param {Record<string, unknown>} validatedInput
+ * @param {any} [authorization]
+ */
+async function runExternalRecordAction(params, definition, validatedInput, authorization) {
   const { database, events, services, modules, module, action, recordId, actor } = params;
   const now = params.now ?? nowIso;
   const service = modules.get(module).service;
@@ -346,7 +493,7 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     managed: (id, patch) => service.applyManaged(id, patch, { actor }),
   });
 
-  const { result, runId } = await runExternalOperation({
+  const { result, runId, idempotencyKey, replayed } = await runExternalOperation({
     database,
     events,
     name: `${module}.${action}`,
@@ -354,6 +501,11 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     input: { recordId, input: validatedInput },
     actor,
     timeoutMs: definition.timeoutMs ?? params.config?.externalTimeoutMs,
+    externalOperation: definition.externalOperation,
+    idempotencyKey: params.idempotencyKey,
+    tenantId: params.tenantId ?? database.tenantId,
+    identity: params.identity,
+    provider: params.provider ?? definition.provider ?? params.config?.externalProvider,
     intent: async (ctx) => {
       const record = await Promise.resolve(service.get(recordId)); // NotFoundError → rolled back
       if (Array.isArray(definition.fromStates) && !definition.fromStates.includes(record[stateField])) {
@@ -374,6 +526,7 @@ async function runExternalRecordAction(params, definition, validatedInput) {
         config: params.config ?? {},
         step: ctx.step,
         now: ctx.now,
+        providerIdempotencyKey: ctx.providerIdempotencyKey,
       })
       : null,
     finalize: typeof definition.finalize === 'function'
@@ -393,7 +546,7 @@ async function runExternalRecordAction(params, definition, validatedInput) {
       })
       : null,
   });
-  return { ok: true, module, action, recordId, runId, result };
+  return { ok: true, module, action, recordId, runId, result, idempotencyKey, replayed };
 }
 
 const READ_ONLY_SERVICE_METHODS = ['get', 'list', 'listWhere', 'countWhere'];

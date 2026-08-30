@@ -307,6 +307,29 @@ async function applyUnits(client, {
   }
 }
 
+async function ensureWriteOutcomes(client) {
+  await exec(client, `
+    CREATE TABLE IF NOT EXISTS ${qualify('write_outcomes')} (
+      tenant_namespace TEXT NOT NULL,
+      raw_key TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      subject_fingerprint TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      target TEXT NOT NULL,
+      contract_version TEXT NOT NULL,
+      request_fingerprint TEXT NOT NULL,
+      record_ids_json TEXT NOT NULL,
+      response_json TEXT,
+      event_intents_json TEXT NOT NULL,
+      trace_intent_json TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      events_promoted BIGINT NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (tenant_namespace, raw_key, phase)
+    )
+  `);
+}
+
 async function inspectDataMarker(client) {
   const present = await exec(
     client,
@@ -700,7 +723,6 @@ export async function bootstrapPostgresqlApplication(options) {
       phase: 'data',
       priorControl: controlAttestation.control,
     });
-
     const controlClient = await connectBounded(controlPool, acquisitionDeadlineMs);
     let controlActive = false;
     /** @type {any} */
@@ -753,6 +775,7 @@ export async function bootstrapPostgresqlApplication(options) {
 
       await exec(dataClient, `CREATE SCHEMA IF NOT EXISTS ${quotePostgresIdent(POSTGRES_APPLICATION_SCHEMA)}`);
       await ensureLedger(dataClient);
+      await ensureWriteOutcomes(dataClient);
       await applyUnits(dataClient, {
         plane: 'data',
         migrations: dataMigrations,

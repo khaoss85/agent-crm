@@ -2,7 +2,9 @@
 
 import { randomUUID } from 'node:crypto';
 import { ValidationError } from './errors.js';
+import { isSyncStorage, storageApi } from './storage-runtime.js';
 import { resolveClock } from './time.js';
+import { deterministicUuid } from './write-ids.js';
 
 /**
  * **The one place run and span lifecycle evidence is persisted.**
@@ -763,6 +765,110 @@ export function createExecutionRunStore(database, options = {}) {
       });
       if (sync) return rows.map(mapRunRow);
       return Promise.resolve(rows).then((resolved) => resolved.map(mapRunRow));
+    },
+
+    /**
+     * Finalize a pending (running) run to completed/failed with its spans.
+     *
+     * Used by PostgreSQL unknown-commit recovery: the business transaction
+     * inserted one running row under a predetermined id; reconciliation or the
+     * live post-commit path writes the same primary key to a terminal status
+     * and never inserts a second run. Already-terminal rows are left alone.
+     *
+     * @param {{
+     *   runId: string, workflowName?: string, status: string, input?: unknown,
+     *   output: unknown, error: string | null, startedAt: string,
+     *   steps: Iterable<{name: string, status: string, output?: unknown, error?: string}>
+     * }} run
+     */
+    async finalizePendingRun(run) {
+      const own = suppliedShape(run, 'Pending execution run',
+        ['runId', 'workflowName', 'status', 'input', 'output', 'error', 'startedAt', 'steps'],
+        ['runId', 'status', 'startedAt', 'steps']);
+      const runId = assertStorableText(own.runId, 'Execution run id', { field: 'runId' });
+      const status = assertStatus(own.status, RUN_STATUSES, 'Execution run status', { field: 'status' });
+      const startedAt = assertStorableText(own.startedAt, 'Execution run startedAt', { field: 'startedAt' });
+      const error = assertOptionalMessage(own.error, 'Execution run error', { field: 'error' });
+      const steps = boundedSteps(own.steps);
+      const finishedAt = now();
+      const handle = isSyncStorage(database) ? storage : storageApi(database);
+      const existing = handle.maybeOne({
+        kind: 'select', table: RUNS, columns: '*',
+        where: [{ column: 'id', op: 'eq', value: runId }],
+      });
+      const row = sync ? existing : await existing;
+      if (row && row.status !== 'running') return;
+
+      const writeSpans = async () => {
+        for (const [index, step] of steps.entries()) {
+          const spanId = deterministicUuid(`${runId}\0span\0${index}`);
+          const already = handle.maybeOne({
+            kind: 'select', table: SPANS, columns: '*',
+            where: [{ column: 'id', op: 'eq', value: spanId }],
+          });
+          const found = sync ? already : await already;
+          if (found) continue;
+          const insert = handle.execute({
+            kind: 'insert',
+            table: SPANS,
+            values: [
+              { column: 'id', value: spanId },
+              { column: 'run_id', value: runId },
+              { column: 'parent_span_id', value: null },
+              { column: 'name', value: step.name },
+              { column: 'status', value: step.status },
+              { column: 'input_json', value: null },
+              { column: 'output_json', value: encodeJson(step.output ?? null) },
+              { column: 'error', value: step.error ?? null },
+              { column: 'started_at', value: startedAt },
+              { column: 'finished_at', value: finishedAt },
+            ],
+          });
+          if (!sync) await insert;
+        }
+      };
+
+      if (!row) {
+        const workflowName = assertStorableText(
+          own.workflowName ?? 'unknown',
+          'Execution run workflow name',
+          { field: 'workflowName' },
+        );
+        const insertRun = handle.execute({
+          kind: 'insert',
+          table: RUNS,
+          values: [
+            { column: 'id', value: runId },
+            { column: 'workflow_name', value: workflowName },
+            { column: 'status', value: status },
+            { column: 'input_json', value: encodeJson(own.input) },
+            { column: 'output_json', value: encodeJson(own.output) },
+            { column: 'error', value: error },
+            { column: 'started_at', value: startedAt },
+            { column: 'finished_at', value: finishedAt },
+          ],
+        });
+        if (!sync) await insertRun;
+        await writeSpans();
+        return;
+      }
+
+      const update = handle.execute({
+        kind: 'update',
+        table: RUNS,
+        values: [
+          { column: 'status', value: status },
+          { column: 'output_json', value: encodeJson(own.output) },
+          { column: 'error', value: error },
+          { column: 'finished_at', value: finishedAt },
+        ],
+        where: [
+          { column: 'id', op: 'eq', value: runId },
+          { column: 'status', op: 'eq', value: 'running' },
+        ],
+      });
+      if (!sync) await update;
+      await writeSpans();
     },
   });
 }
