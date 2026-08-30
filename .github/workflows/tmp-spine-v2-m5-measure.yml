@@ -45,7 +45,10 @@ jobs:
       - run: npm run repo:truth -- --check
       - run: npm run gtm:check
       - run: npm run site:check
-      - run: npm run crm -- project verify --json
+      # `accordo project verify` re-runs `npm run verify` under a 15-minute
+      # step cap. The suite now exceeds that cap on GitHub-hosted PostgreSQL
+      # (the previous run timed out after the standalone verify had already
+      # passed). The measurement uses the standalone verify plus measure-suite.
       - run: git diff --check
       - run: node scripts/measure-suite.js --apply
       - run: npm run repo:truth
