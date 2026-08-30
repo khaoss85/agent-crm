@@ -1,6 +1,5 @@
 // @ts-check
 
-import { types } from 'node:util';
 import { AppError } from './errors.js';
 
 /**
@@ -13,9 +12,7 @@ import { AppError } from './errors.js';
  * @param {any} database
  */
 export function isSyncStorage(database) {
-  if (database?.storage?.sync) return true;
-  const api = database?.storage;
-  return Boolean(api && typeof api.maybeOne === 'function' && !types.isAsyncFunction(api.maybeOne));
+  return Boolean(database?.storage?.sync && typeof database.storage.sync.execute === 'function');
 }
 
 /**
@@ -72,7 +69,8 @@ export function storageMany(database, statement, map = (row) => row) {
  */
 export async function storageMutate(database, name, fn) {
   if (isSyncStorage(database)) {
-    return database.storage.sync.savepoint(name, () => fn(database.storage.sync));
+    const sync = storageApi(database);
+    return sync.savepoint(name, () => fn(sync));
   }
   const storage = database.storage;
   if (typeof storage.activeTransaction === 'function' && storage.activeTransaction()) {

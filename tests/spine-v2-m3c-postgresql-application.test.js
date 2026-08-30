@@ -254,7 +254,7 @@ test('child-process PostgreSQL boot writes domain, workflow, audit and trace', {
     encoding: 'utf8',
     timeout: 45_000,
   });
-  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.status, 0, `${run.stderr}\n${run.stdout}`);
   const receipt = JSON.parse(run.stdout);
   assert.equal(receipt.ok, true);
   assert.equal(receipt.adapter, 'postgresql');

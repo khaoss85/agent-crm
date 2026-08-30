@@ -2,7 +2,7 @@
 
 import { startPostgresqlLifecycle, startSqliteLifecycle } from './async-lifecycle.js';
 import { describePortableTenantBinding } from '../../core/src/tenant-binding.js';
-import { isSyncStorage, storageMany, storageMaybeOne } from '../../core/src/storage-runtime.js';
+import { storageMany, storageMaybeOne } from '../../core/src/storage-runtime.js';
 import { AuditLog } from '../../core/src/audit.js';
 import { EventBus } from '../../core/src/event-bus.js';
 import { ModuleRegistry } from '../../core/src/module-registry.js';
@@ -146,7 +146,7 @@ function createPortableCoreAdapters({ storage, services, pipelines }) {
           name: String(row.name),
           domain: row.domain === null || row.domain === undefined ? null : String(row.domain),
         }));
-      const rows = storageMany({ storage }, {
+      return storageMany({ storage }, {
         kind: 'select',
         table: 'companies',
         columns: ['id', 'name', 'domain', 'created_at'],
@@ -154,9 +154,7 @@ function createPortableCoreAdapters({ storage, services, pipelines }) {
           { column: 'created_at', direction: 'asc' },
           { column: 'id', direction: 'asc' },
         ],
-      });
-      if (isSyncStorage({ storage })) return mapRows(rows);
-      return Promise.resolve(rows).then(mapRows);
+      }, mapRows);
     },
     findContactByEmail(email) {
       if (typeof email !== 'string' || email.trim() === '') {
@@ -216,7 +214,23 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
     transactionAsync(fn) {
       return handle.storage.transaction(async (tx) => {
         const previous = handle.storage;
-        handle.storage = tx;
+        // SQLite's Storage Contract handle exposes `.sync`. The affine client
+        // passed into `transaction()` is that inner object, which has no nested
+        // `.sync`. Keep the contract shape so `isSyncStorage` and
+        // `database.storage.sync.execute` stay bound to the open transaction.
+        // PostgreSQL affine clients have no `.sync`; they stay the tx handle.
+        handle.storage = previous && previous.sync
+          ? Object.freeze({
+            contract: previous.contract,
+            sync: tx.sync ?? tx,
+            activeTransaction: previous.activeTransaction,
+            execute: async (statement) => (tx.sync ?? tx).execute(statement),
+            maybeOne: async (statement) => (tx.sync ?? tx).maybeOne(statement),
+            many: async (statement) => (tx.sync ?? tx).many(statement),
+            transaction: previous.transaction,
+            savepoint: (name, body) => (tx.sync ?? tx).savepoint(name, body),
+          })
+          : tx;
         try {
           return await fn(tx);
         } finally {

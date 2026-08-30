@@ -442,7 +442,7 @@ export function createExecutionRunStore(database, options = {}) {
   const newId = resolveIdSource(options.newId);
   const sync = database?.storage?.sync;
   const storage = sync ?? database?.storage;
-  if (!storage) {
+  if (!storage || typeof storage.execute !== 'function') {
     throw new ValidationError('The execution-run store requires a database with Storage Contract v1');
   }
   const after = (result, value) => (sync ? value : Promise.resolve(result).then(() => value));

@@ -192,7 +192,7 @@ export async function runRecordAction(params) {
     // keys are dropped). A prepare failure fails the action with an honest
     // trace and never opens the transaction.
     if (typeof definition.prepare === 'function') {
-      const previewRecord = service.get(recordId); // NotFoundError → honest 404, no provider call
+      const previewRecord = await Promise.resolve(service.get(recordId)); // NotFoundError → honest 404, no provider call
       prepared = sanitizeJsonSafe(
         await definition.prepare({
           record: previewRecord,
@@ -207,7 +207,7 @@ export async function runRecordAction(params) {
     }
     result = await events.buffered(async (outbox) => {
       const value = await database.transactionAsync(async () => {
-        const record = service.get(recordId); // NotFoundError → rolled back, no writes
+        const record = await Promise.resolve(service.get(recordId)); // NotFoundError → rolled back, no writes
         if (Array.isArray(definition.fromStates) && !definition.fromStates.includes(record[definition.stateField ?? 'status'])) {
           throw new InvalidStateError(
             `${module}.${action} is not allowed from state "${record[definition.stateField ?? 'status']}"`,
@@ -354,8 +354,8 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     input: { recordId, input: validatedInput },
     actor,
     timeoutMs: definition.timeoutMs ?? params.config?.externalTimeoutMs,
-    intent: (ctx) => {
-      const record = service.get(recordId); // NotFoundError → rolled back
+    intent: async (ctx) => {
+      const record = await Promise.resolve(service.get(recordId)); // NotFoundError → rolled back
       if (Array.isArray(definition.fromStates) && !definition.fromStates.includes(record[stateField])) {
         throw new InvalidStateError(
           `${module}.${action} is not allowed from state "${record[stateField]}"`,
@@ -377,10 +377,20 @@ async function runExternalRecordAction(params, definition, validatedInput) {
       })
       : null,
     finalize: typeof definition.finalize === 'function'
-      ? (ctx) => definition.finalize({ ...ctx, ...writeContext(), record: service.get(recordId), input: validatedInput })
+      ? async (ctx) => definition.finalize({
+        ...ctx,
+        ...writeContext(),
+        record: await Promise.resolve(service.get(recordId)),
+        input: validatedInput,
+      })
       : null,
     compensate: typeof definition.compensate === 'function'
-      ? (ctx) => definition.compensate({ ...ctx, ...writeContext(), record: service.get(recordId), input: validatedInput })
+      ? async (ctx) => definition.compensate({
+        ...ctx,
+        ...writeContext(),
+        record: await Promise.resolve(service.get(recordId)),
+        input: validatedInput,
+      })
       : null,
   });
   return { ok: true, module, action, recordId, runId, result };

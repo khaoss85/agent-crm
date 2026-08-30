@@ -180,6 +180,10 @@ function driftError(entry, persisted) {
   );
 }
 
+function assertFingerprintMatch(entry, persisted) {
+  if (String(persisted.fingerprint) !== entry.fingerprint) throw driftError(entry, persisted.fingerprint);
+}
+
 /**
  * The id source, given the same treatment `resolveClock` gives the clock: an
  * injected generator is *input*, so what it returns is validated on every call
@@ -304,7 +308,7 @@ export function createDefinitionVersionStore(database, options = {}) {
             });
             continue;
           }
-          if (String(persisted.fingerprint) !== entry.fingerprint) throw driftError(entry, persisted.fingerprint);
+          assertFingerprintMatch(entry, persisted);
         }
       };
       if (sync) {
@@ -347,7 +351,7 @@ export function createDefinitionVersionStore(database, options = {}) {
               });
               continue;
             }
-            if (String(persisted.fingerprint) !== entry.fingerprint) throw driftError(entry, persisted.fingerprint);
+            assertFingerprintMatch(entry, persisted);
           }
         });
         return;

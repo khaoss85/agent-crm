@@ -347,6 +347,7 @@ export function createPostgresqlStorage(pool, options = {}) {
   }
 
   async function rollbackSafely(client, primaryError) {
+    if (DESTROYED.has(client)) return;
     try {
       await client.query('ROLLBACK');
     } catch {
@@ -476,7 +477,7 @@ export function createPostgresqlStorage(pool, options = {}) {
       active = false;
       return result;
     } catch (error) {
-      if (active) await rollbackSafely(client, error);
+      if (active && !DESTROYED.has(client)) await rollbackSafely(client, error);
       throw error instanceof AppError ? error : sanitizePgError(error);
     } finally {
       const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
