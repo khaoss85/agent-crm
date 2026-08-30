@@ -386,7 +386,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     }, { actor });
 
     const idempotencyKey = key();
-    injectPostgresqlCommitFault(storage, 'post-commit-ack-drop', { skip: 2 });
+    injectPostgresqlCommitFault(storage, 'post-commit-ack-drop', { skip: 3 });
     await assert.rejects(
       () => app.runAction({
         module: 'opportunity',
@@ -494,5 +494,103 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
       },
     );
     assert.equal(provider.calls(), 0);
+  });
+
+  test('unknown call-phase commit never replays the provider', { timeout: 60_000 }, async (t) => {
+    const provider = createCountingProvider();
+    const booted = await bootPostgresqlApp(t, {
+      selected: {
+        packageContract: 2,
+        packages: [],
+        modules: ['opportunity'],
+        actions: [{
+          module: 'opportunity',
+          name: 'notify-partner',
+          actionContract: 2,
+          externalOperation: 2,
+          provider,
+          async intent({ record }) { return { opportunityId: record.id }; },
+          async finalize({ record }) { return { id: record.id }; },
+        }],
+      },
+    });
+    if (!booted) return;
+    const { app } = booted;
+    const storage = postgresqlTestStorage(app);
+    const company = await app.services.companies.create(
+      { name: 'Call Co' },
+      { actor, identity: subjectA, idempotencyKey: key() },
+    );
+    const opportunity = await app.services.opportunities.create({
+      companyId: company.id, name: 'Deal', valueCents: 1000, owner: 'ada',
+    }, { actor });
+    const idempotencyKey = key();
+    injectPostgresqlCommitFault(storage, 'post-commit-ack-drop', { skip: 1 });
+    await assert.rejects(
+      () => app.runAction({
+        module: 'opportunity', action: 'notify-partner', recordId: opportunity.id,
+        actor, identity: subjectA, idempotencyKey, provider,
+      }),
+      (error) => error.code === 'COMMIT_OUTCOME_UNKNOWN',
+    );
+    assert.equal(provider.calls(), 0);
+    await assert.rejects(
+      () => app.runAction({
+        module: 'opportunity', action: 'notify-partner', recordId: opportunity.id,
+        actor, identity: subjectA, idempotencyKey, provider,
+      }),
+      (error) => error.code === 'COMMIT_OUTCOME_UNKNOWN',
+    );
+    assert.equal(provider.calls(), 0);
+  });
+
+  test('omitted idempotency key is pinned across external phases', { timeout: 60_000 }, async (t) => {
+    const provider = createCountingProvider();
+    const booted = await bootPostgresqlApp(t, {
+      selected: {
+        packageContract: 2,
+        packages: [],
+        modules: ['opportunity'],
+        actions: [{
+          module: 'opportunity',
+          name: 'notify-partner',
+          actionContract: 2,
+          externalOperation: 2,
+          provider,
+          async intent({ record }) { return { opportunityId: record.id }; },
+          async finalize({ record, external }) { return { id: record.id, receiptId: external?.receiptId ?? null }; },
+        }],
+      },
+    });
+    if (!booted) return;
+    const { app } = booted;
+    const storage = postgresqlTestStorage(app);
+    const company = await app.services.companies.create(
+      { name: 'Pin Co' },
+      { actor, identity: subjectA, idempotencyKey: key() },
+    );
+    const opportunity = await app.services.opportunities.create({
+      companyId: company.id, name: 'Deal', valueCents: 1000, owner: 'ada',
+    }, { actor });
+    injectPostgresqlCommitFault(storage, 'post-commit-ack-drop', { skip: 3 });
+    let issued;
+    await assert.rejects(
+      () => app.runAction({
+        module: 'opportunity', action: 'notify-partner', recordId: opportunity.id,
+        actor, identity: subjectA, provider,
+      }),
+      (error) => {
+        assert.equal(error.code, 'COMMIT_OUTCOME_UNKNOWN');
+        issued = error.details?.idempotencyKey;
+        return typeof issued === 'string';
+      },
+    );
+    assert.equal(provider.calls(), 1);
+    const resumed = await app.runAction({
+      module: 'opportunity', action: 'notify-partner', recordId: opportunity.id,
+      actor, identity: subjectA, idempotencyKey: issued, provider,
+    });
+    assert.equal(provider.calls(), 1);
+    assert.equal(resumed.idempotencyKey, issued);
   });
 });

@@ -8,6 +8,8 @@ import { createExecutionRunStore } from './execution-run-store.js';
 // neither touches the other at module-evaluation time (ADR-017).
 import { runExternalOperation } from './external-operation.js';
 import { isUnknownCommit, runIdempotentWrite, usesWriteOutcomes } from './write-outcome-runtime.js';
+import { createWriteOutcomeStore } from './write-outcome-store.js';
+import { resolveIdempotencyKey, tenantNamespace } from './idempotency.js';
 
 /**
  * Stable error for an action attempted from an invalid lifecycle state.
@@ -336,6 +338,33 @@ async function runPostgresqlRecordAction(params, definition, validatedInput, aut
   const { database, events, services, modules, module, action, recordId, actor } = params;
   const now = params.now ?? nowIso;
   const service = modules.get(module).service;
+  const writeSpec = {
+    tenantId: params.tenantId ?? database.tenantId,
+    idempotencyKey: usesWriteOutcomes(database)
+      ? resolveIdempotencyKey(params.idempotencyKey, now)
+      : params.idempotencyKey,
+    identity: params.identity,
+    actor,
+    operation: `${module}.${action}`,
+    target: recordId,
+    contractVersion: String(definition.actionContract ?? 1),
+    input: { recordId, input: validatedInput },
+    now,
+  };
+  if (usesWriteOutcomes(database)) {
+    const existing = await createWriteOutcomeStore(database).lookup(
+      tenantNamespace(writeSpec.tenantId),
+      resolveIdempotencyKey(writeSpec.idempotencyKey, now),
+      'root',
+    );
+    if (existing) {
+      const outcome = await runIdempotentWrite(database, events, writeSpec, async () => existing.response);
+      return {
+        ok: true, module, action, recordId, runId: outcome.runId, result: outcome.result,
+        idempotencyKey: outcome.idempotencyKey, replayed: true,
+      };
+    }
+  }
   /** @type {any} */
   let prepared;
   if (typeof definition.prepare === 'function') {
@@ -354,17 +383,7 @@ async function runPostgresqlRecordAction(params, definition, validatedInput, aut
   }
 
   try {
-    const outcome = await runIdempotentWrite(database, events, {
-      tenantId: params.tenantId ?? database.tenantId,
-      idempotencyKey: params.idempotencyKey,
-      identity: params.identity,
-      actor,
-      operation: `${module}.${action}`,
-      target: recordId,
-      contractVersion: String(definition.actionContract ?? 1),
-      input: { recordId, input: validatedInput },
-      now,
-    }, async ({ step }) => {
+    const outcome = await runIdempotentWrite(database, events, writeSpec, async ({ step }) => {
       const record = await Promise.resolve(service.get(recordId));
       if (Array.isArray(definition.fromStates) && !definition.fromStates.includes(record[definition.stateField ?? 'status'])) {
         throw new InvalidStateError(

@@ -115,7 +115,10 @@ export async function runIdempotentWrite(database, events, spec, execute) {
       operation, target, contractVersion, input: spec.input ?? null,
     }),
   };
-  const runId = deterministicUuid(`${tenantNs}\0${rawKey}\0${phase}\0run`);
+  const runId = typeof spec.runId === 'string' && spec.runId
+    ? spec.runId
+    : deterministicUuid(`${tenantNs}\0${rawKey}\0${phase}\0run`);
+  const settleTrace = spec.settleTrace !== false;
   const providerKey = providerIdempotencyKey(tenantNs, rawKey);
   const store = createWriteOutcomeStore(database);
   const seed = `${tenantNs}\0${rawKey}\0${phase}`;
@@ -124,7 +127,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
     const existing = await store.lookup(tenantNs, rawKey, phase);
     if (existing) {
       assertOutcomeScope(existing, scope);
-      await promoteAndFinalize(database, events, store, existing);
+      await promoteAndFinalize(database, events, store, existing, { settleTrace });
       return {
         replayed: true,
         idempotencyKey: rawKey,
@@ -165,7 +168,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
             const traceIntent = {
               runId,
               workflowName: operation,
-              status: 'completed',
+              status: settleTrace ? 'completed' : 'running',
               input: encodeJsonSafe({
                 target,
                 input: spec.input ?? null,
@@ -215,7 +218,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
           } else {
             outbox.discard();
           }
-          await finalizePendingTrace(database, committed.traceIntent);
+          if (settleTrace) await finalizePendingTrace(database, committed.traceIntent);
         } else {
           outbox.discard();
         }
@@ -238,7 +241,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
           const winner = await store.lookup(tenantNs, rawKey, phase);
           if (winner) {
             assertOutcomeScope(winner, scope);
-            await promoteAndFinalize(database, events, store, winner);
+            await promoteAndFinalize(database, events, store, winner, { settleTrace });
             return {
               replayed: true,
               idempotencyKey: rawKey,
@@ -335,7 +338,7 @@ export async function reconcileWriteOutcome(database, events, spec) {
  * @param {ReturnType<typeof createWriteOutcomeStore>} store
  * @param {any} outcome
  */
-async function promoteAndFinalize(database, events, store, outcome) {
+async function promoteAndFinalize(database, events, store, outcome, options = {}) {
   const won = await store.tryPromoteEvents(outcome);
   if (won) {
     for (const entry of outcome.eventIntents ?? []) {
@@ -350,7 +353,7 @@ async function promoteAndFinalize(database, events, store, outcome) {
       }
     }
   }
-  await finalizePendingTrace(database, outcome.traceIntent);
+  if (options.settleTrace !== false) await finalizePendingTrace(database, outcome.traceIntent);
 }
 
 /**

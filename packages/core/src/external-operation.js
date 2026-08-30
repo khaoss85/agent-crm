@@ -5,6 +5,7 @@ import { AppError, normalizeError } from './errors.js';
 import { nowIso } from './time.js';
 import { writeTrace, sanitizeJsonSafe } from './action-runtime.js';
 import { requestFingerprint, resolveIdempotencyKey, tenantNamespace } from './idempotency.js';
+import { deterministicUuid } from './write-ids.js';
 import {
   isUnknownCommit,
   runIdempotentWrite,
@@ -269,14 +270,22 @@ async function runExternalOperationV2(operation) {
   const provider = operation.provider;
   if (usesWriteOutcomes(database)) assertProviderV2(provider);
 
+  const rawKey = usesWriteOutcomes(database)
+    ? resolveIdempotencyKey(operation.idempotencyKey, now)
+    : operation.idempotencyKey;
+  const tenantId = operation.tenantId ?? database.tenantId;
+  const sharedRunId = usesWriteOutcomes(database)
+    ? deterministicUuid(`${tenantNamespace(tenantId)}\0${rawKey}\0run`)
+    : undefined;
   const specBase = {
-    tenantId: operation.tenantId ?? database.tenantId,
-    idempotencyKey: operation.idempotencyKey,
+    tenantId,
+    idempotencyKey: rawKey,
     identity: operation.identity,
     actor,
     contractVersion: 'external.v2',
     input,
     now,
+    runId: sharedRunId,
   };
 
   const intentOutcome = await runIdempotentWrite(database, events, {
@@ -284,6 +293,7 @@ async function runExternalOperationV2(operation) {
     operation: `${name}.intent`,
     target: 'intent',
     phase: 'intent',
+    settleTrace: false,
   }, async ({ step, runId, idempotencyKey, providerIdempotencyKey }) => {
     const value = freezePhaseValue(await operation.intent({
       input, actor, now, step, runId, idempotencyKey, providerIdempotencyKey,
@@ -338,6 +348,7 @@ async function runExternalOperationV2(operation) {
     operation: `${name}.finalize`,
     target: 'finalize',
     phase: 'finalize',
+    settleTrace: true,
   }, async ({ step, runId, idempotencyKey, providerIdempotencyKey }) => freezePhaseValue(
     await operation.finalize({
       input, actor, now, step, runId, idempotencyKey, providerIdempotencyKey,
@@ -376,13 +387,24 @@ async function obtainProviderReceipt(args) {
     intentValue, input, actor, now, external,
   } = args;
   const store = usesWriteOutcomes(database) ? createWriteOutcomeStore(database) : null;
+  const rawKey = specBase.idempotencyKey;
   if (store) {
-    const stored = await store.lookup(
-      tenantNamespace(specBase.tenantId),
-      resolveIdempotencyKey(specBase.idempotencyKey, now),
-      'receipt',
-    );
+    const stored = await store.lookup(tenantNamespace(specBase.tenantId), rawKey, 'receipt');
     if (stored) return stored.response;
+    const attempted = await store.lookup(tenantNamespace(specBase.tenantId), rawKey, 'call');
+    if (attempted) {
+      if (provider && typeof provider.reconcile === 'function') {
+        const remote = await provider.reconcile({
+          idempotencyKey: providerKey,
+          intent: intentValue,
+        });
+        if (remote && remote.status !== 'absent' && remote !== null) {
+          assertProviderReceipt(remote, { providerKey, operation: name, requestFingerprint: requestFp });
+          return persistReceipt(args, freezePhaseValue(remote));
+        }
+      }
+      throw unknownCommitError(rawKey);
+    }
   }
 
   if (provider && typeof provider.reconcile === 'function') {
@@ -398,6 +420,16 @@ async function obtainProviderReceipt(args) {
 
   if (typeof external !== 'function' && !(provider && typeof provider.call === 'function')) {
     return null;
+  }
+
+  if (usesWriteOutcomes(database)) {
+    await runIdempotentWrite(database, events, {
+      ...specBase,
+      operation: `${name}.call`,
+      target: 'call',
+      phase: 'call',
+      settleTrace: false,
+    }, async () => ({ attempted: true, providerIdempotencyKey: providerKey }));
   }
 
   const timeoutMs = Number.isSafeInteger(args.specBase.timeoutMs) && args.specBase.timeoutMs > 0
@@ -445,6 +477,7 @@ async function persistReceipt(args, receipt) {
       operation: `${name}.receipt`,
       target: 'receipt',
       phase: 'receipt',
+      settleTrace: false,
     }, async () => receipt);
     return outcome.result;
   } catch (error) {

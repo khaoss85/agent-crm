@@ -15,7 +15,7 @@ import { isSyncStorage, storageApi } from './storage-runtime.js';
  */
 
 export const WRITE_OUTCOMES = 'write_outcomes';
-export const WRITE_OUTCOME_PHASES = Object.freeze(['root', 'intent', 'receipt', 'finalize']);
+export const WRITE_OUTCOME_PHASES = Object.freeze(['root', 'intent', 'call', 'receipt', 'finalize']);
 
 export const WRITE_OUTCOME_DDL = `
 CREATE TABLE IF NOT EXISTS write_outcomes (
