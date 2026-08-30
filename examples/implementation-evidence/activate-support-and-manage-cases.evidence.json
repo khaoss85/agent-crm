@@ -23,7 +23,7 @@
         {
           "kind": "source.artifact",
           "path": "packages/service/src/index.js",
-          "sha256": "10d416e2d054c48ea3cd6bdaad4c96db0e312a26dff980d41c42f075321c5082"
+          "sha256": "a9db6da8fb7f818f1e0584e46752d3a41501af5bbb5c56e1aadfc75bcf98324a"
         }
       ]
     },
@@ -220,7 +220,7 @@
         }
       ],
       "partial": {
-        "reason": "\"never claims to be current\" is observed: the evaluation states its basis and states that no contractual breach was determined. \"Names the instant it used\" is not — the run publishes the state an evaluation recorded, not the timestamp field it recorded it against"
+        "reason": "\"never claims to be current\" is observed: the evaluation states its basis and states that no contractual breach was determined. \"Names the instant it used\" is not \u2014 the run publishes the state an evaluation recorded, not the timestamp field it recorded it against"
       }
     },
     {
@@ -262,7 +262,7 @@
   "limitations": [
     {
       "code": "PLAN_TARGETS_A_STARTER_NOT_THIS_REPOSITORY",
-      "message": "this plan was written against the application the b2b starter composes, which is not the composition this repository's own root has. The digest it pins is reproduced here by the service scenario, which composes exactly that application — so every fact about it is cited where it was observed, and no application fact is cited from this repository's AX1 report"
+      "message": "this plan was written against the application the b2b starter composes, which is not the composition this repository's own root has. The digest it pins is reproduced here by the service scenario, which composes exactly that application \u2014 so every fact about it is cited where it was observed, and no application fact is cited from this repository's AX1 report"
     },
     {
       "code": "SERVICE_COVERAGE_IS_NOT_A_CONTRACT",

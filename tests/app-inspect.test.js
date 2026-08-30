@@ -498,7 +498,9 @@ test('existing surfaces are untouched by AX1', async (t) => {
   const report = JSON.parse(validate.stdout);
   assert.equal(report.command, 'package:inspect');
   assert.equal(report.ok, true);
-  assert.deepEqual(Object.keys(report).sort(), ['command', 'metadata', 'ok', 'package', 'packages', 'path', 'privateImports', 'problems']);
+  assert.deepEqual(Object.keys(report).sort(), [
+    'command', 'graphs', 'metadata', 'ok', 'package', 'packages', 'path', 'privateImports', 'problems', 'selectedGraph',
+  ]);
   assert.equal(report.path, 'packages/delivery', 'still a repository-relative path');
 });
 
