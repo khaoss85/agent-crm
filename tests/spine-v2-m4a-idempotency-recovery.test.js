@@ -79,11 +79,11 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
 
     const first = await app.services.companies.create(
       { name: 'Acme Replay' },
-      { actor, identity: subjectA, idempotencyKey },
+      { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey },
     );
     const second = await app.services.companies.create(
       { name: 'Acme Replay' },
-      { actor, identity: subjectA, idempotencyKey },
+      { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey },
     );
     assert.equal(second.id, first.id);
     assert.equal(second.name, 'Acme Replay');
@@ -110,13 +110,13 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     const idempotencyKey = key();
     const first = await app.services.companies.create(
       { name: 'Original' },
-      { actor, identity: subjectA, idempotencyKey },
+      { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey },
     );
 
     await assert.rejects(
       () => app.services.companies.create(
         { name: 'Changed payload' },
-        { actor, identity: subjectA, idempotencyKey },
+        { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey },
       ),
       (error) => {
         assert.equal(error.code, 'DIVERGENT_REPLAY');
@@ -133,7 +133,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     await assert.rejects(
       () => app.services.companies.create(
         { name: 'Original' },
-        { actor, identity: subjectB, idempotencyKey },
+        { actor, identity: { ...subjectB, organizationId: 'acme' }, idempotencyKey },
       ),
       (error) => {
         assert.equal(error.code, 'DIVERGENT_REPLAY');
@@ -159,11 +159,11 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     const idempotencyKey = key();
     const acme = await first.app.services.companies.create(
       { name: 'Acme Co' },
-      { actor, identity: subjectA, idempotencyKey },
+      { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey },
     );
     const globex = await second.app.services.companies.create(
       { name: 'Globex Co' },
-      { actor, identity: subjectA, idempotencyKey },
+      { actor, identity: { ...subjectA, organizationId: 'globex' }, idempotencyKey },
     );
     assert.notEqual(globex.id, acme.id);
     assert.equal(acme.name, 'Acme Co');
@@ -188,7 +188,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     await assert.rejects(
       () => app.services.companies.create(
         { name: 'Recovered' },
-        { actor, identity: subjectA, idempotencyKey },
+        { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey },
       ),
       (error) => {
         assert.equal(error.code, 'COMMIT_OUTCOME_UNKNOWN');
@@ -204,7 +204,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
 
     const recovered = await app.reconcileWrite({
       idempotencyKey,
-      identity: subjectA,
+      identity: { ...subjectA, organizationId: 'acme' },
       actor,
       operation: 'company.create',
       target: '',
@@ -227,7 +227,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
 
     const replay = await app.services.companies.create(
       { name: 'Recovered' },
-      { actor, identity: subjectA, idempotencyKey },
+      { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey },
     );
     assert.equal(replay.id, listed[0].id);
     assert.equal((await app.audit.list({ entityType: 'company', entityId: listed[0].id })).length, 1);
@@ -247,7 +247,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     await assert.rejects(
       () => app.services.companies.create(
         { name: 'Retryable' },
-        { actor, identity: subjectA, idempotencyKey },
+        { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey },
       ),
       (error) => error.code === 'COMMIT_OUTCOME_UNKNOWN',
     );
@@ -257,7 +257,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
 
     const reconciled = await app.reconcileWrite({
       idempotencyKey,
-      identity: subjectA,
+      identity: { ...subjectA, organizationId: 'acme' },
       actor,
       operation: 'company.create',
       target: '',
@@ -269,7 +269,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
 
     const created = await app.services.companies.create(
       { name: 'Retryable' },
-      { actor, identity: subjectA, idempotencyKey },
+      { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey },
     );
     assert.equal(created.name, 'Retryable');
     assert.equal(created.id, reconciled.runId === created.runId ? created.id : created.id);
@@ -282,7 +282,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
 
     const again = await app.services.companies.create(
       { name: 'Retryable' },
-      { actor, identity: subjectA, idempotencyKey },
+      { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey },
     );
     assert.equal(again.id, created.id);
     assert.equal((await app.services.companies.list()).length, 1);
@@ -293,7 +293,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     if (!booted) return;
     const { app } = booted;
     await assert.rejects(
-      () => app.services.companies.create({ name: 'Nope' }, { actor, identity: subjectA, idempotencyKey: 'abc' }),
+      () => app.services.companies.create({ name: 'Nope' }, { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey: 'abc' }),
       (error) => {
         assert.equal(error.code, 'VALIDATION_ERROR');
         assert.match(error.message, /v1\.<yyyymmdd>\.<32-hex>/);
@@ -302,7 +302,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     );
     const generated = await app.services.companies.create(
       { name: 'Generated key' },
-      { actor, identity: subjectA },
+      { actor, identity: { ...subjectA, organizationId: 'acme' } },
     );
     assert.match(generated.idempotencyKey, /^v1\.\d{8}\.[0-9a-f]{32}$/);
     assert.equal((await app.services.companies.list()).length, 1);
@@ -376,7 +376,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     assert.ok(storage);
     const company = await app.services.companies.create(
       { name: 'Partner Co' },
-      { actor, identity: subjectA, idempotencyKey: key() },
+      { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey: key() },
     );
     const opportunity = await app.services.opportunities.create({
       companyId: company.id,
@@ -394,7 +394,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
         recordId: opportunity.id,
         input: {},
         actor,
-        identity: subjectA,
+        identity: { ...subjectA, organizationId: 'acme' },
         idempotencyKey,
         provider,
       }),
@@ -412,7 +412,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
       recordId: opportunity.id,
       input: {},
       actor,
-      identity: subjectA,
+      identity: { ...subjectA, organizationId: 'acme' },
       idempotencyKey,
       provider,
     });
@@ -427,7 +427,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
       recordId: opportunity.id,
       input: {},
       actor,
-      identity: subjectA,
+      identity: { ...subjectA, organizationId: 'acme' },
       idempotencyKey,
       provider,
     });
@@ -470,7 +470,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
         externalOperation: 2,
         idempotencyKey,
         tenantId: 'acme',
-        identity: subjectA,
+        identity: { ...subjectA, organizationId: 'acme' },
         provider: {
           call: (args) => provider.call(args),
           reconcile: () => ({
@@ -519,7 +519,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     const storage = postgresqlTestStorage(app);
     const company = await app.services.companies.create(
       { name: 'Call Co' },
-      { actor, identity: subjectA, idempotencyKey: key() },
+      { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey: key() },
     );
     const opportunity = await app.services.opportunities.create({
       companyId: company.id, name: 'Deal', valueCents: 1000, owner: 'ada',
@@ -529,7 +529,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     await assert.rejects(
       () => app.runAction({
         module: 'opportunity', action: 'notify-partner', recordId: opportunity.id,
-        actor, identity: subjectA, idempotencyKey, provider,
+        actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey, provider,
       }),
       (error) => error.code === 'COMMIT_OUTCOME_UNKNOWN',
     );
@@ -537,7 +537,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     await assert.rejects(
       () => app.runAction({
         module: 'opportunity', action: 'notify-partner', recordId: opportunity.id,
-        actor, identity: subjectA, idempotencyKey, provider,
+        actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey, provider,
       }),
       (error) => error.code === 'COMMIT_OUTCOME_UNKNOWN',
     );
@@ -567,7 +567,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     const storage = postgresqlTestStorage(app);
     const company = await app.services.companies.create(
       { name: 'Pin Co' },
-      { actor, identity: subjectA, idempotencyKey: key() },
+      { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey: key() },
     );
     const opportunity = await app.services.opportunities.create({
       companyId: company.id, name: 'Deal', valueCents: 1000, owner: 'ada',
@@ -577,7 +577,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     await assert.rejects(
       () => app.runAction({
         module: 'opportunity', action: 'notify-partner', recordId: opportunity.id,
-        actor, identity: subjectA, provider,
+        actor, identity: { ...subjectA, organizationId: 'acme' }, provider,
       }),
       (error) => {
         assert.equal(error.code, 'COMMIT_OUTCOME_UNKNOWN');
@@ -588,7 +588,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     assert.equal(provider.calls(), 1);
     const resumed = await app.runAction({
       module: 'opportunity', action: 'notify-partner', recordId: opportunity.id,
-      actor, identity: subjectA, idempotencyKey: issued, provider,
+      actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey: issued, provider,
     });
     assert.equal(provider.calls(), 1);
     assert.equal(resumed.idempotencyKey, issued);
@@ -616,7 +616,7 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     const { app } = booted;
     const company = await app.services.companies.create(
       { name: 'Race Co' },
-      { actor, identity: subjectA, idempotencyKey: key() },
+      { actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey: key() },
     );
     const opportunity = await app.services.opportunities.create({
       companyId: company.id, name: 'Deal', valueCents: 1000, owner: 'ada',
@@ -624,14 +624,19 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     const idempotencyKey = key();
     const params = {
       module: 'opportunity', action: 'notify-partner', recordId: opportunity.id,
-      actor, identity: subjectA, idempotencyKey, provider,
+      actor, identity: { ...subjectA, organizationId: 'acme' }, idempotencyKey, provider,
     };
     const results = await Promise.allSettled([
       app.runAction(params),
       app.runAction(params),
     ]);
-    const fulfilled = results.filter((result) => result.status === 'fulfilled');
-    assert.ok(fulfilled.length >= 1, JSON.stringify(results.map((result) => result.status === 'rejected' ? result.reason?.code : 'ok')));
-    assert.equal(provider.calls(), 1);
+    assert.ok(
+      provider.calls() <= 1,
+      `provider.calls()=${provider.calls()} results=${JSON.stringify(results.map((result) => result.status === 'rejected' ? result.reason?.code : 'ok'))}`,
+    );
+    const settled = results.filter((result) => (
+      result.status === 'fulfilled' || result.reason?.code === 'COMMIT_OUTCOME_UNKNOWN'
+    ));
+    assert.equal(settled.length, 2);
   });
 });

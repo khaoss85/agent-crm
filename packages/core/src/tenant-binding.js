@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ConflictError, ValidationError } from './errors.js';
+import { AppError, ConflictError, NotFoundError, ValidationError } from './errors.js';
 import { assertTenantId, bindTenantStorage } from './tenant-storage.js';
 
 /**
@@ -83,6 +83,30 @@ export function describePortableTenantBinding(input) {
     controlPlaneAdapter: input.controlPlaneAdapter,
     dataPlaneIsolation: input.dataPlaneIsolation,
   });
+}
+
+/**
+ * Bound-tenant identity check for one-tenant-per-instance. A foreign tenant is
+ * not found (404), never forbidden (403). The identifier is not echoed.
+ *
+ * @param {unknown} identity
+ * @param {string} boundTenantId
+ */
+export function assertIdentityTenant(identity, boundTenantId) {
+  if (identity == null) return;
+  if (typeof identity !== 'object' || Array.isArray(identity)) {
+    throw new NotFoundError('Organization', 'unknown');
+  }
+  const object = /** @type {Record<string, unknown>} */ (identity);
+  const organizationId = object.organizationId ?? object.tenantId;
+  if (organizationId == null || organizationId === '') {
+    throw new AppError('verified identity did not name a tenant', {
+      code: 'SPINE_TENANT_REQUIRED',
+      status: 401,
+    });
+  }
+  if (organizationId === boundTenantId) return;
+  throw new NotFoundError('Organization', 'unknown');
 }
 
 /** Loopback hosts a local-development runtime may bind to. */

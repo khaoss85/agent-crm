@@ -1,7 +1,7 @@
 // @ts-check
 
 import { startPostgresqlLifecycle, startSqliteLifecycle } from './async-lifecycle.js';
-import { describePortableTenantBinding } from '../../core/src/tenant-binding.js';
+import { assertIdentityTenant, describePortableTenantBinding } from '../../core/src/tenant-binding.js';
 import { runWithAffineStorage, storageMany, storageMaybeOne } from '../../core/src/storage-runtime.js';
 import { AuditLog } from '../../core/src/audit.js';
 import { EventBus } from '../../core/src/event-bus.js';
@@ -426,6 +426,13 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
     notifications: closeOver(notificationProvider, ['send', 'list']),
     runAction(params) {
       const { module, action, recordId, input, actor } = params;
+      if (options.boundTenantId) {
+        try {
+          assertIdentityTenant(params.identity, options.boundTenantId);
+        } catch (error) {
+          return Promise.reject(error);
+        }
+      }
       return runRecordAction({
         database: handle,
         events,
@@ -467,6 +474,7 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
     schema: CRM_SCHEMA,
     config,
     health() {
+      if (typeof options.health === 'function') return options.health();
       const adapter = storage?.sync ? 'sqlite' : 'postgresql';
       const descriptor = Object.freeze({ adapter, available: true });
       return Object.freeze({
@@ -550,6 +558,12 @@ export async function startPortableSqliteApp(options = {}) {
  *   signatureTimeoutMs?: number,
  *   listenMode?: string,
  *   faultInject?: string,
+ *   now?: () => number,
+ *   leaseTtlMs?: number,
+ *   queryDeadlineMs?: number,
+ *   acquisitionDeadlineMs?: number,
+ *   rebind?: unknown,
+ *   promoteClone?: unknown,
  * }} options
  */
 export async function startPortablePostgresqlApp(options) {
@@ -562,7 +576,21 @@ export async function startPortablePostgresqlApp(options) {
     moduleMigrations: options.moduleMigrations,
     clock: options.clock,
     faultInject: options.faultInject,
-    assemble: ({ accepted, storage }) => assemblePortableGraph({ accepted, storage, options }),
+    now: options.now,
+    leaseTtlMs: options.leaseTtlMs,
+    queryDeadlineMs: options.queryDeadlineMs,
+    acquisitionDeadlineMs: options.acquisitionDeadlineMs,
+    rebind: options.rebind,
+    promoteClone: options.promoteClone,
+    assemble: ({ accepted, storage, bootstrap }) => assemblePortableGraph({
+      accepted,
+      storage,
+      options: {
+        ...options,
+        boundTenantId: options.tenantId,
+        health: () => bootstrap.health(),
+      },
+    }),
   });
   const graph = lifecycle.assembled;
   const facade = Object.freeze({

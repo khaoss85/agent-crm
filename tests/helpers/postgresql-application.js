@@ -27,9 +27,10 @@ function safeIdent(prefix) {
  * Isolated control and data PostgreSQL databases for application tests.
  *
  * @param {import('node:test').TestContext} t
- * @returns {Promise<null | { control: object, data: object }>}
+ * @param {{ dataCount?: number }} [options]
+ * @returns {Promise<null | { control: object, data: object, dataPlanes: object[] }>}
  */
-export async function openIsolatedPostgresqlPlanes(t) {
+export async function openIsolatedPostgresqlPlanes(t, options = {}) {
   const admin = new Client({ connectionString: PG_TEST_URL, connectionTimeoutMillis: 2000 });
   try {
     await admin.connect();
@@ -44,20 +45,25 @@ export async function openIsolatedPostgresqlPlanes(t) {
     return null;
   }
 
+  const dataCount = Number.isInteger(options.dataCount) && options.dataCount > 0 ? options.dataCount : 1;
   const base = parseUrl(PG_TEST_URL);
   const controlName = safeIdent('am3cc');
-  const dataName = safeIdent('am3cd');
+  const dataNames = Array.from({ length: dataCount }, () => safeIdent('am3cd'));
   await admin.query(`CREATE DATABASE ${controlName}`);
-  await admin.query(`CREATE DATABASE ${dataName}`);
+  for (const dataName of dataNames) {
+    await admin.query(`CREATE DATABASE ${dataName}`);
+  }
 
   t.after(async () => {
     try {
       await admin.query(
         'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ANY($1) AND pid <> pg_backend_pid()',
-        [[controlName, dataName]],
+        [[controlName, ...dataNames]],
       );
       await admin.query(`DROP DATABASE IF EXISTS ${controlName}`);
-      await admin.query(`DROP DATABASE IF EXISTS ${dataName}`);
+      for (const dataName of dataNames) {
+        await admin.query(`DROP DATABASE IF EXISTS ${dataName}`);
+      }
     } catch {
       /* teardown is best-effort */
     } finally {
@@ -65,9 +71,11 @@ export async function openIsolatedPostgresqlPlanes(t) {
     }
   });
 
+  const dataPlanes = dataNames.map((database) => ({ ...base, database }));
   return {
     control: { ...base, database: controlName },
-    data: { ...base, database: dataName },
+    data: dataPlanes[0],
+    dataPlanes,
   };
 }
 
@@ -88,22 +96,34 @@ CREATE TABLE IF NOT EXISTS "accordo"."gadgets" (
  * @param {object} [overrides]
  */
 export async function bootPostgresqlApp(t, overrides = {}) {
-  const planes = await openIsolatedPostgresqlPlanes(t);
+  const planes = overrides.planes ?? await openIsolatedPostgresqlPlanes(t);
   if (!planes) return null;
   const tenantId = overrides.tenantId ?? 'acme';
+  const data = overrides.data ?? planes.data;
   const identityVerifier = overrides.identityVerifier ?? createTestVerifier({ tenantId });
   const app = await createAccordoAppAsync({
     adapter: 'postgresql',
-    testHarness: { loopback: true, control: planes.control, data: planes.data },
+    testHarness: {
+      loopback: true,
+      control: planes.control,
+      data,
+      queryDeadlineMs: overrides.queryDeadlineMs,
+      leaseTtlMs: overrides.leaseTtlMs,
+    },
     spine: { mode: 'local-development', tenant: { id: tenantId } },
     identityVerifier,
     selected: overrides.selected,
     moduleMigrations: overrides.moduleMigrations ?? [GADGET_MIGRATION],
     clock: overrides.clock,
     faultInject: overrides.faultInject,
+    now: overrides.now,
+    leaseTtlMs: overrides.leaseTtlMs,
+    queryDeadlineMs: overrides.queryDeadlineMs,
+    rebind: overrides.rebind,
+    promoteClone: overrides.promoteClone,
   });
   t.after(() => app.close());
-  return { app, planes, tenantId };
+  return { app, planes, tenantId, data };
 }
 
 export function assertNoSecrets(value, extras = []) {
