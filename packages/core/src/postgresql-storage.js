@@ -359,11 +359,15 @@ export function createPostgresqlStorage(pool, options = {}) {
     try {
       await queryOn(client, 'COMMIT');
     } catch (error) {
+      destroyTracked(client);
+      const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+      if (bind && bind.client === client) bind.destroyed = true;
       const mapped = error instanceof AppError ? error : sanitizePgError(error);
-      if (mapped.code === 'STORAGE_TIMEOUT' || mapped.code === 'STORAGE_UNAVAILABLE') {
-        destroyTracked(client);
-        const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
-        if (bind && bind.client === client) bind.destroyed = true;
+      const lost = mapped.code === 'STORAGE_TIMEOUT'
+        || mapped.code === 'STORAGE_UNAVAILABLE'
+        || mapped.code === 'STORAGE_CLIENT_AFFINITY'
+        || connectionLost(error);
+      if (lost) {
         throw new AppError('PostgreSQL commit outcome is unknown', {
           code: 'COMMIT_OUTCOME_UNKNOWN', status: 503,
         });

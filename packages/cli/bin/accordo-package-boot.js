@@ -69,9 +69,32 @@ function describe(app, name) {
 
 let app = null;
 try {
-  const { createAccordoApp } = await import(pathToFileURL(join(rootDir, 'packages/app/src/index.js')).href);
+  const [{ createAccordoApp, createAccordoAppAsync }, { generatedDomains }] = await Promise.all([
+    import(pathToFileURL(join(rootDir, 'packages/app/src/index.js')).href),
+    import(pathToFileURL(join(rootDir, 'packages/domains/generated/index.js')).href),
+  ]);
+  const clock = () => '2026-01-01T00:00:00.000Z';
+  const selectedContract = (generatedDomains ?? []).some((pkg) => pkg?.packageContract === 2) ? 2 : 1;
   // A fixed clock so nothing in the report can derive from the wall clock.
-  app = createAccordoApp({ dbPath, clock: () => '2026-01-01T00:00:00.000Z' });
+  // Contract-2 graphs boot on the portable factory; v1 stays on createAccordoApp.
+  if (selectedContract === 2) {
+    const modules = [...new Set((generatedDomains ?? []).flatMap((pkg) => [
+      ...(pkg.resources ?? []),
+      ...(pkg.actions ?? []).map((action) => action.module),
+    ]))].filter((name) => typeof name === 'string').sort();
+    app = await createAccordoAppAsync({
+      dbPath,
+      clock,
+      selected: {
+        packageContract: 2,
+        packages: generatedDomains,
+        actions: [],
+        modules,
+      },
+    });
+  } else {
+    app = createAccordoApp({ dbPath, clock });
+  }
 
   const registry = app.domains;
   const composed = typeof registry?.names === 'function' ? [...registry.names()].sort() : [];
@@ -143,5 +166,5 @@ try {
   })}\n`);
   process.exitCode = 1;
 } finally {
-  try { app?.close(); } catch { /* a failed boot has nothing to close */ }
+  try { await app?.close(); } catch { /* a failed boot has nothing to close */ }
 }
