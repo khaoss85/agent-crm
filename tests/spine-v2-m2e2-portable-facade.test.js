@@ -20,6 +20,7 @@ const v2Empty = Object.freeze({
 });
 
 const FACADE_KEYS = Object.freeze([
+  'acknowledgeWrite',
   'actions',
   'audit',
   'close',
@@ -27,6 +28,8 @@ const FACADE_KEYS = Object.freeze([
   'domains',
   'events',
   'health',
+  'listUnacknowledgedWrites',
+  'lookupWrite',
   'metrics',
   'modules',
   'notifications',
@@ -35,6 +38,7 @@ const FACADE_KEYS = Object.freeze([
   'packageContract',
   'pipelines',
   'providers',
+  'reconcileWrite',
   'runAction',
   'schema',
   'services',

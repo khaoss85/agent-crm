@@ -13,6 +13,7 @@ import { createAccordoApp, createAccordoAppAsync } from '../packages/app/src/ind
 import { createPartnerScorecardPackage } from '../examples/custom-packages/partner-scorecard/src/index.js';
 
 const FACADE_KEYS = Object.freeze([
+  'acknowledgeWrite',
   'actions',
   'audit',
   'close',
@@ -20,6 +21,8 @@ const FACADE_KEYS = Object.freeze([
   'domains',
   'events',
   'health',
+  'listUnacknowledgedWrites',
+  'lookupWrite',
   'metrics',
   'modules',
   'notifications',
@@ -28,6 +31,7 @@ const FACADE_KEYS = Object.freeze([
   'packageContract',
   'pipelines',
   'providers',
+  'reconcileWrite',
   'runAction',
   'schema',
   'services',
