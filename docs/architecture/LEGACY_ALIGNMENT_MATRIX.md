@@ -141,7 +141,7 @@ Closing milestone for every `deferred` row: package-module state adoption before
 
 ### PostgreSQL write-outcome idempotency and external-operation v2 (Production Spine v2 M4A)
 
-Horizontal runtime capability: every PostgreSQL write is keyed, stored as a bounded outcome in the same SERIALIZABLE transaction, and recovered after `COMMIT_OUTCOME_UNKNOWN` by tenant+raw-key lookup. External-operation v2 adds durable intent/finalize phase keys, a stable provider idempotency key and read-only reconcile; PostgreSQL composition refuses `externalOperation: 1`. SQLite legacy calls remain compatible when the key is omitted. HTTP/SDK/CLI transport of the key, leases and TLS bind remain M4B/M4C. Not shared-database tenancy and not production ready.
+Horizontal runtime capability: every PostgreSQL write is keyed, stored as a bounded outcome in the same SERIALIZABLE transaction, and recovered after `COMMIT_OUTCOME_UNKNOWN` by tenant+raw-key lookup. External-operation v2 adds durable intent/finalize phase keys, a stable provider idempotency key and read-only reconcile; PostgreSQL composition refuses `externalOperation: 1`. SQLite legacy calls remain compatible when the key is omitted. HTTP/SDK/Admin/CLI now transport the key (M4C). Leases and tenant binding are M4B. Not shared-database tenancy and not production ready.
 
 | Domain | Status | Reason |
 |---|---|---|
@@ -158,7 +158,26 @@ Horizontal runtime capability: every PostgreSQL write is keyed, stored as a boun
 | Customer Data | `deferred` | package persistence is outside the M4A kernel envelope |
 | Custom-package fixture | `deferred` | customer packages remain SQLite/v1 until their authors declare external-operation v2 |
 
-Closing milestone for every `deferred` row: dual-graph PostgreSQL selection with external-operation v2 (M4B/domain adoption), not a silent rewrite of bundled v1 graphs in this PR.
+Closing milestone for every `deferred` row: dual-graph PostgreSQL selection with external-operation v2 (domain adoption), not a silent rewrite of bundled v1 graphs in this PR.
+
+### Tenant binding v2, leases and HTTP/SDK/Admin/CLI (Production Spine v2 M4B–M4C)
+
+Horizontal runtime capability: one tenant per dedicated PostgreSQL data plane; writer leases with generation fencing; `Idempotency-Key` on HTTP/SDK; Admin form/action controller owns the root key. Clone/expiry does not auto-promote a writer. Not shared-database row tenancy and not production ready.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel HTTP/SDK company writes and workflow stage/approval carry keys on PostgreSQL; Contact/Opportunity standalone creates are not independently keyed |
+| Pipeline | `not_applicable` | pipeline composition does not own write outcomes |
+| Lead Intelligence | `deferred` | no opportunistic domain refactor to green this cell |
+| Commercial Operations | `deferred` | no opportunistic domain refactor to green this cell |
+| Signature & Order | `deferred` | no opportunistic domain refactor to green this cell |
+| Contract Activation | `deferred` | no opportunistic domain refactor to green this cell |
+| Delivery | `deferred` | no opportunistic domain refactor to green this cell |
+| Service | `deferred` | no opportunistic domain refactor to green this cell |
+| Work | `deferred` | no opportunistic domain refactor to green this cell |
+| Lifecycle | `deferred` | no opportunistic domain refactor to green this cell |
+| Customer Data | `deferred` | no opportunistic domain refactor to green this cell |
+| Custom-package fixture | `deferred` | customer packages remain SQLite/v1 until their authors declare portable v2 |
 
 ### Identity-verifier pre-connect contract v2 assessment (Production Spine v2 M2F)
 

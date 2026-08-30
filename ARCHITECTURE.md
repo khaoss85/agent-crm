@@ -26,7 +26,7 @@ Workflows and policies
         ↓
 CRM module services
         ↓
-SQLite adapter
+SQLite adapter or dedicated-database PostgreSQL adapter
 
 MCP + CLI sit beside the application and invoke the same public layer.
 Trace + audit observe every controlled mutation.

@@ -164,7 +164,7 @@ them:
 | `CI_EVIDENCE_NOT_INFERRED` | no CI, browser-smoke or benchmark result is read |
 | `SECRETS_NOT_INSPECTED` | no secret, credential or environment value is read |
 | `PROVIDER_HEALTH_UNKNOWN` | a composed provider is not a reachable one |
-| `PRODUCTION_SPINE_ABSENT` | Production Spine v1 (ADR-038) adds verified identity, organizations, memberships, authorization and a database-per-tenant boundary, but none of it is reportable from *source*: the mode, the verifier and the memberships are runtime facts. PostgreSQL and shared-database tenancy, durable jobs, secrets, backups and deployment remain absent |
+| `PRODUCTION_SPINE_ABSENT` | Production Spine v1 (ADR-038) adds verified identity, organizations, memberships, authorization and a database-per-tenant boundary, but none of it is reportable from *source*: the mode, the verifier and the memberships are runtime facts. Dedicated-database PostgreSQL composition exists at runtime; shared-database row tenancy, durable jobs, secrets, backups and Cloud deployment remain absent |
 | `ADMIN_EXTENSIONS_UNSUPPORTED` | the framework has no seam for package Admin extensions, so the list is empty for *every* project |
 | `DATA_QUALITY_UNKNOWN` | source-only inspection cannot judge data |
 | `RUNTIME_STATE_UNKNOWN` | nothing here reports what is running or deployed |
