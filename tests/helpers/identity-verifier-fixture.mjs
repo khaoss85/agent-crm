@@ -15,6 +15,13 @@ function resourceFor(plane) {
   };
 }
 
+export function testResource(label, plane = 'data') {
+  return {
+    resourceId: `${plane}-${label}`,
+    resourceFingerprint: fingerprint(`accordo.test.${plane}.${label}`),
+  };
+}
+
 /**
  * Checked-in test provider. Never holds production credentials.
  *
@@ -28,6 +35,8 @@ function resourceFor(plane) {
  *   wrongTenant?: boolean,
  *   wrongResource?: boolean,
  *   wrongMigration?: boolean,
+ *   dataResource?: { resourceId: string, resourceFingerprint: string },
+ *   controlResource?: { resourceId: string, resourceFingerprint: string },
  * }} [options]
  */
 export function createTestVerifier(options = {}) {
@@ -37,6 +46,8 @@ export function createTestVerifier(options = {}) {
   const seen = new Set();
 
   function discover(plane) {
+    if (plane === 'data' && options.dataResource) return options.dataResource;
+    if (plane === 'control' && options.controlResource) return options.controlResource;
     return resourceFor(plane);
   }
 

@@ -218,6 +218,12 @@ export async function startSqliteLifecycle(options = {}) {
  *   moduleMigrations?: Array<{name: string, sql: string}>,
  *   clock?: () => string,
  *   faultInject?: string,
+ *   now?: () => number,
+ *   leaseTtlMs?: number,
+ *   queryDeadlineMs?: number,
+ *   acquisitionDeadlineMs?: number,
+ *   rebind?: unknown,
+ *   promoteClone?: unknown,
  *   assemble?: (ctx: { accepted: ReturnType<typeof preflightSelectedGraph>, storage: any, bootstrap: any }) => any,
  * }} options
  */
@@ -233,6 +239,12 @@ export async function startPostgresqlLifecycle(options) {
     moduleMigrations: options.moduleMigrations,
     clock: options.clock,
     faultInject: options.faultInject,
+    now: options.now,
+    leaseTtlMs: options.leaseTtlMs,
+    queryDeadlineMs: options.queryDeadlineMs,
+    acquisitionDeadlineMs: options.acquisitionDeadlineMs,
+    rebind: options.rebind,
+    promoteClone: options.promoteClone,
     selectedExtra: accepted.packages.map((pkg) => pkg.name),
   });
 

@@ -172,6 +172,7 @@ function loopbackEndpoint(endpoint) {
   if (!LOOPBACK.has(String(endpoint.host))) {
     throw bindingRequired();
   }
+  // search_path / options are never isolation inputs and are not forwarded.
   return Object.freeze({
     host: endpoint.host,
     port: endpoint.port,
@@ -179,6 +180,7 @@ function loopbackEndpoint(endpoint) {
     user: endpoint.user,
     password: endpoint.password,
     ssl: false,
+    acquisitionDeadlineMs: endpoint.acquisitionDeadlineMs,
   });
 }
 
@@ -202,6 +204,12 @@ function loopbackEndpoint(endpoint) {
  *   projectRoot?: string,
  *   listenMode?: string,
  *   faultInject?: string,
+ *   now?: () => number,
+ *   leaseTtlMs?: number,
+ *   queryDeadlineMs?: number,
+ *   acquisitionDeadlineMs?: number,
+ *   rebind?: unknown,
+ *   promoteClone?: unknown,
  * }} [options]
  */
 export async function createAccordoAppAsync(options = {}) {
@@ -234,6 +242,12 @@ export async function createAccordoAppAsync(options = {}) {
       catalogTimeoutMs: options.catalogTimeoutMs,
       signatureTimeoutMs: options.signatureTimeoutMs,
       faultInject: options.faultInject,
+      now: options.now,
+      leaseTtlMs: options.leaseTtlMs,
+      queryDeadlineMs: options.queryDeadlineMs,
+      acquisitionDeadlineMs: options.acquisitionDeadlineMs,
+      rebind: options.rebind,
+      promoteClone: options.promoteClone,
     });
   }
 
@@ -251,6 +265,12 @@ export async function createAccordoAppAsync(options = {}) {
       catalogTimeoutMs: options.catalogTimeoutMs,
       signatureTimeoutMs: options.signatureTimeoutMs,
       faultInject: options.faultInject,
+      now: options.now,
+      leaseTtlMs: options.leaseTtlMs ?? options.testHarness.leaseTtlMs,
+      queryDeadlineMs: options.queryDeadlineMs ?? options.testHarness.queryDeadlineMs,
+      acquisitionDeadlineMs: options.acquisitionDeadlineMs ?? options.testHarness.acquisitionDeadlineMs,
+      rebind: options.rebind,
+      promoteClone: options.promoteClone,
     });
   }
 
