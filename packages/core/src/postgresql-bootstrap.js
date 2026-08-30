@@ -591,14 +591,22 @@ function assertSeparateEndpoints(control, data) {
   }
 }
 
-function describeWriterHealth(writerLease, now) {
+function describeWriterHealth(writerLease, now, closed = false) {
+  if (closed) {
+    return Object.freeze({
+      ok: true,
+      ready: false,
+      storage: Object.freeze({ adapter: 'postgresql', available: false }),
+      reason: 'WRITER_LEASE_RELEASED',
+    });
+  }
   const current = epochNow(now);
   const expiresAt = Date.parse(writerLease.expiresAt);
   const ready = Number.isFinite(expiresAt) && current < expiresAt;
   return Object.freeze({
     ok: true,
     ready,
-    storage: Object.freeze({ adapter: 'postgresql', available: true }),
+    storage: Object.freeze({ adapter: 'postgresql', available: ready }),
     ...(ready ? {} : { reason: 'WRITER_LEASE_EXPIRED' }),
   });
 }
@@ -728,6 +736,21 @@ export async function bootstrapPostgresqlApplication(options) {
         refuse('TENANT_BINDING_MISMATCH', 'the control plane already maps this tenant to a different data plane');
       }
 
+      const leaseInput = {
+        tenantId: options.tenantId,
+        resourceFingerprint: dataAttestation.data.resource.resourceFingerprint,
+        evidenceFingerprint: dataAttestation.data.evidence.evidenceFingerprint,
+        clock: options.clock,
+        now: options.now,
+        leaseTtlMs,
+      };
+      if (marker) {
+        writerLease = await acquireWriterLease(controlClient, {
+          ...leaseInput,
+          bindingUuid: marker.dataPlaneId,
+        });
+      }
+
       await exec(dataClient, `CREATE SCHEMA IF NOT EXISTS ${quotePostgresIdent(POSTGRES_APPLICATION_SCHEMA)}`);
       await ensureLedger(dataClient);
       await applyUnits(dataClient, {
@@ -761,15 +784,12 @@ export async function bootstrapPostgresqlApplication(options) {
         dataPlaneId: binding.dataPlaneId,
         clock: options.clock,
       });
-      writerLease = await acquireWriterLease(controlClient, {
-        tenantId: options.tenantId,
-        bindingUuid: binding.dataPlaneId,
-        resourceFingerprint: dataAttestation.data.resource.resourceFingerprint,
-        evidenceFingerprint: dataAttestation.data.evidence.evidenceFingerprint,
-        clock: options.clock,
-        now: options.now,
-        leaseTtlMs,
-      });
+      if (!writerLease) {
+        writerLease = await acquireWriterLease(controlClient, {
+          ...leaseInput,
+          bindingUuid: binding.dataPlaneId,
+        });
+      }
       await recordStartupAudit(controlClient, {
         plane: 'control',
         tenantId: options.tenantId,
@@ -790,13 +810,18 @@ export async function bootstrapPostgresqlApplication(options) {
       releaseClient(controlClient);
     }
 
+    const leaseState = { holder: writerLease, closed: false };
     dataStorage = createPostgresqlStorage(dataPool, {
       schema: POSTGRES_APPLICATION_SCHEMA,
       acquisitionDeadlineMs,
       queryDeadlineMs,
+      writerGuard: () => {
+        const snapshot = describeWriterHealth(leaseState.holder, options.now, leaseState.closed);
+        if (!snapshot.ready) {
+          refuse(snapshot.reason ?? 'WRITER_LEASE_EXPIRED', 'this process does not hold an unexpired writer lease');
+        }
+      },
     });
-    let closed = false;
-    const leaseHolder = writerLease;
     return Object.freeze({
       adapter: 'postgresql',
       schema: POSTGRES_APPLICATION_SCHEMA,
@@ -804,19 +829,19 @@ export async function bootstrapPostgresqlApplication(options) {
       dataStorage,
       binding,
       writerLease: Object.freeze({
-        generation: leaseHolder.generation,
-        expiresAt: leaseHolder.expiresAt,
+        generation: leaseState.holder.generation,
+        expiresAt: leaseState.holder.expiresAt,
       }),
       attestation: Object.freeze({
         control: controlAttestation.control.evidence,
         data: dataAttestation.data.evidence,
       }),
       health() {
-        return describeWriterHealth(leaseHolder, options.now);
+        return describeWriterHealth(leaseState.holder, options.now, leaseState.closed);
       },
       async close() {
-        if (closed) return;
-        closed = true;
+        if (leaseState.closed) return;
+        leaseState.closed = true;
         const releaser = await connectBounded(controlPool, acquisitionDeadlineMs).catch(() => null);
         if (releaser) {
           try {
@@ -829,8 +854,8 @@ export async function bootstrapPostgresqlApplication(options) {
             await exec(releaser, 'SET LOCAL search_path TO pg_catalog');
             await expireWriterLease(releaser, {
               tenantId: options.tenantId,
-              leaseId: leaseHolder.leaseId,
-              generation: leaseHolder.generation,
+              leaseId: leaseState.holder.leaseId,
+              generation: leaseState.holder.generation,
               clock: options.clock,
               now: options.now,
             });

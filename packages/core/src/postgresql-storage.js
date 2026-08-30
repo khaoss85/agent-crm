@@ -226,6 +226,7 @@ function releaseClient(client) {
  *   queryDeadlineMs?: number,
  *   lockTimeoutMs?: number,
  *   statementTimeoutMs?: number,
+ *   writerGuard?: () => void,
  * }} [options]
  */
 export function createPostgresqlStorage(pool, options = {}) {
@@ -240,7 +241,12 @@ export function createPostgresqlStorage(pool, options = {}) {
   const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
   const statementTimeoutMs = options.statementTimeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS;
   const quotedSchema = schema ? quoteStorageIdentifier(schema, 'schema') : null;
+  const writerGuard = typeof options.writerGuard === 'function' ? options.writerGuard : null;
   const checkedOut = new Set();
+
+  function assertWriter() {
+    if (writerGuard) writerGuard();
+  }
 
   /** @type {object} */
   const poolStorage = {};
@@ -499,6 +505,7 @@ export function createPostgresqlStorage(pool, options = {}) {
   }
 
   async function runTransaction(fn) {
+    assertWriter();
     const current = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
     if (current && current.poolStorage === poolStorage && !current.closed) {
       throw new AppError(
@@ -540,6 +547,7 @@ export function createPostgresqlStorage(pool, options = {}) {
     contract: STORAGE_CONTRACT,
     activeTransaction: () => null,
     async execute(statement) {
+      assertWriter();
       return withAutocommitWrite((client) => executeOn(client, statement));
     },
     async maybeOne(statement) {
