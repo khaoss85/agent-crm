@@ -205,3 +205,67 @@ export async function startSqliteLifecycle(options = {}) {
     close,
   });
 }
+
+/**
+ * Own one PostgreSQL control+data bootstrap after a successful v2 preflight.
+ *
+ * @param {{
+ *   selected: any,
+ *   tenantId: string,
+ *   identityVerifier: { operations: any },
+ *   control: object,
+ *   data: object,
+ *   moduleMigrations?: Array<{name: string, sql: string}>,
+ *   clock?: () => string,
+ *   faultInject?: string,
+ *   assemble?: (ctx: { accepted: ReturnType<typeof preflightSelectedGraph>, storage: any, bootstrap: any }) => any,
+ * }} options
+ */
+export async function startPostgresqlLifecycle(options) {
+  const accepted = preflightSelectedGraph(options.selected);
+  const assemble = options.assemble ?? (() => undefined);
+  const { bootstrapPostgresqlApplication } = await import('../../core/src/postgresql-bootstrap.js');
+  const bootstrap = await bootstrapPostgresqlApplication({
+    control: options.control,
+    data: options.data,
+    tenantId: options.tenantId,
+    identityVerifier: options.identityVerifier,
+    moduleMigrations: options.moduleMigrations,
+    clock: options.clock,
+    faultInject: options.faultInject,
+    selectedExtra: accepted.packages.map((pkg) => pkg.name),
+  });
+
+  const handle = {
+    storage: bootstrap.dataStorage,
+    transactionAsync(fn) {
+      return bootstrap.dataStorage.transaction(fn);
+    },
+  };
+
+  let assembled;
+  try {
+    assembled = await assemble({ accepted, storage: bootstrap.dataStorage, bootstrap, handle });
+  } catch (error) {
+    try {
+      await bootstrap.close();
+    } catch (cleanupError) {
+      attachCleanupError(error, cleanupError);
+    }
+    throw error;
+  }
+
+  let closePromise;
+  const close = () => {
+    if (!closePromise) closePromise = bootstrap.close();
+    return closePromise;
+  };
+
+  return Object.freeze({
+    accepted,
+    storage: bootstrap.dataStorage,
+    bootstrap,
+    assembled,
+    close,
+  });
+}

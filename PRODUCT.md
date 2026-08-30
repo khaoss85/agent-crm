@@ -21,8 +21,7 @@ Accordo is not an autonomous salesperson and is not a full Salesforce replacemen
 The framework **authenticates nobody** — a deployment adapter verifies the request — and it
 **owns tenancy and authorization completely**, with one tenant per application instance enforced
 by the storage binding rather than by a filter (ADR-038). Persistence for the composed
-application is SQLite. A PostgreSQL storage adapter exists behind Storage Contract v1;
-application factories still refuse PostgreSQL composition. Shared-database row-level
+application is SQLite or dedicated-database PostgreSQL. Shared-database row-level
 tenancy, durable jobs, billing and any marketing runtime do not exist.
 Each of those sentences is bound to a generated fact (ADR-039) and re-checked by
 `npm run repo:truth -- --check`.
@@ -30,7 +29,7 @@ Each of those sentences is bound to a generated fact (ADR-039) and re-checked by
 <!-- truth: spine.authentication.framework_verifier=absent -->
 <!-- truth: spine.authorization.enforced=enforced -->
 <!-- truth: spine.tenant.isolation.mode=one_tenant_per_instance -->
-<!-- truth: spine.postgresql.implemented=absent -->
+<!-- truth: spine.postgresql.implemented=implemented -->
 <!-- truth: spine.durable_jobs.implemented=absent -->
 <!-- truth: billing.implemented=absent -->
 <!-- truth: marketing_runtime.implemented=absent -->

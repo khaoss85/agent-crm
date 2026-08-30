@@ -187,7 +187,27 @@ function parsePostgresEndpoint(value) {
       tlsRefused();
     }
   }
-  parsePostgresTls(endpoint.tls);
+  const tls = parsePostgresTls(endpoint.tls);
+  return Object.freeze({
+    host: /** @type {string} */ (endpoint.host),
+    ...(Object.hasOwn(endpoint, 'port') ? { port: /** @type {number} */ (endpoint.port) } : {}),
+    database: /** @type {string} */ (endpoint.database),
+    user: /** @type {string} */ (endpoint.user),
+    password: /** @type {string} */ (endpoint.password),
+    ...(Object.hasOwn(endpoint, 'sslmode') ? { sslmode: /** @type {string} */ (endpoint.sslmode) } : {}),
+    tls,
+  });
+}
+
+/**
+ * Endpoint identity is host+port+database. Schema names, URLs and credentials
+ * are not identities.
+ *
+ * @param {{host: string, port?: number, database: string}} endpoint
+ */
+function endpointIdentity(endpoint) {
+  const port = endpoint.port ?? 5432;
+  return `${endpoint.host.toLowerCase()}|${port}|${endpoint.database}`;
 }
 
 /** @param {Record<string, unknown>} envelope */
@@ -214,13 +234,22 @@ function parseEnvelope(envelope) {
     });
   }
 
-  parsePostgresEndpoint(envelope.connection);
-  parsePostgresEndpoint(envelope.controlPlane);
-  refuse(
-    'DEPLOYMENT_STORAGE_POSTGRESQL_UNSUPPORTED',
-    'the PostgreSQL adapter is not available; storage remains SQLite until the production adapter lands',
-    { contract: DEPLOYMENT_STORAGE_CONTRACT, adapter: 'postgresql' },
-  );
+  const connection = parsePostgresEndpoint(envelope.connection);
+  const controlPlane = parsePostgresEndpoint(envelope.controlPlane);
+  if (endpointIdentity(connection) === endpointIdentity(controlPlane)) {
+    refuse(
+      'DEPLOYMENT_STORAGE_PLANES_ALIAS',
+      'PostgreSQL control and data planes must not share an endpoint identity',
+    );
+  }
+  return Object.freeze({
+    contract: DEPLOYMENT_STORAGE_CONTRACT,
+    adapter: /** @type {'postgresql'} */ ('postgresql'),
+    identityVerifier,
+    spine,
+    connection,
+    controlPlane,
+  });
 }
 
 /** @param {string} dbPath */
@@ -291,6 +320,6 @@ export function loadDeploymentStorage(options = {}) {
 export function describeDeploymentStorage(selection) {
   const adapter = isPlainObject(selection) ? selection.adapter : undefined;
   if (adapter === 'sqlite') return Object.freeze({ adapter: 'sqlite', available: true });
-  if (adapter === 'postgresql') return Object.freeze({ adapter: 'postgresql', available: false });
+  if (adapter === 'postgresql') return Object.freeze({ adapter: 'postgresql', available: true });
   invalidEnvelope();
 }

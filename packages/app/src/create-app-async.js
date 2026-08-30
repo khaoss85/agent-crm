@@ -1,14 +1,18 @@
 // @ts-check
 
+import { isAbsolute, resolve } from 'node:path';
 import { AppError } from '../../core/src/errors.js';
-import { startPortableSqliteApp } from './portable-app.js';
+import { readTrustedRegularFile } from '../../core/src/trusted-file.js';
+import { startPortablePostgresqlApp, startPortableSqliteApp } from './portable-app.js';
 
 /**
  * Public portable async factory. It composes kernel Company, Contact,
- * Opportunity and Approval over the source-private SQLite lifecycle. The
- * default selected graph is an explicit packageContract 2 with empty package,
- * action and module lists. Bundled and generated v1 registries are never the
- * default. This module does not import or wrap the synchronous v1 factory.
+ * Opportunity and Approval over the source-private SQLite lifecycle, or a
+ * complete PostgreSQL application when deployment storage / test harness
+ * selects that adapter. The default selected graph is an explicit
+ * packageContract 2 with empty package, action and module lists. Bundled and
+ * generated v1 registries are never the default. This module does not import
+ * or wrap the synchronous v1 factory.
  */
 
 const DEFAULT_SELECTED_GRAPH = Object.freeze({
@@ -29,26 +33,14 @@ const POSTGRES_KEYS = Object.freeze([
 ]);
 
 const UNSUPPORTED_KEYS = Object.freeze([
-  'spine',
-  'identityVerifier',
   'authorize',
   'security',
-  'deploymentStorage',
   'openDatabase',
   'listen',
   'providers',
 ]);
 
-function storageUnavailable(adapter) {
-  return new AppError(
-    'the PostgreSQL adapter is not available; the portable factory remains SQLite until the production adapter lands',
-    {
-      code: 'STORAGE_ADAPTER_UNAVAILABLE',
-      status: 400,
-      details: { adapter },
-    },
-  );
-}
+const LOOPBACK = Object.freeze(new Set(['127.0.0.1', '::1', 'localhost', '::ffff:127.0.0.1']));
 
 function optionUnsupported(option) {
   return new AppError(
@@ -61,6 +53,61 @@ function optionUnsupported(option) {
   );
 }
 
+function bindingRequired() {
+  return new AppError(
+    'PostgreSQL composition requires a canonical tenant, spine binding and trusted identity verifier',
+    {
+      code: 'PORTABLE_POSTGRESQL_BINDING_REQUIRED',
+      status: 400,
+      details: { adapter: 'postgresql' },
+    },
+  );
+}
+
+function looksLikePostgres(options) {
+  if (options == null || typeof options !== 'object' || Array.isArray(options)) return false;
+  try {
+    if (options.adapter != null && options.adapter !== 'sqlite') return true;
+  } catch {
+    return true;
+  }
+  for (const key of POSTGRES_KEYS) {
+    try {
+      if (options[key] != null) return true;
+    } catch {
+      return true;
+    }
+  }
+  try {
+    if (typeof options.dbPath === 'string' && /^postgres(ql)?:\/\//i.test(options.dbPath)) return true;
+  } catch {
+    return true;
+  }
+  try {
+    if (options.deployment?.selection?.adapter === 'postgresql') return true;
+  } catch {
+    return true;
+  }
+  try {
+    if (options.testHarness != null) return true;
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+function isCompletePostgres(options) {
+  if (options?.deployment?.selection?.adapter === 'postgresql' && options.deployment.identityVerifier) {
+    return Boolean(options.deployment.selection.spine?.tenant?.id && options.deployment.selection.identityVerifier);
+  }
+  if (options?.adapter === 'postgresql' && options.testHarness?.loopback === true
+    && options.testHarness.control && options.testHarness.data
+    && options.spine?.tenant?.id && options.identityVerifier) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * @param {any} options
  */
@@ -69,34 +116,20 @@ function refuseUnavailableOptions(options) {
     return;
   }
 
-  let adapter;
-  try {
-    adapter = options.adapter;
-  } catch {
-    throw storageUnavailable('unknown');
-  }
-  if (adapter != null && adapter !== 'sqlite') {
-    throw storageUnavailable('postgresql');
+  if (looksLikePostgres(options) && !isCompletePostgres(options)) {
+    throw bindingRequired();
   }
 
-  for (const key of POSTGRES_KEYS) {
-    let value;
-    try {
-      value = options[key];
-    } catch {
-      throw storageUnavailable('postgresql');
+  if (!isCompletePostgres(options)) {
+    for (const key of ['spine', 'identityVerifier', 'deploymentStorage']) {
+      let value;
+      try {
+        value = options[key];
+      } catch {
+        throw optionUnsupported(key);
+      }
+      if (value != null) throw optionUnsupported(key);
     }
-    if (value != null) throw storageUnavailable('postgresql');
-  }
-
-  let dbPath;
-  try {
-    dbPath = options.dbPath;
-  } catch {
-    throw storageUnavailable('postgresql');
-  }
-  if (typeof dbPath === 'string' && /^postgres(ql)?:\/\//i.test(dbPath)) {
-    throw storageUnavailable('postgresql');
   }
 
   for (const key of UNSUPPORTED_KEYS) {
@@ -110,8 +143,47 @@ function refuseUnavailableOptions(options) {
   }
 }
 
+function sslFromEndpoint(endpoint, projectRoot) {
+  const caFile = endpoint.tls?.caFile;
+  if (typeof caFile !== 'string' || caFile === '') {
+    throw new AppError(
+      'deployment-storage PostgreSQL connections require authenticated TLS with certificate and hostname verification',
+      { code: 'DEPLOYMENT_STORAGE_TLS_REFUSED', status: 500 },
+    );
+  }
+  const path = isAbsolute(caFile) ? caFile : resolve(projectRoot ?? process.cwd(), caFile);
+  const ca = readTrustedRegularFile(path, {
+    maxBytes: 64 * 1024,
+    untrusted: () => {
+      throw new AppError(
+        'deployment-storage PostgreSQL connections require authenticated TLS with certificate and hostname verification',
+        { code: 'DEPLOYMENT_STORAGE_TLS_REFUSED', status: 500 },
+      );
+    },
+  });
+  return {
+    rejectUnauthorized: true,
+    ca,
+    servername: endpoint.tls.servername ?? endpoint.host,
+  };
+}
+
+function loopbackEndpoint(endpoint) {
+  if (!LOOPBACK.has(String(endpoint.host))) {
+    throw bindingRequired();
+  }
+  return Object.freeze({
+    host: endpoint.host,
+    port: endpoint.port,
+    database: endpoint.database,
+    user: endpoint.user,
+    password: endpoint.password,
+    ssl: false,
+  });
+}
+
 /**
- * Own one portable SQLite application. Startup is unconditionally async.
+ * Own one portable application. Startup is unconditionally async.
  *
  * @param {{
  *   dbPath?: string,
@@ -122,11 +194,59 @@ function refuseUnavailableOptions(options) {
  *   signatureTimeoutMs?: number,
  *   selected?: any,
  *   adapter?: unknown,
+ *   deployment?: { selection: any, identityVerifier: any },
+ *   testHarness?: any,
+ *   spine?: any,
+ *   identityVerifier?: any,
+ *   moduleMigrations?: Array<{name: string, sql: string}>,
+ *   projectRoot?: string,
+ *   faultInject?: string,
  * }} [options]
  */
 export async function createAccordoAppAsync(options = {}) {
   refuseUnavailableOptions(options);
   const selected = options.selected === undefined ? DEFAULT_SELECTED_GRAPH : options.selected;
+
+  if (isCompletePostgres(options) && options.deployment?.selection?.adapter === 'postgresql') {
+    const selection = options.deployment.selection;
+    const projectRoot = options.projectRoot;
+    return startPortablePostgresqlApp({
+      selected,
+      tenantId: selection.spine.tenant.id,
+      identityVerifier: options.deployment.identityVerifier,
+      control: {
+        ...selection.controlPlane,
+        ssl: sslFromEndpoint(selection.controlPlane, projectRoot),
+      },
+      data: {
+        ...selection.connection,
+        ssl: sslFromEndpoint(selection.connection, projectRoot),
+      },
+      moduleMigrations: options.moduleMigrations,
+      clock: options.clock,
+      approvalThresholdCents: options.approvalThresholdCents,
+      catalogTimeoutMs: options.catalogTimeoutMs,
+      signatureTimeoutMs: options.signatureTimeoutMs,
+      faultInject: options.faultInject,
+    });
+  }
+
+  if (isCompletePostgres(options) && options.testHarness?.loopback === true) {
+    return startPortablePostgresqlApp({
+      selected,
+      tenantId: options.spine.tenant.id,
+      identityVerifier: options.identityVerifier,
+      control: loopbackEndpoint(options.testHarness.control),
+      data: loopbackEndpoint(options.testHarness.data),
+      moduleMigrations: options.moduleMigrations,
+      clock: options.clock,
+      approvalThresholdCents: options.approvalThresholdCents,
+      catalogTimeoutMs: options.catalogTimeoutMs,
+      signatureTimeoutMs: options.signatureTimeoutMs,
+      faultInject: options.faultInject,
+    });
+  }
+
   return startPortableSqliteApp({
     selected,
     dbPath: options.dbPath,

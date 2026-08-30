@@ -580,21 +580,18 @@ test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and mi
   }
 });
 
-test('M2-17 PostgreSQL selection refuses with a stable code before opening a connection', () => {
+test('M2-17 PostgreSQL selection returns a closed descriptor before opening a connection', () => {
   const root = scratch();
   const configPath = writeConfig(root, postgresEnvelope());
   const started = Date.now();
-  const error = assertCode(
-    () => loadDeploymentStorage({ configPath, env: {} }),
-    'DEPLOYMENT_STORAGE_POSTGRESQL_UNSUPPORTED',
-    [configPath, root, SENTINEL_PASSWORD, '127.0.0.1', 'db.example.test'],
-  );
-  assert.ok(Date.now() - started < 250, 'postgresql refusal opened a connection');
-  assert.equal(error instanceof Error, true);
-  assert.deepEqual(describeDeploymentStorage({ adapter: 'postgresql' }), {
+  const selected = loadDeploymentStorage({ configPath, env: {} });
+  assert.ok(Date.now() - started < 250, 'postgresql selection opened a connection');
+  assert.equal(selected.adapter, 'postgresql');
+  assert.deepEqual(describeDeploymentStorage(selected), {
     adapter: 'postgresql',
-    available: false,
+    available: true,
   });
+  assert.equal(JSON.stringify(describeDeploymentStorage(selected)).includes(SENTINEL_PASSWORD), false);
 });
 
 test('M2-17 loader still does not import a PostgreSQL driver', () => {

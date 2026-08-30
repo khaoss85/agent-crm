@@ -20,7 +20,7 @@ import { createAccordoApp, createAccordoAppAsync } from '../packages/app/src/ind
 import { createHttpServer } from '../apps/server/src/index.js';
 import { startPortableHttpServer } from '../packages/app/src/portable-http.js';
 import { createDatabase } from '../packages/core/src/database.js';
-import { loadDeploymentStorage } from '../packages/core/src/deployment-storage.js';
+import { describeDeploymentStorage, loadDeploymentStorage } from '../packages/core/src/deployment-storage.js';
 import { createMcpServer } from '../packages/mcp/src/index.js';
 import {
   createProductionPromptRegistry,
@@ -453,7 +453,7 @@ test('malformed and unavailable storage errors never echo locators or credential
       dbPath: POSTGRES_URL,
     }),
     (error) => {
-      assert.equal(error.code, 'STORAGE_ADAPTER_UNAVAILABLE');
+      assert.equal(error.code, 'PORTABLE_POSTGRESQL_BINDING_REQUIRED');
       assert.deepEqual(error.details, { adapter: 'postgresql' });
       assertBounded(error, [POSTGRES_URL, workspace.root]);
       return true;
@@ -465,15 +465,10 @@ test('malformed and unavailable storage errors never echo locators or credential
     join(workspace.root, 'pg.json'),
     `${JSON.stringify(postgresEnvelope(), null, 2)}\n`,
   );
-  assert.throws(
-    () => loadDeploymentStorage({ configPath: postgresPath }),
-    (error) => {
-      assert.equal(error.code, 'DEPLOYMENT_STORAGE_POSTGRESQL_UNSUPPORTED');
-      assert.equal(error.details?.adapter, 'postgresql');
-      assertBounded(error, [postgresPath, SENTINEL_PASSWORD, POSTGRES_URL, '127.0.0.1']);
-      return true;
-    },
-  );
+  const selected = loadDeploymentStorage({ configPath: postgresPath });
+  assert.equal(selected.adapter, 'postgresql');
+  assert.deepEqual(describeDeploymentStorage(selected), { adapter: 'postgresql', available: true });
+  assertBounded(describeDeploymentStorage(selected), [postgresPath, SENTINEL_PASSWORD, POSTGRES_URL]);
 
   const malformedPath = writeTrusted(join(workspace.root, 'bad.json'), '{"adapter":"sqlite"}\n');
   assert.throws(

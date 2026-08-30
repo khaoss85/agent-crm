@@ -153,6 +153,9 @@ export const TRUTH_LIMITATIONS = Object.freeze([
     + 'scripts/site-check.js inside gtm:check across README.md, site/ and every docs/ document outside '
     + 'DATED_HISTORY. What no gate holds is every other current count: module, package, resource, action, '
     + 'policy, provider, rail, skill, scenario and JTBD-row counts, in this document set and in others'],
+  ['POSTGRESQL_IS_APPLICATION_COMPOSITION_NOT_SHARED_TENANCY',
+    'spine.postgresql.implemented means createAccordoAppAsync can compose one tenant onto dedicated PostgreSQL '
+    + 'databases. It is not shared-database row-level tenancy and not a production-readiness claim'],
   ['POSTURE_PROSE_NOT_GENERATED',
     'productionPosture in packages/cli/src/app-inspect.js is hand-written English bound to explicit fact ids. '
     + 'The citations hold its VALUES; they do not derive its wording, so a reworded falsehood is caught only '
@@ -305,7 +308,6 @@ export const NAMESPACE_PROBES = Object.freeze({
  * authorities must agree, or neither answer is published.
  */
 const DECLARED_ABSENCE = Object.freeze({
-  'spine.postgresql.implemented': { in: 'SPINE_NOT_MODELED', match: /postgresql/i },
   'spine.durable_jobs.implemented': {
     in: 'SPINE_NOT_MODELED',
     match: /durable jobs|outbox|scheduler/i,
@@ -1527,8 +1529,9 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     return bundle;
   }
 
-  // The adapter pin is not application composition. The public factory must
-  // still refuse PostgreSQL or the declared-absence fact is a lie.
+  // PostgreSQL application composition: the public factory either still refuses
+  // the adapter outright, or requires a canonical tenant/spine/verifier before
+  // any connection. Connecting during this probe would be a lie about absence.
   try {
     const factory = await import(url('packages/app/src/create-app-async.js'));
     try {
@@ -1537,12 +1540,15 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         connection: 'postgres://pg-user:s3cret-unavailable@127.0.0.1:1/accordo',
       });
       bundle.postgresqlApplicationRefused = false;
+      bundle.postgresqlBindingRequired = false;
     } catch (error) {
-      bundle.postgresqlApplicationRefused = /** @type {any} */ (error)?.code === 'STORAGE_ADAPTER_UNAVAILABLE';
+      const code = /** @type {any} */ (error)?.code;
+      bundle.postgresqlApplicationRefused = code === 'STORAGE_ADAPTER_UNAVAILABLE';
+      bundle.postgresqlBindingRequired = code === 'PORTABLE_POSTGRESQL_BINDING_REQUIRED';
     }
   } catch (error) {
     unavailable(
-      `createAccordoAppAsync could not be imported to prove PostgreSQL remains refused: `
+      `createAccordoAppAsync could not be imported to prove PostgreSQL composition: `
         + `${/** @type {any} */ (error)?.message ?? error}`,
     );
     return bundle;
@@ -1950,36 +1956,49 @@ export function buildFacts(bundle) {
     });
   }
 
-  // PostgreSQL has a second, independent authority: the public factory still
-  // refuses application composition, and production dependencies are empty or
-  // exactly the pinned `pg` adapter driver. An unexpected library, or a factory
-  // that accepts PostgreSQL, contradicts the declared absence.
-  const postgres = facts.find((fact) => fact.id === 'spine.postgresql.implemented');
-  if (postgres) {
-    const deps = bundle.productionDependencies ?? [];
-    const none = deps.length === 0;
-    const adapterOnly = deps.length === 1 && deps[0] === 'pg';
-    if (!none && !adapterOnly) {
-      refuse(
-        'spine.postgresql.implemented',
-        `spine.postgresql.implemented reads 'absent' from SPINE_NOT_MODELED, but package.json now declares `
-          + `production dependencies (${deps.join(', ')}). Two authorities must `
-          + 'agree before a boundary fact may stand',
-      );
-    } else if (bundle.postgresqlApplicationRefused !== true) {
-      refuse(
-        'spine.postgresql.implemented',
-        "spine.postgresql.implemented reads 'absent' from SPINE_NOT_MODELED, but createAccordoAppAsync no longer "
-          + 'refuses PostgreSQL with STORAGE_ADAPTER_UNAVAILABLE. Two authorities must agree before a boundary '
-          + 'fact may stand',
-      );
-    } else {
-      postgres.evidence = [
-        ...postgres.evidence,
+  const deps = bundle.productionDependencies ?? [];
+  const none = deps.length === 0;
+  const adapterOnly = deps.length === 1 && deps[0] === 'pg';
+  if (!none && !adapterOnly) {
+    refuse(
+      'spine.postgresql.implemented',
+      `package.json declares production dependencies (${deps.join(', ')}) that are not the pinned pg adapter. `
+        + 'Two authorities must agree before a boundary fact may stand',
+    );
+  } else if (bundle.postgresqlApplicationRefused === true) {
+    add({
+      id: 'spine.postgresql.implemented',
+      value: 'absent',
+      authority: 'spine.contract',
+      evidence: [
         none ? 'package.json#dependencies:none' : 'package.json#dependencies:pg@adapter-only',
         'createAccordoAppAsync#STORAGE_ADAPTER_UNAVAILABLE',
-      ].sort(compare);
-    }
+      ],
+      scope: 'framework',
+      limitations: ['TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
+    });
+  } else if (bundle.postgresqlBindingRequired === true) {
+    add({
+      id: 'spine.postgresql.implemented',
+      value: 'implemented',
+      authority: 'spine.contract',
+      evidence: [
+        'package.json#dependencies:pg@adapter-only',
+        'createAccordoAppAsync#PORTABLE_POSTGRESQL_BINDING_REQUIRED',
+        'packages/app/src/create-app-async.js#createAccordoAppAsync',
+      ],
+      scope: 'framework',
+      limitations: [
+        'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME',
+        'POSTGRESQL_IS_APPLICATION_COMPOSITION_NOT_SHARED_TENANCY',
+      ],
+    });
+  } else {
+    refuse(
+      'spine.postgresql.implemented',
+      'createAccordoAppAsync neither refused PostgreSQL with STORAGE_ADAPTER_UNAVAILABLE nor required a '
+        + 'canonical tenant/spine/verifier before connect. Two authorities must agree before a boundary fact may stand',
+    );
   }
 
   // ── domain packages ──────────────────────────────────────────────────────

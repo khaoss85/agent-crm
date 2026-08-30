@@ -310,6 +310,39 @@ matrix exists to prevent. Closing the gap is M3C.
 | Which need a code backfill? | Closing the rows is M3C application composition, not a domain rewrite in this PR |
 | Was the matrix updated? | Yes — this section |
 
+### PostgreSQL application composition (Production Spine v2 M3C)
+
+M3C is a horizontal kernel seam: the portable async factory boots a dedicated-
+database PostgreSQL application after startup attestation. Shared-database
+row-level tenancy is still absent. A `partial` row means the domain graph can
+be selected on PostgreSQL; a `deferred` row means its own records have not
+been proven through a representative write on that adapter.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `aligned` | Company/Contact/Opportunity/Approval create, list, audit and workflow run on PostgreSQL |
+| Work | `partial` | contract-2 graph composes on PostgreSQL; follow-up writes still need generated work-task modules |
+| Pipeline | `partial` | opportunity pipeline columns exist on the PostgreSQL data plane; dedicated pipeline tests remain SQLite |
+| Lead Intelligence | `deferred` | domain records have not been exercised on PostgreSQL |
+| Commercial Operations | `deferred` | domain records have not been exercised on PostgreSQL |
+| Signature & Order | `deferred` | domain records have not been exercised on PostgreSQL |
+| Contract Activation | `deferred` | domain records have not been exercised on PostgreSQL |
+| Delivery | `deferred` | domain records have not been exercised on PostgreSQL |
+| Service | `deferred` | domain records have not been exercised on PostgreSQL |
+| Lifecycle | `deferred` | domain records have not been exercised on PostgreSQL |
+| Customer Data | `deferred` | domain records have not been exercised on PostgreSQL |
+| Custom-package fixture | `deferred` | the v1 fixture remains SQLite |
+| Custom-package score-disclosure fixture | `deferred` | the v1 fixture remains SQLite |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime persistence consumer |
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | Core CRM services gained an async Storage Contract path so PostgreSQL composition can run without changing `createAccordoApp()` |
+| Which are already aligned? | Core CRM (Sales) on the representative write/audit/workflow path |
+| Which need metadata only? | The deferred package rows: composition is possible, domain writes are unproven |
+| Which need a code backfill? | Generated-module services still use `storage.sync`; package record modules need the same dual path before those rows close |
+| Was the matrix updated? | Yes — this section |
+
 ### Async package-contract v2 assessment (Production Spine v2 M2E-1)
 
 M2E-1 is horizontal kernel capability: it makes uniform contract-1 and

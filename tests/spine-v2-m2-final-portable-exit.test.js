@@ -162,7 +162,7 @@ test('PostgreSQL-shaped options refuse before connection and never echo credenti
     await assert.rejects(
       () => createAccordoAppAsync(options),
       (error) => {
-        assert.equal(error.code, 'STORAGE_ADAPTER_UNAVAILABLE');
+        assert.equal(error.code, 'PORTABLE_POSTGRESQL_BINDING_REQUIRED');
         assert.equal(error.status, 400);
         assert.equal(error.details?.adapter, 'postgresql');
         const blob = `${error.message}\n${JSON.stringify(error.details)}`;

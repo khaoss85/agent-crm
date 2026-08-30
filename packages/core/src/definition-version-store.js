@@ -235,7 +235,8 @@ function boundedBatch(entries) {
 export function createDefinitionVersionStore(database, options = {}) {
   const now = resolveClock(options.clock);
   const newId = resolveIdSource(options.newId);
-  const storage = database?.storage?.sync;
+  const sync = database?.storage?.sync;
+  const storage = sync ?? database?.storage;
   if (!storage) {
     throw new ValidationError('The definition-version store requires a database with Storage Contract v1');
   }
@@ -264,9 +265,9 @@ export function createDefinitionVersionStore(database, options = {}) {
         }
         seen.add(id);
       }
-      storage.transaction(() => {
+      const persistWith = async (handle) => {
         for (const [index, entry] of bounded.entries()) {
-          const persisted = storage.maybeOne({
+          const persisted = await handle.maybeOne({
             kind: 'select',
             table: TABLE,
             columns: ['fingerprint'],
@@ -277,16 +278,7 @@ export function createDefinitionVersionStore(database, options = {}) {
             ],
           });
           if (!persisted) {
-            // Unlike every other check here, this one belongs INSIDE the
-            // transaction, and the asymmetry is deliberate: it reads the table,
-            // and only under `BEGIN IMMEDIATE` does the write lock guarantee no
-            // other connection slips a row in between this read and the insert
-            // below. It closes both a generator repeating an id across calls —
-            // which the per-batch check cannot see, because `seen` starts empty
-            // every call — and a collision with a row that was already there.
-            // Without it the `PRIMARY KEY` decides, and the caller reads the
-            // driver's words instead of this store's.
-            const taken = storage.maybeOne({
+            const taken = await handle.maybeOne({
               kind: 'select',
               table: TABLE,
               columns: ['id'],
@@ -298,7 +290,7 @@ export function createDefinitionVersionStore(database, options = {}) {
                   + 'every definition version needs its own id',
               );
             }
-            storage.execute({
+            await handle.execute({
               kind: 'insert',
               table: TABLE,
               values: [
@@ -314,7 +306,53 @@ export function createDefinitionVersionStore(database, options = {}) {
           }
           if (String(persisted.fingerprint) !== entry.fingerprint) throw driftError(entry, persisted.fingerprint);
         }
-      });
+      };
+      if (sync) {
+        storage.transaction(() => {
+          for (const [index, entry] of bounded.entries()) {
+            const persisted = storage.maybeOne({
+              kind: 'select',
+              table: TABLE,
+              columns: ['fingerprint'],
+              where: [
+                { column: 'type', op: 'eq', value: entry.type },
+                { column: 'name', op: 'eq', value: entry.name },
+                { column: 'version', op: 'eq', value: entry.version },
+              ],
+            });
+            if (!persisted) {
+              const taken = storage.maybeOne({
+                kind: 'select',
+                table: TABLE,
+                columns: ['id'],
+                where: [{ column: 'id', op: 'eq', value: minted[index].id }],
+              });
+              if (taken) {
+                throw new ValidationError(
+                  `newId returned an id that is already registered ("${minted[index].id}"); `
+                    + 'every definition version needs its own id',
+                );
+              }
+              storage.execute({
+                kind: 'insert',
+                table: TABLE,
+                values: [
+                  { column: 'id', value: minted[index].id },
+                  { column: 'type', value: entry.type },
+                  { column: 'name', value: entry.name },
+                  { column: 'version', value: entry.version },
+                  { column: 'fingerprint', value: entry.fingerprint },
+                  { column: 'registered_at', value: minted[index].registeredAt },
+                ],
+              });
+              continue;
+            }
+            if (String(persisted.fingerprint) !== entry.fingerprint) throw driftError(entry, persisted.fingerprint);
+          }
+        });
+        return;
+      }
+      return storage.transaction((tx) => persistWith(tx));
     },
   });
 }

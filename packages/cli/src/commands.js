@@ -290,8 +290,19 @@ export async function runCli(argv) {
   // top-level import made every CLI command — including the read-only ones —
   // fail to load when the composition was broken, which is precisely when
   // `app inspect` and `package validate` are the commands you need.
-  const { createAccordoApp } = await import('../../app/src/index.js');
-  const app = createAccordoApp({ dbPath: sqliteFactoryPath(prepared.selection) });
+  const { createAccordoApp, createAccordoAppAsync } = await import('../../app/src/index.js');
+  const postgresql = prepared.selection.adapter === 'postgresql';
+  let app;
+  try {
+    app = postgresql
+      ? await createAccordoAppAsync({
+        deployment: prepared,
+        projectRoot: projectRootFromFlags(flags),
+      })
+      : createAccordoApp({ dbPath: sqliteFactoryPath(prepared.selection) });
+  } catch (error) {
+    throw error;
+  }
   let shouldClose = true;
   try {
     switch (command) {
@@ -300,23 +311,27 @@ export async function runCli(argv) {
         const host = String(flags.host ?? '127.0.0.1');
         const { createHttpServer } = await import('../../../apps/server/src/index.js');
         const server = createHttpServer(app);
-        await new Promise((resolveListen, reject) => {
-          server.once('error', reject);
-          server.listen(port, host, resolveListen);
-        });
+        try {
+          await new Promise((resolveListen, reject) => {
+            server.once('error', reject);
+            server.listen(port, host, resolveListen);
+          });
+        } catch (error) {
+          server.close();
+          throw error;
+        }
         const address = server.address();
         const actualPort = typeof address === 'object' && address ? address.port : port;
         console.log(`Accordo running at http://${host}:${actualPort}`);
         if (documentSelected(prepared.selection)) {
           console.log(JSON.stringify(describeDeploymentStorage(prepared.selection)));
-        } else {
+        } else if (!postgresql) {
           console.log(`Database: ${app.database.path}`);
         }
         shouldClose = false;
         const shutdown = () => {
           server.close(() => {
-            app.close();
-            process.exit(0);
+            Promise.resolve(app.close()).finally(() => process.exit(0));
           });
         };
         process.once('SIGINT', shutdown);
@@ -422,10 +437,6 @@ function refusePostgresqlCommand(command, selection) {
       { code: CLI_VERIFIED_OPERATOR_REQUIRED, status: 403 },
     );
   }
-  throw new AppError(
-    'the PostgreSQL adapter is not available; storage remains SQLite until the production adapter lands',
-    { code: 'DEPLOYMENT_STORAGE_POSTGRESQL_UNSUPPORTED', status: 500, details: { adapter: 'postgresql' } },
-  );
 }
 
 /**

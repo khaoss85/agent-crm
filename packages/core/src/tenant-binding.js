@@ -62,6 +62,29 @@ import { assertTenantId, bindTenantStorage } from './tenant-storage.js';
 /** The binding contract version published in the schema. */
 export const TENANT_BINDING_CONTRACT = 1;
 
+/** Portable descriptor used by the async PostgreSQL/SQLite composition path. */
+export const TENANT_BINDING_CONTRACT_V2 = 2;
+
+/**
+ * Bounded portable tenant binding. Locators and connection details never belong.
+ *
+ * @param {{
+ *   adapter: 'sqlite' | 'postgresql',
+ *   tenantBound: boolean,
+ *   controlPlaneAdapter: 'sqlite' | 'postgresql',
+ *   dataPlaneIsolation: 'dedicated_database' | 'dedicated_file',
+ * }} input
+ */
+export function describePortableTenantBinding(input) {
+  return Object.freeze({
+    contract: TENANT_BINDING_CONTRACT_V2,
+    adapter: input.adapter,
+    tenantBound: input.tenantBound === true,
+    controlPlaneAdapter: input.controlPlaneAdapter,
+    dataPlaneIsolation: input.dataPlaneIsolation,
+  });
+}
+
 /** Loopback hosts a local-development runtime may bind to. */
 const LOOPBACK = Object.freeze(new Set(['127.0.0.1', '::1', 'localhost', '::ffff:127.0.0.1']));
 

@@ -130,8 +130,8 @@ same one CI runs on every push) into a directory it keeps, then inspects the res
                        (a deployment adapter supplies verified identity), while
                        tenancy — one tenant per application instance — and
                        authorization are owned and enforced by the framework.
-                       SQLite only; shared-database tenancy, PostgreSQL, durable
-                       jobs, secrets and backups are absent
+                       SQLite or dedicated-database PostgreSQL; shared-database
+                       tenancy, durable jobs, secrets and backups are absent
 ```
 
 It ends on the eleven things the inspector says it cannot see, because a tour that shows only
@@ -210,10 +210,10 @@ something nobody checked. No number in any of these sentences is checked either
   <!-- truth: spine.tenant.isolation.mode=one_tenant_per_instance -->
   <!-- truth: spine.tenant.crm_data_plane_enforced=enforced_by_binding -->
   <!-- truth: spine.multi_tenant_single_instance=refused_at_startup -->
-- **Application composition is SQLite only.** A PostgreSQL storage adapter exists behind
-  Storage Contract v1; the application factories still refuse PostgreSQL. Shared-database
-  tenancy is not implemented.
-  <!-- truth: spine.postgresql.implemented=absent -->
+- **Not shared-database tenancy.** `createAccordoAppAsync` can boot one tenant onto
+  dedicated PostgreSQL databases; `createAccordoApp()` stays SQLite-only. Shared-database
+  row-level tenancy is not implemented, and this is not a production-readiness claim.
+  <!-- truth: spine.postgresql.implemented=implemented -->
 - **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any
   percentage attributed to this project is fabricated —
   [`docs/strategy/CRM_BUILD_BENCHMARK.md`](docs/strategy/CRM_BUILD_BENCHMARK.md) is the

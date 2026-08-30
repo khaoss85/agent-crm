@@ -324,6 +324,7 @@ Published in the document's own `limitations[]`, by code:
 | `WORDING_IS_NOT_GENERATED` | no prose is written or rewritten; a fact constrains what a bound sentence may assert, it does not produce the sentence |
 | `EDITIONS_NOT_BOUND` | `docs/editions/**` is outside the bound set in v1 |
 | `NUMERIC_CLAIMS_NOT_BOUND` | this contract requires no number to be bound and can discover none that ought to be — see the section below, which states the two things the shorter wording got wrong |
+| `POSTGRESQL_IS_APPLICATION_COMPOSITION_NOT_SHARED_TENANCY` | `spine.postgresql.implemented` means `createAccordoAppAsync` can compose one tenant onto dedicated PostgreSQL databases. It is not shared-database row-level tenancy and not a production-readiness claim |
 | `POSTURE_PROSE_NOT_GENERATED` | `productionPosture` is hand-written English bound to fact **ids**; the citations hold its values, not its wording. `RETIRED_CLAIMS` catches the one recorded falsehood; generating the sentence is v2 |
 | `CODE_VOCABULARY_INCLUDES_COMMENTS` | the vocabulary is harvested lexically, so a code named only in a source comment counts as declared. `RETIRED_CODES` closes the case that matters: a code this repository deliberately removed is subtracted wherever it is mentioned |
 

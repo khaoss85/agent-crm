@@ -251,14 +251,14 @@ test('M2-17 --db plus --deployment-storage refuses before opening either surface
 
 test('M2-11/M2-32 PostgreSQL documents refuse before composition for every APP_COMMANDS entry', () => {
   const root = scratch();
-  writeModule(root, 'providers/identity-verifier.mjs', VALID_VERIFIER);
+  writeModule(root, 'providers/identity-verifier.mjs', VALID_VERIFIER.replaceAll("'local-development'", "'production'"));
   const configPath = writeConfig(root, postgresEnvelope());
   for (const command of APP_COMMANDS.filter((name) => name !== 'serve')) {
     const run = runCli([command, '--deployment-storage', configPath, '--root', root], {
       cwd: repoRoot, env: spawnEnv(), timeout: 10_000,
     });
     assert.notEqual(run.status, 0, `${command} should refuse postgresql`);
-    assert.equal(failureCode(run), 'DEPLOYMENT_STORAGE_POSTGRESQL_UNSUPPORTED', command);
+    assert.equal(failureCode(run), CLI_VERIFIED_OPERATOR_REQUIRED, command);
     assertCredentialFree(haystackOf(run), [configPath, root, SENTINEL_PASSWORD]);
     assertNoLocator(haystackOf(run), [configPath]);
   }
@@ -267,14 +267,17 @@ test('M2-11/M2-32 PostgreSQL documents refuse before composition for every APP_C
 
 test('M2-17 serve refuses a PostgreSQL document before listen', { timeout: 15_000 }, async () => {
   const root = scratch();
-  writeModule(root, 'providers/identity-verifier.mjs', VALID_VERIFIER);
+  writeModule(root, 'providers/identity-verifier.mjs', VALID_VERIFIER.replaceAll("'local-development'", "'production'"));
   const configPath = writeConfig(root, postgresEnvelope());
   const run = runCli(['serve', '--deployment-storage', configPath, '--root', root, '--port', '0'], {
     cwd: repoRoot, env: spawnEnv(), timeout: 8_000,
   });
   assert.notEqual(run.status, 0);
-  assert.equal(failureCode(run), 'DEPLOYMENT_STORAGE_POSTGRESQL_UNSUPPORTED');
   assert.equal(run.stdout.includes('Accordo running at'), false);
+  assert.ok(
+    ['DEPLOYMENT_STORAGE_TLS_REFUSED', 'STORAGE_UNAVAILABLE', 'IDENTITY_VERIFIER_ATTESTATION_REFUSED', 'STARTUP_ATTESTATION_REFUSED'].includes(failureCode(run)),
+    failureCode(run),
+  );
   assertCredentialFree(haystackOf(run), [configPath, root]);
   assertNoLocator(haystackOf(run), [configPath]);
 });

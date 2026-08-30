@@ -144,7 +144,8 @@ function renderTriggerWhen(when, dialect) {
     return `WHEN ${clauses.join('\n  OR ')}`;
   }
   const joiner = when.join === 'or' ? ' OR ' : ' AND ';
-  return `WHEN ${clauses.join(joiner)}`;
+  const body = clauses.join(joiner);
+  return dialect === 'postgres' ? `WHEN (${body})` : `WHEN ${body}`;
 }
 
 /**

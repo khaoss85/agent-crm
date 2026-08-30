@@ -36,8 +36,9 @@ windowed identity-conflict detector to replace v1's correctness-first whole-tabl
 read. **Production Spine v1 is implemented** (ADR-038), so this data now sits behind
 enforced authorization, memberships and one tenant per application instance — but the
 framework authenticates nobody and ships no verifier, so who a membership belongs to
-is only as trustworthy as the adapter a deployment supplies. PostgreSQL, shared-database
-tenancy, durable jobs, secrets and backups remain unimplemented (Spine v2–v4).
+is only as trustworthy as the adapter a deployment supplies. Dedicated-database
+PostgreSQL application composition exists; shared-database tenancy, durable jobs,
+secrets and backups remain unimplemented (Spine v2 remainder through v4).
 
 The paragraph above is this roadmap's **current-status block**, and every
 load-bearing sentence in it is bound to a generated fact (ADR-039). The rest of the
@@ -50,7 +51,7 @@ intended, and a fact contract has nothing to say about an intention.
 <!-- truth: spine.authorization.enforced=enforced -->
 <!-- truth: spine.authentication.framework_verifier=absent -->
 <!-- truth: spine.multi_tenant_single_instance=refused_at_startup -->
-<!-- truth: spine.postgresql.implemented=absent -->
+<!-- truth: spine.postgresql.implemented=implemented -->
 <!-- truth: spine.durable_jobs.implemented=absent -->
 <!-- truth: spine.secrets_backups.implemented=absent -->
 

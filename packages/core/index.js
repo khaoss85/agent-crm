@@ -266,6 +266,8 @@ export {
 
 export {
   TENANT_BINDING_CONTRACT,
+  TENANT_BINDING_CONTRACT_V2,
+  describePortableTenantBinding,
   resolveTenantBinding,
   assertBindAddress,
   assertBoundOrganization,

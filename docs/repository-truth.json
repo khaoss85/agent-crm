@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "304aa28efa21bbec0ac938fcf21e84acdab82113ce343b1d993a62a1e9d962f9",
+  "sourceSha": "cc423b3a3b751da9767e969e5b44159dd64c1896cf2dbd412ab845f5e3ae398a",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -689,17 +689,17 @@
     },
     {
       "id": "spine.postgresql.implemented",
-      "value": "absent",
+      "value": "implemented",
       "authority": "spine.contract",
       "evidence": [
-        "createAccordoAppAsync#STORAGE_ADAPTER_UNAVAILABLE",
-        "declared:PostgreSQL application composition or shared-database row-level tenancy (Spine v2)",
+        "createAccordoAppAsync#PORTABLE_POSTGRESQL_BINDING_REQUIRED",
         "package.json#dependencies:pg@adapter-only",
-        "packages/app/src/spine.js#SPINE_NOT_MODELED"
+        "packages/app/src/create-app-async.js#createAccordoAppAsync"
       ],
       "scope": "framework",
       "status": "current",
       "limitations": [
+        "POSTGRESQL_IS_APPLICATION_COMPOSITION_NOT_SHARED_TENANCY",
         "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
       ]
     },
@@ -844,6 +844,10 @@
       "message": "this contract requires no number to be bound and can discover none that ought to be. A citation standing next to a number binds the sentence, never the number. Two precisions, because the shorter statement read as more than it was: (1) ONE cited fact does carry an integer — spine.identity.contract, a contract version, checked in site/claims.json exactly like any other value — so \"no number is checked here\" is false; what holds is that no COUNT is, the count-shaped facts being the measurement ones that MEASUREMENT_FACTS_ARE_GENERATED_BUT_NOT_CITED keeps out of every document. (2) Typed TEST counts are not unchecked, they are checked by a different gate — findLooseTestCounts in scripts/measurement.js, run by scripts/site-check.js inside gtm:check across README.md, site/ and every docs/ document outside DATED_HISTORY. What no gate holds is every other current count: module, package, resource, action, policy, provider, rail, skill, scenario and JTBD-row counts, in this document set and in others"
     },
     {
+      "code": "POSTGRESQL_IS_APPLICATION_COMPOSITION_NOT_SHARED_TENANCY",
+      "message": "spine.postgresql.implemented means createAccordoAppAsync can compose one tenant onto dedicated PostgreSQL databases. It is not shared-database row-level tenancy and not a production-readiness claim"
+    },
+    {
       "code": "POSTURE_PROSE_NOT_GENERATED",
       "message": "productionPosture in packages/cli/src/app-inspect.js is hand-written English bound to explicit fact ids. The citations hold its VALUES; they do not derive its wording, so a reworded falsehood is caught only where RETIRED_CLAIMS names the exact retired claim. Generating the sentence from its own facts is v2"
     },
@@ -852,5 +856,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "dae1f11506c13f938aea1249c154074ecb3d5673fc596d0ef67772776a1004e0"
+  "fingerprint": "e33224abf30d23232133c20ed193843416f5e9481aac79c72d0d7d1ac859d991"
 }

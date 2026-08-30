@@ -18,11 +18,11 @@ never wrapped in `try/catch`. SQLite remains Node `node:sqlite` and does not
 load `pg`. There is no ORM, no query builder and no SQLite-to-PostgreSQL
 translator.
 
-Limitation: applications that select PostgreSQL carry this driver. The
-application factories still refuse PostgreSQL composition
-(`STORAGE_ADAPTER_UNAVAILABLE`). This is not shared-database tenancy and not a
-production-readiness claim.
-<!-- truth: spine.postgresql.implemented=absent -->
+Limitation: applications that select PostgreSQL carry this driver.
+`createAccordoAppAsync()` composes a dedicated-database PostgreSQL application;
+`createAccordoApp()` stays SQLite-only. This is not shared-database tenancy and
+not a production-readiness claim.
+<!-- truth: spine.postgresql.implemented=implemented -->
 
 ## ADR-002 — Services and workflows own mutations
 

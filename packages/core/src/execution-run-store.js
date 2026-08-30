@@ -440,15 +440,20 @@ function resolveIdSource(newId) {
 export function createExecutionRunStore(database, options = {}) {
   const now = resolveClock(options.clock);
   const newId = resolveIdSource(options.newId);
-  const storage = database?.storage?.sync;
+  const sync = database?.storage?.sync;
+  const storage = sync ?? database?.storage;
   if (!storage) {
     throw new ValidationError('The execution-run store requires a database with Storage Contract v1');
   }
+  const after = (result, value) => (sync ? value : Promise.resolve(result).then(() => value));
 
   /** @param {string} table @param {string} id @param {Array<{column: string, value: unknown}>} values */
-  const patch = (table, id, values) => storage.execute({
-    kind: 'update', table, values, where: [{ column: 'id', op: 'eq', value: id }],
-  });
+  const patch = (table, id, values) => {
+    const result = storage.execute({
+      kind: 'update', table, values, where: [{ column: 'id', op: 'eq', value: id }],
+    });
+    return after(result, undefined);
+  };
 
   return Object.freeze({
     /**
@@ -461,7 +466,7 @@ export function createExecutionRunStore(database, options = {}) {
       const own = ownedShape(run, 'Execution run', ['workflowName', 'input'], ['workflowName']);
       const workflowName = assertStorableText(own.workflowName, 'Execution run workflow name', { field: 'workflowName' });
       const id = assertGeneratedId(newId(), 'The generated run id', { field: 'id' });
-      storage.execute({
+      return after(storage.execute({
         kind: 'insert',
         table: RUNS,
         values: [
@@ -475,8 +480,7 @@ export function createExecutionRunStore(database, options = {}) {
           { column: 'started_at', value: now() },
           { column: 'finished_at', value: null },
         ],
-      });
-      return id;
+      }), id);
     },
 
     /**
@@ -491,7 +495,7 @@ export function createExecutionRunStore(database, options = {}) {
       const runId = assertStorableText(own.runId, 'Trace span run id', { field: 'runId' });
       const name = assertStorableText(own.name, 'Trace span name', { field: 'name' });
       const id = assertGeneratedId(newId(), 'The generated span id', { field: 'id' });
-      storage.execute({
+      return after(storage.execute({
         kind: 'insert',
         table: SPANS,
         values: [
@@ -506,8 +510,7 @@ export function createExecutionRunStore(database, options = {}) {
           { column: 'started_at', value: now() },
           { column: 'finished_at', value: null },
         ],
-      });
-      return id;
+      }), id);
     },
 
     /**
@@ -675,17 +678,33 @@ export function createExecutionRunStore(database, options = {}) {
      * @param {string} runId
      */
     getRun(runId) {
-      const row = storage.maybeOne({
-        kind: 'select', table: RUNS, columns: '*',
-        where: [{ column: 'id', op: 'eq', value: runId }],
-      });
-      if (!row) return null;
-      const spans = storage.many({
-        kind: 'select', table: SPANS, columns: '*',
-        where: [{ column: 'run_id', op: 'eq', value: runId }],
-        orderBy: [{ column: 'started_at', direction: 'asc' }],
-      }).map(mapSpanRow);
-      return { ...mapRunRow(row), spans };
+      const load = async () => {
+        const row = await storage.maybeOne({
+          kind: 'select', table: RUNS, columns: '*',
+          where: [{ column: 'id', op: 'eq', value: runId }],
+        });
+        if (!row) return null;
+        const spans = (await storage.many({
+          kind: 'select', table: SPANS, columns: '*',
+          where: [{ column: 'run_id', op: 'eq', value: runId }],
+          orderBy: [{ column: 'started_at', direction: 'asc' }],
+        })).map(mapSpanRow);
+        return { ...mapRunRow(row), spans };
+      };
+      if (sync) {
+        const row = storage.maybeOne({
+          kind: 'select', table: RUNS, columns: '*',
+          where: [{ column: 'id', op: 'eq', value: runId }],
+        });
+        if (!row) return null;
+        const spans = storage.many({
+          kind: 'select', table: SPANS, columns: '*',
+          where: [{ column: 'run_id', op: 'eq', value: runId }],
+          orderBy: [{ column: 'started_at', direction: 'asc' }],
+        }).map(mapSpanRow);
+        return { ...mapRunRow(row), spans };
+      }
+      return load();
     },
 
     /**
@@ -706,11 +725,13 @@ export function createExecutionRunStore(database, options = {}) {
       const limit = Math.min(
         Math.max(/** @type {number} */ (own.limit) ?? DEFAULT_RUN_LIMIT, 1), MAX_RUN_LIMIT,
       );
-      return storage.many({
+      const rows = storage.many({
         kind: 'select', table: RUNS, columns: '*', where,
         orderBy: [{ column: 'started_at', direction: 'desc' }],
         limit,
-      }).map(mapRunRow);
+      });
+      if (sync) return rows.map(mapRunRow);
+      return Promise.resolve(rows).then((resolved) => resolved.map(mapRunRow));
     },
   });
 }
