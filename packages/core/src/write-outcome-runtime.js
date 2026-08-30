@@ -2,11 +2,14 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createExecutionRunStore } from './execution-run-store.js';
+import { AppError, NotFoundError } from './errors.js';
 import {
   assertOutcomeScope,
+  deriveChildKey,
   encodeJsonSafe,
   providerIdempotencyKey,
   requestFingerprint,
+  requireIdempotencyKey,
   resolveIdempotencyKey,
   subjectFingerprint,
   tenantNamespace,
@@ -423,4 +426,120 @@ export function refuseUnprovableMutation(idempotencyKey, runId) {
   throw unknownCommitError(idempotencyKey, runId);
 }
 
-export { providerIdempotencyKey, isUnknownCommit, unknownCommitError };
+/**
+ * Bounded public projection of a write outcome. Never includes domain payload,
+ * credentials or locators.
+ *
+ * @param {any} outcome
+ */
+export function projectWriteOutcome(outcome) {
+  if (!outcome) return null;
+  return Object.freeze({
+    idempotencyKey: outcome.rawKey,
+    operation: outcome.operation,
+    target: outcome.target,
+    requestFingerprint: outcome.requestFingerprint,
+    runId: outcome.runId,
+    createdAt: outcome.createdAt,
+    acknowledged: outcome.acknowledgedAt != null,
+    status: outcome.response == null ? 'pending' : 'committed',
+  });
+}
+
+/**
+ * Tenant-and-subject bound lookup. Another subject's key is indistinguishable
+ * from absence.
+ *
+ * @param {any} database
+ * @param {{
+ *   tenantId: unknown,
+ *   idempotencyKey: unknown,
+ *   identity?: any,
+ *   actor?: unknown,
+ *   phase?: string,
+ * }} spec
+ */
+export async function lookupWriteOutcome(database, spec) {
+  if (!usesWriteOutcomes(database)) {
+    throw new AppError('Write-outcome lookup requires PostgreSQL', {
+      code: 'WRITE_OUTCOME_POSTGRESQL_REQUIRED',
+      status: 400,
+    });
+  }
+  const rawKey = requireIdempotencyKey(spec.idempotencyKey);
+  const tenantNs = tenantNamespace(spec.tenantId);
+  const subject = subjectFingerprint(spec.identity, spec.actor);
+  const store = createWriteOutcomeStore(database);
+  const existing = await store.lookup(tenantNs, rawKey, spec.phase ?? 'root');
+  if (!existing || existing.subjectFingerprint !== subject) {
+    throw new NotFoundError('WriteOutcome', rawKey);
+  }
+  return projectWriteOutcome(existing);
+}
+
+/**
+ * @param {any} database
+ * @param {{ tenantId: unknown, identity?: any, actor?: unknown }} spec
+ */
+export async function listUnacknowledgedWriteOutcomes(database, spec) {
+  if (!usesWriteOutcomes(database)) {
+    throw new AppError('Write-outcome lookup requires PostgreSQL', {
+      code: 'WRITE_OUTCOME_POSTGRESQL_REQUIRED',
+      status: 400,
+    });
+  }
+  const tenantNs = tenantNamespace(spec.tenantId);
+  const subject = subjectFingerprint(spec.identity, spec.actor);
+  const store = createWriteOutcomeStore(database);
+  const rows = await store.listUnacknowledged(tenantNs, subject);
+  return rows.map(projectWriteOutcome);
+}
+
+/**
+ * Idempotent Admin acknowledgement. Derives a child key from the submission
+ * root + `admin-ack` + run id. Repeats add no write or audit.
+ *
+ * @param {any} database
+ * @param {any} events
+ * @param {{
+ *   tenantId: unknown,
+ *   idempotencyKey: unknown,
+ *   identity?: any,
+ *   actor?: unknown,
+ * }} spec
+ */
+export async function acknowledgeWriteOutcome(database, events, spec) {
+  const parent = await lookupWriteOutcome(database, spec);
+  const childKey = deriveChildKey(parent.idempotencyKey, 'admin-ack', parent.runId);
+  const outcome = await runIdempotentWrite(database, events, {
+    tenantId: spec.tenantId,
+    idempotencyKey: childKey,
+    identity: spec.identity,
+    actor: spec.actor,
+    operation: 'admin.ack',
+    target: parent.idempotencyKey,
+    contractVersion: 'write.v1',
+    input: { runId: parent.runId },
+  }, async () => {
+    const store = createWriteOutcomeStore(database);
+    const tenantNs = tenantNamespace(spec.tenantId);
+    const existing = await store.lookup(tenantNs, parent.idempotencyKey, 'root');
+    if (!existing) throw new NotFoundError('WriteOutcome', parent.idempotencyKey);
+    await store.tryAcknowledge({
+      tenantNamespace: tenantNs,
+      rawKey: parent.idempotencyKey,
+      phase: 'root',
+      acknowledgedAt: nowIso(),
+    });
+    return { ok: true, idempotencyKey: parent.idempotencyKey, runId: parent.runId };
+  });
+  return Object.freeze({
+    ok: true,
+    idempotencyKey: parent.idempotencyKey,
+    ackKey: childKey,
+    runId: parent.runId,
+    replayed: outcome.replayed === true,
+  });
+}
+
+export { providerIdempotencyKey, isUnknownCommit, unknownCommitError, deriveChildKey };

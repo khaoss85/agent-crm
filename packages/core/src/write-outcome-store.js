@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS write_outcomes (
   run_id TEXT NOT NULL,
   events_promoted INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL,
+  acknowledged_at TIMESTAMPTZ,
   PRIMARY KEY (tenant_namespace, raw_key, phase)
 )
 `;
@@ -72,6 +73,7 @@ function mapOutcome(row) {
     runId: String(row.run_id),
     eventsPromoted: Number(row.events_promoted ?? 0) === 1,
     createdAt: row.created_at,
+    acknowledgedAt: row.acknowledged_at ?? null,
   });
 }
 
@@ -170,6 +172,54 @@ export function createWriteOutcomeStore(database) {
           { column: 'raw_key', op: 'eq', value: outcome.rawKey },
           { column: 'phase', op: 'eq', value: phase },
           { column: 'events_promoted', op: 'eq', value: 0 },
+        ],
+      });
+      return Number(result?.affectedRows ?? 0) === 1;
+    },
+
+    /**
+     * Subject-scoped pending discovery. Never returns another subject's keys
+     * and never includes domain payload.
+     *
+     * @param {string} tenantNamespace
+     * @param {string} subjectFingerprint
+     */
+    async listUnacknowledged(tenantNamespace, subjectFingerprint) {
+      const rows = await api().many({
+        kind: 'select',
+        table: WRITE_OUTCOMES,
+        columns: '*',
+        where: [
+          { column: 'tenant_namespace', op: 'eq', value: tenantNamespace },
+          { column: 'subject_fingerprint', op: 'eq', value: subjectFingerprint },
+          { column: 'phase', op: 'eq', value: 'root' },
+          { column: 'acknowledged_at', op: 'is-null' },
+        ],
+        orderBy: [
+          { column: 'created_at', direction: 'asc' },
+          { column: 'raw_key', direction: 'asc' },
+        ],
+      });
+      return (rows ?? []).map(mapOutcome).filter(Boolean);
+    },
+
+    /**
+     * Compare-and-set client acknowledgement. Returns true when this caller
+     * flipped the flag.
+     *
+     * @param {{ tenantNamespace: string, rawKey: string, phase?: string, acknowledgedAt: string }} outcome
+     */
+    async tryAcknowledge(outcome) {
+      const phase = outcome.phase ?? 'root';
+      const result = await api().execute({
+        kind: 'update',
+        table: WRITE_OUTCOMES,
+        values: [{ column: 'acknowledged_at', value: outcome.acknowledgedAt }],
+        where: [
+          { column: 'tenant_namespace', op: 'eq', value: outcome.tenantNamespace },
+          { column: 'raw_key', op: 'eq', value: outcome.rawKey },
+          { column: 'phase', op: 'eq', value: phase },
+          { column: 'acknowledged_at', op: 'is-null' },
         ],
       });
       return Number(result?.affectedRows ?? 0) === 1;

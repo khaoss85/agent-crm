@@ -2,10 +2,21 @@
 
 import { startPostgresqlLifecycle, startSqliteLifecycle } from './async-lifecycle.js';
 import { assertIdentityTenant, describePortableTenantBinding } from '../../core/src/tenant-binding.js';
-import { runWithAffineStorage, storageMany, storageMaybeOne } from '../../core/src/storage-runtime.js';
+import {
+  affineStorageFor,
+  isSyncStorage,
+  runWithAffineStorage,
+  storageMany,
+  storageMaybeOne,
+} from '../../core/src/storage-runtime.js';
 import { AuditLog } from '../../core/src/audit.js';
 import { EventBus } from '../../core/src/event-bus.js';
-import { reconcileWriteOutcome } from '../../core/src/write-outcome-runtime.js';
+import {
+  acknowledgeWriteOutcome,
+  listUnacknowledgedWriteOutcomes,
+  lookupWriteOutcome,
+  reconcileWriteOutcome,
+} from '../../core/src/write-outcome-runtime.js';
 import { ModuleRegistry } from '../../core/src/module-registry.js';
 import { CRM_SCHEMA } from '../../core/src/schema.js';
 import { createCompanyModule } from '../../modules/company/src/index.js';
@@ -224,23 +235,18 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
      * @param {() => any} fn
      */
     transactionAsync(fn) {
+      if (isSyncStorage(handle)) {
+        return handle.storage.sync.savepoint('tx', () => fn(handle.storage.sync));
+      }
+      const current = affineStorageFor(handle);
+      if (current && typeof current.savepoint === 'function') {
+        return current.savepoint('nested_tx', () => fn(current));
+      }
       return handle.storage.transaction(async (tx) => {
         // Publish the affine client in request-local storage. Never assign it
         // onto the shared handle: overlapping HTTP requests must keep seeing
         // the pool (PostgreSQL) or the outer SQLite contract handle.
-        const affine = handle.storage.sync
-          ? Object.freeze({
-            contract: handle.storage.contract,
-            sync: tx.sync ?? tx,
-            activeTransaction: handle.storage.activeTransaction,
-            execute: async (statement) => (tx.sync ?? tx).execute(statement),
-            maybeOne: async (statement) => (tx.sync ?? tx).maybeOne(statement),
-            many: async (statement) => (tx.sync ?? tx).many(statement),
-            transaction: handle.storage.transaction,
-            savepoint: (name, body) => (tx.sync ?? tx).savepoint(name, body),
-          })
-          : tx;
-        return runWithAffineStorage(handle, affine, () => fn(tx));
+        return runWithAffineStorage(handle, tx, () => fn(tx));
       });
     },
   };
@@ -337,6 +343,7 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
   const workflows = new WorkflowEngine({
     database: handle,
     services,
+    events,
     config: { approvalThresholdCents },
   });
   workflows.register(requestOpportunityStageChangeWorkflow);
@@ -470,6 +477,30 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
         phase: params.phase ?? 'root',
       });
     },
+    lookupWrite(params) {
+      return lookupWriteOutcome(handle, {
+        tenantId: params.tenantId ?? options.tenantId ?? handle.tenantId,
+        idempotencyKey: params.idempotencyKey,
+        identity: params.identity,
+        actor: params.actor,
+        phase: params.phase ?? 'root',
+      });
+    },
+    listUnacknowledgedWrites(params = {}) {
+      return listUnacknowledgedWriteOutcomes(handle, {
+        tenantId: params.tenantId ?? options.tenantId ?? handle.tenantId,
+        identity: params.identity,
+        actor: params.actor,
+      });
+    },
+    acknowledgeWrite(params) {
+      return acknowledgeWriteOutcome(handle, events, {
+        tenantId: params.tenantId ?? options.tenantId ?? handle.tenantId,
+        idempotencyKey: params.idempotencyKey,
+        identity: params.identity,
+        actor: params.actor,
+      });
+    },
     now,
     schema: CRM_SCHEMA,
     config,
@@ -534,6 +565,10 @@ export async function startPortableSqliteApp(options = {}) {
     providers: graph.providers,
     notifications: graph.notifications,
     runAction: graph.runAction,
+    reconcileWrite: graph.reconcileWrite,
+    lookupWrite: graph.lookupWrite,
+    listUnacknowledgedWrites: graph.listUnacknowledgedWrites,
+    acknowledgeWrite: graph.acknowledgeWrite,
     now: graph.now,
     schema: graph.schema,
     config: graph.config,
@@ -618,6 +653,9 @@ export async function startPortablePostgresqlApp(options) {
     notifications: graph.notifications,
     runAction: graph.runAction,
     reconcileWrite: graph.reconcileWrite,
+    lookupWrite: graph.lookupWrite,
+    listUnacknowledgedWrites: graph.listUnacknowledgedWrites,
+    acknowledgeWrite: graph.acknowledgeWrite,
     now: graph.now,
     schema: graph.schema,
     config: graph.config,
