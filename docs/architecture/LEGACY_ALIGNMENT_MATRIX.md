@@ -139,6 +139,27 @@ selects PostgreSQL and none imports the intent renderer.
 
 Closing milestone for every `deferred` row: package-module state adoption before a composition is selected for PostgreSQL (M3B/dual-graph follow-up), not a silent rewrite in this PR.
 
+### PostgreSQL write-outcome idempotency and external-operation v2 (Production Spine v2 M4A)
+
+Horizontal runtime capability: every PostgreSQL write is keyed, stored as a bounded outcome in the same SERIALIZABLE transaction, and recovered after `COMMIT_OUTCOME_UNKNOWN` by tenant+raw-key lookup. External-operation v2 adds durable intent/finalize phase keys, a stable provider idempotency key and read-only reconcile; PostgreSQL composition refuses `externalOperation: 1`. SQLite legacy calls remain compatible when the key is omitted. HTTP/SDK/CLI transport of the key, leases and TLS bind remain M4B/M4C. Not shared-database tenancy and not production ready.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel `company.create` and record actions on PostgreSQL use the outcome envelope; Contact/Opportunity/Approval standalone creates are not yet independently keyed |
+| Pipeline | `not_applicable` | pipeline composition does not own write outcomes |
+| Lead Intelligence | `deferred` | package still `externalOperation: 1` / SQLite graph; PostgreSQL composition refuses until a v2 graph exists |
+| Commercial Operations | `deferred` | catalog sync is not on the M4A envelope; dual-graph PostgreSQL selection is later |
+| Signature & Order | `deferred` | shipped `externalOperation: 1`; PostgreSQL composition refuses it until the v2 provider+reconcile graph |
+| Contract Activation | `deferred` | package persistence is outside the M4A kernel envelope |
+| Delivery | `deferred` | package persistence is outside the M4A kernel envelope |
+| Service | `deferred` | package persistence is outside the M4A kernel envelope |
+| Work | `deferred` | package persistence is outside the M4A kernel envelope |
+| Lifecycle | `deferred` | package persistence is outside the M4A kernel envelope |
+| Customer Data | `deferred` | package persistence is outside the M4A kernel envelope |
+| Custom-package fixture | `deferred` | customer packages remain SQLite/v1 until their authors declare external-operation v2 |
+
+Closing milestone for every `deferred` row: dual-graph PostgreSQL selection with external-operation v2 (M4B/domain adoption), not a silent rewrite of bundled v1 graphs in this PR.
+
 ### Identity-verifier pre-connect contract v2 assessment (Production Spine v2 M2F)
 
 The verifier resolver is a horizontal *runtime* capability: every executable
