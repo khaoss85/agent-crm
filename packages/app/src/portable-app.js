@@ -368,6 +368,7 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
       resources: () => domains.resources(),
       metadata: () => domains.metadata(),
       report: () => domains.report(),
+      capability: (request) => domains.capability(request),
     }),
     workflows: closeOver(workflows, ['run', 'list', 'listRuns', 'getRun']),
     audit: closeOver(audit, ['record', 'list']),

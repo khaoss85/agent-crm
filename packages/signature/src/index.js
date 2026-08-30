@@ -1,6 +1,6 @@
 // @ts-check
 
-import { definePackage } from '../../core/index.js';
+import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { SignatureRegistries } from './registry.js';
 import { buildRequestSignatureAction, createSignatureOperations } from './operations.js';
 import { createSignatureOrdersCapability } from './capability.js';
@@ -183,7 +183,12 @@ export function createSignatureDomain(options = {}) {
 
   /** The registries, for the composition that owns this package instance. */
   pkg.registries = registries;
-  return pkg;
+  return selectPackageGraph(pkg, options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createSignatureDomain()` callers keep v1. */
+export function createSignatureDomainV2(options = {}) {
+  return createSignatureDomain({ ...options, packageContract: 2 });
 }
 
 export { SignatureRegistries } from './registry.js';

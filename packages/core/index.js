@@ -27,6 +27,18 @@ export {
   validateDomainDefinition,
 } from './src/package-registry.js';
 
+// ---- dual bundled graphs (Spine v2 M3P) ----
+// One kernel helper stamps package/action/operation/capability contracts
+// together. Bundled packages export both graphs; v1 callers keep the current
+// synchronous object. Promise-returning wrappers never enter the v1 registry.
+export {
+  selectPackageGraph,
+  selectedPackageContract,
+  describePackageGraphContracts,
+  describeBundledPackageGraphs,
+  refuseAsyncPackagesOnSynchronousFactory,
+} from './src/package-graph.js';
+
 // ---- errors a package raises through the runtime ----
 // Status and code travel to HTTP, SDK, MCP and Admin unchanged, so a package
 // never formats its own transport response. `normalizeError` is the same

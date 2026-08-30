@@ -1,6 +1,6 @@
 // @ts-check
 
-import { definePackage } from '../../core/index.js';
+import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { buildServiceActions, serviceMetadata } from './actions.js';
 import { SERVICE_POLICY_KIND, defineServiceActivationPolicy } from './activation-policy.js';
 import {
@@ -53,7 +53,7 @@ export function createServicePackage(options = {}) {
     definition: defineServiceActivationPolicy(definition),
   }));
 
-  return definePackage({
+  return selectPackageGraph(definePackage({
     packageContract: 1,
     name: SERVICE_PACKAGE,
     label: 'Service operations',
@@ -86,7 +86,12 @@ export function createServicePackage(options = {}) {
         })),
       };
     },
-  });
+  }), options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createServicePackage()` callers keep v1. */
+export function createServicePackageV2(options = {}) {
+  return createServicePackage({ ...options, packageContract: 2 });
 }
 
 export { defineServiceActivationPolicy, SERVICE_POLICY_KIND, CASE_PRIORITIES, AMBIGUOUS } from './activation-policy.js';

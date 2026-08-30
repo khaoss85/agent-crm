@@ -1,6 +1,6 @@
 // @ts-check
 
-import { definePackage } from '../../core/index.js';
+import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { buildCustomerDataActions } from './actions.js';
 import { createCustomerIdentityCapability } from './capability.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
@@ -60,7 +60,7 @@ export function createCustomerDataPackage(options = {}) {
   const names = resolvedNames(config);
   const policy = options.matchPolicy ?? defineCustomerMatchPolicy();
 
-  return definePackage({
+  return selectPackageGraph(definePackage({
     packageContract: 1,
     name: CUSTOMER_DATA_DOMAIN,
     version: 1,
@@ -203,7 +203,12 @@ export function createCustomerDataPackage(options = {}) {
           'GDPR or legal assurance', 'retention and erasure', 'cross-channel timeline'],
       };
     },
-  });
+  }), options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createCustomerDataPackage()` callers keep v1. */
+export function createCustomerDataPackageV2(options = {}) {
+  return createCustomerDataPackage({ ...options, packageContract: 2 });
 }
 
 export { defineCustomerMatchPolicy, MATCH_POLICY_KIND, MATCH_RULES, LIMITATIONS };

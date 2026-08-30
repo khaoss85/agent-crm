@@ -487,6 +487,34 @@ per-domain dispositions below remain unchanged.
 | Custom-package score-disclosure fixture | `not_applicable` | it consumes `intelligence@1` as a customer-authored capability proof and never writes Organization or Membership rows |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime mutation |
 
+### Dual bundled v1/v2 package graphs (Production Spine v2 M3P)
+
+Horizontal kernel capability: `selectPackageGraph` stamps package, action,
+operation and capability contracts onto a cloned declaration and wraps only
+the v2 execute/create seams. Each bundled package keeps its v1 factory as the
+`createAccordoApp()` selection and exports an explicit v2 companion for
+`createAccordoAppAsync({ selected })`. The async factory default graph stays
+empty; v1 custom packages remain fail-closed on that path. Default
+`accordo serve` and PostgreSQL are not this slice.
+<!-- truth: spine.postgresql.implemented=absent -->
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | kernel Company/Contact/Opportunity/Approval are not domain packages; they already compose on both factories |
+| Pipeline | `not_applicable` | a kernel workflow capability, not a domain package |
+| Lead Intelligence | `aligned` | `createIntelligenceDomain()` stays v1; `createIntelligenceDomainV2()` is the awaited graph |
+| Commercial Operations | `aligned` | `createCommercialDomain()` stays v1; `createCommercialDomainV2()` is the awaited graph |
+| Signature & Order | `aligned` | `createSignatureDomain()` stays v1; `createSignatureDomainV2()` is the awaited graph |
+| Contract Activation | `aligned` | `createContractsDomain()` stays v1; `createContractsDomainV2()` is the awaited graph |
+| Delivery | `aligned` | `createDeliveryPackage()` stays v1; `createDeliveryPackageV2()` is the awaited graph |
+| Service | `aligned` | `createServicePackage()` stays v1; `createServicePackageV2()` is the awaited graph |
+| Work | `aligned` | `createWorkPackage()` stays v1; `createWorkPackageV2()` is the awaited graph |
+| Lifecycle | `aligned` | `createLifecyclePackage()` stays v1; `createLifecyclePackageV2()` is the awaited graph |
+| Customer Data | `aligned` | `createCustomerDataPackage()` stays v1; `createCustomerDataPackageV2()` is the awaited graph |
+| Custom-package fixture | `deferred` | partner-scorecard remains the customer-authored contract-1 compatibility proof; the portable path still refuses it with `PACKAGE_ASYNC_CONTRACT_REQUIRED` rather than rewriting it |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof on contract 1; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
+
 ### Public storage posture, health boundary and raw-driver exit (Production Spine v2 M2 final)
 
 This slice is horizontal kernel machinery, not a domain capability. Portable
