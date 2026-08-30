@@ -423,13 +423,26 @@ async function obtainProviderReceipt(args) {
   }
 
   if (usesWriteOutcomes(database)) {
-    await runIdempotentWrite(database, events, {
+    const callOutcome = await runIdempotentWrite(database, events, {
       ...specBase,
       operation: `${name}.call`,
       target: 'call',
       phase: 'call',
       settleTrace: false,
     }, async () => ({ attempted: true, providerIdempotencyKey: providerKey }));
+    if (callOutcome.replayed) {
+      if (provider && typeof provider.reconcile === 'function') {
+        const remote = await provider.reconcile({
+          idempotencyKey: providerKey,
+          intent: intentValue,
+        });
+        if (remote && remote.status !== 'absent' && remote !== null) {
+          assertProviderReceipt(remote, { providerKey, operation: name, requestFingerprint: requestFp });
+          return persistReceipt(args, freezePhaseValue(remote));
+        }
+      }
+      throw unknownCommitError(rawKey);
+    }
   }
 
   const timeoutMs = Number.isSafeInteger(args.specBase.timeoutMs) && args.specBase.timeoutMs > 0

@@ -593,4 +593,45 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
     assert.equal(provider.calls(), 1);
     assert.equal(resumed.idempotencyKey, issued);
   });
+
+  test('two concurrent first attempts with the same key call the provider once', { timeout: 60_000 }, async (t) => {
+    const provider = createCountingProvider();
+    const booted = await bootPostgresqlApp(t, {
+      selected: {
+        packageContract: 2,
+        packages: [],
+        modules: ['opportunity'],
+        actions: [{
+          module: 'opportunity',
+          name: 'notify-partner',
+          actionContract: 2,
+          externalOperation: 2,
+          provider,
+          async intent({ record }) { return { opportunityId: record.id }; },
+          async finalize({ record, external }) { return { id: record.id, receiptId: external?.receiptId ?? null }; },
+        }],
+      },
+    });
+    if (!booted) return;
+    const { app } = booted;
+    const company = await app.services.companies.create(
+      { name: 'Race Co' },
+      { actor, identity: subjectA, idempotencyKey: key() },
+    );
+    const opportunity = await app.services.opportunities.create({
+      companyId: company.id, name: 'Deal', valueCents: 1000, owner: 'ada',
+    }, { actor });
+    const idempotencyKey = key();
+    const params = {
+      module: 'opportunity', action: 'notify-partner', recordId: opportunity.id,
+      actor, identity: subjectA, idempotencyKey, provider,
+    };
+    const results = await Promise.allSettled([
+      app.runAction(params),
+      app.runAction(params),
+    ]);
+    const fulfilled = results.filter((result) => result.status === 'fulfilled');
+    assert.ok(fulfilled.length >= 1, JSON.stringify(results.map((result) => result.status === 'rejected' ? result.reason?.code : 'ok')));
+    assert.equal(provider.calls(), 1);
+  });
 });
