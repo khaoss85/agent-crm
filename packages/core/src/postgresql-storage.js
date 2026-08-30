@@ -731,6 +731,9 @@ export async function probePostgresqlQueryDeadline(storage, seconds) {
  * }} endpoint
  */
 export function createPostgresqlPool(endpoint) {
+  // search_path / options / connectionString are never isolation inputs. The
+  // adapter always qualifies objects under the fixed schema and SET search_path
+  // on checkout; hostile caller path settings are ignored here.
   const pool = new Pool({
     host: endpoint.host,
     port: endpoint.port ?? 5432,
