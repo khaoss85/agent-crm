@@ -37,8 +37,9 @@ read. **Production Spine v1 is implemented** (ADR-038), so this data now sits be
 enforced authorization, memberships and one tenant per application instance — but the
 framework authenticates nobody and ships no verifier, so who a membership belongs to
 is only as trustworthy as the adapter a deployment supplies. Dedicated-database
-PostgreSQL application composition exists; shared-database tenancy, durable jobs,
-secrets and backups remain unimplemented (Spine v2 remainder through v4).
+Dedicated-database PostgreSQL application composition exists through Spine v2 M5;
+shared-database tenancy, durable jobs, secrets and backups remain unimplemented
+(Spine v3–v4).
 
 The paragraph above is this roadmap's **current-status block**, and every
 load-bearing sentence in it is bound to a generated fact (ADR-039). The rest of the
@@ -468,7 +469,7 @@ Two consequences worth stating plainly: **a Cloud release serving an M11-era CRM
 
 - **Outcome:** a generated CRM can be exposed to real users. **v1 is merged (PR #98, ADR-038); v2–v4 are not.**
 - **v1 — done.** Verified identity as an adapter contract (`IDENTITY_CONTRACT = 1`, four kinds), organizations and memberships, eleven bounded permissions in five role bundles enforced server-authoritatively, `ACCORDO_MODE` with no default and a production mode that fails startup without a verifier, one tenant per application instance enforced structurally, and a fail-closed actor boundary. **The framework authenticates nobody** — no login, password, session or OIDC implementation ships, and that is the deliberate boundary, not an oversight.
-- **v2 — PostgreSQL and shared-database tenancy.** The PostgreSQL adapter behind the existing database contract (ADR-001's promised swap), and row-level tenancy over 86+ tables, which v1 deliberately did not attempt because a half-migrated version of it is worse than none.
+- **v2 — dedicated-database PostgreSQL (merged through M5).** Storage Contract v1, explicit dialect intent, `pg@8.23.0` on PostgreSQL 16, dual bundled v1/v2 graphs, `createAccordoAppAsync()` / PostgreSQL `accordo serve`, write-outcome idempotency, control-plane leases and HTTP/SDK/Admin/CLI key transport. **Shared-database row-level tenancy remains deferred** — one tenant per application instance / dedicated data plane. Not a production-readiness claim.
 - **v3 — durable jobs, outbox and scheduler.**
 - **v4 — the self-host interfaces:** secret provider, backup/restore, observability export, remote-safe MCP (Streamable HTTP with authorization — TASKS.md item 6).
 - **Dependencies:** Phase 2 (core objects stable). Gates Phase 9 — no public deploys before the whole phase, not merely v1.
