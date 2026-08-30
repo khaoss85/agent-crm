@@ -27,7 +27,7 @@ Generated: **2026-08-30**.
 | Fact | Value |
 |---|---|
 | Latest merged milestone | **Production Spine v2 M5 truth closeout** is on this branch: dedicated-database PostgreSQL composition, write-outcome idempotency, leases and HTTP/SDK/Admin/CLI key transport are merged. `createAccordoApp()` stays synchronous SQLite-only. Not shared-database tenancy, not Spine v3/v4, not Cloud, and not production ready. <!-- truth: spine.storage.contract=1 --><!-- truth: spine.storage.company_runtime=implemented --><!-- truth: spine.storage.generated_runtime=implemented --><!-- truth: spine.storage.work_legacy_raw=absent --><!-- truth: spine.postgresql.implemented=implemented --> |
-| Measured at | `58cf4ec` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
+| Measured at | `84a3efe` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
 | Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |
