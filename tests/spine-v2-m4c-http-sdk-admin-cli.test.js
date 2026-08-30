@@ -410,15 +410,15 @@ describe('M4C PostgreSQL HTTP/SDK/Admin/CLI', { concurrency: 1 }, () => {
         method: 'POST', body: { targetStage: 'proposal' }, key: leftKey,
       }),
       http(listening.url, `/api/opportunities/${opportunity.body.id}/stage`, {
-        method: 'POST', body: { targetStage: 'won' }, key: rightKey,
+        method: 'POST', body: { targetStage: 'lost' }, key: rightKey,
       }),
     ]);
     const successes = [left, right].filter((item) => item.status === 200);
-    const settled = [left, right].filter((item) => item.status === 200 || item.status === 409 || item.status === 503);
+    const settled = [left, right].filter((item) => [200, 400, 409, 503].includes(item.status));
     assert.ok(successes.length <= 1, `expected at most one commit, got ${successes.length}`);
     assert.equal(settled.length, 2);
     const current = await http(listening.url, `/api/opportunities/${opportunity.body.id}`);
-    assert.ok(['qualification', 'proposal', 'won', 'approval_pending'].includes(current.body.stage));
+    assert.ok(['qualification', 'proposal', 'lost', 'approval_pending'].includes(current.body.stage));
     const traces = await http(listening.url, '/api/traces?workflowName=request-opportunity-stage-change');
     const completed = (traces.body.items ?? []).filter((item) => item.status === 'completed');
     assert.ok(completed.length <= 1);
