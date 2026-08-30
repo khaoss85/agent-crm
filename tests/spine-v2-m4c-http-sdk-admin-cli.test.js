@@ -284,6 +284,9 @@ describe('M4C PostgreSQL HTTP/SDK/Admin/CLI', { concurrency: 1 }, () => {
     assert.equal(listed.body.items.length, 1);
     const audit = await http(listening.url, `/api/audit?entityType=company&entityId=${first.body.id}`);
     assert.equal(audit.body.items.length, 1);
+    const traces = await http(listening.url, '/api/traces?workflowName=company.create');
+    assert.equal(traces.body.items.length, 1);
+    assert.equal(traces.body.items[0].status, 'completed');
     const sdk = new AccordoClient({
       baseUrl: listening.url,
       actor: { type: 'user', id: 'm4c-ada' },
@@ -411,8 +414,13 @@ describe('M4C PostgreSQL HTTP/SDK/Admin/CLI', { concurrency: 1 }, () => {
       }),
     ]);
     const successes = [left, right].filter((item) => item.status === 200);
-    assert.ok(successes.length >= 1);
+    const settled = [left, right].filter((item) => item.status === 200 || item.status === 409 || item.status === 503);
+    assert.ok(successes.length <= 1, `expected at most one commit, got ${successes.length}`);
+    assert.equal(settled.length, 2);
     const current = await http(listening.url, `/api/opportunities/${opportunity.body.id}`);
-    assert.ok(['proposal', 'won', 'approval_pending'].includes(current.body.stage));
+    assert.ok(['qualification', 'proposal', 'won', 'approval_pending'].includes(current.body.stage));
+    const traces = await http(listening.url, '/api/traces?workflowName=request-opportunity-stage-change');
+    const completed = (traces.body.items ?? []).filter((item) => item.status === 'completed');
+    assert.ok(completed.length <= 1);
   });
 });

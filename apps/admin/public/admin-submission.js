@@ -128,6 +128,61 @@ export function requireSubmissionContext(options) {
  *   transport: (path: string, options: Record<string, unknown>) => Promise<any>,
  * }} options
  */
+function memoryStorage() {
+  /** @type {Map<string, string>} */
+  const map = new Map();
+  return {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)); },
+    removeItem: (key) => { map.delete(key); },
+  };
+}
+
+/**
+ * View-local controller over an Admin client. Mutations go through
+ * {@link createSubmissionController}; GET stays on the raw client. The shared
+ * `fetch` helper still refuses a raw mutation without a key.
+ *
+ * @param {{request: Function}} client
+ * @param {{ submissions?: ReturnType<typeof createSubmissionController>, storage?: any }} [deps]
+ */
+export function bindAdminMutations(client, deps = {}) {
+  const submissions = deps.submissions ?? createSubmissionController({
+    storage: deps.storage ?? (typeof globalThis.localStorage === 'undefined' ? memoryStorage() : globalThis.localStorage),
+    transport: (path, options) => client.request(path, {
+      method: options.method,
+      body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body ?? {}),
+      idempotencyKey: options.idempotencyKey,
+      headers: { ...(options.headers ?? {}), 'Idempotency-Key': options.idempotencyKey },
+    }),
+  });
+  return {
+    submissions,
+    client: {
+      /**
+       * @param {string} path
+       * @param {Record<string, unknown>} [options]
+       */
+      request(path, options = {}) {
+        const method = String(options.method ?? 'GET').toUpperCase();
+        if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+          let body = options.body ?? {};
+          if (typeof body === 'string') {
+            try { body = body === '' ? {} : JSON.parse(body); } catch { /* fingerprint the raw string */ }
+          }
+          return submissions.submit({
+            path,
+            method,
+            body,
+            key: typeof options.idempotencyKey === 'string' ? options.idempotencyKey : undefined,
+          });
+        }
+        return client.request(path, options);
+      },
+    },
+  };
+}
+
 export function createSubmissionController(options) {
   const storage = options.storage ?? globalThis.localStorage;
   const clock = options.clock ?? (() => new Date().toISOString());

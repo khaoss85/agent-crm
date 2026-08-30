@@ -1,5 +1,7 @@
 // @ts-check
 
+import { bindAdminMutations } from './admin-submission.js';
+
 /**
  * **The Production Spine section (ADR-038).**
  *
@@ -57,7 +59,9 @@ export const TENANT_ISOLATION_WARNING =
 /**
  * @param {{doc: any, mount: any, client: any}} deps
  */
-export function createSpineView({ doc, mount, client }) {
+export function createSpineView(deps) {
+  const { doc, mount } = deps;
+  const { client } = bindAdminMutations(deps.client, deps);
   const el = (tag, className, text) => {
     const node = doc.createElement(tag);
     if (className) node.setAttribute('class', className);

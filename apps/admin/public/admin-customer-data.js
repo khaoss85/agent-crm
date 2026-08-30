@@ -1,5 +1,7 @@
 // @ts-check
 
+import { bindAdminMutations } from './admin-submission.js';
+
 /**
  * **The Customer Data Foundation section (ADR-037).**
  *
@@ -46,7 +48,9 @@ function block(el, panel, meta) {
 /**
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps
  */
-export function createCustomerDataView({ doc, mount, client, navigate = () => {} }) {
+export function createCustomerDataView(deps) {
+  const { doc, mount, navigate = () => {} } = deps;
+  const { client } = bindAdminMutations(deps.client, deps);
   const el = (tag, className, text) => {
     const node = doc.createElement(tag);
     if (className) node.setAttribute('class', className);

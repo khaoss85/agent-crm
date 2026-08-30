@@ -6,6 +6,7 @@
 // so hostile stage labels or record names are inert text.
 
 import { formatMinorUnits } from './admin-core.js';
+import { bindAdminMutations } from './admin-submission.js';
 
 const BOARD_LIMIT = 200;
 
@@ -26,7 +27,8 @@ function el(doc, tag, options = {}) {
  * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void}} deps
  */
 export function createPipelineBoard(deps) {
-  const { doc, mount, client } = deps;
+  const { doc, mount } = deps;
+  const { client } = bindAdminMutations(deps.client, deps);
   const toast = deps.toast ?? (() => {});
 
   /** Guard against stale async responses overwriting a newer board. */

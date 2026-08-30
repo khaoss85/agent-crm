@@ -352,6 +352,7 @@ const pipelineBoard = createPipelineBoard({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   toast,
 });
 
@@ -362,6 +363,7 @@ const quoteView = createQuoteView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -371,6 +373,7 @@ const workView = createWorkView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -381,6 +384,7 @@ const customerDataView = createCustomerDataView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -392,6 +396,7 @@ const spineView = createSpineView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
 });
 
 async function populateNav() {
