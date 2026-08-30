@@ -91,12 +91,14 @@ export function requireStorageMethodKind(method, statement, allowed) {
 export const STORAGE_WRITE_KINDS = WRITE_KINDS;
 export const STORAGE_READ_KINDS = READ_KINDS;
 
-function renderStatement(statement, dialect) {
+function renderStatement(statement, dialect, schema) {
   if (!statement || typeof statement !== 'object' || !Object.hasOwn(statement, 'kind') || typeof statement.kind !== 'string') {
     refuse('Storage statement must be a structured object');
   }
   const placeholder = placeholders(dialect);
-  const table = identifier(statement.table, 'table');
+  const table = dialect === 'postgresql' && typeof schema === 'string' && schema !== ''
+    ? `${identifier(schema, 'schema')}.${identifier(statement.table, 'table')}`
+    : identifier(statement.table, 'table');
   if (statement.kind === 'insert') {
     closed(statement, ['kind', 'table', 'values'], 'insert statement', ['kind', 'table', 'values']);
     const bound = values(statement.values, 'Insert');
@@ -157,8 +159,8 @@ export function renderSqliteStatement(statement) {
 }
 
 /** Render the closed M1 statement vocabulary for the PostgreSQL adapter (`$1..$n`). */
-export function renderPostgresqlStatement(statement) {
-  return renderStatement(statement, 'postgresql');
+export function renderPostgresqlStatement(statement, options = {}) {
+  return renderStatement(statement, 'postgresql', options.schema);
 }
 
 /**

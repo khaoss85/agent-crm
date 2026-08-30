@@ -26,7 +26,7 @@ Generated: **2026-08-29**.
 
 | Fact | Value |
 |---|---|
-| Latest merged milestone | **Production Spine v2 M3B PostgreSQL adapter** is merged on `main`: pinned `pg@8.23.0`, Storage Contract v1 on SQLite and PostgreSQL, connection-affine SERIALIZABLE transactions. `createAccordoApp()` stays synchronous SQLite-only; application factories still refuse PostgreSQL composition. This branch adds dual bundled v1/v2 package graphs. Default `accordo serve` on the async factory and full application boot on PostgreSQL remain later work. Not shared-database tenancy and not production ready. <!-- truth: spine.storage.contract=1 --><!-- truth: spine.storage.company_runtime=implemented --><!-- truth: spine.storage.generated_runtime=implemented --><!-- truth: spine.storage.work_legacy_raw=absent --><!-- truth: spine.postgresql.implemented=absent --> |
+| Latest merged milestone | **Production Spine v2 M3C PostgreSQL application composition** is on this branch: `createAccordoAppAsync()` boots a dedicated-database PostgreSQL application after startup attestation; `accordo serve` awaits that path when PostgreSQL is selected. `createAccordoApp()` stays synchronous SQLite-only. Not shared-database tenancy and not production ready. <!-- truth: spine.storage.contract=1 --><!-- truth: spine.storage.company_runtime=implemented --><!-- truth: spine.storage.generated_runtime=implemented --><!-- truth: spine.storage.work_legacy_raw=absent --><!-- truth: spine.postgresql.implemented=implemented --> |
 | Measured at | `58cf4ec` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
 | Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
@@ -141,7 +141,7 @@ boundaries prevent a production PostgreSQL deployment from being claimed:
 | Blocker | Consequence today |
 |---|---|
 | No deployment authentication verifier | identity is only as trustworthy as the deployment adapter; the framework ships no verifier |
-| PostgreSQL application composition | the M3B adapter exists behind Storage Contract v1; `createAccordoApp()` stays SQLite-only and portable factories still refuse PostgreSQL composition until M3C |
+| Shared-database row tenancy | dedicated-database PostgreSQL composition exists; shared-database row-level tenancy does not |
 | No durable outbox or scheduler | post-commit delivery, renewal triggers, SLA timers and unattended work do not survive process loss |
 | No secret, backup or production-observability system | real provider credentials and recoverability cannot be operated safely |
 | Browser E2E remains outside CI | current Chromium receipts are manual and Admin regressions are not browser-gated on every push |
@@ -175,9 +175,9 @@ The final M2 posture slice bounded public storage descriptors and
 explicit graphs: `createX()` for `createAccordoApp()` and `createXV2()` for a
 caller-supplied portable selected graph.
 <!-- truth: spine.storage.contract=1 -->
-The M3B adapter exists; application factories still refuse PostgreSQL composition.
+M3C boots `createAccordoAppAsync()` and `accordo serve` on dedicated-database PostgreSQL after startup attestation. Shared-database row tenancy is not implemented.
 
-**Not implemented:** PostgreSQL application boot and `accordo serve` on PostgreSQL (M3C); M4 reliability
+**Not implemented:** M4 reliability
 (leases, idempotency, webhook keys); Spine v3 jobs/outbox/scheduler; Spine v4
 secrets/backups/observability; Cloud; default `accordo serve` on the async factory;
 deployment authentication; billing, invoicing and revenue

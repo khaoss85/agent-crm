@@ -8,6 +8,7 @@ import {
 } from '../../core/src/deployment-storage.js';
 import { prepareDeploymentPreconnect } from '../../core/src/identity-verifier.js';
 import { MODE_ENV } from '../../core/src/runtime-mode.js';
+import { AppError } from '../../core/src/errors.js';
 import { createMcpServer } from './server.js';
 
 /**
@@ -40,6 +41,12 @@ export async function startMcpStdio(options = {}) {
     return;
   }
 
+  if (prepared.selection.adapter === 'postgresql') {
+    throw new AppError(
+      'local MCP does not compose PostgreSQL; production MCP remains static-context-only',
+      { code: 'MCP_POSTGRESQL_UNSUPPORTED', status: 400 },
+    );
+  }
   const dbPath = sqliteFactoryPath(prepared.selection);
   const app = createAccordoApp({ dbPath });
   const publicStorage = documentSelected(prepared.selection)

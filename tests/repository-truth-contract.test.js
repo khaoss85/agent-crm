@@ -726,7 +726,7 @@ test('a declared-absence fact whose declaration is gone is refused, never defaul
   mutated.spineNotModeled = [];
   const { facts, problems } = buildFacts(mutated);
   assert.deepEqual(codes(problems), ['TRUTH_AUTHORITY_UNAVAILABLE']);
-  for (const id of ['spine.postgresql.implemented', 'spine.durable_jobs.implemented', 'spine.secrets_backups.implemented']) {
+  for (const id of ['spine.durable_jobs.implemented', 'spine.secrets_backups.implemented']) {
     assert.equal(facts.some((fact) => fact.id === id), false, `${id} was published from an absent declaration`);
     problemNaming(problems, id);
   }
@@ -879,14 +879,16 @@ test('the pinned pg adapter does not flip spine.postgresql.implemented while the
   assert.ok(postgres.evidence.includes('createAccordoAppAsync#STORAGE_ADAPTER_UNAVAILABLE'));
 });
 
-test('a public factory that accepts PostgreSQL contradicts declared absence', async () => {
+test('a public factory that requires a PostgreSQL binding publishes implemented application composition', async () => {
   const mutated = await bundle();
   mutated.productionDependencies = ['pg'];
   mutated.postgresqlApplicationRefused = false;
+  mutated.postgresqlBindingRequired = true;
   const { facts, problems } = buildFacts(mutated);
-  assert.deepEqual(codes(problems), ['TRUTH_AUTHORITIES_CONTRADICT']);
-  assert.equal(facts.some((fact) => fact.id === 'spine.postgresql.implemented'), false);
-  problemNaming(problems, 'createAccordoAppAsync no longer refuses PostgreSQL');
+  assert.equal(problems.some((problem) => problem.message.includes('spine.postgresql.implemented')), false);
+  const postgres = facts.find((fact) => fact.id === 'spine.postgresql.implemented');
+  assert.equal(postgres.value, 'implemented');
+  assert.ok(postgres.evidence.includes('createAccordoAppAsync#PORTABLE_POSTGRESQL_BINDING_REQUIRED'));
 });
 
 // ──────────────────────────── negative: a receipt is verified, never trusted
@@ -1076,7 +1078,7 @@ test('a source regression makes the committed document stale AND fails every doc
 test('--check exits non-zero and --json reports the problems machine-readably', async (t) => {
   const fixture = frameworkFixture(t);
   fixture.copyFrom(TRUTH_DOCUMENT);
-  fixture.write('PRODUCT.md', '<!-- truth: spine.postgresql.implemented=implemented -->\n');
+  fixture.write('PRODUCT.md', '<!-- truth: spine.postgresql.implemented=absent -->\n');
   fixture.seal();
   const run = spawnSync(process.execPath, [join(repoRoot, 'scripts/repo-truth.js'), '--check', '--json'], {
     cwd: fixture.root,

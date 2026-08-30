@@ -4224,7 +4224,7 @@
   ],
   "source": {
     "apps/admin/public/admin-quotes.js": "2989d42b38ddc8e114f32524f9fb163bdee18c33ba3fd849e21b57c93dbeb066",
-    "apps/server/src/http-server.js": "b9d20e6d2c6b4808e913077819eb64a4b627214b6157a3ad92d7f62cf8f6c231",
+    "apps/server/src/http-server.js": "901ea0c527932d20a25e898a1b1a48eacb5151fc2abd9a4bbd1c7c1104465b8e",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
     "packages/app/src/create-app.js": "39d5984c0e302de3838646ddc2b0b76d6ba7f27478b0f21255f999a186d350bf",
     "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",
@@ -4251,10 +4251,10 @@
     "packages/commercial/src/registry.js": "60d7ceff3de3bf88363288cb2c0a9386a335f6c1b10bf6a935306695a75b40af",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",
     "packages/commercial/src/verify-terms.js": "e3c4e150fc4e6a0efe925f8db6d14698e4a69e9c6518d5e3f7ee90473db8871c",
-    "packages/core/src/action-runtime.js": "8204232660b12f9d456cdb6deb6f268e43864061a7d6e55be5a0106449a97a17",
+    "packages/core/src/action-runtime.js": "1b397b8fc368c09fc50800a6dbe28dac6d41802e143db90d4cbedc2fb1a5c243",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
-    "packages/core/src/definition-version-store.js": "64db72fdc97c47ee78e98b56cc6a034f487e098dad0487d9730265cefad5cc65",
-    "packages/core/src/execution-run-store.js": "00d2c2406299536e53f5fcec54a82df62cc0465a07c6b489679e9c21c1690f62",
+    "packages/core/src/definition-version-store.js": "87ad1979e37b77e0fb1ce196c85d16dd8b0032025b3939a5cf04d4ad19eff2fb",
+    "packages/core/src/execution-run-store.js": "18f7b489155f756b3fd45a67bb5407229b3f771c9a54fb6e6301f98648ba7c8f",
     "packages/core/src/money.js": "67d7c03a14cf053e1e6f52d73ed2ca96608a8c3992615fe6a6738bcfc930e705",
     "packages/core/src/timeout.js": "9af8f74ac0f6fa7b229576c43540364d9014ce2225198c0e84e18070d952ff88",
     "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325"

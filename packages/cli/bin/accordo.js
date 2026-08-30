@@ -8,7 +8,9 @@ runCli(process.argv.slice(2)).catch((error) => {
   if (code.startsWith('DEPLOYMENT_STORAGE_')
     || code.startsWith('IDENTITY_VERIFIER_')
     || code === 'CLI_VERIFIED_OPERATOR_REQUIRED'
-    || code === 'MCP_PRODUCTION_SURFACE_UNAVAILABLE') {
+    || code === 'MCP_PRODUCTION_SURFACE_UNAVAILABLE'
+    || code === 'POSTGRESQL_HTTP_SPINE_REQUIRED'
+    || code === 'PACKAGE_ASYNC_CONTRACT_REQUIRED') {
     console.error(JSON.stringify({
       ok: false,
       code,

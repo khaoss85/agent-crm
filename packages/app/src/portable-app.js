@@ -1,6 +1,8 @@
 // @ts-check
 
-import { startSqliteLifecycle } from './async-lifecycle.js';
+import { startPostgresqlLifecycle, startSqliteLifecycle } from './async-lifecycle.js';
+import { describePortableTenantBinding } from '../../core/src/tenant-binding.js';
+import { runWithAffineStorage, storageMany, storageMaybeOne } from '../../core/src/storage-runtime.js';
 import { AuditLog } from '../../core/src/audit.js';
 import { EventBus } from '../../core/src/event-bus.js';
 import { ModuleRegistry } from '../../core/src/module-registry.js';
@@ -41,23 +43,35 @@ const ACTION_ELIGIBLE_CORE_MODULES = new Set(['opportunity']);
 /**
  * Authenticated Admin counts. Uses Storage Contract `kind: 'count'` only.
  *
- * @param {{ sync: { maybeOne: (statement: object) => { n?: unknown } | null } }} storage
+ * @param {any} database
  */
-function countAdminMetrics(storage) {
-  const count = (table, where) => {
-    const statement = where === undefined
-      ? { kind: 'count', table }
-      : { kind: 'count', table, where };
-    return Number(storage.sync.maybeOne(statement)?.n ?? 0);
-  };
-  return Object.freeze({
-    companies: count('companies'),
-    contacts: count('contacts'),
-    opportunities: count('opportunities'),
-    pendingApprovals: count('approvals', [{ column: 'status', op: 'eq', value: 'pending' }]),
-    workflowRuns: count('workflow_runs'),
-    auditEvents: count('audit_events'),
-  });
+function countAdminMetrics(database) {
+  const statementFor = (table, where) => (where === undefined
+    ? { kind: 'count', table }
+    : { kind: 'count', table, where });
+  const storage = database?.storage;
+  if (storage?.sync) {
+    const count = (table, where) => Number(storage.sync.maybeOne(statementFor(table, where))?.n ?? 0);
+    return Object.freeze({
+      companies: count('companies'),
+      contacts: count('contacts'),
+      opportunities: count('opportunities'),
+      pendingApprovals: count('approvals', [{ column: 'status', op: 'eq', value: 'pending' }]),
+      workflowRuns: count('workflow_runs'),
+      auditEvents: count('audit_events'),
+    });
+  }
+  const count = (table, where) => storageMaybeOne(database, statementFor(table, where), (row) => Number(row?.n ?? 0));
+  return Promise.all([
+    count('companies'),
+    count('contacts'),
+    count('opportunities'),
+    count('approvals', [{ column: 'status', op: 'eq', value: 'pending' }]),
+    count('workflow_runs'),
+    count('audit_events'),
+  ]).then(([companies, contacts, opportunities, pendingApprovals, workflowRuns, auditEvents]) => Object.freeze({
+    companies, contacts, opportunities, pendingApprovals, workflowRuns, auditEvents,
+  }));
 }
 
 /**
@@ -111,9 +125,9 @@ function portableService(service) {
  * `database.storage.sync`; this portable copy uses the owned `storage.sync`
  * handle. Neither path reaches the SQLite driver.
  *
- * @param {{storage: any, services: {companies: any, contacts: any, opportunities: any}, pipelines?: {forModule: (name: string) => any}}} deps
+ * @param {{database: any, services: {companies: any, contacts: any, opportunities: any}, pipelines?: {forModule: (name: string) => any}}} deps
  */
-function createPortableCoreAdapters({ storage, services, pipelines }) {
+function createPortableCoreAdapters({ database, services, pipelines }) {
   for (const name of ['companies', 'contacts', 'opportunities']) {
     if (!services[name] || typeof services[name].create !== 'function') {
       throw new ValidationError(`Core adapters need the ${name} service`);
@@ -125,7 +139,14 @@ function createPortableCoreAdapters({ storage, services, pipelines }) {
         throw new ValidationError('companyName is required to match a company', { field: 'companyName' });
       }
       const wanted = normalizeCompanyName(name);
-      return storage.sync.many({
+      const mapRows = (rows) => rows
+        .filter((row) => normalizeCompanyName(String(row.name)) === wanted)
+        .map((row) => ({
+          id: String(row.id),
+          name: String(row.name),
+          domain: row.domain === null || row.domain === undefined ? null : String(row.domain),
+        }));
+      return storageMany(database, {
         kind: 'select',
         table: 'companies',
         columns: ['id', 'name', 'domain', 'created_at'],
@@ -133,27 +154,20 @@ function createPortableCoreAdapters({ storage, services, pipelines }) {
           { column: 'created_at', direction: 'asc' },
           { column: 'id', direction: 'asc' },
         ],
-      })
-        .filter((row) => normalizeCompanyName(String(row.name)) === wanted)
-        .map((row) => ({
-          id: String(row.id),
-          name: String(row.name),
-          domain: row.domain === null || row.domain === undefined ? null : String(row.domain),
-        }));
+      }, mapRows);
     },
     findContactByEmail(email) {
       if (typeof email !== 'string' || email.trim() === '') {
         throw new ValidationError('email is required to match a contact', { field: 'email' });
       }
-      const row = storage.sync.maybeOne({
+      return storageMaybeOne(database, {
         kind: 'select',
         table: 'contacts',
         columns: ['id', 'company_id', 'email'],
         where: [{ column: 'email', op: 'eq', value: normalizeEmail(email) }],
-      });
-      return row
+      }, (row) => (row
         ? { id: String(row.id), companyId: String(row.company_id), email: String(row.email) }
-        : null;
+        : null));
     },
     createCompany(input, context) {
       return services.companies.create(input, context);
@@ -198,7 +212,24 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
      * @param {() => any} fn
      */
     transactionAsync(fn) {
-      return storage.transaction(fn);
+      return handle.storage.transaction(async (tx) => {
+        // Publish the affine client in request-local storage. Never assign it
+        // onto the shared handle: overlapping HTTP requests must keep seeing
+        // the pool (PostgreSQL) or the outer SQLite contract handle.
+        const affine = handle.storage.sync
+          ? Object.freeze({
+            contract: handle.storage.contract,
+            sync: tx.sync ?? tx,
+            activeTransaction: handle.storage.activeTransaction,
+            execute: async (statement) => (tx.sync ?? tx).execute(statement),
+            maybeOne: async (statement) => (tx.sync ?? tx).maybeOne(statement),
+            many: async (statement) => (tx.sync ?? tx).many(statement),
+            transaction: handle.storage.transaction,
+            savepoint: (name, body) => (tx.sync ?? tx).savepoint(name, body),
+          })
+          : tx;
+        return runWithAffineStorage(handle, affine, () => fn(tx));
+      });
     },
   };
 
@@ -267,7 +298,7 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
     approvals: approvalModule.service,
   };
 
-  const coreAdapters = createPortableCoreAdapters({ storage, services, pipelines });
+  const coreAdapters = createPortableCoreAdapters({ database: handle, services, pipelines });
   const approvalThresholdCents =
     options.approvalThresholdCents
     ?? Number(process.env.APPROVAL_THRESHOLD_CENTS ?? 5_000_000);
@@ -408,15 +439,16 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
     schema: CRM_SCHEMA,
     config,
     health() {
-      const storage = Object.freeze({ adapter: 'sqlite', available: true });
+      const adapter = storage?.sync ? 'sqlite' : 'postgresql';
+      const descriptor = Object.freeze({ adapter, available: true });
       return Object.freeze({
         ok: true,
-        ready: storage.available === true,
-        storage,
+        ready: descriptor.available === true,
+        storage: descriptor,
       });
     },
     metrics() {
-      return countAdminMetrics(storage);
+      return countAdminMetrics(handle);
     },
   };
 }
@@ -451,6 +483,69 @@ export async function startPortableSqliteApp(options = {}) {
   const graph = lifecycle.assembled;
   return Object.freeze({
     storage: Object.freeze({ adapter: 'sqlite', available: true }),
+    packageContract: graph.packageContract,
+    health: graph.health,
+    metrics: graph.metrics,
+    services: graph.services,
+    modules: graph.modules,
+    actions: graph.actions,
+    operations: graph.operations,
+    pipelines: graph.pipelines,
+    domains: graph.domains,
+    workflows: graph.workflows,
+    audit: graph.audit,
+    events: graph.events,
+    providers: graph.providers,
+    notifications: graph.notifications,
+    runAction: graph.runAction,
+    now: graph.now,
+    schema: graph.schema,
+    config: graph.config,
+    close: lifecycle.close,
+  });
+}
+
+/**
+ * Own one PostgreSQL lifecycle and assemble the portable graph over its data
+ * plane. Connection locators never appear on the returned facade.
+ *
+ * @param {{
+ *   selected: any,
+ *   tenantId: string,
+ *   identityVerifier: { operations: any },
+ *   control: object,
+ *   data: object,
+ *   moduleMigrations?: Array<{name: string, sql: string}>,
+ *   clock?: () => string,
+ *   approvalThresholdCents?: number,
+ *   catalogTimeoutMs?: number,
+ *   signatureTimeoutMs?: number,
+ *   listenMode?: string,
+ *   faultInject?: string,
+ * }} options
+ */
+export async function startPortablePostgresqlApp(options) {
+  const lifecycle = await startPostgresqlLifecycle({
+    selected: options.selected,
+    tenantId: options.tenantId,
+    identityVerifier: options.identityVerifier,
+    control: options.control,
+    data: options.data,
+    moduleMigrations: options.moduleMigrations,
+    clock: options.clock,
+    faultInject: options.faultInject,
+    assemble: ({ accepted, storage }) => assemblePortableGraph({ accepted, storage, options }),
+  });
+  const graph = lifecycle.assembled;
+  return Object.freeze({
+    storage: Object.freeze({ adapter: 'postgresql', available: true }),
+    listenMode: options.listenMode ?? 'local-development',
+    tenantBinding: describePortableTenantBinding({
+      adapter: 'postgresql',
+      tenantBound: true,
+      controlPlaneAdapter: 'postgresql',
+      dataPlaneIsolation: 'dedicated_database',
+    }),
     packageContract: graph.packageContract,
     health: graph.health,
     metrics: graph.metrics,

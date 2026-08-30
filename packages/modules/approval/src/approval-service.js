@@ -6,6 +6,7 @@ import { enumValue, requiredString } from '../../../core/src/validation.js';
 import { APPROVAL_STATUSES } from '../../../core/src/schema.js';
 import { normalizeActor } from '../../../core/src/actor.js';
 import { nowIso } from '../../../core/src/time.js';
+import { isSyncStorage, storageMany, storageMaybeOne, storageMutate } from '../../../core/src/storage-runtime.js';
 
 export class ApprovalService {
   /** @param {{database: any, audit: any, events: any, opportunities: any}} dependencies */
@@ -22,8 +23,8 @@ export class ApprovalService {
    */
   async request(input, context = {}) {
     const opportunityId = requiredString(input.opportunityId, 'opportunityId');
-    this.opportunities.get(opportunityId);
-    const existing = this.findPendingByOpportunity(opportunityId);
+    await Promise.resolve(this.opportunities.get(opportunityId));
+    const existing = await Promise.resolve(this.findPendingByOpportunity(opportunityId));
     if (existing) return existing;
     const actor = normalizeActor(context.actor);
     const approval = {
@@ -36,16 +37,28 @@ export class ApprovalService {
       requestedAt: nowIso(),
       decidedAt: null,
     };
-    this.database.storage.sync.execute({
-      kind: 'insert', table: 'approvals', values: approvalValues(approval),
-    });
-    this.audit.record({
-      actor,
-      action: 'approval.requested',
-      entityType: 'approval',
-      entityId: approval.id,
-      data: { ...approval, workflowRunId: context.workflowRunId ?? null },
-    });
+    const insert = { kind: 'insert', table: 'approvals', values: approvalValues(approval) };
+    if (isSyncStorage(this.database)) {
+      this.database.storage.sync.execute(insert);
+      this.audit.record({
+        actor,
+        action: 'approval.requested',
+        entityType: 'approval',
+        entityId: approval.id,
+        data: { ...approval, workflowRunId: context.workflowRunId ?? null },
+      });
+    } else {
+      await storageMutate(this.database, 'approval_request', async (tx) => {
+        await tx.execute(insert);
+        await this.audit.record({
+          actor,
+          action: 'approval.requested',
+          entityType: 'approval',
+          entityId: approval.id,
+          data: { ...approval, workflowRunId: context.workflowRunId ?? null },
+        }, tx);
+      });
+    }
     await this.events.emit('approval.requested', approval);
     return approval;
   }
@@ -56,49 +69,51 @@ export class ApprovalService {
    * @param {{actor?: unknown, workflowRunId?: string}} [context]
    */
   async decide(id, decision, context = {}) {
-    const approval = this.get(id);
+    const approval = await Promise.resolve(this.get(id));
     if (approval.status !== 'pending') {
       throw new ConflictError(`Approval ${id} is already ${approval.status}`, { id, status: approval.status });
     }
     const status = enumValue(decision, [...APPROVAL_STATUSES].filter((item) => item !== 'pending'), 'decision');
     const actor = normalizeActor(context.actor);
     const decidedAt = nowIso();
-    this.database.storage.sync.execute({
+    const update = {
       kind: 'update', table: 'approvals', values: [
         { column: 'status', value: status }, { column: 'decided_by', value: actor.id },
         { column: 'decided_at', value: decidedAt },
       ], where: [{ column: 'id', op: 'eq', value: id }],
-    });
-    const updated = this.get(id);
-    this.audit.record({
+    };
+    if (isSyncStorage(this.database)) this.database.storage.sync.execute(update);
+    else await storageMutate(this.database, 'approval_decide', async (tx) => { await tx.execute(update); });
+    const updated = await Promise.resolve(this.get(id));
+    await Promise.resolve(this.audit.record({
       actor,
       action: `approval.${status}`,
       entityType: 'approval',
       entityId: id,
       data: { opportunityId: updated.opportunityId, workflowRunId: context.workflowRunId ?? null },
-    });
+    }));
     await this.events.emit(`approval.${status}`, updated);
     return updated;
   }
 
   /** @param {string} id */
   get(id) {
-    const row = this.database.storage.sync.maybeOne({
+    return storageMaybeOne(this.database, {
       kind: 'select', table: 'approvals', columns: '*', where: [{ column: 'id', op: 'eq', value: id }],
+    }, (row) => {
+      if (!row) throw new NotFoundError('Approval', id);
+      return this.#mapRow(row);
     });
-    if (!row) throw new NotFoundError('Approval', id);
-    return this.#mapRow(row);
   }
 
   /** @param {string} opportunityId */
   findPendingByOpportunity(opportunityId) {
-    const row = this.database.storage.sync.maybeOne({
+    return storageMaybeOne(this.database, {
       kind: 'select', table: 'approvals', columns: '*', where: [
         { column: 'opportunity_id', op: 'eq', value: opportunityId },
         { column: 'status', op: 'eq', value: 'pending' },
       ],
-    });
-    return row ? this.#mapRow(row) : null;
+    }, (row) => (row ? this.#mapRow(row) : null));
   }
 
   /** @param {{status?: string, opportunityId?: string, limit?: number}} [filters] */
@@ -112,19 +127,21 @@ export class ApprovalService {
       where.push({ column: 'opportunity_id', op: 'eq', value: filters.opportunityId });
     }
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
-    return this.database.storage.sync.many({
+    return storageMany(this.database, {
       kind: 'select', table: 'approvals', columns: '*', where,
       orderBy: [{ column: 'requested_at', direction: 'desc' }], limit,
-    }).map((row) => this.#mapRow(row));
+    }, (row) => this.#mapRow(row));
   }
 
   /** @param {any} row */
   #mapRow(row) {
     const opportunity = this.opportunities.get(row.opportunity_id);
-    return mapApprovalRow({
-      ...row, opportunity_name: opportunity.name, company_name: opportunity.companyName,
-      value_cents: opportunity.valueCents, currency: opportunity.currency,
+    const map = (resolved) => mapApprovalRow({
+      ...row, opportunity_name: resolved.name, company_name: resolved.companyName,
+      value_cents: resolved.valueCents, currency: resolved.currency,
     });
+    if (isSyncStorage(this.database)) return map(opportunity);
+    return Promise.resolve(opportunity).then(map);
   }
 }
 

@@ -254,14 +254,55 @@ async function instantiateVerifier(namespace, mode, signal) {
 
   const verifyRequest = /** @type {(...args: unknown[]) => unknown} */ (operations.verifyRequest);
   /** @type {Record<string, (...args: unknown[]) => unknown>} */
-  const wrapped = { verifyRequest: verifyRequest.bind(operations) };
+  const wrapped = {
+    verifyRequest: async function wrappedVerifyRequest(evidence) {
+      if (!isPlainObject(evidence)) {
+        refuse(
+          'IDENTITY_VERIFIER_EVIDENCE_INVALID',
+          'request evidence cannot satisfy startup attestation',
+          { contract: IDENTITY_VERIFIER_CONTRACT, operation: 'verifyRequest' },
+        );
+      }
+      try {
+        return await verifyRequest.call(operations, evidence);
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        refuse(
+          'IDENTITY_VERIFIER_REQUEST_REFUSED',
+          'identity verifier refused the request',
+          { contract: IDENTITY_VERIFIER_CONTRACT, operation: 'verifyRequest' },
+        );
+      }
+    },
+  };
   for (const name of ATTEST_OPERATIONS) {
-    wrapped[name] = function notInM2() {
-      refuse(
-        'IDENTITY_VERIFIER_OPERATION_UNSUPPORTED',
-        'identity verifier discovery and attestation are not available until the production adapter',
-        { contract: IDENTITY_VERIFIER_CONTRACT, operation: name },
-      );
+    const original = /** @type {(...args: unknown[]) => unknown} */ (operations[name]);
+    wrapped[name] = async function wrappedAttest(input) {
+      if (name.startsWith('discover')) {
+        if (!isPlainObject(input) || typeof input.plane !== 'string' || input.resourceClass !== 'postgresql') {
+          refuse(
+            'IDENTITY_VERIFIER_CHALLENGE_INVALID',
+            'startup discovery requires a closed opaque handle',
+            { contract: IDENTITY_VERIFIER_CONTRACT, operation: name },
+          );
+        }
+      } else if (!isPlainObject(input) || input.operation !== name) {
+        refuse(
+          'IDENTITY_VERIFIER_CHALLENGE_INVALID',
+          'startup attestation requires a closed challenge bound to this operation',
+          { contract: IDENTITY_VERIFIER_CONTRACT, operation: name },
+        );
+      }
+      try {
+        return await original.call(operations, input);
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        refuse(
+          'IDENTITY_VERIFIER_ATTESTATION_REFUSED',
+          'identity verifier refused startup attestation',
+          { contract: IDENTITY_VERIFIER_CONTRACT, operation: name },
+        );
+      }
     };
   }
   return Object.freeze({

@@ -739,7 +739,7 @@ export class PackageRegistry {
   persistFingerprints(database) {
     const entries = [...this.#policies.values()];
     if (entries.length === 0) return;
-    createDefinitionVersionStore(database).persist(entries.map((entry) => ({
+    return createDefinitionVersionStore(database).persist(entries.map((entry) => ({
       type: `domain-policy:${entry.domain}:${entry.kind}`,
       name: entry.definition.name,
       version: entry.definition.version,

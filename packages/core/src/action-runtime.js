@@ -192,7 +192,7 @@ export async function runRecordAction(params) {
     // keys are dropped). A prepare failure fails the action with an honest
     // trace and never opens the transaction.
     if (typeof definition.prepare === 'function') {
-      const previewRecord = service.get(recordId); // NotFoundError → honest 404, no provider call
+      const previewRecord = await Promise.resolve(service.get(recordId)); // NotFoundError → honest 404, no provider call
       prepared = sanitizeJsonSafe(
         await definition.prepare({
           record: previewRecord,
@@ -207,7 +207,7 @@ export async function runRecordAction(params) {
     }
     result = await events.buffered(async (outbox) => {
       const value = await database.transactionAsync(async () => {
-        const record = service.get(recordId); // NotFoundError → rolled back, no writes
+        const record = await Promise.resolve(service.get(recordId)); // NotFoundError → rolled back, no writes
         if (Array.isArray(definition.fromStates) && !definition.fromStates.includes(record[definition.stateField ?? 'status'])) {
           throw new InvalidStateError(
             `${module}.${action} is not allowed from state "${record[definition.stateField ?? 'status']}"`,
@@ -272,7 +272,7 @@ export async function runRecordAction(params) {
   // write failure (e.g. the database is briefly locked by a concurrent writer)
   // must never mask the action's real outcome, so it is logged, not thrown.
   try {
-    writeTrace(database, {
+    await Promise.resolve(writeTrace(database, {
       runId,
       workflowName: `${module}.${action}`,
       status: failure ? 'failed' : 'completed',
@@ -298,7 +298,7 @@ export async function runRecordAction(params) {
       error: failure ? failure.message : null,
       startedAt,
       steps,
-    });
+    }));
   } catch (traceError) {
     console.error(
       `[accordo] ${module}.${action} run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`,
@@ -354,8 +354,8 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     input: { recordId, input: validatedInput },
     actor,
     timeoutMs: definition.timeoutMs ?? params.config?.externalTimeoutMs,
-    intent: (ctx) => {
-      const record = service.get(recordId); // NotFoundError → rolled back
+    intent: async (ctx) => {
+      const record = await Promise.resolve(service.get(recordId)); // NotFoundError → rolled back
       if (Array.isArray(definition.fromStates) && !definition.fromStates.includes(record[stateField])) {
         throw new InvalidStateError(
           `${module}.${action} is not allowed from state "${record[stateField]}"`,
@@ -377,10 +377,20 @@ async function runExternalRecordAction(params, definition, validatedInput) {
       })
       : null,
     finalize: typeof definition.finalize === 'function'
-      ? (ctx) => definition.finalize({ ...ctx, ...writeContext(), record: service.get(recordId), input: validatedInput })
+      ? async (ctx) => definition.finalize({
+        ...ctx,
+        ...writeContext(),
+        record: await Promise.resolve(service.get(recordId)),
+        input: validatedInput,
+      })
       : null,
     compensate: typeof definition.compensate === 'function'
-      ? (ctx) => definition.compensate({ ...ctx, ...writeContext(), record: service.get(recordId), input: validatedInput })
+      ? async (ctx) => definition.compensate({
+        ...ctx,
+        ...writeContext(),
+        record: await Promise.resolve(service.get(recordId)),
+        input: validatedInput,
+      })
       : null,
   });
   return { ok: true, module, action, recordId, runId, result };
@@ -502,7 +512,7 @@ function safeActor(actor) {
  * @param {any} database @param {{runId: string, workflowName: string, status: string, input: unknown, output: unknown, error: string | null, startedAt: string, steps: Array<{name: string, status: string, output?: unknown, error?: string}>}} run
  */
 export function writeTrace(database, run) {
-  createExecutionRunStore(database).recordRun(run);
+  return createExecutionRunStore(database).recordRun(run);
 }
 
 export { ValidationError, NotFoundError };

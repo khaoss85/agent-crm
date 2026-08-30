@@ -206,25 +206,25 @@ test('M2-22 loads a valid verifier before any database or listener exists', asyn
   assert.equal(resolvedHaystack.includes(root), false);
   assert.equal(resolvedHaystack.includes('identity-verifier.mjs'), false);
 
-  const discoverError = assertCode(
+  const discoverError = await assertCodeAsync(
     () => prepared.identityVerifier.operations.discoverControlResource(),
-    'IDENTITY_VERIFIER_OPERATION_UNSUPPORTED',
+    'IDENTITY_VERIFIER_CHALLENGE_INVALID',
     [root, SENTINEL_PASSWORD, 'provider-discover-must-not-run', 'provider-attest-must-not-run'],
   );
   assert.equal(leakHaystack(discoverError).includes(root), false);
-  assertCode(
+  await assertCodeAsync(
     () => prepared.identityVerifier.operations.attestControlStartup(),
-    'IDENTITY_VERIFIER_OPERATION_UNSUPPORTED',
+    'IDENTITY_VERIFIER_CHALLENGE_INVALID',
     [root, 'provider-attest-must-not-run'],
   );
-  assertCode(
+  await assertCodeAsync(
     () => prepared.identityVerifier.operations.discoverDataResource(),
-    'IDENTITY_VERIFIER_OPERATION_UNSUPPORTED',
+    'IDENTITY_VERIFIER_CHALLENGE_INVALID',
     [root, 'provider-discover-must-not-run'],
   );
-  assertCode(
+  await assertCodeAsync(
     () => prepared.identityVerifier.operations.attestDataStartup(),
-    'IDENTITY_VERIFIER_OPERATION_UNSUPPORTED',
+    'IDENTITY_VERIFIER_CHALLENGE_INVALID',
     [root, 'provider-attest-must-not-run'],
   );
 });

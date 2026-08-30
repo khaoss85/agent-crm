@@ -12,6 +12,7 @@ import {
 } from '../../../core/src/validation.js';
 import { OPPORTUNITY_STAGES, OPPORTUNITY_TYPES } from '../../../core/src/schema.js';
 import { nowIso } from '../../../core/src/time.js';
+import { isSyncStorage, storageMany, storageMaybeOne, storageMutate } from '../../../core/src/storage-runtime.js';
 
 const ALLOWED_TRANSITIONS = Object.freeze({
   discovery: ['qualification', 'lost'],
@@ -62,7 +63,7 @@ export class OpportunityService {
    * @param {string} id @param {Record<string, unknown>} patch @param {{actor?: unknown}} [context]
    */
   async applyManaged(id, patch, context = {}) {
-    this.get(id);
+    await Promise.resolve(this.get(id));
     /** @type {{column: string, value: unknown}[]} */
     const values = [];
     /** @type {Record<string, unknown>} */
@@ -88,24 +89,40 @@ export class OpportunityService {
       values.push({ column, value });
       changes[field] = value;
     }
-    if (!values.length) return this.get(id);
+    if (!values.length) return Promise.resolve(this.get(id));
     values.push({ column: 'updated_at', value: nowIso() });
 
-    const updated = this.database.storage.sync.savepoint('opportunity_managed', () => {
-      this.database.storage.sync.execute({
-        kind: 'update', table: 'opportunities', values,
-        where: [{ column: 'id', op: 'eq', value: id }],
+    const write = {
+      kind: 'update', table: 'opportunities', values,
+      where: [{ column: 'id', op: 'eq', value: id }],
+    };
+    let updated;
+    if (isSyncStorage(this.database)) {
+      updated = this.database.storage.sync.savepoint('opportunity_managed', () => {
+        this.database.storage.sync.execute(write);
+        const next = this.get(id);
+        this.audit.record({
+          actor: context.actor,
+          action: 'opportunity.updated',
+          entityType: 'opportunity',
+          entityId: id,
+          data: changes,
+        });
+        return next;
       });
-      const updated = this.get(id);
-      this.audit.record({
-        actor: context.actor,
-        action: 'opportunity.updated',
-        entityType: 'opportunity',
-        entityId: id,
-        data: changes,
+    } else {
+      await storageMutate(this.database, 'opportunity_managed', async (tx) => {
+        await tx.execute(write);
+        await this.audit.record({
+          actor: context.actor,
+          action: 'opportunity.updated',
+          entityType: 'opportunity',
+          entityId: id,
+          data: changes,
+        }, tx);
       });
-      return updated;
-    });
+      updated = await this.get(id);
+    }
     await this.events.emit('opportunity.updated', updated);
     return updated;
   }
@@ -117,10 +134,10 @@ export class OpportunityService {
   async create(input, context = {}) {
     this.#rejectManagedInput(input);
     const companyId = requiredString(input.companyId, 'companyId');
-    this.companies.get(companyId);
+    await Promise.resolve(this.companies.get(companyId));
     const contactId = optionalString(input.contactId, 'contactId');
     if (contactId) {
-      const contact = this.contacts.get(contactId);
+      const contact = await Promise.resolve(this.contacts.get(contactId));
       if (contact.companyId !== companyId) {
         throw new ValidationError('contactId must belong to companyId', { contactId, companyId });
       }
@@ -145,11 +162,35 @@ export class OpportunityService {
       updatedAt: timestamp,
     };
 
+    const insert = { kind: 'insert', table: 'opportunities', values: opportunityValues(opportunity) };
     try {
-      this.database.storage.sync.execute({
-        kind: 'insert', table: 'opportunities', values: opportunityValues(opportunity),
-      });
+      if (isSyncStorage(this.database)) {
+        this.database.storage.sync.execute(insert);
+        this.audit.record({
+          actor: context.actor,
+          action: 'opportunity.created',
+          entityType: 'opportunity',
+          entityId: opportunity.id,
+          data: opportunity,
+        });
+      } else {
+        await storageMutate(this.database, 'opportunity_create', async (tx) => {
+          await tx.execute(insert);
+          await this.audit.record({
+            actor: context.actor,
+            action: 'opportunity.created',
+            entityType: 'opportunity',
+            entityId: opportunity.id,
+            data: opportunity,
+          }, tx);
+        });
+      }
     } catch (error) {
+      if (error instanceof ConflictError) {
+        throw new ConflictError(`An opportunity already exists for source ${opportunity.sourceKey}`, {
+          sourceKey: opportunity.sourceKey,
+        });
+      }
       if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
         throw new ConflictError(`An opportunity already exists for source ${opportunity.sourceKey}`, {
           sourceKey: opportunity.sourceKey,
@@ -157,25 +198,18 @@ export class OpportunityService {
       }
       throw error;
     }
-
-    this.audit.record({
-      actor: context.actor,
-      action: 'opportunity.created',
-      entityType: 'opportunity',
-      entityId: opportunity.id,
-      data: opportunity,
-    });
     await this.events.emit('opportunity.created', opportunity);
     return opportunity;
   }
 
   /** @param {string} id */
   get(id) {
-    const row = this.database.storage.sync.maybeOne({
+    return storageMaybeOne(this.database, {
       kind: 'select', table: 'opportunities', columns: '*', where: [{ column: 'id', op: 'eq', value: id }],
+    }, (row) => {
+      if (!row) throw new NotFoundError('Opportunity', id);
+      return this.#mapRow(row);
     });
-    if (!row) throw new NotFoundError('Opportunity', id);
-    return this.#mapRow(row);
   }
 
   /** @param {{stage?: string, type?: string, companyId?: string, limit?: number}} [filters] */
@@ -193,10 +227,10 @@ export class OpportunityService {
       where.push({ column: 'company_id', op: 'eq', value: filters.companyId });
     }
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
-    return this.database.storage.sync.many({
+    return storageMany(this.database, {
       kind: 'select', table: 'opportunities', columns: '*', where,
       orderBy: [{ column: 'updated_at', direction: 'desc' }], limit,
-    }).map((row) => this.#mapRow(row));
+    }, (row) => this.#mapRow(row));
   }
 
   /**
@@ -206,7 +240,7 @@ export class OpportunityService {
    * @param {{actor?: unknown, workflowRunId?: string, bypassTransitionCheck?: boolean}} [context]
    */
   async setStage(id, targetStage, context = {}) {
-    const opportunity = this.get(id);
+    const opportunity = await Promise.resolve(this.get(id));
     const stage = enumValue(targetStage, [...OPPORTUNITY_STAGES], 'targetStage');
     if (opportunity.stage === stage) return opportunity;
     const allowed = ALLOWED_TRANSITIONS[opportunity.stage] ?? [];
@@ -218,13 +252,15 @@ export class OpportunityService {
       });
     }
     const updatedAt = nowIso();
-    this.database.storage.sync.execute({
+    const write = {
       kind: 'update', table: 'opportunities', values: [
         { column: 'stage', value: stage }, { column: 'updated_at', value: updatedAt },
       ], where: [{ column: 'id', op: 'eq', value: id }],
-    });
-    const updated = this.get(id);
-    this.audit.record({
+    };
+    if (isSyncStorage(this.database)) this.database.storage.sync.execute(write);
+    else await storageMutate(this.database, 'opportunity_stage', async (tx) => { await tx.execute(write); });
+    const updated = await Promise.resolve(this.get(id));
+    await Promise.resolve(this.audit.record({
       actor: context.actor,
       action: 'opportunity.stage_changed',
       entityType: 'opportunity',
@@ -234,7 +270,7 @@ export class OpportunityService {
         to: stage,
         workflowRunId: context.workflowRunId ?? null,
       },
-    });
+    }));
     await this.events.emit('opportunity.stage_changed', {
       opportunity: updated,
       from: opportunity.stage,
@@ -248,10 +284,14 @@ export class OpportunityService {
   #mapRow(row) {
     const company = this.companies.get(row.company_id);
     const contact = row.contact_id ? this.contacts.get(row.contact_id) : null;
-    return mapOpportunityRow({
-      ...row, company_name: company.name,
-      contact_name: contact ? `${contact.firstName} ${contact.lastName}` : null,
+    const map = (resolvedCompany, resolvedContact) => mapOpportunityRow({
+      ...row, company_name: resolvedCompany.name,
+      contact_name: resolvedContact ? `${resolvedContact.firstName} ${resolvedContact.lastName}` : null,
     });
+    if (isSyncStorage(this.database)) return map(company, contact);
+    return Promise.all([Promise.resolve(company), Promise.resolve(contact)]).then(([resolvedCompany, resolvedContact]) => (
+      map(resolvedCompany, resolvedContact)
+    ));
   }
 }
 

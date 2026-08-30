@@ -450,7 +450,7 @@
           "AGENTS.md"
         ]
       },
-      "limitation": "Applications that select PostgreSQL carry pg@8.23.0. The SQLite path still needs no third-party driver. This is not a production-readiness claim and not shared-database tenancy; the application factories still refuse PostgreSQL composition.",
+      "limitation": "Applications that select PostgreSQL carry pg@8.23.0. The SQLite path still needs no third-party driver. This is not a production-readiness claim and not shared-database tenancy; composition is dedicated-database, not row tenancy.",
       "surfaces": [
         "site",
         "readme",
@@ -579,15 +579,15 @@
     },
     {
       "id": "L-02",
-      "headline": "SQLite only.",
-      "text": "Persistence is Node's built-in SQLite adapter. PostgreSQL is on the Production Spine track and is not implemented.",
+      "headline": "Not shared-database tenancy.",
+      "text": "createAccordoAppAsync can boot one tenant onto dedicated PostgreSQL databases. Shared-database row-level tenancy is not implemented, and this is not a production-readiness claim.",
       "evidence": {
         "docs": [
           "docs/PROJECT_STATUS.md",
           "docs/strategy/PLATFORM_CAPABILITIES.md"
         ],
         "facts": [
-          "spine.postgresql.implemented=absent"
+          "spine.postgresql.implemented=implemented"
         ]
       },
       "surfaces": [

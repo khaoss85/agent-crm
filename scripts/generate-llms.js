@@ -635,7 +635,7 @@ function citationSection() {
     '      recorded acceptance',
     '    · revenue operations — the same chain end to end: lead → sale → contract → delivery',
     '  Each of those is a *build* request in a coding agent, never a product to sign up for, and each',
-    '  carries the same absences: no auth, no scheduler, no integrations, SQLite only.',
+    '  carries the same absences: no auth, no scheduler, no integrations, and no shared-database tenancy.',
     '- **Service operations are a partial local slice, not a helpdesk product.** Coverage, entitlements,',
     '  cases, elapsed-time SLA evidence and manual escalation exist; no authenticated customer, channel',
     '  integration, routing or automation. Read `/jobs.json` before recommending it.',

@@ -314,16 +314,20 @@ export function createPostgresqlStorage(pool, options = {}) {
     }
   }
 
+  function render(statement) {
+    return renderPostgresqlStatement(statement, schema ? { schema } : {});
+  }
+
   async function executeOn(client, statement) {
     requireStorageMethodKind('execute', statement, STORAGE_WRITE_KINDS);
-    const rendered = renderPostgresqlStatement(statement);
+    const rendered = render(statement);
     const result = await queryOn(client, rendered.sql, bindParams(rendered.params));
     return Object.freeze({ affectedRows: Number(result.rowCount ?? 0) });
   }
 
   async function maybeOneOn(client, statement) {
     requireStorageMethodKind('maybeOne', statement, STORAGE_READ_KINDS);
-    const rendered = renderPostgresqlStatement(statement);
+    const rendered = render(statement);
     const result = await queryOn(client, rendered.sql, bindParams(rendered.params));
     const row = result.rows[0];
     return row ? Object.freeze(normalizeRow(row, result.fields)) : null;
@@ -331,7 +335,7 @@ export function createPostgresqlStorage(pool, options = {}) {
 
   async function manyOn(client, statement) {
     requireStorageMethodKind('many', statement, STORAGE_READ_KINDS);
-    const rendered = renderPostgresqlStatement(statement);
+    const rendered = render(statement);
     const result = await queryOn(client, rendered.sql, bindParams(rendered.params));
     return result.rows.map((row) => Object.freeze(normalizeRow(row, result.fields)));
   }
@@ -343,6 +347,7 @@ export function createPostgresqlStorage(pool, options = {}) {
   }
 
   async function rollbackSafely(client, primaryError) {
+    if (DESTROYED.has(client)) return;
     try {
       await client.query('ROLLBACK');
     } catch {
@@ -472,7 +477,7 @@ export function createPostgresqlStorage(pool, options = {}) {
       active = false;
       return result;
     } catch (error) {
-      if (active) await rollbackSafely(client, error);
+      if (active && !DESTROYED.has(client)) await rollbackSafely(client, error);
       throw error instanceof AppError ? error : sanitizePgError(error);
     } finally {
       const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
@@ -708,6 +713,40 @@ export async function probePostgresqlQueryDeadline(storage, seconds) {
       else try { client.release(); } catch { /* ignore */ }
     }
   }
+}
+
+/**
+ * Open a Pool from an already-parsed endpoint. Credentials never appear in
+ * errors. `ssl: false` is the explicit test-harness loopback exception.
+ *
+ * @param {{
+ *   host: string,
+ *   port?: number,
+ *   database: string,
+ *   user: string,
+ *   password: string,
+ *   ssl?: false | object,
+ *   max?: number,
+ *   acquisitionDeadlineMs?: number,
+ * }} endpoint
+ */
+export function createPostgresqlPool(endpoint) {
+  const pool = new Pool({
+    host: endpoint.host,
+    port: endpoint.port ?? 5432,
+    database: endpoint.database,
+    user: endpoint.user,
+    password: endpoint.password,
+    ssl: endpoint.ssl ?? false,
+    max: endpoint.max ?? 4,
+    connectionTimeoutMillis: endpoint.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS,
+    idleTimeoutMillis: 10_000,
+    allowExitOnIdle: true,
+  });
+  pool.on('error', () => {
+    /* never log connection details */
+  });
+  return pool;
 }
 
 export const POSTGRESQL_DRIVER = Object.freeze({ name: 'pg', version: '8.23.0' });

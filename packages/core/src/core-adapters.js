@@ -1,6 +1,7 @@
 // @ts-check
 
 import { ValidationError } from './errors.js';
+import { isSyncStorage, storageMany, storageMaybeOne } from './storage-runtime.js';
 
 /**
  * Core-module adapters for record actions (ADR-013).
@@ -63,7 +64,14 @@ export function createCoreAdapters({ database, services, pipelines }) {
         throw new ValidationError('companyName is required to match a company', { field: 'companyName' });
       }
       const wanted = normalizeCompanyName(name);
-      return database.storage.sync.many({
+      const mapRows = (rows) => rows
+        .filter((row) => normalizeCompanyName(String(row.name)) === wanted)
+        .map((row) => ({
+          id: String(row.id),
+          name: String(row.name),
+          domain: row.domain === null || row.domain === undefined ? null : String(row.domain),
+        }));
+      const rows = storageMany(database, {
         kind: 'select',
         table: 'companies',
         columns: ['id', 'name', 'domain', 'created_at'],
@@ -71,13 +79,9 @@ export function createCoreAdapters({ database, services, pipelines }) {
           { column: 'created_at', direction: 'asc' },
           { column: 'id', direction: 'asc' },
         ],
-      })
-        .filter((row) => normalizeCompanyName(String(row.name)) === wanted)
-        .map((row) => ({
-          id: String(row.id),
-          name: String(row.name),
-          domain: row.domain === null || row.domain === undefined ? null : String(row.domain),
-        }));
+      });
+      if (isSyncStorage(database)) return mapRows(rows);
+      return Promise.resolve(rows).then(mapRows);
     },
 
     /**
@@ -91,15 +95,14 @@ export function createCoreAdapters({ database, services, pipelines }) {
       if (typeof email !== 'string' || email.trim() === '') {
         throw new ValidationError('email is required to match a contact', { field: 'email' });
       }
-      const row = database.storage.sync.maybeOne({
+      return storageMaybeOne(database, {
         kind: 'select',
         table: 'contacts',
         columns: ['id', 'company_id', 'email'],
         where: [{ column: 'email', op: 'eq', value: normalizeEmail(email) }],
-      });
-      return row
+      }, (row) => (row
         ? { id: String(row.id), companyId: String(row.company_id), email: String(row.email) }
-        : null;
+        : null));
     },
 
     /** @param {{name: string, domain?: string | null}} input @param {{actor?: unknown}} [context] */

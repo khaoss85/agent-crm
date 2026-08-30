@@ -65,7 +65,7 @@ export class WorkflowEngine {
   async run(name, input, context = {}) {
     const workflow = this.workflows.get(name);
     if (!workflow) throw new NotFoundError('Workflow', name);
-    const runId = this.#runs.startRun({ workflowName: name, input });
+    const runId = await this.#runs.startRun({ workflowName: name, input });
 
     /** @type {Record<string, any>} */
     let state = {};
@@ -74,7 +74,7 @@ export class WorkflowEngine {
 
     try {
       for (const step of workflow.steps) {
-        const spanId = this.#runs.startSpan({ runId, name: step.name, input: { input, state } });
+        const spanId = await this.#runs.startSpan({ runId, name: step.name, input: { input, state } });
 
         try {
           const output = await step.execute({
@@ -92,16 +92,16 @@ export class WorkflowEngine {
             state = { ...state, [step.name]: output };
           }
           completed.push({ definition: step, output });
-          this.#runs.completeSpan({ spanId, output });
+          await this.#runs.completeSpan({ spanId, output });
         } catch (error) {
           const normalized = normalizeError(error);
-          this.#runs.failSpan({ spanId, error: normalized.message });
+          await this.#runs.failSpan({ spanId, error: normalized.message });
           throw normalized;
         }
       }
 
       const output = state;
-      this.#runs.completeRun({ runId, output });
+      await this.#runs.completeRun({ runId, output });
       return { runId, status: 'completed', output };
     } catch (error) {
       const normalized = normalizeError(error);
@@ -123,7 +123,7 @@ export class WorkflowEngine {
           console.error(`[accordo] compensation failed in ${item.definition.name}: ${compensation.message}`);
         }
       }
-      this.#runs.failRun({ runId, error: normalized.message, output: state });
+      await this.#runs.failRun({ runId, error: normalized.message, output: state });
       normalized.details = {
         ...(normalized.details && typeof normalized.details === 'object' ? normalized.details : {}),
         workflowRunId: runId,
@@ -144,6 +144,12 @@ export class WorkflowEngine {
   /** @param {string} id */
   getRun(id) {
     const run = this.#runs.getRun(id);
+    if (run && typeof run.then === 'function') {
+      return run.then((resolved) => {
+        if (!resolved) throw new NotFoundError('Workflow run', id);
+        return resolved;
+      });
+    }
     if (!run) throw new NotFoundError('Workflow run', id);
     return run;
   }

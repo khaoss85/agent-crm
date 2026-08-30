@@ -81,7 +81,7 @@ export const DEFAULT_ACTION_PERMISSION = 'records.write';
  * distinction ADR-039 §7.1 turns on.
  */
 export const SPINE_NOT_MODELED = Object.freeze([
-  'PostgreSQL application composition or shared-database row-level tenancy (Spine v2)',
+  'shared-database row-level tenancy (Spine v2 remainder)',
   'durable jobs, outbox or scheduler (Spine v3)',
   'secret manager, backups, restore, deploy or rollback (Spine v4)',
   'password, session or credential storage — the framework authenticates nobody',

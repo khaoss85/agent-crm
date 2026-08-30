@@ -440,15 +440,20 @@ function resolveIdSource(newId) {
 export function createExecutionRunStore(database, options = {}) {
   const now = resolveClock(options.clock);
   const newId = resolveIdSource(options.newId);
-  const storage = database?.storage?.sync;
-  if (!storage) {
+  const sync = database?.storage?.sync;
+  const storage = sync ?? database?.storage;
+  if (!storage || typeof storage.execute !== 'function') {
     throw new ValidationError('The execution-run store requires a database with Storage Contract v1');
   }
+  const after = (result, value) => (sync ? value : Promise.resolve(result).then(() => value));
 
   /** @param {string} table @param {string} id @param {Array<{column: string, value: unknown}>} values */
-  const patch = (table, id, values) => storage.execute({
-    kind: 'update', table, values, where: [{ column: 'id', op: 'eq', value: id }],
-  });
+  const patch = (table, id, values) => {
+    const result = storage.execute({
+      kind: 'update', table, values, where: [{ column: 'id', op: 'eq', value: id }],
+    });
+    return after(result, undefined);
+  };
 
   return Object.freeze({
     /**
@@ -461,7 +466,7 @@ export function createExecutionRunStore(database, options = {}) {
       const own = ownedShape(run, 'Execution run', ['workflowName', 'input'], ['workflowName']);
       const workflowName = assertStorableText(own.workflowName, 'Execution run workflow name', { field: 'workflowName' });
       const id = assertGeneratedId(newId(), 'The generated run id', { field: 'id' });
-      storage.execute({
+      return after(storage.execute({
         kind: 'insert',
         table: RUNS,
         values: [
@@ -475,8 +480,7 @@ export function createExecutionRunStore(database, options = {}) {
           { column: 'started_at', value: now() },
           { column: 'finished_at', value: null },
         ],
-      });
-      return id;
+      }), id);
     },
 
     /**
@@ -491,7 +495,7 @@ export function createExecutionRunStore(database, options = {}) {
       const runId = assertStorableText(own.runId, 'Trace span run id', { field: 'runId' });
       const name = assertStorableText(own.name, 'Trace span name', { field: 'name' });
       const id = assertGeneratedId(newId(), 'The generated span id', { field: 'id' });
-      storage.execute({
+      return after(storage.execute({
         kind: 'insert',
         table: SPANS,
         values: [
@@ -506,8 +510,7 @@ export function createExecutionRunStore(database, options = {}) {
           { column: 'started_at', value: now() },
           { column: 'finished_at', value: null },
         ],
-      });
-      return id;
+      }), id);
     },
 
     /**
@@ -519,7 +522,7 @@ export function createExecutionRunStore(database, options = {}) {
     completeSpan(span) {
       const own = ownedShape(span, 'Trace span completion', ['spanId', 'output'], ['spanId']);
       const spanId = assertStorableText(own.spanId, 'Trace span id', { field: 'spanId' });
-      patch(SPANS, spanId, [
+      return patch(SPANS, spanId, [
         { column: 'status', value: 'completed' },
         { column: 'output_json', value: encodeJson(own.output) },
         { column: 'finished_at', value: now() },
@@ -536,7 +539,7 @@ export function createExecutionRunStore(database, options = {}) {
       const own = ownedShape(span, 'Trace span failure', ['spanId', 'error'], ['spanId', 'error']);
       const spanId = assertStorableText(own.spanId, 'Trace span id', { field: 'spanId' });
       const error = assertOptionalMessage(own.error, 'Trace span error', { field: 'error' });
-      patch(SPANS, spanId, [
+      return patch(SPANS, spanId, [
         { column: 'status', value: 'failed' },
         { column: 'error', value: error },
         { column: 'finished_at', value: now() },
@@ -550,7 +553,7 @@ export function createExecutionRunStore(database, options = {}) {
     completeRun(run) {
       const own = ownedShape(run, 'Execution run completion', ['runId', 'output'], ['runId']);
       const runId = assertStorableText(own.runId, 'Execution run id', { field: 'runId' });
-      patch(RUNS, runId, [
+      return patch(RUNS, runId, [
         { column: 'status', value: 'completed' },
         { column: 'output_json', value: encodeJson(own.output) },
         { column: 'finished_at', value: now() },
@@ -566,7 +569,7 @@ export function createExecutionRunStore(database, options = {}) {
       const own = ownedShape(run, 'Execution run failure', ['runId', 'error', 'output'], ['runId', 'error']);
       const runId = assertStorableText(own.runId, 'Execution run id', { field: 'runId' });
       const error = assertOptionalMessage(own.error, 'Execution run error', { field: 'error' });
-      patch(RUNS, runId, [
+      return patch(RUNS, runId, [
         { column: 'status', value: 'failed' },
         { column: 'error', value: error },
         { column: 'output_json', value: encodeJson(own.output) },
@@ -626,40 +629,71 @@ export function createExecutionRunStore(database, options = {}) {
       // One finish instant for the run and every span, because one clock reading
       // is what the statement this replaced took.
       const finishedAt = now();
-      storage.execute({
-        kind: 'insert',
-        table: RUNS,
-        values: [
-          { column: 'id', value: runId },
-          { column: 'workflow_name', value: workflowName },
-          { column: 'status', value: status },
-          { column: 'input_json', value: encodeJson(own.input) },
-          { column: 'output_json', value: encodeJson(own.output) },
-          { column: 'error', value: error },
-          { column: 'started_at', value: startedAt },
-          { column: 'finished_at', value: finishedAt },
-        ],
-      });
-      for (const [index, step] of steps.entries()) {
-        storage.execute({
+      const persist = (handle) => {
+        const runWrite = handle.execute({
           kind: 'insert',
-          table: SPANS,
+          table: RUNS,
           values: [
-            { column: 'id', value: minted[index] },
-            { column: 'run_id', value: runId },
-            { column: 'parent_span_id', value: null },
-            { column: 'name', value: step.name },
-            { column: 'status', value: step.status },
-            // A recorded span carries no input of its own: the run's input is
-            // the whole of what it was given.
-            { column: 'input_json', value: null },
-            { column: 'output_json', value: encodeJson(step.output ?? null) },
-            { column: 'error', value: step.error ?? null },
+            { column: 'id', value: runId },
+            { column: 'workflow_name', value: workflowName },
+            { column: 'status', value: status },
+            { column: 'input_json', value: encodeJson(own.input) },
+            { column: 'output_json', value: encodeJson(own.output) },
+            { column: 'error', value: error },
             { column: 'started_at', value: startedAt },
             { column: 'finished_at', value: finishedAt },
           ],
         });
-      }
+        const spanWrites = () => {
+          for (const [index, step] of steps.entries()) {
+            handle.execute({
+              kind: 'insert',
+              table: SPANS,
+              values: [
+                { column: 'id', value: minted[index] },
+                { column: 'run_id', value: runId },
+                { column: 'parent_span_id', value: null },
+                { column: 'name', value: step.name },
+                { column: 'status', value: step.status },
+                // A recorded span carries no input of its own: the run's input is
+                // the whole of what it was given.
+                { column: 'input_json', value: null },
+                { column: 'output_json', value: encodeJson(step.output ?? null) },
+                { column: 'error', value: step.error ?? null },
+                { column: 'started_at', value: startedAt },
+                { column: 'finished_at', value: finishedAt },
+              ],
+            });
+          }
+        };
+        if (sync) {
+          void runWrite;
+          spanWrites();
+          return undefined;
+        }
+        return Promise.resolve(runWrite).then(async () => {
+          for (const [index, step] of steps.entries()) {
+            await handle.execute({
+              kind: 'insert',
+              table: SPANS,
+              values: [
+                { column: 'id', value: minted[index] },
+                { column: 'run_id', value: runId },
+                { column: 'parent_span_id', value: null },
+                { column: 'name', value: step.name },
+                { column: 'status', value: step.status },
+                { column: 'input_json', value: null },
+                { column: 'output_json', value: encodeJson(step.output ?? null) },
+                { column: 'error', value: step.error ?? null },
+                { column: 'started_at', value: startedAt },
+                { column: 'finished_at', value: finishedAt },
+              ],
+            });
+          }
+        });
+      };
+      if (sync) return persist(storage);
+      return storage.transaction((tx) => persist(tx));
     },
 
     /**
@@ -675,17 +709,33 @@ export function createExecutionRunStore(database, options = {}) {
      * @param {string} runId
      */
     getRun(runId) {
-      const row = storage.maybeOne({
-        kind: 'select', table: RUNS, columns: '*',
-        where: [{ column: 'id', op: 'eq', value: runId }],
-      });
-      if (!row) return null;
-      const spans = storage.many({
-        kind: 'select', table: SPANS, columns: '*',
-        where: [{ column: 'run_id', op: 'eq', value: runId }],
-        orderBy: [{ column: 'started_at', direction: 'asc' }],
-      }).map(mapSpanRow);
-      return { ...mapRunRow(row), spans };
+      const load = async () => {
+        const row = await storage.maybeOne({
+          kind: 'select', table: RUNS, columns: '*',
+          where: [{ column: 'id', op: 'eq', value: runId }],
+        });
+        if (!row) return null;
+        const spans = (await storage.many({
+          kind: 'select', table: SPANS, columns: '*',
+          where: [{ column: 'run_id', op: 'eq', value: runId }],
+          orderBy: [{ column: 'started_at', direction: 'asc' }],
+        })).map(mapSpanRow);
+        return { ...mapRunRow(row), spans };
+      };
+      if (sync) {
+        const row = storage.maybeOne({
+          kind: 'select', table: RUNS, columns: '*',
+          where: [{ column: 'id', op: 'eq', value: runId }],
+        });
+        if (!row) return null;
+        const spans = storage.many({
+          kind: 'select', table: SPANS, columns: '*',
+          where: [{ column: 'run_id', op: 'eq', value: runId }],
+          orderBy: [{ column: 'started_at', direction: 'asc' }],
+        }).map(mapSpanRow);
+        return { ...mapRunRow(row), spans };
+      }
+      return load();
     },
 
     /**
@@ -706,11 +756,13 @@ export function createExecutionRunStore(database, options = {}) {
       const limit = Math.min(
         Math.max(/** @type {number} */ (own.limit) ?? DEFAULT_RUN_LIMIT, 1), MAX_RUN_LIMIT,
       );
-      return storage.many({
+      const rows = storage.many({
         kind: 'select', table: RUNS, columns: '*', where,
         orderBy: [{ column: 'started_at', direction: 'desc' }],
         limit,
-      }).map(mapRunRow);
+      });
+      if (sync) return rows.map(mapRunRow);
+      return Promise.resolve(rows).then((resolved) => resolved.map(mapRunRow));
     },
   });
 }

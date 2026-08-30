@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { normalizeActor } from './actor.js';
 import { AppError } from './errors.js';
 import { nowIso } from './time.js';
+import { isSyncStorage, storageApi, storageMany } from './storage-runtime.js';
 
 export class AuditLog {
   /** @param {import('./database.js').AccordoDatabase} database */
@@ -15,7 +16,7 @@ export class AuditLog {
   /**
    * @param {{actor?: unknown, action: string, entityType: string, entityId: string, data?: unknown}} event
    */
-  record(event) {
+  record(event, handle) {
     const actor = normalizeActor(event.actor);
     const item = {
       id: randomUUID(),
@@ -27,7 +28,8 @@ export class AuditLog {
       data: event.data ?? {},
       createdAt: nowIso(),
     };
-    this.database.storage.sync.execute({
+    const api = handle ?? storageApi(this.database);
+    const result = api.execute({
       kind: 'insert', table: 'audit_events', values: [
         { column: 'id', value: item.id },
         { column: 'actor_type', value: item.actorType },
@@ -39,7 +41,8 @@ export class AuditLog {
         { column: 'created_at', value: item.createdAt },
       ],
     });
-    return item;
+    if (isSyncStorage(this.database)) return item;
+    return Promise.resolve(result).then(() => item);
   }
 
   /** @param {{limit?: number, entityType?: string, entityId?: string}} [filters] */
@@ -52,11 +55,10 @@ export class AuditLog {
       where.push({ column: 'entity_id', op: 'eq', value: filters.entityId });
     }
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
-    const rows = this.database.storage.sync.many({
+    return storageMany(this.database, {
       kind: 'select', table: 'audit_events', columns: '*', where,
       orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
-    });
-    return rows.map(mapAuditRow);
+    }, mapAuditRow);
   }
 }
 
