@@ -160,6 +160,19 @@ export async function runIdempotentWrite(database, events, spec, execute) {
       }, async () => events.buffered(async (outbox) => {
         const value = await withWriteIds(seed, async () => {
           const inner = await database.transactionAsync(async () => {
+            const traceInput = encodeJsonSafe({
+              target,
+              input: spec.input ?? null,
+              actor: spec.actor && typeof spec.actor === 'object'
+                ? { type: /** @type {any} */ (spec.actor).type ?? null, id: /** @type {any} */ (spec.actor).id ?? null }
+                : null,
+            });
+            await openPendingRun(database, {
+              runId,
+              workflowName: operation,
+              input: traceInput,
+              startedAt,
+            });
             const produced = await execute({
               emit: (event, payload) => events.emit(event, payload),
               step: (name, output) => steps.push({ name, status: 'completed', output }),
@@ -172,13 +185,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
               runId,
               workflowName: operation,
               status: settleTrace ? 'completed' : 'running',
-              input: encodeJsonSafe({
-                target,
-                input: spec.input ?? null,
-                actor: spec.actor && typeof spec.actor === 'object'
-                  ? { type: /** @type {any} */ (spec.actor).type ?? null, id: /** @type {any} */ (spec.actor).id ?? null }
-                  : null,
-              }),
+              input: traceInput,
               output: encoded,
               error: null,
               startedAt,
@@ -195,12 +202,6 @@ export async function runIdempotentWrite(database, events, spec, execute) {
               traceIntent,
               runId,
               createdAt: now(),
-            });
-            await openPendingRun(database, {
-              runId,
-              workflowName: operation,
-              input: traceIntent.input,
-              startedAt,
             });
             return encoded;
           });

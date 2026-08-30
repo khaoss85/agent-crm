@@ -601,10 +601,13 @@ function buildRouter(app) {
       throw new NotFoundError('Operation', 'write outcomes');
     }
     const context = writeContext(app, { actor, identity, organizationId, headers });
+    if (typeof body?.operation !== 'string' || body.operation.trim() === '') {
+      throw new ValidationError('operation is required to reconcile a write', { field: 'operation' });
+    }
     return await app.reconcileWrite({
       ...context,
       idempotencyKey: requireIdempotencyKey(params.key),
-      operation: typeof body?.operation === 'string' ? body.operation : 'company.create',
+      operation: body.operation,
       target: typeof body?.target === 'string' ? body.target : '',
       contractVersion: typeof body?.contractVersion === 'string' ? body.contractVersion : 'write.v1',
       input: body?.input ?? null,
