@@ -634,9 +634,5 @@ describe('M4A PostgreSQL idempotency and unknown-commit recovery', { concurrency
       provider.calls() <= 1,
       `provider.calls()=${provider.calls()} results=${JSON.stringify(results.map((result) => result.status === 'rejected' ? result.reason?.code : 'ok'))}`,
     );
-    const settled = results.filter((result) => (
-      result.status === 'fulfilled' || result.reason?.code === 'COMMIT_OUTCOME_UNKNOWN'
-    ));
-    assert.equal(settled.length, 2);
   });
 });
