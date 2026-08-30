@@ -1,0 +1,60 @@
+# Temporary GitHub-hosted exact measurement of post-M5 main.
+# Pin is the measured source. This file must not appear on the measurement PR.
+name: tmp-spine-v2-m5-measure
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/tmp-spine-v2-m5-measure-runner]
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_USER: postgres
+          POSTGRES_DB: accordo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ACCORDO_TEST_POSTGRES: '1'
+      ACCORDO_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/accordo_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 84a3efed3b119847e0451f9505212f10217c0d41
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: node -v
+      - run: git rev-parse HEAD
+      - run: npm ci
+      - run: npm run verify
+      - run: npm run smoke
+      - run: npm run repo:truth -- --check
+      - run: npm run gtm:check
+      - run: npm run site:check
+      - run: npm run crm -- project verify --json
+      - run: git diff --check
+      - run: node scripts/measure-suite.js --apply
+      - run: npm run repo:truth
+      - run: npm run repo:truth -- --check
+      - name: Upload generated measurement outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: spine-v2-m5-measurement
+          path: |
+            site/claims.json
+            docs/repository-truth.json
+          if-no-files-found: error
