@@ -144,6 +144,12 @@ export class WorkflowEngine {
   /** @param {string} id */
   getRun(id) {
     const run = this.#runs.getRun(id);
+    if (run && typeof run.then === 'function') {
+      return run.then((resolved) => {
+        if (!resolved) throw new NotFoundError('Workflow run', id);
+        return resolved;
+      });
+    }
     if (!run) throw new NotFoundError('Workflow run', id);
     return run;
   }

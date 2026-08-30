@@ -21,6 +21,7 @@ import {
   APP_COMMAND_POSTGRESQL_CLASSIFICATION,
   APP_COMMANDS,
   CLI_VERIFIED_OPERATOR_REQUIRED,
+  POSTGRESQL_HTTP_SPINE_REQUIRED,
 } from '../packages/cli/src/commands.js';
 import { MCP_PRODUCTION_SURFACE_UNAVAILABLE } from '../packages/mcp/src/production-surface.js';
 
@@ -274,10 +275,7 @@ test('M2-17 serve refuses a PostgreSQL document before listen', { timeout: 15_00
   });
   assert.notEqual(run.status, 0);
   assert.equal(run.stdout.includes('Accordo running at'), false);
-  assert.ok(
-    ['DEPLOYMENT_STORAGE_TLS_REFUSED', 'STORAGE_UNAVAILABLE', 'IDENTITY_VERIFIER_ATTESTATION_REFUSED', 'STARTUP_ATTESTATION_REFUSED'].includes(failureCode(run)),
-    failureCode(run),
-  );
+  assert.equal(failureCode(run), POSTGRESQL_HTTP_SPINE_REQUIRED);
   assertCredentialFree(haystackOf(run), [configPath, root]);
   assertNoLocator(haystackOf(run), [configPath]);
 });

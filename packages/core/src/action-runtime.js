@@ -272,7 +272,7 @@ export async function runRecordAction(params) {
   // write failure (e.g. the database is briefly locked by a concurrent writer)
   // must never mask the action's real outcome, so it is logged, not thrown.
   try {
-    writeTrace(database, {
+    await Promise.resolve(writeTrace(database, {
       runId,
       workflowName: `${module}.${action}`,
       status: failure ? 'failed' : 'completed',
@@ -298,7 +298,7 @@ export async function runRecordAction(params) {
       error: failure ? failure.message : null,
       startedAt,
       steps,
-    });
+    }));
   } catch (traceError) {
     console.error(
       `[accordo] ${module}.${action} run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`,
@@ -512,7 +512,7 @@ function safeActor(actor) {
  * @param {any} database @param {{runId: string, workflowName: string, status: string, input: unknown, output: unknown, error: string | null, startedAt: string, steps: Array<{name: string, status: string, output?: unknown, error?: string}>}} run
  */
 export function writeTrace(database, run) {
-  createExecutionRunStore(database).recordRun(run);
+  return createExecutionRunStore(database).recordRun(run);
 }
 
 export { ValidationError, NotFoundError };

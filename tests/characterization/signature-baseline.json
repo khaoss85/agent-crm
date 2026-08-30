@@ -2765,7 +2765,7 @@
     }
   ],
   "source": {
-    "apps/server/src/http-server.js": "b9d20e6d2c6b4808e913077819eb64a4b627214b6157a3ad92d7f62cf8f6c231",
+    "apps/server/src/http-server.js": "901ea0c527932d20a25e898a1b1a48eacb5151fc2abd9a4bbd1c7c1104465b8e",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
     "examples/starters/b2b-lead-qualification/signature.js": "e2f34c4e71f9a03f8ced77ba23b9a09c3da8ab6b9731db91cee12cf778ba4765",
     "packages/app/src/create-app.js": "39d5984c0e302de3838646ddc2b0b76d6ba7f27478b0f21255f999a186d350bf",
@@ -2793,11 +2793,11 @@
     "packages/commercial/src/registry.js": "60d7ceff3de3bf88363288cb2c0a9386a335f6c1b10bf6a935306695a75b40af",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",
     "packages/commercial/src/verify-terms.js": "e3c4e150fc4e6a0efe925f8db6d14698e4a69e9c6518d5e3f7ee90473db8871c",
-    "packages/core/src/action-runtime.js": "aeefb73e52f4cfb4f6e9b177bc072eb3b6068a46c323646dbc606cec220ddbea",
+    "packages/core/src/action-runtime.js": "1b397b8fc368c09fc50800a6dbe28dac6d41802e143db90d4cbedc2fb1a5c243",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
     "packages/core/src/definition-version-store.js": "87ad1979e37b77e0fb1ce196c85d16dd8b0032025b3939a5cf04d4ad19eff2fb",
-    "packages/core/src/execution-run-store.js": "9a613becf4f0b9b5bca4df7b66f833d29c66271278745acdb38afa7a4a8da7f3",
-    "packages/core/src/external-operation.js": "a42f0be7e894cdce0c1ee1845e04930dddd64fe68a32929e965c2c8a57ec9fbe",
+    "packages/core/src/execution-run-store.js": "18f7b489155f756b3fd45a67bb5407229b3f771c9a54fb6e6301f98648ba7c8f",
+    "packages/core/src/external-operation.js": "32e866c327b3ab4707ec07520b46335b92bd09d898e969950257fbd6ebf2c2b2",
     "packages/core/src/money.js": "67d7c03a14cf053e1e6f52d73ed2ca96608a8c3992615fe6a6738bcfc930e705",
     "packages/core/src/operation-runtime.js": "ab227ce568a781221aa6a424946ff257683e51926ee24d61e829a20c43ef2d4e",
     "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325",

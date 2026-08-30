@@ -178,7 +178,7 @@ export async function runExternalOperation(operation) {
   }
 
   try {
-    writeTrace(database, {
+    await Promise.resolve(writeTrace(database, {
       runId,
       workflowName: name,
       status: failure ? 'failed' : 'completed',
@@ -187,7 +187,7 @@ export async function runExternalOperation(operation) {
       error: failure ? failure.message : null,
       startedAt,
       steps,
-    });
+    }));
   } catch (traceError) {
     console.error(`[accordo] ${name} run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`);
   }

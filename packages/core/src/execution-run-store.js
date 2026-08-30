@@ -522,7 +522,7 @@ export function createExecutionRunStore(database, options = {}) {
     completeSpan(span) {
       const own = ownedShape(span, 'Trace span completion', ['spanId', 'output'], ['spanId']);
       const spanId = assertStorableText(own.spanId, 'Trace span id', { field: 'spanId' });
-      patch(SPANS, spanId, [
+      return patch(SPANS, spanId, [
         { column: 'status', value: 'completed' },
         { column: 'output_json', value: encodeJson(own.output) },
         { column: 'finished_at', value: now() },
@@ -539,7 +539,7 @@ export function createExecutionRunStore(database, options = {}) {
       const own = ownedShape(span, 'Trace span failure', ['spanId', 'error'], ['spanId', 'error']);
       const spanId = assertStorableText(own.spanId, 'Trace span id', { field: 'spanId' });
       const error = assertOptionalMessage(own.error, 'Trace span error', { field: 'error' });
-      patch(SPANS, spanId, [
+      return patch(SPANS, spanId, [
         { column: 'status', value: 'failed' },
         { column: 'error', value: error },
         { column: 'finished_at', value: now() },
@@ -553,7 +553,7 @@ export function createExecutionRunStore(database, options = {}) {
     completeRun(run) {
       const own = ownedShape(run, 'Execution run completion', ['runId', 'output'], ['runId']);
       const runId = assertStorableText(own.runId, 'Execution run id', { field: 'runId' });
-      patch(RUNS, runId, [
+      return patch(RUNS, runId, [
         { column: 'status', value: 'completed' },
         { column: 'output_json', value: encodeJson(own.output) },
         { column: 'finished_at', value: now() },
@@ -569,7 +569,7 @@ export function createExecutionRunStore(database, options = {}) {
       const own = ownedShape(run, 'Execution run failure', ['runId', 'error', 'output'], ['runId', 'error']);
       const runId = assertStorableText(own.runId, 'Execution run id', { field: 'runId' });
       const error = assertOptionalMessage(own.error, 'Execution run error', { field: 'error' });
-      patch(RUNS, runId, [
+      return patch(RUNS, runId, [
         { column: 'status', value: 'failed' },
         { column: 'error', value: error },
         { column: 'output_json', value: encodeJson(own.output) },
@@ -629,40 +629,71 @@ export function createExecutionRunStore(database, options = {}) {
       // One finish instant for the run and every span, because one clock reading
       // is what the statement this replaced took.
       const finishedAt = now();
-      storage.execute({
-        kind: 'insert',
-        table: RUNS,
-        values: [
-          { column: 'id', value: runId },
-          { column: 'workflow_name', value: workflowName },
-          { column: 'status', value: status },
-          { column: 'input_json', value: encodeJson(own.input) },
-          { column: 'output_json', value: encodeJson(own.output) },
-          { column: 'error', value: error },
-          { column: 'started_at', value: startedAt },
-          { column: 'finished_at', value: finishedAt },
-        ],
-      });
-      for (const [index, step] of steps.entries()) {
-        storage.execute({
+      const persist = (handle) => {
+        const runWrite = handle.execute({
           kind: 'insert',
-          table: SPANS,
+          table: RUNS,
           values: [
-            { column: 'id', value: minted[index] },
-            { column: 'run_id', value: runId },
-            { column: 'parent_span_id', value: null },
-            { column: 'name', value: step.name },
-            { column: 'status', value: step.status },
-            // A recorded span carries no input of its own: the run's input is
-            // the whole of what it was given.
-            { column: 'input_json', value: null },
-            { column: 'output_json', value: encodeJson(step.output ?? null) },
-            { column: 'error', value: step.error ?? null },
+            { column: 'id', value: runId },
+            { column: 'workflow_name', value: workflowName },
+            { column: 'status', value: status },
+            { column: 'input_json', value: encodeJson(own.input) },
+            { column: 'output_json', value: encodeJson(own.output) },
+            { column: 'error', value: error },
             { column: 'started_at', value: startedAt },
             { column: 'finished_at', value: finishedAt },
           ],
         });
-      }
+        const spanWrites = () => {
+          for (const [index, step] of steps.entries()) {
+            handle.execute({
+              kind: 'insert',
+              table: SPANS,
+              values: [
+                { column: 'id', value: minted[index] },
+                { column: 'run_id', value: runId },
+                { column: 'parent_span_id', value: null },
+                { column: 'name', value: step.name },
+                { column: 'status', value: step.status },
+                // A recorded span carries no input of its own: the run's input is
+                // the whole of what it was given.
+                { column: 'input_json', value: null },
+                { column: 'output_json', value: encodeJson(step.output ?? null) },
+                { column: 'error', value: step.error ?? null },
+                { column: 'started_at', value: startedAt },
+                { column: 'finished_at', value: finishedAt },
+              ],
+            });
+          }
+        };
+        if (sync) {
+          void runWrite;
+          spanWrites();
+          return undefined;
+        }
+        return Promise.resolve(runWrite).then(async () => {
+          for (const [index, step] of steps.entries()) {
+            await handle.execute({
+              kind: 'insert',
+              table: SPANS,
+              values: [
+                { column: 'id', value: minted[index] },
+                { column: 'run_id', value: runId },
+                { column: 'parent_span_id', value: null },
+                { column: 'name', value: step.name },
+                { column: 'status', value: step.status },
+                { column: 'input_json', value: null },
+                { column: 'output_json', value: encodeJson(step.output ?? null) },
+                { column: 'error', value: step.error ?? null },
+                { column: 'started_at', value: startedAt },
+                { column: 'finished_at', value: finishedAt },
+              ],
+            });
+          }
+        });
+      };
+      if (sync) return persist(storage);
+      return storage.transaction((tx) => persist(tx));
     },
 
     /**

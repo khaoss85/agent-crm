@@ -266,4 +266,98 @@ test('child-process PostgreSQL boot writes domain, workflow, audit and trace', {
   assert.equal(run.stderr.includes('SUPERSECRET_SENTINEL_PASSWORD'), false);
   assert.equal(JSON.stringify(receipt).includes(PG_TEST_URL), false);
 });
+
+test('overlapping PostgreSQL requests keep using the pool', { timeout: 60_000 }, async (t) => {
+  let releaseHold = () => {};
+  const held = new Promise((resolve) => { releaseHold = resolve; });
+  let signalStarted = () => {};
+  const started = new Promise((resolve) => { signalStarted = resolve; });
+  const result = await bootPostgresqlApp(t, {
+    selected: {
+      packageContract: 2,
+      packages: [{
+        packageContract: 2,
+        name: 'hold-domain',
+        version: 1,
+        label: 'hold-domain',
+        actions: [{
+          module: 'opportunity',
+          name: 'hold',
+          actionContract: 2,
+          execute: async () => {
+            signalStarted();
+            await held;
+            return { held: true };
+          },
+        }],
+        operations: [],
+        capabilities: [],
+      }],
+      actions: [],
+      modules: ['opportunity'],
+    },
+  });
+  if (!result) return;
+  const { app } = result;
+  const company = await app.services.companies.create({ name: 'Hold Co' }, { actor });
+  const contact = await app.services.contacts.create({
+    companyId: company.id, firstName: 'Ada', lastName: 'Lovelace', email: 'ada@hold.test',
+  }, { actor });
+  const opportunity = await app.services.opportunities.create({
+    companyId: company.id, contactId: contact.id, name: 'Hold deal', valueCents: 1000, owner: 'ada',
+  }, { actor });
+  const running = app.runAction({
+    module: 'opportunity', action: 'hold', recordId: opportunity.id, actor,
+  });
+  await started;
+  const listed = await Promise.resolve(app.services.companies.list());
+  assert.equal(listed.length, 1);
+  const other = await app.services.companies.create({ name: 'Other Co' }, { actor });
+  assert.equal(other.name, 'Other Co');
+  releaseHold();
+  const heldAction = await running;
+  assert.equal((heldAction.result ?? heldAction).held, true);
+});
+
+test('PostgreSQL action traces persist before runAction returns', { timeout: 60_000 }, async (t) => {
+  const result = await bootPostgresqlApp(t, {
+    selected: {
+      packageContract: 2,
+      packages: [{
+        packageContract: 2,
+        name: 'probe-domain',
+        version: 1,
+        label: 'probe-domain',
+        actions: [{
+          module: 'opportunity',
+          name: 'probe-tag',
+          actionContract: 2,
+          execute: async (ctx) => ({ id: ctx.record.id, tagged: true }),
+        }],
+        operations: [],
+        capabilities: [],
+      }],
+      actions: [],
+      modules: ['opportunity'],
+    },
+  });
+  if (!result) return;
+  const { app } = result;
+  const company = await app.services.companies.create({ name: 'Trace Co' }, { actor });
+  const contact = await app.services.contacts.create({
+    companyId: company.id, firstName: 'Ada', lastName: 'Lovelace', email: 'ada@trace.test',
+  }, { actor });
+  const opportunity = await app.services.opportunities.create({
+    companyId: company.id, contactId: contact.id, name: 'Trace deal', valueCents: 1000, owner: 'ada',
+  }, { actor });
+  const tagged = await app.runAction({
+    module: 'opportunity', action: 'probe-tag', recordId: opportunity.id, actor,
+  });
+  const run = await Promise.resolve(app.workflows.getRun(tagged.runId));
+  assert.equal(run.status, 'completed');
+  assert.ok(run.spans.length > 0);
+  const metrics = await Promise.resolve(app.metrics());
+  assert.equal(metrics.companies, 1);
+  assert.equal(app.listenMode, 'local-development');
+});
 });

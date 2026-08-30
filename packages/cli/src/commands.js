@@ -7,6 +7,7 @@ import {
   describeDeploymentStorage,
 } from '../../core/src/deployment-storage.js';
 import { prepareDeploymentPreconnect } from '../../core/src/identity-verifier.js';
+import { assertBindAddress } from '../../core/src/tenant-binding.js';
 import { scaffoldModule } from './scaffold-module.js';
 import { validateManifestCommand, generateMigrationCommand, readManifestFile } from './manifest-commands.js';
 import { planModule, applyModulePlan } from './module-factory.js';
@@ -40,6 +41,7 @@ export const APP_COMMAND_POSTGRESQL_CLASSIFICATION = Object.freeze({
 });
 
 export const CLI_VERIFIED_OPERATOR_REQUIRED = 'CLI_VERIFIED_OPERATOR_REQUIRED';
+export const POSTGRESQL_HTTP_SPINE_REQUIRED = 'POSTGRESQL_HTTP_SPINE_REQUIRED';
 
 /** @param {string[]} argv */
 export async function runCli(argv) {
@@ -292,12 +294,24 @@ export async function runCli(argv) {
   // `app inspect` and `package validate` are the commands you need.
   const { createAccordoApp, createAccordoAppAsync } = await import('../../app/src/index.js');
   const postgresql = prepared.selection.adapter === 'postgresql';
+  if (postgresql && command === 'serve') {
+    const mode = prepared.selection.spine?.mode ?? 'local-development';
+    if (mode === 'production') {
+      throw new AppError(
+        'PostgreSQL HTTP serve in production requires a composed request spine',
+        { code: POSTGRESQL_HTTP_SPINE_REQUIRED, status: 403 },
+      );
+    }
+    assertBindAddress(mode, String(flags.host ?? '127.0.0.1'));
+  }
   let app;
   try {
     app = postgresql
       ? await createAccordoAppAsync({
         deployment: prepared,
         projectRoot: projectRootFromFlags(flags),
+        selected: await portableSelectedGraphForServe(),
+        listenMode: prepared.selection.spine?.mode ?? 'local-development',
       })
       : createAccordoApp({ dbPath: sqliteFactoryPath(prepared.selection) });
   } catch (error) {
@@ -417,6 +431,24 @@ function documentSelected(selection) {
 }
 
 /** @param {{ adapter?: unknown, connection?: { path?: unknown } }} selection */
+async function portableSelectedGraphForServe() {
+  const { generatedDomains } = await import('../../domains/generated/index.js');
+  const packages = Array.isArray(generatedDomains) ? generatedDomains : [];
+  if (packages.length === 0) return undefined;
+  if (packages.some((pkg) => pkg?.packageContract !== 2)) {
+    throw new AppError(
+      'PostgreSQL serve requires an explicit packageContract 2 graph; v1 generated packages cannot compose on the portable factory',
+      { code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED', status: 400 },
+    );
+  }
+  const modules = [...new Set(packages.flatMap((pkg) => (
+    Array.isArray(pkg?.modules)
+      ? pkg.modules.map((entry) => (typeof entry === 'string' ? entry : entry?.name))
+      : []
+  )).filter((name) => typeof name === 'string'))];
+  return { packageContract: 2, packages, actions: [], modules };
+}
+
 function sqliteFactoryPath(selection) {
   if (selection.adapter !== 'sqlite') return undefined;
   return typeof selection.connection?.path === 'string' ? selection.connection.path : undefined;

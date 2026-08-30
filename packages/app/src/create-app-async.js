@@ -200,18 +200,24 @@ function loopbackEndpoint(endpoint) {
  *   identityVerifier?: any,
  *   moduleMigrations?: Array<{name: string, sql: string}>,
  *   projectRoot?: string,
+ *   listenMode?: string,
  *   faultInject?: string,
  * }} [options]
  */
 export async function createAccordoAppAsync(options = {}) {
   refuseUnavailableOptions(options);
   const selected = options.selected === undefined ? DEFAULT_SELECTED_GRAPH : options.selected;
+  const listenMode = options.listenMode
+    ?? options.deployment?.selection?.spine?.mode
+    ?? options.spine?.mode
+    ?? 'local-development';
 
   if (isCompletePostgres(options) && options.deployment?.selection?.adapter === 'postgresql') {
     const selection = options.deployment.selection;
     const projectRoot = options.projectRoot;
     return startPortablePostgresqlApp({
       selected,
+      listenMode,
       tenantId: selection.spine.tenant.id,
       identityVerifier: options.deployment.identityVerifier,
       control: {
@@ -234,6 +240,7 @@ export async function createAccordoAppAsync(options = {}) {
   if (isCompletePostgres(options) && options.testHarness?.loopback === true) {
     return startPortablePostgresqlApp({
       selected,
+      listenMode,
       tenantId: options.spine.tenant.id,
       identityVerifier: options.identityVerifier,
       control: loopbackEndpoint(options.testHarness.control),

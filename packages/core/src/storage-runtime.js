@@ -1,6 +1,34 @@
 // @ts-check
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { AppError } from './errors.js';
+
+/**
+ * Request-local affine storage overlay. Portable `transactionAsync` publishes
+ * the acquired client here instead of mutating the process-wide handle, so a
+ * second request still sees the pool.
+ *
+ * @type {AsyncLocalStorage<{database: any, storage: any}>}
+ */
+const AFFINE_STORAGE = new AsyncLocalStorage();
+
+/**
+ * @param {any} database
+ * @param {any} storage
+ * @param {() => any} fn
+ */
+export function runWithAffineStorage(database, storage, fn) {
+  return AFFINE_STORAGE.run({ database, storage }, fn);
+}
+
+/**
+ * @param {any} database
+ */
+function currentStorage(database) {
+  const overlay = AFFINE_STORAGE.getStore();
+  if (overlay && overlay.database === database) return overlay.storage;
+  return database?.storage;
+}
 
 /**
  * Storage Contract access for dual SQLite-sync / PostgreSQL-async consumers.
@@ -12,14 +40,15 @@ import { AppError } from './errors.js';
  * @param {any} database
  */
 export function isSyncStorage(database) {
-  return Boolean(database?.storage?.sync && typeof database.storage.sync.execute === 'function');
+  const storage = currentStorage(database);
+  return Boolean(storage?.sync && typeof storage.sync.execute === 'function');
 }
 
 /**
  * @param {any} database
  */
 export function storageApi(database) {
-  const storage = database?.storage;
+  const storage = currentStorage(database);
   if (!storage || typeof storage !== 'object') {
     throw new AppError('Storage Contract v1 handle is required', {
       code: 'STORAGE_UNAVAILABLE',
@@ -72,7 +101,7 @@ export async function storageMutate(database, name, fn) {
     const sync = storageApi(database);
     return sync.savepoint(name, () => fn(sync));
   }
-  const storage = database.storage;
+  const storage = currentStorage(database);
   if (typeof storage.activeTransaction === 'function' && storage.activeTransaction()) {
     return storage.savepoint(name, () => fn(storage));
   }

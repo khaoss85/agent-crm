@@ -142,7 +142,7 @@ export function createHttpServer(app, options = {}) {
    */
   const listen = server.listen.bind(server);
   server.listen = /** @type {any} */ ((...args) => {
-    const mode = app?.spine?.mode?.mode ?? null;
+    const mode = app?.spine?.mode?.mode ?? app?.listenMode ?? null;
     if (mode) {
       const host = args.find((arg, index) => index > 0 && typeof arg === 'string')
         ?? (typeof args[0] === 'object' && args[0] !== null ? /** @type {any} */ (args[0]).host : undefined);
@@ -272,7 +272,7 @@ function buildRouter(app) {
     if (typeof app.metrics !== 'function') {
       throw new NotFoundError('Operation', 'admin metrics');
     }
-    return { counts: app.metrics() };
+    return { counts: await Promise.resolve(app.metrics()) };
   });
 
   router.add('GET', '/api/schema', async () => ({
@@ -645,7 +645,15 @@ function buildRouter(app) {
  * @param {any} app @param {any} identity @param {string|null} organizationId @param {string} permission
  */
 async function gate(app, identity, organizationId, permission) {
-  if (!app?.spine) return null;
+  if (!app?.spine) {
+    if (app?.listenMode === 'production') {
+      throw new AppError(
+        'PostgreSQL HTTP serve in production requires a composed request spine',
+        { code: 'POSTGRESQL_HTTP_SPINE_REQUIRED', status: 403 },
+      );
+    }
+    return null;
+  }
   const decision = await app.spine.authorize({ identity, organizationId, permission });
   refuseThenableDomainValue(decision, 'authorization');
   return decision;

@@ -45,7 +45,7 @@ export function refuseThenableDomainValue(value, label = 'value') {
   }
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const record = /** @type {Record<string, unknown>} */ (value);
-    for (const key of ['items', 'body', 'result']) {
+    for (const key of ['items', 'body', 'result', 'counts']) {
       if (Object.prototype.hasOwnProperty.call(record, key) && isThenable(record[key])) {
         throw thenableDomainValueError(`${label}.${key}`);
       }
