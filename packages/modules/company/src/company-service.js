@@ -1,10 +1,11 @@
 // @ts-check
 
-import { randomUUID } from 'node:crypto';
 import { NotFoundError } from '../../../core/src/errors.js';
 import { requiredString, optionalString } from '../../../core/src/validation.js';
 import { nowIso } from '../../../core/src/time.js';
 import { isSyncStorage, storageMany, storageMaybeOne, storageMutate } from '../../../core/src/storage-runtime.js';
+import { nextWriteId } from '../../../core/src/write-ids.js';
+import { runIdempotentWrite, usesWriteOutcomes } from '../../../core/src/write-outcome-runtime.js';
 
 export class CompanyService {
   /** @param {{database: any, audit: any, events: any}} dependencies */
@@ -14,18 +15,14 @@ export class CompanyService {
     this.events = events;
   }
 
-  /** @param {{name: unknown, domain?: unknown}} input @param {{actor?: unknown}} [context] */
+  /**
+   * @param {{name: unknown, domain?: unknown}} input
+   * @param {{actor?: unknown, identity?: any, idempotencyKey?: string, tenantId?: string}} [context]
+   */
   async create(input, context = {}) {
-    const timestamp = nowIso();
-    const company = {
-      id: randomUUID(),
-      name: requiredString(input.name, 'name'),
-      domain: optionalString(input.domain, 'domain')?.toLowerCase() ?? null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-
-    const insert = {
+    const name = requiredString(input.name, 'name');
+    const domain = optionalString(input.domain, 'domain')?.toLowerCase() ?? null;
+    const insertFor = (company) => ({
       kind: 'insert', table: 'companies', values: [
         { column: 'id', value: company.id },
         { column: 'name', value: company.name },
@@ -33,30 +30,77 @@ export class CompanyService {
         { column: 'created_at', value: company.createdAt },
         { column: 'updated_at', value: company.updatedAt },
       ],
-    };
+    });
+    const auditFor = (company, handle) => this.audit.record({
+      actor: context.actor,
+      action: 'company.created',
+      entityType: 'company',
+      entityId: company.id,
+      data: company,
+    }, handle);
+
     if (isSyncStorage(this.database)) {
+      const timestamp = nowIso();
+      const company = {
+        id: nextWriteId('record'),
+        name,
+        domain,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
       this.database.storage.sync.savepoint('company_create', () => {
-        this.database.storage.sync.execute(insert);
-        this.audit.record({
-          actor: context.actor,
-          action: 'company.created',
-          entityType: 'company',
-          entityId: company.id,
-          data: company,
-        });
+        this.database.storage.sync.execute(insertFor(company));
+        auditFor(company);
       });
-    } else {
-      await storageMutate(this.database, 'company_create', async (tx) => {
-        await tx.execute(insert);
-        await this.audit.record({
-          actor: context.actor,
-          action: 'company.created',
-          entityType: 'company',
-          entityId: company.id,
-          data: company,
-        }, tx);
-      });
+      await this.events.emit('company.created', company);
+      return company;
     }
+
+    if (usesWriteOutcomes(this.database)) {
+      const outcome = await runIdempotentWrite(this.database, this.events, {
+        tenantId: context.tenantId ?? this.database.tenantId,
+        idempotencyKey: context.idempotencyKey,
+        identity: context.identity,
+        actor: context.actor,
+        operation: 'company.create',
+        target: '',
+        contractVersion: 'write.v1',
+        input: { name, domain },
+      }, async ({ emit }) => {
+        const timestamp = nowIso();
+        const company = {
+          id: nextWriteId('record'),
+          name,
+          domain,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        await storageMutate(this.database, 'company_create', async (tx) => {
+          await tx.execute(insertFor(company));
+          await auditFor(company, tx);
+        });
+        await emit('company.created', company);
+        return company;
+      });
+      const company = outcome.result;
+      Object.defineProperty(company, 'idempotencyKey', { value: outcome.idempotencyKey, enumerable: false });
+      Object.defineProperty(company, 'runId', { value: outcome.runId, enumerable: false });
+      Object.defineProperty(company, 'replayed', { value: outcome.replayed, enumerable: false });
+      return company;
+    }
+
+    const timestamp = nowIso();
+    const company = {
+      id: nextWriteId('record'),
+      name,
+      domain,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    await storageMutate(this.database, 'company_create', async (tx) => {
+      await tx.execute(insertFor(company));
+      await auditFor(company, tx);
+    });
     await this.events.emit('company.created', company);
     return company;
   }
