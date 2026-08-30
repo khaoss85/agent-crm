@@ -220,6 +220,29 @@ async function applyUnits(client, {
   }
 }
 
+async function ensureWriteOutcomes(client) {
+  await exec(client, `
+    CREATE TABLE IF NOT EXISTS ${qualify('write_outcomes')} (
+      tenant_namespace TEXT NOT NULL,
+      raw_key TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      subject_fingerprint TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      target TEXT NOT NULL,
+      contract_version TEXT NOT NULL,
+      request_fingerprint TEXT NOT NULL,
+      record_ids_json TEXT NOT NULL,
+      response_json TEXT,
+      event_intents_json TEXT NOT NULL,
+      trace_intent_json TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      events_promoted BIGINT NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (tenant_namespace, raw_key, phase)
+    )
+  `);
+}
+
 async function claimDataPlane(client, { tenantId, clock, faultInject }) {
   const existing = await exec(client, `SELECT tenant_slug, data_plane_id FROM ${qualify(BINDING_TABLE)} WHERE singleton = 1`);
   const row = existing.rows?.[0];
@@ -389,11 +412,14 @@ export async function bootstrapPostgresqlApplication(options) {
       tenantId: options.tenantId,
       clock: options.clock,
       faultInject: options.faultInject,
-      afterSchema: (client) => claimDataPlane(client, {
-        tenantId: options.tenantId,
-        clock: options.clock,
-        faultInject: options.faultInject,
-      }),
+      afterSchema: async (client) => {
+        await ensureWriteOutcomes(client);
+        return claimDataPlane(client, {
+          tenantId: options.tenantId,
+          clock: options.clock,
+          faultInject: options.faultInject,
+        });
+      },
     });
 
     const controlClient = await controlPool.connect();
