@@ -135,6 +135,28 @@ export function providerIdempotencyKey(tenantNs, rawKey) {
 }
 
 /**
+ * Deterministic child key for nested writes and Admin acknowledgement.
+ * Same root + closed scope + child identity always yields the same key;
+ * different children stay distinct. The bucket is inherited from the root.
+ *
+ * @param {unknown} rootKey
+ * @param {string} scope
+ * @param {string} childId
+ */
+export function deriveChildKey(rootKey, scope, childId) {
+  const parent = requireIdempotencyKey(rootKey);
+  if (typeof scope !== 'string' || scope.trim() === '' || scope.includes('\0')) {
+    throw new ValidationError('Child key scope must be a closed non-empty token', { field: 'scope' });
+  }
+  if (typeof childId !== 'string' || childId.trim() === '' || childId.includes('\0')) {
+    throw new ValidationError('Child key identity must be a closed non-empty token', { field: 'childId' });
+  }
+  const bucket = parent.split('.')[1];
+  const digest = sha256Hex(`accordo.child.v1\0${parent}\0${scope}\0${childId}`).slice(0, 32);
+  return `v1.${bucket}.${digest}`;
+}
+
+/**
  * @param {string} kind
  */
 export function divergentReplayError(kind) {

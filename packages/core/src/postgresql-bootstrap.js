@@ -325,8 +325,13 @@ async function ensureWriteOutcomes(client) {
       run_id TEXT NOT NULL,
       events_promoted BIGINT NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL,
+      acknowledged_at TIMESTAMPTZ,
       PRIMARY KEY (tenant_namespace, raw_key, phase)
     )
+  `);
+  await exec(client, `
+    ALTER TABLE ${qualify('write_outcomes')}
+      ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ
   `);
 }
 

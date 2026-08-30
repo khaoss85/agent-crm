@@ -15,6 +15,7 @@ import { refuseThenableDomainValue } from '../../../packages/core/src/async-valu
 import { isExposableGeneratedModule } from '../../../packages/core/src/generated-module-contract.js';
 import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
 import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
+import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
 
 const DEFAULT_PUBLIC_DIR = resolve(
   fileURLToPath(new URL('../../admin/public', import.meta.url)),
@@ -30,9 +31,36 @@ const DEFAULT_PUBLIC_DIR = resolve(
  */
 const RESPONSE_ENVELOPE = Symbol('accordo.responseEnvelope');
 
-/** @param {number} status @param {unknown} body */
-function respond(status, body) {
-  return { [RESPONSE_ENVELOPE]: true, status, body };
+/** @param {number} status @param {unknown} body @param {Record<string, string>} [headers] */
+function respond(status, body, headers = {}) {
+  return { [RESPONSE_ENVELOPE]: true, status, body, headers };
+}
+
+/**
+ * @param {import('node:http').IncomingHttpHeaders | undefined} headers
+ */
+function readIdempotencyHeader(headers) {
+  const raw = headers?.['idempotency-key'];
+  if (raw == null || raw === '') return undefined;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return requireIdempotencyKey(value);
+}
+
+/**
+ * @param {any} app
+ * @param {{ actor?: unknown, identity?: any, organizationId?: string | null, headers?: import('node:http').IncomingHttpHeaders }} ctx
+ */
+function writeContext(app, ctx) {
+  const tenantId = ctx.identity?.organizationId
+    ?? ctx.identity?.tenantId
+    ?? ctx.organizationId
+    ?? null;
+  return {
+    actor: ctx.actor,
+    identity: ctx.identity,
+    tenantId,
+    idempotencyKey: readIdempotencyHeader(ctx.headers),
+  };
 }
 
 /** @param {unknown} value */
@@ -101,7 +129,7 @@ export function createHttpServer(app, options = {}) {
           if (isResponseEnvelope(result)) {
             refuseThenableDomainValue(result.body, 'http body');
           }
-          sendJson(response, envelope.status, envelope.body);
+          sendJson(response, envelope.status, envelope.body, envelope.headers);
         }
         return;
       }
@@ -416,20 +444,20 @@ function buildRouter(app) {
       }),
     };
   });
-  router.add('POST', '/api/modules/:module/records', async ({ params, body, actor, identity, organizationId }) => {
+  router.add('POST', '/api/modules/:module/records', async ({ params, body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'create');
-    return respond(201, await module.service.create(recordInput(body), { actor }));
+    return respond(201, await module.service.create(recordInput(body), writeContext(app, { actor, identity, organizationId, headers })));
   });
   router.add('GET', '/api/modules/:module/records/:id', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'get');
     return await module.service.get(params.id);
   });
-  router.add('PATCH', '/api/modules/:module/records/:id', async ({ params, body, actor, identity, organizationId }) => {
+  router.add('PATCH', '/api/modules/:module/records/:id', async ({ params, body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'update');
-    return await module.service.update(params.id, recordInput(body), { actor });
+    return await module.service.update(params.id, recordInput(body), writeContext(app, { actor, identity, organizationId, headers }));
   });
 
   // Code-first actions over the generic surface (ADR-011/014). The route only
@@ -440,10 +468,9 @@ function buildRouter(app) {
   // declaration — core CRUD stays on its dedicated routes and is never served
   // by the generic records surface). Anything else is a 404; unknown action
   // 404; bad input 400; invalid transition a stable 409.
-  router.add('POST', '/api/modules/:module/records/:id/actions/:action', async ({ params, body, actor, identity, organizationId }) => {
+  router.add('POST', '/api/modules/:module/records/:id/actions/:action', async ({ params, body, actor, identity, organizationId, headers }) => {
     resolveActionableModule(app, params.module); // 404 for unknown/ineligible modules
-    // The action runtime authorizes with the action's own declared permission;
-    // passing the identity through is what makes that possible.
+    const context = writeContext(app, { actor, identity, organizationId, headers });
     return await app.runAction({
       module: params.module,
       action: params.action,
@@ -452,6 +479,8 @@ function buildRouter(app) {
       actor,
       identity,
       organizationId,
+      tenantId: context.tenantId,
+      idempotencyKey: context.idempotencyKey,
     });
   });
 
@@ -459,9 +488,9 @@ function buildRouter(app) {
     await gate(app, identity, organizationId, 'records.read');
     return { items: await app.services.companies.list({ limit: parseLimit(query.limit) }) };
   });
-  router.add('POST', '/api/companies', async ({ body, actor, identity, organizationId }) => {
+  router.add('POST', '/api/companies', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
-    return respond(201, await app.services.companies.create(body ?? {}, { actor }));
+    return respond(201, await app.services.companies.create(body ?? {}, writeContext(app, { actor, identity, organizationId, headers })));
   });
 
   router.add('GET', '/api/contacts', async ({ query, identity, organizationId }) => {
@@ -473,9 +502,9 @@ function buildRouter(app) {
       }),
     };
   });
-  router.add('POST', '/api/contacts', async ({ body, actor, identity, organizationId }) => {
+  router.add('POST', '/api/contacts', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
-    return respond(201, await app.services.contacts.create(body ?? {}, { actor }));
+    return respond(201, await app.services.contacts.create(body ?? {}, writeContext(app, { actor, identity, organizationId, headers })));
   });
 
   router.add('GET', '/api/opportunities', async ({ query, identity, organizationId }) => {
@@ -489,20 +518,20 @@ function buildRouter(app) {
       }),
     };
   });
-  router.add('POST', '/api/opportunities', async ({ body, actor, identity, organizationId }) => {
+  router.add('POST', '/api/opportunities', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
-    return respond(201, await app.services.opportunities.create(body ?? {}, { actor }));
+    return respond(201, await app.services.opportunities.create(body ?? {}, writeContext(app, { actor, identity, organizationId, headers })));
   });
   router.add('GET', '/api/opportunities/:id', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     return await app.services.opportunities.get(params.id);
   });
-  router.add('POST', '/api/opportunities/:id/stage', async ({ params, body, actor, identity, organizationId }) => {
+  router.add('POST', '/api/opportunities/:id/stage', async ({ params, body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
     return await app.workflows.run(
       'request-opportunity-stage-change',
       { opportunityId: params.id, targetStage: body?.targetStage },
-      { actor },
+      writeContext(app, { actor, identity, organizationId, headers }),
     );
   });
 
@@ -516,20 +545,20 @@ function buildRouter(app) {
       }),
     };
   });
-  router.add('POST', '/api/approvals/:id/approve', async ({ params, actor, identity, organizationId }) => {
+  router.add('POST', '/api/approvals/:id/approve', async ({ params, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'approvals.decide');
     return await app.workflows.run(
       'decide-opportunity-approval',
       { approvalId: params.id, decision: 'approved' },
-      { actor },
+      writeContext(app, { actor, identity, organizationId, headers }),
     );
   });
-  router.add('POST', '/api/approvals/:id/reject', async ({ params, actor, identity, organizationId }) => {
+  router.add('POST', '/api/approvals/:id/reject', async ({ params, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'approvals.decide');
     return await app.workflows.run(
       'decide-opportunity-approval',
       { approvalId: params.id, decision: 'rejected' },
-      { actor },
+      writeContext(app, { actor, identity, organizationId, headers }),
     );
   });
 
@@ -537,6 +566,54 @@ function buildRouter(app) {
   // read-gated like any other record read. An ungated audit route is a
   // disclosure of who did what, which is precisely what this milestone exists
   // to protect.
+  router.add('GET', '/api/write-outcomes', async ({ identity, organizationId, actor }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.listUnacknowledgedWrites !== 'function') {
+      throw new NotFoundError('Operation', 'write outcomes');
+    }
+    return {
+      items: await app.listUnacknowledgedWrites(writeContext(app, { actor, identity, organizationId })),
+    };
+  });
+  router.add('GET', '/api/write-outcomes/:key', async ({ params, identity, organizationId, actor }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.lookupWrite !== 'function') {
+      throw new NotFoundError('Operation', 'write outcomes');
+    }
+    return await app.lookupWrite({
+      ...writeContext(app, { actor, identity, organizationId }),
+      idempotencyKey: requireIdempotencyKey(params.key),
+    });
+  });
+  router.add('POST', '/api/write-outcomes/:key/ack', async ({ params, identity, organizationId, actor, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.acknowledgeWrite !== 'function') {
+      throw new NotFoundError('Operation', 'write outcomes');
+    }
+    return await app.acknowledgeWrite({
+      ...writeContext(app, { actor, identity, organizationId, headers }),
+      idempotencyKey: requireIdempotencyKey(params.key),
+    });
+  });
+  router.add('POST', '/api/write-outcomes/:key/reconcile', async ({ params, body, identity, organizationId, actor, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.reconcileWrite !== 'function') {
+      throw new NotFoundError('Operation', 'write outcomes');
+    }
+    const context = writeContext(app, { actor, identity, organizationId, headers });
+    if (typeof body?.operation !== 'string' || body.operation.trim() === '') {
+      throw new ValidationError('operation is required to reconcile a write', { field: 'operation' });
+    }
+    return await app.reconcileWrite({
+      ...context,
+      idempotencyKey: requireIdempotencyKey(params.key),
+      operation: body.operation,
+      target: typeof body?.target === 'string' ? body.target : '',
+      contractVersion: typeof body?.contractVersion === 'string' ? body.contractVersion : 'write.v1',
+      input: body?.input ?? null,
+    });
+  });
+
   router.add('GET', '/api/traces', async ({ query, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     return {
@@ -809,15 +886,22 @@ function safeSignatureHeaders(headers) {
   return out;
 }
 
-/** @param {import('node:http').ServerResponse} response @param {number} status @param {unknown} body */
-function sendJson(response, status, body) {
+/** @param {import('node:http').ServerResponse} response @param {number} status @param {unknown} body @param {Record<string, string>} [extraHeaders] */
+function sendJson(response, status, body, extraHeaders = {}) {
   if (response.writableEnded) return;
   const payload = JSON.stringify(body);
-  response.writeHead(status, {
+  /** @type {Record<string, string>} */
+  const headers = {
     'content-type': 'application/json; charset=utf-8',
-    'content-length': Buffer.byteLength(payload),
+    'content-length': String(Buffer.byteLength(payload)),
     'cache-control': 'no-store',
-  });
+    ...(extraHeaders && typeof extraHeaders === 'object' ? extraHeaders : {}),
+  };
+  const key = headers['idempotency-key']
+    ?? (body && typeof body === 'object' ? /** @type {any} */ (body).idempotencyKey : undefined)
+    ?? (body && typeof body === 'object' && /** @type {any} */ (body).error?.details?.idempotencyKey);
+  if (typeof key === 'string' && key !== '') headers['idempotency-key'] = key;
+  response.writeHead(status, headers);
   response.end(payload);
 }
 

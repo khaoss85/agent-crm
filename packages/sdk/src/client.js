@@ -37,30 +37,58 @@ export class AccordoClient {
   metrics() { return this.request('/api/admin/metrics'); }
   schema() { return this.request('/api/schema'); }
   listCompanies() { return this.request('/api/companies'); }
-  createCompany(input) { return this.request('/api/companies', { method: 'POST', body: input }); }
+  createCompany(input, options = {}) {
+    return this.request('/api/companies', { method: 'POST', body: input, idempotencyKey: options.idempotencyKey });
+  }
   listContacts(companyId) {
     return this.request(`/api/contacts${companyId ? `?companyId=${encodeURIComponent(companyId)}` : ''}`);
   }
-  createContact(input) { return this.request('/api/contacts', { method: 'POST', body: input }); }
+  createContact(input, options = {}) {
+    return this.request('/api/contacts', { method: 'POST', body: input, idempotencyKey: options.idempotencyKey });
+  }
   listOpportunities(filters = {}) {
     const query = new URLSearchParams(filters).toString();
     return this.request(`/api/opportunities${query ? `?${query}` : ''}`);
   }
-  createOpportunity(input) { return this.request('/api/opportunities', { method: 'POST', body: input }); }
-  requestStageChange(id, targetStage) {
+  createOpportunity(input, options = {}) {
+    return this.request('/api/opportunities', { method: 'POST', body: input, idempotencyKey: options.idempotencyKey });
+  }
+  requestStageChange(id, targetStage, options = {}) {
     return this.request(`/api/opportunities/${encodeURIComponent(id)}/stage`, {
       method: 'POST',
       body: { targetStage },
+      idempotencyKey: options.idempotencyKey,
     });
   }
   listApprovals(status) {
     return this.request(`/api/approvals${status ? `?status=${encodeURIComponent(status)}` : ''}`);
   }
-  decideApproval(id, decision) {
+  decideApproval(id, decision, options = {}) {
     const action = decision === 'approved' ? 'approve' : 'reject';
     return this.request(`/api/approvals/${encodeURIComponent(id)}/${action}`, {
       method: 'POST',
       body: {},
+      idempotencyKey: options.idempotencyKey,
+    });
+  }
+  lookupWrite(key) {
+    return this.request(`/api/write-outcomes/${encodeURIComponent(key)}`);
+  }
+  listUnacknowledgedWrites() {
+    return this.request('/api/write-outcomes');
+  }
+  acknowledgeWrite(key, options = {}) {
+    return this.request(`/api/write-outcomes/${encodeURIComponent(key)}/ack`, {
+      method: 'POST',
+      body: {},
+      idempotencyKey: options.idempotencyKey,
+    });
+  }
+  reconcileWrite(key, body = {}, options = {}) {
+    return this.request(`/api/write-outcomes/${encodeURIComponent(key)}/reconcile`, {
+      method: 'POST',
+      body,
+      idempotencyKey: options.idempotencyKey,
     });
   }
   getTrace(id) { return this.request(`/api/traces/${encodeURIComponent(id)}`); }
@@ -90,12 +118,18 @@ export class AccordoClient {
         return client.request(`${base}/records${query}`);
       },
       /** @param {Record<string, unknown>} input */
-      create(input) { return client.request(`${base}/records`, { method: 'POST', body: input }); },
+      create(input, options = {}) {
+        return client.request(`${base}/records`, { method: 'POST', body: input, idempotencyKey: options.idempotencyKey });
+      },
       /** @param {string} id */
       get(id) { return client.request(`${base}/records/${encodeURIComponent(id)}`); },
       /** @param {string} id @param {Record<string, unknown>} patch */
-      update(id, patch) {
-        return client.request(`${base}/records/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch });
+      update(id, patch, options = {}) {
+        return client.request(`${base}/records/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: patch,
+          idempotencyKey: options.idempotencyKey,
+        });
       },
       /**
        * Run a code-first action on a record (ADR-011). `input` must be a plain
@@ -105,7 +139,7 @@ export class AccordoClient {
        *
        * @param {string} id @param {string} actionName @param {Record<string, unknown>} [input]
        */
-      action(id, actionName, input = {}) {
+      action(id, actionName, input = {}, options = {}) {
         if (typeof actionName !== 'string' || !actionName.trim()) {
           throw new Error('action(id, name, input) requires a non-empty action name');
         }
@@ -114,26 +148,32 @@ export class AccordoClient {
         }
         return client.request(
           `${base}/records/${encodeURIComponent(id)}/actions/${encodeURIComponent(actionName.trim())}`,
-          { method: 'POST', body: input },
+          { method: 'POST', body: input, idempotencyKey: options.idempotencyKey },
         );
       },
     });
   }
 
-  /** @param {string} path @param {{method?: string, body?: unknown}} [options] */
+  /** @param {string} path @param {{method?: string, body?: unknown, idempotencyKey?: string, headers?: Record<string, string>}} [options] */
   async request(path, options = {}) {
     // Network failures (fetch rejections) propagate as-is and stay
     // distinguishable from framework HTTP errors, which always carry status.
+    /** @type {Record<string, string>} */
+    const headers = {
+      'content-type': 'application/json',
+      'x-actor-type': this.actor.type,
+      'x-actor-id': this.actor.id,
+      // Last, so a caller presenting a verified identity is not overridden
+      // by the actor assertion the client would otherwise send.
+      ...this.headers,
+      ...(options.headers ?? {}),
+    };
+    if (typeof options.idempotencyKey === 'string' && options.idempotencyKey !== '') {
+      headers['Idempotency-Key'] = options.idempotencyKey;
+    }
     const response = await this.fetch(`${this.baseUrl}${path}`, {
       method: options.method ?? 'GET',
-      headers: {
-        'content-type': 'application/json',
-        'x-actor-type': this.actor.type,
-        'x-actor-id': this.actor.id,
-        // Last, so a caller presenting a verified identity is not overridden
-        // by the actor assertion the client would otherwise send.
-        ...this.headers,
-      },
+      headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
     // Parse defensively: a non-JSON error response must surface the server's

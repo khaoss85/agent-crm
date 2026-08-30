@@ -2,6 +2,7 @@
 
 import { NotFoundError, normalizeError } from '../../core/src/errors.js';
 import { createExecutionRunStore } from '../../core/src/execution-run-store.js';
+import { runIdempotentWrite, usesWriteOutcomes } from '../../core/src/write-outcome-runtime.js';
 
 /**
  * @typedef {{
@@ -29,10 +30,11 @@ export class WorkflowEngine {
   /** @type {ReturnType<typeof createExecutionRunStore>} */
   #runs;
 
-  /** @param {{database: any, services: Record<string, any>, config?: Record<string, any>}} dependencies */
-  constructor({ database, services, config = {} }) {
+  /** @param {{database: any, services: Record<string, any>, events?: any, config?: Record<string, any>}} dependencies */
+  constructor({ database, services, events = null, config = {} }) {
     this.database = database;
     this.services = services;
+    this.events = events;
     this.config = config;
     // Run and span persistence, owned by the kernel rather than by this
     // engine. Built once because `this.database` is: `packages/app/src/create-app.js`
@@ -61,11 +63,40 @@ export class WorkflowEngine {
     }));
   }
 
-  /** @param {string} name @param {any} input @param {{actor?: unknown}} [context] */
+  /** @param {string} name @param {any} input @param {{actor?: unknown, identity?: any, idempotencyKey?: string, tenantId?: string}} [context] */
   async run(name, input, context = {}) {
     const workflow = this.workflows.get(name);
     if (!workflow) throw new NotFoundError('Workflow', name);
-    const runId = await this.#runs.startRun({ workflowName: name, input });
+    if (usesWriteOutcomes(this.database) && this.events) {
+      const outcome = await runIdempotentWrite(this.database, this.events, {
+        tenantId: context.tenantId ?? this.database.tenantId,
+        idempotencyKey: context.idempotencyKey,
+        identity: context.identity,
+        actor: context.actor,
+        operation: name,
+        target: typeof input?.opportunityId === 'string' ? input.opportunityId
+          : typeof input?.approvalId === 'string' ? input.approvalId
+            : '',
+        contractVersion: 'workflow.v1',
+        input,
+      }, async ({ runId }) => this.#execute(workflow, input, { ...context, runId }));
+      const result = outcome.result && typeof outcome.result === 'object'
+        ? { ...outcome.result, idempotencyKey: outcome.idempotencyKey, replayed: outcome.replayed }
+        : outcome.result;
+      return result;
+    }
+    return this.#execute(workflow, input, context);
+  }
+
+  /**
+   * @param {WorkflowDefinition} workflow
+   * @param {any} input
+   * @param {{actor?: unknown, runId?: string}} context
+   */
+  async #execute(workflow, input, context) {
+    // Envelope writes already inserted the pending run under this id.
+    const runId = context.runId
+      ?? await this.#runs.startRun({ workflowName: workflow.name, input });
 
     /** @type {Record<string, any>} */
     let state = {};

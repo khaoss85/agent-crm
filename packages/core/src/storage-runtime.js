@@ -24,10 +24,17 @@ export function runWithAffineStorage(database, storage, fn) {
 /**
  * @param {any} database
  */
-function currentStorage(database) {
+export function affineStorageFor(database) {
   const overlay = AFFINE_STORAGE.getStore();
   if (overlay && overlay.database === database) return overlay.storage;
-  return database?.storage;
+  return null;
+}
+
+/**
+ * @param {any} database
+ */
+function currentStorage(database) {
+  return affineStorageFor(database) ?? database?.storage;
 }
 
 /**

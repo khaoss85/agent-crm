@@ -1,3 +1,5 @@
+import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
+
 const elements = {
   metrics: document.querySelector('#metrics'),
   opportunities: document.querySelector('#opportunities'),
@@ -21,26 +23,54 @@ const headers = {
   'x-actor-id': 'admin-demo',
 };
 
+function isMutation(method) {
+  return ['POST', 'PUT', 'PATCH', 'DELETE'].includes(String(method ?? 'GET').toUpperCase());
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: { ...headers, ...(options.headers || {}) } });
+  const method = options.method ?? 'GET';
+  /** @type {Record<string, string>} */
+  const requestHeaders = { ...headers, ...(options.headers || {}) };
+  if (isMutation(method)) {
+    requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
+  }
+  const response = await fetch(path, { ...options, headers: requestHeaders });
   const body = await response.json();
-  if (!response.ok) throw new Error(body?.error?.message || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(body?.error?.message || `Request failed (${response.status})`);
+    Object.assign(error, { status: response.status, code: body?.error?.code, details: body?.error?.details ?? null });
+    throw error;
+  }
   return body;
 }
+
+const submissions = createSubmissionController({
+  transport: (path, options) => api(path, {
+    method: options.method,
+    body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body ?? {}),
+    idempotencyKey: options.idempotencyKey,
+  }),
+});
 
 // Request client for generated-module views. A declared identity for audit —
 // NOT authentication; a local caller can set any actor. The Admin is
 // local-development-only until a deployment supplies an identity verifier.
 const moduleClient = {
   async request(path, options = {}) {
+    const method = options.method ?? 'GET';
+    /** @type {Record<string, string>} */
+    const requestHeaders = {
+      'content-type': 'application/json',
+      'x-actor-type': 'user',
+      'x-actor-id': 'admin-ui',
+      ...(options.headers || {}),
+    };
+    if (isMutation(method)) {
+      requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
+    }
     const response = await fetch(path, {
       ...options,
-      headers: {
-        'content-type': 'application/json',
-        'x-actor-type': 'user',
-        'x-actor-id': 'admin-ui',
-        ...(options.headers || {}),
-      },
+      headers: requestHeaders,
     });
     const text = await response.text();
     let payload;
@@ -70,12 +100,13 @@ async function refresh() {
       (body) => ({ available: true, counts: body.counts }),
       () => ({ available: false, counts: null }),
     );
-    const [health, metrics, opportunities, approvals, traces] = await Promise.all([
+    const [health, metrics, opportunities, approvals, traces, pendingWrites] = await Promise.all([
       api('/health'),
       metricsPromise,
       api('/api/opportunities'),
       api('/api/approvals?status=pending'),
       api('/api/traces?limit=8'),
+      api('/api/write-outcomes').then((body) => body, () => ({ items: [] })),
     ]);
     if (health.ok !== true) throw new Error('Runtime health check failed');
     if (metrics.available) renderMetrics(metrics.counts);
@@ -83,6 +114,10 @@ async function refresh() {
     renderOpportunities(opportunities.items);
     renderApprovals(approvals.items);
     renderTraces(traces.items);
+    const unacked = Array.isArray(pendingWrites?.items) ? pendingWrites.items.length : 0;
+    if (unacked > 0) {
+      toast(`${unacked} unacknowledged submission${unacked === 1 ? '' : 's'} recovered.`);
+    }
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -188,9 +223,10 @@ function renderTraces(items) {
 async function requestProposal(id, button) {
   toggleBusy(button, true);
   try {
-    const result = await api(`/api/opportunities/${id}/stage`, {
+    const result = await submissions.submit({
+      path: `/api/opportunities/${id}/stage`,
       method: 'POST',
-      body: JSON.stringify({ targetStage: 'proposal' }),
+      body: { targetStage: 'proposal' },
     });
     toast(result.output.outcome === 'approval_required' ? 'Approval requested.' : 'Moved to Proposal.');
     await refresh();
@@ -204,7 +240,11 @@ async function requestProposal(id, button) {
 async function decide(id, decision, button) {
   toggleBusy(button, true);
   try {
-    await api(`/api/approvals/${id}/${decision}`, { method: 'POST', body: '{}' });
+    await submissions.submit({
+      path: `/api/approvals/${id}/${decision}`,
+      method: 'POST',
+      body: {},
+    });
     toast(decision === 'approve' ? 'Renewal approved.' : 'Renewal rejected.');
     await refresh();
   } catch (error) {
@@ -238,7 +278,7 @@ async function showTrace(id) {
 async function runDemo() {
   toggleBusy(elements.demoButton, true);
   try {
-    await api('/api/demo/run', { method: 'POST', body: '{}' });
+    await submissions.submit({ path: '/api/demo/run', method: 'POST', body: {} });
     toast('Demo created: €20k moved to Proposal; €80k awaits approval.');
     await refresh();
   } catch (error) {
@@ -303,6 +343,7 @@ const moduleAdmin = createModuleAdmin({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
   toast,
 });
@@ -311,6 +352,7 @@ const pipelineBoard = createPipelineBoard({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   toast,
 });
 
@@ -321,6 +363,7 @@ const quoteView = createQuoteView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -330,6 +373,7 @@ const workView = createWorkView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -340,6 +384,7 @@ const customerDataView = createCustomerDataView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -351,6 +396,7 @@ const spineView = createSpineView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
 });
 
 async function populateNav() {
