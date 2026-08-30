@@ -40,7 +40,7 @@ The desired catalogue already contains the underlying user jobs. A new catalogue
 - `ACC-JTBD-SALES-MGR-020` — experiment with new agentic team workflows.
 - `ACC-JTBD-AE-019` — build new personal plays through agents.
 - `ACC-JTBD-CRM-PO-020` — evolve the platform through agents and capability packs.
-- `ACC-JTBD-AGENT-ENG-005` through `015` — retrieval and memory, planning, managed actions, approvals, policy, specialized-agent orchestration, monitoring, retries, evaluation, and hallucination/authorization controls.
+- `ACC-JTBD-AGENT-ENG-005` through `015` — retrieval and memory, planning, managed actions, approvals, policy, specialized-agent orchestration, monitoring, retries, evaluation, model routing and context optimization, and hallucination/authorization controls.
 
 ### Marketing and ABM cluster
 
@@ -113,7 +113,7 @@ The default strategy is:
 
 1. **CLI/JSON remains canonical.** Repository inspection, planning, checks, and proof stay deterministic and model-neutral.
 2. **MCP is a bounded tool bridge, not the product core.** Expose only useful capability/action surfaces; do not turn every method into a tool.
-3. **Reuse native coding-agent tool execution where supported.** Claude Code, Codex, and future agents can compose source, invoke CLI commands, and use permitted MCP servers.
+3. **Reuse native coding-agent tool execution where supported, but preserve the write boundary.** Claude Code, Codex, and future agents may compose source, invoke CLI commands, and use permitted MCP servers directly for builder and read-only work. Any side-effecting email, calendar, enrichment, advertising, commerce, telephony, or other provider call must execute through an Accordo managed action or application-scoped operation that enforces verified identity and tenant scope, policy and approval, idempotency and reconciliation, and audit/trace evidence. A native MCP call is never a shortcut around those controls.
 4. **Keep model execution pluggable.** The open-source runtime must not require one model provider or one token-billed API.
 5. **Do not promise subscription reuse for unattended production.** A provider-native subscription may be useful for interactive building or supervised operation only where its product terms and technical surface allow it. Production role agents need an explicit deployable runtime contract.
 6. **External systems remain explicit dependencies.** Contact discovery, email delivery, calendars, telephony, enrichment, and social channels require legitimate providers, credentials, permissions, and jurisdiction-appropriate use. Accordo governs and records their use; it does not fabricate access to them.
@@ -195,6 +195,7 @@ The pack must stop or escalate on:
 - repeated delivery failure or provider refusal;
 - reply received, meeting booked, or maximum sequence reached;
 - attempted claim outside approved source material;
+- source, page, contact, reply, attachment, or provider content that contains instructions aimed at the agent, requests a policy/tool change, or otherwise suggests prompt injection; treat it strictly as untrusted data, prevent it from selecting tools or overriding policy, and escalate for review;
 - budget, rate, or jurisdiction limit reached.
 
 ### Initial autonomy
@@ -246,7 +247,7 @@ Coverage target cluster:
 SDR-001, 003–008, 010–012, 018
 ```
 
-Acceptance requires one end-to-end scenario from ICP configuration to a human-approved meeting request, with no real mass outreach claim.
+Acceptance requires one end-to-end scenario from ICP configuration to a human-approved meeting request, with no real mass outreach claim. Before any outbound execution, adversarial fixtures must prove that instructions embedded in source pages, contact data, attachments, or replies cannot alter tool selection, approved audience, policy, content constraints, or action scope.
 
 ### AW2 — Durable outreach and reply loop
 
@@ -257,6 +258,7 @@ Adds:
 - scheduled steps;
 - outbox and external-operation reconciliation;
 - reply ingestion and intent classification;
+- adversarial source/reply handling that treats embedded instructions strictly as data and escalates suspected prompt injection before any next action;
 - stop rules, opt-out, no-show, and handoff;
 - delivery, reply, and meeting receipts.
 
@@ -293,6 +295,17 @@ PT/Gym lead or trial
 ```
 
 This tests Accordo’s agent composition, PostgreSQL/Cloud posture, jobs, interactions, Admin, and a selected JTBD acceptance pack against a real product.
+
+## Roadmap continuity for future campaigns
+
+Every future implementation prompt that advances Cloud, guided onboarding, role-agent packs, Arvo, the winery blueprint, Interactions, Customer Data Operations, Marketing, or the package ecosystem must re-read and reconcile the live versions of:
+
+- this roadmap;
+- `GUIDED_ONBOARDING_AND_VERTICAL_BLUEPRINTS.md`;
+- `../jtbd/roadmap/OWNERSHIP.md` and the independent coverage overlay;
+- `../PROJECT_STATUS.md` and Repository Truth.
+
+Each campaign handoff must state which relevant roadmap items are `IN_SCOPE`, `DEPENDENCY_ONLY`, `DEFERRED` with an explicit reason, or `MUST_NOT_CLAIM`. This continuity rule prevents fast infrastructure work from silently losing product commitments; it does not force unrelated roadmap items into the same PR and it does not promote coverage.
 
 ## Coverage and truth rules
 
