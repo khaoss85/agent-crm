@@ -2,13 +2,13 @@
   "claimsContract": 2,
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used. Contract 2 (ADR-027): measuredAgainst additionally requires testFiles and testsTree, and no claim, limitation or repoFact may type an exact test count — the one number lives in measuredAgainst and reaches a page as {{measured.tests}}.",
   "measuredAgainst": {
-    "date": "2026-08-29",
-    "sha": "58cf4ec",
+    "date": "2026-08-30",
+    "sha": "84a3efe",
     "command": "npm run verify",
-    "tests": 1964,
+    "tests": 2068,
     "failures": 0,
-    "testFiles": 155,
-    "testsTree": "b259918efb4611f2e98d5f72b34ad27f0f399b04",
+    "testFiles": 165,
+    "testsTree": "a338d698d55eef929053da9e9eb45c698dc8a659",
     "note": "Written by `node scripts/measure-suite.js --apply` from a real run on a clean tree. Never edit these numbers by hand: scripts/site-check.js verifies sha, testsTree and testFiles against the commit, so a record moved forward without a re-run fails the build."
   },
   "claims": [
