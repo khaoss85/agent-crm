@@ -89,6 +89,33 @@ overbuilt/roadmap debt, or taxonomy error. In particular, `PLT-004` is horizonta
 plumbing, while the five Governance & Security orphans remain individually visible for human
 portfolio review.
 
+## Cross-cutting role-agent composition
+
+Individual assignments remain authoritative per JTBD. Higher-level role-agent packs are a
+non-authoritative composition view that groups existing desired jobs into end-to-end product
+slices; they do not alter assignment, priority, or coverage. The prospecting, marketing, and
+customer/service composition strategy is documented in
+[`../../strategy/AGENTIC_WORKFORCE_ROADMAP.md`](../../strategy/AGENTIC_WORKFORCE_ROADMAP.md).
+
+That roadmap deliberately reuses the existing SDR, ABM, customer-success, and agent-engineering
+jobs rather than adding duplicate catalogue records. A pack, prompt, connector, or model output
+cannot promote any grouped job: each coverage row still requires its own executable evidence.
+
+## Guided onboarding and vertical blueprints
+
+Guided first configuration is another non-authoritative composition layer. It lets a coding agent
+audit the permitted business sources, recommend or accept a selected JTBD set, and propose a
+Project Blueprint containing modules, fields, views, workflows, role-agent packs, providers,
+approval gates, deployment mode, data boundaries, and acceptance scenarios. It does not change
+which pillar owns a job and does not convert selection into support.
+
+The onboarding, managed deployment receipt, Cloud provider decision gate, Arvo pilot shape, and
+winery Growth and Customer Operations blueprint are documented in
+[`../../strategy/GUIDED_ONBOARDING_AND_VERTICAL_BLUEPRINTS.md`](../../strategy/GUIDED_ONBOARDING_AND_VERTICAL_BLUEPRINTS.md).
+The proposed `OB0–OB4` and `VB0–VB4` slices are roadmap composition views only. Exact desired jobs
+remain governed by `assignments.jsonl`, while each coverage row still moves only through its own
+executable evidence.
+
 ## Public/private boundary
 
 The public overlay carries track, milestone, disposition, dependencies, and public
