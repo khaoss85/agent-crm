@@ -58,7 +58,7 @@ function fixtureProvider(overrides = {}) {
     contract: BACKUP_CONTRACT,
     name: 'fixture',
     adapter: 'postgresql',
-    async inspectSource() {
+    async inspectAuthority() {
       return {
         bindingUuid: source.bindingUuid,
         tenantFingerprint: source.tenantFingerprint,
@@ -87,11 +87,26 @@ function operations(provider = fixtureProvider()) {
   });
 }
 
+function nativeWithFixtureAuthority(options) {
+  const native = createPostgresqlNativeBackupProvider(options);
+  return defineBackupProvider({
+    ...native,
+    async inspectAuthority() {
+      return {
+        bindingUuid: source.bindingUuid,
+        tenantFingerprint: source.tenantFingerprint,
+        resourceFingerprint: source.resourceFingerprint,
+        migrationSetFingerprint: source.migrationSetFingerprint,
+      };
+    },
+  });
+}
+
 test('contract vocabulary is closed and SQLite is explicitly unsupported', () => {
   assert.deepEqual(backupVocabulary(), {
     contract: 1,
     adapters: ['postgresql'],
-    providerKeys: ['contract', 'name', 'adapter', 'inspectSource', 'createArtifact', 'prepareRestore', 'withTargetLock', 'restoreArtifact'],
+    providerKeys: ['contract', 'name', 'adapter', 'inspectAuthority', 'createArtifact', 'prepareRestore', 'withTargetLock', 'restoreArtifact'],
     evidenceKeys: ['contract', 'adapter', 'bindingUuid', 'tenantFingerprint', 'resourceFingerprint', 'migrationSetFingerprint', 'repositoryFingerprint'],
     expectedIntentKeys: ['bindingUuid', 'tenantFingerprint', 'resourceFingerprint', 'migrationSetFingerprint', 'repositoryFingerprint'],
     bundleEntries: ['artifact.dump', 'manifest.json'],
@@ -164,7 +179,7 @@ test('source connection authority must match the evidence before artifact creati
   t.after(() => rm(root, { recursive: true, force: true }));
   let artifactCalled = false;
   const provider = fixtureProvider({
-    async inspectSource() {
+    async inspectAuthority() {
       return {
         bindingUuid: source.bindingUuid,
         tenantFingerprint: '9'.repeat(64),
@@ -178,6 +193,49 @@ test('source connection authority must match the evidence before artifact creati
     assert.equal(error?.code, 'BACKUP_SOURCE_AUTHORITY_MISMATCH'); assertNoLeak(error); return true;
   });
   assert.equal(artifactCalled, false);
+});
+
+test('create resolves a rotating connection once and binds inspection plus dump to that endpoint', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-affine-create-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let resolutions = 0;
+  const seen = [];
+  const rotating = Object.freeze({
+    async withEnvironment(consumer) {
+      resolutions += 1;
+      return consumer({
+        PGHOST: '127.0.0.1', PGPORT: '5432', PGDATABASE: `source-${resolutions}`,
+        PGUSER: 'fixture', PGPASSWORD: `password-${resolutions}`,
+      });
+    },
+  });
+  const provider = fixtureProvider({
+    async inspectAuthority({ connection: bound }) {
+      return bound.withEnvironment((environment) => {
+        seen.push(environment.PGDATABASE);
+        return {
+          bindingUuid: source.bindingUuid,
+          tenantFingerprint: source.tenantFingerprint,
+          resourceFingerprint: source.resourceFingerprint,
+          migrationSetFingerprint: source.migrationSetFingerprint,
+        };
+      });
+    },
+    async createArtifact({ artifactPath, connection: bound }) {
+      return bound.withEnvironment(async (environment) => {
+        seen.push(environment.PGDATABASE);
+        await writeFile(artifactPath, 'affine-source');
+        return { name: 'fixture', major: 16, version: 'fixture-16.0' };
+      });
+    },
+  });
+  const affineOperations = createBackupOperations({
+    adapter: 'postgresql', provider, evidence: source, connection: rotating,
+    clock: () => '2026-08-31T12:00:00.000Z',
+  });
+  await affineOperations.create({ bundlePath: join(root, 'bundle') });
+  assert.equal(resolutions, 1);
+  assert.deepEqual(seen, ['source-1', 'source-1']);
 });
 
 test('top-level accessors and coercion objects refuse without invoking or reflecting hostile values', async () => {
@@ -208,7 +266,7 @@ test('top-level accessors and coercion objects refuse without invoking or reflec
 test('native provider refuses missing, wrong-major and hung tools with stable leak-free errors', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-tools-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const missing = createPostgresqlNativeBackupProvider({ pgDump: join(root, 'missing') });
+  const missing = nativeWithFixtureAuthority({ pgDump: join(root, 'missing') });
   await assert.rejects(operations(missing).create({ bundlePath: join(root, 'missing-bundle') }), (error) => {
     assert.equal(error?.code, 'BACKUP_TOOL_UNAVAILABLE'); assertNoLeak(error); return true;
   });
@@ -216,13 +274,13 @@ test('native provider refuses missing, wrong-major and hung tools with stable le
   const wrong = join(root, 'wrong');
   await writeFile(wrong, '#!/bin/sh\nprintf "pg_dump (PostgreSQL) 15.9\\n"\n');
   await chmod(wrong, 0o700);
-  const wrongProvider = createPostgresqlNativeBackupProvider({ pgDump: wrong });
+  const wrongProvider = nativeWithFixtureAuthority({ pgDump: wrong });
   await assert.rejects(operations(wrongProvider).create({ bundlePath: join(root, 'wrong-bundle') }), (error) => error?.code === 'BACKUP_TOOL_VERSION_REFUSED');
 
   const hung = join(root, 'hung');
   await writeFile(hung, '#!/bin/sh\nwhile :; do :; done\n');
   await chmod(hung, 0o700);
-  const hungProvider = createPostgresqlNativeBackupProvider({ pgDump: hung, timeoutMs: 10 });
+  const hungProvider = nativeWithFixtureAuthority({ pgDump: hung, timeoutMs: 10 });
   await assert.rejects(operations(hungProvider).create({ bundlePath: join(root, 'hung-bundle') }), (error) => error?.code === 'BACKUP_TOOL_TIMEOUT');
 
   const envProbe = join(root, 'env-probe');
@@ -247,18 +305,7 @@ done
     if (prior === undefined) delete process.env.ACCORDO_UNRELATED_CHILD_SENTINEL;
     else process.env.ACCORDO_UNRELATED_CHILD_SENTINEL = prior;
   });
-  const envNative = createPostgresqlNativeBackupProvider({ pgDump: envProbe });
-  const envProvider = defineBackupProvider({
-    ...envNative,
-    async inspectSource() {
-      return {
-        bindingUuid: source.bindingUuid,
-        tenantFingerprint: source.tenantFingerprint,
-        resourceFingerprint: source.resourceFingerprint,
-        migrationSetFingerprint: source.migrationSetFingerprint,
-      };
-    },
-  });
+  const envProvider = nativeWithFixtureAuthority({ pgDump: envProbe });
   await operations(envProvider)
     .create({ bundlePath: join(root, 'env-bundle') });
 });
@@ -318,4 +365,76 @@ test('restore consumes its verified private snapshot and rechecks those exact by
     operations(scratchMutation).restore({ bundlePath: changedBundle, expected, target: connection }),
     (error) => error?.code === 'BACKUP_ARTIFACT_CHANGED_DURING_RESTORE',
   );
+});
+
+test('restore resolves one target for lock, import, and post-restore authority', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-affine-restore-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bundlePath = join(root, 'bundle');
+  await operations().create({ bundlePath });
+  let resolutions = 0;
+  const seen = [];
+  let locked = false;
+  const rotatingTarget = Object.freeze({
+    async withEnvironment(consumer) {
+      resolutions += 1;
+      return consumer({
+        PGHOST: '127.0.0.1', PGPORT: '5432', PGDATABASE: `target-${resolutions}`,
+        PGUSER: 'fixture', PGPASSWORD: `password-${resolutions}`,
+      });
+    },
+  });
+  const observe = (bound) => bound.withEnvironment((environment) => {
+    seen.push(environment.PGDATABASE);
+    return environment;
+  });
+  const provider = fixtureProvider({
+    async withTargetLock({ connection: bound }, operation) {
+      await observe(bound);
+      locked = true;
+      try { return await operation({ empty: true }); } finally { locked = false; }
+    },
+    async restoreArtifact({ connection: bound }) { await observe(bound); },
+    async inspectAuthority({ connection: bound }) {
+      assert.equal(locked, true, 'post-restore authority is inspected while the target fence is held');
+      await observe(bound);
+      return {
+        bindingUuid: source.bindingUuid,
+        tenantFingerprint: source.tenantFingerprint,
+        resourceFingerprint: source.resourceFingerprint,
+        migrationSetFingerprint: source.migrationSetFingerprint,
+      };
+    },
+  });
+  const restoreOperations = createBackupOperations({
+    adapter: 'postgresql', provider, evidence: source, connection,
+  });
+  assert.equal((await restoreOperations.restore({ bundlePath, expected, target: rotatingTarget })).restored, true);
+  assert.equal(resolutions, 1);
+  assert.deepEqual(seen, ['target-1', 'target-1', 'target-1']);
+  assert.equal(locked, false);
+});
+
+test('target-lock provider cannot return before its unique callback settles', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-lock-settlement-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bundlePath = join(root, 'bundle');
+  await operations().create({ bundlePath });
+  let restored = false;
+  const provider = fixtureProvider({
+    async withTargetLock(_input, operation) {
+      void operation({ empty: true });
+      return undefined;
+    },
+    async restoreArtifact({ artifactPath }) {
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal((await readFile(artifactPath, 'utf8')), 'closed-fixture-artifact');
+      restored = true;
+    },
+  });
+  await assert.rejects(
+    operations(provider).restore({ bundlePath, expected, target: connection }),
+    (error) => error?.code === 'BACKUP_TARGET_LOCK_INVALID',
+  );
+  assert.equal(restored, true, 'outer restore waited for the detached callback before refusing and cleaning scratch');
 });

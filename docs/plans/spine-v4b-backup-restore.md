@@ -100,6 +100,14 @@ Use Node 22.16.0 through `fnm`.
   `7993a05a9692601b5748075ce3bd565d81ca55aa`. Repository authorities and the
   V4A secret/pre-connect, M3 migration, attestation, binding and lease seams
   inspected. Selected approach 3 above.
+- 2026-08-31: implemented the causal PostgreSQL contract and merged current
+  Spine v3A main regularly. Independent review then found that resolving a
+  credential provider separately at each phase could inspect one endpoint and
+  dump or restore another. Create and restore now each consume one affine,
+  limited-lifetime environment; restore keeps the target authority lock through
+  byte re-verification and restored-authority inspection, and rejects providers
+  that do not await exactly one lock callback settlement. Deterministic rotating
+  endpoint and early-returning lock-provider regressions pass on Node 22.16.0.
 
 ## Decision log
 
@@ -116,7 +124,9 @@ Use Node 22.16.0 through `fnm`.
 
 ## Outcome and follow-up
 
-Implementation pending. The integration campaign will later add the smallest
-operator/app lifecycle surface and final combined truth. Managed scheduling,
-retention, remote artifact custody, PITR, Cloud APIs and Arvo execution remain
-future work.
+The bounded implementation and local deterministic evidence are complete;
+hosted PostgreSQL 16 create/verify/restore/normal-boot evidence and independent
+exact-head delta review remain required before merge. The integration campaign
+will later add the smallest operator/app lifecycle surface and final combined
+truth. Managed scheduling, retention, remote artifact custody, PITR, Cloud APIs
+and Arvo execution remain future work.

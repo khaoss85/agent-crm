@@ -22,7 +22,7 @@ export const BACKUP_TOOL_MAJOR = 16;
 export const BACKUP_TOOL_TIMEOUT_MS = 60_000;
 
 const PROVIDER_KEYS = Object.freeze([
-  'contract', 'name', 'adapter', 'inspectSource', 'createArtifact', 'prepareRestore', 'withTargetLock', 'restoreArtifact',
+  'contract', 'name', 'adapter', 'inspectAuthority', 'createArtifact', 'prepareRestore', 'withTargetLock', 'restoreArtifact',
 ]);
 const EVIDENCE_KEYS = Object.freeze([
   'contract', 'adapter', 'bindingUuid', 'tenantFingerprint', 'resourceFingerprint',
@@ -182,6 +182,28 @@ async function useConnection(connection, consumer) {
   }
 }
 
+function affineConnection(environment) {
+  let active = true;
+  return Object.freeze({
+    connection: Object.freeze({
+      async withEnvironment(consumer) {
+        if (!active || typeof consumer !== 'function') {
+          refuse('BACKUP_CONNECTION_AFFINITY_REFUSED', 'backup connection is outside its affine operation');
+        }
+        return consumer(Object.freeze({ ...environment }));
+      },
+    }),
+    close() { active = false; },
+  });
+}
+
+async function useAffineConnection(connection, consumer) {
+  return useConnection(connection, async (environment) => {
+    const affine = affineConnection(environment);
+    try { return await consumer(affine.connection); } finally { affine.close(); }
+  });
+}
+
 async function readBounded(handle, max, code) {
   const chunks = [];
   let total = 0;
@@ -323,7 +345,7 @@ async function digestTrustedPath(path) {
 export function defineBackupProvider(definition) {
   const provider = snapshot(definition, PROVIDER_KEYS, 'BACKUP_PROVIDER_INVALID');
   if (provider.contract !== BACKUP_CONTRACT || provider.adapter !== 'postgresql' || !NAME.test(provider.name)
-    || typeof provider.inspectSource !== 'function' || typeof provider.createArtifact !== 'function'
+    || typeof provider.inspectAuthority !== 'function' || typeof provider.createArtifact !== 'function'
     || typeof provider.prepareRestore !== 'function'
     || typeof provider.withTargetLock !== 'function' || typeof provider.restoreArtifact !== 'function') {
     refuse('BACKUP_PROVIDER_INVALID', 'backup provider is not a closed runtime contract');
@@ -357,6 +379,51 @@ async function providerCall(operation, callback) {
   }
 }
 
+const TARGET_LOCK_COMPLETED = Object.freeze({ completed: true });
+
+async function runWithTargetLock(provider, connection, operation) {
+  let accepting = true;
+  let invalid = false;
+  let completion = null;
+  const callback = (state) => {
+    if (!accepting || completion) {
+      invalid = true;
+      const rejected = Promise.reject(failure(
+        'BACKUP_TARGET_LOCK_INVALID',
+        'restore target lock invoked its operation outside the unique settlement',
+      ));
+      rejected.catch(() => {});
+      return rejected;
+    }
+    completion = Promise.resolve().then(() => operation(state)).then(() => TARGET_LOCK_COMPLETED);
+    completion.catch(() => {});
+    return completion;
+  };
+  let providerResult;
+  let providerError = null;
+  try {
+    providerResult = await providerCall(
+      'target-lock',
+      () => provider.withTargetLock({ connection }, callback),
+    );
+  } catch (error) {
+    providerError = error;
+  } finally {
+    accepting = false;
+  }
+  let completionResult;
+  if (completion) {
+    try { completionResult = await completion; } catch (error) {
+      if (!providerError) providerError = error;
+    }
+  }
+  if (providerError) throw providerError;
+  if (invalid || !completion || providerResult !== TARGET_LOCK_COMPLETED
+    || completionResult !== TARGET_LOCK_COMPLETED) {
+    refuse('BACKUP_TARGET_LOCK_INVALID', 'restore target lock did not settle its unique operation');
+  }
+}
+
 export function createBackupOperations(options) {
   const configuration = snapshotOptional(
     options,
@@ -387,25 +454,26 @@ export function createBackupOperations(options) {
       const request = snapshot(input, ['bundlePath'], 'BACKUP_CREATE_INPUT_INVALID');
       if (!exactString(request.bundlePath, 4096)) refuse('BACKUP_PATH_INVALID', 'backup bundle path is invalid');
       const bundlePath = request.bundlePath;
-      const destination = resolve(bundlePath);
-      try { await access(destination); refuse('BACKUP_DESTINATION_EXISTS', 'backup destination already exists'); } catch (error) {
-        if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
-      }
-      const observedSource = acceptedObservedAuthority(
-        await providerCall('inspect-source', () => provider.inspectSource({ connection })),
-        'BACKUP_SOURCE_AUTHORITY_INVALID',
-      );
-      compareLiveAuthority(
-        observedSource,
-        evidence,
-        'BACKUP_SOURCE_AUTHORITY_MISMATCH',
-        'backup connection does not match the supplied source authority',
-      );
-      await mkdir(dirname(destination), { recursive: true });
-      const stage = await mkdtemp(join(dirname(destination), '.accordo-backup-'));
-      try {
+      return useAffineConnection(connection, async (boundConnection) => {
+        const destination = resolve(bundlePath);
+        try { await access(destination); refuse('BACKUP_DESTINATION_EXISTS', 'backup destination already exists'); } catch (error) {
+          if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
+        }
+        const observedSource = acceptedObservedAuthority(
+          await providerCall('inspect-source', () => provider.inspectAuthority({ connection: boundConnection })),
+          'BACKUP_SOURCE_AUTHORITY_INVALID',
+        );
+        compareLiveAuthority(
+          observedSource,
+          evidence,
+          'BACKUP_SOURCE_AUTHORITY_MISMATCH',
+          'backup connection does not match the supplied source authority',
+        );
+        await mkdir(dirname(destination), { recursive: true });
+        const stage = await mkdtemp(join(dirname(destination), '.accordo-backup-'));
+        try {
         const artifactPath = join(stage, BACKUP_ARTIFACT_NAME);
-        const tool = await providerCall('create', () => provider.createArtifact({ artifactPath, connection }));
+        const tool = await providerCall('create', () => provider.createArtifact({ artifactPath, connection: boundConnection }));
         const acceptedTool = snapshot(tool, TOOL_KEYS, 'BACKUP_TOOL_INVALID');
         if (!['pg_dump', 'fixture'].includes(acceptedTool.name) || acceptedTool.major !== BACKUP_TOOL_MAJOR
           || !TOOL_VERSION.test(acceptedTool.version)) refuse('BACKUP_TOOL_INVALID', 'backup tool identity is invalid');
@@ -438,10 +506,11 @@ export function createBackupOperations(options) {
         try { await syncedArtifact.sync(); } finally { await syncedArtifact.close(); }
         await rename(stage, destination);
         return Object.freeze({ contract: BACKUP_CONTRACT, bundleCommitted: true, manifest });
-      } catch (error) {
-        await rm(stage, { recursive: true, force: true }).catch(() => {});
-        throw error;
-      }
+        } catch (error) {
+          await rm(stage, { recursive: true, force: true }).catch(() => {});
+          throw error;
+        }
+      });
     },
     verify,
     async restore(input) {
@@ -454,44 +523,42 @@ export function createBackupOperations(options) {
         await chmod(scratchArtifact, 0o400);
         const targetConnection = safeConnection(request.target);
         await providerCall('prepare-restore', () => provider.prepareRestore());
-        let invoked = false;
-        await providerCall('target-lock', () => provider.withTargetLock(
-          { connection: targetConnection },
-          async (state) => {
-            if (invoked) refuse('BACKUP_TARGET_LOCK_INVALID', 'restore target lock invoked its operation more than once');
-            invoked = true;
+        return await useAffineConnection(targetConnection, async (boundConnection) => {
+          let restoredResult = null;
+          await runWithTargetLock(provider, boundConnection, async (state) => {
             const inspected = snapshot(state, ['empty'], 'BACKUP_TARGET_INSPECTION_INVALID');
             if (typeof inspected.empty !== 'boolean') refuse('BACKUP_TARGET_INSPECTION_INVALID', 'restore target inspection is invalid');
             if (!inspected.empty) refuse('BACKUP_TARGET_NOT_EMPTY', 'restore target is not explicitly empty');
             try {
-              await providerCall('restore', () => provider.restoreArtifact({ artifactPath: scratchArtifact, connection: targetConnection }));
+              await providerCall('restore', () => provider.restoreArtifact({ artifactPath: scratchArtifact, connection: boundConnection }));
             } catch {
               throw failure('BACKUP_RESTORE_PARTIAL', 'restore failed and the target must be treated as possibly partial', {
                 contract: BACKUP_CONTRACT,
                 targetState: 'possibly-partial',
               });
             }
-          },
-        ));
-        if (!invoked) refuse('BACKUP_TARGET_LOCK_INVALID', 'restore target lock did not invoke its operation');
-        if (await digestTrustedPath(scratchArtifact) !== verified.manifest.artifact.digest) {
-          refuse('BACKUP_ARTIFACT_CHANGED_DURING_RESTORE', 'the executed backup artifact changed during restore');
-        }
-        const restored = acceptedObservedAuthority(
-          await inspectRestoredAuthority(targetConnection),
-          'BACKUP_RESTORED_AUTHORITY_MISMATCH',
-        );
-        compareLiveAuthority(
-          restored,
-          verified.manifest.source,
-          'BACKUP_RESTORED_AUTHORITY_MISMATCH',
-          'restored database evidence does not match expected source authority',
-        );
-        return Object.freeze({
-          contract: BACKUP_CONTRACT,
-          restored: true,
-          authority: 'normal-startup-required',
-          manifest: verified.manifest,
+            if (await digestTrustedPath(scratchArtifact) !== verified.manifest.artifact.digest) {
+              refuse('BACKUP_ARTIFACT_CHANGED_DURING_RESTORE', 'the executed backup artifact changed during restore');
+            }
+            const restored = acceptedObservedAuthority(
+              await providerCall('inspect-restored', () => provider.inspectAuthority({ connection: boundConnection })),
+              'BACKUP_RESTORED_AUTHORITY_MISMATCH',
+            );
+            compareLiveAuthority(
+              restored,
+              verified.manifest.source,
+              'BACKUP_RESTORED_AUTHORITY_MISMATCH',
+              'restored database evidence does not match expected source authority',
+            );
+            restoredResult = Object.freeze({
+              contract: BACKUP_CONTRACT,
+              restored: true,
+              authority: 'normal-startup-required',
+              manifest: verified.manifest,
+            });
+          });
+          if (!restoredResult) refuse('BACKUP_TARGET_LOCK_INVALID', 'restore target lock completed without verified authority');
+          return restoredResult;
         });
       } finally {
         await chmod(scratchArtifact, 0o600).catch(() => {});
@@ -627,10 +694,7 @@ export function createPostgresqlNativeBackupProvider(options = {}) {
     contract: BACKUP_CONTRACT,
     name: 'postgresql-native',
     adapter: 'postgresql',
-    async inspectSource({ connection }) {
-      await toolIdentity(dumpCommand, 'pg_dump', timeoutMs);
-      return inspectRestoredAuthority(connection);
-    },
+    async inspectAuthority({ connection }) { return inspectRestoredAuthority(connection); },
     async createArtifact({ artifactPath, connection }) {
       const tool = await toolIdentity(dumpCommand, 'pg_dump', timeoutMs);
       await useConnection(connection, (environment) => runTool(
