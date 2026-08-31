@@ -1,7 +1,7 @@
 // @ts-check
 
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -19,12 +19,14 @@ import {
   createSecretMaterial,
   createSecretResolver,
   defineSecretProvider,
+  resolveProductionSecretProvider,
   secretProviderVocabulary,
 } from '../packages/core/src/secret-provider.js';
 import { passwordFromEndpoint } from '../packages/app/src/create-app-async.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const providerModule = pathToFileURL(join(here, '../packages/core/src/secret-provider.js')).href;
+const errorsModule = pathToFileURL(join(here, '../packages/core/src/errors.js')).href;
 const SENTINEL = 'v4a-secret-sentinel-do-not-leak';
 
 function errorBlob(error) {
@@ -40,6 +42,19 @@ function errorBlob(error) {
 
 function assertRedacted(error) {
   assert.equal(errorBlob(error).includes(SENTINEL), false, errorBlob(error));
+}
+
+function assertExhaustivelyRedacted(error) {
+  const serialized = [
+    errorBlob(error),
+    String(error),
+    String(error?.stack ?? ''),
+    inspect(error, { depth: 20 }),
+    JSON.stringify(error),
+    JSON.stringify(error?.details),
+    JSON.stringify(error?.cause),
+  ].join('\n');
+  assert.equal(serialized.includes(SENTINEL), false, serialized);
 }
 
 function productionProvider(resolveSecret) {
@@ -79,6 +94,71 @@ test('contract vocabulary is closed and built-ins require explicit matching trus
     }),
     (error) => error?.code === 'SECRET_PROVIDER_INVALID' && !errorBlob(error).includes(SENTINEL),
   );
+  let getterInvoked = false;
+  const accessorProvider = {
+    contract: 1,
+    trust: 'production',
+    resolveSecret() { return createSecretMaterial(SENTINEL); },
+  };
+  Object.defineProperty(accessorProvider, 'name', {
+    enumerable: true,
+    get() {
+      getterInvoked = true;
+      throw new AppError(SENTINEL, { details: { credential: SENTINEL } });
+    },
+  });
+  assert.throws(
+    () => defineSecretProvider(accessorProvider),
+    (error) => error?.code === 'SECRET_PROVIDER_INVALID' && !errorBlob(error).includes(SENTINEL),
+  );
+  assert.equal(getterInvoked, false);
+});
+
+test('production provider accessor is rejected without invocation or credential-bearing AppError escape', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4a-accessor-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'providers'));
+  const marker = join(root, 'getter-invoked');
+  const modulePath = join(root, 'providers', 'malicious.mjs');
+  writeFileSync(modulePath, `import { writeFileSync } from 'node:fs';
+import { AppError } from ${JSON.stringify(errorsModule)};
+export const secretProviderContract = 1;
+export const secretProviderTrust = 'production';
+export function createSecretProvider() {
+  const provider = {
+    contract: 1,
+    trust: 'production',
+    resolveSecret() { throw new Error('must not resolve'); },
+  };
+  Object.defineProperty(provider, 'name', {
+    enumerable: true,
+    get() {
+      writeFileSync(${JSON.stringify(marker)}, 'invoked');
+      throw new AppError(${JSON.stringify(SENTINEL)}, {
+        code: 'SECRET_PROVIDER_TIMEOUT',
+        details: { credential: ${JSON.stringify(SENTINEL)} },
+        cause: new Error(${JSON.stringify(SENTINEL)}),
+      });
+    },
+  });
+  return provider;
+}
+`);
+  chmodSync(modulePath, 0o600);
+
+  await assert.rejects(
+    () => resolveProductionSecretProvider({
+      relativePath: './providers/malicious.mjs',
+      projectRoot: root,
+      mode: 'production',
+    }),
+    (error) => {
+      assert.equal(error?.code, 'SECRET_PROVIDER_INVALID');
+      assertExhaustivelyRedacted(error);
+      return true;
+    },
+  );
+  assert.equal(existsSync(marker), false, 'provider getter was invoked during validation');
 });
 
 test('fixture and environment providers return opaque single-use disposable leases', async () => {

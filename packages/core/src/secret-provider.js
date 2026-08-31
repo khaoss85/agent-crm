@@ -38,9 +38,18 @@ const SECRET_REFERENCE = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/;
 const materialBytes = new WeakMap();
 const leaseBytes = new WeakMap();
 const leaseTimers = new WeakMap();
+const frameworkErrors = new WeakSet();
 
 function error(code, message, details = { contract: SECRET_PROVIDER_CONTRACT }) {
-  return new AppError(message, { code, status: 500, details });
+  const failure = new AppError(message, { code, status: 500, details });
+  frameworkErrors.add(failure);
+  return failure;
+}
+
+function isFrameworkError(value) {
+  return (typeof value === 'object' && value !== null) || typeof value === 'function'
+    ? frameworkErrors.has(value)
+    : false;
 }
 
 function invalid() {
@@ -53,12 +62,22 @@ function isPlainObject(value) {
 }
 
 function closedObject(value, keys) {
-  if (!isPlainObject(value)) invalid();
-  const names = Object.getOwnPropertyNames(value);
-  if (Object.getOwnPropertySymbols(value).length || names.some((key) => HOSTILE_KEYS.includes(key))) invalid();
-  if (names.length !== keys.length || names.some((key) => !keys.includes(key))) invalid();
-  for (const key of keys) if (!Object.hasOwn(value, key)) invalid();
-  return /** @type {Record<string, any>} */ (value);
+  try {
+    if (!isPlainObject(value)) invalid();
+    const names = Object.getOwnPropertyNames(value);
+    if (Object.getOwnPropertySymbols(value).length || names.some((key) => HOSTILE_KEYS.includes(key))) invalid();
+    if (names.length !== keys.length || names.some((key) => !keys.includes(key))) invalid();
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (const key of keys) {
+      const descriptor = descriptors[key];
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')
+        || typeof descriptor.get === 'function' || typeof descriptor.set === 'function') invalid();
+    }
+    return /** @type {Record<string, any>} */ (value);
+  } catch (cause) {
+    if (isFrameworkError(cause)) throw cause;
+    invalid();
+  }
 }
 
 function positiveTimeout(value, fallback) {
@@ -166,24 +185,33 @@ function takeMaterial(material) {
 }
 
 function disposeProviderResult(value) {
-  if (value instanceof SecretMaterial) value.dispose();
-  else if (value instanceof Uint8Array) value.fill(0);
+  try {
+    if (value instanceof SecretMaterial) value.dispose();
+    else if (value instanceof Uint8Array) value.fill(0);
+  } catch {
+    // Hostile provider values must not replace the stable validation refusal.
+  }
 }
 
 export function defineSecretProvider(definition) {
-  const provider = closedObject(definition, PROVIDER_KEYS);
-  if (provider.contract !== SECRET_PROVIDER_CONTRACT) {
-    throw error('SECRET_PROVIDER_CONTRACT_UNSUPPORTED', 'secret provider contract is not supported');
+  try {
+    const provider = closedObject(definition, PROVIDER_KEYS);
+    if (provider.contract !== SECRET_PROVIDER_CONTRACT) {
+      throw error('SECRET_PROVIDER_CONTRACT_UNSUPPORTED', 'secret provider contract is not supported');
+    }
+    if (typeof provider.name !== 'string' || !PROVIDER_NAME.test(provider.name)) invalid();
+    if (typeof provider.trust !== 'string' || !RUNTIME_MODES.includes(provider.trust)) invalid();
+    if (typeof provider.resolveSecret !== 'function') invalid();
+    return Object.freeze({
+      contract: SECRET_PROVIDER_CONTRACT,
+      name: provider.name,
+      trust: provider.trust,
+      resolveSecret: provider.resolveSecret,
+    });
+  } catch (cause) {
+    if (isFrameworkError(cause)) throw cause;
+    invalid();
   }
-  if (typeof provider.name !== 'string' || !PROVIDER_NAME.test(provider.name)) invalid();
-  if (typeof provider.trust !== 'string' || !RUNTIME_MODES.includes(provider.trust)) invalid();
-  if (typeof provider.resolveSecret !== 'function') invalid();
-  return Object.freeze({
-    contract: SECRET_PROVIDER_CONTRACT,
-    name: provider.name,
-    trust: provider.trust,
-    resolveSecret: provider.resolveSecret,
-  });
 }
 
 export function createEnvironmentSecretProvider(options = {}) {
@@ -276,7 +304,7 @@ export function createSecretResolver(options) {
       try {
         material = await Promise.race([pending, deadline]);
       } catch (cause) {
-        if (deadlineExpired && cause instanceof AppError && cause.code === 'SECRET_PROVIDER_TIMEOUT') throw cause;
+        if (deadlineExpired && isFrameworkError(cause)) throw cause;
         throw error('SECRET_PROVIDER_FAILED', 'secret provider failed to resolve the reference');
       } finally {
         clearTimeout(timer);
@@ -376,7 +404,7 @@ export async function resolveProductionSecretProvider(options) {
       }),
     ]);
   } catch (cause) {
-    if (cause instanceof AppError) throw cause;
+    if (isFrameworkError(cause)) throw cause;
     throw error('SECRET_PROVIDER_INIT_FAILED', 'secret provider failed to initialize');
   } finally {
     clearTimeout(timer);
