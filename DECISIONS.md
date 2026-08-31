@@ -4100,6 +4100,42 @@ tenancy or a tenant switcher.
   Cloud queue, production-readiness claim or JTBD promotion. Those boundaries
   remain for V3B, V3C and the integration campaign.
 
+### V3B addendum — committed effect intents are dispatched through exact durable jobs
+
+The existing PostgreSQL `write_outcomes.event_intents_json` remains the sole
+effect-intent authority. The transaction that inserts an outcome also enqueues
+one deterministic V3A job for each applicable closed effect family on the same
+affine storage handle: internal event promotion, and external-operation receipt
+continuation into local finalize. The job carries only contract, run, phase and
+source-fingerprint identity. Event/domain/provider payloads, idempotency keys,
+actors, credentials and secret references remain in neither job nor job audit.
+Rollback therefore leaves no dispatchable identity; commit followed by process
+death leaves a pending one. A committed outcome from before V3B is recovered by
+deterministically backfilling that same identity on explicit replay.
+
+Internal events are dispatched from the committed outcome, then
+`events_promoted` is compare-and-set only after every subscriber returns. The
+old mark-before-dispatch path is gone. Transport is **at least once**: when a
+later subscriber fails, a retry may repeat an earlier subscriber. Concurrent
+workers cannot own the same claim, but a process death after durable execution
+start remains visible reconciliation evidence and is never automatically
+invoked again. Poison reaches a bounded terminal job; no intent is silently
+deleted and no exactly-once delivery claim is made.
+
+The external continuation handler accepts only a registered local-finalize
+operation. It reloads the committed intent and receipt, returns successfully if
+finalize already exists, and otherwise requires the callback to prove a
+committed finalize outcome before the job succeeds. Provider `call` and
+`reconcile` handles never enter this runtime, so recovering a receipt cannot
+implicitly replay an external side effect. This is a continuation fence, not a
+managed integration service or a general event platform.
+
+Construction still starts no worker. SQLite keeps its immediate in-process
+event compatibility and gains no durable-outbox or multi-node claim. The
+authoritative security audit path is not migrated into effect dispatch, and
+V3B adds no timer consumer, CLI/MCP/operator surface, Cloud backend,
+production-readiness claim or JTBD promotion.
+
 ---
 
 ## ADR-040 — Runtime secrets are named references resolved before use, never deployment values

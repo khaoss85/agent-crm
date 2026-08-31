@@ -120,6 +120,38 @@ timer consumers. Every other `deferred` row requires its own later causal domain
 adoption with executable idempotency and approval evidence; V3A does not mass-fit
 jobs into existing packages.
 
+### Transactional outbox and effect dispatch v1 (Production Spine v3B)
+
+Horizontal PostgreSQL runtime capability: the existing write-outcome event
+intents and an applicable V3A effect identity commit together. Workers dispatch
+only committed source outcomes, mark internal events promoted only after
+subscriber success, and retain poison or begun-unknown delivery as visible job
+evidence. Delivery is at least once plus an idempotent/reconcilable identity,
+never exactly once. External receipt continuation can call only registered
+local finalize work and never receives a provider call/reconcile handle.
+SQLite retains immediate in-process event behavior; this is not a durable
+SQLite-outbox claim. Security audit is unchanged.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | PostgreSQL kernel write outcomes now retain and promote their committed internal event intents through exact durable jobs; standalone writes outside that envelope do not gain an outbox by implication |
+| Pipeline | `not_applicable` | pipeline composition owns no separate persisted effect intent |
+| Lead Intelligence | `deferred` | the bundled provider graph is not adopted onto external-operation v2 and no real provider adapter exists |
+| Commercial Operations | `deferred` | catalog/provider effects remain outside the M4 write-outcome envelope |
+| Signature & Order | `deferred` | the neutral receipt-to-local-finalize consumer exists, but the shipped package provider graph still requires its own external-operation-v2 adoption; V3B does not replay signature providers |
+| Contract Activation | `deferred` | activation scheduling is V3C; no renewal effect is inferred from infrastructure |
+| Delivery | `deferred` | no delivery effect consumer is adopted in this slice |
+| Service | `deferred` | no service/SLA effect consumer is adopted in this slice |
+| Work | `deferred` | due follow-up scheduling is V3C; no task state is changed by the outbox |
+| Lifecycle | `deferred` | no decision or commercial follow-up is created automatically |
+| Customer Data | `not_applicable` | linking/projection owns no current post-commit effect intent |
+| Custom-package fixture | `not_applicable` | the fixture declares no write-outcome effect consumer |
+| Custom-package score-disclosure fixture | `not_applicable` | the read-only capability fixture declares no effect consumer |
+
+Closing milestones are causal domain adoptions onto the PostgreSQL write-outcome
+and external-operation-v2 contracts. A durable identity alone promotes no domain
+coverage and authorizes no provider retry.
+
 ### Deployment-storage loader contract v1 assessment (Production Spine v2 M2F)
 
 The shared deployment-storage loader is a horizontal *runtime* capability: every

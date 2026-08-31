@@ -15,7 +15,7 @@ This slice adds no application worker autostart, CLI/MCP surface, security-audit
 
 ## Repository context and authoritative seams
 
-- Exact base: `7cf90f2a9b80b04afdb4ca798c85b363f728b50a` on `claude/spine-v3b-transactional-outbox`.
+- Started from reviewed V3A head `7cf90f2a9b80b04afdb4ca798c85b363f728b50a`; after V3A merged regularly, `origin/main` merge commit `9a512cf47374c4901a4d058838d731c908513bd0` integrated public ancestry without rebase or squash.
 - `packages/core/src/write-outcome-runtime.js` owns the PostgreSQL transaction that atomically persists domain writes, audit evidence, `write_outcomes.event_intents_json`, and trace intent.
 - `packages/core/src/write-outcome-store.js` owns lookup and the existing `events_promoted` terminal evidence. It remains the authoritative source; no parallel event payload is copied into a job.
 - `packages/core/src/external-operation.js` owns external-operation v2 intent/call/receipt/finalize sequencing and already guarantees that a replayed call outcome never authorizes another provider call.
@@ -70,6 +70,8 @@ Hosted exact-head PostgreSQL 16 evidence is mandatory when the local service is 
 
 - 2026-08-31: Created the branch from exact reviewed V3A head and traced write-outcome insertion/promotion, event buffering, affine storage, and external-operation receipt/finalize paths.
 - 2026-08-31: Chose `write_outcomes` as the sole effect-intent authority and V3A jobs as delivery ownership/evidence. Rejected a second outbox table and rejected marking `events_promoted` before dispatch.
+- 2026-08-31: Implemented atomic affine enqueue, exact-job internal promotion, local-only external finalize continuation, poison/reconciliation evidence and SQLite compatibility in `4e7f889`; integrated merged V3A ancestry in `9a512cf`.
+- 2026-08-31: Added deterministic recovery for committed pre-V3B outcomes and removed dynamic handler-code interpolation from recovery diagnostics in `3e1da1e`. Integrated focused Node 22 evidence is 43 tests, 37 pass, zero fail and six expected local PostgreSQL skips; hosted PostgreSQL 16 remains mandatory.
 
 ## Decision log
 
@@ -77,8 +79,10 @@ Hosted exact-head PostgreSQL 16 evidence is mandatory when the local service is 
 - Event transport is at least once. No exactly-once external or internal delivery claim is made.
 - The external continuation registry accepts local finalize functions only. Provider handles are structurally absent.
 - Security audit stays on its existing authoritative database path.
+- Explicit replay may backfill a missing deterministic effect job for a committed pre-V3B outcome. That recovery is not retroactive atomicity; the outcome is already the durable authority and repeat insertion is idempotent.
 - Final public truth/status, operator surfaces, measurement, and timer consumers remain for their later campaign slices.
 
 ## Outcome and follow-up
 
-Pending implementation and exact-head review.
+Implementation and local focused validation are complete. Required worker red-team,
+independent exact-head review and hosted PostgreSQL 16 evidence remain before merge.
