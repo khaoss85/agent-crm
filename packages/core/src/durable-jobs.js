@@ -390,15 +390,16 @@ export function createDurableJobStore(options) {
       : inTransaction(persist);
   }
 
-  async function claim(workerId, leaseMs = 30_000, context = {}) {
+  async function claimDue(workerId, leaseMs = 30_000, context = {}, id = null) {
     const actor = systemMutationActor(context, 'Durable-job claim context');
     const worker = boundedText(workerId, 'workerId');
+    const jobId = id == null ? null : boundedText(id, 'job id');
     positiveInteger(leaseMs, 'leaseMs', MAX_LEASE_MS);
     const instant = now();
     const expiresAt = new Date(Date.parse(instant) + leaseMs).toISOString();
     const claimId = boundedText(claimIdSource(), 'generated claim id');
     return inTransaction(async (adapter, handle) => {
-      const result = await adapter.claim({ tenantId, workerId: worker, claimId, now: instant, expiresAt });
+      const result = await adapter.claim({ tenantId, workerId: worker, claimId, now: instant, expiresAt, id: jobId });
       for (const expired of result.terminalized) {
         await recordMutation(audit, handle, actor, 'failed', String(expired.id), {
           state: 'failed_terminal', claimGeneration: safeInteger(expired.claim_generation, 'claimGeneration'),
@@ -414,6 +415,9 @@ export function createDurableJobStore(options) {
       return job;
     });
   }
+
+  const claim = (workerId, leaseMs = 30_000, context = {}) => claimDue(workerId, leaseMs, context);
+  const claimById = (id, workerId, leaseMs = 30_000, context = {}) => claimDue(workerId, leaseMs, context, id);
 
   function requireClaim(job, workerId) {
     if (!job || job.tenantId !== tenantId || job.state !== 'claimed' || !job.claim
@@ -450,6 +454,7 @@ export function createDurableJobStore(options) {
     enqueue,
     get,
     claim,
+    claimById,
     async beginExecution(job, workerId, context = {}) {
       const actor = systemMutationActor(context, 'Durable-job execution-start context');
       const owner = boundedText(workerId, 'workerId');
@@ -683,11 +688,13 @@ export function createDurableJobWorker(options) {
     return options.store.succeed(executingJob, workerId, outcomeReference, { actor });
   }
 
-  async function poll() {
+  async function claimAndExecute(jobId = null) {
     if (!accepting || closed) return null;
     if (pollPromise) return pollPromise;
     pollPromise = (async () => {
-      const job = await options.store.claim(workerId, leaseMs, { actor });
+      const job = jobId == null
+        ? await options.store.claim(workerId, leaseMs, { actor })
+        : await options.store.claimById(jobId, workerId, leaseMs, { actor });
       if (!job) return null;
       if (!accepting || closed) return options.store.release(job, workerId, { actor });
       inFlight = execute(job);
@@ -704,6 +711,8 @@ export function createDurableJobWorker(options) {
       pollPromise = null;
     }
   }
+
+  const poll = () => claimAndExecute();
 
   async function drain(input = {}) {
     closedObject(input, ['timeoutMs'], [], 'Durable-job drain options');
@@ -739,6 +748,7 @@ export function createDurableJobWorker(options) {
       if (accepting) scheduleWake(0);
     },
     poll,
+    run: (jobId) => claimAndExecute(boundedText(jobId, 'job id')),
     drain,
     stop: drain,
     async close(input = {}) {

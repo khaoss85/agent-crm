@@ -18,6 +18,11 @@ import { isSyncStorage, storageApi } from './storage-runtime.js';
 import { nowIso } from './time.js';
 import { deterministicUuid, snapshotWriteIds, withWriteIds } from './write-ids.js';
 import {
+  dispatchTransactionalOutboxJob,
+  enqueueWriteOutcomeEffects,
+  transactionalOutboxEffectIdentity,
+} from './transactional-outbox.js';
+import {
   createWriteOutcomeStore,
   isUnknownCommit,
   unknownCommitError,
@@ -130,7 +135,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
     const existing = await store.lookup(tenantNs, rawKey, phase);
     if (existing) {
       assertOutcomeScope(existing, scope);
-      await promoteAndFinalize(database, events, store, existing, { settleTrace });
+      await promoteAndFinalize(database, events, store, existing, { settleTrace, tenantId: spec.tenantId });
       return {
         replayed: true,
         idempotencyKey: rawKey,
@@ -152,6 +157,8 @@ export async function runIdempotentWrite(database, events, spec, execute) {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     /** @type {Array<{name: string, status: string, output?: unknown, error?: string}>} */
     const steps = [];
+    /** @type {any[]} */
+    let effectJobs = [];
     try {
       const result = await ENVELOPE.run({
         idempotencyKey: rawKey,
@@ -191,7 +198,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
               startedAt,
               steps: steps.slice(),
             };
-            await store.insert({
+            const persistedOutcome = {
               tenantNamespace: tenantNs,
               rawKey,
               phase,
@@ -202,32 +209,43 @@ export async function runIdempotentWrite(database, events, spec, execute) {
               traceIntent,
               runId,
               createdAt: now(),
+            };
+            await store.insert(persistedOutcome);
+            effectJobs = await enqueueWriteOutcomeEffects({
+              database,
+              tenantId: spec.tenantId,
+              outcome: persistedOutcome,
+              transaction: storageApi(database),
+              clock: now,
             });
             return encoded;
           });
           return inner;
         });
-        const committed = await store.lookup(tenantNs, rawKey, phase);
-        if (committed) {
-          const won = await store.tryPromoteEvents(committed);
-          if (won) {
-            try {
-              await outbox.commit();
-            } catch (dispatchError) {
-              console.error(
-                `[accordo] ${operation} run ${runId}: business writes committed but event dispatch failed: `
-                + `${dispatchError instanceof Error ? dispatchError.message : String(dispatchError)}`,
-              );
-            }
-          } else {
-            outbox.discard();
-          }
-          if (settleTrace) await finalizePendingTrace(database, committed.traceIntent);
-        } else {
-          outbox.discard();
-        }
+        outbox.discard();
         return value;
       }));
+      const committed = await store.lookup(tenantNs, rawKey, phase);
+      if (committed) {
+        for (const job of effectJobs.filter((entry) => entry.handler.name === 'promote-write-outcome-events')) {
+          try {
+            const dispatched = await dispatchTransactionalOutboxJob({
+              database, events, tenantId: spec.tenantId, clock: now,
+              workerId: `write-outcome-${runId}`,
+            }, job.id);
+            if (dispatched && dispatched.state !== 'succeeded') {
+              console.error(`[accordo] ${operation} run ${runId}: committed outbox dispatch is pending recovery: ${dispatched.lastErrorCode ?? 'TRANSACTIONAL_OUTBOX_DISPATCH_PENDING'}`);
+            }
+          } catch (dispatchError) {
+            console.error(
+              `[accordo] ${operation} run ${runId}: committed outbox dispatch is pending recovery: `
+              + `${dispatchError && typeof dispatchError === 'object' && 'code' in dispatchError
+                ? String(dispatchError.code) : 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED'}`,
+            );
+          }
+        }
+        if (settleTrace) await finalizePendingTrace(database, committed.traceIntent);
+      }
       return {
         replayed: false,
         idempotencyKey: rawKey,
@@ -245,7 +263,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
           const winner = await store.lookup(tenantNs, rawKey, phase);
           if (winner) {
             assertOutcomeScope(winner, scope);
-            await promoteAndFinalize(database, events, store, winner, { settleTrace });
+            await promoteAndFinalize(database, events, store, winner, { settleTrace, tenantId: spec.tenantId });
             return {
               replayed: true,
               idempotencyKey: rawKey,
@@ -311,7 +329,7 @@ export async function reconcileWriteOutcome(database, events, spec) {
     const existing = await store.lookup(tenantNs, rawKey, phase);
     if (existing) {
       assertOutcomeScope(existing, scope);
-      await promoteAndFinalize(database, events, store, existing);
+      await promoteAndFinalize(database, events, store, existing, { tenantId: spec.tenantId });
       return Object.freeze({
         status: 'committed',
         retryAuthorized: false,
@@ -343,18 +361,23 @@ export async function reconcileWriteOutcome(database, events, spec) {
  * @param {any} outcome
  */
 async function promoteAndFinalize(database, events, store, outcome, options = {}) {
-  const won = await store.tryPromoteEvents(outcome);
-  if (won) {
-    for (const entry of outcome.eventIntents ?? []) {
-      if (!entry || typeof entry !== 'object') continue;
-      try {
-        await events.emit(entry.event, entry.payload);
-      } catch (error) {
-        console.error(
-          `[accordo] ${outcome.operation} run ${outcome.runId}: recovery event dispatch failed: `
-          + `${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+  if (Array.isArray(outcome.eventIntents) && outcome.eventIntents.length > 0) {
+    const effect = transactionalOutboxEffectIdentity(
+      options.tenantId,
+      outcome,
+      'internal-event-promotion',
+    );
+    try {
+      await dispatchTransactionalOutboxJob({
+        database, events, tenantId: options.tenantId,
+        workerId: `write-outcome-${outcome.runId}`,
+      }, effect.jobId);
+    } catch (error) {
+      console.error(
+        `[accordo] ${outcome.operation} run ${outcome.runId}: committed outbox recovery remains pending: `
+        + `${error && typeof error === 'object' && 'code' in error
+          ? String(error.code) : 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED'}`,
+      );
     }
   }
   if (options.settleTrace !== false) await finalizePendingTrace(database, outcome.traceIntent);

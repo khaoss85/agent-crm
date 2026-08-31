@@ -83,12 +83,25 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
      ORDER BY schedule_at, created_at, id
      LIMIT 1
   `,
+    dueById: `
+    SELECT id, claim_generation FROM spine_jobs
+     WHERE tenant_id = ? AND id = ?
+       AND ((state IN ('pending', 'failed_retryable') AND attempt < max_attempts AND schedule_at <= ?)
+         OR (state = 'claimed' AND claim_expires_at <= ? AND execution_started_at IS NULL))
+     LIMIT 1
+  `,
     expired: `
     SELECT id, claim_generation FROM spine_jobs
      WHERE tenant_id = ? AND state = 'claimed' AND claim_expires_at <= ?
        AND execution_started_at IS NOT NULL
      ORDER BY claim_expires_at, id
      LIMIT 100
+  `,
+    expiredById: `
+    SELECT id, claim_generation FROM spine_jobs
+     WHERE tenant_id = ? AND id = ? AND state = 'claimed' AND claim_expires_at <= ?
+       AND execution_started_at IS NOT NULL
+     LIMIT 1
   `,
     terminalizeExpired: `
     UPDATE spine_jobs
@@ -158,11 +171,15 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
     get(tenantId, id) { return statement('get').get(tenantId, id) ?? null; },
     getByRoot(tenantId, root) { return statement('byRoot').get(tenantId, root) ?? null; },
     claim(input) {
-      const terminalized = statement('expired').all(input.tenantId, input.now);
+      const terminalized = input.id == null
+        ? statement('expired').all(input.tenantId, input.now)
+        : statement('expiredById').all(input.tenantId, input.id, input.now);
       for (const row of terminalized) {
         statement('terminalizeExpired').run(input.now, input.tenantId, row.id, input.now);
       }
-      const candidate = statement('due').get(input.tenantId, input.now, input.now);
+      const candidate = input.id == null
+        ? statement('due').get(input.tenantId, input.now, input.now)
+        : statement('dueById').get(input.tenantId, input.id, input.now, input.now);
       if (!candidate) return { row: null, terminalized };
       const changed = statement('claim').run(
         input.workerId, input.claimId, input.expiresAt, input.now,
@@ -229,7 +246,8 @@ export function registerPostgresqlDurableJobStorage(storage, { query, table, own
       const exhaustedResult = await query(`
         WITH exhausted AS (
           SELECT "id" FROM ${table}
-           WHERE "tenant_id" = $2 AND "state" = 'claimed' AND "claim_expires_at" <= $1
+           WHERE "tenant_id" = $2 AND ($3::text IS NULL OR "id" = $3)
+             AND "state" = 'claimed' AND "claim_expires_at" <= $1
              AND "execution_started_at" IS NOT NULL
            ORDER BY "claim_expires_at", "id"
            FOR UPDATE SKIP LOCKED
@@ -242,11 +260,11 @@ export function registerPostgresqlDurableJobStorage(storage, { query, table, own
           FROM exhausted
          WHERE j."id" = exhausted."id" AND j."tenant_id" = $2
          RETURNING j."id", j."claim_generation"
-      `, [input.now, input.tenantId]);
+      `, [input.now, input.tenantId, input.id ?? null]);
       const result = await query(`
         WITH candidate AS (
           SELECT "id" FROM ${table}
-           WHERE "tenant_id" = $1
+           WHERE "tenant_id" = $1 AND ($6::text IS NULL OR "id" = $6)
              AND (("state" IN ('pending', 'failed_retryable') AND "attempt" < "max_attempts" AND "schedule_at" <= $2)
                OR ("state" = 'claimed' AND "claim_expires_at" <= $2 AND "execution_started_at" IS NULL))
            ORDER BY "schedule_at", "created_at", "id"
@@ -263,7 +281,7 @@ export function registerPostgresqlDurableJobStorage(storage, { query, table, own
           FROM candidate
          WHERE j."id" = candidate."id" AND j."tenant_id" = $1
          RETURNING ${returning}
-      `, [input.tenantId, input.now, input.workerId, input.claimId, input.expiresAt]);
+      `, [input.tenantId, input.now, input.workerId, input.claimId, input.expiresAt, input.id ?? null]);
       return { row: result.rows[0] ?? null, terminalized: exhaustedResult.rows };
     },
     async beginExecution(input) {

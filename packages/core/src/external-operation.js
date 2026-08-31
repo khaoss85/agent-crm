@@ -12,6 +12,10 @@ import {
   usesWriteOutcomes,
 } from './write-outcome-runtime.js';
 import { createWriteOutcomeStore, unknownCommitError } from './write-outcome-store.js';
+import {
+  dispatchTransactionalOutboxJob,
+  transactionalOutboxEffectIdentity,
+} from './transactional-outbox.js';
 
 /**
  * The bounded external-operation contract (ADR-017).
@@ -356,6 +360,31 @@ async function runExternalOperationV2(operation) {
       external: receipt,
     }),
   ));
+
+  if (usesWriteOutcomes(database)) {
+    const receiptOutcome = await createWriteOutcomeStore(database).lookup(
+      tenantNamespace(tenantId), rawKey, 'receipt',
+    );
+    if (receiptOutcome) {
+      const effect = transactionalOutboxEffectIdentity(
+        tenantId,
+        receiptOutcome,
+        'external-finalize-continuation',
+      );
+      try {
+        await dispatchTransactionalOutboxJob({
+          database, events, tenantId, clock: now,
+          workerId: `external-finalize-${receiptOutcome.runId}`,
+        }, effect.jobId);
+      } catch (error) {
+        console.error(
+          `[accordo] ${name} run ${receiptOutcome.runId}: finalize continuation evidence remains pending: `
+          + `${error && typeof error === 'object' && 'code' in error
+            ? String(error.code) : 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED'}`,
+        );
+      }
+    }
+  }
 
   return {
     result: finalized.result,

@@ -109,6 +109,21 @@ export function createWriteOutcomeStore(database) {
       return mapOutcome(row);
     },
 
+    /** Lookup one exact phase by its stable run identity without exposing the raw key to jobs. */
+    async lookupByRun(tenantNamespace, runId, phase) {
+      const row = await api().maybeOne({
+        kind: 'select',
+        table: WRITE_OUTCOMES,
+        columns: '*',
+        where: [
+          { column: 'tenant_namespace', op: 'eq', value: tenantNamespace },
+          { column: 'run_id', op: 'eq', value: runId },
+          { column: 'phase', op: 'eq', value: phase },
+        ],
+      });
+      return mapOutcome(row);
+    },
+
     /**
      * @param {{
      *   tenantNamespace: string,
@@ -156,8 +171,8 @@ export function createWriteOutcomeStore(database) {
     },
 
     /**
-     * Compare-and-set event promotion. Returns true when this caller won the
-     * right to dispatch the stored intents exactly once.
+     * Compare-and-set terminal event-promotion evidence. Call only after every
+     * stored intent was dispatched; V3A job ownership prevents concurrent dispatch.
      *
      * @param {{ tenantNamespace: string, rawKey: string, phase?: string }} outcome
      */
