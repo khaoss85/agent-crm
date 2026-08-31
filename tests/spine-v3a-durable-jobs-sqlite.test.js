@@ -240,15 +240,22 @@ test('worker retries only closed transient failures with injected backoff and th
   assert.deepEqual(worker.status(), { accepting: false, closed: true, polling: false, inFlight: false, wakeScheduled: false, lastWorkerErrorCode: null });
 });
 
-test('timer poll exposes one bounded worker error and clears it after recovery', async () => {
-  let failClaim = true;
+test('timer poll survives a hostile code getter, exposes bounded status, and recovers', async () => {
+  let claimMode = 'hostile';
   let attempted;
   const firstAttempt = new Promise((resolve) => { attempted = resolve; });
   const store = {
     now: () => '2026-09-01T09:00:00.000Z',
     async claim() {
       attempted();
-      if (failClaim) {
+      if (claimMode === 'hostile') {
+        const hostile = new Error('credential-shaped storage detail must not enter status');
+        Object.defineProperty(hostile, 'code', {
+          get() { throw new Error('hostile-code-getter-do-not-export'); },
+        });
+        throw hostile;
+      }
+      if (claimMode === 'bounded') {
         throw new AppError('credential-shaped storage detail must not enter status', {
           code: 'DURABLE_JOB_STORAGE_UNAVAILABLE', status: 500, details: { secret: 'do-not-export' },
         });
@@ -263,11 +270,41 @@ test('timer poll exposes one bounded worker error and clears it after recovery',
   worker.wake();
   await firstAttempt;
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(worker.status().lastWorkerErrorCode, 'DURABLE_JOB_POLL_FAILED');
+  assert.equal(worker.status().wakeScheduled, true, 'timer loop remains scheduled after hostile rejection');
+  assert.equal(JSON.stringify(worker.status()).includes('hostile-code-getter-do-not-export'), false);
+  claimMode = 'bounded';
+  await assert.rejects(worker.poll(), (error) => error.code === 'DURABLE_JOB_STORAGE_UNAVAILABLE');
   assert.equal(worker.status().lastWorkerErrorCode, 'DURABLE_JOB_STORAGE_UNAVAILABLE');
   assert.equal(JSON.stringify(worker.status()).includes('do-not-export'), false);
-  failClaim = false;
+  claimMode = 'recovered';
   assert.equal(await worker.poll(), null);
   assert.equal(worker.status().lastWorkerErrorCode, null);
+  await worker.close();
+});
+
+test('handler error code accessors are never invoked or persisted', async (t) => {
+  const f = fixture(t);
+  const registry = createDurableJobHandlerRegistry();
+  registry.register({
+    kind: 'named-action', name: 'run-follow-up', version: 1,
+    async execute() {
+      const hostile = new Error('handler detail must stay bounded');
+      Object.defineProperty(hostile, 'code', {
+        get() { throw new Error('handler-code-getter-do-not-export'); },
+      });
+      throw hostile;
+    },
+  });
+  const worker = createDurableJobWorker({
+    store: f.store, registry, workerId: 'worker-a', clock: f.clock, pollIntervalMs: 60_000,
+  });
+  await f.store.enqueue(input('root-hostile-handler'));
+  worker.start();
+  const failed = await worker.poll();
+  assert.equal(failed.state, 'failed_terminal');
+  assert.equal(failed.lastErrorCode, 'JOB_HANDLER_FAILED');
+  assert.equal(JSON.stringify(failed).includes('handler-code-getter-do-not-export'), false);
   await worker.close();
 });
 

@@ -361,11 +361,22 @@ export function createDurableJobHandlerRegistry() {
   });
 }
 
-function boundedErrorCode(error) {
-  const code = error && typeof error === 'object' ? error.code : null;
+function boundedOwnErrorCode(error, fallback) {
+  if (!error || (typeof error !== 'object' && typeof error !== 'function')) return fallback;
+  let descriptor;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+  } catch {
+    return fallback;
+  }
+  const code = descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : null;
   return typeof code === 'string' && ERROR_CODE.test(code) && code.length <= 128
     ? code
-    : 'JOB_HANDLER_FAILED';
+    : fallback;
+}
+
+function boundedErrorCode(error) {
+  return boundedOwnErrorCode(error, 'JOB_HANDLER_FAILED');
 }
 
 function defaultBackoff(attempt) {
@@ -392,10 +403,7 @@ export function createDurableJobWorker(options) {
   let lastWorkerErrorCode = null;
 
   const recordPollFailure = (error) => {
-    const code = error && typeof error === 'object' ? error.code : null;
-    lastWorkerErrorCode = typeof code === 'string' && ERROR_CODE.test(code) && code.length <= 128
-      ? code
-      : 'DURABLE_JOB_POLL_FAILED';
+    lastWorkerErrorCode = boundedOwnErrorCode(error, 'DURABLE_JOB_POLL_FAILED');
   };
 
   const clearWake = () => {
