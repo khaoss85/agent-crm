@@ -83,7 +83,7 @@ export async function enqueueWriteOutcomeEffects({
   if (Array.isArray(outcome.eventIntents) && outcome.eventIntents.length > 0) {
     effects.push('internal-event-promotion');
   }
-  if (outcome.phase === 'receipt' && outcome.externalFinalizeDeclared === true) {
+  if (outcome.phase === 'receipt' && outcome.externalFinalizeDeclared !== false) {
     effects.push('external-finalize-continuation');
   }
   const jobs = [];
@@ -211,6 +211,14 @@ export function registerTransactionalOutboxHandlers(registry, {
         });
       }
       const receipt = await loadSource(outcomes, tenantNs, source);
+      if (receipt.externalFinalizeDeclared !== true) {
+        throw new AppError('External finalize declaration requires operator reconciliation', {
+          code: receipt.externalFinalizeDeclared === null
+            ? 'JOB_OUTBOX_FINALIZE_DECLARATION_RECONCILIATION_REQUIRED'
+            : 'TRANSACTIONAL_OUTBOX_SOURCE_INVALID',
+          status: receipt.externalFinalizeDeclared === null ? 409 : 500,
+        });
+      }
       const finalized = await outcomes.lookupByRun(tenantNs, source.runId, 'finalize');
       if (finalized) return { outcomeReference: `outbox:${source.sourceFingerprint}` };
       const intent = await outcomes.lookupByRun(tenantNs, source.runId, 'intent');

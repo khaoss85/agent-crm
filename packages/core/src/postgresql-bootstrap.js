@@ -324,7 +324,7 @@ async function ensureWriteOutcomes(client) {
       trace_intent_json TEXT NOT NULL,
       run_id TEXT NOT NULL,
       events_promoted BIGINT NOT NULL DEFAULT 0,
-      external_finalize_declared BIGINT NOT NULL DEFAULT 0,
+      external_finalize_declared BIGINT,
       created_at TIMESTAMPTZ NOT NULL,
       acknowledged_at TIMESTAMPTZ,
       PRIMARY KEY (tenant_namespace, raw_key, phase)
@@ -336,7 +336,12 @@ async function ensureWriteOutcomes(client) {
   `);
   await exec(client, `
     ALTER TABLE ${qualify('write_outcomes')}
-      ADD COLUMN IF NOT EXISTS external_finalize_declared BIGINT NOT NULL DEFAULT 0
+      ADD COLUMN IF NOT EXISTS external_finalize_declared BIGINT
+  `);
+  await exec(client, `
+    ALTER TABLE ${qualify('write_outcomes')}
+      ALTER COLUMN external_finalize_declared DROP DEFAULT,
+      ALTER COLUMN external_finalize_declared DROP NOT NULL
   `);
 }
 

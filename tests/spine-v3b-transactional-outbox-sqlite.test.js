@@ -79,6 +79,12 @@ test('receipt backfill creates a continuation only from persisted finalize-decla
   });
   assert.equal(continuation.handler.name, 'continue-external-finalize');
   assert.equal(continuation.state, 'pending');
+  const [legacyEvidence] = await ensureCommittedWriteOutcomeEffects({
+    database, tenantId: 'tenant-a',
+    outcome: { ...source, runId: 'legacy-receipt-run', externalFinalizeDeclared: null },
+  });
+  assert.equal(legacyEvidence.handler.name, 'continue-external-finalize');
+  assert.equal(legacyEvidence.state, 'pending');
 });
 
 test('exact one-shot claim does not terminalize an unrelated expired begun job', async (t) => {

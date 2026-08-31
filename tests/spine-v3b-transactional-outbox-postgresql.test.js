@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createDurableJobStore } from '../packages/core/src/durable-jobs.js';
 import { EventBus } from '../packages/core/src/event-bus.js';
 import { runExternalOperation } from '../packages/core/src/external-operation.js';
-import { injectPostgresqlCommitFault } from '../packages/core/src/postgresql-storage.js';
+import { injectPostgresqlCommitFault, probePostgresqlQuery } from '../packages/core/src/postgresql-storage.js';
 import { runWithAffineStorage, storageApi } from '../packages/core/src/storage-runtime.js';
 import {
   createTransactionalOutboxWorker,
@@ -266,6 +266,18 @@ test('provider-only receipt declares no finalize continuation while a declared f
   assert.equal((await createDurableJobStore({ storage, tenantId: booted.tenantId }).list())
     .some((entry) => entry.handler.name === 'continue-external-finalize'), false,
   'a valid provider-only operation creates no poison continuation');
+  await assert.rejects(
+    runExternalOperation({
+      database, events, tenantId: booted.tenantId, actor,
+      name: 'partner.provider-only', externalOperation: 2,
+      idempotencyKey: providerOnlyKey, provider: makeProvider(),
+      input: { command: 'safe' },
+      now: () => '2026-09-01T09:00:00.000Z',
+      async intent() { throw new Error('committed intent must replay'); },
+      async finalize() { throw new Error('mismatched finalize must never run'); },
+    }),
+    (error) => error.code === 'DIVERGENT_REPLAY',
+  );
 
   const finalizeKey = 'v1.20260901.dddddddddddddddddddddddddddddddd';
   await assert.rejects(
@@ -289,6 +301,78 @@ test('provider-only receipt declares no finalize continuation while a declared f
   assert.equal(continuations.length, 1,
     'the committed receipt and its declared-finalize continuation survive the interrupted finalize together');
   assert.equal(continuations[0].state, 'pending');
+  await assert.rejects(
+    runExternalOperation({
+      database, events, tenantId: booted.tenantId, actor,
+      name: 'partner.with-finalize', externalOperation: 2,
+      idempotencyKey: finalizeKey, provider: makeProvider(),
+      input: { command: 'safe' },
+      now: () => '2026-09-01T09:00:01.000Z',
+      async intent() { throw new Error('committed intent must replay'); },
+    }),
+    (error) => error.code === 'DIVERGENT_REPLAY',
+  );
+});
+
+test('a real schema upgrade preserves legacy receipt declaration as reconcilable unknown', { timeout: 90_000 }, async (t) => {
+  const firstBoot = await bootPostgresqlApp(t, { moduleMigrations: [] });
+  if (!firstBoot) return;
+  const firstStorage = postgresqlTestStorage(firstBoot.app);
+  const firstDatabase = databaseHandle(firstStorage, firstBoot.tenantId);
+  const legacy = outcome('v1.20260901.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'receipt', 'legacy-receipt-run', {
+    externalFinalizeDeclared: true,
+  });
+  await firstDatabase.transactionAsync(async () => {
+    await createWriteOutcomeStore(firstDatabase).insert(legacy);
+  });
+  await probePostgresqlQuery(firstStorage,
+    'ALTER TABLE "accordo"."write_outcomes" DROP COLUMN external_finalize_declared');
+  await firstBoot.app.close();
+
+  const upgraded = await bootPostgresqlApp(t, {
+    planes: firstBoot.planes,
+    moduleMigrations: [],
+  });
+  const storage = postgresqlTestStorage(upgraded.app);
+  const database = databaseHandle(storage, upgraded.tenantId);
+  const stored = await createWriteOutcomeStore(database).lookup(
+    tenantNamespace(upgraded.tenantId), legacy.rawKey, legacy.phase,
+  );
+  assert.equal(stored.externalFinalizeDeclared, null,
+    'bootstrap adds the tri-state column without silently rewriting legacy authority to false');
+  await assert.rejects(
+    runExternalOperation({
+      database, events: new EventBus(), tenantId: upgraded.tenantId, actor,
+      name: 'partner.notify', externalOperation: 2,
+      idempotencyKey: legacy.rawKey,
+      provider: {
+        call() { throw new Error('legacy receipt must prevent provider call'); },
+        reconcile() { throw new Error('legacy receipt must prevent provider reconcile'); },
+      },
+      input: { command: 'legacy' },
+      now: () => '2026-09-01T09:00:02.000Z',
+      async intent() { return { requested: true }; },
+      async finalize() { throw new Error('legacy ambiguity must prevent finalize'); },
+    }),
+    (error) => error.code === 'EXTERNAL_FINALIZE_DECLARATION_RECONCILIATION_REQUIRED',
+  );
+  const [evidence] = (await createDurableJobStore({
+    storage, tenantId: upgraded.tenantId,
+  }).list()).filter((entry) => entry.handler.name === 'continue-external-finalize');
+  assert.equal(evidence.handler.name, 'continue-external-finalize');
+  const worker = createTransactionalOutboxWorker({
+    database, events: new EventBus(), tenantId: upgraded.tenantId,
+    workerId: 'legacy-finalize-evidence', pollIntervalMs: 60_000,
+    resolveExternalFinalize: async () => {
+      throw new Error('legacy ambiguity must never infer callback authority');
+    },
+  });
+  worker.start();
+  const terminal = await worker.run(evidence.id);
+  assert.equal(terminal.state, 'failed_terminal');
+  assert.equal(terminal.lastErrorCode,
+    'JOB_OUTBOX_FINALIZE_DECLARATION_RECONCILIATION_REQUIRED');
+  await worker.close();
 });
 
 test('event promotion attempts later stored intents before surfacing one bounded retryable failure', { timeout: 90_000 }, async (t) => {

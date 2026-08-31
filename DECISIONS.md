@@ -4108,12 +4108,18 @@ one deterministic V3A job for each applicable closed effect family on the same
 affine storage handle: internal event promotion, and external-operation receipt
 continuation only when that receipt durably records that the operation declared
 a finalize phase. Provider-only operations record the closed false value and
-create no poison continuation. The job carries only contract, run, phase and
+create no poison continuation. A legacy receipt with no declaration retains
+`unknown`, creates bounded reconciliation evidence, and never infers callback
+authority. Replaying a known receipt under the opposite declaration refuses as
+a divergent contract. The job carries only contract, run, phase and
 source-fingerprint identity. Event/domain/provider payloads, idempotency keys,
 actors, credentials and secret references remain in neither job nor job audit.
 Rollback therefore leaves no dispatchable identity; commit followed by process
-death leaves a pending one. A committed outcome from before V3B is recovered by
-deterministically backfilling that same identity on explicit replay.
+death leaves a pending one. A committed event outcome from before V3B is
+recovered by deterministically backfilling that same identity on explicit
+replay. Historical receipt continuation is backfilled only with committed
+declaration authority; an ambiguous legacy receipt requires explicit operator
+reconciliation.
 
 Internal events are dispatched from the committed outcome. A subscriber failure
 does not starve later stored intents: every valid intent is attempted, failures

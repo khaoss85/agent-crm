@@ -243,6 +243,33 @@ function receiptMismatch() {
   });
 }
 
+function divergentFinalizeDeclaration() {
+  return new AppError('External operation finalize declaration differs from the committed receipt', {
+    code: 'DIVERGENT_REPLAY', status: 409,
+  });
+}
+
+function unknownFinalizeDeclaration() {
+  return new AppError('Committed receipt finalize declaration requires operator reconciliation', {
+    code: 'EXTERNAL_FINALIZE_DECLARATION_RECONCILIATION_REQUIRED', status: 409,
+  });
+}
+
+async function assertFinalizeDeclaration(args, stored) {
+  if (stored.externalFinalizeDeclared === null) {
+    await ensureCommittedWriteOutcomeEffects({
+      database: args.database,
+      tenantId: args.specBase.tenantId,
+      outcome: stored,
+      clock: args.now,
+    });
+    throw unknownFinalizeDeclaration();
+  }
+  if (stored.externalFinalizeDeclared !== args.finalizeDeclared) {
+    throw divergentFinalizeDeclaration();
+  }
+}
+
 /**
  * @param {any} remote
  * @param {{
@@ -427,7 +454,10 @@ async function obtainProviderReceipt(args) {
   const rawKey = specBase.idempotencyKey;
   if (store) {
     const stored = await store.lookup(tenantNamespace(specBase.tenantId), rawKey, 'receipt');
-    if (stored) return stored.response;
+    if (stored) {
+      await assertFinalizeDeclaration(args, stored);
+      return stored.response;
+    }
     const attempted = await store.lookup(tenantNamespace(specBase.tenantId), rawKey, 'call');
     if (attempted) {
       if (provider && typeof provider.reconcile === 'function') {
@@ -539,7 +569,10 @@ async function persistReceipt(args, receipt) {
       resolveIdempotencyKey(specBase.idempotencyKey, specBase.now),
       'receipt',
     );
-    if (existing) return existing.response;
+    if (existing) {
+      await assertFinalizeDeclaration(args, existing);
+      return existing.response;
+    }
     if (args.provider && typeof args.provider.reconcile === 'function') {
       const remote = await args.provider.reconcile({
         idempotencyKey: args.providerKey,

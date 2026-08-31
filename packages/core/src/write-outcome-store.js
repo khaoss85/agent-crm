@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS write_outcomes (
   trace_intent_json TEXT NOT NULL,
   run_id TEXT NOT NULL,
   events_promoted INTEGER NOT NULL DEFAULT 0,
-  external_finalize_declared INTEGER NOT NULL DEFAULT 0,
+  external_finalize_declared INTEGER,
   created_at TIMESTAMPTZ NOT NULL,
   acknowledged_at TIMESTAMPTZ,
   PRIMARY KEY (tenant_namespace, raw_key, phase)
@@ -51,6 +51,16 @@ function decodeJson(value) {
   } catch {
     return value;
   }
+}
+
+function decodeFinalizeDeclared(value) {
+  if (value === null || value === undefined) return null;
+  const numeric = Number(value);
+  if (numeric === 0) return false;
+  if (numeric === 1) return true;
+  throw new AppError('Write-outcome finalize declaration is invalid', {
+    code: 'WRITE_OUTCOME_FINALIZE_DECLARATION_INVALID', status: 500,
+  });
 }
 
 /**
@@ -73,7 +83,7 @@ function mapOutcome(row) {
     traceIntent: decodeJson(row.trace_intent_json),
     runId: String(row.run_id),
     eventsPromoted: Number(row.events_promoted ?? 0) === 1,
-    externalFinalizeDeclared: Number(row.external_finalize_declared ?? 0) === 1,
+    externalFinalizeDeclared: decodeFinalizeDeclared(row.external_finalize_declared),
     createdAt: row.created_at,
     acknowledgedAt: row.acknowledged_at ?? null,
   });

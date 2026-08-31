@@ -32,7 +32,7 @@ Internal event promotion runs through the exact durable-job claim. To preserve c
 
 Delivery is honestly at least once. Every valid stored intent is attempted even when an earlier intent's subscriber fails; the pass then reports one bounded retryable failure. A retry may therefore repeat any intent already dispatched. A process death after execution start leaves V3A reconciliation-required evidence and is never automatically replayed. Successful dispatch has one terminal job plus `events_promoted` evidence. Poison remains visible as a terminal job with a bounded code; nothing is silently deleted.
 
-External receipt continuation is a separate named handler. Receipt persistence carries one closed `external_finalize_declared` bit into the same transaction; only true creates the continuation identity, while a valid provider-only operation creates none. The handler reads intent/receipt/finalize outcomes by tenant namespace plus run/phase, verifies the source fingerprint, and succeeds immediately when finalize already exists. Otherwise it calls only a registered local finalize continuation. Provider `call` and `reconcile` handles are not accepted by this runtime. After the callback, a committed finalize outcome is required before the job can succeed.
+External receipt continuation is a separate named handler. Receipt persistence carries one closed tri-state `external_finalize_declared` value into the same transaction: new operations persist true or false; true creates the continuation identity and a valid provider-only false creates none. A schema-upgraded legacy row remains null/unknown, creates terminal reconciliation evidence, and never infers callback authority. Replay compares a known stored declaration with the current operation and refuses the opposite shape as divergent. The handler reads intent/receipt/finalize outcomes by tenant namespace plus run/phase, verifies the source fingerprint, and succeeds immediately when finalize already exists. Otherwise it calls only a registered local finalize continuation. Provider `call` and `reconcile` handles are not accepted by this runtime. After the callback, a committed finalize outcome is required before the job can succeed.
 
 SQLite retains its existing immediate buffered-event compatibility because M4 write outcomes are PostgreSQL-only. V3B does not claim durable SQLite outbox semantics or multi-node SQLite dispatch.
 
@@ -74,6 +74,7 @@ Hosted exact-head PostgreSQL 16 evidence is mandatory when the local service is 
 - 2026-08-31: Coupled internal-event promotion evidence to the claim-fenced success transaction and corrected the PostgreSQL exact-claim race proof to accept the adapter's bounded serializable conflict.
 - 2026-08-31: Added deterministic recovery for committed pre-V3B outcomes and removed dynamic handler-code interpolation from recovery diagnostics in `3e1da1e`. Integrated focused Node 22 evidence is 43 tests, 37 pass, zero fail and six expected local PostgreSQL skips; hosted PostgreSQL 16 remains mandatory.
 - 2026-08-31: Exact-head review closed two material dispatch gaps: a failed early subscriber no longer starves later stored intents, and receipt continuation is authorized only by a committed finalize-declared bit so provider-only operations create no poison job.
+- 2026-08-31: Delta review replaced the unsafe legacy default with tri-state declaration evidence, added replay contract comparison, and made ambiguous upgraded receipts terminal reconciliation evidence rather than silently provider-only.
 
 ## Decision log
 
@@ -82,7 +83,7 @@ Hosted exact-head PostgreSQL 16 evidence is mandatory when the local service is 
 - The external continuation registry accepts local finalize functions only. Provider handles are structurally absent.
 - Finalize continuation authority is persisted with the receipt; runtime callback presence is never reconstructed or guessed during backfill.
 - Security audit stays on its existing authoritative database path.
-- Explicit replay may backfill a missing deterministic effect job for a committed pre-V3B outcome. That recovery is not retroactive atomicity; the outcome is already the durable authority and repeat insertion is idempotent.
+- Explicit replay may backfill a missing deterministic event effect job for a committed pre-V3B outcome. Receipt continuation backfill requires a committed declaration; legacy null remains explicit reconciliation evidence. That recovery is not retroactive atomicity; the outcome is already the durable authority and repeat insertion is idempotent.
 - Final public truth/status, operator surfaces, measurement, and timer consumers remain for their later campaign slices.
 
 ## Outcome and follow-up

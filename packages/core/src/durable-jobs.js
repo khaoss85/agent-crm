@@ -21,11 +21,13 @@ export const DURABLE_JOB_RETRYABLE_ERRORS = Object.freeze([
 
 const RETRYABLE = new Set(DURABLE_JOB_RETRYABLE_ERRORS);
 const HANDLER_RETRYABLE = new Set(['JOB_HANDLER_BUSY', 'JOB_HANDLER_TEMPORARY_UNAVAILABLE']);
+const HANDLER_TERMINAL = new Set(['JOB_OUTBOX_FINALIZE_DECLARATION_RECONCILIATION_REQUIRED']);
 const PRE_EXECUTION_FAILURES = new Set([
   'JOB_HANDLER_NOT_REGISTERED', 'JOB_EXTERNAL_OUTCOME_RECONCILIATION_REQUIRED',
 ]);
 const CLOSED_FAILURE_CODES = new Set([
   ...HANDLER_RETRYABLE,
+  ...HANDLER_TERMINAL,
   ...PRE_EXECUTION_FAILURES,
   'JOB_HANDLER_FAILED',
   'JOB_BACKOFF_INVALID',
@@ -597,7 +599,7 @@ function boundedOwnErrorCode(error, fallback) {
 
 function boundedErrorCode(error) {
   const code = boundedOwnErrorCode(error, 'JOB_HANDLER_FAILED');
-  return HANDLER_RETRYABLE.has(code) ? code : 'JOB_HANDLER_FAILED';
+  return HANDLER_RETRYABLE.has(code) || HANDLER_TERMINAL.has(code) ? code : 'JOB_HANDLER_FAILED';
 }
 
 function defaultBackoff(attempt) {

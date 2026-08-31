@@ -132,7 +132,9 @@ at least once plus an idempotent/reconcilable identity, never exactly once.
 External receipt continuation exists only when the committed receipt says a
 finalize phase was declared, can call only registered local finalize work, and
 never receives a provider call/reconcile handle. Provider-only operations do
-not create continuation jobs.
+not create continuation jobs. A legacy receipt whose declaration predates this
+evidence remains operator-visible unknown and is never silently treated as
+provider-only or authorized for finalize.
 SQLite retains immediate in-process event behavior; this is not a durable
 SQLite-outbox claim. Security audit is unchanged.
 
