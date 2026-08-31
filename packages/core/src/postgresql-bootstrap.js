@@ -76,7 +76,7 @@ export function fingerprintPostgresqlRepository(extra = []) {
   return createHash('sha256').update(JSON.stringify({ core, extra })).digest('hex');
 }
 
-function tenantFingerprint(tenantId) {
+export function fingerprintPostgresqlTenant(tenantId) {
   return createHash('sha256').update(`accordo.tenant.v1\0${tenantId}`).digest('hex');
 }
 
@@ -233,7 +233,7 @@ async function recordStartupAudit(client, {
     [
       randomUUID(),
       plane,
-      tenantFingerprint(tenantId),
+      fingerprintPostgresqlTenant(tenantId),
       attestation.evidence.identityFingerprint,
       attestation.evidence.evidenceFingerprint,
       attestation.resource.resourceFingerprint,
@@ -863,6 +863,15 @@ export async function bootstrapPostgresqlApplication(options) {
       attestation: Object.freeze({
         control: controlAttestation.control.evidence,
         data: dataAttestation.data.evidence,
+      }),
+      backupEvidence: Object.freeze({
+        contract: 1,
+        adapter: 'postgresql',
+        bindingUuid: binding.dataPlaneId,
+        tenantFingerprint: fingerprintPostgresqlTenant(options.tenantId),
+        resourceFingerprint: dataAttestation.data.resource.resourceFingerprint,
+        migrationSetFingerprint: dataAttestation.data.migrationSetFingerprint,
+        repositoryFingerprint,
       }),
       health() {
         return describeWriterHealth(leaseState.holder, options.now, leaseState.closed);
