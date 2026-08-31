@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { inspect } from 'node:util';
+import { writeFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -14,6 +15,7 @@ import {
   createPostgresqlNativeBackupProvider,
   defineBackupProvider,
 } from '../packages/core/src/backup-restore.js';
+import * as publicCore from '../packages/core/index.js';
 
 const SENTINEL = 'backup-secret-sentinel-never-leak';
 const LOCATOR = 'postgresql://sentinel.invalid/private';
@@ -27,6 +29,14 @@ const source = Object.freeze({
   migrationSetFingerprint: '3'.repeat(64),
   repositoryFingerprint: '4'.repeat(64),
 });
+const FIXTURE_MANIFEST_DIGEST = createHash('sha256').update(`${JSON.stringify({
+  contract: 1,
+  adapter: 'postgresql',
+  createdAt: '2026-08-31T12:00:00.000Z',
+  source: Object.fromEntries(Object.entries(source).filter(([key]) => !['contract', 'adapter'].includes(key))),
+  artifact: { algorithm: 'sha256', digest: FIXTURE_DIGEST },
+  provider: { contract: 1, name: 'fixture', tool: { name: 'fixture', major: 16, version: 'fixture-16.0' } },
+}, null, 2)}\n`).digest('hex');
 const expected = Object.freeze({
   bindingUuid: source.bindingUuid,
   tenantFingerprint: source.tenantFingerprint,
@@ -34,8 +44,11 @@ const expected = Object.freeze({
   migrationSetFingerprint: source.migrationSetFingerprint,
   repositoryFingerprint: source.repositoryFingerprint,
   artifactDigest: FIXTURE_DIGEST,
+  manifestDigest: FIXTURE_MANIFEST_DIGEST,
+  targetResourceFingerprint: source.resourceFingerprint,
 });
 const connection = Object.freeze({
+  resourceFingerprint: source.resourceFingerprint,
   async withEnvironment(consumer) {
     return consumer({
       PGHOST: '127.0.0.1', PGPORT: '5432', PGDATABASE: 'fixture', PGUSER: 'fixture', PGPASSWORD: SENTINEL,
@@ -53,22 +66,39 @@ function fixtureRestoreControl(receipts = []) {
       const existing = operations.get(input.operationId);
       if (existing) {
         assert.equal(existing.artifactDigest, input.artifactDigest);
-        return { id: existing.id, outcome: existing.outcome };
+        assert.equal(existing.manifestDigest, input.manifestDigest);
+        return {
+          id: existing.id,
+          outcome: existing.outcome,
+          artifactDigest: existing.artifactDigest,
+          manifestDigest: existing.manifestDigest,
+          targetResourceFingerprint: existing.targetResourceFingerprint,
+        };
       }
       const state = {
         id: `restore-${input.operationId}`,
         artifactDigest: input.artifactDigest,
+        manifestDigest: input.manifestDigest,
+        targetResourceFingerprint: input.targetResourceFingerprint,
         outcome: null,
       };
       operations.set(input.operationId, state);
       receipts.push({ phase: 'attempted', input });
-      return { id: state.id, outcome: null };
+      return {
+        id: state.id,
+        outcome: null,
+        artifactDigest: state.artifactDigest,
+        manifestDigest: state.manifestDigest,
+        targetResourceFingerprint: state.targetResourceFingerprint,
+      };
     },
     async recordOutcome(input) {
       const state = operations.get(input.operationId);
       assert.ok(state);
       assert.equal(state.id, input.receiptId);
       assert.equal(state.artifactDigest, input.artifactDigest);
+      assert.equal(state.manifestDigest, input.manifestDigest);
+      assert.equal(state.targetResourceFingerprint, input.targetResourceFingerprint);
       if (state.outcome !== null) {
         assert.equal(state.outcome, input.outcome, 'receipt outcome updates are idempotent, never divergent');
         return;
@@ -150,7 +180,8 @@ test('contract vocabulary is closed and SQLite is explicitly unsupported', () =>
     evidenceKeys: ['contract', 'adapter', 'bindingUuid', 'tenantFingerprint', 'resourceFingerprint', 'migrationSetFingerprint', 'repositoryFingerprint'],
     expectedIntentKeys: [
       'bindingUuid', 'tenantFingerprint', 'resourceFingerprint',
-      'migrationSetFingerprint', 'repositoryFingerprint', 'artifactDigest',
+      'migrationSetFingerprint', 'repositoryFingerprint', 'artifactDigest', 'manifestDigest',
+      'targetResourceFingerprint',
     ],
     restoreControlKeys: ['contract', 'authorizeAndRecordAttempt', 'recordOutcome'],
     restoreOutcomes: ['succeeded', 'refused', 'possibly-partial'],
@@ -164,6 +195,11 @@ test('contract vocabulary is closed and SQLite is explicitly unsupported', () =>
     }),
     (error) => error?.code === 'BACKUP_ADAPTER_UNSUPPORTED',
   );
+  assert.equal(publicCore.BACKUP_CONTRACT, BACKUP_CONTRACT);
+  assert.equal(publicCore.defineBackupProvider, defineBackupProvider);
+  assert.equal(publicCore.createBackupOperations, createBackupOperations);
+  assert.equal(publicCore.createPostgresqlNativeBackupProvider, createPostgresqlNativeBackupProvider);
+  assert.deepEqual(publicCore.backupVocabulary(), backupVocabulary());
 });
 
 test('atomic bundle has a closed non-secret manifest and verifies only against independent expected intent', async (t) => {
@@ -200,18 +236,45 @@ test('tampered artifact, manifest and extra bundle entries refuse', async (t) =>
   const coherentManifestPath = join(coherentBundle, 'manifest.json');
   const coherentManifest = JSON.parse(await readFile(coherentManifestPath, 'utf8'));
   coherentManifest.artifact.digest = createHash('sha256').update(coherentBytes).digest('hex');
-  await writeFile(coherentManifestPath, `${JSON.stringify(coherentManifest, null, 2)}\n`);
+  const coherentManifestBytes = `${JSON.stringify(coherentManifest, null, 2)}\n`;
+  await writeFile(coherentManifestPath, coherentManifestBytes);
   await assert.rejects(
-    operations().verify({ bundlePath: coherentBundle, expected }),
+    operations().verify({
+      bundlePath: coherentBundle,
+      expected: {
+        ...expected,
+        manifestDigest: createHash('sha256').update(coherentManifestBytes).digest('hex'),
+      },
+    }),
     (error) => error?.code === 'BACKUP_EXPECTED_INTENT_MISMATCH'
       && error?.details?.field === 'artifactDigest',
     'a coherent artifact plus manifest replacement cannot replace caller-owned artifact identity',
   );
 
+  const metadataBundle = join(root, 'metadata-substitution');
+  await operations().create({ bundlePath: metadataBundle });
+  const metadataManifestPath = join(metadataBundle, 'manifest.json');
+  const metadataManifest = JSON.parse(await readFile(metadataManifestPath, 'utf8'));
+  metadataManifest.source.repositoryFingerprint = '9'.repeat(64);
+  await writeFile(metadataManifestPath, `${JSON.stringify(metadataManifest, null, 2)}\n`);
+  await assert.rejects(
+    operations().verify({
+      bundlePath: metadataBundle,
+      expected: { ...expected, repositoryFingerprint: '9'.repeat(64) },
+    }),
+    (error) => error?.code === 'BACKUP_EXPECTED_INTENT_MISMATCH'
+      && error?.details?.field === 'manifestDigest',
+    'unchanged artifact bytes cannot authorize substituted manifest authority metadata',
+  );
+
   const manifestBundle = join(root, 'manifest');
   await operations().create({ bundlePath: manifestBundle });
-  await writeFile(join(manifestBundle, 'manifest.json'), JSON.stringify({ contract: 1, secret: SENTINEL }));
-  await assert.rejects(operations().verify({ bundlePath: manifestBundle, expected }), (error) => {
+  const invalidManifest = JSON.stringify({ contract: 1, secret: SENTINEL });
+  await writeFile(join(manifestBundle, 'manifest.json'), invalidManifest);
+  await assert.rejects(operations().verify({
+    bundlePath: manifestBundle,
+    expected: { ...expected, manifestDigest: createHash('sha256').update(invalidManifest).digest('hex') },
+  }), (error) => {
     assert.equal(error?.code, 'BACKUP_MANIFEST_INVALID'); assertNoLeak(error); return true;
   });
 
@@ -256,6 +319,22 @@ test('source connection authority must match the evidence before artifact creati
     assert.equal(error?.code, 'BACKUP_SOURCE_AUTHORITY_MISMATCH'); assertNoLeak(error); return true;
   });
   assert.equal(artifactCalled, false);
+
+  let mismatchedConnectionUsed = false;
+  const mismatchedConnection = Object.freeze({
+    resourceFingerprint: '9'.repeat(64),
+    async withEnvironment() { mismatchedConnectionUsed = true; throw new Error(SENTINEL); },
+  });
+  const mismatchedOperations = createBackupOperations({
+    adapter: 'postgresql', provider: fixtureProvider(), evidence: source,
+    connection: mismatchedConnection, restoreControl: fixtureRestoreControl(),
+  });
+  await assert.rejects(
+    mismatchedOperations.create({ bundlePath: join(root, 'wrong-resource') }),
+    (error) => error?.code === 'BACKUP_SOURCE_AUTHORITY_MISMATCH'
+      && error?.details?.field === 'resourceFingerprint',
+  );
+  assert.equal(mismatchedConnectionUsed, false, 'declared source resource mismatch refuses before credentials resolve');
 });
 
 test('create resolves a rotating connection once and binds inspection plus dump to that endpoint', async (t) => {
@@ -264,6 +343,7 @@ test('create resolves a rotating connection once and binds inspection plus dump 
   let resolutions = 0;
   const seen = [];
   const rotating = Object.freeze({
+    resourceFingerprint: source.resourceFingerprint,
     async withEnvironment(consumer) {
       resolutions += 1;
       return consumer({
@@ -390,7 +470,7 @@ if [ "$1" = "--version" ]; then
   printf "pg_dump (PostgreSQL) 16.7\\n"
   exit 0
 fi
-if [ "$PGHOST" != "db.internal.example" ] || [ "$PGHOSTADDR" != "127.0.0.1" ] || [ "$PGSSLMODE" != "verify-full" ] || [ "$PGSSLROOTCERT" != ${JSON.stringify(caPath)} ]; then
+if [ "$PGHOST" != "db.internal.example" ] || [ "$PGHOSTADDR" != "127.0.0.1" ] || [ "$PGSSLMODE" != "verify-full" ] || [ "${'$'}(cat "$PGSSLROOTCERT")" != "fixture-ca" ]; then
   exit 92
 fi
 for argument in "$@"; do
@@ -408,6 +488,7 @@ done
   });
   const envProvider = nativeWithFixtureAuthority({ pgDump: envProbe });
   const tlsConnection = Object.freeze({
+    resourceFingerprint: source.resourceFingerprint,
     async withEnvironment(consumer) {
       return consumer({
         PGHOST: 'db.internal.example', PGHOSTADDR: '127.0.0.1', PGPORT: '5432',
@@ -422,6 +503,112 @@ done
   }).create({ bundlePath: join(root, 'env-bundle') });
 });
 
+test('native provider injects one database client factory into source and restored authority inspection', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-native-authority-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dump = join(root, 'pg-dump');
+  const restore = join(root, 'pg-restore');
+  const caPath = join(root, 'root.crt');
+  const pinnedPathReceipt = join(root, 'pinned-path-receipt');
+  const originalCa = 'native-original-ca';
+  const replacementCa = 'native-replacement-ca';
+  await writeFile(caPath, originalCa, { mode: 0o600 });
+  await writeFile(dump, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf "pg_dump (PostgreSQL) 16.7\\n"
+  exit 0
+fi
+if [ "${'$'}(cat "$PGSSLROOTCERT")" != "${originalCa}" ]; then exit 91; fi
+printf "%s" "$PGSSLROOTCERT" > ${JSON.stringify(pinnedPathReceipt)}
+for argument in "$@"; do
+  case "$argument" in
+    --file=*) printf "native-authority-artifact" > "${'$'}{argument#--file=}" ;;
+  esac
+done
+`);
+  await writeFile(restore, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf "pg_restore (PostgreSQL) 16.7\\n"
+  exit 0
+fi
+if [ "${'$'}(cat "$PGSSLROOTCERT")" != "${originalCa}" ]; then exit 92; fi
+printf "%s" "$PGSSLROOTCERT" > ${JSON.stringify(pinnedPathReceipt)}
+`);
+  await Promise.all([chmod(dump, 0o700), chmod(restore, 0o700)]);
+
+  let pools = 0;
+  let markerReads = 0;
+  const createPool = (options) => {
+    pools += 1;
+    assert.equal(options.database, 'fixture');
+    assert.equal(options.password, SENTINEL);
+    assert.equal(options.ssl.ca, originalCa, 'Node authority probes consume the pinned original CA bytes');
+    if (pools <= 2) writeFileSync(caPath, replacementCa, { mode: 0o600 });
+    const client = {
+      async query(sql) {
+        if (sql.includes('spine_data_plane_binding')) {
+          markerReads += 1;
+          return { rowCount: 1, rows: [{ tenant_slug: 'tenant-a', data_plane_id: source.bindingUuid }] };
+        }
+        if (sql.includes('startup_audit')) {
+          return { rowCount: 1, rows: [{
+            tenant_fingerprint: source.tenantFingerprint,
+            resource_fingerprint: source.resourceFingerprint,
+            migration_set_fingerprint: source.migrationSetFingerprint,
+          }] };
+        }
+        if (sql.includes('pg_try_advisory_lock')) return { rowCount: 1, rows: [{ acquired: true }] };
+        if (sql.includes('WITH user_namespace')) {
+          assert.match(sql, /pg_catalog\.pg_cast WHERE oid >= 16384/);
+          return { rowCount: 1, rows: [{ occupied: false }] };
+        }
+        if (sql.includes('pg_advisory_unlock')) return { rowCount: 1, rows: [{ pg_advisory_unlock: true }] };
+        throw new Error(`unexpected fixture query: ${sql}`);
+      },
+      release() {},
+    };
+    return {
+      async connect() { return client; },
+      async end() {},
+    };
+  };
+  const provider = createPostgresqlNativeBackupProvider({
+    pgDump: dump, pgRestore: restore, createPool,
+  });
+  const tlsConnection = Object.freeze({
+    resourceFingerprint: source.resourceFingerprint,
+    async withEnvironment(consumer) {
+      return consumer({
+        PGHOST: 'db.internal.example', PGHOSTADDR: '127.0.0.1', PGPORT: '5432',
+        PGDATABASE: 'fixture', PGUSER: 'fixture', PGPASSWORD: SENTINEL,
+        PGSSLMODE: 'verify-full', PGSSLROOTCERT: caPath,
+      });
+    },
+  });
+  const nativeOperations = createBackupOperations({
+    adapter: 'postgresql', provider, evidence: source, connection: tlsConnection,
+    restoreControl: fixtureRestoreControl(),
+    clock: () => '2026-08-31T12:00:00.000Z',
+  });
+  const bundlePath = join(root, 'bundle');
+  const created = await nativeOperations.create({ bundlePath });
+  await writeFile(caPath, originalCa, { mode: 0o600 });
+  const intent = {
+    ...expected,
+    artifactDigest: created.artifactDigest,
+    manifestDigest: created.manifestDigest,
+  };
+  const result = await nativeOperations.restore({
+    bundlePath, expected: intent, target: tlsConnection, actor: RESTORE_ACTOR,
+    operationId: 'native-authority-inspection',
+  });
+  assert.equal(result.restored, true);
+  assert.equal(markerReads, 2, 'both source and post-restore authority use the injected client factory');
+  assert.equal(pools, 3, 'source inspection, target lock and restored inspection each use the injected factory');
+  const removedPinnedPath = await readFile(pinnedPathReceipt, 'utf8');
+  await assert.rejects(readFile(removedPinnedPath), { code: 'ENOENT' });
+});
+
 test('connection transport is explicit: plaintext is loopback-only and remote requires verify-full trust', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-transport-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -430,6 +617,7 @@ test('connection transport is explicit: plaintext is loopback-only and remote re
     ['remote-plaintext', { PGSSLMODE: 'disable' }],
   ]) {
     const unsafe = Object.freeze({
+      resourceFingerprint: source.resourceFingerprint,
       async withEnvironment(consumer) {
         return consumer({
           PGHOST: 'remote-db.example', PGPORT: '5432', PGDATABASE: 'fixture',
@@ -542,6 +730,7 @@ test('restore requires an actor and records path-free control-plane attempt plus
         return control.recordOutcome(input);
       },
     }),
+    clock: () => '2026-08-31T12:00:00.000Z',
   });
   await bounded.create({ bundlePath });
   await assert.rejects(
@@ -641,6 +830,7 @@ test('restore resolves one target for lock, import, and post-restore authority',
   let locked = false;
   let lockEntries = 0;
   const rotatingTarget = Object.freeze({
+    resourceFingerprint: source.resourceFingerprint,
     async withEnvironment(consumer) {
       resolutions += 1;
       return consumer({
@@ -688,6 +878,22 @@ test('restore resolves one target for lock, import, and post-restore authority',
     bundlePath, expected, target: rotatingTarget, actor: RESTORE_ACTOR, operationId: 'affine-target',
   };
   assert.equal((await restoreOperations.restore(restoreRequest)).restored, true);
+  const otherTargetFingerprint = '8'.repeat(64);
+  const otherTarget = Object.freeze({
+    resourceFingerprint: otherTargetFingerprint,
+    async withEnvironment(consumer) {
+      throw new Error(`replayed target must not resolve its environment: ${typeof consumer}`);
+    },
+  });
+  await assert.rejects(
+    restoreOperations.restore({
+      ...restoreRequest,
+      target: otherTarget,
+      expected: { ...expected, targetResourceFingerprint: otherTargetFingerprint },
+    }),
+    (error) => error?.code === 'BACKUP_RESTORE_RECEIPT_INVALID',
+    'a terminal operation receipt for target A cannot authorize target B',
+  );
   const replay = await restoreOperations.restore(restoreRequest);
   assert.equal(replay.replayed, true);
   assert.equal(resolutions, 1);

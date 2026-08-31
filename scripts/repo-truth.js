@@ -777,7 +777,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     const runtimeMode = await import(url('packages/core/src/runtime-mode.js'));
     const tenantStorage = await import(url('packages/core/src/tenant-storage.js'));
     const secretProvider = await import(url('packages/core/src/secret-provider.js'));
-    const backupRestore = await import(url('packages/core/src/backup-restore.js'));
+    const publicCore = await import(url('packages/core/index.js'));
     const spine = await import(url('packages/app/src/spine.js'));
 
     bundle.identityContract = identity.IDENTITY_CONTRACT;
@@ -813,15 +813,18 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     bundle.secretProviderProbe = await truthSecretLease.use(
       (value) => value === 'repository-truth-secret-provider-probe',
     ) && truthSecretLease.disposed === true;
-    const backupVocabulary = backupRestore.backupVocabulary();
-    bundle.backupRestoreContract = backupRestore.BACKUP_CONTRACT;
+    const backupVocabulary = publicCore.backupVocabulary();
+    bundle.backupRestoreContract = publicCore.BACKUP_CONTRACT;
     bundle.backupRestoreProbe = backupVocabulary.contract === 1
       && backupVocabulary.adapters?.length === 1
       && backupVocabulary.adapters[0] === 'postgresql'
       && backupVocabulary.expectedIntentKeys?.includes('artifactDigest')
+      && backupVocabulary.expectedIntentKeys?.includes('manifestDigest')
+      && backupVocabulary.expectedIntentKeys?.includes('targetResourceFingerprint')
       && backupVocabulary.restoreControlKeys?.includes('recordOutcome')
-      && typeof backupRestore.createBackupOperations === 'function'
-      && typeof backupRestore.createPostgresqlNativeBackupProvider === 'function';
+      && typeof publicCore.defineBackupProvider === 'function'
+      && typeof publicCore.createBackupOperations === 'function'
+      && typeof publicCore.createPostgresqlNativeBackupProvider === 'function';
     // A limitation string is `CODE — prose`; the code is the structural half.
     bundle.tenantLimitationCodes = [...tenantStorage.TENANT_LIMITATIONS]
       .map((entry) => /^([A-Z][A-Z0-9_]+)/.exec(String(entry))?.[1] ?? '')
@@ -2008,6 +2011,7 @@ export function buildFacts(bundle) {
       'packages/core/src/backup-restore.js#BACKUP_CONTRACT',
       'packages/core/src/backup-restore.js#createBackupOperations',
       'packages/core/src/backup-restore.js#createPostgresqlNativeBackupProvider',
+      'packages/core/index.js#bounded-self-host-backup-export',
       'executable-probe:backup-vocabulary-closed-contract',
     ],
     scope: 'framework',
@@ -2340,7 +2344,7 @@ export function buildFacts(bundle) {
 
   const authorities = [
     { id: 'identity.contract', kind: 'source', reads: ['packages/core/src/identity.js'] },
-    { id: 'spine.contract', kind: 'source', reads: ['packages/app/src/spine.js', 'packages/core/src/authorization.js', 'packages/core/src/backup-restore.js'] },
+    { id: 'spine.contract', kind: 'source', reads: ['packages/app/src/spine.js', 'packages/core/src/authorization.js', 'packages/core/src/backup-restore.js', 'packages/core/index.js'] },
     { id: 'runtime.mode', kind: 'source', reads: ['packages/core/src/runtime-mode.js'] },
     { id: 'tenant.storage', kind: 'source', reads: ['packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js'] },
     { id: 'storage.contract', kind: 'source', reads: ['scripts/repo-truth.js', 'packages/core/src/storage-contract.js', 'packages/core/src/database.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/core/src/actor.js', 'packages/core/src/module-manifest.js', 'packages/core/src/module-evolution.js', 'packages/core/src/timeout.js', 'packages/core/src/action-runtime.js', 'packages/core/src/external-operation.js', 'packages/core/src/core-adapters.js', 'packages/core/src/definition-fingerprint.js', 'packages/core/src/money.js', 'packages/core/src/solution-plan.js', 'packages/core/src/implementation-evidence.js', 'packages/core/src/spine-store.js', 'packages/core/src/package-registry.js', 'packages/core/src/package-composition.js', 'packages/core/src/identity.js', 'packages/core/src/runtime-mode.js', 'packages/core/src/authorization.js', 'packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js', 'packages/work/src/follow-up.js', 'packages/core/index.js'] },

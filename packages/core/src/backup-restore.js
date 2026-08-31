@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import {
-  access, chmod, lstat, mkdir, mkdtemp, open, readdir, rename, rm,
+  access, chmod, lstat, mkdir, mkdtemp, open, readdir, rename, rm, writeFile,
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -31,19 +31,23 @@ const AUTHORITY_KEYS = Object.freeze([
   'bindingUuid', 'tenantFingerprint', 'resourceFingerprint',
   'migrationSetFingerprint', 'repositoryFingerprint',
 ]);
-const EXPECTED_KEYS = Object.freeze([...AUTHORITY_KEYS, 'artifactDigest']);
+const EXPECTED_KEYS = Object.freeze([
+  ...AUTHORITY_KEYS, 'artifactDigest', 'manifestDigest', 'targetResourceFingerprint',
+]);
 const MANIFEST_KEYS = Object.freeze(['contract', 'adapter', 'createdAt', 'source', 'artifact', 'provider']);
 const SOURCE_KEYS = Object.freeze(AUTHORITY_KEYS);
 const ARTIFACT_KEYS = Object.freeze(['algorithm', 'digest']);
 const PROVIDER_MANIFEST_KEYS = Object.freeze(['contract', 'name', 'tool']);
 const TOOL_KEYS = Object.freeze(['name', 'major', 'version']);
-const CONNECTION_KEYS = Object.freeze(['withEnvironment']);
+const CONNECTION_KEYS = Object.freeze(['withEnvironment', 'resourceFingerprint']);
 const ENV_KEYS = Object.freeze([
   'PGHOST', 'PGHOSTADDR', 'PGPORT', 'PGDATABASE', 'PGUSER', 'PGPASSWORD',
   'PGSSLMODE', 'PGSSLROOTCERT',
 ]);
 const RESTORE_CONTROL_KEYS = Object.freeze(['contract', 'authorizeAndRecordAttempt', 'recordOutcome']);
-const RESTORE_RECEIPT_KEYS = Object.freeze(['id', 'outcome']);
+const RESTORE_RECEIPT_KEYS = Object.freeze([
+  'id', 'outcome', 'artifactDigest', 'manifestDigest', 'targetResourceFingerprint',
+]);
 const RESTORE_OUTCOMES = Object.freeze(['succeeded', 'refused', 'possibly-partial']);
 const HOSTILE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 const NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -140,7 +144,8 @@ function expectedDocument(value) {
   const item = snapshot(value, EXPECTED_KEYS, 'BACKUP_EXPECTED_INTENT_INVALID');
   if (!UUID.test(item.bindingUuid) || !fingerprint(item.tenantFingerprint)
     || !fingerprint(item.resourceFingerprint) || !fingerprint(item.migrationSetFingerprint)
-    || !fingerprint(item.repositoryFingerprint) || !fingerprint(item.artifactDigest)) {
+    || !fingerprint(item.repositoryFingerprint) || !fingerprint(item.artifactDigest)
+    || !fingerprint(item.manifestDigest) || !fingerprint(item.targetResourceFingerprint)) {
     refuse('BACKUP_EXPECTED_INTENT_INVALID', 'restore expected intent is incomplete');
   }
   return Object.freeze(item);
@@ -150,6 +155,9 @@ function safeConnection(value) {
   const item = snapshot(value, CONNECTION_KEYS, 'BACKUP_CONNECTION_INVALID');
   if (typeof item.withEnvironment !== 'function') {
     refuse('BACKUP_CONNECTION_INVALID', 'backup connection provider is invalid');
+  }
+  if (!fingerprint(item.resourceFingerprint)) {
+    refuse('BACKUP_CONNECTION_INVALID', 'backup connection resource authority is invalid');
   }
   return Object.freeze(item);
 }
@@ -222,19 +230,26 @@ async function beginRestore(control, actor, intent, operationId) {
       contract: BACKUP_CONTRACT,
       operationId,
       artifactDigest: intent.artifactDigest,
+      manifestDigest: intent.manifestDigest,
+      targetResourceFingerprint: intent.targetResourceFingerprint,
       actor,
       expected: Object.freeze(Object.fromEntries(AUTHORITY_KEYS.map((key) => [key, intent[key]]))),
     })),
   );
   const accepted = snapshot(receipt, RESTORE_RECEIPT_KEYS, 'BACKUP_RESTORE_RECEIPT_INVALID');
   if (!exactString(accepted.id, 200)
-    || !(accepted.outcome === null || RESTORE_OUTCOMES.includes(accepted.outcome))) {
+    || !(accepted.outcome === null || RESTORE_OUTCOMES.includes(accepted.outcome))
+    || accepted.artifactDigest !== intent.artifactDigest
+    || accepted.manifestDigest !== intent.manifestDigest
+    || accepted.targetResourceFingerprint !== intent.targetResourceFingerprint) {
     refuse('BACKUP_RESTORE_RECEIPT_INVALID', 'restore attempt receipt is invalid');
   }
   return Object.freeze({
     ...accepted,
     operationId,
     artifactDigest: intent.artifactDigest,
+    manifestDigest: intent.manifestDigest,
+    targetResourceFingerprint: intent.targetResourceFingerprint,
   });
 }
 
@@ -247,6 +262,8 @@ async function finishRestore(control, receipt, outcome) {
       operationId: receipt.operationId,
       receiptId: receipt.id,
       artifactDigest: receipt.artifactDigest,
+      manifestDigest: receipt.manifestDigest,
+      targetResourceFingerprint: receipt.targetResourceFingerprint,
       outcome,
     })),
   );
@@ -261,10 +278,11 @@ async function useConnection(connection, consumer) {
   }
 }
 
-function affineConnection(environment) {
+function affineConnection(environment, resourceFingerprint) {
   let active = true;
   return Object.freeze({
     connection: Object.freeze({
+      resourceFingerprint,
       async withEnvironment(consumer) {
         if (!active || typeof consumer !== 'function') {
           refuse('BACKUP_CONNECTION_AFFINITY_REFUSED', 'backup connection is outside its affine operation');
@@ -278,8 +296,37 @@ function affineConnection(environment) {
 
 async function useAffineConnection(connection, consumer) {
   return useConnection(connection, async (environment) => {
-    const affine = affineConnection(environment);
-    try { return await consumer(affine.connection); } finally { affine.close(); }
+    let pinnedDirectory = null;
+    let pinnedEnvironment = environment;
+    try {
+      if (environment.PGSSLMODE === 'verify-full') {
+        let ca;
+        try {
+          ca = readTrustedRegularFile(environment.PGSSLROOTCERT, {
+            maxBytes: 64 * 1024,
+            untrusted: () => refuse('BACKUP_CONNECTION_TLS_REFUSED', 'backup connection TLS authority is unavailable'),
+          });
+        } catch (error) {
+          if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
+          refuse('BACKUP_CONNECTION_TLS_REFUSED', 'backup connection TLS authority is unavailable');
+        }
+        pinnedDirectory = await mkdtemp(join(tmpdir(), '.accordo-backup-tls-'));
+        const pinnedPath = join(pinnedDirectory, 'root.crt');
+        await writeFile(pinnedPath, ca, { mode: 0o600, flag: 'wx' });
+        await chmod(pinnedPath, 0o400);
+        pinnedEnvironment = Object.freeze({ ...environment, PGSSLROOTCERT: pinnedPath });
+      }
+      const affine = affineConnection(pinnedEnvironment, connection.resourceFingerprint);
+      try { return await consumer(affine.connection); } finally { affine.close(); }
+    } finally {
+      if (pinnedDirectory) {
+        try {
+          await rm(pinnedDirectory, { recursive: true, force: true });
+        } catch {
+          refuse('BACKUP_TLS_CLEANUP_FAILED', 'backup TLS authority cleanup failed');
+        }
+      }
+    }
   });
 }
 
@@ -398,7 +445,15 @@ async function verifyBundle(bundlePath, expected, copyPath = null) {
     const manifestStat = await manifestHandle.stat();
     const artifactStat = await artifactHandle.stat();
     if (!manifestStat.isFile() || !artifactStat.isFile()) refuse('BACKUP_BUNDLE_INVALID', 'backup bundle files are invalid');
-    const manifest = parseManifest(await readBounded(manifestHandle, 64 * 1024, 'BACKUP_MANIFEST_INVALID'));
+    const manifestBytes = await readBounded(manifestHandle, 64 * 1024, 'BACKUP_MANIFEST_INVALID');
+    const manifestDigest = createHash('sha256').update(manifestBytes).digest('hex');
+    if (manifestDigest !== intent.manifestDigest) {
+      refuse('BACKUP_EXPECTED_INTENT_MISMATCH', 'backup manifest does not match the independently supplied restore intent', {
+        contract: BACKUP_CONTRACT,
+        field: 'manifestDigest',
+      });
+    }
+    const manifest = parseManifest(manifestBytes);
     compareExpected(manifest.source, intent);
     const digest = await copyAndDigest(artifactHandle, copyPath);
     if (digest !== manifest.artifact.digest) refuse('BACKUP_ARTIFACT_TAMPERED', 'backup artifact digest does not match its manifest');
@@ -539,6 +594,12 @@ export function createBackupOperations(options) {
     async create(input) {
       const request = snapshot(input, ['bundlePath'], 'BACKUP_CREATE_INPUT_INVALID');
       if (!exactString(request.bundlePath, 4096)) refuse('BACKUP_PATH_INVALID', 'backup bundle path is invalid');
+      if (connection.resourceFingerprint !== evidence.resourceFingerprint) {
+        refuse('BACKUP_SOURCE_AUTHORITY_MISMATCH', 'backup connection does not match the supplied source authority', {
+          contract: BACKUP_CONTRACT,
+          field: 'resourceFingerprint',
+        });
+      }
       const bundlePath = request.bundlePath;
       return useAffineConnection(connection, async (boundConnection) => {
         const destination = resolve(bundlePath);
@@ -586,8 +647,10 @@ export function createBackupOperations(options) {
           artifact: Object.freeze({ algorithm: 'sha256', digest }),
           provider: Object.freeze({ contract: BACKUP_CONTRACT, name: provider.name, tool: Object.freeze(acceptedTool) }),
         });
+        const manifestBytes = canonicalManifest(manifest);
+        const manifestDigest = createHash('sha256').update(manifestBytes).digest('hex');
         const handle = await open(join(stage, BACKUP_MANIFEST_NAME), 'wx', 0o600);
-        try { await handle.writeFile(canonicalManifest(manifest), 'utf8'); await handle.sync(); } finally { await handle.close(); }
+        try { await handle.writeFile(manifestBytes, 'utf8'); await handle.sync(); } finally { await handle.close(); }
         const syncedArtifact = await open(artifactPath, constants.O_RDONLY | constants.O_NOFOLLOW);
         try { await syncedArtifact.sync(); } finally { await syncedArtifact.close(); }
         await rename(stage, destination);
@@ -595,6 +658,7 @@ export function createBackupOperations(options) {
           contract: BACKUP_CONTRACT,
           bundleCommitted: true,
           artifactDigest: digest,
+          manifestDigest,
           manifest,
         });
         } catch (error) {
@@ -625,6 +689,12 @@ export function createBackupOperations(options) {
         const verified = await verifyBundle(request.bundlePath, request.expected, scratchArtifact);
         await chmod(scratchArtifact, 0o400);
         const targetConnection = safeConnection(request.target);
+        if (targetConnection.resourceFingerprint !== intent.targetResourceFingerprint) {
+          refuse('BACKUP_TARGET_AUTHORITY_MISMATCH', 'restore target does not match the independently supplied target authority', {
+            contract: BACKUP_CONTRACT,
+            field: 'targetResourceFingerprint',
+          });
+        }
         await providerCall('prepare-restore', () => provider.prepareRestore());
         receipt = await beginRestore(restoreControl, actor, intent, request.operationId);
         if (receipt.outcome !== null) {
@@ -709,7 +779,7 @@ export function createBackupOperations(options) {
   });
 }
 
-async function inspectRestoredAuthority(connection) {
+async function inspectRestoredAuthority(connection, createPool) {
   return useConnection(connection, async (environment) => {
     try {
       return await withNativeClient(environment, async (client) => {
@@ -723,7 +793,7 @@ async function inspectRestoredAuthority(connection) {
           resourceFingerprint: String(audit.rows[0].resource_fingerprint),
           migrationSetFingerprint: String(audit.rows[0].migration_set_fingerprint),
         });
-      });
+      }, createPool);
     } catch (error) {
       if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
       refuse('BACKUP_RESTORED_AUTHORITY_MISMATCH', 'restored database authority could not be verified');
@@ -842,6 +912,8 @@ async function inspectEmptyClient(client) {
         SELECT 1 FROM pg_catalog.pg_largeobject_metadata
       ) OR EXISTS (
         SELECT 1 FROM pg_catalog.pg_default_acl
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_cast WHERE oid >= 16384
       ) AS occupied`);
     return Object.freeze({ empty: result.rows[0]?.occupied === false });
   } catch {
@@ -930,7 +1002,9 @@ export function createPostgresqlNativeBackupProvider(options = {}) {
     contract: BACKUP_CONTRACT,
     name: 'postgresql-native',
     adapter: 'postgresql',
-    async inspectAuthority({ connection }) { return inspectRestoredAuthority(connection); },
+    async inspectAuthority({ connection }) {
+      return inspectRestoredAuthority(connection, configuration.createPool);
+    },
     async createArtifact({ artifactPath, connection }) {
       const tool = await toolIdentity(dumpCommand, 'pg_dump', timeoutMs);
       await useConnection(connection, (environment) => runTool(

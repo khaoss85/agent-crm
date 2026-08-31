@@ -54,10 +54,10 @@ production-backup claim, JTBD promotion or production-readiness claim.
    artifact verification, trusted bundle reads and stable SQLite/tool/version
    refusals. Add a bounded injected process runner whose timeout kills and
    observes the child without exposing arguments, environment or stderr.
-2. Implement native PostgreSQL create and verify. Create returns the artifact
-   digest as caller-owned identity in addition to writing it into the manifest;
-   verify and restore require that independently retained digest, so replacing
-   artifact and manifest coherently still refuses. Create stages `artifact.dump`
+2. Implement native PostgreSQL create and verify. Create returns independent
+   artifact and canonical-manifest digests as caller-owned bundle identity;
+   verify and restore require both retained digests, so replacing artifact,
+   manifest bytes or manifest authority metadata still refuses. Create stages `artifact.dump`
    and `manifest.json` in a sibling temporary directory, fsyncs/closes them,
    then atomically renames into a previously absent destination. The manifest
    contains contract, adapter, created instant, binding/resource/tenant,
@@ -65,13 +65,16 @@ production-backup claim, JTBD promotion or production-readiness claim.
    identity/version only.
 3. Implement restore into an explicitly empty target. Verification compares
    the bundle against separately supplied expected tenant/resource/binding,
-   migration and repository intent before `pg_restore`; the target emptiness
+   migration and repository intent before `pg_restore`. The target connection,
+   expected intent and durable receipt carry the same non-secret deployment-
+   attested resource fingerprint, so cross-target replay refuses before target
+   access. The target emptiness
    probe covers relations, schemas, types, functions, extensions, text-search
    definitions and other enumerated user-owned catalog families before mutation.
    A caller-supplied control-plane boundary verifies the actor and durably
    appends a path-free, operation-idempotent attempt before target access. Its
    `recordOutcome` implementation must be durable, append-only and idempotent
-   for the same operation/artifact identity. Succeeded and possibly-partial
+   for the same operation/bundle/target identity. Succeeded and possibly-partial
    outcomes are recorded before releasing the target authority lock; refused
    outcomes are recorded without target mutation. Partial
    failure never presents the target as promoted or rebound. Normal application
@@ -141,6 +144,11 @@ Use Node 22.16.0 through `fnm`.
 - Plaintext transport is never inferred. It requires explicit `disable` and is
   accepted only for loopback development/test endpoints; every remote endpoint
   must use `verify-full` with a trusted CA and verified logical hostname.
+- A `verify-full` operation copies trusted CA bytes once into an owner-only
+  private file. Node authority probes and every native tool in that affine
+  operation consume that same immutable copy; replacing the configured CA path
+  after the probe cannot change native-tool trust. The private copy is removed
+  before the operation settles.
 - PostgreSQL locators remain in the allowlisted child environment, never argv.
   Native tools run in their own process group; timeout and output-bound failure
   kill and observe the wrapper plus descendants before settling.
@@ -154,7 +162,7 @@ Use Node 22.16.0 through `fnm`.
 - Database-local emptiness is enumerated across schemas, relations, types,
   functions, extensions, foreign objects, event triggers, publication/
   subscription, procedural language, collation/conversion/operator, text-search,
-  large-object metadata and default-ACL families. Cluster-global roles,
+  large-object metadata, default-ACL and user-created cast families. Cluster-global roles,
   tablespaces and server configuration are not target-database backup content
   and remain deployment authority rather than emptiness inputs.
 

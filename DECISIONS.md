@@ -4192,21 +4192,25 @@ telemetry consumer receives a lease, reference or value.
 **Plan:** `docs/plans/spine-v4b-backup-restore.md`.
 
 The public core provides a provider-neutral PostgreSQL-only backup contract; the
-built-in provider uses PostgreSQL 16 `pg_dump`/`pg_restore`. Create returns a
-SHA-256 artifact identity that the caller must retain independently. Verify and
-restore compare both artifact and manifest against that identity, so a coherent
-replacement of both bundle files does not become authority.
+built-in provider uses PostgreSQL 16 `pg_dump`/`pg_restore`. Create returns
+independent SHA-256 identities for the artifact and canonical manifest bytes;
+the caller must retain both. Verify and restore compare the bundle against both
+identities, so a coherent replacement or altered manifest authority metadata
+does not become authority.
 
 Restore accepts no ambient target. One affine connection is held across an
 exclusive advisory lock, enumerated database-local emptiness inspection,
 `pg_restore`, byte re-verification and restored binding/migration inspection.
+The connection carries a non-secret resource fingerprint supplied by deployment
+authority; expected intent and the durable receipt bind it, so replaying a
+successful operation against a second endpoint refuses before target access.
 The target must be empty; normal startup attestation remains the only path to
 writer authority, and a physical clone is never promoted or rebound here.
 
 A restore also carries a stable caller operation id and verified actor through
 a caller-owned control-plane seam. That seam must durably append the attempt
 outside the target before target access and idempotently append exactly one
-closed outcome for the same operation/artifact identity. Success and possible
+closed outcome for the same operation/bundle/target identity. Success and possible
 partial mutation are recorded while the target lock remains held. A terminal
 replay never touches the target again. This core interface cannot prove an
 arbitrary caller persisted its receipt; public operator composition must supply
@@ -4214,7 +4218,9 @@ the durable append-only implementation before exposing restore.
 
 Connection transport is explicit. Plaintext is accepted only when declared for
 a loopback development/test endpoint. Remote operation requires `verify-full`,
-a trusted CA and verified logical hostname for Node probes and native libpq.
+a trusted CA and verified logical hostname. Each affine operation pins the
+trusted CA bytes into one private owner-only file consumed by both Node probes
+and native libpq, then removes it before settlement.
 Credentials and database locators live only in a bounded allowlisted child
 environment, never argv, manifests, receipts or errors. Native tools run in a
 separate process group; timeout or output overflow kills and observes the group
@@ -4223,3 +4229,10 @@ before settlement.
 This is a bounded self-host contract, not managed artifact custody, scheduling,
 retention, PITR, clone promotion, an operator UI/CLI, or a recoverability SLA.
 SQLite is explicitly unsupported.
+
+The five closed construction symbols are intentionally exported from
+`packages/core/index.js`. Self-host runtime composition and the future private
+Cloud adapter are two concrete consumers of the same manifest and restore
+fences; forcing either to deep-import private source or recreate those fences
+would fail the DX Simplicity Gate. No storage handle, locator, generic process
+runner, custody service or operator command enters the public surface.

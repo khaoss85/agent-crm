@@ -27,14 +27,38 @@ function restoreControl(receipts) {
     contract: 1,
     async authorizeAndRecordAttempt(input) {
       const existing = operations.get(input.operationId);
-      if (existing) return { id: existing.id, outcome: existing.outcome };
-      const state = { id: `pg-${input.operationId}`, outcome: null };
+      if (existing) {
+        assert.equal(existing.artifactDigest, input.artifactDigest);
+        assert.equal(existing.manifestDigest, input.manifestDigest);
+        assert.equal(existing.targetResourceFingerprint, input.targetResourceFingerprint);
+        return {
+          id: existing.id, outcome: existing.outcome,
+          artifactDigest: existing.artifactDigest,
+          manifestDigest: existing.manifestDigest,
+          targetResourceFingerprint: existing.targetResourceFingerprint,
+        };
+      }
+      const state = {
+        id: `pg-${input.operationId}`,
+        artifactDigest: input.artifactDigest,
+        manifestDigest: input.manifestDigest,
+        targetResourceFingerprint: input.targetResourceFingerprint,
+        outcome: null,
+      };
       operations.set(input.operationId, state);
       receipts.push({ phase: 'attempted', input });
-      return { id: state.id, outcome: null };
+      return {
+        id: state.id, outcome: null,
+        artifactDigest: state.artifactDigest,
+        manifestDigest: state.manifestDigest,
+        targetResourceFingerprint: state.targetResourceFingerprint,
+      };
     },
     async recordOutcome(input) {
       const state = operations.get(input.operationId);
+      assert.equal(state.artifactDigest, input.artifactDigest);
+      assert.equal(state.manifestDigest, input.manifestDigest);
+      assert.equal(state.targetResourceFingerprint, input.targetResourceFingerprint);
       if (state.outcome !== null) { assert.equal(state.outcome, input.outcome); return; }
       state.outcome = input.outcome;
       receipts.push({ phase: 'outcome', input });
@@ -42,8 +66,9 @@ function restoreControl(receipts) {
   });
 }
 
-function connection(endpoint) {
+function connection(endpoint, resourceFingerprint) {
   return Object.freeze({
+    resourceFingerprint,
     async withEnvironment(consumer) {
       return consumer({
         PGHOST: endpoint.host,
@@ -80,7 +105,7 @@ async function bootstrap(control, data, dataResource, tenantId = TENANT) {
   });
 }
 
-function expectedOf(evidence, artifactDigest) {
+function expectedOf(evidence, artifactDigest, manifestDigest, targetResourceFingerprint) {
   return Object.freeze({
     bindingUuid: evidence.bindingUuid,
     tenantFingerprint: evidence.tenantFingerprint,
@@ -88,19 +113,22 @@ function expectedOf(evidence, artifactDigest) {
     migrationSetFingerprint: evidence.migrationSetFingerprint,
     repositoryFingerprint: evidence.repositoryFingerprint,
     artifactDigest,
+    manifestDigest,
+    targetResourceFingerprint,
   });
 }
 
 test('PostgreSQL 16 native backup verifies, restores only to empty target, and boots through normal authority', { timeout: 120_000 }, async (t) => {
-  const planes = await openIsolatedPostgresqlPlanes(t, { dataCount: 13 });
+  const planes = await openIsolatedPostgresqlPlanes(t, { dataCount: 14 });
   if (!planes) return;
   const [
     sourceData, replacementData, cloneData, occupiedData, wrongSourceData,
     enumData, domainData, functionData, extensionData, compositeData, textSearchData,
-    largeObjectData, defaultAclData,
+    largeObjectData, defaultAclData, castData,
   ] = planes.dataPlanes;
   const logicalResource = testResource('v4b-logical-primary');
   const cloneResource = testResource('v4b-unratified-clone');
+  const occupiedResource = testResource('v4b-occupied-target');
   const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-pg-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const bundlePath = join(root, 'bundle');
@@ -120,7 +148,7 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
     adapter: 'postgresql',
     provider,
     evidence: source.backupEvidence,
-    connection: connection(sourceData),
+    connection: connection(sourceData, source.backupEvidence.resourceFingerprint),
     restoreControl: restoreControl(receipts),
   });
 
@@ -130,7 +158,7 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
     adapter: 'postgresql',
     provider,
     evidence: source.backupEvidence,
-    connection: connection(wrongSourceData),
+    connection: connection(wrongSourceData, other.backupEvidence.resourceFingerprint),
     restoreControl: restoreControl([]),
   });
   await assert.rejects(
@@ -140,7 +168,12 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
   await other.close();
 
   const created = await operations.create({ bundlePath });
-  const expected = expectedOf(source.backupEvidence, created.artifactDigest);
+  const expected = expectedOf(
+    source.backupEvidence,
+    created.artifactDigest,
+    created.manifestDigest,
+    logicalResource.resourceFingerprint,
+  );
   assert.equal((await operations.verify({ bundlePath, expected })).verified, true);
   const manifest = await readFile(join(bundlePath, 'manifest.json'), 'utf8');
   const credentialLocator = `postgresql://${sourceData.user}:${sourceData.password}@${sourceData.host}:${sourceData.port ?? 5432}/${sourceData.database}`;
@@ -163,7 +196,9 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
   try { await occupiedClient.query('CREATE TABLE public.must_not_overwrite(id integer)'); } finally { await occupiedClient.end(); }
   await assert.rejects(
     operations.restore({
-      bundlePath, expected, target: connection(occupiedData), actor: RESTORE_ACTOR,
+      bundlePath,
+      expected: { ...expected, targetResourceFingerprint: occupiedResource.resourceFingerprint },
+      target: connection(occupiedData, occupiedResource.resourceFingerprint), actor: RESTORE_ACTOR,
       operationId: 'occupied-table',
     }),
     (error) => error?.code === 'BACKUP_TARGET_NOT_EMPTY',
@@ -183,12 +218,16 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
     [textSearchData, 'CREATE TEXT SEARCH CONFIGURATION public.restore_guard_search (COPY = pg_catalog.simple)'],
     [largeObjectData, 'SELECT pg_catalog.lo_create(0)'],
     [defaultAclData, 'ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC'],
+    [castData, 'CREATE CAST (integer AS boolean) WITH INOUT AS ASSIGNMENT'],
   ].entries()) {
+    const catalogResource = testResource(`v4b-catalog-target-${index}`);
     const objectClient = await client(endpoint);
     try { await objectClient.query(ddl); } finally { await objectClient.end(); }
     await assert.rejects(
       operations.restore({
-        bundlePath, expected, target: connection(endpoint), actor: RESTORE_ACTOR,
+        bundlePath,
+        expected: { ...expected, targetResourceFingerprint: catalogResource.resourceFingerprint },
+        target: connection(endpoint, catalogResource.resourceFingerprint), actor: RESTORE_ACTOR,
         operationId: `occupied-catalog-${index}`,
       }),
       (error) => error?.code === 'BACKUP_TARGET_NOT_EMPTY',
@@ -201,7 +240,8 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
     await lockHolder.query('SELECT pg_advisory_lock($1, $2)', [DATA_ADVISORY_LOCK.classId, DATA_ADVISORY_LOCK.objectId]);
     await assert.rejects(
       operations.restore({
-        bundlePath, expected, target: connection(replacementData), actor: RESTORE_ACTOR,
+        bundlePath, expected,
+        target: connection(replacementData, logicalResource.resourceFingerprint), actor: RESTORE_ACTOR,
         operationId: 'target-lock-busy',
       }),
       (error) => error?.code === 'BACKUP_TARGET_BUSY',
@@ -213,7 +253,8 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
   }
 
   const restored = await operations.restore({
-    bundlePath, expected, target: connection(replacementData), actor: RESTORE_ACTOR,
+    bundlePath, expected,
+    target: connection(replacementData, logicalResource.resourceFingerprint), actor: RESTORE_ACTOR,
     operationId: 'replacement-restore',
   });
   assert.equal(restored.restored, true);
@@ -232,7 +273,9 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
   await target.close();
   target = null;
   const cloneRestore = await operations.restore({
-    bundlePath, expected, target: connection(cloneData), actor: RESTORE_ACTOR,
+    bundlePath,
+    expected: { ...expected, targetResourceFingerprint: cloneResource.resourceFingerprint },
+    target: connection(cloneData, cloneResource.resourceFingerprint), actor: RESTORE_ACTOR,
     operationId: 'clone-restore',
   });
   assert.equal(cloneRestore.authority, 'normal-startup-required');

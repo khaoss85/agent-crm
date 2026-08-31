@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "3e781e904ad429d38773a9a0dc2360d515606e027b0216e2b800b1435c59b422",
+  "sourceSha": "e5a1f062a9ae3762070f802d9ba3d7da1471b5b62109faa6c976313968e62256",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -84,6 +84,7 @@
       "kind": "source",
       "reads": [
         "packages/app/src/spine.js",
+        "packages/core/index.js",
         "packages/core/src/authorization.js",
         "packages/core/src/backup-restore.js"
       ]
@@ -652,6 +653,7 @@
       "authority": "spine.contract",
       "evidence": [
         "executable-probe:backup-vocabulary-closed-contract",
+        "packages/core/index.js#bounded-self-host-backup-export",
         "packages/core/src/backup-restore.js#BACKUP_CONTRACT",
         "packages/core/src/backup-restore.js#createBackupOperations",
         "packages/core/src/backup-restore.js#createPostgresqlNativeBackupProvider"
@@ -899,5 +901,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "05dd28579b2763ae3b639ae84a0c79938dd52e719efface822193fb1897eb7b2"
+  "fingerprint": "9f8e9784df2a901b84a76f308dff7e35ffc291ffc913df60e4048c9325906bff"
 }
