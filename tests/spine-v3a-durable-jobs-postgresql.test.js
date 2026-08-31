@@ -50,12 +50,23 @@ test('V3A live PostgreSQL migration, concurrent claim, rollback, expiry, and fen
     store.enqueue({ ...jobInput('pg-root-a'), scheduleAt: '2026-09-02T09:00:00.000Z' }, operatorContext),
     (error) => error.code === 'DURABLE_JOB_IDEMPOTENCY_MISMATCH',
   );
-  const [left, right] = await Promise.all([
+  const concurrentClaims = await Promise.allSettled([
     store.claim('pg-worker-a', 1_000, workerContext),
     store.claim('pg-worker-b', 1_000, workerContext),
   ]);
-  const winners = [left, right].filter(Boolean);
+  const rejectedClaims = concurrentClaims.filter((claim) => claim.status === 'rejected');
+  for (const claim of rejectedClaims) {
+    assert.equal(claim.reason?.code, 'CONFLICT');
+    assert.equal(claim.reason?.details?.transient, true,
+      'SERIALIZABLE claim contention may refuse transiently, never grant a second claim');
+  }
+  const settledClaims = concurrentClaims
+    .filter((claim) => claim.status === 'fulfilled')
+    .map((claim) => claim.value);
+  const winners = settledClaims.filter(Boolean);
   assert.equal(winners.length, 1, 'two workers cannot execute one active claim concurrently');
+  assert.equal(settledClaims.filter((claim) => claim === null).length + rejectedClaims.length, 1,
+    'the losing concurrent claim is either skipped or a bounded serialization refusal');
   const first = winners[0];
   assert.equal(first.id, scheduled.id);
   assert.equal(await store.claim('pg-worker-c', 1_000, workerContext), null, 'active claim cannot be stolen');
