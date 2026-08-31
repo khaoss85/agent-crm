@@ -237,6 +237,7 @@ const DATA_PLANE_MIGRATIONS = [
         claim_id TEXT,
         claim_generation INTEGER NOT NULL CHECK(claim_generation BETWEEN 0 AND 9007199254740991),
         claim_expires_at TEXT,
+        execution_started_at TEXT,
         idempotency_root TEXT NOT NULL,
         outcome_reference TEXT,
         created_at TEXT NOT NULL,

@@ -3985,7 +3985,7 @@ Accordo has one versioned durable-job contract on the tenant data plane. A job
 persists a named handler identity and canonical JSON-safe payload, never source
 code or a command. Every row carries the already-bound application tenant,
 schedule intent plus instant, bounded attempt policy, idempotency root, claim generation and
-claim fingerprint. Omitted schedules persist as `immediate`, so the same
+claim fingerprint, plus nullable execution-start time for the active generation. Omitted schedules persist as `immediate`, so the same
 idempotency root joins across clock drift without collapsing into an explicitly
 scheduled request. Every completion is compare-and-set on tenant, worker,
 generation, fingerprint and unexpired lease.
@@ -3997,6 +3997,17 @@ Audit data contains transition state, claim generation and a bounded error code
 where applicable; it never copies payload, idempotency root, outcome reference
 or handler input. An explicitly constructed worker additionally requires a
 system actor and has no fallback identity.
+
+Immediately before a registered handler is invoked, the worker compare-and-sets
+`execution_started_at` under tenant, worker, claim fingerprint, generation and
+live lease, then records `durable_job.execution_started` in that same
+transaction. Expiry can therefore recover an unstarted claim without consuming
+another attempt. Expiry after execution start instead becomes
+`JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED`; the claim is cleared, the start
+timestamp remains durable terminal evidence, and no worker invokes it again.
+This is deliberately conservative: a crash after the CAS and before the
+JavaScript call is also reconciliation-required. It is not exactly-once
+execution or delivery.
 
 PostgreSQL claims one due row inside the existing connection-affine transaction
 with `FOR UPDATE SKIP LOCKED`. SQLite claims inside its existing
@@ -4048,20 +4059,31 @@ tenancy or a tenant switcher.
 - Transactional enqueue accepts only the live callback-scoped handle owned by
   the current async flow. A root handle or a callback handle retained after
   commit/rollback is refused before it can write.
-- Active claims cannot be stolen; expired claims gain a new generation; a final
-  expired attempt becomes visibly terminal rather than exceeding `maxAttempts`.
+- Active claims cannot be stolen. An expired unstarted claim gains a new
+  generation without consuming another attempt; an expired started claim is
+  terminal reconciliation evidence regardless of remaining attempt budget.
 - A pre-handler release is fenced by tenant, worker, claim fingerprint,
   generation and live lease, and does not consume the execution-attempt budget.
 - Worker status exposes only the last bounded poll error code, never raw storage
   error text or details; a later successful poll clears it.
+- Claim, execution-start, success, failure, and release require a system actor;
+  enqueue, cancel, and reschedule retain explicit operator/agent authority. This
+  prevents an ordinary caller from fabricating worker execution evidence.
 - Cancel and reschedule apply only before a claim. A handler that outlives its
-  lease may finish too late and is fenced; internal business handlers therefore
-  still require their own idempotent outcome identity.
+  lease is terminalized by recovery and its late completion is fenced; internal
+  business handlers therefore still require their own idempotent outcome identity.
 - Explicit reschedule changes the persisted caller-visible schedule intent to
   `scheduled`; retry backoff changes the next instant without rewriting the
   original caller intent.
 - A job transition and its audit event commit or roll back together. A fenced
   transition writes neither; reads require no actor and write no audit event.
+- Canonical payload traversal reads own data descriptors recursively for both
+  objects and arrays. Accessors are refused without invocation; proxy/trap and
+  other hostile inspection failures collapse to `DURABLE_JOB_PAYLOAD_INVALID`
+  with no cause, details or caller-controlled serialization.
+- Job input, handler identity, and mutation actor context are likewise inspected
+  through own data descriptors before any field read. Hostile injected backoff
+  behavior terminalizes as `JOB_BACKOFF_INVALID` without retaining its error.
 - V3A is infrastructure only. It adds no cron grammar, recurrence policy,
   outbox, timer consumer, provider adapter, operator command, public app facade,
   Cloud queue, production-readiness claim or JTBD promotion. Those boundaries

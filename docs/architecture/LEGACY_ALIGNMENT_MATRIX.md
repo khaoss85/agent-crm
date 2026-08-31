@@ -91,7 +91,11 @@ explicitly started worker. PostgreSQL uses transactional
 `FOR UPDATE SKIP LOCKED`; SQLite uses its one-connection single-writer boundary
 and does not claim multi-node worker support. Omitted versus explicit schedule
 intent is durable, and each actor-required mutation records payload-free audit
-evidence on the same storage transaction. This slice adds no domain timer
+evidence on the same storage transaction. A worker persists a generation-fenced
+execution start before handler invocation: only unstarted expiry is recoverable;
+started expiry becomes terminal reconciliation evidence without a second
+invocation. Execution lifecycle transitions require an explicit system actor;
+operator/agent actors remain limited to scheduling mutations. This slice adds no domain timer
 consumer, cron language, outbox, operator surface, worker autostart or public
 production-readiness claim.
 

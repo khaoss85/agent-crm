@@ -24,6 +24,8 @@ test('PostgreSQL claim authority uses transaction-affine FOR UPDATE SKIP LOCKED'
   assert.match(source, /FOR UPDATE SKIP LOCKED/);
   assert.match(source, /WITH candidate AS/);
   assert.match(source, /claim_generation/);
+  assert.match(source, /execution_started_at/);
+  assert.match(source, /JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED/);
   assert.match(source, /"attempt" = "attempt" - 1/);
 });
 
@@ -33,8 +35,8 @@ test('V3A live PostgreSQL migration, concurrent claim, rollback, expiry, and fen
   if (!result) return;
   const storage = postgresqlTestStorage(result.app);
   assert.ok(storage, 'application exposes its test-only bound data storage');
-  const ids = ['pg-job-a', 'pg-job-b', 'pg-job-c', 'pg-job-d', 'pg-job-e', 'pg-job-f'];
-  const claims = ['pg-claim-a', 'pg-claim-b', 'pg-claim-c', 'pg-claim-d', 'pg-claim-e', 'pg-claim-f'];
+  const ids = Array.from({ length: 12 }, (_unused, index) => `pg-job-${index + 1}`);
+  const claims = Array.from({ length: 20 }, (_unused, index) => `pg-claim-${index + 1}`);
   const store = createDurableJobStore({
     storage, tenantId: result.tenantId, clock: () => current,
     idSource: () => ids.shift(), claimIdSource: () => claims.shift(),
@@ -65,11 +67,13 @@ test('V3A live PostgreSQL migration, concurrent claim, rollback, expiry, and fen
   current = '2026-09-01T09:00:01.100Z';
   const recovered = await store.claim('pg-worker-c', 1_000, workerContext);
   assert.equal(recovered.claim.generation, first.claim.generation + 1);
+  assert.equal(recovered.attempt, 1);
   await assert.rejects(
     store.succeed(first, first.claim.workerId, null, workerContext),
     (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED',
   );
-  assert.equal((await store.succeed(recovered, 'pg-worker-c', 'renewal-review:done', workerContext)).state, 'succeeded');
+  const recoveredExecution = await store.beginExecution(recovered, 'pg-worker-c', workerContext);
+  assert.equal((await store.succeed(recoveredExecution, 'pg-worker-c', 'renewal-review:done', workerContext)).state, 'succeeded');
 
   const releasable = await store.enqueue(jobInput('pg-root-release'), operatorContext);
   const beforeHandler = await store.claim('pg-worker-a', 1_000, workerContext);
@@ -79,7 +83,23 @@ test('V3A live PostgreSQL migration, concurrent claim, rollback, expiry, and fen
   const afterRelease = await store.claim('pg-worker-b', 1_000, workerContext);
   assert.equal(afterRelease.attempt, 1);
   assert.equal(afterRelease.claim.generation, beforeHandler.claim.generation + 1);
-  await store.succeed(afterRelease, 'pg-worker-b', null, workerContext);
+  const releaseExecution = await store.beginExecution(afterRelease, 'pg-worker-b', workerContext);
+  await store.succeed(releaseExecution, 'pg-worker-b', null, workerContext);
+
+  const uncertain = await store.enqueue(jobInput('pg-root-uncertain'), operatorContext);
+  const uncertainClaim = await store.claim('pg-worker-a', 1_000, workerContext);
+  assert.equal(uncertainClaim.id, uncertain.id);
+  const uncertainExecution = await store.beginExecution(uncertainClaim, 'pg-worker-a', workerContext);
+  current = '2026-09-01T09:00:02.100Z';
+  assert.equal(await store.claim('pg-worker-b', 1_000, workerContext), null);
+  const reconciled = await store.get(uncertain.id);
+  assert.equal(reconciled.state, 'failed_terminal');
+  assert.equal(reconciled.lastErrorCode, 'JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED');
+  assert.equal(reconciled.executionStartedAt, '2026-09-01T09:00:01.100Z');
+  await assert.rejects(
+    store.succeed(uncertainExecution, 'pg-worker-a', null, workerContext),
+    (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED',
+  );
 
   const auditCountBeforeRollback = (await audit.list({ entityType: 'durable_job' })).length;
   await assert.rejects(
@@ -95,7 +115,8 @@ test('V3A live PostgreSQL migration, concurrent claim, rollback, expiry, and fen
 
   const events = await audit.list({ entityType: 'durable_job', entityId: scheduled.id });
   assert.deepEqual(events.map((event) => event.action).sort(), [
-    'durable_job.claimed', 'durable_job.claimed', 'durable_job.enqueued', 'durable_job.succeeded',
+    'durable_job.claimed', 'durable_job.claimed', 'durable_job.enqueued',
+    'durable_job.execution_started', 'durable_job.succeeded',
   ]);
   assert.deepEqual(events.filter((event) => event.action === 'durable_job.claimed')
     .map((event) => event.data.claimGeneration).sort(), [1, 2]);

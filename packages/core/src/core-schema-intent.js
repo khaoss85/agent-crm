@@ -509,6 +509,7 @@ const V9_STATEMENTS = [
       text('claim_id'),
       integer('claim_generation', { notNull: true, check: { kind: 'between', min: 0, max: SAFE_INTEGER_MAX } }),
       timestamp('claim_expires_at'),
+      timestamp('execution_started_at'),
       text('idempotency_root', { notNull: true }),
       text('outcome_reference'),
       timestamp('created_at', { notNull: true }),
