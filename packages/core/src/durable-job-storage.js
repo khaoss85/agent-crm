@@ -1,10 +1,12 @@
 // @ts-check
 
 import { AppError } from './errors.js';
+import { proveCallerTransaction, TRANSACTION_PROOF } from './transaction-witness.js';
 
 /** Private adapter registry. Raw drivers never cross this file boundary. */
 const DURABLE_JOB_STORAGE = new WeakMap();
 const DURABLE_JOB_OWNER = new WeakMap();
+const DURABLE_JOB_TRANSACTION_AUTHORITY = new WeakMap();
 
 export function registerDurableJobStorageOwner(storage, owner) {
   DURABLE_JOB_OWNER.set(storage, owner);
@@ -18,6 +20,29 @@ export function durableJobStorageOwnerFor(storage) {
     });
   }
   return owner;
+}
+
+/** Bind a callback-only transaction handle to the storage witness it must prove. */
+export function registerDurableJobTransactionAuthority(transaction, authority) {
+  DURABLE_JOB_TRANSACTION_AUTHORITY.set(transaction, authority);
+}
+
+export function assertActiveDurableJobTransaction(transaction) {
+  if (!transaction || (typeof transaction !== 'object' && typeof transaction !== 'function')) {
+    throw new AppError('Durable-job transactional enqueue requires a live transaction handle', {
+      code: 'DURABLE_JOB_TRANSACTION_REQUIRED', status: 500,
+      details: { proof: TRANSACTION_PROOF.NO_STORAGE },
+    });
+  }
+  const authority = DURABLE_JOB_TRANSACTION_AUTHORITY.get(transaction);
+  const proof = authority
+    ? proveCallerTransaction({ database: { storage: authority } })
+    : TRANSACTION_PROOF.NO_TRANSACTION;
+  if (proof !== TRANSACTION_PROOF.ACTIVE) {
+    throw new AppError('Durable-job transactional enqueue requires the current caller-owned transaction', {
+      code: 'DURABLE_JOB_TRANSACTION_REQUIRED', status: 500, details: { proof },
+    });
+  }
 }
 
 export function durableJobStorageFor(storage) {

@@ -92,16 +92,39 @@ test('SQLite schedules at the exact UTC boundary, reschedules one pending job, c
   assert.equal((await restartedStore.get(restartFuture.id)).state, 'pending');
 });
 
-test('enqueue joins a caller transaction and rollback leaves no durable work', async (t) => {
+test('enqueue requires a live caller-owned transaction and stale handles persist nothing', async (t) => {
   const f = fixture(t);
+  let rolledBackTx;
   await assert.rejects(
     f.database.storage.transaction(async (tx) => {
+      rolledBackTx = tx;
       await f.store.enqueue(input('root-rollback'), { transaction: tx });
       throw new Error('rollback');
     }),
     /rollback/,
   );
   assert.deepEqual(await f.store.list(), []);
+  await assert.rejects(
+    f.store.enqueue(input('root-after-rollback'), { transaction: rolledBackTx }),
+    (error) => error.code === 'DURABLE_JOB_TRANSACTION_REQUIRED'
+      && error.details.proof === 'no-transaction',
+  );
+
+  let committedTx;
+  await f.database.storage.transaction(async (tx) => {
+    committedTx = tx;
+    await f.store.enqueue(input('root-live-commit'), { transaction: tx });
+  });
+  await assert.rejects(
+    f.store.enqueue(input('root-after-commit'), { transaction: committedTx }),
+    (error) => error.code === 'DURABLE_JOB_TRANSACTION_REQUIRED'
+      && error.details.proof === 'no-transaction',
+  );
+  await assert.rejects(
+    f.store.enqueue(input('root-handle-refused'), { transaction: f.database.storage }),
+    (error) => error.code === 'DURABLE_JOB_TRANSACTION_REQUIRED',
+  );
+  assert.deepEqual((await f.store.list()).map((job) => job.idempotencyRoot), ['root-live-commit']);
 
   const otherPath = join(tmpdir(), `accordo-v3a-other-${process.pid}-${Date.now()}.sqlite`);
   const other = createDatabase({ path: otherPath, plane: 'data' });
@@ -110,7 +133,7 @@ test('enqueue joins a caller transaction and rollback leaves no durable work', a
     other.storage.transaction(async (tx) => f.store.enqueue(input('root-wrong-storage'), { transaction: tx })),
     (error) => error.code === 'DURABLE_JOB_TRANSACTION_MISMATCH',
   );
-  assert.deepEqual(await f.store.list(), []);
+  assert.deepEqual((await f.store.list()).map((job) => job.idempotencyRoot), ['root-live-commit']);
 });
 
 test('claims fence workers, tenants, generations, active leases, and recover exactly at expiry', async (t) => {

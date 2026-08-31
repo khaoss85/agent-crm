@@ -2,7 +2,11 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { AppError, ValidationError } from './errors.js';
-import { durableJobStorageFor, durableJobStorageOwnerFor } from './durable-job-storage.js';
+import {
+  assertActiveDurableJobTransaction,
+  durableJobStorageFor,
+  durableJobStorageOwnerFor,
+} from './durable-job-storage.js';
 import { resolveClock } from './time.js';
 
 export const DURABLE_JOB_CONTRACT = 1;
@@ -190,12 +194,13 @@ export function createDurableJobStore(options) {
   if (typeof idSource !== 'function' || typeof claimIdSource !== 'function') throw new TypeError('Durable-job id sources must be functions');
   const storageOwner = durableJobStorageOwnerFor(options.storage);
 
-  const adapterFor = (storage) => {
+  const adapterFor = (storage, requireTransaction = false) => {
     if (durableJobStorageOwnerFor(storage) !== storageOwner) {
       throw new AppError('Durable-job transaction belongs to a different storage handle', {
         code: 'DURABLE_JOB_TRANSACTION_MISMATCH', status: 500,
       });
     }
+    if (requireTransaction) assertActiveDurableJobTransaction(storage);
     return durableJobStorageFor(storage);
   };
 
@@ -243,8 +248,8 @@ export function createDurableJobStore(options) {
         code: 'DURABLE_JOB_IDEMPOTENCY_MISMATCH', status: 409,
       });
     };
-    return context.transaction
-      ? persist(adapterFor(context.transaction))
+    return Object.hasOwn(context, 'transaction')
+      ? persist(adapterFor(context.transaction, true))
       : inTransaction(persist);
   }
 

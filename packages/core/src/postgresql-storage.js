@@ -15,6 +15,7 @@ import {
 import { openTransactionScope } from './transaction-minter.js';
 import { currentTransactionWitness } from './transaction-witness.js';
 import {
+  registerDurableJobTransactionAuthority,
   registerDurableJobStorageOwner,
   registerPostgresqlDurableJobStorage,
 } from './durable-job-storage.js';
@@ -502,6 +503,7 @@ export function createPostgresqlStorage(pool, options = {}) {
       table: durableJobTable,
       owner: durableJobOwner,
     });
+    registerDurableJobTransactionAuthority(affine, affine);
     return affine;
   }
 

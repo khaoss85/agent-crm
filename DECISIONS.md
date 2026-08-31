@@ -4035,6 +4035,9 @@ tenancy or a tenant switcher.
 ### Consequences and limits
 
 - A caller can enqueue through an existing transaction; rollback leaves no job.
+- Transactional enqueue accepts only the live callback-scoped handle owned by
+  the current async flow. A root handle or a callback handle retained after
+  commit/rollback is refused before it can write.
 - Active claims cannot be stolen; expired claims gain a new generation; a final
   expired attempt becomes visibly terminal rather than exceeding `maxAttempts`.
 - A pre-handler release is fenced by tenant, worker, claim fingerprint,

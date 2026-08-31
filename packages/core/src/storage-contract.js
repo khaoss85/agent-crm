@@ -1,7 +1,10 @@
 // @ts-check
 
 import { AppError } from './errors.js';
-import { registerSqliteDurableJobStorage } from './durable-job-storage.js';
+import {
+  registerDurableJobTransactionAuthority,
+  registerSqliteDurableJobStorage,
+} from './durable-job-storage.js';
 
 export const STORAGE_CONTRACT = 1;
 const IDENTIFIER = /^[a-z][a-z0-9_]*$/;
@@ -235,5 +238,6 @@ export function createSqliteStorage(raw, transaction, transactionAsync, readWitn
   });
   registerSqliteDurableJobStorage(sync, raw, durableJobOwner);
   registerSqliteDurableJobStorage(storage, raw, durableJobOwner);
+  registerDurableJobTransactionAuthority(sync, storage);
   return storage;
 }
