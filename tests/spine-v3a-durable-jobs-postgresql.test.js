@@ -18,6 +18,7 @@ test('PostgreSQL claim authority uses transaction-affine FOR UPDATE SKIP LOCKED'
   assert.match(source, /FOR UPDATE SKIP LOCKED/);
   assert.match(source, /WITH candidate AS/);
   assert.match(source, /claim_generation/);
+  assert.match(source, /"attempt" = "attempt" - 1/);
 });
 
 test('V3A live PostgreSQL migration, concurrent claim, rollback, expiry, and fencing', { timeout: 90_000 }, async (t) => {
@@ -26,8 +27,8 @@ test('V3A live PostgreSQL migration, concurrent claim, rollback, expiry, and fen
   if (!result) return;
   const storage = postgresqlTestStorage(result.app);
   assert.ok(storage, 'application exposes its test-only bound data storage');
-  const ids = ['pg-job-a', 'pg-job-b', 'pg-job-c'];
-  const claims = ['pg-claim-a', 'pg-claim-b', 'pg-claim-c', 'pg-claim-d'];
+  const ids = ['pg-job-a', 'pg-job-b', 'pg-job-c', 'pg-job-d'];
+  const claims = ['pg-claim-a', 'pg-claim-b', 'pg-claim-c', 'pg-claim-d', 'pg-claim-e', 'pg-claim-f'];
   const store = createDurableJobStore({
     storage, tenantId: result.tenantId, clock: () => current,
     idSource: () => ids.shift(), claimIdSource: () => claims.shift(),
@@ -56,6 +57,16 @@ test('V3A live PostgreSQL migration, concurrent claim, rollback, expiry, and fen
     (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED',
   );
   assert.equal((await store.succeed(recovered, 'pg-worker-c', 'renewal-review:done')).state, 'succeeded');
+
+  const releasable = await store.enqueue(jobInput('pg-root-release'));
+  const beforeHandler = await store.claim('pg-worker-a', 1_000);
+  assert.equal(beforeHandler.id, releasable.id);
+  const released = await store.release(beforeHandler, 'pg-worker-a');
+  assert.equal(released.attempt, 0, 'a PostgreSQL pre-handler release does not consume execution budget');
+  const afterRelease = await store.claim('pg-worker-b', 1_000);
+  assert.equal(afterRelease.attempt, 1);
+  assert.equal(afterRelease.claim.generation, beforeHandler.claim.generation + 1);
+  await store.succeed(afterRelease, 'pg-worker-b');
 
   await assert.rejects(
     storage.transaction(async (tx) => {

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createDatabase } from '../packages/core/src/database.js';
+import { AppError } from '../packages/core/src/errors.js';
 import {
   DURABLE_JOB_CONTRACT,
   DURABLE_JOB_STATES,
@@ -20,8 +21,8 @@ function fixture(t) {
   let current = '2026-09-01T09:00:00.000Z';
   const clock = () => current;
   const database = createDatabase({ path, plane: 'data' });
-  const ids = ['job-a', 'job-b', 'job-c', 'job-d', 'job-e', 'job-f'];
-  const claims = ['claim-a', 'claim-b', 'claim-c', 'claim-d', 'claim-e', 'claim-f'];
+  const ids = Array.from({ length: 20 }, (_unused, index) => `job-${index + 1}`);
+  const claims = Array.from({ length: 40 }, (_unused, index) => `claim-${index + 1}`);
   const store = createDurableJobStore({
     storage: database.storage, tenantId: 'tenant-a', clock,
     idSource: () => ids.shift(), claimIdSource: () => claims.shift(),
@@ -170,17 +171,41 @@ test('an expired final claim becomes terminal instead of running beyond maxAttem
   assert.equal(exhausted.attempt, 1);
 });
 
-test('explicit release preserves retryability and a new generation can finish', async (t) => {
+test('owner-fenced pre-handler releases do not consume attempts, including external handlers', async (t) => {
   const f = fixture(t);
-  const job = await f.store.enqueue(input('root-release'));
-  const first = await f.store.claim('worker-a', 30_000);
-  const released = await f.store.release(first, 'worker-a');
-  assert.equal(released.state, 'failed_retryable');
-  assert.equal(released.lastErrorCode, 'JOB_CLAIM_RELEASED');
-  const next = await f.store.claim('worker-b', 30_000);
-  assert.equal(next.id, job.id);
-  assert.equal(next.claim.generation, first.claim.generation + 1);
-  assert.equal((await f.store.succeed(next, 'worker-b')).state, 'succeeded');
+  for (const [root, sideEffect] of [
+    ['root-release-ordinary', 'none'],
+    ['root-release-external', 'external-operation-v2'],
+  ]) {
+    const job = await f.store.enqueue(input(root, { maxAttempts: 1 }));
+    let generation = 0;
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      const claim = await f.store.claim('worker-a', 30_000);
+      assert.equal(claim.attempt, 1);
+      assert.ok(claim.claim.generation > generation);
+      generation = claim.claim.generation;
+      const released = await f.store.release(claim, 'worker-a');
+      assert.equal(released.state, 'failed_retryable');
+      assert.equal(released.attempt, 0);
+      assert.equal(released.lastErrorCode, 'JOB_CLAIM_RELEASED');
+    }
+    let calls = 0;
+    const registry = createDurableJobHandlerRegistry();
+    registry.register({
+      kind: 'named-action', name: 'run-follow-up', version: 1, sideEffect,
+      async execute() { calls += 1; return { outcomeReference: `${root}:done` }; },
+    });
+    const worker = createDurableJobWorker({
+      store: f.store, registry, workerId: 'worker-b', clock: f.clock, pollIntervalMs: 60_000,
+    });
+    worker.start();
+    const completed = await worker.poll();
+    assert.equal(completed.id, job.id);
+    assert.equal(completed.state, 'succeeded');
+    assert.equal(completed.attempt, 1);
+    assert.equal(calls, 1, `${sideEffect} handler executes after release without false reconciliation`);
+    await worker.close();
+  }
 });
 
 test('worker retries only closed transient failures with injected backoff and then succeeds', async (t) => {
@@ -199,7 +224,7 @@ test('worker retries only closed transient failures with injected backoff and th
     store: f.store, registry, workerId: 'worker-a', clock: f.clock,
     pollIntervalMs: 60_000, backoff: () => 500,
   });
-  assert.deepEqual(worker.status(), { accepting: false, closed: false, polling: false, inFlight: false, wakeScheduled: false });
+  assert.deepEqual(worker.status(), { accepting: false, closed: false, polling: false, inFlight: false, wakeScheduled: false, lastWorkerErrorCode: null });
   await f.store.enqueue(input('root-retry'));
   worker.start();
   const failed = await worker.poll();
@@ -212,7 +237,38 @@ test('worker retries only closed transient failures with injected backoff and th
   assert.equal((await worker.poll()).state, 'succeeded');
   assert.equal(calls, 2);
   assert.deepEqual(await worker.close(), { drained: true });
-  assert.deepEqual(worker.status(), { accepting: false, closed: true, polling: false, inFlight: false, wakeScheduled: false });
+  assert.deepEqual(worker.status(), { accepting: false, closed: true, polling: false, inFlight: false, wakeScheduled: false, lastWorkerErrorCode: null });
+});
+
+test('timer poll exposes one bounded worker error and clears it after recovery', async () => {
+  let failClaim = true;
+  let attempted;
+  const firstAttempt = new Promise((resolve) => { attempted = resolve; });
+  const store = {
+    now: () => '2026-09-01T09:00:00.000Z',
+    async claim() {
+      attempted();
+      if (failClaim) {
+        throw new AppError('credential-shaped storage detail must not enter status', {
+          code: 'DURABLE_JOB_STORAGE_UNAVAILABLE', status: 500, details: { secret: 'do-not-export' },
+        });
+      }
+      return null;
+    },
+  };
+  const worker = createDurableJobWorker({
+    store, registry: createDurableJobHandlerRegistry(), workerId: 'worker-a', pollIntervalMs: 60_000,
+  });
+  worker.start();
+  worker.wake();
+  await firstAttempt;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(worker.status().lastWorkerErrorCode, 'DURABLE_JOB_STORAGE_UNAVAILABLE');
+  assert.equal(JSON.stringify(worker.status()).includes('do-not-export'), false);
+  failClaim = false;
+  assert.equal(await worker.poll(), null);
+  assert.equal(worker.status().lastWorkerErrorCode, null);
+  await worker.close();
 });
 
 test('terminal and external-operation failures never retry implicitly', async (t) => {

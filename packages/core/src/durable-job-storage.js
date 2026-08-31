@@ -85,6 +85,15 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
        AND claim_worker_id = ? AND claim_id = ? AND claim_generation = ?
        AND claim_expires_at > ?
   `,
+    release: `
+    UPDATE spine_jobs
+       SET state = 'failed_retryable', attempt = attempt - 1,
+           schedule_at = ?, updated_at = ?, last_error_code = 'JOB_CLAIM_RELEASED',
+           claim_worker_id = NULL, claim_id = NULL, claim_expires_at = NULL
+     WHERE tenant_id = ? AND id = ? AND state = 'claimed' AND attempt > 0
+       AND claim_worker_id = ? AND claim_id = ? AND claim_generation = ?
+       AND claim_expires_at > ?
+  `,
     cancel: `
     UPDATE spine_jobs SET state = 'cancelled', updated_at = ?, last_error_code = NULL
      WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'failed_retryable')
@@ -120,6 +129,12 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
       return Number(statement('finish').run(
         input.state, input.scheduleAt, input.outcomeReference, input.now,
         input.errorCode, input.tenantId, input.id, input.workerId,
+        input.claimId, input.generation, input.now,
+      ).changes);
+    },
+    release(input) {
+      return Number(statement('release').run(
+        input.now, input.now, input.tenantId, input.id, input.workerId,
         input.claimId, input.generation, input.now,
       ).changes);
     },
@@ -206,6 +221,22 @@ export function registerPostgresqlDurableJobStorage(storage, { query, table, own
       `, [
         input.state, input.scheduleAt, input.outcomeReference, input.now,
         input.errorCode, input.tenantId, input.id, input.workerId,
+        input.claimId, input.generation,
+      ]);
+      return Number(result.rowCount ?? 0);
+    },
+    async release(input) {
+      const result = await query(`
+        UPDATE ${table}
+           SET "state" = 'failed_retryable', "attempt" = "attempt" - 1,
+               "schedule_at" = $1, "updated_at" = $1,
+               "last_error_code" = 'JOB_CLAIM_RELEASED',
+               "claim_worker_id" = NULL, "claim_id" = NULL, "claim_expires_at" = NULL
+         WHERE "tenant_id" = $2 AND "id" = $3 AND "state" = 'claimed'
+           AND "attempt" > 0 AND "claim_worker_id" = $4 AND "claim_id" = $5
+           AND "claim_generation" = $6 AND "claim_expires_at" > $1
+      `, [
+        input.now, input.tenantId, input.id, input.workerId,
         input.claimId, input.generation,
       ]);
       return Number(result.rowCount ?? 0);

@@ -303,9 +303,15 @@ export function createDurableJobStore(options) {
       });
     },
     async release(job, workerId) {
-      return finish(job, boundedText(workerId, 'workerId'), {
-        state: 'failed_retryable', scheduleAt: now(), errorCode: 'JOB_CLAIM_RELEASED',
-      });
+      const owner = boundedText(workerId, 'workerId');
+      const claim = requireClaim(job, owner);
+      const instant = now();
+      const changed = await inTransaction((adapter) => adapter.release({
+        tenantId, id: job.id, workerId: owner, claimId: claim.claimId,
+        generation: claim.generation, now: instant,
+      }));
+      if (changed !== 1) throw claimFenced();
+      return get(job.id);
     },
     async cancel(id) {
       const jobId = boundedText(id, 'job id');
@@ -383,6 +389,14 @@ export function createDurableJobWorker(options) {
   let timer = null;
   let pollPromise = null;
   let inFlight = null;
+  let lastWorkerErrorCode = null;
+
+  const recordPollFailure = (error) => {
+    const code = error && typeof error === 'object' ? error.code : null;
+    lastWorkerErrorCode = typeof code === 'string' && ERROR_CODE.test(code) && code.length <= 128
+      ? code
+      : 'DURABLE_JOB_POLL_FAILED';
+  };
 
   const clearWake = () => {
     if (timer !== null) clearTimeout(timer);
@@ -394,7 +408,7 @@ export function createDurableJobWorker(options) {
     if (!accepting || closed) return;
     timer = setTimeout(() => {
       timer = null;
-      void poll().catch(() => {}).finally(() => scheduleWake());
+      void poll().catch(recordPollFailure).finally(() => scheduleWake());
     }, delay);
   };
 
@@ -458,7 +472,16 @@ export function createDurableJobWorker(options) {
       inFlight = execute(job);
       try { return await inFlight; } finally { inFlight = null; }
     })();
-    try { return await pollPromise; } finally { pollPromise = null; }
+    try {
+      const result = await pollPromise;
+      lastWorkerErrorCode = null;
+      return result;
+    } catch (error) {
+      recordPollFailure(error);
+      throw error;
+    } finally {
+      pollPromise = null;
+    }
   }
 
   async function drain(input = {}) {
@@ -504,7 +527,10 @@ export function createDurableJobWorker(options) {
       return result;
     },
     status() {
-      return Object.freeze({ accepting, closed, polling: pollPromise !== null, inFlight: inFlight !== null, wakeScheduled: timer !== null });
+      return Object.freeze({
+        accepting, closed, polling: pollPromise !== null, inFlight: inFlight !== null,
+        wakeScheduled: timer !== null, lastWorkerErrorCode,
+      });
     },
   });
 }

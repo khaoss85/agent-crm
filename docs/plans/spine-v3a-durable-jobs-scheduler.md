@@ -33,9 +33,9 @@ The third approach pays for the adapter seam with two concrete dialects and prev
 - Required persisted identity: job id, tenant id, kind, handler name/version, canonical payload fingerprint and bounded JSON, schedule instant, state, attempt/max attempts, claim owner/generation/expiry, idempotency root/outcome reference, timestamps, and bounded last error code.
 - Payload is JSON-safe data only. Handler identity comes from a named registry; no source, function, command, secret, or provider credential is persisted.
 - PostgreSQL due claims select one eligible row in a transaction with `FOR UPDATE SKIP LOCKED`; SQLite serializes claim mutation through the current single-writer transaction. Multi-node SQLite support is not claimed.
-- Completion/release requires the same tenant, worker, generation, and unexpired claim. Expired claims are recoverable; active claims cannot be stolen.
+- Completion/release requires the same tenant, worker, generation, and unexpired claim. A pre-handler release preserves its generation fence but returns the execution attempt; expired claims are recoverable and active claims cannot be stolen.
 - Retry is opt-in through a closed retryable error code, bounded by `maxAttempts`, and scheduled using an injected deterministic backoff. Validation, authorization, policy, unknown, and provider failures are terminal by default; no external provider operation is replayed implicitly.
-- Worker lifecycle is explicit: `start`, bounded `poll`, `drain`, `stop`, and `close`. Stop prevents new claims; current work either finishes inside the drain deadline or its claim is explicitly released for recovery. No constructor or app factory starts a timer.
+- Worker lifecycle is explicit: `start`, bounded `poll`, `drain`, `stop`, and `close`. Stop prevents new claims; current work either finishes inside the drain deadline or a claim not yet handed to its handler is explicitly released for recovery. Timer poll failures remain visible as one bounded code until a successful poll. No constructor or app factory starts a timer.
 
 ## Milestones
 

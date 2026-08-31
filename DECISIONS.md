@@ -3995,7 +3995,12 @@ not a claim that SQLite supports multi-node workers.
 
 Construction starts nothing. A worker has explicit `start`, bounded `poll`,
 `drain`, `stop` and `close`; application composition does not gain a hidden
-timer in this slice. The worker retries only two closed transient handler codes
+timer in this slice. If shutdown wins after claim but before handler invocation,
+an owner-fenced release preserves the incremented claim generation while
+returning the execution attempt, so repeated drains cannot exhaust untouched
+work or falsely classify an external operation as already attempted. Timer poll
+failures remain visible as one bounded code in worker status and clear only
+after a successful poll. The worker retries only two closed transient handler codes
 with bounded injected backoff. Unknown, validation, authorization and policy
 failures are terminal. A recovered `external-operation-v2` claim never invokes
 the provider again: its idempotency root is the stable external operation
@@ -4032,6 +4037,10 @@ tenancy or a tenant switcher.
 - A caller can enqueue through an existing transaction; rollback leaves no job.
 - Active claims cannot be stolen; expired claims gain a new generation; a final
   expired attempt becomes visibly terminal rather than exceeding `maxAttempts`.
+- A pre-handler release is fenced by tenant, worker, claim fingerprint,
+  generation and live lease, and does not consume the execution-attempt budget.
+- Worker status exposes only the last bounded poll error code, never raw storage
+  error text or details; a later successful poll clears it.
 - Cancel and reschedule apply only before a claim. A handler that outlives its
   lease may finish too late and is fenced; internal business handlers therefore
   still require their own idempotent outcome identity.
