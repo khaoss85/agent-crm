@@ -790,7 +790,7 @@ test('building the thing SPINE_NOT_MODELED says is absent contradicts the senten
   // describes, which is the failure this contract exists to close.
   for (const [id, resource] of [
     ['spine.durable_jobs.implemented', 'job-run'],
-    ['spine.secrets_backups.implemented', 'secret-binding'],
+    ['spine.secrets_backups.implemented', 'backup-run'],
   ]) {
     const mutated = await bundle();
     mutated.composition.resources = [...mutated.composition.resources, resource];
@@ -803,6 +803,8 @@ test('building the thing SPINE_NOT_MODELED says is absent contradicts the senten
   // work tasks exist, a person moves every one of them, and neither is a job.
   const clean = buildFacts(await bundle());
   assert.equal(clean.facts.find((fact) => fact.id === 'spine.durable_jobs.implemented').value, 'absent');
+  assert.equal(clean.facts.find((fact) => fact.id === 'spine.secret_provider.implemented').value, 'implemented');
+  assert.equal(clean.facts.find((fact) => fact.id === 'spine.secrets_backups.implemented').value, 'absent');
 });
 
 test('a package the composition no longer holds contradicts its own factory', async () => {

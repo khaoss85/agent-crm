@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
 import { AccordoClient } from '../packages/sdk/src/client.js';
@@ -35,6 +35,7 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const cli = join(repoRoot, 'packages/cli/bin/accordo.js');
+const secretProviderHref = pathToFileURL(join(repoRoot, 'packages/core/src/secret-provider.js')).href;
 const actorHeaders = Object.freeze({
   'content-type': 'application/json',
   'x-actor-type': 'user',
@@ -214,22 +215,37 @@ test('M4C CLI child process refuses unauthenticated PostgreSQL mutators', () => 
     '',
   ].join('\n'));
   chmodSync(verifierPath, 0o600);
+  const secretProviderPath = join(root, 'providers/secret-provider.mjs');
+  writeFileSync(secretProviderPath, `import { createSecretMaterial } from ${JSON.stringify(secretProviderHref)};
+export const secretProviderContract = 1;
+export const secretProviderTrust = 'production';
+export function createSecretProvider() {
+  return {
+    contract: 1,
+    name: 'm4c-fixture',
+    trust: 'production',
+    resolveSecret() { return createSecretMaterial('SUPERSECRET_SENTINEL_PASSWORD'); },
+  };
+}
+`);
+  chmodSync(secretProviderPath, 0o600);
   const configPath = join(root, 'deployment-storage.json');
   writeFileSync(configPath, `${JSON.stringify({
-    contract: 1,
+    contract: 2,
     adapter: 'postgresql',
     connection: {
       host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
-      password: 'SUPERSECRET_SENTINEL_PASSWORD', sslmode: 'verify-full',
+      passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD', sslmode: 'verify-full',
       tls: { enabled: true, verify: 'full', caFile: './tls/ca.pem', servername: 'db.example.test' },
     },
     controlPlane: {
       host: '127.0.0.1', port: 2, database: 'accordo_control', user: 'accordo',
-      password: 'SUPERSECRET_SENTINEL_PASSWORD', sslmode: 'verify-full',
+      passwordSecret: 'ACCORDO_TEST_CONTROL_PASSWORD', sslmode: 'verify-full',
       tls: { enabled: true, verify: 'full', caFile: './tls/ca.pem', servername: 'db.example.test' },
     },
     spine: { mode: 'production', tenant: { id: 'acme' } },
     identityVerifier: './providers/identity-verifier.mjs',
+    secretProvider: { kind: 'module', path: './providers/secret-provider.mjs' },
   }, null, 2)}\n`);
   chmodSync(configPath, 0o600);
   for (const command of APP_COMMANDS.filter((name) => name !== 'serve')) {

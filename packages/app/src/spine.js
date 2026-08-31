@@ -76,14 +76,16 @@ export const DEFAULT_ACTION_PERMISSION = 'records.write';
  * Hoisted here it is a **declaration**: importable, frozen, spread into
  * `describe()` unchanged, and read by `scripts/repo-truth.js` as the authority
  * behind `spine.postgresql.implemented`, `spine.durable_jobs.implemented` and
- * `spine.secrets_backups.implemented`. Those facts are therefore
+ * `spine.secrets_backups.implemented`. The bounded self-host secret-provider
+ * contract has its own positive executable fact; the combined remainder stays
+ * declared absent. Those absence facts are therefore
  * *declared-absent* rather than *inferred from silence*, which is the
  * distinction ADR-039 §7.1 turns on.
  */
 export const SPINE_NOT_MODELED = Object.freeze([
   'shared-database row-level tenancy (Spine v2 remainder)',
   'durable jobs, outbox or scheduler (Spine v3)',
-  'secret manager, backups, restore, deploy or rollback (Spine v4)',
+  'managed secret custody or service, backups, restore, deploy or rollback (Spine v4 remainder)',
   'password, session or credential storage — the framework authenticates nobody',
   'email invitations',
   'SOC2, GDPR or any compliance posture',

@@ -57,20 +57,21 @@ test('deployment loader returns a PostgreSQL selection without connecting', () =
   try {
     const configPath = join(root, 'deployment-storage.json');
     writeFileSync(configPath, `${JSON.stringify({
-      contract: 1,
+      contract: 2,
       adapter: 'postgresql',
       connection: {
         host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
-        password: 'SUPERSECRET_SENTINEL_PASSWORD', sslmode: 'verify-full',
+        passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD', sslmode: 'verify-full',
         tls: { enabled: true, verify: 'full', caFile: './tls/ca.pem', servername: 'db.example.test' },
       },
       controlPlane: {
         host: '127.0.0.1', port: 1, database: 'accordo_control', user: 'accordo',
-        password: 'SUPERSECRET_SENTINEL_PASSWORD', sslmode: 'verify-full',
+        passwordSecret: 'ACCORDO_TEST_CONTROL_PASSWORD', sslmode: 'verify-full',
         tls: { enabled: true, verify: 'full', caFile: './tls/ca.pem', servername: 'db.example.test' },
       },
       spine: { mode: 'production', tenant: { id: 'acme' } },
       identityVerifier: './providers/identity-verifier.js',
+      secretProvider: { kind: 'module', path: './providers/secret-provider.mjs' },
     }, null, 2)}\n`);
     chmodSync(configPath, 0o600);
     const selected = loadDeploymentStorage({ configPath, env: {} });
@@ -88,16 +89,17 @@ test('identical PostgreSQL endpoints refuse before connect', () => {
     const configPath = join(root, 'deployment-storage.json');
     const endpoint = {
       host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
-      password: 'SUPERSECRET_SENTINEL_PASSWORD', sslmode: 'verify-full',
+      passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD', sslmode: 'verify-full',
       tls: { enabled: true, verify: 'full', caFile: './tls/ca.pem' },
     };
     writeFileSync(configPath, `${JSON.stringify({
-      contract: 1,
+      contract: 2,
       adapter: 'postgresql',
       connection: endpoint,
       controlPlane: endpoint,
       spine: { mode: 'production', tenant: { id: 'acme' } },
       identityVerifier: './providers/identity-verifier.js',
+      secretProvider: { kind: 'module', path: './providers/secret-provider.mjs' },
     }, null, 2)}\n`);
     chmodSync(configPath, 0o600);
     assert.throws(

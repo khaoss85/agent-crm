@@ -113,6 +113,12 @@ export const TRUTH_LIMITATIONS = Object.freeze([
     'every fact is read from checked-in source or from a recorded receipt. Nothing here reports what a '
     + 'deployed instance is doing: which mode it chose, which tenant it is bound to, whether a verifier is '
     + 'configured and who holds which membership remain runtime facts'],
+  ['SELF_HOST_SECRET_PROVIDER_ONLY',
+    'the implemented fact covers the bounded provider-neutral runtime contract and its local/test/provider-plugin '
+    + 'boundaries. It is not managed secret custody, rotation, availability or provider health'],
+  ['MANAGED_SECRETS_BACKUPS_OBSERVABILITY_ABSENT',
+    'the combined Spine v4 remainder is absent: no managed secret custody/service, backup/restore contract or '
+    + 'observability export/backend is implemented by this fact'],
   ['REFERENCE_COMPOSITION_NOT_THE_PROJECT',
     'packages/domains/generated/index.js is empty in this repository, so package facts are read from a named '
     + 'REFERENCE composition of the nine checked-in domain packages. That is what the framework can compose, '
@@ -195,6 +201,7 @@ export const AUTHORITY_SOURCES = Object.freeze([
   'packages/core/src/tenant-storage.js',
   'packages/core/src/tenant-binding.js',
   'packages/core/src/storage-contract.js',
+  'packages/core/src/secret-provider.js',
   'packages/core/src/database.js',
   'packages/core/src/errors.js',
   'packages/core/src/validation.js',
@@ -317,8 +324,8 @@ const DECLARED_ABSENCE = Object.freeze({
   },
   'spine.secrets_backups.implemented': {
     in: 'SPINE_NOT_MODELED',
-    match: /secret manager|backups/i,
-    absentPrefixes: ['secret', 'secrets', 'backup', 'backups', 'restore', 'vault', 'credential', 'key-rotation'],
+    match: /managed secret custody|backups/i,
+    absentPrefixes: ['backup', 'backups', 'restore'],
   },
 });
 
@@ -767,6 +774,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     const authorization = await import(url('packages/core/src/authorization.js'));
     const runtimeMode = await import(url('packages/core/src/runtime-mode.js'));
     const tenantStorage = await import(url('packages/core/src/tenant-storage.js'));
+    const secretProvider = await import(url('packages/core/src/secret-provider.js'));
     const spine = await import(url('packages/app/src/spine.js'));
 
     bundle.identityContract = identity.IDENTITY_CONTRACT;
@@ -779,6 +787,29 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     bundle.runtimeModes = [...runtimeMode.RUNTIME_MODES];
     bundle.tenantStrategy = tenantStorage.TENANT_STRATEGY;
     bundle.tenantStorageContract = tenantStorage.TENANT_STORAGE_CONTRACT;
+    bundle.secretProviderContract = secretProvider.SECRET_PROVIDER_CONTRACT;
+    bundle.secretProviderPurposes = [...(secretProvider.SECRET_PURPOSES ?? [])];
+    bundle.secretProviderOperations = [
+      secretProvider.defineSecretProvider,
+      secretProvider.createEnvironmentSecretProvider,
+      secretProvider.createFixtureSecretProvider,
+      secretProvider.createSecretResolver,
+      secretProvider.resolveProductionSecretProvider,
+    ].map((operation) => typeof operation === 'function');
+    const truthSecretProvider = secretProvider.createFixtureSecretProvider({
+      'truth.secret-provider': 'repository-truth-secret-provider-probe',
+    });
+    const truthSecretResolver = secretProvider.createSecretResolver({
+      provider: truthSecretProvider,
+      mode: 'local-development',
+    });
+    const truthSecretLease = await truthSecretResolver.resolveSecret('truth.secret-provider', {
+      purpose: 'identity-verifier',
+      tenantId: 'repository-truth',
+    });
+    bundle.secretProviderProbe = await truthSecretLease.use(
+      (value) => value === 'repository-truth-secret-provider-probe',
+    ) && truthSecretLease.disposed === true;
     // A limitation string is `CODE — prose`; the code is the structural half.
     bundle.tenantLimitationCodes = [...tenantStorage.TENANT_LIMITATIONS]
       .map((entry) => /^([A-Z][A-Z0-9_]+)/.exec(String(entry))?.[1] ?? '')
@@ -1936,6 +1967,25 @@ export function buildFacts(bundle) {
     limitations: ['STORAGE_FACT_IS_BOUNDED_PROBE'],
   });
 
+  add({
+    id: 'spine.secret_provider.implemented',
+    value: bundle.secretProviderContract === 1
+      && bundle.secretProviderPurposes?.length === 3
+      && bundle.secretProviderOperations?.every(Boolean)
+      && bundle.secretProviderProbe === true
+      ? 'implemented'
+      : 'absent',
+    authority: 'spine.contract',
+    evidence: [
+      'packages/core/src/secret-provider.js#SECRET_PROVIDER_CONTRACT',
+      'packages/core/src/secret-provider.js#createSecretResolver',
+      'packages/core/src/secret-provider.js#resolveProductionSecretProvider',
+      'executable-probe:fixture-resolve-single-use-dispose',
+    ],
+    scope: 'framework',
+    limitations: ['SELF_HOST_SECRET_PROVIDER_ONLY', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
+  });
+
   for (const [id, rule] of Object.entries(DECLARED_ABSENCE)) {
     const declaration = (bundle.spineNotModeled ?? []).find((entry) => rule.match.test(String(entry)));
     if (!declaration) {
@@ -1952,7 +2002,9 @@ export function buildFacts(bundle) {
       authority: 'spine.contract',
       evidence: ['packages/app/src/spine.js#SPINE_NOT_MODELED', `declared:${declaration}`],
       scope: 'framework',
-      limitations: ['TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
+      limitations: id === 'spine.secrets_backups.implemented'
+        ? ['MANAGED_SECRETS_BACKUPS_OBSERVABILITY_ABSENT', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME']
+        : ['TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
     });
   }
 
