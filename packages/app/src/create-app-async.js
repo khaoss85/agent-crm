@@ -168,6 +168,33 @@ function sslFromEndpoint(endpoint, projectRoot) {
   };
 }
 
+export function passwordFromEndpoint(endpoint, secretResolver, purpose, tenantId) {
+  if (typeof endpoint.passwordSecret !== 'string' || !secretResolver) {
+    throw new AppError(
+      'PostgreSQL deployment storage requires a resolvable credential reference',
+      { code: 'DEPLOYMENT_STORAGE_SECRET_REFERENCE_REQUIRED', status: 500, details: { adapter: 'postgresql' } },
+    );
+  }
+  return async function resolvePostgresqlPassword() {
+    const lease = await secretResolver.resolveSecret(endpoint.passwordSecret, {
+      purpose,
+      tenantId,
+    });
+    return lease.use((value) => value);
+  };
+}
+
+function postgresqlEndpoint(endpoint, secretResolver, purpose, tenantId, projectRoot) {
+  return {
+    host: endpoint.host,
+    ...(endpoint.port !== undefined ? { port: endpoint.port } : {}),
+    database: endpoint.database,
+    user: endpoint.user,
+    password: passwordFromEndpoint(endpoint, secretResolver, purpose, tenantId),
+    ssl: sslFromEndpoint(endpoint, projectRoot),
+  };
+}
+
 function loopbackEndpoint(endpoint) {
   if (!LOOPBACK.has(String(endpoint.host))) {
     throw bindingRequired();
@@ -196,7 +223,7 @@ function loopbackEndpoint(endpoint) {
  *   signatureTimeoutMs?: number,
  *   selected?: any,
  *   adapter?: unknown,
- *   deployment?: { selection: any, identityVerifier: any },
+ *   deployment?: { selection: any, identityVerifier: any, secretResolver?: any },
  *   testHarness?: any,
  *   spine?: any,
  *   identityVerifier?: any,
@@ -228,14 +255,20 @@ export async function createAccordoAppAsync(options = {}) {
       listenMode,
       tenantId: selection.spine.tenant.id,
       identityVerifier: options.deployment.identityVerifier,
-      control: {
-        ...selection.controlPlane,
-        ssl: sslFromEndpoint(selection.controlPlane, projectRoot),
-      },
-      data: {
-        ...selection.connection,
-        ssl: sslFromEndpoint(selection.connection, projectRoot),
-      },
+      control: postgresqlEndpoint(
+        selection.controlPlane,
+        options.deployment.secretResolver,
+        'postgresql-control-password',
+        selection.spine.tenant.id,
+        projectRoot,
+      ),
+      data: postgresqlEndpoint(
+        selection.connection,
+        options.deployment.secretResolver,
+        'postgresql-data-password',
+        selection.spine.tenant.id,
+        projectRoot,
+      ),
       moduleMigrations: options.moduleMigrations,
       clock: options.clock,
       approvalThresholdCents: options.approvalThresholdCents,

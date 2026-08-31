@@ -235,6 +235,34 @@ database or listener exists. Live discover/attest remains M3.
 | Customer Data | `not_applicable` | package behaviour does not select the verifier provider |
 | Custom-package fixture | `not_applicable` | customer packages receive no identityVerifier document |
 
+### Runtime secret-provider contract v1 assessment (Production Spine v4A)
+
+The secret resolver is a horizontal runtime capability consumed at the
+deployment boundary by PostgreSQL control/data authentication and identity
+verifier initialization. Domain packages do not receive the resolver, secret
+references or leases. Existing fixture provider definitions remain
+credential-free; real external-provider credentials are later adapter work, not
+an excuse to push this boundary into every domain.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project records never resolve credentials; the PostgreSQL adapter consumes them below the service boundary |
+| Pipeline | `not_applicable` | pipeline composition has no provider credential |
+| Lead Intelligence | `deferred` | only a deterministic fixture provider ships; a future real enrichment adapter must consume the resolver without putting references in its definition fingerprint |
+| Commercial Operations | `deferred` | only deterministic fixture catalog providers ship; real catalog adapter credential binding is later provider work |
+| Signature & Order | `deferred` | the fixture verification key remains explicitly test-only; a real signature adapter must resolve its credential at the deployment boundary |
+| Contract Activation | `not_applicable` | activation calls no external provider |
+| Delivery | `not_applicable` | delivery calls no external provider |
+| Service | `not_applicable` | service calls no external provider |
+| Work | `not_applicable` | work calls no external provider |
+| Lifecycle | `not_applicable` | lifecycle calls no external provider |
+| Customer Data | `not_applicable` | the bounded source envelope carries provenance, not a provider credential |
+| Custom-package fixture | `not_applicable` | customer packages do not receive internal deployment secrets machinery |
+
+Closing milestone for a `deferred` row is the corresponding real provider
+adapter with executable zero-leak evidence. This PR does not refactor a domain,
+ship a third-party credential or make provider work retryable.
+
 ### Public site provenance contract v2 assessment
 
 `/version.json` v2 is a horizontal discovery contract for the generated public

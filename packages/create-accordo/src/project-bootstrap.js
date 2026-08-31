@@ -508,7 +508,7 @@ export function planProjectBootstrap({ directory, name, cwd = process.cwd(), sou
       // Stated, not discovered: the generated composition file is the empty one.
       composedPackages: [],
       databaseBackend: 'sqlite (node:sqlite)',
-      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite or dedicated-database PostgreSQL; shared-database tenancy, durable jobs, secrets and backups are absent',
+      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite or dedicated-database PostgreSQL, with a bounded self-host secret-provider contract; shared-database tenancy, durable jobs, managed secret custody/service and backups are absent',
     },
     source: {
       resolved: Boolean(sourceRoot),

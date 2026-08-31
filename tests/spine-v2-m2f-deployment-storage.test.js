@@ -72,14 +72,14 @@ function postgresTls() {
 
 function postgresEnvelope(overrides = {}) {
   return {
-    contract: 1,
+    contract: 2,
     adapter: 'postgresql',
     connection: {
       host: '127.0.0.1',
       port: 1,
       database: 'accordo',
       user: 'accordo',
-      password: SENTINEL_PASSWORD,
+      passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD',
       sslmode: 'verify-full',
       tls: postgresTls(),
     },
@@ -88,12 +88,13 @@ function postgresEnvelope(overrides = {}) {
       port: 1,
       database: 'accordo_control',
       user: 'accordo',
-      password: SENTINEL_PASSWORD,
+      passwordSecret: 'ACCORDO_TEST_CONTROL_PASSWORD',
       sslmode: 'verify-full',
       tls: postgresTls(),
     },
     spine: { mode: 'production', tenant: { id: 'acme' } },
     identityVerifier: './providers/identity-verifier.js',
+    secretProvider: { kind: 'module', path: './providers/secret-provider.mjs' },
     ...overrides,
   };
 }
@@ -138,7 +139,7 @@ function assertCode(fn, code, extras = []) {
 }
 
 test('M2-17 publishes a versioned loader and SQLite --db compatibility', () => {
-  assert.equal(DEPLOYMENT_STORAGE_CONTRACT, 1);
+  assert.equal(DEPLOYMENT_STORAGE_CONTRACT, 2);
   assert.equal(DEPLOYMENT_STORAGE_ENV, 'ACCORDO_DEPLOYMENT_STORAGE');
 
   const selected = loadDeploymentStorage({ dbPath: ':memory:', env: {} });
@@ -269,7 +270,7 @@ test('M2-17 extra envelope keys, prototypes and unknown adapters refuse', () => 
 
 test('M2-17 unsupported contract versions refuse without echoing bytes', () => {
   const root = scratch();
-  const configPath = writeConfig(root, sqliteEnvelope({ contract: 2 }));
+  const configPath = writeConfig(root, sqliteEnvelope({ contract: 3 }));
   assertCode(() => loadDeploymentStorage({ configPath, env: {} }), 'DEPLOYMENT_STORAGE_CONTRACT_UNSUPPORTED', [configPath]);
 });
 
@@ -484,7 +485,7 @@ test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and mi
       body: postgresEnvelope({
         connection: {
           host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
-          password: SENTINEL_PASSWORD, sslmode: 'verify-full',
+          passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD', sslmode: 'verify-full',
         },
       }),
     },
@@ -493,7 +494,7 @@ test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and mi
       body: postgresEnvelope({
         connection: {
           host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
-          password: SENTINEL_PASSWORD, sslmode: 'verify-full',
+          passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD', sslmode: 'verify-full',
           tls: { enabled: false, verify: 'full', caFile: './tls/deployment-ca.pem' },
         },
       }),
@@ -503,7 +504,7 @@ test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and mi
       body: postgresEnvelope({
         connection: {
           host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
-          password: SENTINEL_PASSWORD, sslmode: 'disable',
+          passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD', sslmode: 'disable',
           tls: postgresTls(),
         },
       }),
@@ -513,7 +514,7 @@ test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and mi
       body: postgresEnvelope({
         connection: {
           host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
-          password: SENTINEL_PASSWORD, sslmode: 'allow',
+          passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD', sslmode: 'allow',
           tls: postgresTls(),
         },
       }),
@@ -523,7 +524,7 @@ test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and mi
       body: postgresEnvelope({
         connection: {
           host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
-          password: SENTINEL_PASSWORD, sslmode: 'prefer',
+          passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD', sslmode: 'prefer',
           tls: postgresTls(),
         },
       }),
@@ -533,7 +534,7 @@ test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and mi
       body: postgresEnvelope({
         connection: {
           host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
-          password: SENTINEL_PASSWORD, sslmode: 'require',
+          passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD', sslmode: 'require',
           tls: postgresTls(),
         },
       }),
@@ -543,7 +544,7 @@ test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and mi
       body: postgresEnvelope({
         connection: {
           host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
-          password: SENTINEL_PASSWORD, sslmode: 'verify-full',
+          passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD', sslmode: 'verify-full',
           tls: { enabled: true, verify: 'none', caFile: './tls/deployment-ca.pem' },
         },
       }),
@@ -553,7 +554,7 @@ test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and mi
       body: postgresEnvelope({
         connection: {
           host: '127.0.0.1', port: 1, database: 'accordo', user: 'accordo',
-          password: SENTINEL_PASSWORD, sslmode: 'verify-full',
+          passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD', sslmode: 'verify-full',
           tls: {
             enabled: true, verify: 'full', caFile: './tls/deployment-ca.pem',
             rejectUnauthorized: false,
@@ -566,7 +567,7 @@ test('M2-18 parser refuses plaintext, weak sslmode, verification-disabled and mi
       body: postgresEnvelope({
         controlPlane: {
           host: '127.0.0.1', port: 1, database: 'accordo_control', user: 'accordo',
-          password: SENTINEL_PASSWORD, sslmode: 'verify-full',
+          passwordSecret: 'ACCORDO_TEST_CONTROL_PASSWORD', sslmode: 'verify-full',
           tls: { enabled: false, verify: 'full', caFile: './tls/deployment-ca.pem' },
         },
       }),

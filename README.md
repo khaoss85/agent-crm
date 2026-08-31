@@ -231,8 +231,10 @@ something nobody checked. No number in any of these sentences is checked either
 - **Nothing bills.** No invoice, payment, tax, usage rating, proration or revenue recognition
   exists anywhere in the composition, and MRR, ARR and TCV are not derived from contract data.
   <!-- truth: billing.implemented=absent -->
-- **No backups, no restore, no secret manager.** None of them exists, and no recovery
-  objective is claimed.
+- **No backups, restore or managed secret custody/service.** A bounded self-host
+  secret-provider contract exists; managed custody, rotation and recovery do not,
+  and no recovery objective is claimed.
+  <!-- truth: spine.secret_provider.implemented=implemented -->
   <!-- truth: spine.secrets_backups.implemented=absent -->
 - **The customer foundation is not a CDP, and the profile is not a timeline.** It links and
   projects the records that already exist; there is no warehouse, no streaming, no activation

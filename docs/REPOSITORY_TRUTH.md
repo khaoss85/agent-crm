@@ -172,7 +172,7 @@ adapter-owned raw state.
     silence, and a declaration that has gone is a failure, not a default. **Every
     declared-absence fact also carries a second authority read from the code** —
     the manifest's production dependencies for PostgreSQL, a namespace probe for
-    durable jobs and for secrets/backups, the journey limitation code for billing
+    durable jobs and for the backup/restore remainder, the journey limitation code for billing
     — because a hand-maintained English sentence only ever answers "does the list
     still say this". Deleting the sentence refuses the fact; *building* the thing
     and leaving the sentence standing has to fail too, or the claim outlives the
@@ -314,6 +314,8 @@ Published in the document's own `limitations[]`, by code:
 |---|---|
 | `STORAGE_FACT_IS_BOUNDED_PROBE` | Company, generated-service and Work storage facts cover only their named executable probes and field shapes, not every checked-in service, schema or storage path |
 | `TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME` | nothing here reports what a deployed instance is doing |
+| `SELF_HOST_SECRET_PROVIDER_ONLY` | the positive secret-provider fact covers the bounded public runtime contract and local/test/provider-plugin boundaries, not managed custody, rotation, availability or provider health |
+| `MANAGED_SECRETS_BACKUPS_OBSERVABILITY_ABSENT` | the combined Spine v4 remainder stays absent: no managed secret custody/service, backup/restore contract or observability export/backend is claimed |
 | `REFERENCE_COMPOSITION_NOT_THE_PROJECT` | `packages/domains/generated/index.js` is empty here, so package facts describe a **reference** composition of the nine checked-in packages, not this checkout's |
 | `JTBD_ROWS_NOT_ENCODED` | no job status is a fact; only a person moves one |
 | `NO_SCENARIO_RECEIPT_AVAILABLE` | `scenario run` writes nothing into the project, so this repository checks in no scenario receipt and scenario evidence is not an authority in v1 |
