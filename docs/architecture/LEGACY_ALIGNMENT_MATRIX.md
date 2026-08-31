@@ -83,6 +83,37 @@ providers, not where the domain lives.
 Columns are the six built domains. Read a row as: *does this domain use this
 horizontal capability the way the contract intends?*
 
+### Durable jobs and scheduler contract v1 (Production Spine v3A)
+
+Horizontal runtime capability: a tenant-bound application can atomically enqueue
+named work, claim due work with a fenced lease, recover after restart, and run an
+explicitly started worker. PostgreSQL uses transactional
+`FOR UPDATE SKIP LOCKED`; SQLite uses its one-connection single-writer boundary
+and does not claim multi-node worker support. This slice adds no domain timer
+consumer, cron language, outbox, operator surface, worker autostart or public
+production-readiness claim.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | the portable data plane owns the durable primitive, but no kernel Company/Contact/Opportunity/Approval behavior schedules itself in V3A |
+| Pipeline | `not_applicable` | pipeline composition defines lifecycle state and owns no timer operation |
+| Lead Intelligence | `deferred` | no scoring or routing timer is adopted; a later domain slice must name a real operation and idempotent outcome |
+| Commercial Operations | `deferred` | no quote/catalog timer is adopted; provider work must remain behind external-operation v2 and reconciliation |
+| Signature & Order | `deferred` | no signature provider effect is replayed from a job; a later outbox/effect slice must preserve external-operation v2 identity |
+| Contract Activation | `deferred` | V3C will adopt the primitive for renewal/notice evaluation without authorizing an automatic commercial decision |
+| Delivery | `deferred` | no delivery obligation timer is adopted in this infrastructure slice |
+| Service | `deferred` | no SLA or escalation timer is adopted in this infrastructure slice |
+| Work | `deferred` | V3C will adopt the primitive for named follow-up work while preserving its caller-owned transaction proof |
+| Lifecycle | `deferred` | no lifecycle proposal timer is adopted in this infrastructure slice |
+| Customer Data | `not_applicable` | linking/projection owns no current scheduled operation and V3A does not invent one |
+| Custom-package fixture | `not_applicable` | the fixture proves package authoring and declares no scheduled operation |
+| Custom-package score-disclosure fixture | `not_applicable` | the capability-consumer fixture reads scoring disclosure and declares no scheduled operation |
+
+Closing milestone for the named Contract Activation and Work rows: Spine v3C
+timer consumers. Every other `deferred` row requires its own later causal domain
+adoption with executable idempotency and approval evidence; V3A does not mass-fit
+jobs into existing packages.
+
 ### Deployment-storage loader contract v1 assessment (Production Spine v2 M2F)
 
 The shared deployment-storage loader is a horizontal *runtime* capability: every

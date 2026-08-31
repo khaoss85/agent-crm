@@ -211,6 +211,44 @@ const DATA_PLANE_MIGRATIONS = [
       END;
     `,
   },
+  {
+    version: 9,
+    name: 'spine_durable_jobs',
+    // Spine v3A. Jobs are tenant data-plane evidence. The tenant column is a
+    // transition authority inside one already-bound instance, not shared-row
+    // tenancy and not permission to point one app at several tenants.
+    sql: `
+      CREATE TABLE spine_jobs (
+        id TEXT PRIMARY KEY,
+        contract_version INTEGER NOT NULL CHECK(contract_version = 1),
+        tenant_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        handler_name TEXT NOT NULL,
+        handler_contract INTEGER NOT NULL CHECK(handler_contract = 1),
+        handler_version INTEGER NOT NULL CHECK(handler_version BETWEEN 1 AND 9007199254740991),
+        payload_json TEXT NOT NULL,
+        payload_fingerprint TEXT NOT NULL,
+        schedule_at TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('pending', 'claimed', 'succeeded', 'failed_retryable', 'failed_terminal', 'cancelled')),
+        attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 9007199254740991),
+        max_attempts INTEGER NOT NULL CHECK(max_attempts BETWEEN 1 AND 9007199254740991),
+        claim_worker_id TEXT,
+        claim_id TEXT,
+        claim_generation INTEGER NOT NULL CHECK(claim_generation BETWEEN 0 AND 9007199254740991),
+        claim_expires_at TEXT,
+        idempotency_root TEXT NOT NULL,
+        outcome_reference TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_error_code TEXT,
+        UNIQUE(tenant_id, idempotency_root)
+      ) STRICT;
+
+      CREATE INDEX spine_jobs_due ON spine_jobs(tenant_id, state, schedule_at, id);
+
+      CREATE INDEX spine_jobs_claim_expiry ON spine_jobs(tenant_id, state, claim_expires_at, id);
+    `,
+  },
 ];
 
 /**

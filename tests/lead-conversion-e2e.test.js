@@ -591,7 +591,7 @@ test('core migration v2 upgrades an existing v1 database in place', async (t) =>
   // v7 is the control-plane audit-intent ledger (ADR-038), and v8 is the
   // schema_migrations checksum column. The point of pinning the complete
   // global order is that an append cannot go unnoticed.
-  assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   const legacy = database.raw.prepare('SELECT source_key, pipeline_key, pipeline_stage FROM opportunities WHERE id = ?').get('o1');
   assert.equal(legacy.source_key, null, 'pre-existing rows keep a NULL source key');
   assert.equal(legacy.pipeline_key, null, 'pre-existing rows keep NULL pipeline state (v3)');

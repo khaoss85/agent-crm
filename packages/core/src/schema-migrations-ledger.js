@@ -134,7 +134,7 @@ export function expectedSchemaFromIntent(applied) {
   /** @type {Map<string, string>} */
   const triggers = new Map();
   for (const intent of CORE_SCHEMA_INTENT) {
-    if (intent.version >= SCHEMA_MIGRATIONS_CHECKSUM_VERSION) continue;
+    if (intent.version === SCHEMA_MIGRATIONS_CHECKSUM_VERSION) continue;
     const recordedName = appliedVersions.get(intent.version);
     if (recordedName === undefined) continue;
     if (recordedName !== intent.name) throw ledgerUnknown(intent.version, recordedName);

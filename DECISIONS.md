@@ -3973,3 +3973,69 @@ means classifying a load-bearing current count against a date, an ADR number, a
 currency example, a receipt's raw count and a digit inside a code fence, and
 `findLooseTestCounts` needed two hand-tuned negative lookbehinds to survive
 widening from `site/` to `docs/` for a single noun.
+
+## ADR-040 — Durable work is a tenant-bound data-plane contract with fenced claims and explicit workers
+
+**Date:** 2026-08-31
+**Status:** accepted
+
+### Decision
+
+Accordo has one versioned durable-job contract on the tenant data plane. A job
+persists a named handler identity and canonical JSON-safe payload, never source
+code or a command. Every row carries the already-bound application tenant,
+schedule instant, bounded attempt policy, idempotency root, claim generation and
+claim fingerprint. Every completion is compare-and-set on tenant, worker,
+generation, fingerprint and unexpired lease.
+
+PostgreSQL claims one due row inside the existing connection-affine transaction
+with `FOR UPDATE SKIP LOCKED`. SQLite claims inside its existing
+`BEGIN IMMEDIATE` single-writer transaction. This is local SQLite compatibility,
+not a claim that SQLite supports multi-node workers.
+
+Construction starts nothing. A worker has explicit `start`, bounded `poll`,
+`drain`, `stop` and `close`; application composition does not gain a hidden
+timer in this slice. The worker retries only two closed transient handler codes
+with bounded injected backoff. Unknown, validation, authorization and policy
+failures are terminal. A recovered `external-operation-v2` claim never invokes
+the provider again: its idempotency root is the stable external operation
+identity and the recovered job becomes reconciliation-required.
+
+### Context
+
+Spine v2 can persist business state and recover uncertain write outcomes, but a
+future timestamp or process restart still loses in-memory follow-up work. A
+naive queue beside the application transaction would also recreate the exact
+process-death gap Spine v3 must close. V3A therefore needs a primitive later
+V3B/V3C work can enqueue through the caller's existing transaction.
+
+The data plane is deliberate. Jobs act on tenant CRM state and must share its
+commit boundary. The required `tenant_id` is transition authority and evidence
+inside one tenant-bound instance; it does not introduce shared-database row
+tenancy or a tenant switcher.
+
+### Alternatives rejected
+
+1. **Expand the generic Storage Contract DSL with inequalities, row locks and
+   returning clauses.** Rejected because one consumer would substantially widen
+   the public structured-SQL vocabulary and imply dialect equivalence where none
+   exists.
+2. **Give the queue a second SQLite connection or PostgreSQL pool.** Rejected
+   because it would escape writer-lease authority and could not atomically join
+   the business transaction.
+3. **Use an in-process timer and reconstruct jobs at startup.** Rejected because
+   process death between commit and reconstruction loses work, and two workers
+   have no durable ownership fence.
+
+### Consequences and limits
+
+- A caller can enqueue through an existing transaction; rollback leaves no job.
+- Active claims cannot be stolen; expired claims gain a new generation; a final
+  expired attempt becomes visibly terminal rather than exceeding `maxAttempts`.
+- Cancel and reschedule apply only before a claim. A handler that outlives its
+  lease may finish too late and is fenced; internal business handlers therefore
+  still require their own idempotent outcome identity.
+- V3A is infrastructure only. It adds no cron grammar, recurrence policy,
+  outbox, timer consumer, provider adapter, operator command, public app facade,
+  Cloud queue, production-readiness claim or JTBD promotion. Those boundaries
+  remain for V3B, V3C and the integration campaign.
