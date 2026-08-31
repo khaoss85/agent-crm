@@ -14,6 +14,11 @@ import {
 } from './storage-contract.js';
 import { openTransactionScope } from './transaction-minter.js';
 import { currentTransactionWitness } from './transaction-witness.js';
+import {
+  registerDurableJobTransactionAuthority,
+  registerDurableJobStorageOwner,
+  registerPostgresqlDurableJobStorage,
+} from './durable-job-storage.js';
 
 const { Pool, Client } = pg;
 
@@ -241,6 +246,10 @@ export function createPostgresqlStorage(pool, options = {}) {
   const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
   const statementTimeoutMs = options.statementTimeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS;
   const quotedSchema = schema ? quoteStorageIdentifier(schema, 'schema') : null;
+  const durableJobTable = quotedSchema
+    ? `${quotedSchema}.${quoteStorageIdentifier('spine_jobs', 'table')}`
+    : quoteStorageIdentifier('spine_jobs', 'table');
+  const durableJobOwner = Object.freeze({});
   const writerGuard = typeof options.writerGuard === 'function' ? options.writerGuard : null;
   const checkedOut = new Set();
 
@@ -486,6 +495,15 @@ export function createPostgresqlStorage(pool, options = {}) {
     });
     Object.freeze(affine);
     PROBES.set(affine, { queryOn: (sql, params) => queryOn(client, sql, params), client });
+    registerPostgresqlDurableJobStorage(affine, {
+      query: (sql, params) => {
+        assertAffine(bind, client);
+        return queryOn(client, sql, params);
+      },
+      table: durableJobTable,
+      owner: durableJobOwner,
+    });
+    registerDurableJobTransactionAuthority(affine, affine);
     return affine;
   }
 
@@ -598,6 +616,7 @@ export function createPostgresqlStorage(pool, options = {}) {
     },
   });
   Object.freeze(poolStorage);
+  registerDurableJobStorageOwner(poolStorage, durableJobOwner);
 
   PROBES.set(poolStorage, {
     pool,

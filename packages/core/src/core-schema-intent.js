@@ -481,6 +481,59 @@ const V8_STATEMENTS = [
   { kind: 'addColumn', table: 'schema_migrations', column: text('checksum') },
 ];
 
+/** Spine v3A: one tenant-bound durable work primitive on the data plane. */
+const V9_STATEMENTS = [
+  {
+    kind: 'createTable',
+    name: 'spine_jobs',
+    strict: true,
+    columns: [
+      text('id', { primaryKey: true }),
+      integer('contract_version', { notNull: true, check: { kind: 'eq', value: 1 } }),
+      text('tenant_id', { notNull: true }),
+      text('kind', { notNull: true }),
+      text('handler_name', { notNull: true }),
+      integer('handler_contract', { notNull: true, check: { kind: 'eq', value: 1 } }),
+      integer('handler_version', { notNull: true, check: { kind: 'between', min: 1, max: SAFE_INTEGER_MAX } }),
+      text('payload_json', { notNull: true }),
+      text('payload_fingerprint', { notNull: true }),
+      text('schedule_intent', { notNull: true, check: { kind: 'in', values: ['immediate', 'scheduled'] } }),
+      timestamp('schedule_at', { notNull: true }),
+      text('state', {
+        notNull: true,
+        check: { kind: 'in', values: ['pending', 'claimed', 'succeeded', 'failed_retryable', 'failed_terminal', 'cancelled'] },
+      }),
+      integer('attempt', { notNull: true, check: { kind: 'between', min: 0, max: SAFE_INTEGER_MAX } }),
+      integer('max_attempts', { notNull: true, check: { kind: 'between', min: 1, max: SAFE_INTEGER_MAX } }),
+      text('claim_worker_id'),
+      text('claim_id'),
+      integer('claim_generation', { notNull: true, check: { kind: 'between', min: 0, max: SAFE_INTEGER_MAX } }),
+      timestamp('claim_expires_at'),
+      timestamp('execution_started_at'),
+      text('idempotency_root', { notNull: true }),
+      text('outcome_reference'),
+      timestamp('created_at', { notNull: true }),
+      timestamp('updated_at', { notNull: true }),
+      text('last_error_code'),
+    ],
+    tableConstraints: [
+      { kind: 'unique', columns: ['tenant_id', 'idempotency_root'] },
+    ],
+  },
+  {
+    kind: 'createIndex',
+    name: 'spine_jobs_due',
+    table: 'spine_jobs',
+    columns: ['tenant_id', 'state', 'schedule_at', 'id'],
+  },
+  {
+    kind: 'createIndex',
+    name: 'spine_jobs_claim_expiry',
+    table: 'spine_jobs',
+    columns: ['tenant_id', 'state', 'claim_expires_at', 'id'],
+  },
+];
+
 /**
  * Authoritative core schema intent. SQLite SQL is rendered from this structure
  * and must hash to the released checksums; PostgreSQL SQL is rendered from the
@@ -495,6 +548,7 @@ export const CORE_SCHEMA_INTENT = Object.freeze([
   Object.freeze({ version: 6, name: 'spine_data_plane_binding_marker', plane: 'data', statements: Object.freeze(V6_STATEMENTS) }),
   Object.freeze({ version: 7, name: 'spine_cross_plane_audit_intents', plane: 'control', statements: Object.freeze(V7_STATEMENTS) }),
   Object.freeze({ version: 8, name: 'schema_migrations_checksum', plane: 'ledger', statements: Object.freeze(V8_STATEMENTS) }),
+  Object.freeze({ version: 9, name: 'spine_durable_jobs', plane: 'data', statements: Object.freeze(V9_STATEMENTS) }),
 ]);
 
 /**
