@@ -47,8 +47,8 @@ function seedReleasedPrefix(path, throughVersion) {
 
 test('MIGRATION_VERSIONS includes the checksum ledger on every plane', () => {
   assert.deepEqual(MIGRATION_VERSIONS, {
-    combined: [1, 2, 3, 4, 5, 6, 7, 8],
-    data: [1, 2, 3, 4, 6, 8],
+    combined: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    data: [1, 2, 3, 4, 6, 8, 9],
     control: [5, 7, 8],
   });
 });
@@ -58,19 +58,19 @@ test('fresh SQLite databases record pinned checksums and boot again', (t) => {
   const path = join(dir, 'fresh.sqlite');
   const first = createDatabase({ path });
   const rows = first.raw.prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version').all();
-  assert.deepEqual(rows.map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(rows.map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   for (const row of rows) {
     if (row.version <= 7) {
       assert.equal(row.checksum, PINNED_CORE_MIGRATION_CHECKSUMS[`${row.version}:${row.name}`]);
     } else {
-      const v8 = CORE_MIGRATIONS_FOR_CHARACTERIZATION.find((entry) => entry.version === 8);
-      assert.equal(row.checksum, sqlChecksum(v8.sql));
+      const migration = CORE_MIGRATIONS_FOR_CHARACTERIZATION.find((entry) => entry.version === row.version);
+      assert.equal(row.checksum, sqlChecksum(migration.sql));
     }
   }
   first.close();
   const second = createDatabase({ path });
   t.after(() => second.close());
-  assert.equal(second.raw.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get().n, 8);
+  assert.equal(second.raw.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get().n, 9);
 });
 
 test('an exact M0-identity SQLite file still boots and backfills pinned checksums', (t) => {
@@ -86,7 +86,7 @@ test('an exact M0-identity SQLite file still boots and backfills pinned checksum
   const adopted = createDatabase({ path, plane: 'combined' });
   t.after(() => adopted.close());
   const rows = adopted.raw.prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version').all();
-  assert.deepEqual(rows.map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(rows.map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   for (const row of rows.filter((entry) => entry.version <= 5)) {
     assert.equal(row.checksum, PINNED_CORE_MIGRATION_CHECKSUMS[`${row.version}:${row.name}`]);
   }
@@ -163,7 +163,7 @@ test('ledger backfill still boots a pre-v8 file that already has module tables',
   const adopted = createDatabase({ path });
   t.after(() => adopted.close());
   const rows = adopted.raw.prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version').all();
-  assert.deepEqual(rows.map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(rows.map((row) => row.version), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   assert.equal(
     adopted.raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'notes'").get()?.name,
     'notes',

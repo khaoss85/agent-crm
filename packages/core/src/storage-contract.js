@@ -1,6 +1,10 @@
 // @ts-check
 
 import { AppError } from './errors.js';
+import {
+  registerDurableJobTransactionAuthority,
+  registerSqliteDurableJobStorage,
+} from './durable-job-storage.js';
 
 export const STORAGE_CONTRACT = 1;
 const IDENTIFIER = /^[a-z][a-z0-9_]*$/;
@@ -182,6 +186,7 @@ export function renderPostgresqlStatement(statement, options = {}) {
  * and says so rather than staying silent.
  */
 export function createSqliteStorage(raw, transaction, transactionAsync, readWitness) {
+  const durableJobOwner = Object.freeze({});
   const activeTransaction = typeof readWitness === 'function' ? () => readWitness() : () => null;
   const prepared = (statement) => {
     const rendered = renderSqliteStatement(statement);
@@ -217,7 +222,7 @@ export function createSqliteStorage(raw, transaction, transactionAsync, readWitn
       }
     },
   });
-  return Object.freeze({
+  const storage = Object.freeze({
     contract: STORAGE_CONTRACT,
     sync,
     /**
@@ -231,4 +236,8 @@ export function createSqliteStorage(raw, transaction, transactionAsync, readWitn
     async many(statement) { return sync.many(statement); },
     async transaction(fn) { return transactionAsync(() => fn(sync)); },
   });
+  registerSqliteDurableJobStorage(sync, raw, durableJobOwner);
+  registerSqliteDurableJobStorage(storage, raw, durableJobOwner);
+  registerDurableJobTransactionAuthority(sync, storage);
+  return storage;
 }

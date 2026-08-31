@@ -3974,6 +3974,132 @@ currency example, a receipt's raw count and a digit inside a code fence, and
 `findLooseTestCounts` needed two hand-tuned negative lookbehinds to survive
 widening from `site/` to `docs/` for a single noun.
 
+## ADR-041 — Durable work is a tenant-bound data-plane contract with fenced claims and explicit workers
+
+**Date:** 2026-08-31
+**Status:** accepted
+
+### Decision
+
+Accordo has one versioned durable-job contract on the tenant data plane. A job
+persists a named handler identity and canonical JSON-safe payload, never source
+code or a command. Every row carries the already-bound application tenant,
+schedule intent plus instant, bounded attempt policy, idempotency root, claim generation and
+claim fingerprint, plus nullable execution-start time for the active generation. Omitted schedules persist as `immediate`, so the same
+idempotency root joins across clock drift without collapsing into an explicitly
+scheduled request. Every completion is compare-and-set on tenant, worker,
+generation, fingerprint and unexpired lease.
+
+Every mutation requires an explicit validated actor. The existing
+`AuditLog.record(event, handle)` writes one closed `durable_job.*` event on the
+same callback-scoped SQLite or affine PostgreSQL transaction as the job row.
+Audit data contains transition state, claim generation and a bounded error code
+where applicable; it never copies payload, idempotency root, outcome reference
+or handler input. An explicitly constructed worker additionally requires a
+system actor and has no fallback identity.
+
+Immediately before a registered handler is invoked, the worker compare-and-sets
+`execution_started_at` under tenant, worker, claim fingerprint, generation and
+live lease, then records `durable_job.execution_started` in that same
+transaction. Expiry can therefore recover an unstarted claim without consuming
+another attempt. Expiry after execution start instead becomes
+`JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED`; the claim is cleared, the start
+timestamp remains durable terminal evidence, and no worker invokes it again.
+This is deliberately conservative: a crash after the CAS and before the
+JavaScript call is also reconciliation-required. It is not exactly-once
+execution or delivery.
+
+PostgreSQL claims one due row inside the existing connection-affine transaction
+with `FOR UPDATE SKIP LOCKED`. SQLite claims inside its existing
+`BEGIN IMMEDIATE` single-writer transaction. This is local SQLite compatibility,
+not a claim that SQLite supports multi-node workers.
+
+Construction starts nothing. A worker has explicit `start`, bounded `poll`,
+`drain`, `stop` and `close`; application composition does not gain a hidden
+timer in this slice. If shutdown wins after claim but before handler invocation,
+an owner-fenced release preserves the incremented claim generation while
+returning the execution attempt, so repeated drains cannot exhaust untouched
+work or falsely classify an external operation as already attempted. Timer poll
+failures remain visible as one ratified bounded code in worker status and clear
+only after a successful poll. `close` becomes terminal and clears its wake timer
+even when draining an in-flight persistence failure rejects. The worker retries
+only two closed transient handler codes with bounded injected backoff. Unknown,
+validation, authorization and policy failures collapse to framework-owned
+terminal codes. An expired `external-operation-v2` claim with no durable
+execution-start evidence is reclaimed on the same attempt and may invoke once.
+Once execution start is durable, expiry or an unknown handler outcome is never
+replayed: the stable idempotency root remains its external operation identity
+and the job becomes reconciliation-required.
+
+### Context
+
+Spine v2 can persist business state and recover uncertain write outcomes, but a
+future timestamp or process restart still loses in-memory follow-up work. A
+naive queue beside the application transaction would also recreate the exact
+process-death gap Spine v3 must close. V3A therefore needs a primitive later
+V3B/V3C work can enqueue through the caller's existing transaction.
+
+The data plane is deliberate. Jobs act on tenant CRM state and must share its
+commit boundary. The required `tenant_id` is transition authority and evidence
+inside one tenant-bound instance; it does not introduce shared-database row
+tenancy or a tenant switcher.
+
+### Alternatives rejected
+
+1. **Expand the generic Storage Contract DSL with inequalities, row locks and
+   returning clauses.** Rejected because one consumer would substantially widen
+   the public structured-SQL vocabulary and imply dialect equivalence where none
+   exists.
+2. **Give the queue a second SQLite connection or PostgreSQL pool.** Rejected
+   because it would escape writer-lease authority and could not atomically join
+   the business transaction.
+3. **Use an in-process timer and reconstruct jobs at startup.** Rejected because
+   process death between commit and reconstruction loses work, and two workers
+   have no durable ownership fence.
+
+### Consequences and limits
+
+- A caller can enqueue through an existing transaction; rollback leaves no job.
+- Transactional enqueue accepts only the live callback-scoped handle owned by
+  the current async flow. A root handle or a callback handle retained after
+  commit/rollback is refused before it can write.
+- Active claims cannot be stolen. An expired unstarted claim gains a new
+  generation without consuming another attempt; an expired started claim is
+  terminal reconciliation evidence regardless of remaining attempt budget.
+- A pre-handler release is fenced by tenant, worker, claim fingerprint,
+  generation and live lease, and does not consume the execution-attempt budget.
+- Pre-execution terminal codes require absent execution-start evidence, while
+  execution/retry completion requires present evidence; neither phase can
+  falsely terminate the other through the direct store seam.
+- Worker status exposes only the last bounded poll error code, never raw storage
+  error text or details; a later successful poll clears it.
+- Claim, execution-start, success, failure, and release require a system actor;
+  enqueue, cancel, and reschedule retain explicit operator/agent authority. This
+  prevents an ordinary caller from fabricating worker execution evidence.
+- Cancel and reschedule apply only before a claim. A handler that outlives its
+  lease is terminalized by recovery and its late completion is fenced; internal
+  business handlers therefore still require their own idempotent outcome identity.
+- Explicit reschedule changes the persisted caller-visible schedule intent to
+  `scheduled`; retry backoff changes the next instant without rewriting the
+  original caller intent.
+- A job transition and its audit event commit or roll back together. A fenced
+  transition writes neither; reads require no actor and write no audit event.
+- Canonical payload traversal reads own data descriptors recursively for both
+  objects and arrays. Accessors are refused without invocation; proxy/trap and
+  other hostile inspection failures collapse to `DURABLE_JOB_PAYLOAD_INVALID`
+  with no cause, details or caller-controlled serialization. Array length is
+  conservatively bounded from the payload byte budget before allocation.
+- Job input, handler identity, and mutation actor context are likewise inspected
+  through own data descriptors before any field read. Hostile injected backoff
+  behavior terminalizes as `JOB_BACKOFF_INVALID` without retaining its error.
+- Store failure codes, handler-derived codes, and worker status codes use closed
+  allowlists. Arbitrary uppercase caller text never enters a job, audit event,
+  or worker status as an error code.
+- V3A is infrastructure only. It adds no cron grammar, recurrence policy,
+  outbox, timer consumer, provider adapter, operator command, public app facade,
+  Cloud queue, production-readiness claim or JTBD promotion. Those boundaries
+  remain for V3B, V3C and the integration campaign.
+
 ---
 
 ## ADR-040 — Runtime secrets are named references resolved before use, never deployment values
