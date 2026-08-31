@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "ad55a631f32be236c5a7445ae190a49b3d216e4370c70375ab3902a74a740c50",
+  "sourceSha": "3e781e904ad429d38773a9a0dc2360d515606e027b0216e2b800b1435c59b422",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -84,7 +84,8 @@
       "kind": "source",
       "reads": [
         "packages/app/src/spine.js",
-        "packages/core/src/authorization.js"
+        "packages/core/src/authorization.js",
+        "packages/core/src/backup-restore.js"
       ]
     },
     {
@@ -646,6 +647,22 @@
       "limitations": []
     },
     {
+      "id": "spine.backup_restore.implemented",
+      "value": "implemented",
+      "authority": "spine.contract",
+      "evidence": [
+        "executable-probe:backup-vocabulary-closed-contract",
+        "packages/core/src/backup-restore.js#BACKUP_CONTRACT",
+        "packages/core/src/backup-restore.js#createBackupOperations",
+        "packages/core/src/backup-restore.js#createPostgresqlNativeBackupProvider"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": [
+        "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
+      ]
+    },
+    {
       "id": "spine.durable_jobs.implemented",
       "value": "absent",
       "authority": "spine.contract",
@@ -725,8 +742,8 @@
       "value": "absent",
       "authority": "spine.contract",
       "evidence": [
-        "declared:managed secret custody or service, backups, restore, deploy or rollback (Spine v4 remainder)",
-        "namespace-probe:backup|backups|restore",
+        "declared:managed secret custody or service, managed backup custody, scheduling or retention, managed observability backend, deploy or rollback (Spine v4 remainder)",
+        "namespace-probe:managed-backup|backup-policy|backup-retention|observability-backend",
         "packages/app/src/spine.js#SPINE_NOT_MODELED"
       ],
       "scope": "framework",
@@ -827,7 +844,7 @@
     },
     {
       "code": "MANAGED_SECRETS_BACKUPS_OBSERVABILITY_ABSENT",
-      "message": "the combined Spine v4 remainder is absent: no managed secret custody/service, backup/restore contract or observability export/backend is implemented by this fact"
+      "message": "the managed Spine v4 remainder is absent: no managed secret custody/service, backup custody/scheduling/retention or observability backend is implemented by this fact; bounded self-host contracts are separate positive facts"
     },
     {
       "code": "REFERENCE_COMPOSITION_NOT_THE_PROJECT",
@@ -882,5 +899,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "37c4dfb760bc9dca63d3ff75f0678997252260bb67f043e8189d4151a7dae7d6"
+  "fingerprint": "05dd28579b2763ae3b639ae84a0c79938dd52e719efface822193fb1897eb7b2"
 }

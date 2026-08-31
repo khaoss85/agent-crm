@@ -212,5 +212,5 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 - [ ] Shared-database row tenancy only if economics justify it.
 - [ ] Actual public→private migration after human repository creation; no history rewrite.
 - [ ] Package remote install/update/uninstall/registry.
-- [ ] Spine v3 jobs/outbox/scheduler; Spine v4 backup/restore and observability export. The bounded self-host secret-provider contract is complete in v4A; managed secret custody/service remains Cloud work.
+- [ ] Spine v3 outbox/scheduler and Spine v4 observability export. Bounded self-host secret-provider and PostgreSQL backup/verify/restore contracts are complete in v4A/v4B; managed secret and backup custody, scheduling and retention remain Cloud work.
 - [ ] Real Codex/Gemini comparative benchmark when both harnesses exist.

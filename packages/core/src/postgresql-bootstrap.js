@@ -9,11 +9,13 @@ import {
   createPostgresqlPool,
   createPostgresqlStorage,
 } from './postgresql-storage.js';
+import { DATA_ADVISORY_LOCK } from './postgresql-authority.js';
 import { attestPostgresqlStartup, fingerprintMigrationSet } from './startup-attestation.js';
+
+export { DATA_ADVISORY_LOCK } from './postgresql-authority.js';
 
 export const POSTGRES_APPLICATION_SCHEMA = POSTGRES_SCHEMA_NAME;
 export const CONTROL_ADVISORY_LOCK = Object.freeze({ classId: 1094927186, objectId: 1129598001 });
-export const DATA_ADVISORY_LOCK = Object.freeze({ classId: 1094927186, objectId: 1145197617 });
 export const PROVISIONING_ADVISORY_LOCK = Object.freeze({ classId: 1094927187 });
 export const WRITER_LEASE_TTL_MS = 60_000;
 export const WRITER_LEASE_TABLE = 'spine_writer_leases';

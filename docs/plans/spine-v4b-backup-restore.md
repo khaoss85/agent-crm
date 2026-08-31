@@ -54,7 +54,10 @@ production-backup claim, JTBD promotion or production-readiness claim.
    artifact verification, trusted bundle reads and stable SQLite/tool/version
    refusals. Add a bounded injected process runner whose timeout kills and
    observes the child without exposing arguments, environment or stderr.
-2. Implement native PostgreSQL create and verify. Create stages `artifact.dump`
+2. Implement native PostgreSQL create and verify. Create returns the artifact
+   digest as caller-owned identity in addition to writing it into the manifest;
+   verify and restore require that independently retained digest, so replacing
+   artifact and manifest coherently still refuses. Create stages `artifact.dump`
    and `manifest.json` in a sibling temporary directory, fsyncs/closes them,
    then atomically renames into a previously absent destination. The manifest
    contains contract, adapter, created instant, binding/resource/tenant,
@@ -65,9 +68,12 @@ production-backup claim, JTBD promotion or production-readiness claim.
    migration and repository intent before `pg_restore`; the target emptiness
    probe covers relations, schemas, types, functions, extensions, text-search
    definitions and other enumerated user-owned catalog families before mutation.
-   A caller-supplied control-plane boundary verifies
-   the actor and durably records a path-free attempt before target access plus
-   a closed succeeded/refused/possibly-partial outcome afterward. Partial
+   A caller-supplied control-plane boundary verifies the actor and durably
+   appends a path-free, operation-idempotent attempt before target access. Its
+   `recordOutcome` implementation must be durable, append-only and idempotent
+   for the same operation/artifact identity. Succeeded and possibly-partial
+   outcomes are recorded before releasing the target authority lock; refused
+   outcomes are recorded without target mutation. Partial
    failure never presents the target as promoted or rebound. Normal application
    boot is the final executable proof and may still refuse clone/resource mismatch.
 4. Add deterministic fixture tests plus the mandatory PostgreSQL 16 hosted
@@ -132,6 +138,12 @@ Use Node 22.16.0 through `fnm`.
   line are never captured in receipts or errors. `verify-full` carries the same
   trusted CA, hostname and `rejectUnauthorized: true` semantics through Node
   authority probes and native libpq tools; weaker TLS modes are refused.
+- Plaintext transport is never inferred. It requires explicit `disable` and is
+  accepted only for loopback development/test endpoints; every remote endpoint
+  must use `verify-full` with a trusted CA and verified logical hostname.
+- PostgreSQL locators remain in the allowlisted child environment, never argv.
+  Native tools run in their own process group; timeout and output-bound failure
+  kill and observe the wrapper plus descendants before settling.
 - Restore never overwrites a live target and never grants writer authority.
   Successful byte import is followed by ordinary startup/attestation; failure
   there remains a refusal, not a promoted clone.
@@ -139,6 +151,12 @@ Use Node 22.16.0 through `fnm`.
   owns operator verification and durable attempted/outcome evidence outside the
   data plane; the public integration layer must compose a real control-plane
   implementation before exposing restore.
+- Database-local emptiness is enumerated across schemas, relations, types,
+  functions, extensions, foreign objects, event triggers, publication/
+  subscription, procedural language, collation/conversion/operator, text-search,
+  large-object metadata and default-ACL families. Cluster-global roles,
+  tablespaces and server configuration are not target-database backup content
+  and remain deployment authority rather than emptiness inputs.
 
 ## Outcome and follow-up
 

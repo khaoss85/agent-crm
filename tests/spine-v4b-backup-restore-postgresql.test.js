@@ -11,6 +11,7 @@ import {
   createPostgresqlNativeBackupProvider,
 } from '../packages/core/src/backup-restore.js';
 import { bootstrapPostgresqlApplication, DATA_ADVISORY_LOCK } from '../packages/core/src/postgresql-bootstrap.js';
+import { createPostgresqlPool } from '../packages/core/src/postgresql-storage.js';
 import { createTestVerifier, testResource } from './helpers/identity-verifier-fixture.mjs';
 import { GADGET_MIGRATION, openIsolatedPostgresqlPlanes } from './helpers/postgresql-application.js';
 import { PG_REQUIRED } from './helpers/storage-contract-cases.js';
@@ -21,13 +22,23 @@ const SENTINEL = 'v4b-postgresql-password-sentinel';
 const RESTORE_ACTOR = Object.freeze({ type: 'user', id: 'v4b-pg-operator' });
 
 function restoreControl(receipts) {
+  const operations = new Map();
   return Object.freeze({
     contract: 1,
     async authorizeAndRecordAttempt(input) {
+      const existing = operations.get(input.operationId);
+      if (existing) return { id: existing.id, outcome: existing.outcome };
+      const state = { id: `pg-${input.operationId}`, outcome: null };
+      operations.set(input.operationId, state);
       receipts.push({ phase: 'attempted', input });
-      return { id: `pg-restore-${receipts.filter((item) => item.phase === 'attempted').length}` };
+      return { id: state.id, outcome: null };
     },
-    async recordOutcome(input) { receipts.push({ phase: 'outcome', input }); },
+    async recordOutcome(input) {
+      const state = operations.get(input.operationId);
+      if (state.outcome !== null) { assert.equal(state.outcome, input.outcome); return; }
+      state.outcome = input.outcome;
+      receipts.push({ phase: 'outcome', input });
+    },
   });
 }
 
@@ -40,6 +51,7 @@ function connection(endpoint) {
         PGDATABASE: endpoint.database,
         PGUSER: endpoint.user,
         PGPASSWORD: endpoint.password || SENTINEL,
+        PGSSLMODE: 'disable',
       });
     },
   });
@@ -68,22 +80,24 @@ async function bootstrap(control, data, dataResource, tenantId = TENANT) {
   });
 }
 
-function expectedOf(evidence) {
+function expectedOf(evidence, artifactDigest) {
   return Object.freeze({
     bindingUuid: evidence.bindingUuid,
     tenantFingerprint: evidence.tenantFingerprint,
     resourceFingerprint: evidence.resourceFingerprint,
     migrationSetFingerprint: evidence.migrationSetFingerprint,
     repositoryFingerprint: evidence.repositoryFingerprint,
+    artifactDigest,
   });
 }
 
 test('PostgreSQL 16 native backup verifies, restores only to empty target, and boots through normal authority', { timeout: 120_000 }, async (t) => {
-  const planes = await openIsolatedPostgresqlPlanes(t, { dataCount: 11 });
+  const planes = await openIsolatedPostgresqlPlanes(t, { dataCount: 13 });
   if (!planes) return;
   const [
     sourceData, replacementData, cloneData, occupiedData, wrongSourceData,
     enumData, domainData, functionData, extensionData, compositeData, textSearchData,
+    largeObjectData, defaultAclData,
   ] = planes.dataPlanes;
   const logicalResource = testResource('v4b-logical-primary');
   const cloneResource = testResource('v4b-unratified-clone');
@@ -100,7 +114,7 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
     );
   } finally { await sourceClient.end(); }
 
-  const provider = createPostgresqlNativeBackupProvider();
+  const provider = createPostgresqlNativeBackupProvider({ createPool: createPostgresqlPool });
   const receipts = [];
   const operations = createBackupOperations({
     adapter: 'postgresql',
@@ -109,7 +123,6 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
     connection: connection(sourceData),
     restoreControl: restoreControl(receipts),
   });
-  const expected = expectedOf(source.backupEvidence);
 
   const otherTenant = 'v4b-other-tenant';
   const other = await bootstrap(planes.control, wrongSourceData, testResource('v4b-other-resource'), otherTenant);
@@ -126,7 +139,8 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
   );
   await other.close();
 
-  await operations.create({ bundlePath });
+  const created = await operations.create({ bundlePath });
+  const expected = expectedOf(source.backupEvidence, created.artifactDigest);
   assert.equal((await operations.verify({ bundlePath, expected })).verified, true);
   const manifest = await readFile(join(bundlePath, 'manifest.json'), 'utf8');
   const credentialLocator = `postgresql://${sourceData.user}:${sourceData.password}@${sourceData.host}:${sourceData.port ?? 5432}/${sourceData.database}`;
@@ -148,7 +162,10 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
   const occupiedClient = await client(occupiedData);
   try { await occupiedClient.query('CREATE TABLE public.must_not_overwrite(id integer)'); } finally { await occupiedClient.end(); }
   await assert.rejects(
-    operations.restore({ bundlePath, expected, target: connection(occupiedData), actor: RESTORE_ACTOR }),
+    operations.restore({
+      bundlePath, expected, target: connection(occupiedData), actor: RESTORE_ACTOR,
+      operationId: 'occupied-table',
+    }),
     (error) => error?.code === 'BACKUP_TARGET_NOT_EMPTY',
   );
   const occupiedProof = await client(occupiedData);
@@ -157,18 +174,23 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
     assert.equal((await occupiedProof.query("SELECT to_regclass('accordo.gadgets') AS name")).rows[0].name, null);
   } finally { await occupiedProof.end(); }
 
-  for (const [endpoint, ddl] of [
+  for (const [index, [endpoint, ddl]] of [
     [enumData, 'CREATE TYPE public.restore_guard_enum AS ENUM (\'one\')'],
     [domainData, 'CREATE DOMAIN public.restore_guard_domain AS text CHECK (VALUE <> \'\')'],
     [functionData, 'CREATE FUNCTION public.restore_guard_function() RETURNS integer LANGUAGE SQL AS \'SELECT 1\''],
     [extensionData, 'CREATE EXTENSION hstore'],
     [compositeData, 'CREATE TYPE public.restore_guard_composite AS (value text)'],
     [textSearchData, 'CREATE TEXT SEARCH CONFIGURATION public.restore_guard_search (COPY = pg_catalog.simple)'],
-  ]) {
+    [largeObjectData, 'SELECT pg_catalog.lo_create(0)'],
+    [defaultAclData, 'ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC'],
+  ].entries()) {
     const objectClient = await client(endpoint);
     try { await objectClient.query(ddl); } finally { await objectClient.end(); }
     await assert.rejects(
-      operations.restore({ bundlePath, expected, target: connection(endpoint), actor: RESTORE_ACTOR }),
+      operations.restore({
+        bundlePath, expected, target: connection(endpoint), actor: RESTORE_ACTOR,
+        operationId: `occupied-catalog-${index}`,
+      }),
       (error) => error?.code === 'BACKUP_TARGET_NOT_EMPTY',
       `restore refuses a target occupied by ${ddl.split(' ')[1].toLowerCase()}`,
     );
@@ -178,7 +200,10 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
   try {
     await lockHolder.query('SELECT pg_advisory_lock($1, $2)', [DATA_ADVISORY_LOCK.classId, DATA_ADVISORY_LOCK.objectId]);
     await assert.rejects(
-      operations.restore({ bundlePath, expected, target: connection(replacementData), actor: RESTORE_ACTOR }),
+      operations.restore({
+        bundlePath, expected, target: connection(replacementData), actor: RESTORE_ACTOR,
+        operationId: 'target-lock-busy',
+      }),
       (error) => error?.code === 'BACKUP_TARGET_BUSY',
       'restore refuses immediately when startup/restore authority is already held',
     );
@@ -189,6 +214,7 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
 
   const restored = await operations.restore({
     bundlePath, expected, target: connection(replacementData), actor: RESTORE_ACTOR,
+    operationId: 'replacement-restore',
   });
   assert.equal(restored.restored, true);
   assert.equal(restored.authority, 'normal-startup-required');
@@ -207,6 +233,7 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
   target = null;
   const cloneRestore = await operations.restore({
     bundlePath, expected, target: connection(cloneData), actor: RESTORE_ACTOR,
+    operationId: 'clone-restore',
   });
   assert.equal(cloneRestore.authority, 'normal-startup-required');
   await assert.rejects(
@@ -220,6 +247,6 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
 
 test('hosted PostgreSQL suite requires matching native client 16 tools', { timeout: 10_000 }, async () => {
   if (!PG_REQUIRED) return;
-  const provider = createPostgresqlNativeBackupProvider({ timeoutMs: 2000 });
+  const provider = createPostgresqlNativeBackupProvider({ timeoutMs: 2000, createPool: createPostgresqlPool });
   await provider.prepareRestore();
 });

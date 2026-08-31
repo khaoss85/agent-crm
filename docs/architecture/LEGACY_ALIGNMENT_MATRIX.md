@@ -271,8 +271,8 @@ ship a third-party credential or make provider work retryable.
 
 This horizontal runtime capability creates and verifies a closed PostgreSQL 16
 backup bundle and restores it only behind an explicit target lock, broad
-empty-target inspection across relation, type, function, extension and
-text-search families, verified-actor control-plane receipt boundary and
+empty-target inspection across enumerated database-local catalog families,
+independent artifact identity, verified-actor control-plane receipt boundary and
 normal startup attestation. It is infrastructure below domain packages: no
 domain receives connection material, backup paths, native-tool arguments or
 restore authority. SQLite and managed backup custody, scheduling, retention and
