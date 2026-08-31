@@ -333,6 +333,49 @@ test('an execution-start audit fault rolls back its claim CAS on the same transa
   assert.equal(persisted.executionStartedAt, null);
 });
 
+test('handler completion, success transition, and success audit roll back atomically', async (t) => {
+  const f = fixture(t);
+  const job = await f.store.enqueue(input('root-completion-rollback'), operatorContext);
+  const registry = createDurableJobHandlerRegistry();
+  registry.register({
+    kind: 'named-action', name: 'run-follow-up', version: 1,
+    async execute() { return { outcomeReference: 'must-not-commit' }; },
+    async complete({ transaction }) {
+      await transaction.execute({
+        kind: 'insert', table: 'audit_events', values: [
+          { column: 'id', value: 'completion-probe' },
+          { column: 'actor_type', value: 'system' },
+          { column: 'actor_id', value: 'completion-probe' },
+          { column: 'action', value: 'completion.probe' },
+          { column: 'entity_type', value: 'completion_probe' },
+          { column: 'entity_id', value: job.id },
+          { column: 'data_json', value: '{}' },
+          { column: 'created_at', value: '2026-09-01T09:00:00.000Z' },
+        ],
+      });
+      throw new Error('injected completion rollback');
+    },
+  });
+  const worker = createDurableJobWorker({
+    store: f.store, registry, workerId: 'completion-worker', actor: systemActor,
+    clock: f.clock, pollIntervalMs: 60_000,
+  });
+  worker.start();
+  await assert.rejects(worker.run(job.id), /injected completion rollback/);
+
+  const persisted = await f.store.get(job.id);
+  assert.equal(persisted.state, 'claimed', 'adapter.finish rolls back with completion failure');
+  assert.equal(persisted.outcomeReference, null);
+  assert.notEqual(persisted.executionStartedAt, null);
+  const audit = new AuditLog(f.database);
+  assert.deepEqual(audit.list({ entityType: 'completion_probe' }), [],
+    'completion-side evidence rolls back with the success transition');
+  assert.equal(audit.list({ entityType: 'durable_job', entityId: job.id })
+    .some((event) => event.action === 'durable_job.succeeded'), false,
+  'success audit cannot survive a failed completion transaction');
+  await worker.close();
+});
+
 test('claims fence workers, tenants, generations, active leases, and recover exactly at expiry', async (t) => {
   const f = fixture(t);
   const job = await f.store.enqueue(input('root-claim'), operatorContext);

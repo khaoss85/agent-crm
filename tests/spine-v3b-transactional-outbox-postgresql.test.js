@@ -48,6 +48,20 @@ function outcome(root, phase, runId, overrides = {}) {
   };
 }
 
+function assertExactRunRace(race) {
+  const rejected = race.filter((entry) => entry.status === 'rejected');
+  for (const result of rejected) {
+    assert.equal(result.reason?.code, 'CONFLICT');
+    assert.equal(result.reason?.details?.transient, true,
+      'only a bounded transient serialization conflict is an acceptable exact-claim loser');
+  }
+  const fulfilled = race.filter((entry) => entry.status === 'fulfilled').map((entry) => entry.value);
+  const succeeded = fulfilled.filter((entry) => entry?.state === 'succeeded');
+  assert.equal(succeeded.length, 1);
+  assert.equal(fulfilled.filter((entry) => entry === null).length + rejected.length, 1,
+    'the exact-claim loser is either skipped or a bounded transient serialization refusal');
+}
+
 test('PostgreSQL commit atomically leaves an exact event job that dispatches once across restart workers', { timeout: 90_000 }, async (t) => {
   const booted = await bootPostgresqlApp(t, { moduleMigrations: [] });
   if (!booted) return;
@@ -94,11 +108,7 @@ test('PostgreSQL commit atomically leaves an exact event job that dispatches onc
   left.start();
   right.start();
   const race = await Promise.allSettled([left.run(job.id), right.run(job.id)]);
-  for (const result of race.filter((entry) => entry.status === 'rejected')) {
-    assert.equal(result.reason?.code, 'CONFLICT');
-  }
-  const results = race.filter((entry) => entry.status === 'fulfilled').map((entry) => entry.value);
-  assert.equal(results.filter((entry) => entry?.state === 'succeeded').length, 1);
+  assertExactRunRace(race);
   assert.equal(deliveries, 1);
   assert.equal((await jobsStore.get(job.id)).state, 'succeeded');
   assert.equal(await left.run(job.id), null, 'the terminal exact job cannot be claimed again');
@@ -207,11 +217,7 @@ test('receipt continuation resumes finalize only and never receives or calls a p
   left.start();
   right.start();
   const race = await Promise.allSettled([left.run(job.id), right.run(job.id)]);
-  for (const result of race.filter((entry) => entry.status === 'rejected')) {
-    assert.equal(result.reason?.code, 'CONFLICT');
-  }
-  assert.equal(race.filter((entry) => entry.status === 'fulfilled'
-    && entry.value?.state === 'succeeded').length, 1);
+  assertExactRunRace(race);
   assert.equal(finalizeCalls, 1);
   assert.equal(providerCalls, 0);
   assert.equal((await createDurableJobStore({ storage, tenantId: booted.tenantId }).get(job.id)).state, 'succeeded');
