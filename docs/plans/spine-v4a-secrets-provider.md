@@ -98,6 +98,11 @@ credential fields may appear in those runtime products.
   verify` attempt reached the same slow shell-classifier cross-product failure
   independently present on baseline; the Lead confirmed current-main exact-head
   hosted CI green and will use exact-head CI as the broad gate.
+- 2026-08-31: exact-head review tightened the deployment boundary to validate
+  password references before any provider/verifier/connection work, moved trusted
+  descriptor closure onto the import deadline even for never-settling modules,
+  and split executable truth between the implemented bounded self-host contract
+  and the still-absent managed secrets/backup/observability remainder.
 
 ## Decision log
 
@@ -126,8 +131,9 @@ PostgreSQL and carries references only; contract-1 SQLite/`--db` compatibility
 remains. No managed provider, vendor adapter, public command, domain behavior or
 JTBD promotion was added.
 
-The integration wave still owns final Repository Truth/status wording, combined
-operations lifecycle, backup/observability consumers and the one exact clean
-measurement. Its expected overlap is `docs/repository-truth.json`: ADR-040 moved
-only the authority `sourceSha`, so this branch regenerated the checked file
-without moving a fact or conclusion.
+The integration wave still owns final combined operations wording, lifecycle,
+backup/observability consumers and the one exact clean measurement. Repository
+Truth now publishes the bounded secret-provider fact from an executable
+single-use resolution probe while leaving the combined managed
+secrets/backups/observability remainder absent; no readiness or JTBD conclusion
+moved.

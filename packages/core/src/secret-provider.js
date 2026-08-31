@@ -237,7 +237,7 @@ export function createFixtureSecretProvider(entries) {
   if (!isPlainObject(entries)) invalid();
   const secrets = new Map();
   for (const key of Object.getOwnPropertyNames(entries)) {
-    if (!validReference(key) || typeof entries[key] !== 'string' || entries[key] === '') invalid();
+    if (!isValidSecretReference(key) || typeof entries[key] !== 'string' || entries[key] === '') invalid();
     secrets.set(key, entries[key]);
   }
   return defineSecretProvider({
@@ -251,7 +251,7 @@ export function createFixtureSecretProvider(entries) {
   });
 }
 
-function validReference(reference) {
+export function isValidSecretReference(reference) {
   return typeof reference === 'string' && reference.length <= SECRET_REFERENCE_MAX_LENGTH
     && SECRET_REFERENCE.test(reference) && !HOSTILE_KEYS.includes(reference);
 }
@@ -282,7 +282,7 @@ export function createSecretResolver(options) {
   return Object.freeze({
     contract: SECRET_PROVIDER_CONTRACT,
     async resolveSecret(reference, context) {
-      if (!validReference(reference)) invalid();
+      if (!isValidSecretReference(reference)) invalid();
       const controller = new AbortController();
       const providerContext = normalizeContext(context, options.mode, controller.signal);
       let timer;
@@ -360,7 +360,14 @@ export async function resolveProductionSecretProvider(options) {
   const { candidate, rootReal } = resolveContainedPath(options.relativePath, options.projectRoot);
   const controller = new AbortController();
   let opened;
+  let openedClosed = false;
   let timer;
+  let deadlineExpired = false;
+  const closeOpened = () => {
+    if (!opened || openedClosed) return;
+    openedClosed = true;
+    closeTrustedFile(opened.fd);
+  };
   const pending = (async () => {
     try {
       const real = fs.realpathSync(candidate);
@@ -373,9 +380,11 @@ export async function resolveProductionSecretProvider(options) {
       opened = openTrustedRegularFile(candidate, trustedOptions);
       let namespace;
       try { namespace = await import(pathToFileURL(candidate).href); } catch { throw error('SECRET_PROVIDER_INIT_FAILED', 'secret provider failed to initialize'); }
+      if (deadlineExpired) throw error('SECRET_PROVIDER_TIMEOUT', 'secret provider initialization timed out');
       assertTrustedFdUnchanged(opened.fd, opened.stat, untrusted);
       const again = openTrustedRegularFile(candidate, trustedOptions);
       try { if (!sameTrustedIdentity(opened.stat, again.stat)) untrusted(); } finally { closeTrustedFile(again.fd); }
+      closeOpened();
       const exports = closedModule(namespace);
       if (exports.secretProviderContract !== SECRET_PROVIDER_CONTRACT) {
         throw error('SECRET_PROVIDER_CONTRACT_UNSUPPORTED', 'secret provider contract is not supported');
@@ -389,7 +398,7 @@ export async function resolveProductionSecretProvider(options) {
       }
       return defineSecretProvider(produced);
     } finally {
-      if (opened) closeTrustedFile(opened.fd);
+      closeOpened();
     }
   })();
   pending.catch(() => {});
@@ -398,7 +407,9 @@ export async function resolveProductionSecretProvider(options) {
       pending,
       new Promise((_resolve, reject) => {
         timer = setTimeout(() => {
+          deadlineExpired = true;
           controller.abort();
+          closeOpened();
           reject(error('SECRET_PROVIDER_TIMEOUT', `secret provider initialization timed out after ${timeoutMs}ms`));
         }, timeoutMs);
       }),

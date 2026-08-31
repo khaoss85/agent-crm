@@ -364,7 +364,7 @@ optional and reachable at the path given; the claims ledger's evidence is never 
 because the generator refuses to publish a file missing it rather than shortening one. Not inlined:
 
 - `docs/AGENT_HARNESS_COMPATIBILITY.md` — 5,545 characters, over the remaining budget. Fetch it directly.
-- `docs/APPLICATION_INSPECTION.md` — 8,773 characters, over the remaining budget. Fetch it directly.
+- `docs/APPLICATION_INSPECTION.md` — 8,833 characters, over the remaining budget. Fetch it directly.
 - The source. No implementation, migration, test or generated artifact appears here.
 - `DECISIONS.md`, the ADR log, and `docs/benchmarks/CRM_JTBD_MATRIX.md`, the job catalogue — both long, and neither needed to decide whether to recommend this.
 - Everything under `docs/strategy/`: plans rather than evidence, and not citable as capability.

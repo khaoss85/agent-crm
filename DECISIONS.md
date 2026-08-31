@@ -4010,12 +4010,16 @@ plaintext string handed to a required third-party API can later be zeroed.
 
 Resolution and production-provider initialization have bounded deadlines and an
 abort signal. Losing promises are observed. Material settling after timeout is
-disposed; late rejection cannot become unhandled. Provider text, hostile
+disposed; late rejection cannot become unhandled. The trusted module descriptor
+has an idempotent outer owner and the deadline closes it even when a top-level
+module import never settles. Provider text, hostile
 results, paths, references and values collapse to stable credential-free
 errors. Runtime semantics never catch a secret failure and continue without it.
 
 Deployment-storage contract 2 replaces PostgreSQL `password` with
-`passwordSecret` and requires an explicit `secretProvider`: `environment` only
+`passwordSecret`. The deployment parser applies the resolver's exact bounded
+reference grammar before provider import, verifier construction or database
+work, and requires an explicit `secretProvider`: `environment` only
 in local-development mode, or a trusted repository-relative `module` in
 production. Contract-1 SQLite and `--db` compatibility remain. PostgreSQL
 contract 1 refuses in every mode with
@@ -4034,8 +4038,10 @@ Built-ins stop at an explicit local-development environment provider and a
 deterministic fixture. Production is an interface/plugin boundary only: no
 Vault, AWS, GCP or managed Accordo provider ships, and production never falls
 back to environment lookup. The resolver is not a domain-package API, CLI/MCP
-surface, health/schema field or Repository Truth claim. No audit, trace, job,
-backup or telemetry consumer receives a lease, reference or value.
+surface or health/schema field. Repository Truth publishes only the bounded
+self-host contract as implemented and separately keeps managed secret custody,
+backup/restore and observability absent. No audit, trace, job, backup or
+telemetry consumer receives a lease, reference or value.
 
 ### Rejected alternatives
 

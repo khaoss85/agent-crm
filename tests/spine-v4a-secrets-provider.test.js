@@ -1,7 +1,7 @@
 // @ts-check
 
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -159,6 +159,37 @@ export function createSecretProvider() {
     },
   );
   assert.equal(existsSync(marker), false, 'provider getter was invoked during validation');
+});
+
+test('repeated production import timeouts close trusted descriptors without waiting for module settlement', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4a-import-timeout-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'providers'));
+  const fdDirectory = existsSync('/proc/self/fd') ? '/proc/self/fd' : '/dev/fd';
+  const descriptorCount = () => readdirSync(fdDirectory).length;
+  const before = descriptorCount();
+
+  for (let index = 0; index < 8; index += 1) {
+    const modulePath = join(root, 'providers', `hanging-${index}.mjs`);
+    writeFileSync(modulePath, `export const secretProviderContract = 1;
+export const secretProviderTrust = 'production';
+await new Promise(() => {});
+export function createSecretProvider() { throw new Error('unreachable'); }
+`);
+    chmodSync(modulePath, 0o600);
+    await assert.rejects(
+      () => resolveProductionSecretProvider({
+        relativePath: `./providers/hanging-${index}.mjs`,
+        projectRoot: root,
+        mode: 'production',
+        timeoutMs: 5,
+      }),
+      (error) => error?.code === 'SECRET_PROVIDER_TIMEOUT',
+    );
+  }
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(descriptorCount() <= before + 1, `trusted descriptors leaked: before=${before}, after=${descriptorCount()}`);
 });
 
 test('fixture and environment providers return opaque single-use disposable leases', async () => {
@@ -420,6 +451,43 @@ export function createSecretProvider() {
   const sqlitePrepared = await prepareDeploymentPreconnect({ configPath: sqlitePath, env: {} });
   assert.equal(sqlitePrepared.secretResolver, null);
   assert.equal(sqlitePrepared.identityVerifier, null);
+});
+
+test('malformed PostgreSQL password references refuse before provider import or preconnect work', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4a-reference-boundary-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'providers'));
+  const marker = join(root, 'provider-imported');
+  const providerPath = join(root, 'providers', 'must-not-import.mjs');
+  writeFileSync(providerPath, `import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(marker)}, 'imported');
+export const secretProviderContract = 1;
+export const secretProviderTrust = 'production';
+export function createSecretProvider() { throw new Error('must not initialize'); }
+`);
+  chmodSync(providerPath, 0o600);
+  const endpoint = (database, passwordSecret) => ({
+    host: 'db.invalid', database, user: 'accordo', passwordSecret,
+    tls: { enabled: true, verify: 'full', caFile: './ca.pem' },
+  });
+
+  for (const [index, reference] of ['contains space', 'contains\nnewline', 'a'.repeat(257)].entries()) {
+    const configPath = join(root, `invalid-${index}.json`);
+    writeFileSync(configPath, JSON.stringify({
+      contract: 2,
+      adapter: 'postgresql',
+      connection: endpoint('data', reference),
+      controlPlane: endpoint('control', 'pg.control.password'),
+      spine: { mode: 'production', tenant: { id: 'acme' } },
+      secretProvider: { kind: 'module', path: './providers/must-not-import.mjs' },
+    }));
+    chmodSync(configPath, 0o600);
+    await assert.rejects(
+      () => prepareDeploymentPreconnect({ configPath, projectRoot: root, env: {} }),
+      (error) => error?.code === 'DEPLOYMENT_STORAGE_ENVELOPE_INVALID',
+    );
+    assert.equal(existsSync(marker), false, 'provider import happened before reference validation');
+  }
 });
 
 test('production refuses legacy inline credentials and environment fallback without reflecting values', async (t) => {

@@ -3,6 +3,7 @@
 import { isAbsolute } from 'node:path';
 import { AppError } from './errors.js';
 import { RUNTIME_MODES } from './runtime-mode.js';
+import { isValidSecretReference } from './secret-provider.js';
 import { readTrustedRegularFile } from './trusted-file.js';
 
 /**
@@ -185,7 +186,7 @@ function parsePostgresTls(value) {
 function parsePostgresSecretEndpoint(value) {
   const endpoint = closedObject(value, POSTGRES_SECRET_ENDPOINT_KEYS, POSTGRES_SECRET_REQUIRED_ENDPOINT_KEYS);
   if (!requiredString(endpoint.host) || !requiredString(endpoint.database)
-    || !requiredString(endpoint.user) || !requiredString(endpoint.passwordSecret)) {
+    || !requiredString(endpoint.user) || !isValidSecretReference(endpoint.passwordSecret)) {
     invalidEnvelope();
   }
   if (Object.hasOwn(endpoint, 'port')) {
