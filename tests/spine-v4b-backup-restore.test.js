@@ -39,6 +39,20 @@ const connection = Object.freeze({
     });
   },
 });
+const RESTORE_ACTOR = Object.freeze({ type: 'user', id: 'backup-operator' });
+
+function fixtureRestoreControl(receipts = []) {
+  return Object.freeze({
+    contract: BACKUP_CONTRACT,
+    async authorizeAndRecordAttempt(input) {
+      receipts.push({ phase: 'attempted', input });
+      return { id: `restore-${receipts.filter((item) => item.phase === 'attempted').length}` };
+    },
+    async recordOutcome(input) {
+      receipts.push({ phase: 'outcome', input });
+    },
+  });
+}
 
 function serialized(value) {
   return [
@@ -83,6 +97,7 @@ function fixtureProvider(overrides = {}) {
 function operations(provider = fixtureProvider()) {
   return createBackupOperations({
     adapter: 'postgresql', provider, evidence: source, connection,
+    restoreControl: fixtureRestoreControl(),
     clock: () => '2026-08-31T12:00:00.000Z',
   });
 }
@@ -109,11 +124,16 @@ test('contract vocabulary is closed and SQLite is explicitly unsupported', () =>
     providerKeys: ['contract', 'name', 'adapter', 'inspectAuthority', 'createArtifact', 'prepareRestore', 'withTargetLock', 'restoreArtifact'],
     evidenceKeys: ['contract', 'adapter', 'bindingUuid', 'tenantFingerprint', 'resourceFingerprint', 'migrationSetFingerprint', 'repositoryFingerprint'],
     expectedIntentKeys: ['bindingUuid', 'tenantFingerprint', 'resourceFingerprint', 'migrationSetFingerprint', 'repositoryFingerprint'],
+    restoreControlKeys: ['contract', 'authorizeAndRecordAttempt', 'recordOutcome'],
+    restoreOutcomes: ['succeeded', 'refused', 'possibly-partial'],
     bundleEntries: ['artifact.dump', 'manifest.json'],
     nativeToolMajor: 16,
   });
   assert.throws(
-    () => createBackupOperations({ adapter: 'sqlite', provider: fixtureProvider(), evidence: source, connection }),
+    () => createBackupOperations({
+      adapter: 'sqlite', provider: fixtureProvider(), evidence: source, connection,
+      restoreControl: fixtureRestoreControl(),
+    }),
     (error) => error?.code === 'BACKUP_ADAPTER_UNSUPPORTED',
   );
 });
@@ -231,6 +251,7 @@ test('create resolves a rotating connection once and binds inspection plus dump 
   });
   const affineOperations = createBackupOperations({
     adapter: 'postgresql', provider, evidence: source, connection: rotating,
+    restoreControl: fixtureRestoreControl(),
     clock: () => '2026-08-31T12:00:00.000Z',
   });
   await affineOperations.create({ bundlePath: join(root, 'bundle') });
@@ -253,7 +274,10 @@ test('top-level accessors and coercion objects refuse without invoking or reflec
     operations().verify({ bundlePath: { toString() { throw new Error(SENTINEL); } }, expected }),
     (error) => { assert.equal(error?.code, 'BACKUP_PATH_INVALID'); assertNoLeak(error); return true; },
   );
-  const hostileOptions = { provider: fixtureProvider(), evidence: source, connection };
+  const hostileOptions = {
+    provider: fixtureProvider(), evidence: source, connection,
+    restoreControl: fixtureRestoreControl(),
+  };
   Object.defineProperty(hostileOptions, 'adapter', {
     enumerable: true,
     get() { throw new Error(SENTINEL); },
@@ -284,6 +308,9 @@ test('native provider refuses missing, wrong-major and hung tools with stable le
   await assert.rejects(operations(hungProvider).create({ bundlePath: join(root, 'hung-bundle') }), (error) => error?.code === 'BACKUP_TOOL_TIMEOUT');
 
   const envProbe = join(root, 'env-probe');
+  const caPath = join(root, 'ca.pem');
+  await writeFile(caPath, 'fixture-ca');
+  await chmod(caPath, 0o600);
   await writeFile(envProbe, `#!/bin/sh
 if [ -n "$ACCORDO_UNRELATED_CHILD_SENTINEL" ]; then
   exit 91
@@ -291,6 +318,9 @@ fi
 if [ "$1" = "--version" ]; then
   printf "pg_dump (PostgreSQL) 16.7\\n"
   exit 0
+fi
+if [ "$PGHOST" != "db.internal.example" ] || [ "$PGHOSTADDR" != "127.0.0.1" ] || [ "$PGSSLMODE" != "verify-full" ] || [ "$PGSSLROOTCERT" != ${JSON.stringify(caPath)} ]; then
+  exit 92
 fi
 for argument in "$@"; do
   case "$argument" in
@@ -306,8 +336,19 @@ done
     else process.env.ACCORDO_UNRELATED_CHILD_SENTINEL = prior;
   });
   const envProvider = nativeWithFixtureAuthority({ pgDump: envProbe });
-  await operations(envProvider)
-    .create({ bundlePath: join(root, 'env-bundle') });
+  const tlsConnection = Object.freeze({
+    async withEnvironment(consumer) {
+      return consumer({
+        PGHOST: 'db.internal.example', PGHOSTADDR: '127.0.0.1', PGPORT: '5432',
+        PGDATABASE: 'fixture', PGUSER: 'fixture', PGPASSWORD: SENTINEL,
+        PGSSLMODE: 'verify-full', PGSSLROOTCERT: caPath,
+      });
+    },
+  });
+  await createBackupOperations({
+    adapter: 'postgresql', provider: envProvider, evidence: source, connection: tlsConnection,
+    restoreControl: fixtureRestoreControl(),
+  }).create({ bundlePath: join(root, 'env-bundle') });
 });
 
 test('non-empty target refuses before restore and provider failure is visibly partial', async (t) => {
@@ -320,16 +361,91 @@ test('non-empty target refuses before restore and provider failure is visibly pa
     async withTargetLock(_input, operation) { return operation({ empty: false }); },
     async restoreArtifact() { restored = true; },
   });
-  await assert.rejects(operations(occupied).restore({ bundlePath, expected, target: connection }), (error) => error?.code === 'BACKUP_TARGET_NOT_EMPTY');
+  await assert.rejects(operations(occupied).restore({
+    bundlePath, expected, target: connection, actor: RESTORE_ACTOR,
+  }), (error) => error?.code === 'BACKUP_TARGET_NOT_EMPTY');
   assert.equal(restored, false);
 
   const partial = fixtureProvider({ async restoreArtifact() { throw new Error(`${SENTINEL} ${LOCATOR}`); } });
-  await assert.rejects(operations(partial).restore({ bundlePath, expected, target: connection }), (error) => {
+  await assert.rejects(operations(partial).restore({
+    bundlePath, expected, target: connection, actor: RESTORE_ACTOR,
+  }), (error) => {
     assert.equal(error?.code, 'BACKUP_RESTORE_PARTIAL');
     assert.equal(error?.details?.targetState, 'possibly-partial');
     assertNoLeak(error);
     return true;
   });
+});
+
+test('restore requires an actor and records path-free control-plane attempt plus terminal or partial outcome', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-receipts-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bundlePath = join(root, 'bundle');
+  const receipts = [];
+  const sequence = [];
+  const control = fixtureRestoreControl(receipts);
+  const provider = fixtureProvider({
+    async withTargetLock(_input, operation) {
+      sequence.push('target-lock');
+      return operation({ empty: true });
+    },
+    async restoreArtifact() {
+      sequence.push('target-mutation');
+      throw new Error(SENTINEL);
+    },
+  });
+  const bounded = createBackupOperations({
+    adapter: 'postgresql', provider, evidence: source, connection,
+    restoreControl: Object.freeze({
+      ...control,
+      async authorizeAndRecordAttempt(input) {
+        sequence.push('attempt-receipt');
+        return control.authorizeAndRecordAttempt(input);
+      },
+    }),
+  });
+  await bounded.create({ bundlePath });
+  await assert.rejects(
+    bounded.restore({ bundlePath, expected, target: connection }),
+    (error) => error?.code === 'BACKUP_RESTORE_INPUT_INVALID',
+  );
+  assert.deepEqual(sequence, []);
+  await assert.rejects(
+    bounded.restore({ bundlePath, expected, target: connection, actor: RESTORE_ACTOR }),
+    (error) => { assert.equal(error?.code, 'BACKUP_RESTORE_PARTIAL'); assertNoLeak(error); return true; },
+  );
+  assert.deepEqual(sequence, ['attempt-receipt', 'target-lock', 'target-mutation']);
+  assert.deepEqual(receipts.map((item) => [item.phase, item.input.outcome ?? null]), [
+    ['attempted', null], ['outcome', 'possibly-partial'],
+  ]);
+  const serializedReceipts = JSON.stringify(receipts);
+  for (const forbidden of [bundlePath, SENTINEL, LOCATOR, 'PGHOST', 'PGPASSWORD']) {
+    assert.equal(serializedReceipts.includes(forbidden), false, serializedReceipts);
+  }
+
+  let unauthorizedTargetTouched = false;
+  const refusingControl = Object.freeze({
+    contract: BACKUP_CONTRACT,
+    async authorizeAndRecordAttempt() {
+      throw Object.assign(new Error(`${SENTINEL} unauthorized`), { details: { locator: LOCATOR } });
+    },
+    async recordOutcome() { throw new Error('unreachable'); },
+  });
+  const refusing = createBackupOperations({
+    adapter: 'postgresql', evidence: source, connection,
+    restoreControl: refusingControl,
+    provider: fixtureProvider({
+      async withTargetLock(_input, operation) {
+        unauthorizedTargetTouched = true;
+        return operation({ empty: true });
+      },
+    }),
+  });
+  await assert.rejects(
+    refusing.restore({ bundlePath, expected, target: connection, actor: RESTORE_ACTOR }),
+    (error) => { assert.equal(error?.code, 'BACKUP_PROVIDER_FAILED'); assertNoLeak(error); return true; },
+  );
+  assert.equal(unauthorizedTargetTouched, false, 'control-plane authorization and attempt receipt precede target access');
 });
 
 test('restore consumes its verified private snapshot and rechecks those exact bytes afterward', async (t) => {
@@ -349,7 +465,7 @@ test('restore consumes its verified private snapshot and rechecks those exact by
     },
   });
   await assert.rejects(
-    operations(substitution).restore({ bundlePath, expected, target: connection }),
+    operations(substitution).restore({ bundlePath, expected, target: connection, actor: RESTORE_ACTOR }),
     (error) => error?.code === 'BACKUP_RESTORE_PARTIAL',
   );
 
@@ -362,7 +478,9 @@ test('restore consumes its verified private snapshot and rechecks those exact by
     },
   });
   await assert.rejects(
-    operations(scratchMutation).restore({ bundlePath: changedBundle, expected, target: connection }),
+    operations(scratchMutation).restore({
+      bundlePath: changedBundle, expected, target: connection, actor: RESTORE_ACTOR,
+    }),
     (error) => error?.code === 'BACKUP_ARTIFACT_CHANGED_DURING_RESTORE',
   );
 });
@@ -408,8 +526,11 @@ test('restore resolves one target for lock, import, and post-restore authority',
   });
   const restoreOperations = createBackupOperations({
     adapter: 'postgresql', provider, evidence: source, connection,
+    restoreControl: fixtureRestoreControl(),
   });
-  assert.equal((await restoreOperations.restore({ bundlePath, expected, target: rotatingTarget })).restored, true);
+  assert.equal((await restoreOperations.restore({
+    bundlePath, expected, target: rotatingTarget, actor: RESTORE_ACTOR,
+  })).restored, true);
   assert.equal(resolutions, 1);
   assert.deepEqual(seen, ['target-1', 'target-1', 'target-1']);
   assert.equal(locked, false);
@@ -433,7 +554,7 @@ test('target-lock provider cannot return before its unique callback settles', as
     },
   });
   await assert.rejects(
-    operations(provider).restore({ bundlePath, expected, target: connection }),
+    operations(provider).restore({ bundlePath, expected, target: connection, actor: RESTORE_ACTOR }),
     (error) => error?.code === 'BACKUP_TARGET_LOCK_INVALID',
   );
   assert.equal(restored, true, 'outer restore waited for the detached callback before refusing and cleaning scratch');

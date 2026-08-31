@@ -267,6 +267,36 @@ Closing milestone for a `deferred` row is the corresponding real provider
 adapter with executable zero-leak evidence. This PR does not refactor a domain,
 ship a third-party credential or make provider work retryable.
 
+### Backup, verify and restore contract v1 assessment (Production Spine v4B)
+
+This horizontal runtime capability creates and verifies a closed PostgreSQL 16
+backup bundle and restores it only behind an explicit target lock, comprehensive
+empty-target inspection, verified-actor control-plane receipt boundary and
+normal startup attestation. It is infrastructure below domain packages: no
+domain receives connection material, backup paths, native-tool arguments or
+restore authority. SQLite and managed backup custody, scheduling, retention and
+promotion remain absent.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | its dedicated PostgreSQL data plane is covered by the self-host contract, but no application/operator composition or managed policy ships in V4B |
+| Pipeline | `not_applicable` | lifecycle definitions own no physical data-plane backup behavior |
+| Lead Intelligence | `not_applicable` | package records are included only as ordinary data-plane bytes; the package owns no backup adapter |
+| Commercial Operations | `not_applicable` | package records are included only as ordinary data-plane bytes; provider state is not backed up by this contract |
+| Signature & Order | `not_applicable` | package records are included as data-plane bytes; external provider custody remains outside this contract |
+| Contract Activation | `not_applicable` | package records are included as ordinary data-plane bytes and receive no restore authority |
+| Delivery | `not_applicable` | package records are included as ordinary data-plane bytes and receive no restore authority |
+| Service | `not_applicable` | package records are included as ordinary data-plane bytes and receive no restore authority |
+| Work | `not_applicable` | package records are included as ordinary data-plane bytes and receive no restore authority |
+| Lifecycle | `not_applicable` | package records are included as ordinary data-plane bytes and receive no restore authority |
+| Customer Data | `not_applicable` | projected records are ordinary data-plane bytes; source-system deletion and ejection remain separate policy |
+| Custom-package fixture | `not_applicable` | custom packages receive no backup provider, connection or restore-control seam |
+| Custom-package score-disclosure fixture | `not_applicable` | the capability fixture receives no backup provider, connection or restore-control seam |
+
+Closing a `partial` cell requires the later authenticated operator composition
+and executable deployment policy. V4B does not retrofit domains, claim managed
+backups or grant a restored clone writer authority.
+
 ### Public site provenance contract v2 assessment
 
 `/version.json` v2 is a horizontal discovery contract for the generated public

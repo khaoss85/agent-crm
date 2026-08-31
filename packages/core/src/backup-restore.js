@@ -8,11 +8,11 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import pg from 'pg';
+import { requireActor } from './actor.js';
 import { AppError } from './errors.js';
 import { DATA_ADVISORY_LOCK } from './postgresql-bootstrap.js';
-
-const { Client } = pg;
+import { createPostgresqlPool } from './postgresql-storage.js';
+import { readTrustedRegularFile } from './trusted-file.js';
 
 export const BACKUP_CONTRACT = 1;
 export const BACKUP_ADAPTERS = Object.freeze(['postgresql']);
@@ -38,7 +38,13 @@ const ARTIFACT_KEYS = Object.freeze(['algorithm', 'digest']);
 const PROVIDER_MANIFEST_KEYS = Object.freeze(['contract', 'name', 'tool']);
 const TOOL_KEYS = Object.freeze(['name', 'major', 'version']);
 const CONNECTION_KEYS = Object.freeze(['withEnvironment']);
-const ENV_KEYS = Object.freeze(['PGHOST', 'PGPORT', 'PGDATABASE', 'PGUSER', 'PGPASSWORD', 'PGSSLMODE']);
+const ENV_KEYS = Object.freeze([
+  'PGHOST', 'PGHOSTADDR', 'PGPORT', 'PGDATABASE', 'PGUSER', 'PGPASSWORD',
+  'PGSSLMODE', 'PGSSLROOTCERT',
+]);
+const RESTORE_CONTROL_KEYS = Object.freeze(['contract', 'authorizeAndRecordAttempt', 'recordOutcome']);
+const RESTORE_RECEIPT_KEYS = Object.freeze(['id']);
+const RESTORE_OUTCOMES = Object.freeze(['succeeded', 'refused', 'possibly-partial']);
 const HOSTILE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 const NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const FINGERPRINT = /^[a-f0-9]{64}$/;
@@ -166,11 +172,65 @@ function safeEnvironment(value) {
     for (const required of ['PGHOST', 'PGPORT', 'PGDATABASE', 'PGUSER']) {
       if (!Object.hasOwn(result, required)) refuse('BACKUP_CONNECTION_INVALID', 'backup connection environment is incomplete');
     }
+    if (Object.hasOwn(result, 'PGSSLMODE')) {
+      if (result.PGSSLMODE !== 'verify-full' || !Object.hasOwn(result, 'PGSSLROOTCERT')) {
+        refuse('BACKUP_CONNECTION_TLS_REFUSED', 'backup connection requires authenticated TLS verification');
+      }
+    } else if (Object.hasOwn(result, 'PGSSLROOTCERT')) {
+      refuse('BACKUP_CONNECTION_TLS_REFUSED', 'backup connection requires authenticated TLS verification');
+    }
     return result;
   } catch (error) {
     if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
     refuse('BACKUP_CONNECTION_INVALID', 'backup connection environment is invalid');
   }
+}
+
+function actorDocument(value) {
+  const item = snapshot(value, ['type', 'id'], 'BACKUP_RESTORE_ACTOR_INVALID');
+  try {
+    const actor = requireActor(item, 'actor');
+    if (!exactString(actor.id, 200)) refuse('BACKUP_RESTORE_ACTOR_INVALID', 'restore actor is invalid');
+    return Object.freeze(actor);
+  } catch (error) {
+    if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
+    refuse('BACKUP_RESTORE_ACTOR_INVALID', 'restore actor is invalid');
+  }
+}
+
+function restoreControlDocument(value) {
+  const item = snapshot(value, RESTORE_CONTROL_KEYS, 'BACKUP_RESTORE_CONTROL_INVALID');
+  if (item.contract !== BACKUP_CONTRACT || typeof item.authorizeAndRecordAttempt !== 'function'
+    || typeof item.recordOutcome !== 'function') {
+    refuse('BACKUP_RESTORE_CONTROL_INVALID', 'restore control-plane receipt boundary is invalid');
+  }
+  return Object.freeze(item);
+}
+
+async function beginRestore(control, actor, intent) {
+  const receipt = await providerCall(
+    'restore-authority-attempt',
+    () => control.authorizeAndRecordAttempt(Object.freeze({
+      contract: BACKUP_CONTRACT,
+      actor,
+      expected: intent,
+    })),
+  );
+  const accepted = snapshot(receipt, RESTORE_RECEIPT_KEYS, 'BACKUP_RESTORE_RECEIPT_INVALID');
+  if (!exactString(accepted.id, 200)) refuse('BACKUP_RESTORE_RECEIPT_INVALID', 'restore attempt receipt is invalid');
+  return Object.freeze(accepted);
+}
+
+async function finishRestore(control, receipt, outcome) {
+  if (!RESTORE_OUTCOMES.includes(outcome)) refuse('BACKUP_RESTORE_RECEIPT_INVALID', 'restore outcome is invalid');
+  await providerCall(
+    'restore-outcome',
+    () => control.recordOutcome(Object.freeze({
+      contract: BACKUP_CONTRACT,
+      receiptId: receipt.id,
+      outcome,
+    })),
+  );
 }
 
 async function useConnection(connection, consumer) {
@@ -427,8 +487,8 @@ async function runWithTargetLock(provider, connection, operation) {
 export function createBackupOperations(options) {
   const configuration = snapshotOptional(
     options,
-    ['adapter', 'provider', 'evidence', 'connection', 'clock'],
-    ['adapter', 'provider', 'evidence', 'connection'],
+    ['adapter', 'provider', 'evidence', 'connection', 'restoreControl', 'clock'],
+    ['adapter', 'provider', 'evidence', 'connection', 'restoreControl'],
     'BACKUP_CONTRACT_INVALID',
   );
   if (configuration.adapter !== 'postgresql') {
@@ -437,6 +497,7 @@ export function createBackupOperations(options) {
   const provider = defineBackupProvider(configuration.provider);
   const evidence = evidenceDocument(configuration.evidence);
   const connection = safeConnection(configuration.connection);
+  const restoreControl = restoreControlDocument(configuration.restoreControl);
   if (configuration.clock !== undefined && typeof configuration.clock !== 'function') {
     refuse('BACKUP_CLOCK_INVALID', 'backup clock is invalid');
   }
@@ -514,21 +575,27 @@ export function createBackupOperations(options) {
     },
     verify,
     async restore(input) {
-      const request = snapshot(input, ['bundlePath', 'expected', 'target'], 'BACKUP_RESTORE_INPUT_INVALID');
+      const request = snapshot(input, ['bundlePath', 'expected', 'target', 'actor'], 'BACKUP_RESTORE_INPUT_INVALID');
       if (!exactString(request.bundlePath, 4096)) refuse('BACKUP_PATH_INVALID', 'backup bundle path is invalid');
+      const actor = actorDocument(request.actor);
       const scratch = await mkdtemp(join(tmpdir(), '.accordo-restore-'));
       const scratchArtifact = join(scratch, BACKUP_ARTIFACT_NAME);
+      let receipt = null;
+      let outcome = 'refused';
+      let targetMutationStarted = false;
       try {
         const verified = await verifyBundle(request.bundlePath, request.expected, scratchArtifact);
         await chmod(scratchArtifact, 0o400);
         const targetConnection = safeConnection(request.target);
         await providerCall('prepare-restore', () => provider.prepareRestore());
-        return await useAffineConnection(targetConnection, async (boundConnection) => {
+        receipt = await beginRestore(restoreControl, actor, expectedDocument(request.expected));
+        const result = await useAffineConnection(targetConnection, async (boundConnection) => {
           let restoredResult = null;
           await runWithTargetLock(provider, boundConnection, async (state) => {
             const inspected = snapshot(state, ['empty'], 'BACKUP_TARGET_INSPECTION_INVALID');
             if (typeof inspected.empty !== 'boolean') refuse('BACKUP_TARGET_INSPECTION_INVALID', 'restore target inspection is invalid');
             if (!inspected.empty) refuse('BACKUP_TARGET_NOT_EMPTY', 'restore target is not explicitly empty');
+            targetMutationStarted = true;
             try {
               await providerCall('restore', () => provider.restoreArtifact({ artifactPath: scratchArtifact, connection: boundConnection }));
             } catch {
@@ -560,6 +627,17 @@ export function createBackupOperations(options) {
           if (!restoredResult) refuse('BACKUP_TARGET_LOCK_INVALID', 'restore target lock completed without verified authority');
           return restoredResult;
         });
+        outcome = 'succeeded';
+        await finishRestore(restoreControl, receipt, outcome);
+        receipt = null;
+        return result;
+      } catch (error) {
+        if (receipt) {
+          if (targetMutationStarted) outcome = 'possibly-partial';
+          await finishRestore(restoreControl, receipt, outcome);
+          receipt = null;
+        }
+        throw error;
       } finally {
         await chmod(scratchArtifact, 0o600).catch(() => {});
         await rm(scratch, { recursive: true, force: true }).catch(() => {});
@@ -570,38 +648,68 @@ export function createBackupOperations(options) {
 
 async function inspectRestoredAuthority(connection) {
   return useConnection(connection, async (environment) => {
-    const client = new Client(clientOptions(environment));
     try {
-      await client.connect();
-      const marker = await client.query('SELECT tenant_slug, data_plane_id FROM accordo.spine_data_plane_binding');
-      const audit = await client.query(`SELECT tenant_fingerprint, resource_fingerprint, migration_set_fingerprint
-        FROM accordo.startup_audit WHERE plane = 'data' ORDER BY created_at DESC, id DESC LIMIT 1`);
-      if (marker.rowCount !== 1 || audit.rowCount !== 1) refuse('BACKUP_RESTORED_AUTHORITY_MISMATCH', 'restored database has no singular binding authority');
-      return Object.freeze({
-        bindingUuid: String(marker.rows[0].data_plane_id),
-        tenantFingerprint: String(audit.rows[0].tenant_fingerprint),
-        resourceFingerprint: String(audit.rows[0].resource_fingerprint),
-        migrationSetFingerprint: String(audit.rows[0].migration_set_fingerprint),
+      return await withNativeClient(environment, async (client) => {
+        const marker = await client.query('SELECT tenant_slug, data_plane_id FROM accordo.spine_data_plane_binding');
+        const audit = await client.query(`SELECT tenant_fingerprint, resource_fingerprint, migration_set_fingerprint
+          FROM accordo.startup_audit WHERE plane = 'data' ORDER BY created_at DESC, id DESC LIMIT 1`);
+        if (marker.rowCount !== 1 || audit.rowCount !== 1) refuse('BACKUP_RESTORED_AUTHORITY_MISMATCH', 'restored database has no singular binding authority');
+        return Object.freeze({
+          bindingUuid: String(marker.rows[0].data_plane_id),
+          tenantFingerprint: String(audit.rows[0].tenant_fingerprint),
+          resourceFingerprint: String(audit.rows[0].resource_fingerprint),
+          migrationSetFingerprint: String(audit.rows[0].migration_set_fingerprint),
+        });
       });
     } catch (error) {
       if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
       refuse('BACKUP_RESTORED_AUTHORITY_MISMATCH', 'restored database authority could not be verified');
-    } finally { await client.end().catch(() => {}); }
+    }
   });
 }
 
 function clientOptions(environment) {
+  let ssl = false;
+  if (environment.PGSSLMODE === 'verify-full') {
+    let ca;
+    try {
+      ca = readTrustedRegularFile(environment.PGSSLROOTCERT, {
+        maxBytes: 64 * 1024,
+        untrusted: () => refuse('BACKUP_CONNECTION_TLS_REFUSED', 'backup connection TLS authority is unavailable'),
+      });
+    } catch (error) {
+      if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
+      refuse('BACKUP_CONNECTION_TLS_REFUSED', 'backup connection TLS authority is unavailable');
+    }
+    if (!ca) refuse('BACKUP_CONNECTION_TLS_REFUSED', 'backup connection TLS authority is unavailable');
+    ssl = Object.freeze({
+      rejectUnauthorized: true,
+      ca,
+      servername: environment.PGHOST,
+    });
+  }
   return {
-    host: environment.PGHOST,
+    host: environment.PGHOSTADDR ?? environment.PGHOST,
     port: Number(environment.PGPORT),
     database: environment.PGDATABASE,
     user: environment.PGUSER,
     password: environment.PGPASSWORD ?? '',
-    ssl: environment.PGSSLMODE === 'require' ? { rejectUnauthorized: true } : false,
-    connectionTimeoutMillis: 2000,
-    query_timeout: 2000,
-    statement_timeout: 2000,
+    ssl,
+    acquisitionDeadlineMs: 2000,
+    queryDeadlineMs: 2000,
   };
+}
+
+async function withNativeClient(environment, consumer) {
+  const pool = createPostgresqlPool({ ...clientOptions(environment), max: 1 });
+  let client;
+  try {
+    client = await pool.connect();
+    return await consumer(client);
+  } finally {
+    try { client?.release(); } catch { /* pool close remains authoritative */ }
+    await pool.end().catch(() => {});
+  }
 }
 
 async function inspectEmptyClient(client) {
@@ -615,6 +723,42 @@ async function inspectEmptyClient(client) {
         WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'public')
           AND nspname NOT LIKE 'pg_toast%'
           AND nspname NOT LIKE 'pg_temp_%'
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND t.typtype IN ('d','e','r','m')
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_extension WHERE extname <> 'plpgsql'
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_foreign_data_wrapper
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_foreign_server
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_event_trigger
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_publication
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_subscription
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_language WHERE lanispl AND lanname <> 'plpgsql'
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_collation c JOIN pg_catalog.pg_namespace n ON n.oid = c.collnamespace
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_conversion c JOIN pg_catalog.pg_namespace n ON n.oid = c.connamespace
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_operator o JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_opclass o JOIN pg_catalog.pg_namespace n ON n.oid = o.opcnamespace
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_opfamily o JOIN pg_catalog.pg_namespace n ON n.oid = o.opfnamespace
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
       ) AS occupied`);
     return Object.freeze({ empty: result.rows[0]?.occupied === false });
   } catch {
@@ -709,21 +853,20 @@ export function createPostgresqlNativeBackupProvider(options = {}) {
     async withTargetLock({ connection }, operation) {
       if (typeof operation !== 'function') refuse('BACKUP_TARGET_LOCK_INVALID', 'restore target lock operation is invalid');
       return useConnection(connection, async (environment) => {
-        const client = new Client(clientOptions(environment));
-        try {
-          await client.connect();
-          const lock = await client.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [
-            DATA_ADVISORY_LOCK.classId, DATA_ADVISORY_LOCK.objectId,
-          ]);
-          if (lock.rows[0]?.acquired !== true) refuse('BACKUP_TARGET_BUSY', 'restore target authority lock is already held');
-          return await operation(await inspectEmptyClient(client));
-        } catch (error) {
-          if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
-          refuse('BACKUP_TARGET_LOCK_FAILED', 'restore target authority lock failed');
-        } finally {
-          await client.query('SELECT pg_advisory_unlock($1, $2)', [DATA_ADVISORY_LOCK.classId, DATA_ADVISORY_LOCK.objectId]).catch(() => {});
-          await client.end().catch(() => {});
-        }
+        return withNativeClient(environment, async (client) => {
+          try {
+            const lock = await client.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [
+              DATA_ADVISORY_LOCK.classId, DATA_ADVISORY_LOCK.objectId,
+            ]);
+            if (lock.rows[0]?.acquired !== true) refuse('BACKUP_TARGET_BUSY', 'restore target authority lock is already held');
+            return await operation(await inspectEmptyClient(client));
+          } catch (error) {
+            if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
+            refuse('BACKUP_TARGET_LOCK_FAILED', 'restore target authority lock failed');
+          } finally {
+            await client.query('SELECT pg_advisory_unlock($1, $2)', [DATA_ADVISORY_LOCK.classId, DATA_ADVISORY_LOCK.objectId]).catch(() => {});
+          }
+        });
       });
     },
     async restoreArtifact({ artifactPath, connection }) {
@@ -747,6 +890,8 @@ export function backupVocabulary() {
     providerKeys: PROVIDER_KEYS,
     evidenceKeys: EVIDENCE_KEYS,
     expectedIntentKeys: EXPECTED_KEYS,
+    restoreControlKeys: RESTORE_CONTROL_KEYS,
+    restoreOutcomes: RESTORE_OUTCOMES,
     bundleEntries: Object.freeze([BACKUP_ARTIFACT_NAME, BACKUP_MANIFEST_NAME]),
     nativeToolMajor: BACKUP_TOOL_MAJOR,
   });

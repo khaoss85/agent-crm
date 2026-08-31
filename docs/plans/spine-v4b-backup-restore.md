@@ -63,10 +63,12 @@ production-backup claim, JTBD promotion or production-readiness claim.
 3. Implement restore into an explicitly empty target. Verification compares
    the bundle against separately supplied expected tenant/resource/binding,
    migration and repository intent before `pg_restore`; the target emptiness
-   probe runs before mutation. Partial failure leaves a stable failed receipt
-   and never presents the target as promoted or rebound. Normal application
-   boot is the final executable proof and may still refuse clone/resource
-   mismatch.
+   probe covers relations, schemas and non-relational user-owned catalog
+   objects before mutation. A caller-supplied control-plane boundary verifies
+   the actor and durably records a path-free attempt before target access plus
+   a closed succeeded/refused/possibly-partial outcome afterward. Partial
+   failure never presents the target as promoted or rebound. Normal application
+   boot is the final executable proof and may still refuse clone/resource mismatch.
 4. Add deterministic fixture tests plus the mandatory PostgreSQL 16 hosted
    create → verify → restore → normal-boot scenario, tamper/wrong-intent/
    non-empty/missing-tool/timeout/leak cases, ADR and Legacy Alignment Matrix.
@@ -108,6 +110,15 @@ Use Node 22.16.0 through `fnm`.
   byte re-verification and restored-authority inspection, and rejects providers
   that do not await exactly one lock callback settlement. Deterministic rotating
   endpoint and early-returning lock-provider regressions pass on Node 22.16.0.
+- 2026-08-31: exact-head review closed four operator-boundary findings in one
+  batch. Native probes now reuse the pinned PostgreSQL storage adapter instead
+  of adding another `pg` import; verify-full carries CA and hostname semantics
+  to both Node and libpq; restore requires a verified-actor control-plane
+  attempt/outcome receipt before target access; and empty-target inspection now
+  covers non-relational user-owned catalog objects. The horizontal alignment
+  matrix records every domain. Hosted leak assertions compare exact connection
+  scalars and a complete locator, avoiding the false positive where the ordinary
+  username `postgres` matched the legitimate adapter name `postgresql`.
 
 ## Decision log
 
@@ -117,10 +128,16 @@ Use Node 22.16.0 through `fnm`.
   evidence to compare, never authority to choose a tenant or target.
 - A native tool gets its connection environment directly from a short-lived
   secret consumer at execution time. That environment and the tool command
-  line are never captured in receipts or errors.
+  line are never captured in receipts or errors. `verify-full` carries the same
+  trusted CA, hostname and `rejectUnauthorized: true` semantics through Node
+  authority probes and native libpq tools; weaker TLS modes are refused.
 - Restore never overwrites a live target and never grants writer authority.
   Successful byte import is followed by ordinary startup/attestation; failure
   there remains a refusal, not a promoted clone.
+- Restore does not mint authority. Its mandatory control-plane receipt seam
+  owns operator verification and durable attempted/outcome evidence outside the
+  data plane; the public integration layer must compose a real control-plane
+  implementation before exposing restore.
 
 ## Outcome and follow-up
 
