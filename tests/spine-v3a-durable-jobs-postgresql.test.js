@@ -90,6 +90,16 @@ test('V3A live PostgreSQL migration, concurrent claim, rollback, expiry, and fen
   const uncertainClaim = await store.claim('pg-worker-a', 1_000, workerContext);
   assert.equal(uncertainClaim.id, uncertain.id);
   const uncertainExecution = await store.beginExecution(uncertainClaim, 'pg-worker-a', workerContext);
+  for (const errorCode of [
+    'JOB_HANDLER_NOT_REGISTERED',
+    'JOB_EXTERNAL_OUTCOME_RECONCILIATION_REQUIRED',
+  ]) {
+    await assert.rejects(
+      store.fail(uncertainExecution, 'pg-worker-a', { errorCode }, workerContext),
+      (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED',
+    );
+  }
+  assert.equal((await store.get(uncertain.id)).state, 'claimed');
   current = '2026-09-01T09:00:02.100Z';
   assert.equal(await store.claim('pg-worker-b', 1_000, workerContext), null);
   const reconciled = await store.get(uncertain.id);

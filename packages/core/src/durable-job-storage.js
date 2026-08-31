@@ -122,7 +122,7 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
            claim_expires_at = NULL
      WHERE tenant_id = ? AND id = ? AND state = 'claimed'
        AND claim_worker_id = ? AND claim_id = ? AND claim_generation = ?
-       AND claim_expires_at > ? AND (? = 0 OR execution_started_at IS NOT NULL)
+       AND claim_expires_at > ? AND (? = (execution_started_at IS NOT NULL))
   `,
     release: `
     UPDATE spine_jobs
@@ -285,7 +285,7 @@ export function registerPostgresqlDurableJobStorage(storage, { query, table, own
          WHERE "tenant_id" = $6 AND "id" = $7 AND "state" = 'claimed'
            AND "claim_worker_id" = $8 AND "claim_id" = $9
            AND "claim_generation" = $10 AND "claim_expires_at" > $4
-           AND ($11 = FALSE OR "execution_started_at" IS NOT NULL)
+           AND $11 = ("execution_started_at" IS NOT NULL)
       `, [
         input.state, input.scheduleAt, input.outcomeReference, input.now,
         input.errorCode, input.tenantId, input.id, input.workerId,

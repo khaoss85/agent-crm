@@ -102,6 +102,33 @@ test('canonical payload inspection never invokes accessors and collapses hostile
   assert.equal(arrayGetterCalls, 0);
 });
 
+test('oversized sparse payload arrays refuse before allocation or accessor traversal', () => {
+  const oversized = [];
+  let getterCalls = 0;
+  Object.defineProperty(oversized, '0', {
+    enumerable: true, configurable: true,
+    get() { getterCalls += 1; return 'must-not-run'; },
+  });
+  oversized.length = 100_000_000;
+  const originalArrayFrom = Array.from;
+  let arrayFromCalls = 0;
+  Array.from = (...args) => {
+    arrayFromCalls += 1;
+    return originalArrayFrom(...args);
+  };
+  try {
+    assert.throws(
+      () => canonicalJobPayload(oversized),
+      (error) => error.code === 'DURABLE_JOB_PAYLOAD_INVALID'
+        && error.details === undefined && error.cause === undefined,
+    );
+  } finally {
+    Array.from = originalArrayFrom;
+  }
+  assert.equal(arrayFromCalls, 0, 'length is bounded before output allocation');
+  assert.equal(getterCalls, 0, 'sparse element accessors are never invoked');
+});
+
 test('enqueue snapshots its input and handler without invoking hostile accessors or leaking failures', async (t) => {
   const f = fixture(t);
   const sentinel = 'HOSTILE_ENQUEUE_SENTINEL_DO_NOT_EXPORT';
@@ -433,6 +460,23 @@ test('job and audit transitions share fencing and audit never copies payload or 
     f.store.release(executing, 'worker-a', workerContext),
     (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED',
   );
+  for (const errorCode of [
+    'JOB_HANDLER_NOT_REGISTERED',
+    'JOB_EXTERNAL_OUTCOME_RECONCILIATION_REQUIRED',
+  ]) {
+    await assert.rejects(
+      f.store.fail(executing, 'worker-a', { errorCode }, workerContext),
+      (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED',
+    );
+  }
+  let unratifiedError;
+  await assert.rejects(
+    f.store.fail(executing, 'worker-a', { errorCode: 'PASSWORD_SECRET_SENTINEL' }, workerContext),
+    (error) => { unratifiedError = error; return /not a ratified/.test(error.message); },
+  );
+  assert.equal([unratifiedError.message, unratifiedError.stack, inspect(unratifiedError, { depth: 12 })]
+    .join('\n').includes('PASSWORD_SECRET_SENTINEL'), false);
+  assert.equal((await f.store.get(job.id)).state, 'claimed', 'pre-execution codes cannot terminate begun work');
   await f.store.succeed(executing, 'worker-a', 'outcome-must-not-be-audited', workerContext);
 
   const events = audit.list({ entityType: 'durable_job', entityId: job.id });
@@ -446,6 +490,22 @@ test('job and audit transitions share fencing and audit never copies payload or 
   assert.equal(encoded.includes(sentinel), false);
   assert.equal(encoded.includes('root-audit'), false);
   assert.equal(encoded.includes('outcome-must-not-be-audited'), false);
+});
+
+test('a missing registered handler terminalizes only before execution begins', async (t) => {
+  const f = fixture(t);
+  const job = await f.store.enqueue(input('root-missing-handler'), operatorContext);
+  const worker = createDurableJobWorker({
+    store: f.store, registry: createDurableJobHandlerRegistry(), workerId: 'worker-a',
+    actor: systemActor, clock: f.clock, pollIntervalMs: 60_000,
+  });
+  worker.start();
+  const failed = await worker.poll();
+  assert.equal(failed.id, job.id);
+  assert.equal(failed.state, 'failed_terminal');
+  assert.equal(failed.lastErrorCode, 'JOB_HANDLER_NOT_REGISTERED');
+  assert.equal(failed.executionStartedAt, null);
+  await worker.close();
 });
 
 test('corrupt claim metadata is refused instead of being normalized into a job', async (t) => {
@@ -606,6 +666,11 @@ test('timer poll survives a hostile code getter, exposes bounded status, and rec
           code: 'DURABLE_JOB_STORAGE_UNAVAILABLE', status: 500, details: { secret: 'do-not-export' },
         });
       }
+      if (claimMode === 'unratified') {
+        throw new AppError('bounded storage failure', {
+          code: 'PASSWORD_SECRET_SENTINEL', status: 500,
+        });
+      }
       return null;
     },
   };
@@ -623,6 +688,10 @@ test('timer poll survives a hostile code getter, exposes bounded status, and rec
   await assert.rejects(worker.poll(), (error) => error.code === 'DURABLE_JOB_STORAGE_UNAVAILABLE');
   assert.equal(worker.status().lastWorkerErrorCode, 'DURABLE_JOB_STORAGE_UNAVAILABLE');
   assert.equal(JSON.stringify(worker.status()).includes('do-not-export'), false);
+  claimMode = 'unratified';
+  await assert.rejects(worker.poll(), (error) => error.code === 'PASSWORD_SECRET_SENTINEL');
+  assert.equal(worker.status().lastWorkerErrorCode, 'DURABLE_JOB_POLL_FAILED');
+  assert.equal(JSON.stringify(worker.status()).includes('PASSWORD_SECRET_SENTINEL'), false);
   claimMode = 'recovered';
   assert.equal(await worker.poll(), null);
   assert.equal(worker.status().lastWorkerErrorCode, null);
@@ -654,6 +723,27 @@ test('handler error code accessors are never invoked or persisted', async (t) =>
   await worker.close();
 });
 
+test('unratified handler error codes never enter job, audit, or worker status', async (t) => {
+  const f = fixture(t);
+  const sentinel = 'PASSWORD_SECRET_SENTINEL';
+  const registry = createDurableJobHandlerRegistry();
+  registry.register({
+    kind: 'named-action', name: 'run-follow-up', version: 1,
+    async execute() { throw Object.assign(new Error('bounded handler failure'), { code: sentinel }); },
+  });
+  const worker = createDurableJobWorker({
+    store: f.store, registry, workerId: 'worker-a', actor: systemActor, clock: f.clock, pollIntervalMs: 60_000,
+  });
+  const job = await f.store.enqueue(input('root-unratified-handler-code'), operatorContext);
+  worker.start();
+  const failed = await worker.poll();
+  assert.equal(failed.state, 'failed_terminal');
+  assert.equal(failed.lastErrorCode, 'JOB_HANDLER_FAILED');
+  const audit = new AuditLog(f.database).list({ entityType: 'durable_job', entityId: job.id });
+  assert.equal([JSON.stringify(failed), JSON.stringify(audit), JSON.stringify(worker.status())].join('\n').includes(sentinel), false);
+  await worker.close();
+});
+
 test('terminal and external-operation failures never retry implicitly', async (t) => {
   const f = fixture(t);
   const registry = createDurableJobHandlerRegistry();
@@ -667,7 +757,7 @@ test('terminal and external-operation failures never retry implicitly', async (t
   worker.start();
   const result = await worker.poll();
   assert.equal(result.state, 'failed_terminal');
-  assert.equal(result.lastErrorCode, 'JOB_EXTERNAL_OUTCOME_RECONCILIATION_REQUIRED');
+  assert.equal(result.lastErrorCode, 'JOB_EXTERNAL_EXECUTION_RECONCILIATION_REQUIRED');
   assert.equal(await worker.poll(), null);
   await worker.close();
 });
@@ -719,6 +809,62 @@ test('a handler held through exact lease expiry is never invoked by recovery and
   await assert.rejects(firstPoll, (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED');
   await firstWorker.close();
   await recoveryWorker.close();
+});
+
+test('close is terminal and clears wake state when in-flight persistence rejects', async () => {
+  const persistenceFailure = new AppError('bounded injected persistence failure', {
+    code: 'DURABLE_JOB_STORAGE_UNAVAILABLE', status: 500,
+  });
+  let finishStarted;
+  let releaseFailure;
+  const finishing = new Promise((resolve) => { finishStarted = resolve; });
+  const failureGate = new Promise((resolve) => { releaseFailure = resolve; });
+  let claimed = false;
+  const claimedJob = Object.freeze({
+    id: 'job-close-failure', tenantId: 'tenant-a', kind: 'named-action',
+    handler: Object.freeze({ name: 'run-follow-up', contract: 1, version: 1 }),
+    payload: Object.freeze({ recordId: 'close-failure' }), idempotencyRoot: 'close-failure',
+    state: 'claimed', attempt: 1, maxAttempts: 3,
+  });
+  const executingJob = Object.freeze({ ...claimedJob, executionStartedAt: '2026-09-01T09:00:00.000Z' });
+  const store = {
+    now: () => '2026-09-01T09:00:00.000Z',
+    async claim() {
+      if (claimed) return null;
+      claimed = true;
+      return claimedJob;
+    },
+    async beginExecution() { return executingJob; },
+    async succeed() {
+      finishStarted();
+      await failureGate;
+      throw persistenceFailure;
+    },
+  };
+  const registry = createDurableJobHandlerRegistry();
+  registry.register({
+    kind: 'named-action', name: 'run-follow-up', version: 1,
+    async execute() { return { outcomeReference: 'close-failure-result' }; },
+  });
+  const worker = createDurableJobWorker({
+    store, registry, workerId: 'worker-a', actor: systemActor, pollIntervalMs: 60_000,
+  });
+  worker.start();
+  const polling = worker.poll();
+  await finishing;
+  const closing = worker.close();
+  const pollRejection = assert.rejects(polling, (error) => error === persistenceFailure);
+  const closeRejection = assert.rejects(closing, (error) => error === persistenceFailure);
+  releaseFailure();
+  await Promise.all([pollRejection, closeRejection]);
+
+  assert.deepEqual(worker.status(), {
+    accepting: false, closed: true, polling: false, inFlight: false,
+    wakeScheduled: false, lastWorkerErrorCode: 'DURABLE_JOB_STORAGE_UNAVAILABLE',
+  });
+  assert.throws(() => worker.start(), (error) => error.code === 'DURABLE_JOB_WORKER_CLOSED');
+  assert.throws(() => worker.wake(), (error) => error.code === 'DURABLE_JOB_WORKER_CLOSED');
+  assert.equal(worker.status().wakeScheduled, false);
 });
 
 test('drain is bounded, stops claims, clears its timer, and keeps an active lease fenced', async (t) => {

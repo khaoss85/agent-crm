@@ -4020,12 +4020,16 @@ timer in this slice. If shutdown wins after claim but before handler invocation,
 an owner-fenced release preserves the incremented claim generation while
 returning the execution attempt, so repeated drains cannot exhaust untouched
 work or falsely classify an external operation as already attempted. Timer poll
-failures remain visible as one bounded code in worker status and clear only
-after a successful poll. The worker retries only two closed transient handler codes
-with bounded injected backoff. Unknown, validation, authorization and policy
-failures are terminal. A recovered `external-operation-v2` claim never invokes
-the provider again: its idempotency root is the stable external operation
-identity and the recovered job becomes reconciliation-required.
+failures remain visible as one ratified bounded code in worker status and clear
+only after a successful poll. `close` becomes terminal and clears its wake timer
+even when draining an in-flight persistence failure rejects. The worker retries
+only two closed transient handler codes with bounded injected backoff. Unknown,
+validation, authorization and policy failures collapse to framework-owned
+terminal codes. An expired `external-operation-v2` claim with no durable
+execution-start evidence is reclaimed on the same attempt and may invoke once.
+Once execution start is durable, expiry or an unknown handler outcome is never
+replayed: the stable idempotency root remains its external operation identity
+and the job becomes reconciliation-required.
 
 ### Context
 
@@ -4064,6 +4068,9 @@ tenancy or a tenant switcher.
   terminal reconciliation evidence regardless of remaining attempt budget.
 - A pre-handler release is fenced by tenant, worker, claim fingerprint,
   generation and live lease, and does not consume the execution-attempt budget.
+- Pre-execution terminal codes require absent execution-start evidence, while
+  execution/retry completion requires present evidence; neither phase can
+  falsely terminate the other through the direct store seam.
 - Worker status exposes only the last bounded poll error code, never raw storage
   error text or details; a later successful poll clears it.
 - Claim, execution-start, success, failure, and release require a system actor;
@@ -4080,10 +4087,14 @@ tenancy or a tenant switcher.
 - Canonical payload traversal reads own data descriptors recursively for both
   objects and arrays. Accessors are refused without invocation; proxy/trap and
   other hostile inspection failures collapse to `DURABLE_JOB_PAYLOAD_INVALID`
-  with no cause, details or caller-controlled serialization.
+  with no cause, details or caller-controlled serialization. Array length is
+  conservatively bounded from the payload byte budget before allocation.
 - Job input, handler identity, and mutation actor context are likewise inspected
   through own data descriptors before any field read. Hostile injected backoff
   behavior terminalizes as `JOB_BACKOFF_INVALID` without retaining its error.
+- Store failure codes, handler-derived codes, and worker status codes use closed
+  allowlists. Arbitrary uppercase caller text never enters a job, audit event,
+  or worker status as an error code.
 - V3A is infrastructure only. It adds no cron grammar, recurrence policy,
   outbox, timer consumer, provider adapter, operator command, public app facade,
   Cloud queue, production-readiness claim or JTBD promotion. Those boundaries

@@ -20,9 +20,18 @@ export const DURABLE_JOB_RETRYABLE_ERRORS = Object.freeze([
 ]);
 
 const RETRYABLE = new Set(DURABLE_JOB_RETRYABLE_ERRORS);
+const HANDLER_RETRYABLE = new Set(['JOB_HANDLER_BUSY', 'JOB_HANDLER_TEMPORARY_UNAVAILABLE']);
 const PRE_EXECUTION_FAILURES = new Set([
   'JOB_HANDLER_NOT_REGISTERED', 'JOB_EXTERNAL_OUTCOME_RECONCILIATION_REQUIRED',
 ]);
+const CLOSED_FAILURE_CODES = new Set([
+  ...HANDLER_RETRYABLE,
+  ...PRE_EXECUTION_FAILURES,
+  'JOB_HANDLER_FAILED',
+  'JOB_BACKOFF_INVALID',
+  'JOB_EXTERNAL_EXECUTION_RECONCILIATION_REQUIRED',
+]);
+const WORKER_STATUS_ERRORS = new Set(['DURABLE_JOB_STORAGE_UNAVAILABLE']);
 const CLOSED_STATES = new Set(DURABLE_JOB_STATES);
 const SCHEDULE_INTENTS = new Set(['immediate', 'scheduled']);
 const NAME = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/;
@@ -30,6 +39,7 @@ const ERROR_CODE = /^[A-Z][A-Z0-9_]*$/;
 const MAX_TEXT = 256;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_PAYLOAD_DEPTH = 12;
+const MAX_PAYLOAD_ARRAY_ITEMS = Math.floor((MAX_PAYLOAD_BYTES - 1) / 2);
 const MAX_ATTEMPTS = 100;
 const MAX_LEASE_MS = 24 * 60 * 60 * 1000;
 const SENSITIVE_KEY = /(?:secret|password|passwd|credential|authorization|bearer|api[_-]?key|connection[_-]?(?:string|url)|database[_-]?url|private[_-]?key)/i;
@@ -150,7 +160,8 @@ function canonicalPayloadValue(value, depth = 0, ancestors = new WeakSet()) {
   ancestors.add(value);
   if (array) {
     const length = descriptors.length;
-    if (!length || !Object.hasOwn(length, 'value') || !Number.isSafeInteger(length.value) || length.value < 0) {
+    if (!length || !Object.hasOwn(length, 'value') || !Number.isSafeInteger(length.value)
+      || length.value < 0 || length.value > MAX_PAYLOAD_ARRAY_ITEMS) {
       throw new Error('array-length');
     }
     const output = Array.from({ length: length.value }, () => null);
@@ -466,10 +477,13 @@ export function createDurableJobStore(options) {
     },
     async fail(job, workerId, input, context = {}) {
       const actor = systemMutationActor(context, 'Durable-job failure context');
-      closedObject(input, ['errorCode', 'retryAt'], ['errorCode'], 'Durable-job failure');
-      const errorCode = boundedCode(input.errorCode, 'errorCode');
+      const failure = closedJobInput(input, ['errorCode', 'retryAt'], ['errorCode']);
+      const errorCode = boundedCode(failure.errorCode, 'errorCode');
+      if (!CLOSED_FAILURE_CODES.has(errorCode)) {
+        throw new ValidationError('errorCode is not a ratified durable-job failure code');
+      }
       const retryable = RETRYABLE.has(errorCode) && job.attempt < job.maxAttempts;
-      const retryAt = retryable ? canonicalInstant(input.retryAt, 'retryAt') : job.scheduleAt;
+      const retryAt = retryable ? canonicalInstant(failure.retryAt, 'retryAt') : job.scheduleAt;
       return finish(job, boundedText(workerId, 'workerId'), {
         state: retryable ? 'failed_retryable' : 'failed_terminal',
         scheduleAt: retryAt, errorCode,
@@ -567,7 +581,8 @@ function boundedOwnErrorCode(error, fallback) {
 }
 
 function boundedErrorCode(error) {
-  return boundedOwnErrorCode(error, 'JOB_HANDLER_FAILED');
+  const code = boundedOwnErrorCode(error, 'JOB_HANDLER_FAILED');
+  return HANDLER_RETRYABLE.has(code) ? code : 'JOB_HANDLER_FAILED';
 }
 
 function defaultBackoff(attempt) {
@@ -598,7 +613,8 @@ export function createDurableJobWorker(options) {
   let lastWorkerErrorCode = null;
 
   const recordPollFailure = (error) => {
-    lastWorkerErrorCode = boundedOwnErrorCode(error, 'DURABLE_JOB_POLL_FAILED');
+    const code = boundedOwnErrorCode(error, 'DURABLE_JOB_POLL_FAILED');
+    lastWorkerErrorCode = WORKER_STATUS_ERRORS.has(code) ? code : 'DURABLE_JOB_POLL_FAILED';
   };
 
   const clearWake = () => {
@@ -630,7 +646,7 @@ export function createDurableJobWorker(options) {
     const recordHandlerFailure = (error) => {
       let errorCode = boundedErrorCode(error);
       if (handler.sideEffect === 'external-operation-v2') {
-        errorCode = 'JOB_EXTERNAL_OUTCOME_RECONCILIATION_REQUIRED';
+        errorCode = 'JOB_EXTERNAL_EXECUTION_RECONCILIATION_REQUIRED';
       }
       const retryable = RETRYABLE.has(errorCode) && handler.sideEffect === 'none' && executingJob.attempt < executingJob.maxAttempts;
       let retryAt;
@@ -726,10 +742,13 @@ export function createDurableJobWorker(options) {
     drain,
     stop: drain,
     async close(input = {}) {
-      const result = await drain(input);
-      closed = true;
-      clearWake();
-      return result;
+      try {
+        return await drain(input);
+      } finally {
+        accepting = false;
+        closed = true;
+        clearWake();
+      }
     },
     status() {
       return Object.freeze({
