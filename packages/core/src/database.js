@@ -228,6 +228,7 @@ const DATA_PLANE_MIGRATIONS = [
         handler_version INTEGER NOT NULL CHECK(handler_version BETWEEN 1 AND 9007199254740991),
         payload_json TEXT NOT NULL,
         payload_fingerprint TEXT NOT NULL,
+        schedule_intent TEXT NOT NULL CHECK(schedule_intent IN ('immediate', 'scheduled')),
         schedule_at TEXT NOT NULL,
         state TEXT NOT NULL CHECK(state IN ('pending', 'claimed', 'succeeded', 'failed_retryable', 'failed_terminal', 'cancelled')),
         attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 9007199254740991),

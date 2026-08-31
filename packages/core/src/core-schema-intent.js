@@ -497,6 +497,7 @@ const V9_STATEMENTS = [
       integer('handler_version', { notNull: true, check: { kind: 'between', min: 1, max: SAFE_INTEGER_MAX } }),
       text('payload_json', { notNull: true }),
       text('payload_fingerprint', { notNull: true }),
+      text('schedule_intent', { notNull: true, check: { kind: 'in', values: ['immediate', 'scheduled'] } }),
       timestamp('schedule_at', { notNull: true }),
       text('state', {
         notNull: true,

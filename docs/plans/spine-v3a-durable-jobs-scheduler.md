@@ -31,12 +31,14 @@ The third approach pays for the adapter seam with two concrete dialects and prev
 
 - Contract version `1`, closed job states, closed retry classes, and closed input shapes.
 - Required persisted identity: job id, tenant id, kind, handler name/version, canonical payload fingerprint and bounded JSON, schedule instant, state, attempt/max attempts, claim owner/generation/expiry, idempotency root/outcome reference, timestamps, and bounded last error code.
+- Persisted schedule intent distinguishes an omitted immediate request from an explicit scheduled request. Idempotent retries of an immediate request join despite clock drift; immediate and explicitly scheduled work never collapse into one identity.
 - Payload is JSON-safe data only. Handler identity comes from a named registry; no source, function, command, secret, or provider credential is persisted.
 - PostgreSQL due claims select one eligible row in a transaction with `FOR UPDATE SKIP LOCKED`; SQLite serializes claim mutation through the current single-writer transaction. Multi-node SQLite support is not claimed.
 - Caller-transaction enqueue requires the callback-scoped handle plus the existing live ownership witness. Root handles and handles retained after commit or rollback refuse before writing.
 - Completion/release requires the same tenant, worker, generation, and unexpired claim. A pre-handler release preserves its generation fence but returns the execution attempt; expired claims are recoverable and active claims cannot be stolen.
 - Retry is opt-in through a closed retryable error code, bounded by `maxAttempts`, and scheduled using an injected deterministic backoff. Validation, authorization, policy, unknown, and provider failures are terminal by default; no external provider operation is replayed implicitly.
 - Worker lifecycle is explicit: `start`, bounded `poll`, `drain`, `stop`, and `close`. Stop prevents new claims; current work either finishes inside the drain deadline or a claim not yet handed to its handler is explicitly released for recovery. Timer poll failures remain visible as one bounded code until a successful poll. No constructor or app factory starts a timer.
+- Every mutation requires an explicit verified actor and records one bounded, payload-free `durable_job.*` audit event on the same SQLite/PostgreSQL transaction handle. Worker construction requires an explicit system-operation actor and never invents one.
 
 ## Milestones
 
@@ -82,6 +84,7 @@ Expected: all commands exit zero; PostgreSQL tests are not skipped when the serv
 - 2026-08-31: Added the closed store, handler registry, retry/backoff policy, external-operation-v2 recovery fence, and explicit worker lifecycle. A red-team lease-expiry finding resulted in the recovered-external-effect regression: the second generation becomes reconciliation-required without invoking the handler/provider twice.
 - 2026-08-31: Focused evidence is green: V3A SQLite plus affected M2F/M3A/lead-conversion suites (the combined run completed with no failures; the live PostgreSQL case skipped only because PostgreSQL 16 is unavailable locally). `npm run check`, `npm run smoke`, Repository Truth, GTM/site/distribution, surface check, and `git diff --check` pass on Node 22.16.0. A post-implementation full `npm run verify` advanced through syntax and broad suites without an observed product failure, then was stopped as a duplicate before the repository's known slow/non-deterministic shell-classifier path; exact-head CI must supply the terminal broad receipt.
 - 2026-08-31: The clean-baseline verify was stopped after the repository's known local shell-classifier cross-product test ran for several minutes and failed while the rest of the observed baseline remained green; exact-head GitHub CI on Node 22.16.0 was already green. Final validation is run again after implementation rather than treating the interrupted baseline as feature evidence.
+- 2026-08-31: PR review found that omitted schedules lost their semantic intent under clock drift and that the private job mutation seam had no actor/audit evidence. The existing `AuditLog.record(event, handle)` accepts both callback-scoped SQLite and affine PostgreSQL handles, so the correction can remain atomic without another ledger or schema.
 
 ## Decision log
 
@@ -91,6 +94,8 @@ Expected: all commands exit zero; PostgreSQL tests are not skipped when the serv
 - Lease generation is a monotonically increasing safe integer. Completion is compare-and-set on tenant, worker, generation, state, and expiry.
 - If the final allowed attempt dies while claimed, the first post-expiry claim transaction marks it `failed_terminal` with bounded evidence instead of executing beyond `maxAttempts`.
 - A recovered `external-operation-v2` job carries the same idempotency root as its external operation identity and becomes reconciliation-required before handler invocation. At-least-once internal work still requires its consumer to use the supplied idempotency root; V3A does not claim exactly-once effects.
+- Schedule intent describes the current caller-visible scheduling decision: enqueue stores `immediate` or `scheduled`, explicit reschedule moves it to `scheduled`, while internal retry backoff preserves the original caller intent.
+- Job audit data contains only closed transition evidence (`state`, claim generation, and bounded error code where applicable). It never copies payload, idempotency roots, outcome references, tenant locators, or handler inputs.
 
 ## Outcome and follow-up
 

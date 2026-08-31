@@ -89,7 +89,9 @@ Horizontal runtime capability: a tenant-bound application can atomically enqueue
 named work, claim due work with a fenced lease, recover after restart, and run an
 explicitly started worker. PostgreSQL uses transactional
 `FOR UPDATE SKIP LOCKED`; SQLite uses its one-connection single-writer boundary
-and does not claim multi-node worker support. This slice adds no domain timer
+and does not claim multi-node worker support. Omitted versus explicit schedule
+intent is durable, and each actor-required mutation records payload-free audit
+evidence on the same storage transaction. This slice adds no domain timer
 consumer, cron language, outbox, operator surface, worker autostart or public
 production-readiness claim.
 

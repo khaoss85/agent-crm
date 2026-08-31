@@ -1,6 +1,8 @@
 // @ts-check
 
 import { createHash, randomUUID } from 'node:crypto';
+import { requireActor } from './actor.js';
+import { AuditLog } from './audit.js';
 import { AppError, ValidationError } from './errors.js';
 import {
   assertActiveDurableJobTransaction,
@@ -19,6 +21,7 @@ export const DURABLE_JOB_RETRYABLE_ERRORS = Object.freeze([
 
 const RETRYABLE = new Set(DURABLE_JOB_RETRYABLE_ERRORS);
 const CLOSED_STATES = new Set(DURABLE_JOB_STATES);
+const SCHEDULE_INTENTS = new Set(['immediate', 'scheduled']);
 const NAME = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/;
 const ERROR_CODE = /^[A-Z][A-Z0-9_]*$/;
 const MAX_TEXT = 256;
@@ -74,6 +77,27 @@ function canonicalInstant(value, label) {
   return value;
 }
 
+function mutationActor(context, allowed, label) {
+  closedObject(context, [...allowed, 'actor'], ['actor'], label);
+  closedObject(context.actor, ['type', 'id'], ['type', 'id'], `${label} actor`);
+  const descriptors = Object.getOwnPropertyDescriptors(context.actor);
+  if (!Object.hasOwn(descriptors.type, 'value') || !Object.hasOwn(descriptors.id, 'value')) {
+    throw new ValidationError(`${label} actor must contain data properties`);
+  }
+  const actor = requireActor(context.actor, 'actor');
+  return Object.freeze({ type: actor.type, id: boundedText(actor.id, 'actor.id') });
+}
+
+async function recordMutation(audit, handle, actor, action, jobId, data = {}) {
+  await Promise.resolve(audit.record({
+    actor,
+    action: `durable_job.${action}`,
+    entityType: 'durable_job',
+    entityId: jobId,
+    data,
+  }, handle));
+}
+
 function canonicalPayloadValue(value, depth = 0) {
   if (depth > MAX_PAYLOAD_DEPTH) throw new ValidationError('Job payload exceeds the maximum nesting depth');
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
@@ -122,9 +146,15 @@ function safeInteger(value, label) {
 function decodeRow(row) {
   if (!row) return null;
   const state = String(row.state);
+  const scheduleIntent = String(row.schedule_intent);
   if (!CLOSED_STATES.has(state)) {
     throw new AppError('Persisted durable-job state is invalid', {
       code: 'DURABLE_JOB_ROW_INVALID', status: 500, details: { field: 'state' },
+    });
+  }
+  if (!SCHEDULE_INTENTS.has(scheduleIntent)) {
+    throw new AppError('Persisted durable-job schedule intent is invalid', {
+      code: 'DURABLE_JOB_ROW_INVALID', status: 500, details: { field: 'scheduleIntent' },
     });
   }
   let payload;
@@ -159,7 +189,7 @@ function decodeRow(row) {
       version: safeInteger(row.handler_version, 'handlerVersion'),
     }),
     payload, payloadFingerprint: String(row.payload_fingerprint),
-    scheduleAt: iso(row.schedule_at), state,
+    scheduleIntent, scheduleAt: iso(row.schedule_at), state,
     attempt: safeInteger(row.attempt, 'attempt'), maxAttempts: safeInteger(row.max_attempts, 'maxAttempts'),
     claim: row.claim_id === null || row.claim_id === undefined ? null : Object.freeze({
       workerId: String(row.claim_worker_id), claimId: String(row.claim_id),
@@ -193,6 +223,7 @@ export function createDurableJobStore(options) {
   const claimIdSource = options.claimIdSource ?? randomUUID;
   if (typeof idSource !== 'function' || typeof claimIdSource !== 'function') throw new TypeError('Durable-job id sources must be functions');
   const storageOwner = durableJobStorageOwnerFor(options.storage);
+  const audit = new AuditLog({ storage: options.storage });
 
   const adapterFor = (storage, requireTransaction = false) => {
     if (durableJobStorageOwnerFor(storage) !== storageOwner) {
@@ -204,7 +235,7 @@ export function createDurableJobStore(options) {
     return durableJobStorageFor(storage);
   };
 
-  const inTransaction = (fn) => options.storage.transaction(async (tx) => fn(adapterFor(tx)));
+  const inTransaction = (fn) => options.storage.transaction(async (tx) => fn(adapterFor(tx), tx));
 
   async function get(id) {
     const jobId = boundedText(id, 'job id');
@@ -212,13 +243,14 @@ export function createDurableJobStore(options) {
   }
 
   async function enqueue(input, context = {}) {
-    closedObject(context, ['transaction'], [], 'Durable-job enqueue context');
+    const actor = mutationActor(context, ['transaction'], 'Durable-job enqueue context');
     closedObject(input,
       ['kind', 'handler', 'payload', 'scheduleAt', 'maxAttempts', 'idempotencyRoot', 'outcomeReference'],
       ['kind', 'handler', 'payload', 'idempotencyRoot'], 'Durable-job enqueue input');
     closedObject(input.handler, ['name', 'contract', 'version'], ['name', 'contract', 'version'], 'Durable-job handler identity');
     const createdAt = now();
     const explicitSchedule = input.scheduleAt !== undefined;
+    const scheduleIntent = explicitSchedule ? 'scheduled' : 'immediate';
     const scheduleAt = canonicalInstant(input.scheduleAt ?? createdAt, 'scheduleAt');
     const payload = canonicalJobPayload(input.payload);
     const row = {
@@ -228,6 +260,7 @@ export function createDurableJobStore(options) {
       handler_contract: input.handler.contract === 1 ? 1 : (() => { throw new ValidationError('handler contract must be 1'); })(),
       handler_version: positiveInteger(input.handler.version, 'handler version'),
       payload_json: payload.json, payload_fingerprint: payload.fingerprint,
+      schedule_intent: scheduleIntent,
       schedule_at: scheduleAt, state: 'pending', attempt: 0,
       max_attempts: positiveInteger(input.maxAttempts ?? 3, 'maxAttempts', MAX_ATTEMPTS),
       claim_worker_id: null, claim_id: null, claim_generation: 0, claim_expires_at: null,
@@ -235,13 +268,19 @@ export function createDurableJobStore(options) {
       outcome_reference: input.outcomeReference == null ? null : boundedText(input.outcomeReference, 'outcomeReference'),
       created_at: createdAt, updated_at: createdAt, last_error_code: null,
     };
-    const persist = async (adapter) => {
-      if (await adapter.insert(row)) return decodeRow(row);
+    const persist = async (adapter, handle) => {
+      if (await adapter.insert(row)) {
+        await recordMutation(audit, handle, actor, 'enqueued', row.id, {
+          state: 'pending', scheduleIntent,
+        });
+        return decodeRow(row);
+      }
       const existing = decodeRow(await adapter.getByRoot(tenantId, row.idempotency_root));
       if (existing && existing.kind === row.kind && existing.handler.name === row.handler_name
         && existing.handler.contract === row.handler_contract && existing.handler.version === row.handler_version
         && existing.payloadFingerprint === row.payload_fingerprint
-        && (!explicitSchedule || existing.scheduleAt === row.schedule_at)
+        && existing.scheduleIntent === scheduleIntent
+        && (scheduleIntent === 'immediate' || existing.scheduleAt === row.schedule_at)
         && existing.maxAttempts === row.max_attempts
         && existing.outcomeReference === row.outcome_reference) return existing;
       throw new AppError('Durable-job idempotency root was already used for different work', {
@@ -249,19 +288,33 @@ export function createDurableJobStore(options) {
       });
     };
     return Object.hasOwn(context, 'transaction')
-      ? persist(adapterFor(context.transaction, true))
+      ? persist(adapterFor(context.transaction, true), context.transaction)
       : inTransaction(persist);
   }
 
-  async function claim(workerId, leaseMs = 30_000) {
+  async function claim(workerId, leaseMs = 30_000, context = {}) {
+    const actor = mutationActor(context, [], 'Durable-job claim context');
     const worker = boundedText(workerId, 'workerId');
     positiveInteger(leaseMs, 'leaseMs', MAX_LEASE_MS);
     const instant = now();
     const expiresAt = new Date(Date.parse(instant) + leaseMs).toISOString();
     const claimId = boundedText(claimIdSource(), 'generated claim id');
-    return inTransaction(async (adapter) => decodeRow(await adapter.claim({
-      tenantId, workerId: worker, claimId, now: instant, expiresAt,
-    })));
+    return inTransaction(async (adapter, handle) => {
+      const result = await adapter.claim({ tenantId, workerId: worker, claimId, now: instant, expiresAt });
+      for (const expired of result.terminalized) {
+        await recordMutation(audit, handle, actor, 'failed', String(expired.id), {
+          state: 'failed_terminal', claimGeneration: safeInteger(expired.claim_generation, 'claimGeneration'),
+          errorCode: 'JOB_ATTEMPTS_EXHAUSTED_AFTER_LEASE',
+        });
+      }
+      const job = decodeRow(result.row);
+      if (job) {
+        await recordMutation(audit, handle, actor, 'claimed', job.id, {
+          state: 'claimed', claimGeneration: job.claimGeneration,
+        });
+      }
+      return job;
+    });
   }
 
   function requireClaim(job, workerId) {
@@ -270,18 +323,25 @@ export function createDurableJobStore(options) {
     return job.claim;
   }
 
-  async function finish(job, workerId, transition) {
+  async function finish(job, workerId, transition, actor) {
     const claim = requireClaim(job, workerId);
     const instant = now();
-    const changed = await inTransaction((adapter) => adapter.finish({
-      tenantId, id: job.id, workerId, claimId: claim.claimId, generation: claim.generation,
-      now: instant, state: transition.state,
-      scheduleAt: transition.scheduleAt ?? job.scheduleAt,
-      outcomeReference: transition.outcomeReference ?? job.outcomeReference,
-      errorCode: transition.errorCode ?? null,
-    }));
-    if (changed !== 1) throw claimFenced();
-    return get(job.id);
+    return inTransaction(async (adapter, handle) => {
+      const changed = await adapter.finish({
+        tenantId, id: job.id, workerId, claimId: claim.claimId, generation: claim.generation,
+        now: instant, state: transition.state,
+        scheduleAt: transition.scheduleAt ?? job.scheduleAt,
+        outcomeReference: transition.outcomeReference ?? job.outcomeReference,
+        errorCode: transition.errorCode ?? null,
+      });
+      if (changed !== 1) throw claimFenced();
+      await recordMutation(audit, handle, actor,
+        transition.state === 'succeeded' ? 'succeeded' : 'failed', job.id, {
+          state: transition.state, claimGeneration: claim.generation,
+          ...(transition.errorCode ? { errorCode: transition.errorCode } : {}),
+        });
+      return decodeRow(await adapter.get(tenantId, job.id));
+    });
   }
 
   return Object.freeze({
@@ -291,13 +351,15 @@ export function createDurableJobStore(options) {
     enqueue,
     get,
     claim,
-    async succeed(job, workerId, outcomeReference = null) {
+    async succeed(job, workerId, outcomeReference = null, context = {}) {
+      const actor = mutationActor(context, [], 'Durable-job success context');
       return finish(job, boundedText(workerId, 'workerId'), {
         state: 'succeeded',
         outcomeReference: outcomeReference == null ? null : boundedText(outcomeReference, 'outcomeReference'),
-      });
+      }, actor);
     },
-    async fail(job, workerId, input) {
+    async fail(job, workerId, input, context = {}) {
+      const actor = mutationActor(context, [], 'Durable-job failure context');
       closedObject(input, ['errorCode', 'retryAt'], ['errorCode'], 'Durable-job failure');
       const errorCode = boundedCode(input.errorCode, 'errorCode');
       const retryable = RETRYABLE.has(errorCode) && job.attempt < job.maxAttempts;
@@ -305,31 +367,48 @@ export function createDurableJobStore(options) {
       return finish(job, boundedText(workerId, 'workerId'), {
         state: retryable ? 'failed_retryable' : 'failed_terminal',
         scheduleAt: retryAt, errorCode,
-      });
+      }, actor);
     },
-    async release(job, workerId) {
+    async release(job, workerId, context = {}) {
+      const actor = mutationActor(context, [], 'Durable-job release context');
       const owner = boundedText(workerId, 'workerId');
       const claim = requireClaim(job, owner);
       const instant = now();
-      const changed = await inTransaction((adapter) => adapter.release({
-        tenantId, id: job.id, workerId: owner, claimId: claim.claimId,
-        generation: claim.generation, now: instant,
-      }));
-      if (changed !== 1) throw claimFenced();
-      return get(job.id);
+      return inTransaction(async (adapter, handle) => {
+        const changed = await adapter.release({
+          tenantId, id: job.id, workerId: owner, claimId: claim.claimId,
+          generation: claim.generation, now: instant,
+        });
+        if (changed !== 1) throw claimFenced();
+        await recordMutation(audit, handle, actor, 'released', job.id, {
+          state: 'failed_retryable', claimGeneration: claim.generation,
+          errorCode: 'JOB_CLAIM_RELEASED',
+        });
+        return decodeRow(await adapter.get(tenantId, job.id));
+      });
     },
-    async cancel(id) {
+    async cancel(id, context = {}) {
+      const actor = mutationActor(context, [], 'Durable-job cancel context');
       const jobId = boundedText(id, 'job id');
-      const changed = await inTransaction((adapter) => adapter.cancel({ tenantId, id: jobId, now: now() }));
-      if (changed !== 1) throw new AppError('Only pending durable jobs can be cancelled', { code: 'DURABLE_JOB_NOT_PENDING', status: 409 });
-      return get(jobId);
+      return inTransaction(async (adapter, handle) => {
+        const changed = await adapter.cancel({ tenantId, id: jobId, now: now() });
+        if (changed !== 1) throw new AppError('Only pending durable jobs can be cancelled', { code: 'DURABLE_JOB_NOT_PENDING', status: 409 });
+        await recordMutation(audit, handle, actor, 'cancelled', jobId, { state: 'cancelled' });
+        return decodeRow(await adapter.get(tenantId, jobId));
+      });
     },
-    async reschedule(id, scheduleAt) {
+    async reschedule(id, scheduleAt, context = {}) {
+      const actor = mutationActor(context, [], 'Durable-job reschedule context');
       const jobId = boundedText(id, 'job id');
       const next = canonicalInstant(scheduleAt, 'scheduleAt');
-      const changed = await inTransaction((adapter) => adapter.reschedule({ tenantId, id: jobId, scheduleAt: next, now: now() }));
-      if (changed !== 1) throw new AppError('Only pending durable jobs can be rescheduled', { code: 'DURABLE_JOB_NOT_PENDING', status: 409 });
-      return get(jobId);
+      return inTransaction(async (adapter, handle) => {
+        const changed = await adapter.reschedule({ tenantId, id: jobId, scheduleAt: next, now: now() });
+        if (changed !== 1) throw new AppError('Only pending durable jobs can be rescheduled', { code: 'DURABLE_JOB_NOT_PENDING', status: 409 });
+        await recordMutation(audit, handle, actor, 'rescheduled', jobId, {
+          state: 'pending', scheduleIntent: 'scheduled',
+        });
+        return decodeRow(await adapter.get(tenantId, jobId));
+      });
     },
     async list(limit = 100) {
       positiveInteger(limit, 'limit', 500);
@@ -391,9 +470,13 @@ function defaultBackoff(attempt) {
 /** Explicit worker. Constructing it starts no timers and claims no work. */
 export function createDurableJobWorker(options) {
   closedObject(options,
-    ['store', 'registry', 'workerId', 'clock', 'pollIntervalMs', 'leaseMs', 'backoff'],
-    ['store', 'registry', 'workerId'], 'Durable-job worker options');
+    ['store', 'registry', 'workerId', 'actor', 'clock', 'pollIntervalMs', 'leaseMs', 'backoff'],
+    ['store', 'registry', 'workerId', 'actor'], 'Durable-job worker options');
   const workerId = boundedText(options.workerId, 'workerId');
+  const actor = mutationActor({ actor: options.actor }, [], 'Durable-job worker operation context');
+  if (actor.type !== 'system') {
+    throw new ValidationError('Durable-job worker operation actor must have system authority', { field: 'actor.type' });
+  }
   const clock = resolveClock(options.clock ?? options.store.now);
   const pollIntervalMs = positiveInteger(options.pollIntervalMs ?? 1_000, 'pollIntervalMs', 60_000);
   const leaseMs = positiveInteger(options.leaseMs ?? 30_000, 'leaseMs', MAX_LEASE_MS);
@@ -428,13 +511,13 @@ export function createDurableJobWorker(options) {
   async function execute(job) {
     const handler = options.registry.resolve(job);
     if (!handler) {
-      return options.store.fail(job, workerId, { errorCode: 'JOB_HANDLER_NOT_REGISTERED' });
+      return options.store.fail(job, workerId, { errorCode: 'JOB_HANDLER_NOT_REGISTERED' }, { actor });
     }
     // A recovered external effect is an unknown outcome, not permission to
     // call the provider again. externalOperationId is stable across attempts;
     // reconciliation owns the next step under external-operation v2.
     if (handler.sideEffect === 'external-operation-v2' && job.attempt > 1) {
-      return options.store.fail(job, workerId, { errorCode: 'JOB_EXTERNAL_OUTCOME_RECONCILIATION_REQUIRED' });
+      return options.store.fail(job, workerId, { errorCode: 'JOB_EXTERNAL_OUTCOME_RECONCILIATION_REQUIRED' }, { actor });
     }
     const recordHandlerFailure = (error) => {
       let errorCode = boundedErrorCode(error);
@@ -451,7 +534,7 @@ export function createDurableJobWorker(options) {
           retryAt = new Date(Date.parse(clock()) + delay).toISOString();
         }
       }
-      return options.store.fail(job, workerId, { errorCode, ...(retryAt ? { retryAt } : {}) });
+      return options.store.fail(job, workerId, { errorCode, ...(retryAt ? { retryAt } : {}) }, { actor });
     };
     let result;
     try {
@@ -472,16 +555,16 @@ export function createDurableJobWorker(options) {
     }
     // Persistence failures are not handler failures. Let the worker surface
     // them without falsely terminalizing a job whose commit outcome is unknown.
-    return options.store.succeed(job, workerId, outcomeReference);
+    return options.store.succeed(job, workerId, outcomeReference, { actor });
   }
 
   async function poll() {
     if (!accepting || closed) return null;
     if (pollPromise) return pollPromise;
     pollPromise = (async () => {
-      const job = await options.store.claim(workerId, leaseMs);
+      const job = await options.store.claim(workerId, leaseMs, { actor });
       if (!job) return null;
-      if (!accepting || closed) return options.store.release(job, workerId);
+      if (!accepting || closed) return options.store.release(job, workerId, { actor });
       inFlight = execute(job);
       try { return await inFlight; } finally { inFlight = null; }
     })();

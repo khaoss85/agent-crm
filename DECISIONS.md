@@ -3984,9 +3984,19 @@ widening from `site/` to `docs/` for a single noun.
 Accordo has one versioned durable-job contract on the tenant data plane. A job
 persists a named handler identity and canonical JSON-safe payload, never source
 code or a command. Every row carries the already-bound application tenant,
-schedule instant, bounded attempt policy, idempotency root, claim generation and
-claim fingerprint. Every completion is compare-and-set on tenant, worker,
+schedule intent plus instant, bounded attempt policy, idempotency root, claim generation and
+claim fingerprint. Omitted schedules persist as `immediate`, so the same
+idempotency root joins across clock drift without collapsing into an explicitly
+scheduled request. Every completion is compare-and-set on tenant, worker,
 generation, fingerprint and unexpired lease.
+
+Every mutation requires an explicit validated actor. The existing
+`AuditLog.record(event, handle)` writes one closed `durable_job.*` event on the
+same callback-scoped SQLite or affine PostgreSQL transaction as the job row.
+Audit data contains transition state, claim generation and a bounded error code
+where applicable; it never copies payload, idempotency root, outcome reference
+or handler input. An explicitly constructed worker additionally requires a
+system actor and has no fallback identity.
 
 PostgreSQL claims one due row inside the existing connection-affine transaction
 with `FOR UPDATE SKIP LOCKED`. SQLite claims inside its existing
@@ -4047,6 +4057,11 @@ tenancy or a tenant switcher.
 - Cancel and reschedule apply only before a claim. A handler that outlives its
   lease may finish too late and is fenced; internal business handlers therefore
   still require their own idempotent outcome identity.
+- Explicit reschedule changes the persisted caller-visible schedule intent to
+  `scheduled`; retry backoff changes the next instant without rewriting the
+  original caller intent.
+- A job transition and its audit event commit or roll back together. A fenced
+  transition writes neither; reads require no actor and write no audit event.
 - V3A is infrastructure only. It adds no cron grammar, recurrence policy,
   outbox, timer consumer, provider adapter, operator command, public app facade,
   Cloud queue, production-readiness claim or JTBD promotion. Those boundaries

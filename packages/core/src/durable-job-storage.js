@@ -57,7 +57,7 @@ export function durableJobStorageFor(storage) {
 
 const COLUMNS = [
   'id', 'contract_version', 'tenant_id', 'kind', 'handler_name', 'handler_contract', 'handler_version',
-  'payload_json', 'payload_fingerprint', 'schedule_at', 'state', 'attempt',
+  'payload_json', 'payload_fingerprint', 'schedule_intent', 'schedule_at', 'state', 'attempt',
   'max_attempts', 'claim_worker_id', 'claim_id', 'claim_generation',
   'claim_expires_at', 'idempotency_root', 'outcome_reference', 'created_at',
   'updated_at', 'last_error_code',
@@ -83,13 +83,20 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
      ORDER BY schedule_at, created_at, id
      LIMIT 1
   `,
+    expired: `
+    SELECT id, claim_generation FROM spine_jobs
+     WHERE tenant_id = ? AND state = 'claimed' AND claim_expires_at <= ?
+       AND attempt >= max_attempts
+     ORDER BY claim_expires_at, id
+     LIMIT 100
+  `,
     terminalizeExpired: `
     UPDATE spine_jobs
        SET state = 'failed_terminal', updated_at = ?,
            last_error_code = 'JOB_ATTEMPTS_EXHAUSTED_AFTER_LEASE',
            claim_worker_id = NULL, claim_id = NULL, claim_expires_at = NULL
-     WHERE tenant_id = ? AND state = 'claimed' AND claim_expires_at <= ?
-       AND attempt >= max_attempts
+     WHERE tenant_id = ? AND id = ? AND state = 'claimed'
+       AND claim_expires_at <= ? AND attempt >= max_attempts
   `,
     claim: `
     UPDATE spine_jobs
@@ -124,7 +131,8 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
      WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'failed_retryable')
   `,
     reschedule: `
-    UPDATE spine_jobs SET state = 'pending', schedule_at = ?, updated_at = ?, last_error_code = NULL
+    UPDATE spine_jobs SET state = 'pending', schedule_intent = 'scheduled',
+           schedule_at = ?, updated_at = ?, last_error_code = NULL
      WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'failed_retryable')
   `,
     list: `
@@ -140,15 +148,21 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
     get(tenantId, id) { return statement('get').get(tenantId, id) ?? null; },
     getByRoot(tenantId, root) { return statement('byRoot').get(tenantId, root) ?? null; },
     claim(input) {
-      statement('terminalizeExpired').run(input.now, input.tenantId, input.now);
+      const terminalized = statement('expired').all(input.tenantId, input.now);
+      for (const row of terminalized) {
+        statement('terminalizeExpired').run(input.now, input.tenantId, row.id, input.now);
+      }
       const candidate = statement('due').get(input.tenantId, input.now, input.now);
-      if (!candidate) return null;
+      if (!candidate) return { row: null, terminalized };
       const changed = statement('claim').run(
         input.workerId, input.claimId, input.expiresAt, input.now,
         input.tenantId, candidate.id, candidate.claim_generation,
         input.now, input.now,
       );
-      return Number(changed.changes) === 1 ? statement('get').get(input.tenantId, candidate.id) : null;
+      return {
+        row: Number(changed.changes) === 1 ? statement('get').get(input.tenantId, candidate.id) : null,
+        terminalized,
+      };
     },
     finish(input) {
       return Number(statement('finish').run(
@@ -196,7 +210,7 @@ export function registerPostgresqlDurableJobStorage(storage, { query, table, own
       return result.rows[0] ?? null;
     },
     async claim(input) {
-      await query(`
+      const exhaustedResult = await query(`
         WITH exhausted AS (
           SELECT "id" FROM ${table}
            WHERE "tenant_id" = $2 AND "state" = 'claimed' AND "claim_expires_at" <= $1
@@ -211,6 +225,7 @@ export function registerPostgresqlDurableJobStorage(storage, { query, table, own
                "claim_worker_id" = NULL, "claim_id" = NULL, "claim_expires_at" = NULL
           FROM exhausted
          WHERE j."id" = exhausted."id" AND j."tenant_id" = $2
+         RETURNING j."id", j."claim_generation"
       `, [input.now, input.tenantId]);
       const result = await query(`
         WITH candidate AS (
@@ -232,7 +247,7 @@ export function registerPostgresqlDurableJobStorage(storage, { query, table, own
          WHERE j."id" = candidate."id" AND j."tenant_id" = $1
          RETURNING ${returning}
       `, [input.tenantId, input.now, input.workerId, input.claimId, input.expiresAt]);
-      return result.rows[0] ?? null;
+      return { row: result.rows[0] ?? null, terminalized: exhaustedResult.rows };
     },
     async finish(input) {
       const result = await query(`
@@ -275,7 +290,7 @@ export function registerPostgresqlDurableJobStorage(storage, { query, table, own
     },
     async reschedule(input) {
       const result = await query(`
-        UPDATE ${table} SET "state" = 'pending', "schedule_at" = $1,
+        UPDATE ${table} SET "state" = 'pending', "schedule_intent" = 'scheduled', "schedule_at" = $1,
                "updated_at" = $2, "last_error_code" = NULL
          WHERE "tenant_id" = $3 AND "id" = $4 AND "state" IN ('pending', 'failed_retryable')
       `, [input.scheduleAt, input.now, input.tenantId, input.id]);

@@ -14,6 +14,12 @@ import {
   createDurableJobStore,
   createDurableJobWorker,
 } from '../packages/core/src/durable-jobs.js';
+import { AuditLog } from '../packages/core/src/audit.js';
+
+const operator = Object.freeze({ type: 'user', id: 'jobs-operator' });
+const systemActor = Object.freeze({ type: 'system', id: 'jobs-worker' });
+const operatorContext = Object.freeze({ actor: operator });
+const workerContext = Object.freeze({ actor: systemActor });
 
 function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'accordo-v3a-'));
@@ -61,26 +67,31 @@ test('V3A contract is closed and payload fingerprints are canonical without secr
 
 test('SQLite schedules at the exact UTC boundary, reschedules one pending job, cancels, and survives restart', async (t) => {
   const f = fixture(t);
+  const audit = new AuditLog(f.database);
   const future = '2026-09-01T10:00:00.000Z';
-  const job = await f.store.enqueue(input('root-a', { scheduleAt: future }));
+  const job = await f.store.enqueue(input('root-a', { scheduleAt: future }), operatorContext);
   assert.equal(job.state, 'pending');
-  assert.equal(await f.store.claim('worker-a', 30_000), null, 'not due before scheduleAt');
+  assert.equal(await f.store.claim('worker-a', 30_000, workerContext), null, 'not due before scheduleAt');
 
-  await f.store.reschedule(job.id, '2026-09-01T09:30:00.000Z');
+  await f.store.reschedule(job.id, '2026-09-01T09:30:00.000Z', operatorContext);
   f.setNow('2026-09-01T09:29:59.999Z');
-  assert.equal(await f.store.claim('worker-a', 30_000), null);
+  assert.equal(await f.store.claim('worker-a', 30_000, workerContext), null);
   f.setNow('2026-09-01T09:30:00.000Z');
-  const claimed = await f.store.claim('worker-a', 30_000);
+  const claimed = await f.store.claim('worker-a', 30_000, workerContext);
   assert.equal(claimed.id, job.id, 'due exactly at scheduleAt');
-  await f.store.succeed(claimed, 'worker-a', 'outcome:one');
+  await f.store.succeed(claimed, 'worker-a', 'outcome:one', workerContext);
 
-  const cancelled = await f.store.enqueue(input('root-b'));
-  await f.store.cancel(cancelled.id);
+  const cancelled = await f.store.enqueue(input('root-b'), operatorContext);
+  await f.store.cancel(cancelled.id, operatorContext);
   assert.equal((await f.store.get(cancelled.id)).state, 'cancelled');
-  assert.equal(await f.store.claim('worker-a', 30_000), null, 'cancelled job never runs');
+  assert.equal(await f.store.claim('worker-a', 30_000, workerContext), null, 'cancelled job never runs');
   const restartFuture = await f.store.enqueue(input('root-restart', {
     scheduleAt: '2026-09-02T09:00:00.000Z',
-  }));
+  }), operatorContext);
+  assert.ok(audit.list({ entityType: 'durable_job', entityId: job.id })
+    .some((event) => event.action === 'durable_job.rescheduled'));
+  assert.ok(audit.list({ entityType: 'durable_job', entityId: cancelled.id })
+    .some((event) => event.action === 'durable_job.cancelled'));
 
   f.database.close();
   const reopened = createDatabase({ path: f.path, plane: 'data' });
@@ -94,18 +105,20 @@ test('SQLite schedules at the exact UTC boundary, reschedules one pending job, c
 
 test('enqueue requires a live caller-owned transaction and stale handles persist nothing', async (t) => {
   const f = fixture(t);
+  const audit = new AuditLog(f.database);
   let rolledBackTx;
   await assert.rejects(
     f.database.storage.transaction(async (tx) => {
       rolledBackTx = tx;
-      await f.store.enqueue(input('root-rollback'), { transaction: tx });
+      await f.store.enqueue(input('root-rollback'), { transaction: tx, actor: operator });
       throw new Error('rollback');
     }),
     /rollback/,
   );
   assert.deepEqual(await f.store.list(), []);
+  assert.deepEqual(audit.list({ entityType: 'durable_job' }), [], 'job and audit roll back together');
   await assert.rejects(
-    f.store.enqueue(input('root-after-rollback'), { transaction: rolledBackTx }),
+    f.store.enqueue(input('root-after-rollback'), { transaction: rolledBackTx, actor: operator }),
     (error) => error.code === 'DURABLE_JOB_TRANSACTION_REQUIRED'
       && error.details.proof === 'no-transaction',
   );
@@ -113,68 +126,162 @@ test('enqueue requires a live caller-owned transaction and stale handles persist
   let committedTx;
   await f.database.storage.transaction(async (tx) => {
     committedTx = tx;
-    await f.store.enqueue(input('root-live-commit'), { transaction: tx });
+    await f.store.enqueue(input('root-live-commit'), { transaction: tx, actor: operator });
   });
   await assert.rejects(
-    f.store.enqueue(input('root-after-commit'), { transaction: committedTx }),
+    f.store.enqueue(input('root-after-commit'), { transaction: committedTx, actor: operator }),
     (error) => error.code === 'DURABLE_JOB_TRANSACTION_REQUIRED'
       && error.details.proof === 'no-transaction',
   );
   await assert.rejects(
-    f.store.enqueue(input('root-handle-refused'), { transaction: f.database.storage }),
+    f.store.enqueue(input('root-handle-refused'), { transaction: f.database.storage, actor: operator }),
     (error) => error.code === 'DURABLE_JOB_TRANSACTION_REQUIRED',
   );
   assert.deepEqual((await f.store.list()).map((job) => job.idempotencyRoot), ['root-live-commit']);
+  assert.deepEqual(
+    audit.list({ entityType: 'durable_job' }).map((event) => event.action),
+    ['durable_job.enqueued'],
+    'committed caller transaction contains its audit evidence',
+  );
 
   const otherPath = join(tmpdir(), `accordo-v3a-other-${process.pid}-${Date.now()}.sqlite`);
   const other = createDatabase({ path: otherPath, plane: 'data' });
   t.after(() => { try { other.close(); } finally { rmSync(otherPath, { force: true }); } });
   await assert.rejects(
-    other.storage.transaction(async (tx) => f.store.enqueue(input('root-wrong-storage'), { transaction: tx })),
+    other.storage.transaction(async (tx) => f.store.enqueue(input('root-wrong-storage'), { transaction: tx, actor: operator })),
     (error) => error.code === 'DURABLE_JOB_TRANSACTION_MISMATCH',
   );
   assert.deepEqual((await f.store.list()).map((job) => job.idempotencyRoot), ['root-live-commit']);
 });
 
+test('an audit insertion fault rolls back the job mutation on the same transaction', async (t) => {
+  const f = fixture(t);
+  f.database.raw.exec(`
+    CREATE TEMP TRIGGER refuse_job_audit
+    BEFORE INSERT ON audit_events
+    WHEN NEW.entity_type = 'durable_job'
+    BEGIN
+      SELECT RAISE(ABORT, 'injected durable-job audit fault');
+    END;
+  `);
+  await assert.rejects(
+    f.store.enqueue(input('root-audit-fault'), operatorContext),
+    /injected durable-job audit fault/,
+  );
+  assert.deepEqual(await f.store.list(), []);
+});
+
 test('claims fence workers, tenants, generations, active leases, and recover exactly at expiry', async (t) => {
   const f = fixture(t);
-  const job = await f.store.enqueue(input('root-claim'));
-  const first = await f.store.claim('worker-a', 1_000);
+  const job = await f.store.enqueue(input('root-claim'), operatorContext);
+  const first = await f.store.claim('worker-a', 1_000, workerContext);
   assert.equal(first.id, job.id);
   assert.equal(first.attempt, 1);
-  assert.equal(await f.store.claim('worker-b', 1_000), null, 'active claim cannot be stolen');
-  await assert.rejects(f.store.succeed(first, 'worker-b'), (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED');
+  assert.equal(await f.store.claim('worker-b', 1_000, workerContext), null, 'active claim cannot be stolen');
+  await assert.rejects(f.store.succeed(first, 'worker-b', null, workerContext), (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED');
   const wrongFingerprint = { ...first, claim: { ...first.claim, claimId: 'wrong-claim-fingerprint' } };
-  await assert.rejects(f.store.succeed(wrongFingerprint, 'worker-a'), (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED');
+  await assert.rejects(f.store.succeed(wrongFingerprint, 'worker-a', null, workerContext), (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED');
 
   const wrongTenant = createDurableJobStore({ storage: f.database.storage, tenantId: 'tenant-b', clock: f.clock });
-  await assert.rejects(wrongTenant.succeed(first, 'worker-a'), (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED');
+  await assert.rejects(wrongTenant.succeed(first, 'worker-a', null, workerContext), (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED');
 
   f.setNow('2026-09-01T09:00:00.999Z');
-  assert.equal(await f.store.claim('worker-b', 1_000), null);
+  assert.equal(await f.store.claim('worker-b', 1_000, workerContext), null);
   f.setNow('2026-09-01T09:00:01.000Z');
-  const recovered = await f.store.claim('worker-b', 1_000);
+  const recovered = await f.store.claim('worker-b', 1_000, workerContext);
   assert.equal(recovered.claim.generation, first.claim.generation + 1);
   assert.equal(recovered.attempt, 2);
-  await assert.rejects(f.store.succeed(first, 'worker-a'), (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED');
-  assert.equal((await f.store.succeed(recovered, 'worker-b')).state, 'succeeded');
+  await assert.rejects(f.store.succeed(first, 'worker-a', null, workerContext), (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED');
+  assert.equal((await f.store.succeed(recovered, 'worker-b', null, workerContext)).state, 'succeeded');
 });
 
 test('idempotency root resolves the same work and refuses a semantic mismatch', async (t) => {
   const f = fixture(t);
-  const first = await f.store.enqueue(input('root-idempotent'));
+  const first = await f.store.enqueue(input('root-idempotent'), operatorContext);
+  assert.equal(first.scheduleIntent, 'immediate');
   f.setNow('2026-09-01T09:00:10.000Z');
-  const same = await f.store.enqueue(input('root-idempotent'));
+  const same = await f.store.enqueue(input('root-idempotent'), operatorContext);
   assert.equal(same.id, first.id);
+  assert.equal(same.scheduleAt, first.scheduleAt, 'omitted immediate schedule joins despite clock drift');
   await assert.rejects(
-    f.store.enqueue(input('root-idempotent', { payload: { recordId: 'different' } })),
+    f.store.enqueue(input('root-idempotent', { scheduleAt: '2026-09-01T10:00:00.000Z' }), operatorContext),
+    (error) => error.code === 'DURABLE_JOB_IDEMPOTENCY_MISMATCH',
+  );
+
+  const scheduled = await f.store.enqueue(input('root-scheduled', {
+    scheduleAt: '2026-09-02T10:00:00.000Z',
+  }), operatorContext);
+  assert.equal(scheduled.scheduleIntent, 'scheduled');
+  f.setNow('2026-09-01T09:01:00.000Z');
+  assert.equal((await f.store.enqueue(input('root-scheduled', {
+    scheduleAt: '2026-09-02T10:00:00.000Z',
+  }), operatorContext)).id, scheduled.id);
+  await assert.rejects(
+    f.store.enqueue(input('root-scheduled'), operatorContext),
+    (error) => error.code === 'DURABLE_JOB_IDEMPOTENCY_MISMATCH',
+  );
+  await assert.rejects(
+    f.store.enqueue(input('root-idempotent', { payload: { recordId: 'different' } }), operatorContext),
     (error) => error.code === 'DURABLE_JOB_IDEMPOTENCY_MISMATCH',
   );
 });
 
+test('every mutation requires actor authority and workers require an explicit system operation actor', async (t) => {
+  const f = fixture(t);
+  await assert.rejects(f.store.enqueue(input('root-no-actor')), /requires "actor"/);
+  await assert.rejects(f.store.claim('worker-a', 1_000), /requires "actor"/);
+  await assert.rejects(
+    f.store.enqueue(input('root-malformed-actor'), { actor: Object.create({ type: 'system', id: 'inherited' }) }),
+    /plain object/,
+  );
+  let invoked = false;
+  const accessorActor = { type: 'system', get id() { invoked = true; return 'hostile'; } };
+  await assert.rejects(
+    f.store.enqueue(input('root-accessor-actor'), { actor: accessorActor }),
+    /data properties/,
+  );
+  assert.equal(invoked, false);
+  const registry = createDurableJobHandlerRegistry();
+  assert.throws(
+    () => createDurableJobWorker({ store: f.store, registry, workerId: 'worker-a' }),
+    /requires "actor"/,
+  );
+  assert.throws(
+    () => createDurableJobWorker({ store: f.store, registry, workerId: 'worker-a', actor: operator }),
+    /system authority/,
+  );
+  assert.deepEqual(await f.store.list(), []);
+});
+
+test('job and audit transitions share fencing and audit never copies payload or secret-shaped input', async (t) => {
+  const f = fixture(t);
+  const audit = new AuditLog(f.database);
+  const sentinel = 'AUDIT_PAYLOAD_SENTINEL_DO_NOT_COPY';
+  const job = await f.store.enqueue(input('root-audit', { payload: { recordId: sentinel } }), operatorContext);
+  const claimed = await f.store.claim('worker-a', 30_000, workerContext);
+  const stale = { ...claimed, claim: { ...claimed.claim, claimId: 'stale-claim' } };
+  await assert.rejects(
+    f.store.succeed(stale, 'worker-a', null, workerContext),
+    (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED',
+  );
+  await f.store.succeed(claimed, 'worker-a', 'outcome-must-not-be-audited', workerContext);
+
+  const events = audit.list({ entityType: 'durable_job', entityId: job.id });
+  assert.deepEqual(events.map((event) => event.action).sort(), [
+    'durable_job.claimed', 'durable_job.enqueued', 'durable_job.succeeded',
+  ]);
+  assert.deepEqual(events.map((event) => event.actorId).sort(), ['jobs-operator', 'jobs-worker', 'jobs-worker']);
+  assert.equal(events.find((event) => event.action === 'durable_job.claimed').data.claimGeneration,
+    claimed.claim.generation);
+  const encoded = JSON.stringify(events);
+  assert.equal(encoded.includes(sentinel), false);
+  assert.equal(encoded.includes('root-audit'), false);
+  assert.equal(encoded.includes('outcome-must-not-be-audited'), false);
+});
+
 test('corrupt claim metadata is refused instead of being normalized into a job', async (t) => {
   const f = fixture(t);
-  const job = await f.store.enqueue(input('root-corrupt-claim'));
+  const job = await f.store.enqueue(input('root-corrupt-claim'), operatorContext);
   f.database.raw.prepare('UPDATE spine_jobs SET claim_id = ? WHERE id = ?').run('smuggled-claim', job.id);
   await assert.rejects(
     f.store.get(job.id),
@@ -184,14 +291,21 @@ test('corrupt claim metadata is refused instead of being normalized into a job',
 
 test('an expired final claim becomes terminal instead of running beyond maxAttempts', async (t) => {
   const f = fixture(t);
-  const job = await f.store.enqueue(input('root-exhausted', { maxAttempts: 1 }));
-  await f.store.claim('worker-a', 1_000);
+  const audit = new AuditLog(f.database);
+  const job = await f.store.enqueue(input('root-exhausted', { maxAttempts: 1 }), operatorContext);
+  await f.store.claim('worker-a', 1_000, workerContext);
   f.setNow('2026-09-01T09:00:01.000Z');
-  assert.equal(await f.store.claim('worker-b', 1_000), null);
+  assert.equal(await f.store.claim('worker-b', 1_000, workerContext), null);
   const exhausted = await f.store.get(job.id);
   assert.equal(exhausted.state, 'failed_terminal');
   assert.equal(exhausted.lastErrorCode, 'JOB_ATTEMPTS_EXHAUSTED_AFTER_LEASE');
   assert.equal(exhausted.attempt, 1);
+  const terminal = audit.list({ entityType: 'durable_job', entityId: job.id })
+    .find((event) => event.action === 'durable_job.failed');
+  assert.deepEqual(terminal.data, {
+    state: 'failed_terminal', claimGeneration: 1,
+    errorCode: 'JOB_ATTEMPTS_EXHAUSTED_AFTER_LEASE',
+  });
 });
 
 test('owner-fenced pre-handler releases do not consume attempts, including external handlers', async (t) => {
@@ -200,18 +314,21 @@ test('owner-fenced pre-handler releases do not consume attempts, including exter
     ['root-release-ordinary', 'none'],
     ['root-release-external', 'external-operation-v2'],
   ]) {
-    const job = await f.store.enqueue(input(root, { maxAttempts: 1 }));
+    const job = await f.store.enqueue(input(root, { maxAttempts: 1 }), operatorContext);
+    const audit = new AuditLog(f.database);
     let generation = 0;
     for (let cycle = 0; cycle < 3; cycle += 1) {
-      const claim = await f.store.claim('worker-a', 30_000);
+      const claim = await f.store.claim('worker-a', 30_000, workerContext);
       assert.equal(claim.attempt, 1);
       assert.ok(claim.claim.generation > generation);
       generation = claim.claim.generation;
-      const released = await f.store.release(claim, 'worker-a');
+      const released = await f.store.release(claim, 'worker-a', workerContext);
       assert.equal(released.state, 'failed_retryable');
       assert.equal(released.attempt, 0);
       assert.equal(released.lastErrorCode, 'JOB_CLAIM_RELEASED');
     }
+    assert.equal(audit.list({ entityType: 'durable_job', entityId: job.id })
+      .filter((event) => event.action === 'durable_job.released').length, 3);
     let calls = 0;
     const registry = createDurableJobHandlerRegistry();
     registry.register({
@@ -219,7 +336,7 @@ test('owner-fenced pre-handler releases do not consume attempts, including exter
       async execute() { calls += 1; return { outcomeReference: `${root}:done` }; },
     });
     const worker = createDurableJobWorker({
-      store: f.store, registry, workerId: 'worker-b', clock: f.clock, pollIntervalMs: 60_000,
+      store: f.store, registry, workerId: 'worker-b', actor: systemActor, clock: f.clock, pollIntervalMs: 60_000,
     });
     worker.start();
     const completed = await worker.poll();
@@ -233,6 +350,7 @@ test('owner-fenced pre-handler releases do not consume attempts, including exter
 
 test('worker retries only closed transient failures with injected backoff and then succeeds', async (t) => {
   const f = fixture(t);
+  const audit = new AuditLog(f.database);
   let calls = 0;
   const registry = createDurableJobHandlerRegistry();
   registry.register({
@@ -244,11 +362,11 @@ test('worker retries only closed transient failures with injected backoff and th
     },
   });
   const worker = createDurableJobWorker({
-    store: f.store, registry, workerId: 'worker-a', clock: f.clock,
+    store: f.store, registry, workerId: 'worker-a', actor: systemActor, clock: f.clock,
     pollIntervalMs: 60_000, backoff: () => 500,
   });
   assert.deepEqual(worker.status(), { accepting: false, closed: false, polling: false, inFlight: false, wakeScheduled: false, lastWorkerErrorCode: null });
-  await f.store.enqueue(input('root-retry'));
+  await f.store.enqueue(input('root-retry'), operatorContext);
   worker.start();
   const failed = await worker.poll();
   assert.equal(failed.state, 'failed_retryable');
@@ -259,6 +377,9 @@ test('worker retries only closed transient failures with injected backoff and th
   f.setNow('2026-09-01T09:00:00.500Z');
   assert.equal((await worker.poll()).state, 'succeeded');
   assert.equal(calls, 2);
+  assert.deepEqual(audit.list({ entityType: 'durable_job' })
+    .filter((event) => ['durable_job.failed', 'durable_job.succeeded'].includes(event.action))
+    .map((event) => event.action).sort(), ['durable_job.failed', 'durable_job.succeeded']);
   assert.deepEqual(await worker.close(), { drained: true });
   assert.deepEqual(worker.status(), { accepting: false, closed: true, polling: false, inFlight: false, wakeScheduled: false, lastWorkerErrorCode: null });
 });
@@ -287,7 +408,7 @@ test('timer poll survives a hostile code getter, exposes bounded status, and rec
     },
   };
   const worker = createDurableJobWorker({
-    store, registry: createDurableJobHandlerRegistry(), workerId: 'worker-a', pollIntervalMs: 60_000,
+    store, registry: createDurableJobHandlerRegistry(), workerId: 'worker-a', actor: systemActor, pollIntervalMs: 60_000,
   });
   worker.start();
   worker.wake();
@@ -320,9 +441,9 @@ test('handler error code accessors are never invoked or persisted', async (t) =>
     },
   });
   const worker = createDurableJobWorker({
-    store: f.store, registry, workerId: 'worker-a', clock: f.clock, pollIntervalMs: 60_000,
+    store: f.store, registry, workerId: 'worker-a', actor: systemActor, clock: f.clock, pollIntervalMs: 60_000,
   });
-  await f.store.enqueue(input('root-hostile-handler'));
+  await f.store.enqueue(input('root-hostile-handler'), operatorContext);
   worker.start();
   const failed = await worker.poll();
   assert.equal(failed.state, 'failed_terminal');
@@ -339,8 +460,8 @@ test('terminal and external-operation failures never retry implicitly', async (t
     sideEffect: 'external-operation-v2',
     async execute() { throw Object.assign(new Error('provider unknown'), { code: 'JOB_HANDLER_TEMPORARY_UNAVAILABLE' }); },
   });
-  const worker = createDurableJobWorker({ store: f.store, registry, workerId: 'worker-a', clock: f.clock, pollIntervalMs: 60_000 });
-  await f.store.enqueue(input('root-external'));
+  const worker = createDurableJobWorker({ store: f.store, registry, workerId: 'worker-a', actor: systemActor, clock: f.clock, pollIntervalMs: 60_000 });
+  await f.store.enqueue(input('root-external'), operatorContext);
   worker.start();
   const result = await worker.poll();
   assert.equal(result.state, 'failed_terminal');
@@ -366,14 +487,14 @@ test('an expired external-operation claim is reconciled, never called a second t
     },
   });
   const firstWorker = createDurableJobWorker({
-    store: f.store, registry, workerId: 'worker-a', clock: f.clock,
+    store: f.store, registry, workerId: 'worker-a', actor: systemActor, clock: f.clock,
     pollIntervalMs: 60_000, leaseMs: 1_000,
   });
   const recoveryWorker = createDurableJobWorker({
-    store: f.store, registry, workerId: 'worker-b', clock: f.clock,
+    store: f.store, registry, workerId: 'worker-b', actor: systemActor, clock: f.clock,
     pollIntervalMs: 60_000, leaseMs: 1_000,
   });
-  await f.store.enqueue(input('root-external-expiry'));
+  await f.store.enqueue(input('root-external-expiry'), operatorContext);
   firstWorker.start();
   const firstPoll = firstWorker.poll();
   await new Promise((resolve) => setImmediate(resolve));
@@ -399,8 +520,8 @@ test('drain is bounded, stops claims, clears its timer, and keeps an active leas
   const held = new Promise((resolve) => { release = resolve; });
   const registry = createDurableJobHandlerRegistry();
   registry.register({ kind: 'named-action', name: 'run-follow-up', version: 1, execute: () => held });
-  const worker = createDurableJobWorker({ store: f.store, registry, workerId: 'worker-a', clock: f.clock, pollIntervalMs: 60_000 });
-  await f.store.enqueue(input('root-drain'));
+  const worker = createDurableJobWorker({ store: f.store, registry, workerId: 'worker-a', actor: systemActor, clock: f.clock, pollIntervalMs: 60_000 });
+  await f.store.enqueue(input('root-drain'), operatorContext);
   worker.start();
   const polling = worker.poll();
   await new Promise((resolve) => setImmediate(resolve));
@@ -408,7 +529,7 @@ test('drain is bounded, stops claims, clears its timer, and keeps an active leas
   assert.deepEqual(close, { drained: false, code: 'DURABLE_JOB_DRAIN_TIMEOUT' });
   assert.equal(worker.status().accepting, false);
   assert.equal(worker.status().wakeScheduled, false);
-  assert.equal(await f.store.claim('worker-b', 30_000), null, 'close does not unsafely release executing work');
+  assert.equal(await f.store.claim('worker-b', 30_000, workerContext), null, 'close does not unsafely release executing work');
   release({ outcomeReference: 'late-safe-finish' });
   assert.equal((await polling).state, 'succeeded');
 });
