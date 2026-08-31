@@ -143,7 +143,11 @@ export class SecretLease {
     leaseTimers.delete(this);
     const value = bytes.toString('utf8');
     disposeBytes(bytes);
-    return await consumer(value);
+    try {
+      return await consumer(value);
+    } catch {
+      throw error('SECRET_CONSUMER_FAILED', 'secret consumer failed while using the resolved value');
+    }
   }
 
   dispose() {

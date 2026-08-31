@@ -4005,6 +4005,10 @@ zeros that provider-owned buffer, then transfers its bytes into one opaque singl
 `SecretLease`; disposal, successful use and an unrefed bounded expiry zero
 mutable storage. String,
 primitive and JSON coercion refuse, and Node inspection prints only `redacted`.
+The lease also owns the plaintext callback boundary: any synchronous throw or
+asynchronous rejection from a consumer is replaced with the framework-minted
+`SECRET_CONSUMER_FAILED` error without retaining the consumer's message, code,
+details, cause or stack. Mutable bytes are zeroed before the callback runs.
 This is limited lifetime where JavaScript permits it, not a claim that a
 plaintext string handed to a required third-party API can later be zeroed.
 

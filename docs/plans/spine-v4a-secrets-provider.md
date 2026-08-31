@@ -103,6 +103,11 @@ credential fields may appear in those runtime products.
   descriptor closure onto the import deadline even for never-settling modules,
   and split executable truth between the implemented bounded self-host contract
   and the still-absent managed secrets/backup/observability remainder.
+- 2026-08-31: a second security review found that a lease consumer could throw
+  plaintext back through an `AppError`. The lease now replaces every callback
+  failure with one framework-owned credential-free code after zeroing its bytes;
+  production verifier request and startup-attestation regressions exhaustively
+  scan the outward error shapes.
 
 ## Decision log
 

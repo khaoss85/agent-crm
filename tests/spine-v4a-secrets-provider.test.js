@@ -237,6 +237,30 @@ test('fixture and environment providers return opaque single-use disposable leas
   assert.equal(expiring.disposed, true);
 });
 
+test('secret lease collapses ordinary consumer failures after single-use disposal', async () => {
+  for (const consumer of [
+    () => { throw new Error('ordinary sync consumer failure'); },
+    async () => { throw new Error('ordinary async consumer failure'); },
+  ]) {
+    const resolver = createSecretResolver({
+      provider: createFixtureSecretProvider({ 'consumer.failure': SENTINEL }),
+      mode: 'local-development',
+    });
+    const lease = await resolver.resolveSecret('consumer.failure', {
+      purpose: 'identity-verifier', tenantId: 'acme',
+    });
+    await assert.rejects(
+      () => lease.use(consumer),
+      (error) => {
+        assert.equal(error?.code, 'SECRET_CONSUMER_FAILED');
+        assertExhaustivelyRedacted(error);
+        return true;
+      },
+    );
+    assert.equal(lease.disposed, true);
+  }
+});
+
 test('hostile provider errors and invalid results collapse to credential-free refusals', async () => {
   for (const resolveSecret of [
     () => { throw new Error(SENTINEL); },
@@ -395,6 +419,76 @@ export async function createIdentityVerifier({ secrets, tenantId }) {
     verifier: { contract: prepared.identityVerifier.contract, trust: prepared.identityVerifier.trust },
     resolver: { contract: prepared.secretResolver?.contract },
   }).includes(SENTINEL), false);
+});
+
+test('production verifier request and attestation cannot export a consumer error containing plaintext', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4a-verifier-consumer-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'providers'));
+  const secretPath = join(root, 'providers', 'secret-provider.mjs');
+  const verifierPath = join(root, 'providers', 'identity-verifier.mjs');
+  const configPath = join(root, 'deployment.json');
+  writeFileSync(secretPath, `import { createSecretMaterial } from ${JSON.stringify(providerModule)};
+export const secretProviderContract = 1;
+export const secretProviderTrust = 'production';
+export function createSecretProvider() {
+  return {
+    contract: 1,
+    name: 'consumer-leak-fixture',
+    trust: 'production',
+    resolveSecret() { return createSecretMaterial(${JSON.stringify(SENTINEL)}); },
+  };
+}
+`);
+  writeFileSync(verifierPath, `import { AppError } from ${JSON.stringify(errorsModule)};
+export const identityVerifierContract = 2;
+export const identityVerifierTrust = 'production';
+export function createIdentityVerifier({ secrets, tenantId }) {
+  async function leak() {
+    const lease = await secrets.resolveSecret('identity.verifier.token', { purpose: 'identity-verifier', tenantId });
+    return lease.use((value) => {
+      throw new AppError(value, {
+        code: value,
+        details: { secret: value },
+        cause: new Error(value),
+      });
+    });
+  }
+  return {
+    verifyRequest: leak,
+    discoverControlResource() {},
+    attestControlStartup: leak,
+    discoverDataResource() {},
+    attestDataStartup() {},
+  };
+}
+`);
+  const endpoint = (database, passwordSecret) => ({
+    host: 'db.invalid', database, user: 'accordo', passwordSecret,
+    tls: { enabled: true, verify: 'full', caFile: './ca.pem' },
+  });
+  writeFileSync(configPath, JSON.stringify({
+    contract: 2,
+    adapter: 'postgresql',
+    connection: endpoint('data', 'pg.data.password'),
+    controlPlane: endpoint('control', 'pg.control.password'),
+    spine: { mode: 'production', tenant: { id: 'acme' } },
+    identityVerifier: './providers/identity-verifier.mjs',
+    secretProvider: { kind: 'module', path: './providers/secret-provider.mjs' },
+  }));
+  for (const path of [secretPath, verifierPath, configPath]) chmodSync(path, 0o600);
+  const prepared = await prepareDeploymentPreconnect({ configPath, projectRoot: root, env: {} });
+
+  for (const operation of [
+    () => prepared.identityVerifier.operations.verifyRequest({}),
+    () => prepared.identityVerifier.operations.attestControlStartup({ operation: 'attestControlStartup' }),
+  ]) {
+    await assert.rejects(operation, (error) => {
+      assert.equal(error?.code, 'SECRET_CONSUMER_FAILED');
+      assertExhaustivelyRedacted(error);
+      return true;
+    });
+  }
 });
 
 test('provider preparation is independent of an identity verifier and SQLite v2 needs no provider', async (t) => {
