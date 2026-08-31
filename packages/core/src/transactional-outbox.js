@@ -176,8 +176,18 @@ export function registerTransactionalOutboxHandlers(registry, {
           throw temporaryDispatchFailure();
         }
       }
-      await outcomes.tryPromoteEvents(outcome);
       return { outcomeReference: `outbox:${source.sourceFingerprint}` };
+    },
+    async complete({ job, transaction }) {
+      const source = boundedSource(job, 'internal-event-promotion');
+      const transactionalOutcomes = createWriteOutcomeStore({ storage: transaction });
+      const outcome = await loadSource(transactionalOutcomes, tenantNs, source);
+      if (outcome.eventsPromoted) return;
+      if (!await transactionalOutcomes.tryPromoteEvents(outcome)) {
+        throw new AppError('Committed event promotion evidence could not be fenced', {
+          code: 'TRANSACTIONAL_OUTBOX_PROMOTION_FENCED', status: 409,
+        });
+      }
     },
   });
   registry.register({

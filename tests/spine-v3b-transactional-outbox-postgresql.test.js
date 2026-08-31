@@ -93,10 +93,15 @@ test('PostgreSQL commit atomically leaves an exact event job that dispatches onc
   });
   left.start();
   right.start();
-  const results = await Promise.all([left.run(job.id), right.run(job.id)]);
+  const race = await Promise.allSettled([left.run(job.id), right.run(job.id)]);
+  for (const result of race.filter((entry) => entry.status === 'rejected')) {
+    assert.equal(result.reason?.code, 'CONFLICT');
+  }
+  const results = race.filter((entry) => entry.status === 'fulfilled').map((entry) => entry.value);
   assert.equal(results.filter((entry) => entry?.state === 'succeeded').length, 1);
   assert.equal(deliveries, 1);
   assert.equal((await jobsStore.get(job.id)).state, 'succeeded');
+  assert.equal(await left.run(job.id), null, 'the terminal exact job cannot be claimed again');
   const stored = await createWriteOutcomeStore(database).lookup(
     tenantNamespace(booted.tenantId), key, 'root',
   );
@@ -201,10 +206,16 @@ test('receipt continuation resumes finalize only and never receives or calls a p
   });
   left.start();
   right.start();
-  await Promise.all([left.run(job.id), right.run(job.id)]);
+  const race = await Promise.allSettled([left.run(job.id), right.run(job.id)]);
+  for (const result of race.filter((entry) => entry.status === 'rejected')) {
+    assert.equal(result.reason?.code, 'CONFLICT');
+  }
+  assert.equal(race.filter((entry) => entry.status === 'fulfilled'
+    && entry.value?.state === 'succeeded').length, 1);
   assert.equal(finalizeCalls, 1);
   assert.equal(providerCalls, 0);
   assert.equal((await createDurableJobStore({ storage, tenantId: booted.tenantId }).get(job.id)).state, 'succeeded');
+  assert.equal(await left.run(job.id), null, 'the terminal continuation cannot be claimed again');
   assert.ok(await createWriteOutcomeStore(database).lookupByRun(
     tenantNamespace(booted.tenantId), runId, 'finalize',
   ));
@@ -296,6 +307,9 @@ test('dispatch begun at lease expiry is reconciliation evidence and is never inv
   release();
   await assert.rejects(firstRun, (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED');
   assert.equal((await jobs.get(job.id)).state, 'failed_terminal');
+  assert.equal((await createWriteOutcomeStore(database).lookup(
+    tenantNamespace(booted.tenantId), source.rawKey, source.phase,
+  )).eventsPromoted, false, 'stale dispatch cannot promote outcome evidence after recovery fencing');
   await first.close();
   await recovery.close();
 });

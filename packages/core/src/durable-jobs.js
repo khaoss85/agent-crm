@@ -425,7 +425,7 @@ export function createDurableJobStore(options) {
     return job.claim;
   }
 
-  async function finish(job, workerId, transition, actor) {
+  async function finish(job, workerId, transition, actor, complete = null) {
     const claim = requireClaim(job, workerId);
     const instant = now();
     return inTransaction(async (adapter, handle) => {
@@ -438,6 +438,7 @@ export function createDurableJobStore(options) {
         executionRequired: transition.executionRequired,
       });
       if (changed !== 1) throw claimFenced();
+      if (complete !== null) await complete(handle);
       await recordMutation(audit, handle, actor,
         transition.state === 'succeeded' ? 'succeeded' : 'failed', job.id, {
           state: transition.state, claimGeneration: claim.generation,
@@ -472,13 +473,16 @@ export function createDurableJobStore(options) {
         return decodeRow(await adapter.get(tenantId, job.id));
       });
     },
-    async succeed(job, workerId, outcomeReference = null, context = {}) {
+    async succeed(job, workerId, outcomeReference = null, context = {}, complete = null) {
       const actor = systemMutationActor(context, 'Durable-job success context');
+      if (complete !== null && typeof complete !== 'function') {
+        throw new ValidationError('Durable-job success completion must be a function');
+      }
       return finish(job, boundedText(workerId, 'workerId'), {
         state: 'succeeded',
         outcomeReference: outcomeReference == null ? null : boundedText(outcomeReference, 'outcomeReference'),
         executionRequired: true,
-      }, actor);
+      }, actor, complete);
     },
     async fail(job, workerId, input, context = {}) {
       const actor = systemMutationActor(context, 'Durable-job failure context');
@@ -548,24 +552,30 @@ export function createDurableJobHandlerRegistry() {
   const handlers = new Map();
   return Object.freeze({
     register(definition) {
-      closedObject(definition, ['name', 'version', 'kind', 'execute', 'sideEffect'], ['name', 'version', 'kind', 'execute'], 'Durable-job handler');
+      closedObject(definition, ['name', 'version', 'kind', 'execute', 'complete', 'sideEffect'], ['name', 'version', 'kind', 'execute'], 'Durable-job handler');
       const name = boundedName(definition.name, 'handler name');
       const kind = boundedName(definition.kind, 'handler kind');
       const version = positiveInteger(definition.version, 'handler version');
       if (typeof definition.execute !== 'function') throw new ValidationError('Durable-job handler execute must be a function');
+      if (definition.complete !== undefined && typeof definition.complete !== 'function') {
+        throw new ValidationError('Durable-job handler complete must be a function');
+      }
       const sideEffect = definition.sideEffect ?? 'none';
       if (sideEffect !== 'none' && sideEffect !== 'external-operation-v2') {
         throw new ValidationError('Durable-job handler sideEffect must be none or external-operation-v2');
       }
       const key = `${kind}\u0000${name}\u0000${version}`;
       if (handlers.has(key)) throw new AppError('Durable-job handler identity is already registered', { code: 'DURABLE_JOB_HANDLER_DUPLICATE', status: 409 });
-      handlers.set(key, Object.freeze({ name, kind, version, sideEffect, execute: definition.execute }));
+      handlers.set(key, Object.freeze({
+        name, kind, version, sideEffect, execute: definition.execute,
+        ...(definition.complete ? { complete: definition.complete } : {}),
+      }));
     },
     resolve(job) {
       return handlers.get(`${job.kind}\u0000${job.handler.name}\u0000${job.handler.version}`) ?? null;
     },
     list() {
-      return [...handlers.values()].map(({ execute: _execute, ...handler }) => Object.freeze({ ...handler }))
+      return [...handlers.values()].map(({ execute: _execute, complete: _complete, ...handler }) => Object.freeze({ ...handler }))
         .sort((a, b) => `${a.kind}:${a.name}:${a.version}`.localeCompare(`${b.kind}:${b.name}:${b.version}`));
     },
   });
@@ -685,7 +695,12 @@ export function createDurableJobWorker(options) {
     }
     // Persistence failures are not handler failures. Let the worker surface
     // them without falsely terminalizing a job whose commit outcome is unknown.
-    return options.store.succeed(executingJob, workerId, outcomeReference, { actor });
+    const complete = typeof handler.complete === 'function'
+      ? (transaction) => handler.complete(Object.freeze({
+        job: executingJob, outcomeReference, transaction,
+      }))
+      : null;
+    return options.store.succeed(executingJob, workerId, outcomeReference, { actor }, complete);
   }
 
   async function claimAndExecute(jobId = null) {

@@ -28,7 +28,7 @@ Each committed source outcome gets at most one deterministic V3A job per applica
 
 Enqueue happens inside the same PostgreSQL connection-affine transaction and uses the live transaction witness already required by V3A. Rollback therefore leaves neither outcome nor job. The actor is obtained only through one named `trustedSystemActor` reason; there is no fallback.
 
-Internal event promotion runs through the exact durable-job claim. To preserve current synchronous PostgreSQL subscriber behavior, the successful write path explicitly executes that exact committed job once after commit. A concurrent/restart worker can win the claim instead, but the same effect job cannot be invoked concurrently. `events_promoted` changes only after every stored intent was dispatched; the old mark-before-dispatch loss gap is removed.
+Internal event promotion runs through the exact durable-job claim. To preserve current synchronous PostgreSQL subscriber behavior, the successful write path explicitly executes that exact committed job once after commit. A concurrent/restart worker can win the claim instead, but the same effect job cannot be invoked concurrently. `events_promoted` changes only after every stored intent was dispatched and in the same transaction as the claim-fenced successful job transition; an expired stale handler can change neither record. The old mark-before-dispatch loss gap is removed.
 
 Delivery is honestly at least once. A subscriber failure after earlier intents dispatched leaves a retryable job and may repeat those earlier intents. A process death after execution start leaves V3A reconciliation-required evidence and is never automatically replayed. Successful dispatch has one terminal job plus `events_promoted` evidence. Poison remains visible as a terminal job with a bounded code; nothing is silently deleted.
 
@@ -71,6 +71,7 @@ Hosted exact-head PostgreSQL 16 evidence is mandatory when the local service is 
 - 2026-08-31: Created the branch from exact reviewed V3A head and traced write-outcome insertion/promotion, event buffering, affine storage, and external-operation receipt/finalize paths.
 - 2026-08-31: Chose `write_outcomes` as the sole effect-intent authority and V3A jobs as delivery ownership/evidence. Rejected a second outbox table and rejected marking `events_promoted` before dispatch.
 - 2026-08-31: Implemented atomic affine enqueue, exact-job internal promotion, local-only external finalize continuation, poison/reconciliation evidence and SQLite compatibility in `4e7f889`; integrated merged V3A ancestry in `9a512cf`.
+- 2026-08-31: Coupled internal-event promotion evidence to the claim-fenced success transaction and corrected the PostgreSQL exact-claim race proof to accept the adapter's bounded serializable conflict.
 - 2026-08-31: Added deterministic recovery for committed pre-V3B outcomes and removed dynamic handler-code interpolation from recovery diagnostics in `3e1da1e`. Integrated focused Node 22 evidence is 43 tests, 37 pass, zero fail and six expected local PostgreSQL skips; hosted PostgreSQL 16 remains mandatory.
 
 ## Decision log
