@@ -15,6 +15,11 @@ import { AppError } from './errors.js';
 import { loadDeploymentStorage } from './deployment-storage.js';
 import { RUNTIME_MODES } from './runtime-mode.js';
 import {
+  createEnvironmentSecretProvider,
+  createSecretResolver,
+  resolveProductionSecretProvider,
+} from './secret-provider.js';
+import {
   assertTrustedFdUnchanged,
   closeTrustedFile,
   openTrustedRegularFile,
@@ -219,8 +224,10 @@ function closedModuleExports(namespace) {
  * @param {object} namespace
  * @param {'local-development'|'production'} mode
  * @param {AbortSignal} signal
+ * @param {any} [secretResolver]
+ * @param {string} [tenantId]
  */
-async function instantiateVerifier(namespace, mode, signal) {
+async function instantiateVerifier(namespace, mode, signal, secretResolver, tenantId) {
   const exports = closedModuleExports(namespace);
 
   if (exports.identityVerifierContract !== IDENTITY_VERIFIER_CONTRACT) {
@@ -236,12 +243,16 @@ async function instantiateVerifier(namespace, mode, signal) {
   if (exports.identityVerifierTrust !== mode) invalid();
   if (typeof exports[IDENTITY_VERIFIER_FACTORY] !== 'function') invalid();
 
-  const factory = /** @type {(config: { mode: string, signal: AbortSignal }) => unknown} */ (
+  const factory = /** @type {(config: { mode: string, signal: AbortSignal, secrets?: any, tenantId?: string }) => unknown} */ (
     exports[IDENTITY_VERIFIER_FACTORY]
   );
   let produced;
   try {
-    produced = await factory(Object.freeze({ mode, signal }));
+    produced = await factory(Object.freeze({
+      mode,
+      signal,
+      ...(secretResolver ? { secrets: secretResolver, tenantId } : {}),
+    }));
   } catch (error) {
     if (error instanceof AppError && error.code === 'IDENTITY_VERIFIER_TIMEOUT') throw error;
     initFailed();
@@ -322,6 +333,8 @@ async function instantiateVerifier(namespace, mode, signal) {
  *   mode?: unknown,
  *   expectedUid?: unknown,
  *   timeoutMs?: unknown,
+ *   secretResolver?: unknown,
+ *   tenantId?: unknown,
  * }} [options]
  */
 export async function resolveIdentityVerifier(options = {}) {
@@ -365,7 +378,13 @@ export async function resolveIdentityVerifier(options = {}) {
       } finally {
         closeTrustedFile(again.fd);
       }
-      return await instantiateVerifier(namespace, mode, controller.signal);
+      return await instantiateVerifier(
+        namespace,
+        mode,
+        controller.signal,
+        options.secretResolver,
+        typeof options.tenantId === 'string' ? options.tenantId : undefined,
+      );
     } finally {
       if (opened) closeTrustedFile(opened.fd);
     }
@@ -387,8 +406,32 @@ export async function resolveIdentityVerifier(options = {}) {
  */
 export async function prepareDeploymentPreconnect(options = {}) {
   const selection = loadDeploymentStorage(options);
+  let secretResolver = null;
+  if (selection.secretProvider?.kind === 'environment') {
+    secretResolver = createSecretResolver({
+      provider: createEnvironmentSecretProvider({ env: options.env ?? process.env }),
+      mode: selection.spine?.mode,
+      timeoutMs: options.timeoutMs,
+    });
+  } else if (selection.secretProvider?.kind === 'module') {
+    if (!requiredString(options.projectRoot)) untrusted();
+    const provider = await resolveProductionSecretProvider({
+      relativePath: selection.secretProvider.path,
+      projectRoot: options.projectRoot,
+      mode: selection.spine?.mode,
+      timeoutMs: options.timeoutMs,
+      ...(isPlainObject(options) && Object.hasOwn(options, 'expectedUid')
+        ? { expectedUid: options.expectedUid }
+        : {}),
+    });
+    secretResolver = createSecretResolver({
+      provider,
+      mode: selection.spine?.mode,
+      timeoutMs: options.timeoutMs,
+    });
+  }
   if (!requiredString(selection.identityVerifier)) {
-    return Object.freeze({ selection, identityVerifier: null });
+    return Object.freeze({ selection, identityVerifier: null, secretResolver });
   }
   if (!requiredString(options.projectRoot)) untrusted();
   const identityVerifier = await resolveIdentityVerifier({
@@ -396,9 +439,11 @@ export async function prepareDeploymentPreconnect(options = {}) {
     projectRoot: options.projectRoot,
     mode: selection.spine?.mode,
     timeoutMs: options.timeoutMs,
+    secretResolver,
+    tenantId: selection.spine?.tenant?.id,
     ...(isPlainObject(options) && Object.hasOwn(options, 'expectedUid')
       ? { expectedUid: options.expectedUid }
       : {}),
   });
-  return Object.freeze({ selection, identityVerifier });
+  return Object.freeze({ selection, identityVerifier, secretResolver });
 }

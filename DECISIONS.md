@@ -3973,3 +3973,77 @@ means classifying a load-bearing current count against a date, an ADR number, a
 currency example, a receipt's raw count and a digit inside a code fence, and
 `findLooseTestCounts` needed two hand-tuned negative lookbehinds to survive
 widening from `site/` to `docs/` for a single noun.
+
+---
+
+## ADR-040 — Runtime secrets are named references resolved before use, never deployment values
+
+**Status:** accepted. **Milestone:** Production Spine v4A.
+**Plan:** `docs/plans/spine-v4a-secrets-provider.md`.
+
+### Context
+
+Production Spine v2 kept PostgreSQL credentials out of public descriptors and
+diagnostics, but deployment contract 1 still carried each password inline in
+the trusted JSON document. Identity verifier modules had no credential boundary
+at all. Those are two current consumers of one safety capability, so a bounded
+runtime contract is justified without becoming a managed secret service.
+
+### Decision
+
+`secretProviderContract: 1` is an internal provider-neutral contract over one
+closed operation: `resolveSecret(reference, context)`. A reference is a bounded
+identifier, never a value. Context is allowlisted to contract, mode, purpose,
+tenant id and an abort signal; initial purposes are identity-verifier and the
+PostgreSQL control/data passwords. Provider definitions are closed
+`{contract,name,trust,resolveSecret}` objects. Provider configuration and secret
+references are not declared-definition fingerprints.
+
+Providers return mutable bytes (a `Uint8Array`, or the framework convenience
+`SecretMaterial`), not a string or an arbitrary result. The resolver copies and
+zeros that provider-owned buffer, then transfers its bytes into one opaque single-use
+`SecretLease`; disposal, successful use and an unrefed bounded expiry zero
+mutable storage. String,
+primitive and JSON coercion refuse, and Node inspection prints only `redacted`.
+This is limited lifetime where JavaScript permits it, not a claim that a
+plaintext string handed to a required third-party API can later be zeroed.
+
+Resolution and production-provider initialization have bounded deadlines and an
+abort signal. Losing promises are observed. Material settling after timeout is
+disposed; late rejection cannot become unhandled. Provider text, hostile
+results, paths, references and values collapse to stable credential-free
+errors. Runtime semantics never catch a secret failure and continue without it.
+
+Deployment-storage contract 2 replaces PostgreSQL `password` with
+`passwordSecret` and requires an explicit `secretProvider`: `environment` only
+in local-development mode, or a trusted repository-relative `module` in
+production. Contract-1 SQLite and `--db` compatibility remain. PostgreSQL
+contract 1 refuses in every mode with
+`DEPLOYMENT_STORAGE_SECRET_REFERENCE_REQUIRED`; it cannot silently retain the
+inline-password path after this boundary exists.
+
+`prepareDeploymentPreconnect()` resolves the secret provider first, gives the
+same resolver to the identity-verifier factory, and completes both before
+application composition can open a database or listener. PostgreSQL control and
+data pools receive `pg` password callbacks that resolve distinct references and
+consume one lease per connection; the pool endpoint contains no reference
+property. TLS validation, attestation, tenant binding and writer-lease ordering
+are unchanged.
+
+Built-ins stop at an explicit local-development environment provider and a
+deterministic fixture. Production is an interface/plugin boundary only: no
+Vault, AWS, GCP or managed Accordo provider ships, and production never falls
+back to environment lookup. The resolver is not a domain-package API, CLI/MCP
+surface, health/schema field or Repository Truth claim. No audit, trace, job,
+backup or telemetry consumer receives a lease, reference or value.
+
+### Rejected alternatives
+
+- Redacting errors while keeping inline passwords leaves values in a long-lived
+  parsed object.
+- Direct `process.env` reads in each consumer create divergent contracts and a
+  silent production fallback.
+- Raw string returns make accidental serialization indistinguishable from
+  intentional consumption and prevent best-effort late disposal.
+- A vendor SDK or managed store adds a service and lifecycle this milestone
+  neither needs nor owns.

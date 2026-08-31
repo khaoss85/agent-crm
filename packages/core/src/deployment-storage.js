@@ -14,18 +14,26 @@ import { readTrustedRegularFile } from './trusted-file.js';
  * from a same-fd no-follow nonblock open (see trusted-file.js).
  */
 
-export const DEPLOYMENT_STORAGE_CONTRACT = 1;
+export const DEPLOYMENT_STORAGE_CONTRACT = 2;
+export const LEGACY_DEPLOYMENT_STORAGE_CONTRACT = 1;
 export const DEPLOYMENT_STORAGE_ENV = 'ACCORDO_DEPLOYMENT_STORAGE';
 export const DEPLOYMENT_STORAGE_MAX_BYTES = 16 * 1024;
 
-const ENVELOPE_KEYS = Object.freeze([
+const LEGACY_ENVELOPE_KEYS = Object.freeze([
   'contract', 'adapter', 'connection', 'controlPlane', 'spine', 'identityVerifier',
 ]);
-const SQLITE_ENDPOINT_KEYS = Object.freeze(['path']);
-const POSTGRES_ENDPOINT_KEYS = Object.freeze([
-  'host', 'port', 'database', 'user', 'password', 'sslmode', 'tls',
+const ENVELOPE_KEYS = Object.freeze([
+  ...LEGACY_ENVELOPE_KEYS, 'secretProvider',
 ]);
-const POSTGRES_REQUIRED_ENDPOINT_KEYS = Object.freeze(['host', 'database', 'user', 'password']);
+const ENVELOPE_REQUIRED_KEYS = Object.freeze([
+  'contract', 'adapter', 'connection', 'controlPlane', 'spine',
+]);
+const SQLITE_ENDPOINT_KEYS = Object.freeze(['path']);
+const POSTGRES_SECRET_ENDPOINT_KEYS = Object.freeze([
+  'host', 'port', 'database', 'user', 'passwordSecret', 'sslmode', 'tls',
+]);
+const POSTGRES_SECRET_REQUIRED_ENDPOINT_KEYS = Object.freeze(['host', 'database', 'user', 'passwordSecret']);
+const SECRET_PROVIDER_KEYS = Object.freeze(['kind', 'path']);
 const TLS_KEYS = Object.freeze(['enabled', 'verify', 'caFile', 'servername', 'rejectUnauthorized']);
 const SPINE_KEYS = Object.freeze(['mode', 'tenant']);
 const TENANT_KEYS = Object.freeze(['id']);
@@ -131,6 +139,12 @@ function parseIdentityVerifier(value) {
 }
 
 /** @param {unknown} value */
+function parseOptionalIdentityVerifier(value) {
+  if (value === undefined || value === null) return null;
+  return parseIdentityVerifier(value);
+}
+
+/** @param {unknown} value */
 function parseSpine(value) {
   const spine = closedObject(value, SPINE_KEYS);
   if (typeof spine.mode !== 'string' || !RUNTIME_MODES.includes(spine.mode)) invalidEnvelope();
@@ -168,24 +182,20 @@ function parsePostgresTls(value) {
 }
 
 /** @param {unknown} value */
-function parsePostgresEndpoint(value) {
-  const endpoint = closedObject(value, POSTGRES_ENDPOINT_KEYS, POSTGRES_REQUIRED_ENDPOINT_KEYS);
+function parsePostgresSecretEndpoint(value) {
+  const endpoint = closedObject(value, POSTGRES_SECRET_ENDPOINT_KEYS, POSTGRES_SECRET_REQUIRED_ENDPOINT_KEYS);
   if (!requiredString(endpoint.host) || !requiredString(endpoint.database)
-    || !requiredString(endpoint.user) || typeof endpoint.password !== 'string') {
+    || !requiredString(endpoint.user) || !requiredString(endpoint.passwordSecret)) {
     invalidEnvelope();
   }
   if (Object.hasOwn(endpoint, 'port')) {
     if (!Number.isInteger(endpoint.port) || /** @type {number} */ (endpoint.port) < 1
-      || /** @type {number} */ (endpoint.port) > 65535) {
-      invalidEnvelope();
-    }
+      || /** @type {number} */ (endpoint.port) > 65535) invalidEnvelope();
   }
   if (Object.hasOwn(endpoint, 'sslmode')) {
     if (typeof endpoint.sslmode !== 'string') invalidEnvelope();
     if (WEAK_SSLMODES.includes(/** @type {string} */ (endpoint.sslmode))
-      || endpoint.sslmode !== 'verify-full') {
-      tlsRefused();
-    }
+      || endpoint.sslmode !== 'verify-full') tlsRefused();
   }
   const tls = parsePostgresTls(endpoint.tls);
   return Object.freeze({
@@ -193,10 +203,24 @@ function parsePostgresEndpoint(value) {
     ...(Object.hasOwn(endpoint, 'port') ? { port: /** @type {number} */ (endpoint.port) } : {}),
     database: /** @type {string} */ (endpoint.database),
     user: /** @type {string} */ (endpoint.user),
-    password: /** @type {string} */ (endpoint.password),
+    passwordSecret: /** @type {string} */ (endpoint.passwordSecret),
     ...(Object.hasOwn(endpoint, 'sslmode') ? { sslmode: /** @type {string} */ (endpoint.sslmode) } : {}),
     tls,
   });
+}
+
+/** @param {unknown} value @param {'local-development'|'production'} mode */
+function parseSecretProvider(value, mode) {
+  const provider = closedObject(value, SECRET_PROVIDER_KEYS, ['kind']);
+  if (provider.kind === 'environment') {
+    if (mode !== 'local-development' || Object.hasOwn(provider, 'path')) {
+      refuse('SECRET_PROVIDER_TRUST_REFUSED', 'production deployments cannot use the local environment secret provider');
+    }
+    return Object.freeze({ kind: /** @type {'environment'} */ ('environment') });
+  }
+  if (provider.kind !== 'module' || !requiredString(provider.path)
+    || isAbsolute(/** @type {string} */ (provider.path))) invalidEnvelope();
+  return Object.freeze({ kind: /** @type {'module'} */ ('module'), path: /** @type {string} */ (provider.path) });
 }
 
 /**
@@ -212,30 +236,63 @@ function endpointIdentity(endpoint) {
 
 /** @param {Record<string, unknown>} envelope */
 function parseEnvelope(envelope) {
-  closedObject(envelope, ENVELOPE_KEYS);
+  if (envelope.contract === LEGACY_DEPLOYMENT_STORAGE_CONTRACT) {
+    closedObject(envelope, LEGACY_ENVELOPE_KEYS);
+    const legacySpine = parseSpine(envelope.spine);
+    if (envelope.adapter === 'postgresql') {
+      refuse(
+        'DEPLOYMENT_STORAGE_SECRET_REFERENCE_REQUIRED',
+        'PostgreSQL deployment storage requires secret references',
+        { contract: DEPLOYMENT_STORAGE_CONTRACT },
+      );
+    }
+    if (envelope.adapter !== 'sqlite' && envelope.adapter !== 'postgresql') invalidEnvelope();
+    const identityVerifier = parseIdentityVerifier(envelope.identityVerifier);
+    if (envelope.adapter === 'sqlite') {
+      return Object.freeze({
+        contract: LEGACY_DEPLOYMENT_STORAGE_CONTRACT,
+        adapter: /** @type {'sqlite'} */ ('sqlite'),
+        identityVerifier,
+        spine: legacySpine,
+        connection: parseSqliteEndpoint(envelope.connection),
+        controlPlane: parseSqliteEndpoint(envelope.controlPlane),
+      });
+    }
+    invalidEnvelope();
+  }
+
   if (envelope.contract !== DEPLOYMENT_STORAGE_CONTRACT) {
     refuse(
       'DEPLOYMENT_STORAGE_CONTRACT_UNSUPPORTED',
       'deployment-storage contract is not supported',
     );
   }
+  closedObject(envelope, ENVELOPE_KEYS, ENVELOPE_REQUIRED_KEYS);
   if (envelope.adapter !== 'sqlite' && envelope.adapter !== 'postgresql') invalidEnvelope();
-  const identityVerifier = parseIdentityVerifier(envelope.identityVerifier);
+  const identityVerifier = parseOptionalIdentityVerifier(envelope.identityVerifier);
   const spine = parseSpine(envelope.spine);
+  const secretProvider = Object.hasOwn(envelope, 'secretProvider')
+    ? parseSecretProvider(envelope.secretProvider, spine.mode)
+    : null;
 
   if (envelope.adapter === 'sqlite') {
     return Object.freeze({
       contract: DEPLOYMENT_STORAGE_CONTRACT,
       adapter: /** @type {'sqlite'} */ ('sqlite'),
       identityVerifier,
+      secretProvider,
       spine,
       connection: parseSqliteEndpoint(envelope.connection),
       controlPlane: parseSqliteEndpoint(envelope.controlPlane),
     });
   }
 
-  const connection = parsePostgresEndpoint(envelope.connection);
-  const controlPlane = parsePostgresEndpoint(envelope.controlPlane);
+  if (!secretProvider) {
+    refuse('SECRET_PROVIDER_REQUIRED', 'PostgreSQL deployment storage requires an explicit secret provider');
+  }
+
+  const connection = parsePostgresSecretEndpoint(envelope.connection);
+  const controlPlane = parsePostgresSecretEndpoint(envelope.controlPlane);
   if (endpointIdentity(connection) === endpointIdentity(controlPlane)) {
     refuse(
       'DEPLOYMENT_STORAGE_PLANES_ALIAS',
@@ -246,6 +303,7 @@ function parseEnvelope(envelope) {
     contract: DEPLOYMENT_STORAGE_CONTRACT,
     adapter: /** @type {'postgresql'} */ ('postgresql'),
     identityVerifier,
+    secretProvider,
     spine,
     connection,
     controlPlane,
@@ -255,7 +313,7 @@ function parseEnvelope(envelope) {
 /** @param {string} dbPath */
 function sqliteFromDbFlag(dbPath) {
   return Object.freeze({
-    contract: DEPLOYMENT_STORAGE_CONTRACT,
+    contract: LEGACY_DEPLOYMENT_STORAGE_CONTRACT,
     adapter: /** @type {'sqlite'} */ ('sqlite'),
     source: /** @type {'db-flag'} */ ('db-flag'),
     identityVerifier: null,

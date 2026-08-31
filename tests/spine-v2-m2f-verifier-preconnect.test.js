@@ -192,7 +192,7 @@ test('M2-22 loads a valid verifier before any database or listener exists', asyn
   });
 
   assert.ok(Date.now() - started < 1000);
-  assert.equal(prepared.selection.contract, DEPLOYMENT_STORAGE_CONTRACT);
+  assert.equal(prepared.selection.contract, 1);
   assert.equal(prepared.selection.adapter, 'sqlite');
   assert.equal(prepared.identityVerifier.contract, 2);
   assert.equal(prepared.identityVerifier.trust, 'production');

@@ -16,7 +16,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   APP_COMMAND_POSTGRESQL_CLASSIFICATION,
   APP_COMMANDS,
@@ -30,6 +30,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const cli = join(repoRoot, 'packages/cli/bin/accordo.js');
 const mcpBin = join(repoRoot, 'packages/mcp/bin/server.js');
+const secretProviderHref = pathToFileURL(join(repoRoot, 'packages/core/src/secret-provider.js')).href;
 
 const SENTINEL_PASSWORD = 'SUPERSECRET_SENTINEL_PASSWORD';
 const SENTINEL_TOKEN = 'SENTINEL_CONFIG_BYTES_DO_NOT_ECHO';
@@ -69,6 +70,19 @@ const HANG_VERIFIER = [
   '',
 ].join('\n');
 
+const VALID_SECRET_PROVIDER = `import { createSecretMaterial } from ${JSON.stringify(secretProviderHref)};
+export const secretProviderContract = 1;
+export const secretProviderTrust = 'production';
+export function createSecretProvider() {
+  return {
+    contract: 1,
+    name: 'entry-fixture',
+    trust: 'production',
+    resolveSecret() { return createSecretMaterial(${JSON.stringify(SENTINEL_PASSWORD)}); },
+  };
+}
+`;
+
 function sqliteEnvelope(root, overrides = {}) {
   return {
     contract: 1,
@@ -92,14 +106,14 @@ function postgresTls() {
 
 function postgresEnvelope(overrides = {}) {
   return {
-    contract: 1,
+    contract: 2,
     adapter: 'postgresql',
     connection: {
       host: '127.0.0.1',
       port: 1,
       database: 'accordo',
       user: 'accordo',
-      password: SENTINEL_PASSWORD,
+      passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD',
       sslmode: 'verify-full',
       tls: postgresTls(),
     },
@@ -108,12 +122,13 @@ function postgresEnvelope(overrides = {}) {
       port: 1,
       database: 'accordo_control',
       user: 'accordo',
-      password: SENTINEL_PASSWORD,
+      passwordSecret: 'ACCORDO_TEST_CONTROL_PASSWORD',
       sslmode: 'verify-full',
       tls: postgresTls(),
     },
     spine: { mode: 'production', tenant: { id: 'acme' } },
     identityVerifier: './providers/identity-verifier.mjs',
+    secretProvider: { kind: 'module', path: './providers/secret-provider.mjs' },
     ...overrides,
   };
 }
@@ -253,6 +268,7 @@ test('M2-17 --db plus --deployment-storage refuses before opening either surface
 test('M2-11/M2-32 PostgreSQL documents refuse before composition for every APP_COMMANDS entry', () => {
   const root = scratch();
   writeModule(root, 'providers/identity-verifier.mjs', VALID_VERIFIER.replaceAll("'local-development'", "'production'"));
+  writeModule(root, 'providers/secret-provider.mjs', VALID_SECRET_PROVIDER);
   const configPath = writeConfig(root, postgresEnvelope());
   for (const command of APP_COMMANDS.filter((name) => name !== 'serve')) {
     const run = runCli([command, '--deployment-storage', configPath, '--root', root], {
@@ -269,6 +285,7 @@ test('M2-11/M2-32 PostgreSQL documents refuse before composition for every APP_C
 test('M2-17 serve refuses a PostgreSQL document before listen', { timeout: 15_000 }, async () => {
   const root = scratch();
   writeModule(root, 'providers/identity-verifier.mjs', VALID_VERIFIER.replaceAll("'local-development'", "'production'"));
+  writeModule(root, 'providers/secret-provider.mjs', VALID_SECRET_PROVIDER);
   const configPath = writeConfig(root, postgresEnvelope());
   const run = runCli(['serve', '--deployment-storage', configPath, '--root', root, '--port', '0'], {
     cwd: repoRoot, env: spawnEnv(), timeout: 8_000,

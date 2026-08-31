@@ -213,14 +213,14 @@ function sqliteEnvelope(root) {
 
 function postgresEnvelope() {
   return {
-    contract: 1,
+    contract: 2,
     adapter: 'postgresql',
     connection: {
       host: '127.0.0.1',
       port: 5432,
       database: 'accordo',
       user: SENTINEL_USER,
-      password: SENTINEL_PASSWORD,
+      passwordSecret: 'ACCORDO_TEST_DATA_PASSWORD',
       sslmode: 'verify-full',
       tls: {
         enabled: true,
@@ -234,7 +234,7 @@ function postgresEnvelope() {
       port: 5432,
       database: 'accordo_control',
       user: SENTINEL_USER,
-      password: SENTINEL_PASSWORD,
+      passwordSecret: 'ACCORDO_TEST_CONTROL_PASSWORD',
       sslmode: 'verify-full',
       tls: {
         enabled: true,
@@ -245,6 +245,7 @@ function postgresEnvelope() {
     },
     spine: { mode: 'production', tenant: { id: 'acme' } },
     identityVerifier: './providers/identity-verifier.mjs',
+    secretProvider: { kind: 'module', path: './providers/secret-provider.mjs' },
   };
 }
 
