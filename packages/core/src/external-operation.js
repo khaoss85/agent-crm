@@ -14,6 +14,7 @@ import {
 import { createWriteOutcomeStore, unknownCommitError } from './write-outcome-store.js';
 import {
   dispatchTransactionalOutboxJob,
+  ensureCommittedWriteOutcomeEffects,
   transactionalOutboxEffectIdentity,
 } from './transactional-outbox.js';
 
@@ -366,6 +367,12 @@ async function runExternalOperationV2(operation) {
       tenantNamespace(tenantId), rawKey, 'receipt',
     );
     if (receiptOutcome) {
+      await ensureCommittedWriteOutcomeEffects({
+        database,
+        tenantId,
+        outcome: receiptOutcome,
+        clock: now,
+      });
       const effect = transactionalOutboxEffectIdentity(
         tenantId,
         receiptOutcome,
@@ -379,8 +386,7 @@ async function runExternalOperationV2(operation) {
       } catch (error) {
         console.error(
           `[accordo] ${name} run ${receiptOutcome.runId}: finalize continuation evidence remains pending: `
-          + `${error && typeof error === 'object' && 'code' in error
-            ? String(error.code) : 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED'}`,
+          + 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED',
         );
       }
     }

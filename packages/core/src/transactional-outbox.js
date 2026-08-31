@@ -9,7 +9,6 @@ import {
 } from './durable-jobs.js';
 import { AppError, ValidationError } from './errors.js';
 import { tenantNamespace } from './idempotency.js';
-import { storageApi } from './storage-runtime.js';
 import { deterministicUuid } from './write-ids.js';
 import { createWriteOutcomeStore } from './write-outcome-store.js';
 
@@ -77,7 +76,7 @@ function createStore(database, tenantId, clock, idSource) {
  * Event/provider/domain content remains solely in write_outcomes.
  */
 export async function enqueueWriteOutcomeEffects({
-  database, tenantId, outcome, transaction = storageApi(database), clock,
+  database, tenantId, outcome, transaction, clock,
 }) {
   const tenantNs = tenantNamespace(tenantId);
   const effects = [];
@@ -89,6 +88,9 @@ export async function enqueueWriteOutcomeEffects({
   for (const effect of effects) {
     const { sourceFingerprint, jobId } = transactionalOutboxEffectIdentity(tenantId, outcome, effect);
     const store = createStore(database, tenantId, clock, () => jobId);
+    const context = transaction === undefined
+      ? { actor: OUTBOX_ACTOR }
+      : { transaction, actor: OUTBOX_ACTOR };
     jobs.push(await store.enqueue({
       kind: OUTBOX_KIND,
       handler: { name: effectHandler(effect), contract: 1, version: 1 },
@@ -100,9 +102,21 @@ export async function enqueueWriteOutcomeEffects({
       },
       idempotencyRoot: `outbox:${effect}:${sourceFingerprint}`,
       maxAttempts: 5,
-    }, { transaction, actor: OUTBOX_ACTOR }));
+    }, context));
   }
   return Object.freeze(jobs);
+}
+
+/**
+ * Deterministically backfill effect ownership for a source that was committed
+ * before V3B existed. The source is already authoritative; each insert owns its
+ * own transaction and the stable idempotency root makes an interrupted backfill
+ * safe to repeat.
+ */
+export function ensureCommittedWriteOutcomeEffects({
+  database, tenantId, outcome, clock,
+}) {
+  return enqueueWriteOutcomeEffects({ database, tenantId, outcome, clock });
 }
 
 function boundedSource(job, effect) {

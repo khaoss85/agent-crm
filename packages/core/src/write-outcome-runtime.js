@@ -20,6 +20,7 @@ import { deterministicUuid, snapshotWriteIds, withWriteIds } from './write-ids.j
 import {
   dispatchTransactionalOutboxJob,
   enqueueWriteOutcomeEffects,
+  ensureCommittedWriteOutcomeEffects,
   transactionalOutboxEffectIdentity,
 } from './transactional-outbox.js';
 import {
@@ -239,8 +240,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
           } catch (dispatchError) {
             console.error(
               `[accordo] ${operation} run ${runId}: committed outbox dispatch is pending recovery: `
-              + `${dispatchError && typeof dispatchError === 'object' && 'code' in dispatchError
-                ? String(dispatchError.code) : 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED'}`,
+              + 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED',
             );
           }
         }
@@ -362,6 +362,11 @@ export async function reconcileWriteOutcome(database, events, spec) {
  */
 async function promoteAndFinalize(database, events, store, outcome, options = {}) {
   if (Array.isArray(outcome.eventIntents) && outcome.eventIntents.length > 0) {
+    await ensureCommittedWriteOutcomeEffects({
+      database,
+      tenantId: options.tenantId,
+      outcome,
+    });
     const effect = transactionalOutboxEffectIdentity(
       options.tenantId,
       outcome,
@@ -375,8 +380,7 @@ async function promoteAndFinalize(database, events, store, outcome, options = {}
     } catch (error) {
       console.error(
         `[accordo] ${outcome.operation} run ${outcome.runId}: committed outbox recovery remains pending: `
-        + `${error && typeof error === 'object' && 'code' in error
-          ? String(error.code) : 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED'}`,
+        + 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED',
       );
     }
   }

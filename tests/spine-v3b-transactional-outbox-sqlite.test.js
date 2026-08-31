@@ -8,6 +8,7 @@ import {
   createDurableJobStore,
   createDurableJobWorker,
 } from '../packages/core/src/durable-jobs.js';
+import { ensureCommittedWriteOutcomeEffects } from '../packages/core/src/transactional-outbox.js';
 import { runIdempotentWrite } from '../packages/core/src/write-outcome-runtime.js';
 
 const actor = Object.freeze({ type: 'user', id: 'sqlite-outbox-operator' });
@@ -36,6 +37,29 @@ test('SQLite keeps immediate event compatibility and does not claim a durable wr
     tenantId: 'tenant-a',
   }).list();
   assert.deepEqual(jobs, [], 'SQLite compatibility does not imply durable M4 outbox semantics');
+});
+
+test('a committed pre-V3B source backfills one deterministic payload-free effect identity', async (t) => {
+  const database = createDatabase({ path: ':memory:', plane: 'data' });
+  t.after(() => database.close());
+  const source = {
+    runId: 'legacy-committed-run',
+    phase: 'root',
+    requestFingerprint: 'a'.repeat(64),
+    eventIntents: [{ event: 'company.created', payload: { secret: 'never copied' } }],
+  };
+
+  const first = await ensureCommittedWriteOutcomeEffects({ database, tenantId: 'tenant-a', outcome: source });
+  const replay = await ensureCommittedWriteOutcomeEffects({ database, tenantId: 'tenant-a', outcome: source });
+  assert.equal(first.length, 1);
+  assert.equal(replay[0].id, first[0].id);
+  const jobs = await createDurableJobStore({ storage: database.storage, tenantId: 'tenant-a' }).list();
+  assert.equal(jobs.length, 1);
+  assert.deepEqual(Object.keys(jobs[0].payload).sort(), [
+    'contractVersion', 'phase', 'runId', 'sourceFingerprint',
+  ]);
+  assert.equal(JSON.stringify(jobs[0].payload).includes('company.created'), false);
+  assert.equal(JSON.stringify(jobs[0].payload).includes('never copied'), false);
 });
 
 test('exact one-shot claim does not terminalize an unrelated expired begun job', async (t) => {
