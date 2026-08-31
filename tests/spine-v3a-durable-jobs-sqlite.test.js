@@ -840,6 +840,7 @@ test('a handler held through exact lease expiry is never invoked by recovery and
   const recovered = await recoveryWorker.poll();
   assert.equal(recovered, null);
   const reconciliation = await f.store.get((await f.store.list())[0].id);
+  assert.equal(reconciliation.recoveryPolicy, 'terminal_unknown');
   assert.equal(reconciliation.state, 'failed_terminal');
   assert.equal(reconciliation.lastErrorCode, 'JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED');
   assert.equal(reconciliation.executionStartedAt, '2026-09-01T09:00:00.000Z');

@@ -3984,7 +3984,8 @@ widening from `site/` to `docs/` for a single noun.
 Accordo has one versioned durable-job contract on the tenant data plane. A job
 persists a named handler identity and canonical JSON-safe payload, never source
 code or a command. Every row carries the already-bound application tenant,
-schedule intent plus instant, bounded attempt policy, idempotency root, claim generation and
+schedule intent plus instant, bounded attempt policy, persisted recovery policy,
+idempotency root, claim generation and
 claim fingerprint, plus nullable execution-start time for the active generation. Omitted schedules persist as `immediate`, so the same
 idempotency root joins across clock drift without collapsing into an explicitly
 scheduled request. Every completion is compare-and-set on tenant, worker,
@@ -4002,7 +4003,8 @@ Immediately before a registered handler is invoked, the worker compare-and-sets
 `execution_started_at` under tenant, worker, claim fingerprint, generation and
 live lease, then records `durable_job.execution_started` in that same
 transaction. Expiry can therefore recover an unstarted claim without consuming
-another attempt. Expiry after execution start instead becomes
+another attempt. Under V3A's default `terminal_unknown` recovery policy, expiry
+after execution start becomes
 `JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED`; the claim is cleared, the start
 timestamp remains durable terminal evidence, and no worker invokes it again.
 This is deliberately conservative: a crash after the CAS and before the
@@ -4028,8 +4030,10 @@ validation, authorization and policy failures collapse to framework-owned
 terminal codes. An expired `external-operation-v2` claim with no durable
 execution-start evidence is reclaimed on the same attempt and may invoke once.
 Once execution start is durable, expiry or an unknown handler outcome is never
-replayed: the stable idempotency root remains its external operation identity
-and the job becomes reconciliation-required.
+replayed under that default: the stable idempotency root remains its external
+operation identity and the job becomes reconciliation-required. ADR-041's V3B
+addendum later introduces one persisted opt-in for locally reconcilable outbox
+effects; it does not change this provider-safe default.
 
 ### Context
 
@@ -4127,10 +4131,16 @@ are collapsed to one bounded retryable result, and `events_promoted` is
 compare-and-set only when the complete pass succeeds. The
 old mark-before-dispatch path is gone. Transport is **at least once**: when a
 later subscriber fails, a retry may repeat an earlier subscriber. Concurrent
-workers cannot own the same claim, but a process death after durable execution
-start remains visible reconciliation evidence and is never automatically
-invoked again. Poison reaches a bounded terminal job; no intent is silently
-deleted and no exactly-once delivery claim is made.
+workers cannot own the same claim. V3B effect jobs persist the closed
+`reconcilable_at_least_once` recovery policy: expiry after durable execution
+start advances attempt and generation, clears the old execution fence, and may
+invoke the same effect identity again until `maxAttempts`. That closes the
+zero-delivery crash window and honestly permits duplicates after partial
+delivery. Exhaustion is visible terminal evidence and late completion remains
+fenced. Every existing/generic job defaults to `terminal_unknown`; in
+particular external-operation-v2 provider work is never replayed by this
+policy. No intent is silently deleted and no exactly-once delivery claim is
+made.
 
 The external continuation handler accepts only a registered local-finalize
 operation. It reloads the committed intent and receipt, returns successfully if

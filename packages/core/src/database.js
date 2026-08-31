@@ -251,6 +251,14 @@ const DATA_PLANE_MIGRATIONS = [
       CREATE INDEX spine_jobs_claim_expiry ON spine_jobs(tenant_id, state, claim_expires_at, id);
     `,
   },
+  {
+    version: 10,
+    name: 'spine_reconcilable_job_recovery',
+    sql: `
+      ALTER TABLE spine_jobs ADD COLUMN recovery_policy TEXT NOT NULL DEFAULT 'terminal_unknown'
+        CHECK(recovery_policy IN ('terminal_unknown', 'reconcilable_at_least_once'));
+    `,
+  },
 ];
 
 /**

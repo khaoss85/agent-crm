@@ -157,7 +157,8 @@ test('PostgreSQL rollback removes both authoritative outcome and effect job', { 
 });
 
 test('receipt continuation resumes finalize only and never receives or calls a provider', { timeout: 90_000 }, async (t) => {
-  const booted = await bootPostgresqlApp(t, { moduleMigrations: [] });
+  let current = '2026-09-01T09:00:00.000Z';
+  const booted = await bootPostgresqlApp(t, { moduleMigrations: [], clock: () => current });
   if (!booted) return;
   const storage = postgresqlTestStorage(booted.app);
   const database = databaseHandle(storage, booted.tenantId);
@@ -178,6 +179,7 @@ test('receipt continuation resumes finalize only and never receives or calls a p
     await store.insert(receipt);
     await enqueueWriteOutcomeEffects({
       database, tenantId: booted.tenantId, outcome: receipt, transaction: storageApi(database),
+      clock: () => current,
     });
   });
 
@@ -207,14 +209,23 @@ test('receipt continuation resumes finalize only and never receives or calls a p
   };
   void providerCalls;
 
-  const [job] = await createDurableJobStore({ storage, tenantId: booted.tenantId }).list();
+  const jobs = createDurableJobStore({ storage, tenantId: booted.tenantId, clock: () => current });
+  const [job] = await jobs.list();
+  assert.equal(job.recoveryPolicy, 'reconcilable_at_least_once');
+  const abandoned = await jobs.claimById(job.id, 'finalize-crashed', 1_000, {
+    actor: { type: 'system', id: 'finalize-crashed' },
+  });
+  await jobs.beginExecution(abandoned, 'finalize-crashed', {
+    actor: { type: 'system', id: 'finalize-crashed' },
+  });
+  current = '2026-09-01T09:00:01.000Z';
   const left = createTransactionalOutboxWorker({
     database, events, tenantId: booted.tenantId, workerId: 'finalize-left',
-    resolveExternalFinalize, pollIntervalMs: 60_000,
+    resolveExternalFinalize, pollIntervalMs: 60_000, clock: () => current,
   });
   const right = createTransactionalOutboxWorker({
     database, events, tenantId: booted.tenantId, workerId: 'finalize-right',
-    resolveExternalFinalize, pollIntervalMs: 60_000,
+    resolveExternalFinalize, pollIntervalMs: 60_000, clock: () => current,
   });
   left.start();
   right.start();
@@ -222,7 +233,13 @@ test('receipt continuation resumes finalize only and never receives or calls a p
   assertExactRunRace(race);
   assert.equal(finalizeCalls, 1);
   assert.equal(providerCalls, 0);
-  assert.equal((await createDurableJobStore({ storage, tenantId: booted.tenantId }).get(job.id)).state, 'succeeded');
+  assert.equal((await jobs.get(job.id)).state, 'succeeded');
+  await assert.rejects(
+    jobs.succeed(abandoned, 'finalize-crashed', 'stale', {
+      actor: { type: 'system', id: 'finalize-crashed' },
+    }),
+    (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED',
+  );
   assert.equal(await left.run(job.id), null, 'the terminal continuation cannot be claimed again');
   assert.ok(await createWriteOutcomeStore(database).lookupByRun(
     tenantNamespace(booted.tenantId), runId, 'finalize',
@@ -458,7 +475,55 @@ test('poison event dispatch remains terminal and operator-visible without silent
   await worker.close();
 });
 
-test('dispatch begun at lease expiry is reconciliation evidence and is never invoked twice', { timeout: 90_000 }, async (t) => {
+test('PostgreSQL two-worker recovery reclaims a reconcilable zero-delivery execution start once', { timeout: 90_000 }, async (t) => {
+  let current = '2026-09-01T08:00:00.000Z';
+  const booted = await bootPostgresqlApp(t, { moduleMigrations: [], clock: () => current });
+  if (!booted) return;
+  const storage = postgresqlTestStorage(booted.app);
+  const database = databaseHandle(storage, booted.tenantId);
+  const events = new EventBus();
+  let deliveries = 0;
+  events.subscribe('company.created', () => { deliveries += 1; });
+  const source = outcome('zero-window-root', 'root', 'zero-window-run', {
+    eventIntents: [{ event: 'company.created', payload: { id: 'zero-window-company' } }],
+  });
+  await database.transactionAsync(async () => {
+    await createWriteOutcomeStore(database).insert(source);
+    await enqueueWriteOutcomeEffects({
+      database, tenantId: booted.tenantId, outcome: source,
+      transaction: storageApi(database), clock: () => current,
+    });
+  });
+  const jobs = createDurableJobStore({ storage, tenantId: booted.tenantId, clock: () => current });
+  const [job] = await jobs.list();
+  assert.equal(job.recoveryPolicy, 'reconcilable_at_least_once');
+  const abandoned = await jobs.claimById(job.id, 'zero-crashed', 1_000, { actor: { type: 'system', id: 'zero-crashed' } });
+  await jobs.beginExecution(abandoned, 'zero-crashed', { actor: { type: 'system', id: 'zero-crashed' } });
+  current = '2026-09-01T08:00:01.000Z';
+  const left = createTransactionalOutboxWorker({
+    database, events, tenantId: booted.tenantId, workerId: 'zero-left',
+    clock: () => current, pollIntervalMs: 60_000, leaseMs: 1_000,
+  });
+  const right = createTransactionalOutboxWorker({
+    database, events, tenantId: booted.tenantId, workerId: 'zero-right',
+    clock: () => current, pollIntervalMs: 60_000, leaseMs: 1_000,
+  });
+  left.start();
+  right.start();
+  assertExactRunRace(await Promise.allSettled([left.run(job.id), right.run(job.id)]));
+  const completed = await jobs.get(job.id);
+  assert.equal(completed.state, 'succeeded');
+  assert.equal(completed.attempt, 2);
+  assert.equal(deliveries, 1);
+  await assert.rejects(
+    jobs.succeed(abandoned, 'zero-crashed', 'stale', { actor: { type: 'system', id: 'zero-crashed' } }),
+    (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED',
+  );
+  await left.close();
+  await right.close();
+});
+
+test('dispatch begun at lease expiry retries at least once and may duplicate partial delivery', { timeout: 90_000 }, async (t) => {
   let current = '2026-09-01T09:00:00.000Z';
   const booted = await bootPostgresqlApp(t, { moduleMigrations: [], clock: () => current });
   if (!booted) return;
@@ -468,7 +533,10 @@ test('dispatch begun at lease expiry is reconciliation evidence and is never inv
   let release;
   let calls = 0;
   const held = new Promise((resolve) => { release = resolve; });
-  events.subscribe('company.created', async () => { calls += 1; await held; });
+  events.subscribe('company.created', async () => {
+    calls += 1;
+    if (calls === 1) await held;
+  });
   const source = outcome('held-root', 'root', 'held-run', {
     eventIntents: [{ event: 'company.created', payload: { id: 'held-company' } }],
   });
@@ -495,17 +563,16 @@ test('dispatch begun at lease expiry is reconciliation evidence and is never inv
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls, 1);
   current = '2026-09-01T09:00:01.000Z';
-  assert.equal(await recovery.run(job.id), null);
+  assert.equal((await recovery.run(job.id)).state, 'succeeded');
   const reconciled = await jobs.get(job.id);
-  assert.equal(reconciled.state, 'failed_terminal');
-  assert.equal(reconciled.lastErrorCode, 'JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED');
-  assert.equal(calls, 1);
+  assert.equal(reconciled.state, 'succeeded');
+  assert.equal(calls, 2, 'partial delivery may be repeated under honest at-least-once recovery');
   release();
   await assert.rejects(firstRun, (error) => error.code === 'DURABLE_JOB_CLAIM_FENCED');
-  assert.equal((await jobs.get(job.id)).state, 'failed_terminal');
+  assert.equal((await jobs.get(job.id)).state, 'succeeded');
   assert.equal((await createWriteOutcomeStore(database).lookup(
     tenantNamespace(booted.tenantId), source.rawKey, source.phase,
-  )).eventsPromoted, false, 'stale dispatch cannot promote outcome evidence after recovery fencing');
+  )).eventsPromoted, true, 'the recovered owner alone promotes terminal outcome evidence');
   await first.close();
   await recovery.close();
 });

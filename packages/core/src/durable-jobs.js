@@ -36,6 +36,7 @@ const CLOSED_FAILURE_CODES = new Set([
 const WORKER_STATUS_ERRORS = new Set(['DURABLE_JOB_STORAGE_UNAVAILABLE']);
 const CLOSED_STATES = new Set(DURABLE_JOB_STATES);
 const SCHEDULE_INTENTS = new Set(['immediate', 'scheduled']);
+const RECOVERY_POLICIES = new Set(['terminal_unknown', 'reconcilable_at_least_once']);
 const NAME = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/;
 const ERROR_CODE = /^[A-Z][A-Z0-9_]*$/;
 const MAX_TEXT = 256;
@@ -286,6 +287,11 @@ function decodeRow(row) {
     }),
     payload, payloadFingerprint: String(row.payload_fingerprint),
     scheduleIntent, scheduleAt: iso(row.schedule_at), state,
+    recoveryPolicy: RECOVERY_POLICIES.has(row.recovery_policy) ? row.recovery_policy : (() => {
+      throw new AppError('Stored durable-job recovery policy is invalid', {
+        code: 'DURABLE_JOB_ROW_INVALID', status: 500, details: { field: 'recoveryPolicy' },
+      });
+    })(),
     attempt: safeInteger(row.attempt, 'attempt'), maxAttempts: safeInteger(row.max_attempts, 'maxAttempts'),
     claim: row.claim_id === null || row.claim_id === undefined ? null : Object.freeze({
       workerId: String(row.claim_worker_id), claimId: String(row.claim_id),
@@ -343,7 +349,7 @@ export function createDurableJobStore(options) {
     const authority = mutationAuthority(context, ['transaction']);
     const actor = authority.actor;
     const jobInput = closedJobInput(input,
-      ['kind', 'handler', 'payload', 'scheduleAt', 'maxAttempts', 'idempotencyRoot', 'outcomeReference'],
+      ['kind', 'handler', 'payload', 'scheduleAt', 'maxAttempts', 'idempotencyRoot', 'outcomeReference', 'recoveryPolicy'],
       ['kind', 'handler', 'payload', 'idempotencyRoot']);
     const handler = closedJobInput(jobInput.handler,
       ['name', 'contract', 'version'], ['name', 'contract', 'version']);
@@ -352,6 +358,10 @@ export function createDurableJobStore(options) {
     const scheduleIntent = explicitSchedule ? 'scheduled' : 'immediate';
     const scheduleAt = canonicalInstant(jobInput.scheduleAt ?? createdAt, 'scheduleAt');
     const payload = canonicalJobPayload(jobInput.payload);
+    const recoveryPolicy = jobInput.recoveryPolicy ?? 'terminal_unknown';
+    if (!RECOVERY_POLICIES.has(recoveryPolicy)) {
+      throw new ValidationError('Durable-job recovery policy is invalid');
+    }
     const row = {
       id: boundedText(idSource(), 'generated job id'), contract_version: DURABLE_JOB_CONTRACT,
       tenant_id: tenantId, kind: boundedName(jobInput.kind, 'job kind'),
@@ -360,6 +370,7 @@ export function createDurableJobStore(options) {
       handler_version: positiveInteger(handler.version, 'handler version'),
       payload_json: payload.json, payload_fingerprint: payload.fingerprint,
       schedule_intent: scheduleIntent,
+      recovery_policy: recoveryPolicy,
       schedule_at: scheduleAt, state: 'pending', attempt: 0,
       max_attempts: positiveInteger(jobInput.maxAttempts ?? 3, 'maxAttempts', MAX_ATTEMPTS),
       claim_worker_id: null, claim_id: null, claim_generation: 0, claim_expires_at: null,
@@ -371,7 +382,7 @@ export function createDurableJobStore(options) {
     const persist = async (adapter, handle) => {
       if (await adapter.insert(row)) {
         await recordMutation(audit, handle, actor, 'enqueued', row.id, {
-          state: 'pending', scheduleIntent,
+          state: 'pending', scheduleIntent, recoveryPolicy,
         });
         return decodeRow(row);
       }
@@ -382,6 +393,7 @@ export function createDurableJobStore(options) {
         && existing.scheduleIntent === scheduleIntent
         && (scheduleIntent === 'immediate' || existing.scheduleAt === row.schedule_at)
         && existing.maxAttempts === row.max_attempts
+        && existing.recoveryPolicy === row.recovery_policy
         && existing.outcomeReference === row.outcome_reference) return existing;
       throw new AppError('Durable-job idempotency root was already used for different work', {
         code: 'DURABLE_JOB_IDEMPOTENCY_MISMATCH', status: 409,
@@ -405,13 +417,14 @@ export function createDurableJobStore(options) {
       for (const expired of result.terminalized) {
         await recordMutation(audit, handle, actor, 'failed', String(expired.id), {
           state: 'failed_terminal', claimGeneration: safeInteger(expired.claim_generation, 'claimGeneration'),
-          errorCode: 'JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED',
+          errorCode: String(expired.last_error_code),
         });
       }
       const job = decodeRow(result.row);
       if (job) {
         await recordMutation(audit, handle, actor, 'claimed', job.id, {
           state: 'claimed', claimGeneration: job.claimGeneration,
+          ...(result.recovered ? { recoveredUnknownOutcome: true } : {}),
         });
       }
       return job;

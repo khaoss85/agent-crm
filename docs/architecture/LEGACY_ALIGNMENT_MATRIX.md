@@ -92,9 +92,11 @@ explicitly started worker. PostgreSQL uses transactional
 and does not claim multi-node worker support. Omitted versus explicit schedule
 intent is durable, and each actor-required mutation records payload-free audit
 evidence on the same storage transaction. A worker persists a generation-fenced
-execution start before handler invocation: only unstarted expiry is recoverable;
-started expiry becomes terminal reconciliation evidence without a second
-invocation. Execution lifecycle transitions require an explicit system actor;
+execution start before handler invocation: under the default recovery policy,
+only unstarted expiry is recoverable and started expiry becomes terminal
+reconciliation evidence without a second invocation. V3B later adds one
+persisted opt-in for its locally reconcilable effect identities; provider jobs
+retain this default. Execution lifecycle transitions require an explicit system actor;
 operator/agent actors remain limited to scheduling mutations. This slice adds no domain timer
 consumer, cron language, outbox, operator surface, worker autostart or public
 production-readiness claim.
@@ -124,10 +126,12 @@ jobs into existing packages.
 
 Horizontal PostgreSQL runtime capability: the existing write-outcome event
 intents and an applicable V3A effect identity commit together. Workers dispatch
-only committed source outcomes, mark internal events promoted only after
-subscriber success, and retain poison or begun-unknown delivery as visible job
-evidence. A failed subscriber does not starve later stored intents; the pass
-then retries as one bounded failure, so duplicates remain possible. Delivery is
+only committed source outcomes and mark internal events promoted only after
+subscriber success. V3B identities persist a reconcilable recovery policy, so
+expired begun work advances its bounded attempt/generation and may dispatch
+again; generic and provider-effect jobs keep terminal unknown-outcome behavior.
+A failed subscriber does not starve later stored intents; the pass then retries
+as one bounded failure, so duplicates remain possible. Delivery is
 at least once plus an idempotent/reconcilable identity, never exactly once.
 External receipt continuation exists only when the committed receipt says a
 finalize phase was declared, can call only registered local finalize work, and

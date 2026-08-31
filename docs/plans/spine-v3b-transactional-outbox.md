@@ -30,7 +30,7 @@ Enqueue happens inside the same PostgreSQL connection-affine transaction and use
 
 Internal event promotion runs through the exact durable-job claim. To preserve current synchronous PostgreSQL subscriber behavior, the successful write path explicitly executes that exact committed job once after commit. A concurrent/restart worker can win the claim instead, but the same effect job cannot be invoked concurrently. `events_promoted` changes only after every stored intent was dispatched and in the same transaction as the claim-fenced successful job transition; an expired stale handler can change neither record. The old mark-before-dispatch loss gap is removed.
 
-Delivery is honestly at least once. Every valid stored intent is attempted even when an earlier intent's subscriber fails; the pass then reports one bounded retryable failure. A retry may therefore repeat any intent already dispatched. A process death after execution start leaves V3A reconciliation-required evidence and is never automatically replayed. Successful dispatch has one terminal job plus `events_promoted` evidence. Poison remains visible as a terminal job with a bounded code; nothing is silently deleted.
+Delivery is honestly at least once. Every valid stored intent is attempted even when an earlier intent's subscriber fails; the pass then reports one bounded retryable failure. A retry may therefore repeat any intent already dispatched. V3B jobs persist `reconcilable_at_least_once`: an expired execution-start advances the bounded attempt and claim generation and invokes the same effect identity again, closing the no-callback crash window while permitting duplicates after partial delivery. Exhaustion remains terminal and late completion is fenced. Generic jobs and external-operation-v2 provider work retain the default `terminal_unknown` policy and are never implicitly replayed. Successful dispatch has one terminal job plus `events_promoted` evidence. Poison remains visible as a terminal job with a bounded code; nothing is silently deleted.
 
 External receipt continuation is a separate named handler. Receipt persistence carries one closed tri-state `external_finalize_declared` value into the same transaction: new operations persist true or false; true creates the continuation identity and a valid provider-only false creates none. A schema-upgraded legacy row remains null/unknown, creates terminal reconciliation evidence, and never infers callback authority. Replay compares a known stored declaration with the current operation and refuses the opposite shape as divergent. The handler reads intent/receipt/finalize outcomes by tenant namespace plus run/phase, verifies the source fingerprint, and succeeds immediately when finalize already exists. Otherwise it calls only a registered local finalize continuation. Provider `call` and `reconcile` handles are not accepted by this runtime. After the callback, a committed finalize outcome is required before the job can succeed.
 
@@ -48,7 +48,7 @@ Add the internal-event handler and exact-job one-shot execution. Replace `events
 
 ### 3. External receipt finalize continuation
 
-Enqueue the receipt continuation atomically, add a closed named local-finalize registry, and prove restart runs finalize only, provider call/reconcile counts remain unchanged, replay is idempotent, missing/poison continuations remain visible, and begun-unknown work is reconciliation evidence.
+Enqueue the receipt continuation atomically, add a closed named local-finalize registry, and prove restart runs finalize only, provider call/reconcile counts remain unchanged, replay is idempotent, missing/poison continuations remain visible, and begun-unknown local continuation work is retried only through its committed effect identity.
 
 ### 4. Decisions and validation
 
@@ -75,11 +75,13 @@ Hosted exact-head PostgreSQL 16 evidence is mandatory when the local service is 
 - 2026-08-31: Added deterministic recovery for committed pre-V3B outcomes and removed dynamic handler-code interpolation from recovery diagnostics in `3e1da1e`. Integrated focused Node 22 evidence is 43 tests, 37 pass, zero fail and six expected local PostgreSQL skips; hosted PostgreSQL 16 remains mandatory.
 - 2026-08-31: Exact-head review closed two material dispatch gaps: a failed early subscriber no longer starves later stored intents, and receipt continuation is authorized only by a committed finalize-declared bit so provider-only operations create no poison job.
 - 2026-08-31: Delta review replaced the unsafe legacy default with tri-state declaration evidence, added replay contract comparison, and made ambiguous upgraded receipts terminal reconciliation evidence rather than silently provider-only.
+- 2026-08-31: Second broad review added schema v10's persisted recovery policy. Only V3B reconcilable effects reclaim expired execution-start evidence; generic and provider-effect jobs retain terminal unknown-outcome semantics.
 
 ## Decision log
 
 - Source fingerprint is evidence for one exact committed outcome identity; it is not a payload digest copied into the job.
 - Event transport is at least once. No exactly-once external or internal delivery claim is made.
+- Recovery policy is persisted job identity, never inferred from a mutable handler registry or handler name.
 - The external continuation registry accepts local finalize functions only. Provider handles are structurally absent.
 - Finalize continuation authority is persisted with the receipt; runtime callback presence is never reconstructed or guessed during backfill.
 - Security audit stays on its existing authoritative database path.

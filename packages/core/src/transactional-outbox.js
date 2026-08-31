@@ -103,6 +103,7 @@ export async function enqueueWriteOutcomeEffects({
         sourceFingerprint,
       },
       idempotencyRoot: `outbox:${effect}:${sourceFingerprint}`,
+      recoveryPolicy: 'reconcilable_at_least_once',
       maxAttempts: 5,
     }, context));
   }
