@@ -63,8 +63,9 @@ production-backup claim, JTBD promotion or production-readiness claim.
 3. Implement restore into an explicitly empty target. Verification compares
    the bundle against separately supplied expected tenant/resource/binding,
    migration and repository intent before `pg_restore`; the target emptiness
-   probe covers relations, schemas and non-relational user-owned catalog
-   objects before mutation. A caller-supplied control-plane boundary verifies
+   probe covers relations, schemas, types, functions, extensions, text-search
+   definitions and other enumerated user-owned catalog families before mutation.
+   A caller-supplied control-plane boundary verifies
    the actor and durably records a path-free attempt before target access plus
    a closed succeeded/refused/possibly-partial outcome afterward. Partial
    failure never presents the target as promoted or rebound. Normal application

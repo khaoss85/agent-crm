@@ -714,22 +714,24 @@ async function withNativeClient(environment, consumer) {
 
 async function inspectEmptyClient(client) {
   try {
-    const result = await client.query(`SELECT EXISTS (
-        SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relkind IN ('r','p','v','m','S','f')
-          AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+    const result = await client.query(`WITH user_namespace AS (
+        SELECT oid FROM pg_catalog.pg_namespace
+        WHERE nspname NOT IN ('pg_catalog', 'information_schema')
+          AND nspname NOT LIKE 'pg_toast%'
+          AND nspname NOT LIKE 'pg_temp_%'
+      ) SELECT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_class c JOIN user_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind IN ('r','p','v','m','S','f','c')
       ) OR EXISTS (
         SELECT 1 FROM pg_catalog.pg_namespace
         WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'public')
           AND nspname NOT LIKE 'pg_toast%'
           AND nspname NOT LIKE 'pg_temp_%'
       ) OR EXISTS (
-        SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+        SELECT 1 FROM pg_catalog.pg_proc p JOIN user_namespace n ON n.oid = p.pronamespace
       ) OR EXISTS (
-        SELECT 1 FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-          AND t.typtype IN ('d','e','r','m')
+        SELECT 1 FROM pg_catalog.pg_type t JOIN user_namespace n ON n.oid = t.typnamespace
+        WHERE t.typtype IN ('c','d','e','r','m')
       ) OR EXISTS (
         SELECT 1 FROM pg_catalog.pg_extension WHERE extname <> 'plpgsql'
       ) OR EXISTS (
@@ -745,20 +747,23 @@ async function inspectEmptyClient(client) {
       ) OR EXISTS (
         SELECT 1 FROM pg_catalog.pg_language WHERE lanispl AND lanname <> 'plpgsql'
       ) OR EXISTS (
-        SELECT 1 FROM pg_catalog.pg_collation c JOIN pg_catalog.pg_namespace n ON n.oid = c.collnamespace
-        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+        SELECT 1 FROM pg_catalog.pg_collation c JOIN user_namespace n ON n.oid = c.collnamespace
       ) OR EXISTS (
-        SELECT 1 FROM pg_catalog.pg_conversion c JOIN pg_catalog.pg_namespace n ON n.oid = c.connamespace
-        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+        SELECT 1 FROM pg_catalog.pg_conversion c JOIN user_namespace n ON n.oid = c.connamespace
       ) OR EXISTS (
-        SELECT 1 FROM pg_catalog.pg_operator o JOIN pg_catalog.pg_namespace n ON n.oid = o.oprnamespace
-        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+        SELECT 1 FROM pg_catalog.pg_operator o JOIN user_namespace n ON n.oid = o.oprnamespace
       ) OR EXISTS (
-        SELECT 1 FROM pg_catalog.pg_opclass o JOIN pg_catalog.pg_namespace n ON n.oid = o.opcnamespace
-        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+        SELECT 1 FROM pg_catalog.pg_opclass o JOIN user_namespace n ON n.oid = o.opcnamespace
       ) OR EXISTS (
-        SELECT 1 FROM pg_catalog.pg_opfamily o JOIN pg_catalog.pg_namespace n ON n.oid = o.opfnamespace
-        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+        SELECT 1 FROM pg_catalog.pg_opfamily o JOIN user_namespace n ON n.oid = o.opfnamespace
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_ts_config t JOIN user_namespace n ON n.oid = t.cfgnamespace
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_ts_dict t JOIN user_namespace n ON n.oid = t.dictnamespace
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_ts_parser t JOIN user_namespace n ON n.oid = t.prsnamespace
+      ) OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_ts_template t JOIN user_namespace n ON n.oid = t.tmplnamespace
       ) AS occupied`);
     return Object.freeze({ empty: result.rows[0]?.occupied === false });
   } catch {

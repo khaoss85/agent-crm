@@ -79,11 +79,11 @@ function expectedOf(evidence) {
 }
 
 test('PostgreSQL 16 native backup verifies, restores only to empty target, and boots through normal authority', { timeout: 120_000 }, async (t) => {
-  const planes = await openIsolatedPostgresqlPlanes(t, { dataCount: 9 });
+  const planes = await openIsolatedPostgresqlPlanes(t, { dataCount: 11 });
   if (!planes) return;
   const [
     sourceData, replacementData, cloneData, occupiedData, wrongSourceData,
-    enumData, domainData, functionData, extensionData,
+    enumData, domainData, functionData, extensionData, compositeData, textSearchData,
   ] = planes.dataPlanes;
   const logicalResource = testResource('v4b-logical-primary');
   const cloneResource = testResource('v4b-unratified-clone');
@@ -162,6 +162,8 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
     [domainData, 'CREATE DOMAIN public.restore_guard_domain AS text CHECK (VALUE <> \'\')'],
     [functionData, 'CREATE FUNCTION public.restore_guard_function() RETURNS integer LANGUAGE SQL AS \'SELECT 1\''],
     [extensionData, 'CREATE EXTENSION hstore'],
+    [compositeData, 'CREATE TYPE public.restore_guard_composite AS (value text)'],
+    [textSearchData, 'CREATE TEXT SEARCH CONFIGURATION public.restore_guard_search (COPY = pg_catalog.simple)'],
   ]) {
     const objectClient = await client(endpoint);
     try { await objectClient.query(ddl); } finally { await objectClient.end(); }

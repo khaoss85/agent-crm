@@ -270,8 +270,9 @@ ship a third-party credential or make provider work retryable.
 ### Backup, verify and restore contract v1 assessment (Production Spine v4B)
 
 This horizontal runtime capability creates and verifies a closed PostgreSQL 16
-backup bundle and restores it only behind an explicit target lock, comprehensive
-empty-target inspection, verified-actor control-plane receipt boundary and
+backup bundle and restores it only behind an explicit target lock, broad
+empty-target inspection across relation, type, function, extension and
+text-search families, verified-actor control-plane receipt boundary and
 normal startup attestation. It is infrastructure below domain packages: no
 domain receives connection material, backup paths, native-tool arguments or
 restore authority. SQLite and managed backup custody, scheduling, retention and
