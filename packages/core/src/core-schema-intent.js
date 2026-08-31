@@ -543,6 +543,7 @@ const V10_STATEMENTS = [
       notNull: true,
       defaultSql: "'terminal_unknown'",
       check: { kind: 'in', values: ['terminal_unknown', 'reconcilable_at_least_once'] },
+      checkWrap: true,
     }),
   },
 ];

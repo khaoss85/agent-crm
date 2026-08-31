@@ -871,8 +871,8 @@ test('an M1-era A+B control plane upgrades, records B pending from A, then B cla
 
 test('core migration identities and plane order are append-only and wrong names refuse stably', (t) => {
   assert.deepEqual(MIGRATION_VERSIONS, {
-    combined: [1, 2, 3, 4, 5, 6, 7, 8, 9],
-    data: [1, 2, 3, 4, 6, 8, 9],
+    combined: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    data: [1, 2, 3, 4, 6, 8, 9, 10],
     control: [5, 7, 8],
   });
   const released = CORE_MIGRATIONS_FOR_CHARACTERIZATION

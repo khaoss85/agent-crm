@@ -256,7 +256,7 @@ const DATA_PLANE_MIGRATIONS = [
     name: 'spine_reconcilable_job_recovery',
     sql: `
       ALTER TABLE spine_jobs ADD COLUMN recovery_policy TEXT NOT NULL DEFAULT 'terminal_unknown'
-        CHECK(recovery_policy IN ('terminal_unknown', 'reconcilable_at_least_once'));
+          CHECK(recovery_policy IN ('terminal_unknown', 'reconcilable_at_least_once'));
     `,
   },
 ];
