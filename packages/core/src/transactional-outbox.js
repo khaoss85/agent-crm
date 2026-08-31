@@ -83,7 +83,9 @@ export async function enqueueWriteOutcomeEffects({
   if (Array.isArray(outcome.eventIntents) && outcome.eventIntents.length > 0) {
     effects.push('internal-event-promotion');
   }
-  if (outcome.phase === 'receipt') effects.push('external-finalize-continuation');
+  if (outcome.phase === 'receipt' && outcome.externalFinalizeDeclared === true) {
+    effects.push('external-finalize-continuation');
+  }
   const jobs = [];
   for (const effect of effects) {
     const { sourceFingerprint, jobId } = transactionalOutboxEffectIdentity(tenantId, outcome, effect);
@@ -162,20 +164,27 @@ export function registerTransactionalOutboxHandlers(registry, {
       const source = boundedSource(job, 'internal-event-promotion');
       const outcome = await loadSource(outcomes, tenantNs, source);
       if (outcome.eventsPromoted) return { outcomeReference: `outbox:${source.sourceFingerprint}` };
+      let invalidIntent = false;
+      let dispatchFailed = false;
       for (const entry of outcome.eventIntents ?? []) {
         if (!entry || typeof entry !== 'object' || typeof entry.event !== 'string'
           || entry.event.length > 128 || !EVENT_NAME.test(entry.event)
           || !Object.hasOwn(entry, 'payload')) {
-          throw new AppError('Committed event intent is invalid', {
-            code: 'TRANSACTIONAL_OUTBOX_INTENT_INVALID', status: 500,
-          });
+          invalidIntent = true;
+          continue;
         }
         try {
           await events.emit(entry.event, entry.payload);
         } catch {
-          throw temporaryDispatchFailure();
+          dispatchFailed = true;
         }
       }
+      if (invalidIntent) {
+        throw new AppError('Committed event intent is invalid', {
+          code: 'TRANSACTIONAL_OUTBOX_INTENT_INVALID', status: 500,
+        });
+      }
+      if (dispatchFailed) throw temporaryDispatchFailure();
       return { outcomeReference: `outbox:${source.sourceFingerprint}` };
     },
     async complete({ job, transaction }) {

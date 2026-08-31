@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS write_outcomes (
   trace_intent_json TEXT NOT NULL,
   run_id TEXT NOT NULL,
   events_promoted INTEGER NOT NULL DEFAULT 0,
+  external_finalize_declared INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL,
   acknowledged_at TIMESTAMPTZ,
   PRIMARY KEY (tenant_namespace, raw_key, phase)
@@ -72,6 +73,7 @@ function mapOutcome(row) {
     traceIntent: decodeJson(row.trace_intent_json),
     runId: String(row.run_id),
     eventsPromoted: Number(row.events_promoted ?? 0) === 1,
+    externalFinalizeDeclared: Number(row.external_finalize_declared ?? 0) === 1,
     createdAt: row.created_at,
     acknowledgedAt: row.acknowledged_at ?? null,
   });
@@ -139,6 +141,7 @@ export function createWriteOutcomeStore(database) {
      *   eventIntents: unknown,
      *   traceIntent: unknown,
      *   runId: string,
+     *   externalFinalizeDeclared?: boolean,
      *   createdAt: string,
      * }} outcome
      */
@@ -165,6 +168,7 @@ export function createWriteOutcomeStore(database) {
           { column: 'trace_intent_json', value: JSON.stringify(outcome.traceIntent ?? null) },
           { column: 'run_id', value: outcome.runId },
           { column: 'events_promoted', value: 0 },
+          { column: 'external_finalize_declared', value: outcome.externalFinalizeDeclared === true ? 1 : 0 },
           { column: 'created_at', value: outcome.createdAt },
         ],
       });

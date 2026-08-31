@@ -336,6 +336,7 @@ async function runExternalOperationV2(operation) {
       actor,
       now,
       external: operation.external,
+      finalizeDeclared: typeof operation.finalize === 'function',
     });
   }
 
@@ -414,6 +415,7 @@ async function runExternalOperationV2(operation) {
  *   actor: unknown,
  *   now: () => string,
  *   external?: Function | null,
+ *   finalizeDeclared: boolean,
  * }} args
  */
 async function obtainProviderReceipt(args) {
@@ -526,6 +528,7 @@ async function persistReceipt(args, receipt) {
       target: 'receipt',
       phase: 'receipt',
       settleTrace: false,
+      externalFinalizeDeclared: args.finalizeDeclared === true,
     }, async () => receipt);
     return outcome.result;
   } catch (error) {

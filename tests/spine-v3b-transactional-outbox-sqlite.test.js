@@ -62,6 +62,25 @@ test('a committed pre-V3B source backfills one deterministic payload-free effect
   assert.equal(JSON.stringify(jobs[0].payload).includes('never copied'), false);
 });
 
+test('receipt backfill creates a continuation only from persisted finalize-declared evidence', async (t) => {
+  const database = createDatabase({ path: ':memory:', plane: 'data' });
+  t.after(() => database.close());
+  const source = {
+    runId: 'receipt-run',
+    phase: 'receipt',
+    requestFingerprint: 'b'.repeat(64),
+    eventIntents: [],
+  };
+  assert.deepEqual(await ensureCommittedWriteOutcomeEffects({
+    database, tenantId: 'tenant-a', outcome: { ...source, externalFinalizeDeclared: false },
+  }), []);
+  const [continuation] = await ensureCommittedWriteOutcomeEffects({
+    database, tenantId: 'tenant-a', outcome: { ...source, externalFinalizeDeclared: true },
+  });
+  assert.equal(continuation.handler.name, 'continue-external-finalize');
+  assert.equal(continuation.state, 'pending');
+});
+
 test('exact one-shot claim does not terminalize an unrelated expired begun job', async (t) => {
   const database = createDatabase({ path: ':memory:', plane: 'data' });
   t.after(() => database.close());

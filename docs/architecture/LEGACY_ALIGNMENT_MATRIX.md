@@ -126,9 +126,13 @@ Horizontal PostgreSQL runtime capability: the existing write-outcome event
 intents and an applicable V3A effect identity commit together. Workers dispatch
 only committed source outcomes, mark internal events promoted only after
 subscriber success, and retain poison or begun-unknown delivery as visible job
-evidence. Delivery is at least once plus an idempotent/reconcilable identity,
-never exactly once. External receipt continuation can call only registered
-local finalize work and never receives a provider call/reconcile handle.
+evidence. A failed subscriber does not starve later stored intents; the pass
+then retries as one bounded failure, so duplicates remain possible. Delivery is
+at least once plus an idempotent/reconcilable identity, never exactly once.
+External receipt continuation exists only when the committed receipt says a
+finalize phase was declared, can call only registered local finalize work, and
+never receives a provider call/reconcile handle. Provider-only operations do
+not create continuation jobs.
 SQLite retains immediate in-process event behavior; this is not a durable
 SQLite-outbox claim. Security audit is unchanged.
 

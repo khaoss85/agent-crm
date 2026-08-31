@@ -4106,15 +4106,19 @@ The existing PostgreSQL `write_outcomes.event_intents_json` remains the sole
 effect-intent authority. The transaction that inserts an outcome also enqueues
 one deterministic V3A job for each applicable closed effect family on the same
 affine storage handle: internal event promotion, and external-operation receipt
-continuation into local finalize. The job carries only contract, run, phase and
+continuation only when that receipt durably records that the operation declared
+a finalize phase. Provider-only operations record the closed false value and
+create no poison continuation. The job carries only contract, run, phase and
 source-fingerprint identity. Event/domain/provider payloads, idempotency keys,
 actors, credentials and secret references remain in neither job nor job audit.
 Rollback therefore leaves no dispatchable identity; commit followed by process
 death leaves a pending one. A committed outcome from before V3B is recovered by
 deterministically backfilling that same identity on explicit replay.
 
-Internal events are dispatched from the committed outcome, then
-`events_promoted` is compare-and-set only after every subscriber returns. The
+Internal events are dispatched from the committed outcome. A subscriber failure
+does not starve later stored intents: every valid intent is attempted, failures
+are collapsed to one bounded retryable result, and `events_promoted` is
+compare-and-set only when the complete pass succeeds. The
 old mark-before-dispatch path is gone. Transport is **at least once**: when a
 later subscriber fails, a retry may repeat an earlier subscriber. Concurrent
 workers cannot own the same claim, but a process death after durable execution

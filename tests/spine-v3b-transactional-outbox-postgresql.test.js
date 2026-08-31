@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { createDurableJobStore } from '../packages/core/src/durable-jobs.js';
 import { EventBus } from '../packages/core/src/event-bus.js';
+import { runExternalOperation } from '../packages/core/src/external-operation.js';
 import { injectPostgresqlCommitFault } from '../packages/core/src/postgresql-storage.js';
 import { runWithAffineStorage, storageApi } from '../packages/core/src/storage-runtime.js';
 import {
@@ -169,6 +170,7 @@ test('receipt continuation resumes finalize only and never receives or calls a p
   const receipt = outcome('external-root', 'receipt', runId, {
     operation: 'partner.notify.receipt',
     response: { receiptId: 'receipt-safe', status: 'present' },
+    externalFinalizeDeclared: true,
   });
   await database.transactionAsync(async () => {
     const store = createWriteOutcomeStore(database);
@@ -227,6 +229,110 @@ test('receipt continuation resumes finalize only and never receives or calls a p
   ));
   await left.close();
   await right.close();
+});
+
+test('provider-only receipt declares no finalize continuation while a declared finalize is queued atomically', { timeout: 90_000 }, async (t) => {
+  const booted = await bootPostgresqlApp(t, { moduleMigrations: [] });
+  if (!booted) return;
+  const storage = postgresqlTestStorage(booted.app);
+  const database = databaseHandle(storage, booted.tenantId);
+  const events = new EventBus();
+  const makeProvider = () => ({
+    call(args) {
+      return {
+        idempotencyKey: args.idempotencyKey,
+        operation: args.operation,
+        requestFingerprint: args.requestFingerprint,
+        receiptId: `receipt-${args.idempotencyKey.slice(-8)}`,
+        status: 'present',
+      };
+    },
+    reconcile() { return { status: 'absent' }; },
+  });
+  const providerOnlyKey = 'v1.20260901.cccccccccccccccccccccccccccccccc';
+  await runExternalOperation({
+    database, events, tenantId: booted.tenantId, actor,
+    name: 'partner.provider-only', externalOperation: 2,
+    idempotencyKey: providerOnlyKey, provider: makeProvider(),
+    input: { command: 'safe' },
+    now: () => '2026-09-01T09:00:00.000Z',
+    async intent() { return { requested: true }; },
+  });
+  const outcomes = createWriteOutcomeStore(database);
+  const providerOnlyReceipt = await outcomes.lookup(
+    tenantNamespace(booted.tenantId), providerOnlyKey, 'receipt',
+  );
+  assert.equal(providerOnlyReceipt.externalFinalizeDeclared, false);
+  assert.equal((await createDurableJobStore({ storage, tenantId: booted.tenantId }).list())
+    .some((entry) => entry.handler.name === 'continue-external-finalize'), false,
+  'a valid provider-only operation creates no poison continuation');
+
+  const finalizeKey = 'v1.20260901.dddddddddddddddddddddddddddddddd';
+  await assert.rejects(
+    runExternalOperation({
+      database, events, tenantId: booted.tenantId, actor,
+      name: 'partner.with-finalize', externalOperation: 2,
+      idempotencyKey: finalizeKey, provider: makeProvider(),
+      input: { command: 'safe' },
+      now: () => '2026-09-01T09:00:01.000Z',
+      async intent() { return { requested: true }; },
+      async finalize() { throw new Error('finalize intentionally interrupted'); },
+    }),
+    /finalize intentionally interrupted/,
+  );
+  const finalizeReceipt = await outcomes.lookup(
+    tenantNamespace(booted.tenantId), finalizeKey, 'receipt',
+  );
+  assert.equal(finalizeReceipt.externalFinalizeDeclared, true);
+  const continuations = (await createDurableJobStore({ storage, tenantId: booted.tenantId }).list())
+    .filter((entry) => entry.handler.name === 'continue-external-finalize');
+  assert.equal(continuations.length, 1,
+    'the committed receipt and its declared-finalize continuation survive the interrupted finalize together');
+  assert.equal(continuations[0].state, 'pending');
+});
+
+test('event promotion attempts later stored intents before surfacing one bounded retryable failure', { timeout: 90_000 }, async (t) => {
+  const booted = await bootPostgresqlApp(t, { moduleMigrations: [] });
+  if (!booted) return;
+  const storage = postgresqlTestStorage(booted.app);
+  const database = databaseHandle(storage, booted.tenantId);
+  const events = new EventBus();
+  let firstAttempts = 0;
+  let laterAttempts = 0;
+  events.subscribe('company.first', () => {
+    firstAttempts += 1;
+    throw new Error('subscriber detail must remain bounded');
+  });
+  events.subscribe('company.later', () => { laterAttempts += 1; });
+  const source = outcome('multi-intent-root', 'root', 'multi-intent-run', {
+    eventIntents: [
+      { event: 'company.first', payload: { id: 'first' } },
+      { event: 'company.later', payload: { id: 'later' } },
+    ],
+  });
+  await database.transactionAsync(async () => {
+    await createWriteOutcomeStore(database).insert(source);
+    await enqueueWriteOutcomeEffects({
+      database, tenantId: booted.tenantId, outcome: source,
+      transaction: storageApi(database),
+    });
+  });
+  const [job] = await createDurableJobStore({ storage, tenantId: booted.tenantId }).list();
+  const worker = createTransactionalOutboxWorker({
+    database, events, tenantId: booted.tenantId, workerId: 'multi-intent-worker',
+    pollIntervalMs: 60_000, backoff: () => 0,
+  });
+  worker.start();
+  const failed = await worker.run(job.id);
+  assert.equal(failed.state, 'failed_retryable');
+  assert.equal(failed.lastErrorCode, 'JOB_HANDLER_TEMPORARY_UNAVAILABLE');
+  assert.equal(firstAttempts, 1);
+  assert.equal(laterAttempts, 1, 'a prior subscriber failure cannot starve a later stored intent');
+  assert.equal(JSON.stringify(failed).includes('subscriber detail'), false);
+  assert.equal((await createWriteOutcomeStore(database).lookup(
+    tenantNamespace(booted.tenantId), source.rawKey, source.phase,
+  )).eventsPromoted, false);
+  await worker.close();
 });
 
 test('poison event dispatch remains terminal and operator-visible without silent deletion', { timeout: 90_000 }, async (t) => {

@@ -63,6 +63,7 @@ const ENVELOPE = new AsyncLocalStorage();
  *   phase?: string,
  *   now?: () => string,
  *   clock?: () => string,
+ *   externalFinalizeDeclared?: boolean,
  * }} spec
  * @param {(ctx: {
  *   emit: (event: string, payload: unknown) => any,
@@ -209,6 +210,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
               eventIntents: outbox.peek(),
               traceIntent,
               runId,
+              externalFinalizeDeclared: spec.externalFinalizeDeclared === true,
               createdAt: now(),
             };
             await store.insert(persistedOutcome);
