@@ -64,6 +64,7 @@ function assertExactRunRace(race) {
 }
 
 test('PostgreSQL commit atomically leaves an exact event job that dispatches once across restart workers', { timeout: 90_000 }, async (t) => {
+  const clock = () => '2026-09-01T09:00:00.000Z';
   const booted = await bootPostgresqlApp(t, { moduleMigrations: [] });
   if (!booted) return;
   const storage = postgresqlTestStorage(booted.app);
@@ -81,7 +82,7 @@ test('PostgreSQL commit atomically leaves an exact event job that dispatches onc
       actor,
       operation: 'company.create',
       input: { name: 'Restart Safe' },
-      now: () => '2026-09-01T09:00:00.000Z',
+      now: clock,
     }, async ({ emit }) => {
       await emit('company.created', { id: 'company-restart' });
       return { id: 'company-restart' };
@@ -101,10 +102,10 @@ test('PostgreSQL commit atomically leaves an exact event job that dispatches onc
   assert.equal(JSON.stringify(job.payload).includes(key), false);
 
   const left = createTransactionalOutboxWorker({
-    database, events, tenantId: booted.tenantId, workerId: 'outbox-left', pollIntervalMs: 60_000,
+    database, events, tenantId: booted.tenantId, workerId: 'outbox-left', pollIntervalMs: 60_000, clock,
   });
   const right = createTransactionalOutboxWorker({
-    database, events, tenantId: booted.tenantId, workerId: 'outbox-right', pollIntervalMs: 60_000,
+    database, events, tenantId: booted.tenantId, workerId: 'outbox-right', pollIntervalMs: 60_000, clock,
   });
   left.start();
   right.start();
@@ -164,11 +165,12 @@ test('receipt continuation resumes finalize only and never receives or calls a p
   const database = databaseHandle(storage, booted.tenantId);
   const events = new EventBus();
   const runId = 'external-restart-run';
-  const intent = outcome('external-root', 'intent', runId, {
+  const externalKey = 'v1.20260901.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+  const intent = outcome(externalKey, 'intent', runId, {
     operation: 'partner.notify.intent',
     response: { intent: { accountId: 'account-safe' } },
   });
-  const receipt = outcome('external-root', 'receipt', runId, {
+  const receipt = outcome(externalKey, 'receipt', runId, {
     operation: 'partner.notify.receipt',
     response: { receiptId: 'receipt-safe', status: 'present' },
     externalFinalizeDeclared: true,
@@ -380,6 +382,7 @@ test('a real schema upgrade preserves legacy receipt declaration as reconcilable
   const worker = createTransactionalOutboxWorker({
     database, events: new EventBus(), tenantId: upgraded.tenantId,
     workerId: 'legacy-finalize-evidence', pollIntervalMs: 60_000,
+    clock: () => '2026-09-01T09:00:02.000Z',
     resolveExternalFinalize: async () => {
       throw new Error('legacy ambiguity must never infer callback authority');
     },
@@ -531,11 +534,16 @@ test('dispatch begun at lease expiry retries at least once and may duplicate par
   const database = databaseHandle(storage, booted.tenantId);
   const events = new EventBus();
   let release;
+  let entered;
+  const firstEntered = new Promise((resolve) => { entered = resolve; });
   let calls = 0;
   const held = new Promise((resolve) => { release = resolve; });
   events.subscribe('company.created', async () => {
     calls += 1;
-    if (calls === 1) await held;
+    if (calls === 1) {
+      entered();
+      await held;
+    }
   });
   const source = outcome('held-root', 'root', 'held-run', {
     eventIntents: [{ event: 'company.created', payload: { id: 'held-company' } }],
@@ -560,7 +568,7 @@ test('dispatch begun at lease expiry retries at least once and may duplicate par
   first.start();
   recovery.start();
   const firstRun = first.run(job.id);
-  await new Promise((resolve) => setImmediate(resolve));
+  await firstEntered;
   assert.equal(calls, 1);
   current = '2026-09-01T09:00:01.000Z';
   assert.equal((await recovery.run(job.id)).state, 'succeeded');

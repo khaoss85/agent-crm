@@ -28,7 +28,7 @@ Each committed source outcome gets at most one deterministic V3A job per applica
 
 Enqueue happens inside the same PostgreSQL connection-affine transaction and uses the live transaction witness already required by V3A. Rollback therefore leaves neither outcome nor job. The actor is obtained only through one named `trustedSystemActor` reason; there is no fallback.
 
-Internal event promotion runs through the exact durable-job claim. To preserve current synchronous PostgreSQL subscriber behavior, the successful write path explicitly executes that exact committed job once after commit. A concurrent/restart worker can win the claim instead, but the same effect job cannot be invoked concurrently. `events_promoted` changes only after every stored intent was dispatched and in the same transaction as the claim-fenced successful job transition; an expired stale handler can change neither record. The old mark-before-dispatch loss gap is removed.
+Internal event promotion runs through the exact durable-job claim. To preserve current synchronous PostgreSQL subscriber behavior, the successful write path explicitly executes that exact committed job once after commit. A concurrent/restart worker can win the claim instead. There is only one active unexpired claim; after expiry, a still-running stale execution may overlap a generation-fenced recovery and duplicate delivery is allowed. `events_promoted` changes only after every stored intent was dispatched and in the same transaction as the claim-fenced successful job transition; an expired stale handler can change neither record. The old mark-before-dispatch loss gap is removed.
 
 Delivery is honestly at least once. Every valid stored intent is attempted even when an earlier intent's subscriber fails; the pass then reports one bounded retryable failure. A retry may therefore repeat any intent already dispatched. V3B jobs persist `reconcilable_at_least_once`: an expired execution-start advances the bounded attempt and claim generation and invokes the same effect identity again, closing the no-callback crash window while permitting duplicates after partial delivery. Exhaustion remains terminal and late completion is fenced. Generic jobs and external-operation-v2 provider work retain the default `terminal_unknown` policy and are never implicitly replayed. Successful dispatch has one terminal job plus `events_promoted` evidence. Poison remains visible as a terminal job with a bounded code; nothing is silently deleted.
 
@@ -76,11 +76,13 @@ Hosted exact-head PostgreSQL 16 evidence is mandatory when the local service is 
 - 2026-08-31: Exact-head review closed two material dispatch gaps: a failed early subscriber no longer starves later stored intents, and receipt continuation is authorized only by a committed finalize-declared bit so provider-only operations create no poison job.
 - 2026-08-31: Delta review replaced the unsafe legacy default with tri-state declaration evidence, added replay contract comparison, and made ambiguous upgraded receipts terminal reconciliation evidence rather than silently provider-only.
 - 2026-08-31: Second broad review added schema v10's persisted recovery policy. Only V3B reconcilable effects reclaim expired execution-start evidence; generic and provider-effect jobs retain terminal unknown-outcome semantics.
+- 2026-08-31: Live PostgreSQL 16 validation found and closed two false-green seams: initial jobs now pin the terminal outbox outcome reference so replay identity does not drift, and deterministic tests pass one clock through enqueue, claim, and recovery. The affected live M4A/V3A/V3B run completed 23 tests with zero failures.
 
 ## Decision log
 
 - Source fingerprint is evidence for one exact committed outcome identity; it is not a payload digest copied into the job.
 - Event transport is at least once. No exactly-once external or internal delivery claim is made.
+- Claim ownership excludes concurrent active unexpired owners. Expiry recovery may overlap a stale execution; generation fencing prevents the stale completion from committing but cannot prevent duplicate effect invocation.
 - Recovery policy is persisted job identity, never inferred from a mutable handler registry or handler name.
 - The external continuation registry accepts local finalize functions only. Provider handles are structurally absent.
 - Finalize continuation authority is persisted with the receipt; runtime callback presence is never reconstructed or guessed during backfill.
