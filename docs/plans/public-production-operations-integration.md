@@ -85,3 +85,19 @@ Held back during V4C so as not to move an head a merge was waiting on, and recor
 **Why two viewpoints found what neither could alone.** On the fourth surface of M4, the reviewer had the right question without the complete map of surfaces; the author had the map without the question. Two incompletenesses of different kinds, neither of which more attention cures — they are cured only by being brought into contact. That is the structural reason every serious defect in this campaign came out of a meeting between two points of view, and not out of anyone looking harder.
 
 **A stale message is not only friction.** The sixth case surfaced because a Lead message reported as missing something already done: instead of answering "it is done, look at the commit" — true, and comfortable — the author re-read, and found the fix was half a fix. It happened twice in this campaign that someone else's out-of-date correction caused a re-read of something considered closed. Worth writing down, because it suggests a misaligned message is not purely waste: it forces a re-read, and sometimes nothing else does.
+
+**The seventh case, and it is this slice's own.** Three of the findings above
+are PostgreSQL findings, and all three were first "verified" by reading the code
+that implements them: the ledger loop was read and pronounced idempotent, the
+multi-statement exec was read and pronounced safe, the readiness hop was read
+and pronounced closed. Every reading was correct about what the code said and
+wrong about what it did — the lifecycle handle was not connection-affine, and
+the probe could not classify a PostgreSQL failure at all. It took a reviewer
+asking *what does the suite actually run* — not *is the code right* — to surface
+it, because the suite was SQLite-only and nothing in the diff said so.
+
+That is the same shape as the six before it, with the comfortable answer again
+being the one that arrived first. The operational rule this campaign ends with
+is worth stating plainly: **re-verifying your own claim is nearly always wasted;
+only trying to falsify it pays.** A claim about PostgreSQL is falsified by
+running PostgreSQL, and by nothing else.
