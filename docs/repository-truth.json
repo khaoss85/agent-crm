@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "a1b2884f535e75fe381c8a14fe4afe0f22ca1ca89c2a45baa5cf2ff0bf84cd7d",
+  "sourceSha": "0c0460d6938e0db795d8da843af03d71b5193cfe5dfaf60ac81a4cdc0f603df8",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -758,6 +758,22 @@
       ]
     },
     {
+      "id": "spine.production_operations.implemented",
+      "value": "implemented",
+      "authority": "spine.contract",
+      "evidence": [
+        "executable-probe:production-operations-composed-but-not-started",
+        "packages/app/src/portable-app.js#composeProductionOperations",
+        "packages/app/src/production-operations.js#createProductionOperations"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": [
+        "SELF_HOST_APPLICATION_STARTED_OPERATIONS_ONLY",
+        "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
+      ]
+    },
+    {
       "id": "spine.secret_provider.implemented",
       "value": "implemented",
       "authority": "spine.contract",
@@ -919,6 +935,10 @@
       "message": "the implemented fact covers the bounded export contract itself: a closed signal vocabulary, an injected exporter, the built-in no-op/JSON-stderr/capture exporters and an application-owned lifecycle. It is not an observability backend, a log store, an APM, a second audit system, dashboards, alerting, retention or a managed telemetry service, and it implements no OpenTelemetry or OTLP support. No attribute the kernel fills carries a tenant, record, run or worker identifier, so telemetry is aggregate-shaped rather than per-record traceable — with one declared exception: a durable job kind and handler name are chosen by whoever enqueued the work and are exported verbatim, so a caller who names a job after a uuid or a tenant slug will see it"
     },
     {
+      "code": "SELF_HOST_APPLICATION_STARTED_OPERATIONS_ONLY",
+      "message": "the implemented fact covers one application composing the shipped job, outbox, timer, backup and telemetry contracts into a single handle whose construction starts nothing. The application starts it, drains it and stops it, and supplies the system authority its worker runs under. It is not a managed jobs service, an operator console, a supervisor, an autostart, a scheduler process or a deployment runtime, and nothing here reports what a deployed instance is doing. Composing operations is the only thing that changes the shape of an application: one that composes none is indistinguishable from one built before this existed"
+    },
+    {
       "code": "SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY",
       "message": "the durable job store, its transactional outbox and its scheduled timer consumers are a bounded self-host contract whose worker the composing application starts explicitly. Nothing autostarts, no operator surface or managed jobs service ships with them, and a timer opens an ask rather than deciding one"
     },
@@ -979,5 +999,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "311d4b663d5ed1c2223a809e5a6fc6157705eea560ea2fe4a25a0f069d6d5c96"
+  "fingerprint": "f0862fcf25c94f4636091752770d427bba5e14600f71a5ab24454edbf560948c"
 }

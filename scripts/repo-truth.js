@@ -130,6 +130,13 @@ export const TRUTH_LIMITATIONS = Object.freeze([
     + 'per-record traceable — with one declared exception: a durable job kind and handler name are chosen by '
     + 'whoever enqueued the work and are exported verbatim, so a caller who names a job after a uuid or a tenant '
     + 'slug will see it'],
+  ['SELF_HOST_APPLICATION_STARTED_OPERATIONS_ONLY',
+    'the implemented fact covers one application composing the shipped job, outbox, timer, backup and telemetry '
+    + 'contracts into a single handle whose construction starts nothing. The application starts it, drains it and '
+    + 'stops it, and supplies the system authority its worker runs under. It is not a managed jobs service, an '
+    + 'operator console, a supervisor, an autostart, a scheduler process or a deployment runtime, and nothing here '
+    + 'reports what a deployed instance is doing. Composing operations is the only thing that changes the shape of '
+    + 'an application: one that composes none is indistinguishable from one built before this existed'],
   ['SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY',
     'the durable job store, its transactional outbox and its scheduled timer consumers are a bounded self-host '
     + 'contract whose worker the composing application starts explicitly. Nothing autostarts, no operator surface '
@@ -907,6 +914,44 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
       && typeof publicCore.registerScheduledAskHandlers === 'function'
       && typeof publicCore.cancelScheduledAsk === 'function'
       && typeof publicCore.rescheduleAsk === 'function';
+
+    // The integration slice, and the only fact here that is proved by building
+    // two applications and comparing them rather than by reading a surface.
+    // What it asserts is the promise: composing operations starts nothing, and
+    // an application that composes none does not carry the handle at all.
+    {
+      const appFactory = await import(url('packages/app/src/index.js'));
+      const timerModule = await import(url('packages/core/src/domain-timers.js'));
+      const { trustedSystemActor: declareAuthority } = await import(url('packages/core/src/actor.js'));
+      const bare = { packageContract: 2, packages: [], actions: [], modules: [] };
+
+      const withoutOperations = await appFactory.createAccordoAppAsync({ dbPath: ':memory:', selected: bare });
+      const absentWhenUnasked = !Object.hasOwn(withoutOperations, 'productionOperations');
+      await withoutOperations.close();
+
+      const withOperations = await appFactory.createAccordoAppAsync({
+        dbPath: ':memory:',
+        selected: bare,
+        moduleMigrations: [timerModule.SCHEDULED_ASK_MIGRATION],
+        productionOperations: {
+          actor: declareAuthority('execute the repository-truth production-operations probe'),
+          tenantId: 'repository-truth-probe',
+          timers: true,
+        },
+      });
+      const posture = await withOperations.productionOperations.status();
+      bundle.productionOperationsProbe = absentWhenUnasked
+        && Object.hasOwn(withOperations, 'productionOperations')
+        && posture.contract === 1
+        && posture.started === false
+        && posture.stopped === false
+        && posture.worker.accepting === false
+        && posture.worker.inFlight === false
+        && posture.composed.timers === true
+        && posture.composed.backup === false
+        && posture.composed.telemetry === false;
+      await withOperations.close();
+    }
     // A limitation string is `CODE — prose`; the code is the structural half.
     bundle.tenantLimitationCodes = [...tenantStorage.TENANT_LIMITATIONS]
       .map((entry) => /^([A-Z][A-Z0-9_]+)/.exec(String(entry))?.[1] ?? '')
@@ -2156,6 +2201,25 @@ export function buildFacts(bundle) {
     ],
     scope: 'framework',
     limitations: ['SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
+  });
+
+  // The integration slice. The three facts above say the contracts exist; this
+  // one says an application can hold them together, and bounds it with what
+  // stays true either way — the application starts them, and nothing else does.
+  add({
+    id: 'spine.production_operations.implemented',
+    value: bundle.productionOperationsProbe === true ? 'implemented' : 'absent',
+    authority: 'spine.contract',
+    evidence: [
+      'packages/app/src/production-operations.js#createProductionOperations',
+      'packages/app/src/portable-app.js#composeProductionOperations',
+      'executable-probe:production-operations-composed-but-not-started',
+    ],
+    scope: 'framework',
+    limitations: [
+      'SELF_HOST_APPLICATION_STARTED_OPERATIONS_ONLY',
+      'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME',
+    ],
   });
 
   for (const [id, rule] of Object.entries(DECLARED_ABSENCE)) {
