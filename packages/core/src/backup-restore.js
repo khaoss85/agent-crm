@@ -15,6 +15,7 @@ import { DATA_ADVISORY_LOCK, DATA_RESTORE_CHILD_LOCK } from './postgresql-author
 import { readTrustedRegularFile } from './trusted-file.js';
 
 export const BACKUP_CONTRACT = 1;
+const BACKUP_TOOL_TIMEOUT_CEILING_MS = 300_000;
 export const BACKUP_ADAPTERS = Object.freeze(['postgresql']);
 export const BACKUP_ARTIFACT_NAME = 'artifact.dump';
 export const BACKUP_MANIFEST_NAME = 'manifest.json';
@@ -1054,7 +1055,15 @@ export function createPostgresqlNativeBackupProvider(options = {}) {
   const dumpCommand = toolCommand(configuration.pgDump, 'pg_dump');
   const restoreCommand = toolCommand(configuration.pgRestore, 'pg_restore');
   const psqlCommand = toolCommand(configuration.psql, 'psql');
-  const timeoutMs = Number.isInteger(configuration.timeoutMs) && configuration.timeoutMs > 0 && configuration.timeoutMs <= 300_000
+  // An out-of-range budget is refused rather than quietly clamped: a caller that
+  // asked for ten minutes and silently got sixty seconds would read the timeout
+  // as a database fault.
+  if (Object.hasOwn(configuration, 'timeoutMs')
+    && !(Number.isInteger(configuration.timeoutMs)
+      && configuration.timeoutMs > 0 && configuration.timeoutMs <= BACKUP_TOOL_TIMEOUT_CEILING_MS)) {
+    refuse('BACKUP_PROVIDER_INVALID', 'backup tool timeout is outside the supported range');
+  }
+  const timeoutMs = Object.hasOwn(configuration, 'timeoutMs')
     ? configuration.timeoutMs : BACKUP_TOOL_TIMEOUT_MS;
   return defineBackupProvider({
     contract: BACKUP_CONTRACT,

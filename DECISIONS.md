@@ -4262,15 +4262,31 @@ telemetry consumer receives a lease, reference or value.
 **Plan:** `docs/plans/spine-v4b-backup-restore.md`.
 
 The public core provides a provider-neutral PostgreSQL-only backup contract; the
-built-in provider uses PostgreSQL 16 `pg_dump`/`pg_restore`. Create returns
+built-in provider uses PostgreSQL 16 `pg_dump`, `pg_restore` and `psql`, and
+refuses when any of the three is absent or reports another major. Create returns
 independent SHA-256 identities for the artifact and canonical manifest bytes;
 the caller must retain both. Verify and restore compare the bundle against both
 identities, so a coherent replacement or altered manifest authority metadata
 does not become authority.
 
-Restore accepts no ambient target. One affine connection is held across an
-exclusive advisory lock, enumerated database-local emptiness inspection,
-`pg_restore`, byte re-verification and restored binding/migration inspection.
+Restore accepts no ambient target, and it does not import through a connection
+`pg_restore` opens for itself, because holding a lock on one backend never
+proved that a second tool reached the same one — behind a proxy or a failover
+the coordinator could fence A while the archive landed in B. `pg_restore` runs
+with an empty environment and only renders the archive to local SQL. A single
+`psql` session then applies it inside one transaction: it takes a
+transaction-level child lock, refuses unless the coordinator's session-level
+witness lock is still held by someone else, applies the rendered SQL, re-checks
+the restored authority and writes non-secret evidence of it, and only then
+commits. A child that reached elsewhere acquires the witness, and refuses before
+any DDL. That fence proves same cluster and same database rather than literally
+the same backend; every divergence it cannot distinguish — replica, failover,
+pooled connection, a coordinator that died — resolves toward refusal. Normal
+startup takes the same child lock, so a child that outlives its coordinator
+still fences bootstrap. The coordinator holds an exclusive advisory lock across
+the whole operation, enumerates database-local emptiness before admitting the
+child, and re-verifies artifact bytes and restored binding/migration identity on
+the connection that holds the lock.
 The connection carries a non-secret resource fingerprint supplied by deployment
 authority; expected intent and the durable receipt bind it, so replaying a
 successful operation against a second endpoint refuses before target access.
@@ -4280,8 +4296,11 @@ writer authority, and a physical clone is never promoted or rebound here.
 A restore also carries a stable caller operation id and verified actor through
 a caller-owned control-plane seam. That seam must durably append the attempt
 outside the target before target access and idempotently append exactly one
-closed outcome for the same operation/bundle/target identity. Success and possible
-partial mutation are recorded while the target lock remains held. A terminal
+closed outcome for the same operation/bundle/target identity. A seam asked for an
+outcome that diverges from one it already closed is a caller defect: the core
+records the first closed outcome and never depends on a second being accepted.
+Success and possible partial mutation are recorded while the target lock remains
+held. A terminal
 replay never touches the target again. This core interface cannot prove an
 arbitrary caller persisted its receipt; public operator composition must supply
 the durable append-only implementation before exposing restore.

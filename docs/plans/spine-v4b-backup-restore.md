@@ -5,7 +5,7 @@
 Accordo gains one provider-neutral, PostgreSQL-only runtime contract that creates
 an atomic backup bundle, verifies it without trusting its manifest as expected
 intent, and restores only into an explicitly empty target. The built-in native
-provider uses PostgreSQL 16 `pg_dump`/`pg_restore`; a restored data plane earns
+provider uses PostgreSQL 16 `pg_dump`, `pg_restore` and `psql`; a restored data plane earns
 writer authority only by passing the existing normal startup attestation,
 tenant/resource binding and migration checks.
 
@@ -65,7 +65,7 @@ production-backup claim, JTBD promotion or production-readiness claim.
    identity/version only.
 3. Implement restore into an explicitly empty target. Verification compares
    the bundle against separately supplied expected tenant/resource/binding,
-   migration and repository intent before `pg_restore`. The target connection,
+   migration and repository intent before the rendered SQL is applied. The target connection,
    expected intent and durable receipt carry the same non-secret deployment-
    attested resource fingerprint, so cross-target replay refuses before target
    access. The target emptiness
@@ -174,3 +174,29 @@ exact-head delta review remain required before merge. The integration campaign
 will later add the smallest operator/app lifecycle surface and final combined
 truth. Managed scheduling, retention, remote artifact custody, PITR, Cloud APIs
 and Arvo execution remain future work.
+
+## Progress — 2026-09-01 restore fence rewrite
+
+The restore path no longer imports through a connection `pg_restore` opens: a
+same-hostname target check could not tell one backend from another behind a
+proxy or a failover. `pg_restore` now renders the archive to local SQL with an
+empty environment, and a single `psql` 16 session applies it inside one
+transaction behind a transaction-level child lock and the coordinator's
+session-level witness lock, re-checking restored authority before it commits.
+Startup takes the same child lock. `psql` 16 is therefore a hard requirement of
+`prepareRestore`, verified in CI alongside `pg_dump` and `pg_restore`.
+
+Completing that rewrite closed three defects that made the batch unrunnable: an
+undefined `readFileBounded`, an expected-authority object wider than the closed
+four-key shape, and a child evidence file left at the default mode that its own
+trusted reader refused. Independent review then added coverage for the fence's
+refusal shape, which no test had exercised — removing the fence block passed
+every test before it — and corrected `CREATE CAST (integer AS boolean)`, which
+PostgreSQL 16 already provides built-in, to a genuinely user-defined cast.
+
+Deferred deliberately: `targetMutationStarted` is raised before the
+connectionless render, so a purely local render failure records
+`possibly-partial` and permanently refuses replay of that operation id even
+though the target was never touched. Narrowing it requires splitting the
+provider's render and apply boundary, which is a contract change rather than a
+fix, and belongs to the integration campaign.

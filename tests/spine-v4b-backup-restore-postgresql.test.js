@@ -1,7 +1,8 @@
 // @ts-check
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -10,7 +11,7 @@ import {
   createBackupOperations,
   createPostgresqlNativeBackupProvider,
 } from '../packages/core/src/backup-restore.js';
-import { bootstrapPostgresqlApplication, DATA_ADVISORY_LOCK } from '../packages/core/src/postgresql-bootstrap.js';
+import { bootstrapPostgresqlApplication, DATA_ADVISORY_LOCK, DATA_RESTORE_CHILD_LOCK } from '../packages/core/src/postgresql-bootstrap.js';
 import { createPostgresqlPool } from '../packages/core/src/postgresql-storage.js';
 import { createTestVerifier, testResource } from './helpers/identity-verifier-fixture.mjs';
 import { GADGET_MIGRATION, openIsolatedPostgresqlPlanes } from './helpers/postgresql-application.js';
@@ -79,6 +80,27 @@ function connection(endpoint, resourceFingerprint) {
         PGSSLMODE: 'disable',
       });
     },
+  });
+}
+
+/** Run one SQL file through the real psql the provider would use. */
+function runPsql(filePath, endpoint) {
+  return new Promise((resolve) => {
+    const child = spawn('psql', [
+      '-X', '--set=ON_ERROR_STOP=1', '--quiet', '--no-align', '--no-password',
+      '--dbname=', `--file=${filePath}`,
+    ], {
+      env: {
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        PGHOST: endpoint.host, PGPORT: String(endpoint.port), PGDATABASE: endpoint.database,
+        PGUSER: endpoint.user, PGPASSWORD: endpoint.password, PGGSSENCMODE: 'disable',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+    child.stdout.resume();
+    child.on('close', (code) => resolve({ code, stderr }));
   });
 }
 
@@ -218,7 +240,7 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
     [textSearchData, 'CREATE TEXT SEARCH CONFIGURATION public.restore_guard_search (COPY = pg_catalog.simple)'],
     [largeObjectData, 'SELECT pg_catalog.lo_create(0)'],
     [defaultAclData, 'ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC'],
-    [castData, 'CREATE CAST (integer AS boolean) WITH INOUT AS ASSIGNMENT'],
+    [castData, 'CREATE CAST (text AS boolean) WITH INOUT AS ASSIGNMENT'],
   ].entries()) {
     const catalogResource = testResource(`v4b-catalog-target-${index}`);
     const objectClient = await client(endpoint);
@@ -288,8 +310,74 @@ test('PostgreSQL 16 native backup verifies, restores only to empty target, and b
   assert.ok(receipts.some((receipt) => receipt.phase === 'outcome' && receipt.input.outcome === 'succeeded'));
 });
 
-test('hosted PostgreSQL suite requires matching native client 16 tools', { timeout: 10_000 }, async () => {
-  if (!PG_REQUIRED) return;
+test('hosted PostgreSQL suite requires matching native client 16 tools', { timeout: 10_000 }, async (t) => {
+  if (!PG_REQUIRED) {
+    t.skip('PostgreSQL is not required in this lane');
+    return;
+  }
   const provider = createPostgresqlNativeBackupProvider({ timeoutMs: 2000, createPool: createPostgresqlPool });
   await provider.prepareRestore();
+});
+
+test('the restore child refuses a backend where the coordinator witness is absent', { timeout: 90_000 }, async (t) => {
+  if (!PG_REQUIRED) {
+    t.skip('PostgreSQL is not required in this lane');
+    return;
+  }
+  const planes = await openIsolatedPostgresqlPlanes(t, { dataCount: 1 });
+  const [endpoint] = planes.data;
+  const witness = Object.freeze({ classId: 1094927188, objectId: 987654321 });
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-fence-runtime-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  // The prelude the provider renders, byte for byte, in front of a target the
+  // coordinator is not holding. A child that reached the wrong backend sees
+  // exactly this: nobody holds the witness, so it takes it, and refuses.
+  const preludePath = join(root, 'prelude.sql');
+  await writeFile(preludePath, `\\set ON_ERROR_STOP on
+BEGIN;
+SET LOCAL search_path TO pg_catalog;
+SELECT pg_advisory_xact_lock(${DATA_RESTORE_CHILD_LOCK.classId}, ${DATA_RESTORE_CHILD_LOCK.objectId});
+DO $accordo_restore_fence$
+BEGIN
+  IF pg_try_advisory_lock(${witness.classId}, ${witness.objectId}) THEN
+    PERFORM pg_advisory_unlock(${witness.classId}, ${witness.objectId});
+    RAISE EXCEPTION 'restore coordinator witness is absent' USING ERRCODE = '55000';
+  END IF;
+END
+$accordo_restore_fence$;
+CREATE TABLE public.fence_must_not_create (id integer);
+COMMIT;
+`, { mode: 0o600 });
+
+  const unwitnessed = await runPsql(preludePath, endpoint);
+  assert.notEqual(unwitnessed.code, 0, 'an unwitnessed child never reaches COMMIT');
+  assert.match(unwitnessed.stderr, /restore coordinator witness is absent/);
+  const proof = await client(endpoint);
+  try {
+    assert.equal(
+      (await proof.query("SELECT to_regclass('public.fence_must_not_create') AS name")).rows[0].name,
+      null,
+      'the refusal rolls back before any DDL becomes durable',
+    );
+  } finally { await proof.end(); }
+
+  // With the coordinator holding the witness on its own session, the same
+  // prelude admits the child and the transaction commits.
+  const holder = await client(endpoint);
+  try {
+    await holder.query('SELECT pg_advisory_lock($1, $2)', [witness.classId, witness.objectId]);
+    const witnessed = await runPsql(preludePath, endpoint);
+    assert.equal(witnessed.code, 0, `a witnessed child is admitted: ${witnessed.stderr}`);
+  } finally {
+    await holder.query('SELECT pg_advisory_unlock($1, $2)', [witness.classId, witness.objectId]);
+    await holder.end();
+  }
+  const created = await client(endpoint);
+  try {
+    assert.equal(
+      (await created.query("SELECT to_regclass('public.fence_must_not_create') AS name")).rows[0].name,
+      'fence_must_not_create',
+    );
+  } finally { await created.end(); }
 });

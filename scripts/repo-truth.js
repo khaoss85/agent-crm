@@ -116,6 +116,11 @@ export const TRUTH_LIMITATIONS = Object.freeze([
   ['SELF_HOST_SECRET_PROVIDER_ONLY',
     'the implemented fact covers the bounded provider-neutral runtime contract and its local/test/provider-plugin '
     + 'boundaries. It is not managed secret custody, rotation, availability or provider health'],
+  ['SELF_HOST_POSTGRESQL_BACKUP_CONTRACT_ONLY',
+    'the implemented fact covers the bounded provider-neutral create/verify/restore contract and its native '
+    + 'PostgreSQL 16 provider, which needs pg_dump, pg_restore and psql present. It is PostgreSQL-only — SQLite is '
+    + 'refused, not degraded — and it is not managed artifact custody, scheduling, retention, PITR, clone promotion, '
+    + 'an operator surface or a recoverability SLA'],
   ['MANAGED_SECRETS_BACKUPS_OBSERVABILITY_ABSENT',
     'the managed Spine v4 remainder is absent: no managed secret custody/service, backup custody/scheduling/retention '
     + 'or observability backend is implemented by this fact; bounded self-host contracts are separate positive facts'],
@@ -327,7 +332,10 @@ const DECLARED_ABSENCE = Object.freeze({
   'spine.secrets_backups.implemented': {
     in: 'SPINE_NOT_MODELED',
     match: /managed secret custody|managed backup custody/i,
-    absentPrefixes: ['managed-backup', 'backup-policy', 'backup-retention', 'observability-backend'],
+    absentPrefixes: [
+      'managed-backup', 'backup-policy', 'backup-retention', 'backup-schedule',
+      'backup-scheduler', 'retention-policy', 'observability-backend',
+    ],
   },
 });
 
@@ -2015,7 +2023,7 @@ export function buildFacts(bundle) {
       'executable-probe:backup-vocabulary-closed-contract',
     ],
     scope: 'framework',
-    limitations: ['TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
+    limitations: ['SELF_HOST_POSTGRESQL_BACKUP_CONTRACT_ONLY', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
   });
 
   for (const [id, rule] of Object.entries(DECLARED_ABSENCE)) {

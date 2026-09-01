@@ -15,6 +15,7 @@ import {
   createPostgresqlNativeBackupProvider,
   defineBackupProvider,
 } from '../packages/core/src/backup-restore.js';
+import { DATA_RESTORE_CHILD_LOCK } from '../packages/core/src/postgresql-authority.js';
 import * as publicCore from '../packages/core/index.js';
 
 const SENTINEL = 'backup-secret-sentinel-never-leak';
@@ -1137,4 +1138,113 @@ test('target-lock provider cannot return before its unique callback settles', as
     (error) => error?.code === 'BACKUP_TARGET_LOCK_INVALID',
   );
   assert.equal(restored, true, 'outer restore waited for the detached callback before refusing and cleaning scratch');
+});
+
+test('the restore child is admitted only behind the coordinator witness fence', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-fence-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bundlePath = join(root, 'bundle');
+  await operations().create({ bundlePath });
+  const restoreProbe = join(root, 'pg-restore-probe');
+  const psqlProbe = join(root, 'psql-probe');
+  const preludeReceipt = join(root, 'prelude-receipt.sql');
+  await writeFile(restoreProbe, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf "pg_restore (PostgreSQL) 16.7\\n"
+  exit 0
+fi
+for argument in "$@"; do
+  case "$argument" in
+    --file=*) printf -- "SELECT 1;\\n" > "${'$'}{argument#--file=}" ;;
+  esac
+done
+`);
+  // The child never reaches a live backend here, so the prelude it would have
+  // executed is kept for inspection: this is the only place the fence is
+  // observable without PostgreSQL.
+  await writeFile(psqlProbe, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf "psql (PostgreSQL) 16.7\\n"
+  exit 0
+fi
+for argument in "$@"; do
+  case "$argument" in
+    --file=*.prelude.sql) cp "${'$'}{argument#--file=}" ${JSON.stringify(preludeReceipt)} ;;
+    --file=*.postlude.sql)
+      rendered="${'$'}{argument#--file=}"
+      printf "accordo-restore-authority-v1|%s|%s|%s|%s\\n" \\
+        "${source.bindingUuid}" "${source.tenantFingerprint}" \\
+        "${source.resourceFingerprint}" "${source.migrationSetFingerprint}" \\
+        > "${'$'}{rendered%.postlude.sql}.authority"
+      ;;
+  esac
+done
+`);
+  await Promise.all([chmod(restoreProbe, 0o700), chmod(psqlProbe, 0o700)]);
+  const provider = nativeWithFixtureAuthority({
+    pgRestore: restoreProbe, psql: psqlProbe, createPool: nativeTargetPool(),
+  });
+  const restored = await createBackupOperations({
+    adapter: 'postgresql', provider, evidence: source, connection,
+    restoreControl: fixtureRestoreControl(),
+  }).restore({
+    bundlePath, expected, target: connection, actor: RESTORE_ACTOR, operationId: 'witnessed-restore',
+  });
+  assert.equal(restored.restored, true);
+
+  const prelude = await readFile(preludeReceipt, 'utf8');
+  assert.match(prelude, /^\\set ON_ERROR_STOP on$/m,
+    'the child stops on the first error rather than continuing into the import');
+  assert.match(prelude, /^BEGIN;$/m, 'the child opens the single transaction the import commits');
+  assert.match(
+    prelude,
+    new RegExp(`pg_advisory_xact_lock\\(${DATA_RESTORE_CHILD_LOCK.classId}, ${DATA_RESTORE_CHILD_LOCK.objectId}\\)`),
+    'the child holds the lock startup and a later restore both wait on',
+  );
+  // The witness objectId is chosen per run, so the fence is pinned by shape:
+  // acquiring the coordinator's witness proves the coordinator is not there.
+  // The witness object is a signed 32-bit draw, so half of all runs render it
+  // negative — which PostgreSQL accepts, advisory lock keys being int4.
+  const fence = prelude.match(
+    /IF pg_try_advisory_lock\((-?\d+), (-?\d+)\) THEN\s+PERFORM pg_advisory_unlock\(\1, \2\);\s+RAISE EXCEPTION '[^']*' USING ERRCODE = '55000';/,
+  );
+  assert.ok(fence, 'the child refuses when it can take the witness, because that proves it reached elsewhere');
+  assert.equal(Number(fence[1]), 1094927188, 'the witness is drawn from the reserved restore class');
+  assert.notEqual(Number(fence[2]), 0, 'the witness object is a live identity, never a fixed zero');
+});
+
+test('a terminal non-success outcome refuses replay instead of touching the target again', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-replay-refused-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bundlePath = join(root, 'bundle');
+  await operations().create({ bundlePath });
+  let lockEntries = 0;
+  const provider = fixtureProvider({
+    async withTargetLock(input, operation) {
+      lockEntries += 1;
+      return operation(lockedState(false));
+    },
+  });
+  const restoreControl = fixtureRestoreControl();
+  const restoreOperations = createBackupOperations({
+    adapter: 'postgresql', provider, evidence: source, connection, restoreControl,
+  });
+  const request = {
+    bundlePath, expected, target: connection, actor: RESTORE_ACTOR, operationId: 'terminal-refusal',
+  };
+
+  // A non-empty target closes the operation as refused, which is terminal.
+  await assert.rejects(restoreOperations.restore(request),
+    (error) => error?.code === 'BACKUP_TARGET_NOT_EMPTY');
+  assert.equal(lockEntries, 1);
+
+  // Replaying it must answer from the receipt alone: a closed refusal is an
+  // answer, and reopening the target to re-derive it would be the mutation the
+  // receipt exists to prevent.
+  await assert.rejects(restoreOperations.restore(request), (error) => {
+    assert.equal(error?.code, 'BACKUP_RESTORE_REPLAY_REFUSED');
+    assert.equal(error?.details?.outcome, 'refused');
+    return true;
+  });
+  assert.equal(lockEntries, 1, 'the refused replay never reaches the target lock again');
 });
