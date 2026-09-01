@@ -397,6 +397,43 @@ export async function rescheduleAsk(context, id, scheduledFor) {
  * @param {any} registry
  * @param {{database: any, tenantId: string, domains?: any, modules?: any, clock?: () => string}} composition
  */
+/**
+ * Answer, before anything is composed over it, whether this database has the
+ * scheduled-ask table.
+ *
+ * The table is not core schema in either dialect: `scheduledAskMigration` ships
+ * with this contract and the composing application applies it, the same way it
+ * starts the worker. That is deliberate, and it has one failure mode — compose
+ * the timers, forget the migration, and learn about it at the first poll, in a
+ * worker, as a job that fails. This turns that into a refusal at the wiring.
+ *
+ * Only a missing table is answered `false`. Every other storage failure is the
+ * caller's to see: swallowing them here would report a broken database as a
+ * forgotten migration and send the reader to fix the wrong thing.
+ *
+ * @param {any} database
+ * @param {string} tenantId
+ * @returns {Promise<boolean>}
+ */
+export async function scheduledAskStorageReady(database, tenantId) {
+  try {
+    await storageApi(database).maybeOne({
+      kind: 'select',
+      table: SCHEDULED_ASK_TABLE,
+      columns: '*',
+      where: [{ column: 'tenant_id', op: 'eq', value: String(tenantId) }],
+    });
+    return true;
+  } catch (error) {
+    const code = /** @type {any} */ (error)?.code;
+    // PostgreSQL names it; SQLite only says it.
+    if (code === '42P01') return false;
+    const message = String(/** @type {any} */ (error)?.message ?? '');
+    if (/no such table/i.test(message)) return false;
+    throw error;
+  }
+}
+
 export function registerScheduledAskHandlers(registry, composition) {
   const { database, tenantId } = composition;
   const now = typeof composition.clock === 'function' ? composition.clock : nowIso;
@@ -446,7 +483,12 @@ export function registerScheduledAskHandlers(registry, composition) {
       // re-proves it against that package's own declared requirements, so an
       // instruction naming a package that never declared the capability is
       // refused there rather than trusted here.
-      const seam = domains.capability({
+      // Awaited, and it must be: under packageContract 2 the registry wraps every
+      // capability seam, so `capability()` hands back a promise. Read
+      // synchronously it is an object with no `createFollowUp` on it, and this
+      // handler refused every real v2 composition while passing against a
+      // synchronous double. Integration found it; no unit test could.
+      const seam = await domains.capability({
         consumer: record.consumerPackage,
         capability: record.capabilityName,
         version: record.capabilityVersion,

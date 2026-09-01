@@ -1,6 +1,9 @@
 // @ts-check
 
 import { startPostgresqlLifecycle, startSqliteLifecycle } from './async-lifecycle.js';
+import { createProductionOperations } from './production-operations.js';
+import { AppError } from '../../core/src/errors.js';
+import { scheduledAskStorageReady } from '../../core/src/domain-timers.js';
 import { assertIdentityTenant, describePortableTenantBinding } from '../../core/src/tenant-binding.js';
 import {
   affineStorageFor,
@@ -521,6 +524,78 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
 }
 
 /**
+ * Three keys are the factory's to supply and nobody else's: the transaction
+ * seam, which no facade publishes, the adapter, which the caller does not
+ * choose here, and — on PostgreSQL — the bound tenant. A composition that
+ * passes one of them has misunderstood who owns the boundary, so it is refused
+ * rather than silently overridden.
+ *
+ * On SQLite there is no bound tenant to inherit, so the caller names it. That
+ * asymmetry is the tenant-binding difference itself, not an inconsistency.
+ */
+async function composeProductionOperations(database, graph, requested, adapter, boundTenantId, telemetry) {
+  if (requested === undefined || requested === null) return null;
+  if (typeof requested !== 'object' || Array.isArray(requested)) {
+    throw new AppError('productionOperations must be a plain object', {
+      code: 'PRODUCTION_OPERATIONS_INVALID', status: 500,
+    });
+  }
+  const owned = boundTenantId === undefined
+    ? ['database', 'adapter', 'telemetry', 'domains', 'modules']
+    : ['database', 'adapter', 'tenantId', 'telemetry', 'domains', 'modules'];
+  for (const key of owned) {
+    if (key in requested) {
+      throw new AppError(`productionOperations may not supply "${key}": the application factory owns it`, {
+        code: 'PRODUCTION_OPERATIONS_INVALID', status: 500,
+      });
+    }
+  }
+  const operations = createProductionOperations({
+    ...requested,
+    database,
+    adapter,
+    domains: graph.domains,
+    modules: graph.modules,
+    ...(boundTenantId === undefined ? {} : { tenantId: boundTenantId }),
+    ...(telemetry === undefined ? {} : { telemetry }),
+  });
+  if (requested.timers !== undefined && requested.timers !== false) {
+    const tenantId = boundTenantId ?? requested.tenantId;
+    if (!await scheduledAskStorageReady(database, tenantId)) {
+      throw new AppError(
+        'scheduled asks need their table: pass moduleMigrations: '
+          + (adapter === 'postgresql'
+            ? "[scheduledAskMigration({ dialect: 'postgresql' })]"
+            : '[SCHEDULED_ASK_MIGRATION]'),
+        { code: 'SCHEDULED_ASK_STORAGE_MISSING', status: 500 },
+      );
+    }
+  }
+  return operations;
+}
+
+/**
+ * Close operations before the storage they poll. A worker that outlives its
+ * database is the one lifecycle bug this composition can actually introduce,
+ * and the drain is bounded, so shutdown stays bounded too.
+ *
+ * Declared, because silence here would be the dishonest half: closing the
+ * application drains best effort and discards the drain report, so a
+ * `DURABLE_JOB_DRAIN_TIMEOUT` at shutdown is not surfaced. An application that
+ * needs to see it calls `drain()` or `stop()` itself and reads the result.
+ */
+function closingOperations(operations, close) {
+  if (!operations) return close;
+  let promise;
+  return () => {
+    if (!promise) {
+      promise = operations.stop().catch(() => undefined).then(() => close());
+    }
+    return promise;
+  };
+}
+
+/**
  * Own one SQLite lifecycle, assemble the portable graph over its storage
  * handle, and return a frozen lexical-allowlist facade.
  *
@@ -532,22 +607,44 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
  *   approvalThresholdCents?: number,
  *   catalogTimeoutMs?: number,
  *   signatureTimeoutMs?: number,
+ *   moduleMigrations?: Array<{name: string, sql: string}>,
  *   openDatabase?: (options: { path?: string, busyTimeoutMs?: number }) => { storage: any, close: () => void },
  *   providers?: unknown,
  *   listen?: unknown,
+ *   telemetry?: unknown,
+ *   productionOperations?: object,
  * }} [options]
  */
 export async function startPortableSqliteApp(options = {}) {
+  /** Captured from the assembly context, which is the only place it travels. */
+  let database;
+  // On SQLite the composed operations are the only telemetry producers there
+  // are — the writer-readiness observer belongs to the PostgreSQL bootstrap. A
+  // sink passed without them would emit nothing and read as a claim that
+  // telemetry is on, so it is refused instead.
+  if (options.telemetry !== undefined && options.productionOperations === undefined) {
+    throw new AppError(
+      'telemetry on SQLite reaches nobody without composed production operations',
+      { code: 'PRODUCTION_OPERATIONS_TELEMETRY_UNREACHABLE', status: 500 },
+    );
+  }
   const lifecycle = await startSqliteLifecycle({
     selected: options.selected,
     dbPath: options.dbPath,
     busyTimeoutMs: options.busyTimeoutMs,
+    moduleMigrations: options.moduleMigrations,
     openDatabase: options.openDatabase,
     providers: options.providers,
     listen: options.listen,
-    assemble: ({ accepted, storage }) => assemblePortableGraph({ accepted, storage, options }),
+    assemble: ({ accepted, storage, database: opened }) => {
+      database = opened;
+      return assemblePortableGraph({ accepted, storage, options });
+    },
   });
   const graph = lifecycle.assembled;
+  const operations = await composeProductionOperations(
+    database, graph, options.productionOperations, 'sqlite', undefined, options.telemetry,
+  );
   return Object.freeze({
     storage: Object.freeze({ adapter: 'sqlite', available: true }),
     packageContract: graph.packageContract,
@@ -572,7 +669,10 @@ export async function startPortableSqliteApp(options = {}) {
     now: graph.now,
     schema: graph.schema,
     config: graph.config,
-    close: lifecycle.close,
+    // Absent unless composed. An application that asks for no operations gets a
+    // facade indistinguishable from the one it got before this slice existed.
+    ...(operations ? { productionOperations: operations } : {}),
+    close: closingOperations(operations, lifecycle.close),
   });
 }
 
@@ -599,9 +699,13 @@ export async function startPortableSqliteApp(options = {}) {
  *   acquisitionDeadlineMs?: number,
  *   rebind?: unknown,
  *   promoteClone?: unknown,
+ *   telemetry?: unknown,
+ *   productionOperations?: object,
  * }} options
  */
 export async function startPortablePostgresqlApp(options) {
+  /** Captured from the assembly context, which is the only place it travels. */
+  let database;
   const lifecycle = await startPostgresqlLifecycle({
     selected: options.selected,
     tenantId: options.tenantId,
@@ -617,17 +721,29 @@ export async function startPortablePostgresqlApp(options) {
     acquisitionDeadlineMs: options.acquisitionDeadlineMs,
     rebind: options.rebind,
     promoteClone: options.promoteClone,
-    assemble: ({ accepted, storage, bootstrap }) => assemblePortableGraph({
-      accepted,
-      storage,
-      options: {
-        ...options,
-        boundTenantId: options.tenantId,
-        health: () => bootstrap.health(),
-      },
-    }),
+    telemetry: options.telemetry,
+    assemble: ({ accepted, storage, bootstrap, handle }) => {
+      database = handle;
+      return assemblePortableGraph({
+        accepted,
+        storage,
+        options: {
+          ...options,
+          boundTenantId: options.tenantId,
+          health: () => bootstrap.health(),
+        },
+      });
+    },
   });
   const graph = lifecycle.assembled;
+  const operations = await composeProductionOperations(
+    database,
+    graph,
+    options.productionOperations,
+    'postgresql',
+    options.tenantId,
+    options.telemetry,
+  );
   const facade = Object.freeze({
     storage: Object.freeze({ adapter: 'postgresql', available: true }),
     listenMode: options.listenMode ?? 'local-development',
@@ -659,7 +775,8 @@ export async function startPortablePostgresqlApp(options) {
     now: graph.now,
     schema: graph.schema,
     config: graph.config,
-    close: lifecycle.close,
+    ...(operations ? { productionOperations: operations } : {}),
+    close: closingOperations(operations, lifecycle.close),
   });
   if (lifecycle.bootstrap?.dataStorage) {
     POSTGRES_TEST_STORAGE.set(facade, lifecycle.bootstrap.dataStorage);

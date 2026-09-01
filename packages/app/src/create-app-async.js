@@ -237,6 +237,8 @@ function loopbackEndpoint(endpoint) {
  *   acquisitionDeadlineMs?: number,
  *   rebind?: unknown,
  *   promoteClone?: unknown,
+ *   telemetry?: unknown,
+ *   productionOperations?: object,
  * }} [options]
  */
 export async function createAccordoAppAsync(options = {}) {
@@ -281,6 +283,8 @@ export async function createAccordoAppAsync(options = {}) {
       acquisitionDeadlineMs: options.acquisitionDeadlineMs,
       rebind: options.rebind,
       promoteClone: options.promoteClone,
+      telemetry: options.telemetry,
+      productionOperations: options.productionOperations,
     });
   }
 
@@ -304,6 +308,8 @@ export async function createAccordoAppAsync(options = {}) {
       acquisitionDeadlineMs: options.acquisitionDeadlineMs ?? options.testHarness.acquisitionDeadlineMs,
       rebind: options.rebind,
       promoteClone: options.promoteClone,
+      telemetry: options.telemetry,
+      productionOperations: options.productionOperations,
     });
   }
 
@@ -311,9 +317,12 @@ export async function createAccordoAppAsync(options = {}) {
     selected,
     dbPath: options.dbPath,
     busyTimeoutMs: options.busyTimeoutMs,
+    moduleMigrations: options.moduleMigrations,
     clock: options.clock,
     approvalThresholdCents: options.approvalThresholdCents,
     catalogTimeoutMs: options.catalogTimeoutMs,
     signatureTimeoutMs: options.signatureTimeoutMs,
+    telemetry: options.telemetry,
+    productionOperations: options.productionOperations,
   });
 }
