@@ -29,7 +29,10 @@ import {
   telemetryErrorCode,
   telemetryVocabulary,
 } from '../packages/core/src/observability-export.js';
-import { describeWriterHealth } from '../packages/core/src/postgresql-bootstrap.js';
+import {
+  bootstrapPostgresqlApplication,
+  describeWriterHealth,
+} from '../packages/core/src/postgresql-bootstrap.js';
 import * as publicCore from '../packages/core/index.js';
 import {
   BACKUP_SENTINELS,
@@ -125,6 +128,8 @@ test('V4C publishes one closed contract, claims no OpenTelemetry support, and ca
   assert.deepEqual(vocabulary.operations, ['emitLog', 'emitMetric', 'emitRun', 'flush', 'close']);
   assert.deepEqual(vocabulary.exporters, ['capture', 'json-stderr', 'noop']);
   assert.equal(vocabulary.openTelemetry, false, 'no OTLP/OpenTelemetry support is implemented or claimed');
+  assert.equal(vocabulary.exportsRecordIdentifiers, false,
+    'the identifier exclusion is machine-readable, not only prose');
   assert.deepEqual(vocabulary.signals, Object.keys(TELEMETRY_SIGNALS).sort());
 
   // The duplicated state list in observability-export.js may not drift from
@@ -252,6 +257,27 @@ test('a caught error contributes only a charset-valid code, and a junk code cost
   assertNoSentinel(capture.records(), 'junk error code');
 });
 
+test('the PostgreSQL seam validates telemetry before it opens anything', async () => {
+  // Ordering, not just refusal: endpoints that cannot possibly connect, plus a
+  // non-sink telemetry. Refusing first proves the seam fails where the wiring
+  // was written rather than after the expensive half of startup.
+  await assert.rejects(
+    () => bootstrapPostgresqlApplication({
+      control: { host: '127.0.0.1', port: 1, database: 'nope', user: 'nope', password: 'nope', acquisitionDeadlineMs: 50 },
+      data: { host: '127.0.0.1', port: 2, database: 'nope', user: 'nope', password: 'nope', acquisitionDeadlineMs: 50 },
+      tenantId: 'acme',
+      identityVerifier: { operations: {} },
+      telemetry: createNoopTelemetryExporter(),
+      acquisitionDeadlineMs: 50,
+    }),
+    (error) => {
+      assert.equal(error.code, 'POSTGRESQL_TELEMETRY_INVALID',
+        'telemetry is judged before any pool, attestation or lease');
+      return true;
+    },
+  );
+});
+
 test('a producer refuses the exporter where the sink belongs, at construction', async (t) => {
   // Every containment this contract promises lives in the sink. An exporter
   // handed to a producer directly receives records the allowlist never saw,
@@ -324,6 +350,126 @@ test('a sink-shaped object that returns a promise cannot reject into a producer'
     assert.deepEqual(rejections, [], 'no unhandled rejection escaped the report adapter');
   } finally {
     process.off('unhandledRejection', listener);
+  }
+});
+
+test('an accessor cannot show the validator one value and the exporter another', async () => {
+  // The two-read loop this replaces was demonstrated exporting free text, a
+  // nested object into a record the contract calls flat, and an exception out
+  // of the public sink. `inspect(..., {getters: false})` would not have seen
+  // any of it, which is why this test builds the accessors explicitly.
+  const lines = [];
+  const capture = createCaptureTelemetryExporter();
+  const stderr = createJsonStderrTelemetryExporter({ write: (line) => lines.push(line) });
+  const tee = defineTelemetryExporter({
+    name: 'tee', contract: 1,
+    emitLog(r) { capture.exporter.emitLog(r); stderr.emitLog(r); },
+    emitMetric(r) { capture.exporter.emitMetric(r); stderr.emitMetric(r); },
+    emitRun(r) { capture.exporter.emitRun(r); stderr.emitRun(r); },
+  });
+  const sink = createTelemetrySink({ exporter: tee });
+
+  /** An attribute that is conforming on read 1 and hostile on read 2. */
+  const twoFaced = (first, second) => {
+    let reads = 0;
+    const attributes = { handler: 'run-follow-up', attempt: 1 };
+    Object.defineProperty(attributes, 'kind', {
+      enumerable: true,
+      get() { reads += 1; return reads === 1 ? first : second; },
+    });
+    return attributes;
+  };
+
+  const payloads = [
+    ['free text', `OK ${SENTINELS.tenantId} ${SENTINELS.idempotencyRoot}`],
+    ['a nested object', { leak: SENTINELS.tenantId }],
+    ['an array', [SENTINELS.payloadValue]],
+    ['a locator', SENTINELS.databaseUrl],
+  ];
+  for (const [label, second] of payloads) {
+    assert.equal(
+      sink.emitLog({ signal: 'accordo.durable_job.claimed', attributes: twoFaced('named-action', second) }),
+      false,
+      `an accessor smuggling ${label} must be refused`,
+    );
+  }
+
+  // A getter that throws must be a counted rejection, not an exception out of
+  // the public sink: producers are wrapped by report(), a direct caller is not.
+  const throwing = { handler: 'run-follow-up', attempt: 1 };
+  Object.defineProperty(throwing, 'kind', {
+    enumerable: true,
+    get() { throw new Error(SENTINELS.errorMessage); },
+  });
+  assert.doesNotThrow(() => {
+    assert.equal(sink.emitLog({ signal: 'accordo.durable_job.claimed', attributes: throwing }), false);
+  });
+
+  // The same trick one level up, on the envelope itself.
+  let envelopeReads = 0;
+  const envelope = { attributes: { kind: 'named-action', handler: 'h', attempt: 1 } };
+  Object.defineProperty(envelope, 'signal', {
+    enumerable: true,
+    get() {
+      envelopeReads += 1;
+      return envelopeReads === 1 ? 'accordo.durable_job.claimed' : SENTINELS.databaseUrl;
+    },
+  });
+  assert.equal(sink.emitLog(envelope), false, 'an accessor on the envelope is refused too');
+
+  await sink.close();
+  assert.equal(capture.records().every((record) => record.signal.startsWith('accordo.telemetry.')), true,
+    'nothing but the sink self-counters survived');
+  assertStructurallyBounded(capture.records());
+  assertNoSentinel(capture.records(), 'accessor-smuggled records');
+  assertNoSentinel(lines.join(''), 'accessor-smuggled stderr bytes');
+  assert.ok(sink.status().rejected >= payloads.length + 2);
+});
+
+test('a job kind and handler name are caller-chosen, and the contract says so rather than pretending otherwise', async (t) => {
+  // The declared exception to the identifier exclusion. Proving it here means
+  // a future reader cannot discover it by surprise in production, and a future
+  // narrowing has a test that must change with it.
+  const { capture, sink } = captureSink();
+  const fixture = jobFixture(t, sink);
+  const callerChosen = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
+  await fixture.store.enqueue({
+    kind: callerChosen,
+    handler: { name: 'someone.surname', contract: 1, version: 1 },
+    payload: {},
+    idempotencyRoot: 'caller-chosen-root',
+  }, { actor: { type: 'user', id: 'v4c-operator' } });
+  fixture.worker.start();
+  await fixture.worker.poll();
+  await fixture.worker.close();
+
+  const claimed = withSignal(capture, 'accordo.durable_job.claimed');
+  assert.equal(claimed.length, 1);
+  assert.equal(claimed[0].attributes.kind, callerChosen,
+    'a caller-chosen job kind is exported verbatim — the declared limit of the exclusion');
+  assert.equal(claimed[0].attributes.handler, 'someone.surname');
+  // Everything the KERNEL fills stays closed even here.
+  const [execution] = withSignal(capture, 'accordo.durable_job.execution');
+  assert.equal(execution.attributes.state, 'failed_terminal');
+  assert.equal(execution.attributes.errorCode, 'JOB_HANDLER_NOT_REGISTERED');
+  assertStructurallyBounded(capture.records());
+});
+
+test('a job released at shutdown reports no execution, because none happened', async (t) => {
+  const { capture, sink } = captureSink();
+  const fixture = jobFixture(t, sink);
+  fixture.registry.register({
+    name: 'run-follow-up', version: 1, kind: 'named-action', async execute() { return {}; },
+  });
+  await fixture.store.enqueue(jobInput, { actor: { type: 'user', id: 'v4c-operator' } });
+  // Claimed while accepting, released because the worker closed underneath it.
+  fixture.worker.start();
+  const settled = await Promise.all([fixture.worker.poll(), fixture.worker.close()]);
+  assert.ok(settled);
+  const executions = withSignal(capture, 'accordo.durable_job.execution');
+  for (const record of executions) {
+    assert.notEqual(record.attributes.state, 'failed_retryable',
+      'a released job must not be reported as an execution that failed');
   }
 });
 
@@ -573,6 +719,44 @@ test('flush and close have deadlines a hanging exporter cannot outlive, and leak
   assert.equal(timers.length, 0, `a deadline timer leaked: ${timers.join(',')}`);
 });
 
+test('a sink stops accepting when the drain starts, and a closed sink with work in flight says so', async () => {
+  let releaseFlush;
+  const gate = new Promise((resolve) => { releaseFlush = resolve; });
+  const one = { signal: 'accordo.durable_job.worker_error', attributes: { errorCode: 'DURABLE_JOB_POLL_FAILED' } };
+  const blocking = defineTelemetryExporter({
+    name: 'blocking-flush', contract: 1,
+    emitLog() {}, emitMetric() {}, emitRun() {},
+    flush: () => gate,
+  });
+  const sink = createTelemetrySink({ exporter: blocking, flushTimeoutMs: 40, closeTimeoutMs: 40 });
+  assert.equal(sink.emitLog(one), true);
+  const closing = sink.close();
+  // The drain has begun; an emission arriving now must not join the in-flight
+  // set behind its own snapshot.
+  assert.equal(sink.emitLog(one), false, 'the sink stops accepting when the drain starts');
+  releaseFlush();
+  const closed = await closing;
+  assert.equal(closed.closed, true);
+  assert.ok(sink.status().dropped >= 1);
+
+  // And a sink closed with work still pending must not claim a clean flush.
+  const stuck = createTelemetrySink({
+    exporter: defineTelemetryExporter({
+      name: 'stuck', contract: 1,
+      emitLog: () => new Promise(() => {}), emitMetric: () => new Promise(() => {}), emitRun: () => new Promise(() => {}),
+    }),
+    flushTimeoutMs: 20,
+    closeTimeoutMs: 20,
+  });
+  stuck.emitLog(one);
+  const stuckClose = await stuck.close();
+  assert.equal(stuckClose.code, 'TELEMETRY_CLOSE_TIMEOUT');
+  assert.ok(stuck.status().inFlight > 0, 'the entry is still pending — nothing evicts it');
+  const afterClose = await stuck.flush();
+  assert.equal(afterClose.flushed, false, 'a closed sink with work in flight must not report a clean flush');
+  assert.equal(afterClose.code, 'TELEMETRY_SINK_CLOSED');
+});
+
 test('close is idempotent, calls the exporter once, and turns later emissions into counted drops', async () => {
   let closes = 0;
   let flushes = 0;
@@ -592,6 +776,10 @@ test('close is idempotent, calls the exporter once, and turns later emissions in
   assert.deepEqual(first, third);
   assert.equal(sink.emitLog(one), false, 'a post-close emission is a counted drop, never an exception');
   assert.equal(sink.status().dropped, 1);
+  // A closed sink flushes nothing, and must not say otherwise.
+  const afterClose = await sink.flush();
+  assert.equal(afterClose.flushed, true, 'nothing was in flight, so the claim is honest');
+  assert.equal(afterClose.inFlight, 0);
   assert.equal(sink.status().closed, true);
   assert.equal(flushes, 1);
 });

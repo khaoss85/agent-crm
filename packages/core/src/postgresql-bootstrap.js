@@ -686,6 +686,13 @@ export async function bootstrapPostgresqlApplication(options) {
   if (options?.rebind === true || options?.promoteClone === true) {
     refuse('TENANT_REBIND_REFUSED', 'requested rebind or clone promotion is not supported');
   }
+  // Before any pool, attestation or lease: a misconfigured telemetry seam must
+  // fail where the wiring was written, on the same terms as the other three
+  // producer seams, not after the expensive half of startup has run.
+  const telemetry = requireTelemetrySink(
+    options.telemetry,
+    (message) => refuse('POSTGRESQL_TELEMETRY_INVALID', message),
+  );
   assertSeparateEndpoints(options.control, options.data);
   const controlMigrations = postgresqlControlMigrations();
   const dataMigrations = postgresqlDataMigrations();
@@ -865,10 +872,7 @@ export async function bootstrapPostgresqlApplication(options) {
     // one signal per refused write. The observer holds one boolean and reports
     // transitions; the lease row stays the authority and no state is added for
     // telemetry. Absent `options.telemetry`, every call below is a no-op.
-    const readiness = createWriterReadinessObserver(requireTelemetrySink(
-      options.telemetry,
-      (message) => refuse('POSTGRESQL_TELEMETRY_INVALID', message),
-    ));
+    const readiness = createWriterReadinessObserver(telemetry);
     const observeReadiness = (snapshot) => readiness.observe(snapshot, {
       expiresAt: leaseState.holder.expiresAt,
       now: new Date(epochNow(options.now)).toISOString(),

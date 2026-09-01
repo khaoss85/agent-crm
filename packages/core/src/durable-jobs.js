@@ -758,9 +758,11 @@ export function createDurableJobWorker(options) {
       });
       const startedAt = clock();
       if (!accepting || closed) {
-        const released = await options.store.release(job, workerId, { actor });
-        reportExecution(released, startedAt);
-        return released;
+        // A job released at shutdown ran no handler, so no execution is
+        // reported for it: emitting one would publish a real elapsed duration
+        // and a `failed_retryable` state for work that never started. The
+        // claim signal already records that this worker held it.
+        return options.store.release(job, workerId, { actor });
       }
       inFlight = execute(job);
       try {

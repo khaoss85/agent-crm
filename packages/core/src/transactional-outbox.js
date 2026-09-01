@@ -199,7 +199,15 @@ function temporaryDispatchFailure() {
  *
  * The wrapper observes and re-raises: the error the worker sees is the error
  * the handler threw, byte for byte, and a telemetry failure cannot turn a
- * failed dispatch into a succeeded one or the reverse. Only the effect name —
+ * failed dispatch into a succeeded one or the reverse.
+ *
+ * **What `outcome` means, precisely.** It reports how this handler *attempt*
+ * settled, and it is emitted when `execute` returns — before the worker commits
+ * `store.succeed`. A commit that then fails leaves `dispatch: succeeded` beside
+ * `execution: failed_retryable` for the same attempt, and both are accurate
+ * about different things: the effect was delivered, the job row was not
+ * advanced. The committed outcome is `accordo.durable_job.execution`, which is
+ * read back from the settled row; this signal is never the authority on it. Only the effect name —
  * a closed V3B constant — the attempt number, an elapsed duration and a
  * charset-validated error code leave here. The committed outcome row, the
  * event payloads and the source fingerprint do not.

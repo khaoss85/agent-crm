@@ -13,10 +13,17 @@
  * a caller happened to pass. A signal name must be in the frozen registry
  * below; an attribute key must be declared for that signal; a value must
  * satisfy the declared kind. Anything else refuses the whole record and counts
- * it. Attributes are flat, so there is no recursive structure for a payload to
- * hide in, and no attribute kind can carry free text — the `code` charset is
- * `write-outcome-runtime.js#boundedFailureCode`'s, which a URL, a path, an
- * email, a uuid or a tenant slug cannot match.
+ * it. Attributes are flat and read exactly once from a data-only snapshot, so
+ * there is no recursive structure for a payload to hide in and no accessor can
+ * return one value to the validator and another to the exporter.
+ *
+ * Every attribute the **kernel** fills is closed: an enumeration member, a
+ * `write-outcome-runtime.js#boundedFailureCode` charset code that a URL, path,
+ * email or uuid cannot match, a bounded integer or a boolean. The single
+ * exception is deliberate and declared at {@link CALLER_NAME_KIND} — a job
+ * `kind` and `handler` name are chosen by whoever enqueued the work, bounded
+ * only to the identifier charset, so the identifier exclusion is narrower than
+ * "no identifier can ever be exported". Read that block before relying on it.
  *
  * No OpenTelemetry or OTLP support is implemented or claimed. The exporter
  * shape is deliberately adapter-compatible so one can be written outside the
@@ -51,7 +58,26 @@ const UNITS = Object.freeze(['ms', 'count']);
 
 const enumOf = (values) => Object.freeze({ kind: 'enum', values });
 const CODE_KIND = Object.freeze({ kind: 'code' });
-const NAME_KIND = Object.freeze({ kind: 'name' });
+/**
+ * The one attribute kind whose **content is chosen by the enqueuing caller**,
+ * not by the kernel — today `kind` and `handler`, and nothing else.
+ *
+ * `durable-jobs.js#enqueue` bounds both with `boundedName` and checks no
+ * membership against the handler registry, and the claim signal is reported
+ * before any handler is resolved. So a caller who enqueues
+ * `kind: 'f47ac10b-58cc-4372-a567-0e02b2c3d479'` or
+ * `handler: 'someone.surname'` sees exactly that in the export: a lowercase
+ * uuid, a tenant slug and a dotted email localpart are all representable here.
+ *
+ * That is the stated boundary of the identifier exclusion, and it is narrower
+ * than "no identifier can be exported": every attribute the kernel itself
+ * fills is closed, and these two carry whatever the caller named their work.
+ * Refusing uuid-shaped or address-shaped values would be a denylist, which is
+ * the thing this whole design refuses — so the limit is declared instead of
+ * pattern-matched, and closing it properly means checking registry membership
+ * at the seam, which is a v2 contract change.
+ */
+const CALLER_NAME_KIND = Object.freeze({ kind: 'name' });
 const NUMBER_KIND = Object.freeze({ kind: 'number' });
 const BOOLEAN_KIND = Object.freeze({ kind: 'boolean' });
 
@@ -66,7 +92,8 @@ const BOOLEAN_KIND = Object.freeze({ kind: 'boolean' });
  * reference, job payload, connection locator, secret value or reference,
  * filesystem path and `error.message`. v1 telemetry is therefore
  * aggregate-shaped, not per-record traceable. That is a limitation, recorded
- * as one, not an oversight.
+ * as one, not an oversight — and see {@link CALLER_NAME_KIND} for the one
+ * declared exception, where the caller names the work.
  */
 export const TELEMETRY_RUN_STATES = RUN_STATES;
 
@@ -74,7 +101,7 @@ export const TELEMETRY_SIGNALS = Object.freeze({
   'accordo.durable_job.claimed': Object.freeze({
     kind: 'log',
     attributes: Object.freeze({
-      kind: NAME_KIND, handler: NAME_KIND, attempt: NUMBER_KIND,
+      kind: CALLER_NAME_KIND, handler: CALLER_NAME_KIND, attempt: NUMBER_KIND,
     }),
     required: Object.freeze(['kind', 'handler', 'attempt']),
   }),
@@ -86,7 +113,7 @@ export const TELEMETRY_SIGNALS = Object.freeze({
   'accordo.durable_job.execution': Object.freeze({
     kind: 'run',
     attributes: Object.freeze({
-      kind: NAME_KIND, handler: NAME_KIND, state: enumOf(RUN_STATES),
+      kind: CALLER_NAME_KIND, handler: CALLER_NAME_KIND, state: enumOf(RUN_STATES),
       attempt: NUMBER_KIND, durationMs: NUMBER_KIND, errorCode: CODE_KIND,
     }),
     required: Object.freeze(['kind', 'handler', 'state', 'attempt', 'durationMs']),
@@ -146,6 +173,41 @@ function plainObject(value) {
     && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 }
 
+/**
+ * A data-only copy, or `null`.
+ *
+ * Reading a property twice is reading two different values when that property
+ * is an accessor: a getter can satisfy the allowlist on the validating read and
+ * return anything at all on the exporting one. That is not hypothetical — it
+ * was demonstrated against the previous two-read loop, exporting free text, a
+ * nested object into a record the contract calls flat, and an exception out of
+ * the public sink from a read that sat outside every `try`.
+ *
+ * So an accessor is refused rather than handled, on the pattern
+ * `durable-jobs.js#closedJobInput` already establishes: every own property must
+ * be an enumerable **data** property, read exactly once, here. Everything
+ * downstream then validates and exports the same binding because there is only
+ * one. A symbol key is refused for the same reason it is there.
+ *
+ * @param {unknown} value
+ */
+function dataSnapshot(value) {
+  if (!plainObject(value)) return null;
+  let descriptors;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return null;
+  }
+  if (Object.getOwnPropertySymbols(descriptors).length > 0) return null;
+  const snapshot = /** @type {Record<string, unknown>} */ ({});
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) return null;
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
+}
+
 function boundedName(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_TEXT && NAME.test(value);
 }
@@ -190,27 +252,32 @@ function attributeAllowed(declared, value) {
  * @param {unknown} input
  */
 function validateSignal(expectedKind, input) {
-  if (!plainObject(input)) return null;
-  const keys = Object.keys(input);
+  // One read of the envelope and one of its attributes, both data-only. Every
+  // check below inspects a local, so the value validated is by construction the
+  // value exported.
+  const envelope = dataSnapshot(input);
+  if (envelope === null) return null;
+  const keys = Object.keys(envelope);
   if (keys.some((key) => key !== 'signal' && key !== 'attributes' && key !== 'value')) return null;
-  const signal = /** @type {any} */ (input).signal;
+  const signal = envelope.signal;
   if (typeof signal !== 'string' || !Object.hasOwn(TELEMETRY_SIGNALS, signal)) return null;
   const declared = TELEMETRY_SIGNALS[signal];
   if (declared.kind !== expectedKind) return null;
 
-  const attributes = /** @type {any} */ (input).attributes ?? {};
-  if (!plainObject(attributes)) return null;
+  const attributes = dataSnapshot(envelope.attributes ?? {});
+  if (attributes === null) return null;
   const attributeKeys = Object.keys(attributes);
   if (attributeKeys.some((key) => !Object.hasOwn(declared.attributes, key))) return null;
   if (declared.required.some((key) => !attributeKeys.includes(key))) return null;
   const exported = /** @type {Record<string, unknown>} */ ({});
   for (const key of attributeKeys.sort()) {
-    if (!attributeAllowed(declared.attributes[key], attributes[key])) return null;
-    exported[key] = attributes[key];
+    const value = attributes[key];
+    if (!attributeAllowed(declared.attributes[key], value)) return null;
+    exported[key] = value;
   }
 
   if (declared.kind === 'metric') {
-    const value = /** @type {any} */ (input).value;
+    const value = envelope.value;
     if (!boundedNumber(value)) return null;
     return Object.freeze({
       contract: TELEMETRY_EXPORT_CONTRACT,
@@ -221,7 +288,7 @@ function validateSignal(expectedKind, input) {
       attributes: Object.freeze(exported),
     });
   }
-  if (Object.hasOwn(input, 'value')) return null;
+  if (Object.hasOwn(envelope, 'value')) return null;
   return Object.freeze({
     contract: TELEMETRY_EXPORT_CONTRACT,
     kind: declared.kind,
@@ -316,11 +383,23 @@ export function createTelemetrySink(options) {
   const counters = { emitted: 0, dropped: 0, rejected: 0, failed: 0 };
   const inFlight = new Set();
   let closed = false;
+  let draining = false;
   let closing = null;
 
   const dispatch = (operation, record) => {
     // Bounded in-flight set rather than a growing queue: there is no batch to
     // lose, no timer to schedule, and backpressure is a counted drop.
+    //
+    // **That drop is not necessarily transient, and the word invites the wrong
+    // reading.** Nothing evicts an entry: a settlement that never settles stays
+    // in the set for the life of the process, so once `maxInFlight` emissions
+    // hang, every later signal drops for good, `inFlight` never returns to zero
+    // and every `close()` reports `TELEMETRY_CLOSE_TIMEOUT`. It stays bounded
+    // and it never crashes, exactly as promised — but a permanently wedged
+    // exporter permanently silences telemetry rather than degrading it.
+    // Evicting would need a timer per emission, which is precisely the
+    // timer-free property this sink is built on, so v1 declares the behaviour
+    // instead of buying it back (ADR-043).
     if (inFlight.size >= maxInFlight) {
       counters.dropped += 1;
       return false;
@@ -346,7 +425,7 @@ export function createTelemetrySink(options) {
   const emit = (expectedKind, operation, input) => {
     // After close the exporter is gone; a late signal is a counted drop, never
     // an error thrown into a shutdown path.
-    if (closed) {
+    if (closed || draining) {
       counters.dropped += 1;
       return false;
     }
@@ -383,7 +462,15 @@ export function createTelemetrySink(options) {
   async function flush(input = {}) {
     if (!plainObject(input)) throw new TypeError('Telemetry flush options must be a plain object');
     const timeoutMs = positiveBound(input.timeoutMs, flushTimeoutMs, MAX_DEADLINE_MS, 'flush timeoutMs');
-    if (closed) return Object.freeze({ flushed: true, ...status() });
+    // A closed sink flushes nothing. Reporting `flushed: true` beside a
+    // non-zero `inFlight` was a record that contradicted itself.
+    if (closed) {
+      return Object.freeze({
+        flushed: inFlight.size === 0,
+        ...(inFlight.size === 0 ? {} : { code: 'TELEMETRY_SINK_CLOSED' }),
+        ...status(),
+      });
+    }
     emitSelfCounters();
     const settled = await settleInFlight(timeoutMs);
     return Object.freeze({
@@ -414,6 +501,10 @@ export function createTelemetrySink(options) {
     if (closing) return closing;
     closing = (async () => {
       emitSelfCounters();
+      // From here the sink accepts nothing: an emission arriving mid-drain
+      // would otherwise enter the in-flight set after its snapshot was taken
+      // and could still be racing `exporter.close()`.
+      draining = true;
       const drained = await settleInFlight(timeoutMs);
       closed = true;
       let released = true;
@@ -724,5 +815,11 @@ export function telemetryVocabulary() {
     // Stated so a reader of the generated truth document cannot infer support
     // this slice does not implement.
     openTelemetry: false,
+    // The same reason `openTelemetry` is stated rather than omitted: a
+    // programmatic consumer must be able to read the boundary, not infer it.
+    // `false` here means no attribute carries a tenant, record, run or worker
+    // identifier — with the one declared exception that a caller-chosen job
+    // kind or handler name is whatever the caller named it.
+    exportsRecordIdentifiers: false,
   });
 }

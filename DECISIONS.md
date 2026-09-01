@@ -4348,6 +4348,14 @@ fails any of those checks is refused whole and counted, never silently
 repaired. Rejecting a record rather than stripping the offending key is
 deliberate: stripping hides the producer defect that put it there.
 
+The envelope and its attributes are copied into data-only snapshots before any
+check runs, so a value is read exactly once. Validating one read and exporting
+another is the whole of the bug this closes: an accessor could satisfy the
+allowlist and then return free text, a nested object, or an exception thrown
+out of the public sink from a read that sat outside every `try`. Reading once
+is what prevents the leak; refusing accessors outright is the stricter policy
+layered on top, because no legitimate producer passes one.
+
 No record identifier is exportable in v1 — not the tenant id or any
 fingerprint, not the job, run or worker id, not the idempotency root or the
 outcome reference. Tenant identity is leak material in this repository by
@@ -4359,20 +4367,51 @@ stated consequence is that v1 telemetry is aggregate-shaped rather than
 per-record traceable; correlation requires a later, deliberately authorized
 contract version rather than a widened attribute list.
 
+Two limits inside that fence are narrower than "no identifier is exportable"
+and are stated rather than left to be discovered. A job `kind` and `handler`
+name are chosen by whoever enqueued the work — `enqueue` bounds them to the
+identifier charset and checks no membership against the handler registry — so a
+caller who names a job after a uuid, a tenant slug or a dotted email localpart
+sees exactly that exported. Every attribute the kernel itself fills stays
+closed. Narrowing this by refusing uuid-shaped or address-shaped values would
+be a denylist, which is the thing this ADR refuses; closing it properly means
+checking registry membership at the seam, and that is a v2 contract change.
+
 Failure is best effort and bounded, stated exactly. An emission returns a
 boolean and never throws; no producer awaits one. Delivery is tracked in a
 bounded in-flight set rather than a growing queue, so backpressure is a counted
-drop with no batch to lose and no timer to schedule. Flush and close each have
+drop with no batch to lose and no timer to schedule. **That drop is not
+necessarily transient**, and "backpressure" invites the wrong reading: nothing
+evicts an in-flight entry, so once `maxInFlight` emissions hang, every later
+signal drops for the life of the process, `inFlight` never returns to zero and
+every `close()` reports a timeout. It stays bounded and never crashes, as
+promised — but a permanently wedged exporter permanently silences telemetry
+instead of degrading it. Evicting would need a timer per emission, which is the
+timer-free property this sink is built on, so v1 declares the behaviour rather
+than buying it back. Flush and close each have
 a deadline built on the same race-and-clear shape as the V3A worker drain, so a
 hung exporter cannot hang application shutdown and no timer is leaked. Close is
 memoized: the exporter is closed at most once, and a later emission is a
 counted drop, not an exception raised into a shutdown path.
 
 Lifecycle is application-owned. Constructing a sink starts no timer, socket or
-process, and the default async application factory gains no telemetry option —
-it composes no job worker, outbox worker or backup operations, so there is
-nothing there to instrument and a factory option would be exactly the hidden
-lifecycle this ADR refuses.
+process, and the default async application factory gains no telemetry option in
+v4C. **Not because there is nothing there to instrument** — an earlier draft of
+this ADR said that and it was false: `createAccordoAppAsync` reaches
+`startPostgresqlLifecycle`, which calls `bootstrapPostgresqlApplication`, and
+that is the readiness producer. The reason is that giving the factory a
+telemetry option is a lifecycle decision — who constructs the sink, who owns
+its shutdown order relative to the data plane — and v4C deliberately leaves it
+to the composition that will own it rather than inventing an owner here.
+
+The measured consequence, stated because it is a real limit rather than a
+detail: `startPostgresqlLifecycle` forwards a closed option list that does not
+include `telemetry`, so `accordo.postgresql.readiness` and
+`accordo.postgresql.writer_lease_remaining_ms` are **unreachable from every
+supported composition** in v4C. Only a direct call to
+`bootstrapPostgresqlApplication` emits them, which is what the hosted test
+does. They are implemented and proven, and no application can turn them on
+yet.
 
 **OpenTelemetry and OTLP are not implemented and not claimed.** They would add
 a large dependency tree against the rule that a production dependency must

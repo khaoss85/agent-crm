@@ -36,10 +36,13 @@ audit write.
   the error class name when no code survives — never `error.message`, because a
   PostgreSQL constraint violation carries tenant ids and fingerprints in its
   text. That rule is the direct model for §Redaction below.
-- `packages/app/src/create-app-async.js` composes **no** durable-job worker, no
-  outbox worker and no backup operations. Those are application-composed
-  objects. This slice keeps that property: the default factory gains no
-  telemetry option, no exporter and no background process.
+- `packages/app/src/create-app-async.js` composes no durable-job worker and no
+  backup operations, but it **does** reach `bootstrapPostgresqlApplication`
+  through `packages/app/src/async-lifecycle.js#startPostgresqlLifecycle` — so
+  it composes the readiness producer. This slice still gives it no telemetry
+  option, for a different reason than "nothing to instrument": who constructs a
+  sink and who owns its shutdown order relative to the data plane is a
+  lifecycle decision, and v4C leaves it to the composition that will own it.
 
 ## Approaches considered
 
@@ -195,11 +198,20 @@ this slice, recorded as one.
 
 Constructing a sink starts nothing: no timer, no socket, no interval, no
 process. `packages/app/src/create-app-async.js` gains **no** telemetry option in
-this slice — it composes no job worker, no outbox worker and no backup
-operations, so there is nothing there to instrument, and adding a factory option
-would be the hidden-lifecycle shape this slice exists to avoid. The application
-constructs a sink, passes it to the runtime objects it already constructs
+this slice. The reason is *not* that it composes nothing instrumentable — it
+reaches `bootstrapPostgresqlApplication` and therefore composes the readiness
+producer. The reason is that ownership of a sink's construction and shutdown
+order is a lifecycle decision this slice deliberately does not make. The
+application constructs a sink, passes it to the runtime objects it constructs
 explicitly, and closes it in its own shutdown order.
+
+**Measured consequence.** `startPostgresqlLifecycle` forwards a closed option
+list that does not include `telemetry`, so `accordo.postgresql.readiness` and
+`accordo.postgresql.writer_lease_remaining_ms` are **unreachable from every
+supported composition** — not merely un-wired. Only a direct call to
+`bootstrapPostgresqlApplication` emits them, which is exactly what the hosted
+test does. They are implemented and proven, and no application can turn them on
+until that option list grows.
 
 ## Milestones
 
@@ -444,3 +456,108 @@ characterization 23 (baseline unmoved) · `npm run check` 470 files ·
 `npm run repo:truth -- --check` clean. The truth document needed a regenerate
 whose diff is **only** `sourceSha`, with the fingerprint unchanged — no fact
 moved, which is exactly the case the campaign rule allows regenerating.
+
+## Progress — 2026-09-01 broad review, both reviewers
+
+Two independent reviews. The leak finding is the one that matters: it
+falsified a written guarantee, and it was found by executing, not by reading.
+
+### F1 — the value validated was not the value exported (HIGH, fixed)
+
+`validateSignal` read each attribute twice — once for `attributeAllowed`, once
+for `exported[key]`. An accessor returns a different value each time, and the
+reviewer demonstrated all three consequences: arbitrary free text carrying a
+tenant id and forged JSON reaching the stderr line with `emitLog` returning
+`true`; a nested object landing inside a record this contract calls flat, when
+no attribute kind accepts an object at all; and an exception escaping
+`sink.emitLog` itself, because the second read sat outside every `try` — the
+producers were covered by `report()`, the public sink was not.
+
+The envelope and its attributes are now copied into data-only snapshots
+(`dataSnapshot`) before any check runs, on the pattern
+`durable-jobs.js#closedJobInput` already establishes: every own property must be
+an enumerable data property, read exactly once, there. Every later check reads a
+local, so the value validated *is* the value exported, by construction.
+
+**Which half is the security fix, stated precisely, because the mutation runs
+made the distinction visible.** Reading once is what prevents the leak: with a
+single read and no accessor refusal, a two-faced getter's first value is both
+validated and exported, which is correct if strange. Refusing accessors is the
+stricter fail-closed policy layered on top, justified because no legitimate
+producer passes one. Consequently the accessor refusal is **not independently
+mutation-observable** — remove it alone and `descriptor.value` is `undefined`,
+which the allowlist rejects anyway; remove the snapshot and the single-read
+property goes with it, which *is* observable. Both snapshots are covered
+(mutations G24, G25 red); the accessor check is a redundant layer and is
+recorded as one rather than dressed up as covered.
+
+No test had touched accessors: `grep defineProperty` over the test file
+returned nothing, and the leak helper used `inspect(..., {getters: false})`, so
+it could not have seen one. There is now a test that smuggles free text, a
+nested object, an array and a locator through a two-faced getter, one that
+throws from a getter, and one that does it on the envelope rather than the
+attributes.
+
+### F2 — `kind` and `handler` are caller-chosen (MEDIUM, declared)
+
+The registry typed both as a bounded identifier, and the module doc generalised
+"no attribute kind can carry free text" to the whole fence. Neither was true of
+these two: `enqueue` bounds them with `boundedName` and checks no membership
+against the handler registry, and the claim signal is reported before any
+handler is resolved — so `kind: 'f47ac10b-…'` and `handler: 'someone.surname'`
+pass and are exported verbatim.
+
+Declared rather than pattern-matched. Refusing uuid-shaped or address-shaped
+values would be a denylist, which is the thing this design exists to refuse;
+closing it properly means checking registry membership at the seam, which is a
+v2 contract change. The kind is renamed `CALLER_NAME_KIND` so the boundary is
+legible where the registry is read, the module doc no longer promises more than
+the fence delivers, ADR-043 states it, and a test pins the current behaviour so
+a future narrowing has to change a test deliberately.
+
+### M1 / M2 — a false reason, repeated four times
+
+ADR-043, this plan twice, and the `3316781` commit message all said the default
+async factory "composes none of the three producer families, so there is nothing
+to instrument". False: `createAccordoAppAsync` → `startPostgresqlLifecycle` →
+`bootstrapPostgresqlApplication`, which is the readiness producer — and this
+plan's own matrix row for Core CRM says `partial` *because* PostgreSQL readiness
+is on that path. The conclusion survives, the reasoning does not, and a false
+reason is worse than a false fact because it would justify never wiring that
+seam. Corrected here and in the ADR; the `3316781` commit message is history and
+carries the superseded wording.
+
+M2 is the consequence: `startPostgresqlLifecycle` forwards a closed option list
+without `telemetry`, so the two PostgreSQL signals are **unreachable**, not
+merely un-wired. Recorded in the ADR, this plan and TASKS.
+
+### The LOW findings, and what was done with each
+
+| # | Finding | Disposition |
+|---|---|---|
+| L1 | a wedged exporter poisons the sink permanently — no eviction, so drops never end | **declared** in the code and ADR-043; eviction needs a timer per emission, which is the timer-free property the sink rests on |
+| L5 | outbox `dispatch: succeeded` is emitted before `store.succeed` commits | **declared** at the wrapper: it reports the handler attempt; `durable_job.execution` is the committed authority |
+| L4 | the release path reported an execution, with a real duration, for a job that never ran | **fixed** — a released job reports no execution |
+| L2 | `flush()` after `close()` claimed `flushed: true` beside a non-zero `inFlight` | **fixed** — it reports the truth, with `TELEMETRY_SINK_CLOSED` |
+| L3 | an emission during the drain could enter the in-flight set behind its snapshot | **fixed** — the sink stops accepting when the drain starts |
+| L6 | bootstrap validated telemetry after pools, attestation and lease | **fixed** — validated first, like the other three seams |
+| L8 | `openTelemetry: false` had no equivalent for the identifier exclusion | **fixed** — `exportsRecordIdentifiers: false` |
+| L9 | the registry JSDoc was attached to `TELEMETRY_RUN_STATES` | **fixed** |
+| L7 | cosmetic | not acted on — the finding as relayed carries no detail to act on; ask the reviewer |
+
+### Mutation verification of the new guards
+
+| Mutation | Result |
+|---|---|
+| envelope snapshot removed | RED |
+| attributes snapshot removed | RED |
+| closed-sink flush honesty (L2) | RED |
+| drain stops accepting (L3) | RED |
+| `exportsRecordIdentifiers` marker (L8) | RED |
+| released job reports no execution (L4) | RED |
+| bootstrap validates telemetry early (L6) | RED |
+| accessor refusal removed alone | **GREEN — redundant layer, see F1 above** |
+
+Twenty-eight guards from the first two commits remain covered; seven of the
+eight new mutations are red, and the eighth is recorded as a redundant layer
+rather than claimed.
