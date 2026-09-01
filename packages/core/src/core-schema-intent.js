@@ -534,6 +534,20 @@ const V9_STATEMENTS = [
   },
 ];
 
+/** Spine v3B: persisted recovery semantics, defaulting every existing job to terminal unknown outcome. */
+const V10_STATEMENTS = [
+  {
+    kind: 'addColumn',
+    table: 'spine_jobs',
+    column: text('recovery_policy', {
+      notNull: true,
+      defaultSql: "'terminal_unknown'",
+      check: { kind: 'in', values: ['terminal_unknown', 'reconcilable_at_least_once'] },
+      checkWrap: true,
+    }),
+  },
+];
+
 /**
  * Authoritative core schema intent. SQLite SQL is rendered from this structure
  * and must hash to the released checksums; PostgreSQL SQL is rendered from the
@@ -549,6 +563,7 @@ export const CORE_SCHEMA_INTENT = Object.freeze([
   Object.freeze({ version: 7, name: 'spine_cross_plane_audit_intents', plane: 'control', statements: Object.freeze(V7_STATEMENTS) }),
   Object.freeze({ version: 8, name: 'schema_migrations_checksum', plane: 'ledger', statements: Object.freeze(V8_STATEMENTS) }),
   Object.freeze({ version: 9, name: 'spine_durable_jobs', plane: 'data', statements: Object.freeze(V9_STATEMENTS) }),
+  Object.freeze({ version: 10, name: 'spine_reconcilable_job_recovery', plane: 'data', statements: Object.freeze(V10_STATEMENTS) }),
 ]);
 
 /**

@@ -42,12 +42,11 @@ import { ValidationError } from './errors.js';
  * A review checked the audit claim rather than accepting it, and the honest
  * statement is narrower than "grep is a complete audit". Two things are true:
  *
- * - **Nothing in this framework claims system authority today.**
- *   `trustedSystemActor` has zero production call sites, and no module outside
- *   this file references {@link SYSTEM_ACTOR}. That is the strongest available
- *   state — the privileged path exists and nothing needs it — and it is worth
- *   re-measuring rather than assuming, because the number that matters is zero
- *   and zero is the easiest number to stop being true.
+ * - **One bounded framework runtime claims system authority today.**
+ *   The transactional-outbox worker uses `trustedSystemActor` for its named,
+ *   payload-free job/audit transitions. No module outside this file directly
+ *   references {@link SYSTEM_ACTOR}. Both facts are measured because a second
+ *   claim site or a direct privileged constant reference needs fresh review.
  * - **Grep alone does not bound it.** {@link SYSTEM_ACTOR} is exported, and a
  *   deliberately well-formed `{type: 'system', id: 'x'}` normalizes to a system
  *   actor by design — the signature webhook depends on exactly that. So an

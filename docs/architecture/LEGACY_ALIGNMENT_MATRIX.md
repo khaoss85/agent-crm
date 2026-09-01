@@ -92,9 +92,11 @@ explicitly started worker. PostgreSQL uses transactional
 and does not claim multi-node worker support. Omitted versus explicit schedule
 intent is durable, and each actor-required mutation records payload-free audit
 evidence on the same storage transaction. A worker persists a generation-fenced
-execution start before handler invocation: only unstarted expiry is recoverable;
-started expiry becomes terminal reconciliation evidence without a second
-invocation. Execution lifecycle transitions require an explicit system actor;
+execution start before handler invocation: under the default recovery policy,
+only unstarted expiry is recoverable and started expiry becomes terminal
+reconciliation evidence without a second invocation. V3B later adds one
+persisted opt-in for its locally reconcilable effect identities; provider jobs
+retain this default. Execution lifecycle transitions require an explicit system actor;
 operator/agent actors remain limited to scheduling mutations. This slice adds no domain timer
 consumer, cron language, outbox, operator surface, worker autostart or public
 production-readiness claim.
@@ -119,6 +121,46 @@ Closing milestone for the named Contract Activation and Work rows: Spine v3C
 timer consumers. Every other `deferred` row requires its own later causal domain
 adoption with executable idempotency and approval evidence; V3A does not mass-fit
 jobs into existing packages.
+
+### Transactional outbox and effect dispatch v1 (Production Spine v3B)
+
+Horizontal PostgreSQL runtime capability: the existing write-outcome event
+intents and an applicable V3A effect identity commit together. Workers dispatch
+only committed source outcomes and mark internal events promoted only after
+subscriber success. V3B identities persist a reconcilable recovery policy, so
+expired begun work advances its bounded attempt/generation and may dispatch
+again; generic and provider-effect jobs keep terminal unknown-outcome behavior.
+A failed subscriber does not starve later stored intents; the pass then retries
+as one bounded failure, so duplicates remain possible. Delivery is
+at least once plus an idempotent/reconcilable identity, never exactly once.
+External receipt continuation exists only when the committed receipt says a
+finalize phase was declared, can call only registered local finalize work, and
+never receives a provider call/reconcile handle. Provider-only operations do
+not create continuation jobs. A legacy receipt whose declaration predates this
+evidence remains operator-visible unknown and is never silently treated as
+provider-only or authorized for finalize.
+SQLite retains immediate in-process event behavior; this is not a durable
+SQLite-outbox claim. Security audit is unchanged.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | PostgreSQL kernel write outcomes now retain and promote their committed internal event intents through exact durable jobs; standalone writes outside that envelope do not gain an outbox by implication |
+| Pipeline | `not_applicable` | pipeline composition owns no separate persisted effect intent |
+| Lead Intelligence | `deferred` | the bundled provider graph is not adopted onto external-operation v2 and no real provider adapter exists |
+| Commercial Operations | `deferred` | catalog/provider effects remain outside the M4 write-outcome envelope |
+| Signature & Order | `deferred` | the neutral receipt-to-local-finalize consumer exists, but the shipped package provider graph still requires its own external-operation-v2 adoption; V3B does not replay signature providers |
+| Contract Activation | `deferred` | activation scheduling is V3C; no renewal effect is inferred from infrastructure |
+| Delivery | `deferred` | no delivery effect consumer is adopted in this slice |
+| Service | `deferred` | no service/SLA effect consumer is adopted in this slice |
+| Work | `deferred` | due follow-up scheduling is V3C; no task state is changed by the outbox |
+| Lifecycle | `deferred` | no decision or commercial follow-up is created automatically |
+| Customer Data | `not_applicable` | linking/projection owns no current post-commit effect intent |
+| Custom-package fixture | `not_applicable` | the fixture declares no write-outcome effect consumer |
+| Custom-package score-disclosure fixture | `not_applicable` | the read-only capability fixture declares no effect consumer |
+
+Closing milestones are causal domain adoptions onto the PostgreSQL write-outcome
+and external-operation-v2 contracts. A durable identity alone promotes no domain
+coverage and authorizes no provider retry.
 
 ### Deployment-storage loader contract v1 assessment (Production Spine v2 M2F)
 

@@ -21,11 +21,13 @@ export const DURABLE_JOB_RETRYABLE_ERRORS = Object.freeze([
 
 const RETRYABLE = new Set(DURABLE_JOB_RETRYABLE_ERRORS);
 const HANDLER_RETRYABLE = new Set(['JOB_HANDLER_BUSY', 'JOB_HANDLER_TEMPORARY_UNAVAILABLE']);
+const HANDLER_TERMINAL = new Set(['JOB_OUTBOX_FINALIZE_DECLARATION_RECONCILIATION_REQUIRED']);
 const PRE_EXECUTION_FAILURES = new Set([
   'JOB_HANDLER_NOT_REGISTERED', 'JOB_EXTERNAL_OUTCOME_RECONCILIATION_REQUIRED',
 ]);
 const CLOSED_FAILURE_CODES = new Set([
   ...HANDLER_RETRYABLE,
+  ...HANDLER_TERMINAL,
   ...PRE_EXECUTION_FAILURES,
   'JOB_HANDLER_FAILED',
   'JOB_BACKOFF_INVALID',
@@ -34,6 +36,7 @@ const CLOSED_FAILURE_CODES = new Set([
 const WORKER_STATUS_ERRORS = new Set(['DURABLE_JOB_STORAGE_UNAVAILABLE']);
 const CLOSED_STATES = new Set(DURABLE_JOB_STATES);
 const SCHEDULE_INTENTS = new Set(['immediate', 'scheduled']);
+const RECOVERY_POLICIES = new Set(['terminal_unknown', 'reconcilable_at_least_once']);
 const NAME = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/;
 const ERROR_CODE = /^[A-Z][A-Z0-9_]*$/;
 const MAX_TEXT = 256;
@@ -284,6 +287,11 @@ function decodeRow(row) {
     }),
     payload, payloadFingerprint: String(row.payload_fingerprint),
     scheduleIntent, scheduleAt: iso(row.schedule_at), state,
+    recoveryPolicy: RECOVERY_POLICIES.has(row.recovery_policy) ? row.recovery_policy : (() => {
+      throw new AppError('Stored durable-job recovery policy is invalid', {
+        code: 'DURABLE_JOB_ROW_INVALID', status: 500, details: { field: 'recoveryPolicy' },
+      });
+    })(),
     attempt: safeInteger(row.attempt, 'attempt'), maxAttempts: safeInteger(row.max_attempts, 'maxAttempts'),
     claim: row.claim_id === null || row.claim_id === undefined ? null : Object.freeze({
       workerId: String(row.claim_worker_id), claimId: String(row.claim_id),
@@ -341,7 +349,7 @@ export function createDurableJobStore(options) {
     const authority = mutationAuthority(context, ['transaction']);
     const actor = authority.actor;
     const jobInput = closedJobInput(input,
-      ['kind', 'handler', 'payload', 'scheduleAt', 'maxAttempts', 'idempotencyRoot', 'outcomeReference'],
+      ['kind', 'handler', 'payload', 'scheduleAt', 'maxAttempts', 'idempotencyRoot', 'outcomeReference', 'recoveryPolicy'],
       ['kind', 'handler', 'payload', 'idempotencyRoot']);
     const handler = closedJobInput(jobInput.handler,
       ['name', 'contract', 'version'], ['name', 'contract', 'version']);
@@ -350,6 +358,10 @@ export function createDurableJobStore(options) {
     const scheduleIntent = explicitSchedule ? 'scheduled' : 'immediate';
     const scheduleAt = canonicalInstant(jobInput.scheduleAt ?? createdAt, 'scheduleAt');
     const payload = canonicalJobPayload(jobInput.payload);
+    const recoveryPolicy = jobInput.recoveryPolicy ?? 'terminal_unknown';
+    if (!RECOVERY_POLICIES.has(recoveryPolicy)) {
+      throw new ValidationError('Durable-job recovery policy is invalid');
+    }
     const row = {
       id: boundedText(idSource(), 'generated job id'), contract_version: DURABLE_JOB_CONTRACT,
       tenant_id: tenantId, kind: boundedName(jobInput.kind, 'job kind'),
@@ -358,6 +370,7 @@ export function createDurableJobStore(options) {
       handler_version: positiveInteger(handler.version, 'handler version'),
       payload_json: payload.json, payload_fingerprint: payload.fingerprint,
       schedule_intent: scheduleIntent,
+      recovery_policy: recoveryPolicy,
       schedule_at: scheduleAt, state: 'pending', attempt: 0,
       max_attempts: positiveInteger(jobInput.maxAttempts ?? 3, 'maxAttempts', MAX_ATTEMPTS),
       claim_worker_id: null, claim_id: null, claim_generation: 0, claim_expires_at: null,
@@ -369,7 +382,7 @@ export function createDurableJobStore(options) {
     const persist = async (adapter, handle) => {
       if (await adapter.insert(row)) {
         await recordMutation(audit, handle, actor, 'enqueued', row.id, {
-          state: 'pending', scheduleIntent,
+          state: 'pending', scheduleIntent, recoveryPolicy,
         });
         return decodeRow(row);
       }
@@ -380,6 +393,7 @@ export function createDurableJobStore(options) {
         && existing.scheduleIntent === scheduleIntent
         && (scheduleIntent === 'immediate' || existing.scheduleAt === row.schedule_at)
         && existing.maxAttempts === row.max_attempts
+        && existing.recoveryPolicy === row.recovery_policy
         && existing.outcomeReference === row.outcome_reference) return existing;
       throw new AppError('Durable-job idempotency root was already used for different work', {
         code: 'DURABLE_JOB_IDEMPOTENCY_MISMATCH', status: 409,
@@ -390,30 +404,35 @@ export function createDurableJobStore(options) {
       : inTransaction(persist);
   }
 
-  async function claim(workerId, leaseMs = 30_000, context = {}) {
+  async function claimDue(workerId, leaseMs = 30_000, context = {}, id = null) {
     const actor = systemMutationActor(context, 'Durable-job claim context');
     const worker = boundedText(workerId, 'workerId');
+    const jobId = id == null ? null : boundedText(id, 'job id');
     positiveInteger(leaseMs, 'leaseMs', MAX_LEASE_MS);
     const instant = now();
     const expiresAt = new Date(Date.parse(instant) + leaseMs).toISOString();
     const claimId = boundedText(claimIdSource(), 'generated claim id');
     return inTransaction(async (adapter, handle) => {
-      const result = await adapter.claim({ tenantId, workerId: worker, claimId, now: instant, expiresAt });
+      const result = await adapter.claim({ tenantId, workerId: worker, claimId, now: instant, expiresAt, id: jobId });
       for (const expired of result.terminalized) {
         await recordMutation(audit, handle, actor, 'failed', String(expired.id), {
           state: 'failed_terminal', claimGeneration: safeInteger(expired.claim_generation, 'claimGeneration'),
-          errorCode: 'JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED',
+          errorCode: String(expired.last_error_code),
         });
       }
       const job = decodeRow(result.row);
       if (job) {
         await recordMutation(audit, handle, actor, 'claimed', job.id, {
           state: 'claimed', claimGeneration: job.claimGeneration,
+          ...(result.recovered ? { recoveredUnknownOutcome: true } : {}),
         });
       }
       return job;
     });
   }
+
+  const claim = (workerId, leaseMs = 30_000, context = {}) => claimDue(workerId, leaseMs, context);
+  const claimById = (id, workerId, leaseMs = 30_000, context = {}) => claimDue(workerId, leaseMs, context, id);
 
   function requireClaim(job, workerId) {
     if (!job || job.tenantId !== tenantId || job.state !== 'claimed' || !job.claim
@@ -421,7 +440,7 @@ export function createDurableJobStore(options) {
     return job.claim;
   }
 
-  async function finish(job, workerId, transition, actor) {
+  async function finish(job, workerId, transition, actor, complete = null) {
     const claim = requireClaim(job, workerId);
     const instant = now();
     return inTransaction(async (adapter, handle) => {
@@ -434,6 +453,7 @@ export function createDurableJobStore(options) {
         executionRequired: transition.executionRequired,
       });
       if (changed !== 1) throw claimFenced();
+      if (complete !== null) await complete(handle);
       await recordMutation(audit, handle, actor,
         transition.state === 'succeeded' ? 'succeeded' : 'failed', job.id, {
           state: transition.state, claimGeneration: claim.generation,
@@ -450,6 +470,7 @@ export function createDurableJobStore(options) {
     enqueue,
     get,
     claim,
+    claimById,
     async beginExecution(job, workerId, context = {}) {
       const actor = systemMutationActor(context, 'Durable-job execution-start context');
       const owner = boundedText(workerId, 'workerId');
@@ -467,13 +488,16 @@ export function createDurableJobStore(options) {
         return decodeRow(await adapter.get(tenantId, job.id));
       });
     },
-    async succeed(job, workerId, outcomeReference = null, context = {}) {
+    async succeed(job, workerId, outcomeReference = null, context = {}, complete = null) {
       const actor = systemMutationActor(context, 'Durable-job success context');
+      if (complete !== null && typeof complete !== 'function') {
+        throw new ValidationError('Durable-job success completion must be a function');
+      }
       return finish(job, boundedText(workerId, 'workerId'), {
         state: 'succeeded',
         outcomeReference: outcomeReference == null ? null : boundedText(outcomeReference, 'outcomeReference'),
         executionRequired: true,
-      }, actor);
+      }, actor, complete);
     },
     async fail(job, workerId, input, context = {}) {
       const actor = systemMutationActor(context, 'Durable-job failure context');
@@ -543,24 +567,30 @@ export function createDurableJobHandlerRegistry() {
   const handlers = new Map();
   return Object.freeze({
     register(definition) {
-      closedObject(definition, ['name', 'version', 'kind', 'execute', 'sideEffect'], ['name', 'version', 'kind', 'execute'], 'Durable-job handler');
+      closedObject(definition, ['name', 'version', 'kind', 'execute', 'complete', 'sideEffect'], ['name', 'version', 'kind', 'execute'], 'Durable-job handler');
       const name = boundedName(definition.name, 'handler name');
       const kind = boundedName(definition.kind, 'handler kind');
       const version = positiveInteger(definition.version, 'handler version');
       if (typeof definition.execute !== 'function') throw new ValidationError('Durable-job handler execute must be a function');
+      if (definition.complete !== undefined && typeof definition.complete !== 'function') {
+        throw new ValidationError('Durable-job handler complete must be a function');
+      }
       const sideEffect = definition.sideEffect ?? 'none';
       if (sideEffect !== 'none' && sideEffect !== 'external-operation-v2') {
         throw new ValidationError('Durable-job handler sideEffect must be none or external-operation-v2');
       }
       const key = `${kind}\u0000${name}\u0000${version}`;
       if (handlers.has(key)) throw new AppError('Durable-job handler identity is already registered', { code: 'DURABLE_JOB_HANDLER_DUPLICATE', status: 409 });
-      handlers.set(key, Object.freeze({ name, kind, version, sideEffect, execute: definition.execute }));
+      handlers.set(key, Object.freeze({
+        name, kind, version, sideEffect, execute: definition.execute,
+        ...(definition.complete ? { complete: definition.complete } : {}),
+      }));
     },
     resolve(job) {
       return handlers.get(`${job.kind}\u0000${job.handler.name}\u0000${job.handler.version}`) ?? null;
     },
     list() {
-      return [...handlers.values()].map(({ execute: _execute, ...handler }) => Object.freeze({ ...handler }))
+      return [...handlers.values()].map(({ execute: _execute, complete: _complete, ...handler }) => Object.freeze({ ...handler }))
         .sort((a, b) => `${a.kind}:${a.name}:${a.version}`.localeCompare(`${b.kind}:${b.name}:${b.version}`));
     },
   });
@@ -582,7 +612,7 @@ function boundedOwnErrorCode(error, fallback) {
 
 function boundedErrorCode(error) {
   const code = boundedOwnErrorCode(error, 'JOB_HANDLER_FAILED');
-  return HANDLER_RETRYABLE.has(code) ? code : 'JOB_HANDLER_FAILED';
+  return HANDLER_RETRYABLE.has(code) || HANDLER_TERMINAL.has(code) ? code : 'JOB_HANDLER_FAILED';
 }
 
 function defaultBackoff(attempt) {
@@ -680,14 +710,21 @@ export function createDurableJobWorker(options) {
     }
     // Persistence failures are not handler failures. Let the worker surface
     // them without falsely terminalizing a job whose commit outcome is unknown.
-    return options.store.succeed(executingJob, workerId, outcomeReference, { actor });
+    const complete = typeof handler.complete === 'function'
+      ? (transaction) => handler.complete(Object.freeze({
+        job: executingJob, outcomeReference, transaction,
+      }))
+      : null;
+    return options.store.succeed(executingJob, workerId, outcomeReference, { actor }, complete);
   }
 
-  async function poll() {
+  async function claimAndExecute(jobId = null) {
     if (!accepting || closed) return null;
     if (pollPromise) return pollPromise;
     pollPromise = (async () => {
-      const job = await options.store.claim(workerId, leaseMs, { actor });
+      const job = jobId == null
+        ? await options.store.claim(workerId, leaseMs, { actor })
+        : await options.store.claimById(jobId, workerId, leaseMs, { actor });
       if (!job) return null;
       if (!accepting || closed) return options.store.release(job, workerId, { actor });
       inFlight = execute(job);
@@ -704,6 +741,8 @@ export function createDurableJobWorker(options) {
       pollPromise = null;
     }
   }
+
+  const poll = () => claimAndExecute();
 
   async function drain(input = {}) {
     closedObject(input, ['timeoutMs'], [], 'Durable-job drain options');
@@ -739,6 +778,7 @@ export function createDurableJobWorker(options) {
       if (accepting) scheduleWake(0);
     },
     poll,
+    run: (jobId) => claimAndExecute(boundedText(jobId, 'job id')),
     drain,
     stop: drain,
     async close(input = {}) {
