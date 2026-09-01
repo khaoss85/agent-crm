@@ -14,12 +14,43 @@ identity verifier is by design supplied by the deployment. Because *"done"
 means the whole phase, not v1*, finishing v3 and v4 does not open the Cloud
 gate by itself.
 
-## 0. The blocking human action
+## 0. The human action that was blocking, and is now taken
 
-**`HUMAN_ACTION_REQUIRED` — the private repository `khaoss85/accordo-platform`
-does not exist and must not be created by an agent.** C0 is blocked on it
-regardless of everything else in this document. A person creates it and grants
-access; nothing below can start first.
+**Closed.** `khaoss85/accordo-platform` now exists, private, created on the
+repository owner's explicit authorisation at the close of this campaign. It is
+empty: a README stating the boundary and pointing back at this document, and
+nothing else. C0 has not started.
+
+The rule that produced the block has not changed and should not be read as
+relaxed: no agent creates a repository on its own initiative. What changed is
+that a person decided, which is exactly what the block was there to require.
+
+**Branch protection: partly done, and one part cannot be done on this plan.**
+The migration document asks for three things. Two are in place on the default
+branch — force-push and deletion are both refused, verified by attempting a
+force-push and having it rejected, not by reading the setting back. The third,
+**secret scanning, is unavailable**: GitHub refuses to enable it for a private
+repository on this account's plan (`Secret scanning is not available for this
+repository`). That is exactly backwards from what the migration document wants —
+it asks for the *stricter* configuration on the private repository precisely
+because credentials are most likely to end up there — so it is named here rather
+than quietly dropped. Closing it means either a plan that includes Advanced
+Security, or a pre-commit/CI secret scan owned by the repository itself.
+
+**Required status checks are deliberately not configured yet.** There are no
+workflows in the repository, so requiring checks would block every push while
+proving nothing. It belongs in the same change that adds the first workflow.
+
+**A credential fact worth stating plainly.** The migration document says an
+agent working in the private repository needs its own scoped credential, and
+that the public agent credential must not gain private access as a side effect.
+The credential in use here is the account owner's, with `repo` scope, so it
+already reaches every private repository the account has — including this one.
+Nothing was widened to create it, but nothing is narrowed either, and a scoped
+credential for private-repository work is still outstanding.
+
+**What this does not unblock.** C0 was gated on the repository *and* on
+everything else in this document.
 
 ## 1. What this campaign made representable, and what it did not
 
@@ -152,10 +183,25 @@ what the Accordo packages already enforce.
 are unique but mutable-looking; there is **no tax id anywhere in Arvo**, so a
 Company reconciled across systems by name would be wrong. No timer. The
 qualification decision stays a human action — Work refuses every closing action
-to a non-human actor. **Gated on Correction 3.**
+to a non-human actor. **Not the pilot's entry point**, now that Correction 3 is
+settled: a Company projected from `gyms` today would be a shell. It stays
+written down because a B2B layer that fills in later would take exactly this
+shape, and because the identity constraint — no tax id anywhere in Arvo —
+outlives the question.
 
 **B. Subscription or trial → durable renewal review.** *This is the scenario
-v3C's timer consumers exist for.* Source: `gyms.trial_ends_at` and
+v3C's timer consumers exist for, and — with Arvo confirmed B2C — the pilot's
+entry point rather than one of three options.*
+
+**That answer promotes the hardest constraint in this document from footnote to
+foundation.** A B2C pilot reads entitlement from `user_profiles`, and
+`user_profiles` is simultaneously the commercial record and the health record:
+`subscription_status`, `tier` and `email_frequency` sit in the same row as
+`injuries`, `injuries_notes`, `body_fat_percentage` and `training_maxes`, with
+no separate person-level commercial account table to read instead. The explicit
+column allow-list therefore stops being one hygiene rule among seven and becomes
+**the** control the pilot rests on: here a `SELECT *` is not a sloppy query, it
+is a health-data export. Source: `gyms.trial_ends_at` and
 `subscription_status`, or the consumer columns as an explicit allow-list. A
 human schedules the review for the notice instant; a worker the application
 starts explicitly presents it there and marks it due — it reaches no domain seam

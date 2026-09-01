@@ -117,8 +117,8 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
    the secret provider (v4A), backup/verify/restore (v4B) and the observability
    export (v4C), composed by one application into a single operations handle
    whose construction starts nothing. Finishing v3 and v4 does not open the
-   Cloud gate: the v4 remainder also names remote-safe MCP, and C0 is blocked on
-   a human action — the private `accordo-platform` repository.
+   Cloud gate: the v4 remainder also names remote-safe MCP. The private
+   `accordo-platform` repository now exists and is empty; C0 has not started.
    Dedicated-database PostgreSQL, dual bundled graphs, leases and write-outcome
    keys are merged. Shared-database row tenancy remains deferred.
 
