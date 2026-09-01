@@ -9,10 +9,10 @@ import {
   createPostgresqlPool,
   createPostgresqlStorage,
 } from './postgresql-storage.js';
-import { DATA_ADVISORY_LOCK } from './postgresql-authority.js';
+import { DATA_ADVISORY_LOCK, DATA_RESTORE_CHILD_LOCK } from './postgresql-authority.js';
 import { attestPostgresqlStartup, fingerprintMigrationSet } from './startup-attestation.js';
 
-export { DATA_ADVISORY_LOCK } from './postgresql-authority.js';
+export { DATA_ADVISORY_LOCK, DATA_RESTORE_CHILD_LOCK } from './postgresql-authority.js';
 
 export const POSTGRES_APPLICATION_SCHEMA = POSTGRES_SCHEMA_NAME;
 export const CONTROL_ADVISORY_LOCK = Object.freeze({ classId: 1094927186, objectId: 1129598001 });
@@ -587,6 +587,11 @@ async function bootstrapPlane(pool, {
     await exec(client, 'BEGIN');
     active = true;
     await exec(client, 'SELECT pg_advisory_xact_lock($1, $2)', [lock.classId, lock.objectId]);
+    if (lock.classId === DATA_ADVISORY_LOCK.classId && lock.objectId === DATA_ADVISORY_LOCK.objectId) {
+      await exec(client, 'SELECT pg_advisory_xact_lock($1, $2)', [
+        DATA_RESTORE_CHILD_LOCK.classId, DATA_RESTORE_CHILD_LOCK.objectId,
+      ]);
+    }
     await exec(client, 'SET LOCAL search_path TO pg_catalog');
     await exec(client, `CREATE SCHEMA IF NOT EXISTS ${quotePostgresIdent(POSTGRES_APPLICATION_SCHEMA)}`);
     await ensureLedger(client);
@@ -752,6 +757,9 @@ export async function bootstrapPostgresqlApplication(options) {
       await exec(dataClient, 'BEGIN');
       dataActive = true;
       await exec(dataClient, 'SELECT pg_advisory_xact_lock($1, $2)', [DATA_ADVISORY_LOCK.classId, DATA_ADVISORY_LOCK.objectId]);
+      await exec(dataClient, 'SELECT pg_advisory_xact_lock($1, $2)', [
+        DATA_RESTORE_CHILD_LOCK.classId, DATA_RESTORE_CHILD_LOCK.objectId,
+      ]);
       await exec(dataClient, 'SET LOCAL search_path TO pg_catalog');
 
       const marker = await inspectDataMarker(dataClient);

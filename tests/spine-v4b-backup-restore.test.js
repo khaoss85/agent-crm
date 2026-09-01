@@ -69,6 +69,7 @@ function fixtureRestoreControl(receipts = []) {
         assert.equal(existing.manifestDigest, input.manifestDigest);
         return {
           id: existing.id,
+          attempt: 'existing',
           outcome: existing.outcome,
           artifactDigest: existing.artifactDigest,
           manifestDigest: existing.manifestDigest,
@@ -86,6 +87,7 @@ function fixtureRestoreControl(receipts = []) {
       receipts.push({ phase: 'attempted', input });
       return {
         id: state.id,
+        attempt: 'new',
         outcome: null,
         artifactDigest: state.artifactDigest,
         manifestDigest: state.manifestDigest,
@@ -143,9 +145,24 @@ function fixtureProvider(overrides = {}) {
       });
     },
     async prepareRestore() {},
-    async withTargetLock(_input, operation) { return operation({ empty: true }); },
+    async withTargetLock(_input, operation) { return operation(lockedState()); },
     async restoreArtifact() {},
     ...overrides,
+  });
+}
+
+function lockedState(empty = true, authority = source) {
+  return Object.freeze({
+    empty,
+    lockedTarget: Object.freeze({}),
+    async inspectAuthority() {
+      return {
+        bindingUuid: authority.bindingUuid,
+        tenantFingerprint: authority.tenantFingerprint,
+        resourceFingerprint: authority.resourceFingerprint,
+        migrationSetFingerprint: authority.migrationSetFingerprint,
+      };
+    },
   });
 }
 
@@ -154,6 +171,34 @@ function operations(provider = fixtureProvider()) {
     adapter: 'postgresql', provider, evidence: source, connection,
     restoreControl: fixtureRestoreControl(),
     clock: () => '2026-08-31T12:00:00.000Z',
+  });
+}
+
+function nativeTargetPool(authority = source) {
+  return () => ({
+    async connect() {
+      return {
+        async query(sql) {
+          if (sql.includes('spine_data_plane_binding')) {
+            return { rowCount: 1, rows: [{ tenant_slug: 'tenant-a', data_plane_id: authority.bindingUuid }] };
+          }
+          if (sql.includes('startup_audit')) {
+            return { rowCount: 1, rows: [{
+              tenant_fingerprint: authority.tenantFingerprint,
+              resource_fingerprint: authority.resourceFingerprint,
+              migration_set_fingerprint: authority.migrationSetFingerprint,
+            }] };
+          }
+          if (sql.includes('pg_try_advisory_lock')) return { rowCount: 1, rows: [{ acquired: true }] };
+          if (sql.includes('pg_advisory_unlock')) return { rowCount: 1, rows: [{ pg_advisory_unlock: true }] };
+          if (sql.includes('pg_advisory_lock')) return { rowCount: 1, rows: [{ pg_advisory_lock: '' }] };
+          if (sql.includes('WITH user_namespace')) return { rowCount: 1, rows: [{ occupied: false }] };
+          throw new Error(`unexpected fixture query: ${sql}`);
+        },
+        release() {},
+      };
+    },
+    async end() {},
   });
 }
 
@@ -184,6 +229,7 @@ test('contract vocabulary is closed and SQLite is explicitly unsupported', () =>
       'targetResourceFingerprint',
     ],
     restoreControlKeys: ['contract', 'authorizeAndRecordAttempt', 'recordOutcome'],
+    restoreAttempts: ['new', 'existing'],
     restoreOutcomes: ['succeeded', 'refused', 'possibly-partial'],
     bundleEntries: ['artifact.dump', 'manifest.json'],
     nativeToolMajor: 16,
@@ -470,7 +516,7 @@ if [ "$1" = "--version" ]; then
   printf "pg_dump (PostgreSQL) 16.7\\n"
   exit 0
 fi
-if [ "$PGHOST" != "db.internal.example" ] || [ "$PGHOSTADDR" != "127.0.0.1" ] || [ "$PGSSLMODE" != "verify-full" ] || [ "${'$'}(cat "$PGSSLROOTCERT")" != "fixture-ca" ]; then
+if [ "$PGHOST" != "db.internal.example" ] || [ "$PGHOSTADDR" != "127.0.0.1" ] || [ "$PGSSLMODE" != "verify-full" ] || [ "$PGGSSENCMODE" != "disable" ] || [ "${'$'}(cat "$PGSSLROOTCERT")" != "fixture-ca" ]; then
   exit 92
 fi
 for argument in "$@"; do
@@ -508,6 +554,7 @@ test('native provider injects one database client factory into source and restor
   t.after(() => rm(root, { recursive: true, force: true }));
   const dump = join(root, 'pg-dump');
   const restore = join(root, 'pg-restore');
+  const psql = join(root, 'psql');
   const caPath = join(root, 'root.crt');
   const pinnedPathReceipt = join(root, 'pinned-path-receipt');
   const originalCa = 'native-original-ca';
@@ -518,6 +565,7 @@ if [ "$1" = "--version" ]; then
   printf "pg_dump (PostgreSQL) 16.7\\n"
   exit 0
 fi
+if [ "$PGGSSENCMODE" != "disable" ]; then exit 90; fi
 if [ "${'$'}(cat "$PGSSLROOTCERT")" != "${originalCa}" ]; then exit 91; fi
 printf "%s" "$PGSSLROOTCERT" > ${JSON.stringify(pinnedPathReceipt)}
 for argument in "$@"; do
@@ -531,10 +579,35 @@ if [ "$1" = "--version" ]; then
   printf "pg_restore (PostgreSQL) 16.7\\n"
   exit 0
 fi
+if [ -n "$PGDATABASE" ] || [ -n "$PGSSLROOTCERT" ]; then exit 92; fi
+for argument in "$@"; do
+  case "$argument" in
+    --dbname=*) exit 93 ;;
+    --file=*) printf -- "SELECT 1;\\n" > "${'$'}{argument#--file=}" ;;
+  esac
+done
+`);
+  await writeFile(psql, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf "psql (PostgreSQL) 16.7\\n"
+  exit 0
+fi
+if [ "$PGGSSENCMODE" != "disable" ]; then exit 90; fi
 if [ "${'$'}(cat "$PGSSLROOTCERT")" != "${originalCa}" ]; then exit 92; fi
 printf "%s" "$PGSSLROOTCERT" > ${JSON.stringify(pinnedPathReceipt)}
+for argument in "$@"; do
+  case "$argument" in
+    --file=*.postlude.sql)
+      rendered="${'$'}{argument#--file=}"
+      printf "accordo-restore-authority-v1|%s|%s|%s|%s\\n" \\
+        "${source.bindingUuid}" "${source.tenantFingerprint}" \\
+        "${source.resourceFingerprint}" "${source.migrationSetFingerprint}" \\
+        > "${'$'}{rendered%.postlude.sql}.authority"
+      ;;
+  esac
+done
 `);
-  await Promise.all([chmod(dump, 0o700), chmod(restore, 0o700)]);
+  await Promise.all([chmod(dump, 0o700), chmod(restore, 0o700), chmod(psql, 0o700)]);
 
   let pools = 0;
   let markerReads = 0;
@@ -563,6 +636,7 @@ printf "%s" "$PGSSLROOTCERT" > ${JSON.stringify(pinnedPathReceipt)}
           return { rowCount: 1, rows: [{ occupied: false }] };
         }
         if (sql.includes('pg_advisory_unlock')) return { rowCount: 1, rows: [{ pg_advisory_unlock: true }] };
+        if (sql.includes('pg_advisory_lock')) return { rowCount: 1, rows: [{ pg_advisory_lock: '' }] };
         throw new Error(`unexpected fixture query: ${sql}`);
       },
       release() {},
@@ -573,7 +647,7 @@ printf "%s" "$PGSSLROOTCERT" > ${JSON.stringify(pinnedPathReceipt)}
     };
   };
   const provider = createPostgresqlNativeBackupProvider({
-    pgDump: dump, pgRestore: restore, createPool,
+    pgDump: dump, pgRestore: restore, psql, createPool,
   });
   const tlsConnection = Object.freeze({
     resourceFingerprint: source.resourceFingerprint,
@@ -604,7 +678,7 @@ printf "%s" "$PGSSLROOTCERT" > ${JSON.stringify(pinnedPathReceipt)}
   });
   assert.equal(result.restored, true);
   assert.equal(markerReads, 2, 'both source and post-restore authority use the injected client factory');
-  assert.equal(pools, 3, 'source inspection, target lock and restored inspection each use the injected factory');
+  assert.equal(pools, 2, 'post-restore authority reuses the exact client that holds the target lock');
   const removedPinnedPath = await readFile(pinnedPathReceipt, 'utf8');
   await assert.rejects(readFile(removedPinnedPath), { code: 'ENOENT' });
 });
@@ -634,6 +708,28 @@ test('connection transport is explicit: plaintext is loopback-only and remote re
       (error) => { assert.equal(error?.code, 'BACKUP_CONNECTION_TLS_REFUSED'); assertNoLeak(error); return true; },
     );
   }
+
+  const caPath = join(root, 'remote-ca.pem');
+  await writeFile(caPath, 'remote-ca', { mode: 0o600 });
+  for (const [name, hostaddr] of [['missing-endpoint', undefined], ['hostname-endpoint', 'another.example']]) {
+    const unsafe = Object.freeze({
+      resourceFingerprint: source.resourceFingerprint,
+      async withEnvironment(consumer) {
+        return consumer({
+          PGHOST: 'remote-db.example', ...(hostaddr === undefined ? {} : { PGHOSTADDR: hostaddr }),
+          PGPORT: '5432', PGDATABASE: 'fixture', PGUSER: 'fixture', PGPASSWORD: SENTINEL,
+          PGSSLMODE: 'verify-full', PGSSLROOTCERT: caPath,
+        });
+      },
+    });
+    await assert.rejects(
+      createBackupOperations({
+        adapter: 'postgresql', provider: fixtureProvider(), evidence: source,
+        connection: unsafe, restoreControl: fixtureRestoreControl(),
+      }).create({ bundlePath: join(root, name) }),
+      (error) => error?.code === 'BACKUP_CONNECTION_ENDPOINT_REFUSED',
+    );
+  }
 });
 
 test('native restore keeps database locator out of argv and consumes PGDATABASE from the bounded environment', async (t) => {
@@ -642,9 +738,28 @@ test('native restore keeps database locator out of argv and consumes PGDATABASE 
   const bundlePath = join(root, 'bundle');
   await operations().create({ bundlePath });
   const restoreProbe = join(root, 'pg-restore-probe');
+  const psqlProbe = join(root, 'psql-probe');
+  // pg_restore only renders the archive to local SQL, so it must receive no
+  // connection environment and no locator at all.
   await writeFile(restoreProbe, `#!/bin/sh
 if [ "$1" = "--version" ]; then
   printf "pg_restore (PostgreSQL) 16.7\\n"
+  exit 0
+fi
+if [ -n "$PGDATABASE" ] || [ -n "$PGUSER" ] || [ -n "$PGPASSWORD" ]; then exit 91; fi
+for argument in "$@"; do
+  case "$argument" in
+    --dbname=*) exit 92 ;;
+    fixture) exit 93 ;;
+    --file=*) printf -- "SELECT 1;\\n" > "${'$'}{argument#--file=}" ;;
+  esac
+done
+`);
+  // psql inherits the original invariant: the database is named by the bounded
+  // environment, never by argv.
+  await writeFile(psqlProbe, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf "psql (PostgreSQL) 16.7\\n"
   exit 0
 fi
 if [ "$PGDATABASE" != "fixture" ]; then exit 91; fi
@@ -652,14 +767,21 @@ seen_empty=0
 for argument in "$@"; do
   if [ "$argument" = "--dbname=" ]; then seen_empty=1; fi
   if [ "$argument" = "fixture" ] || [ "$argument" = "--dbname=fixture" ]; then exit 92; fi
+  case "$argument" in
+    --file=*.postlude.sql)
+      rendered="${'$'}{argument#--file=}"
+      printf "accordo-restore-authority-v1|%s|%s|%s|%s\\n" \\
+        "${source.bindingUuid}" "${source.tenantFingerprint}" \\
+        "${source.resourceFingerprint}" "${source.migrationSetFingerprint}" \\
+        > "${'$'}{rendered%.postlude.sql}.authority"
+      ;;
+  esac
 done
 if [ "$seen_empty" != "1" ]; then exit 93; fi
 `);
-  await chmod(restoreProbe, 0o700);
-  const native = nativeWithFixtureAuthority({ pgRestore: restoreProbe });
-  const provider = defineBackupProvider({
-    ...native,
-    async withTargetLock(_input, operation) { return operation({ empty: true }); },
+  await Promise.all([chmod(restoreProbe, 0o700), chmod(psqlProbe, 0o700)]);
+  const provider = nativeWithFixtureAuthority({
+    pgRestore: restoreProbe, psql: psqlProbe, createPool: nativeTargetPool(),
   });
   const restoreOperations = createBackupOperations({
     adapter: 'postgresql', provider, evidence: source, connection,
@@ -678,7 +800,7 @@ test('non-empty target refuses before restore and provider failure is visibly pa
   await operations().create({ bundlePath });
   let restored = false;
   const occupied = fixtureProvider({
-    async withTargetLock(_input, operation) { return operation({ empty: false }); },
+    async withTargetLock(_input, operation) { return operation(lockedState(false)); },
     async restoreArtifact() { restored = true; },
   });
   await assert.rejects(operations(occupied).restore({
@@ -709,7 +831,7 @@ test('restore requires an actor and records path-free control-plane attempt plus
     async withTargetLock(_input, operation) {
       sequence.push('target-lock');
       receiptLockHeld = true;
-      try { return await operation({ empty: true }); } finally { receiptLockHeld = false; }
+      try { return await operation(lockedState()); } finally { receiptLockHeld = false; }
     },
     async restoreArtifact() {
       sequence.push('target-mutation');
@@ -767,7 +889,7 @@ test('restore requires an actor and records path-free control-plane attempt plus
     provider: fixtureProvider({
       async withTargetLock(_input, operation) {
         unauthorizedTargetTouched = true;
-        return operation({ empty: true });
+        return operation(lockedState());
       },
     }),
   });
@@ -780,6 +902,46 @@ test('restore requires an actor and records path-free control-plane attempt plus
   assert.equal(unauthorizedTargetTouched, false, 'control-plane authorization and attempt receipt precede target access');
 });
 
+test('an indeterminate durable attempt after process death cannot authorize a second mutation', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-indeterminate-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bundlePath = join(root, 'bundle');
+  await operations().create({ bundlePath });
+  let targetTouched = false;
+  const crashedAttemptControl = Object.freeze({
+    contract: BACKUP_CONTRACT,
+    async authorizeAndRecordAttempt(input) {
+      return {
+        id: 'restore-crashed-before-terminal-receipt',
+        attempt: 'existing',
+        outcome: null,
+        artifactDigest: input.artifactDigest,
+        manifestDigest: input.manifestDigest,
+        targetResourceFingerprint: input.targetResourceFingerprint,
+      };
+    },
+    async recordOutcome() { throw new Error('indeterminate replay must not mint a terminal outcome'); },
+  });
+  const bounded = createBackupOperations({
+    adapter: 'postgresql', evidence: source, connection, restoreControl: crashedAttemptControl,
+    provider: fixtureProvider({
+      async withTargetLock(_input, operation) {
+        targetTouched = true;
+        return operation(lockedState());
+      },
+    }),
+  });
+  await assert.rejects(
+    bounded.restore({
+      bundlePath, expected, target: connection, actor: RESTORE_ACTOR,
+      operationId: 'crashed-restore-replay',
+    }),
+    (error) => error?.code === 'BACKUP_RESTORE_RECONCILIATION_REQUIRED'
+      && error?.details?.targetState === 'indeterminate',
+  );
+  assert.equal(targetTouched, false, 'a surviving native child cannot make its pending receipt replayable');
+});
+
 test('restore consumes its verified private snapshot and rechecks those exact bytes afterward', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-snapshot-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -789,7 +951,7 @@ test('restore consumes its verified private snapshot and rechecks those exact by
   const substitution = fixtureProvider({
     async withTargetLock(_input, operation) {
       await writeFile(join(bundlePath, 'artifact.dump'), 'substituted-after-verify');
-      return operation({ empty: true });
+      return operation(lockedState());
     },
     async restoreArtifact({ artifactPath }) {
       assert.equal((await readFile(artifactPath, 'utf8')), 'closed-fixture-artifact');
@@ -848,19 +1010,19 @@ test('restore resolves one target for lock, import, and post-restore authority',
       await observe(bound);
       lockEntries += 1;
       locked = true;
-      try { return await operation({ empty: true }); } finally { locked = false; }
+      try {
+        return await operation(Object.freeze({
+          empty: true,
+          lockedTarget: Object.freeze({}),
+          async inspectAuthority() {
+            assert.equal(locked, true, 'post-restore authority is read on the held-lock session');
+            await observe(bound);
+            return lockedState().inspectAuthority();
+          },
+        }));
+      } finally { locked = false; }
     },
     async restoreArtifact({ connection: bound }) { await observe(bound); },
-    async inspectAuthority({ connection: bound }) {
-      assert.equal(locked, true, 'post-restore authority is inspected while the target fence is held');
-      await observe(bound);
-      return {
-        bindingUuid: source.bindingUuid,
-        tenantFingerprint: source.tenantFingerprint,
-        resourceFingerprint: source.resourceFingerprint,
-        migrationSetFingerprint: source.migrationSetFingerprint,
-      };
-    },
   });
   const restoreReceipts = [];
   const baseRestoreControl = fixtureRestoreControl(restoreReceipts);
@@ -904,6 +1066,53 @@ test('restore resolves one target for lock, import, and post-restore authority',
   assert.equal(locked, false);
 });
 
+test('a restore routed away from the held-lock backend is possibly partial and never adopted', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-backend-fence-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bundlePath = join(root, 'bundle');
+  await operations().create({ bundlePath });
+  const receipts = [];
+  let wrongBackendMutated = false;
+  let lockedInspection = false;
+  const provider = fixtureProvider({
+    async withTargetLock(_input, operation) {
+      return operation(Object.freeze({
+        empty: true,
+        lockedTarget: Object.freeze({}),
+        async inspectAuthority() {
+          lockedInspection = true;
+          return {
+            bindingUuid: source.bindingUuid,
+            tenantFingerprint: source.tenantFingerprint,
+            resourceFingerprint: '9'.repeat(64),
+            migrationSetFingerprint: source.migrationSetFingerprint,
+          };
+        },
+      }));
+    },
+    async restoreArtifact() { wrongBackendMutated = true; },
+    async inspectAuthority() {
+      throw new Error('a fresh post-restore connection must never replace held-lock authority');
+    },
+  });
+  await assert.rejects(
+    createBackupOperations({
+      adapter: 'postgresql', provider, evidence: source, connection,
+      restoreControl: fixtureRestoreControl(receipts),
+    }).restore({
+      bundlePath, expected, target: connection, actor: RESTORE_ACTOR,
+      operationId: 'wrong-backend-import',
+    }),
+    (error) => error?.code === 'BACKUP_RESTORED_AUTHORITY_MISMATCH',
+  );
+  assert.equal(wrongBackendMutated, true, 'the native tool outcome is conservatively treated as unknown');
+  assert.equal(lockedInspection, true, 'acceptance is decided only by the held-lock backend session');
+  assert.equal(
+    receipts.some((item) => item.phase === 'outcome' && item.input.outcome === 'possibly-partial'),
+    true,
+  );
+});
+
 test('target-lock provider cannot return before its unique callback settles', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-lock-settlement-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -912,7 +1121,7 @@ test('target-lock provider cannot return before its unique callback settles', as
   let restored = false;
   const provider = fixtureProvider({
     async withTargetLock(_input, operation) {
-      void operation({ empty: true });
+      void operation(lockedState());
       return undefined;
     },
     async restoreArtifact({ artifactPath }) {

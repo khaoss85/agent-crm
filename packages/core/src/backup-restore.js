@@ -1,6 +1,6 @@
 // @ts-check
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import {
@@ -8,9 +8,10 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { isIP } from 'node:net';
 import { requireActor } from './actor.js';
 import { AppError } from './errors.js';
-import { DATA_ADVISORY_LOCK } from './postgresql-authority.js';
+import { DATA_ADVISORY_LOCK, DATA_RESTORE_CHILD_LOCK } from './postgresql-authority.js';
 import { readTrustedRegularFile } from './trusted-file.js';
 
 export const BACKUP_CONTRACT = 1;
@@ -42,12 +43,13 @@ const TOOL_KEYS = Object.freeze(['name', 'major', 'version']);
 const CONNECTION_KEYS = Object.freeze(['withEnvironment', 'resourceFingerprint']);
 const ENV_KEYS = Object.freeze([
   'PGHOST', 'PGHOSTADDR', 'PGPORT', 'PGDATABASE', 'PGUSER', 'PGPASSWORD',
-  'PGSSLMODE', 'PGSSLROOTCERT',
+  'PGSSLMODE', 'PGSSLROOTCERT', 'PGGSSENCMODE',
 ]);
 const RESTORE_CONTROL_KEYS = Object.freeze(['contract', 'authorizeAndRecordAttempt', 'recordOutcome']);
 const RESTORE_RECEIPT_KEYS = Object.freeze([
-  'id', 'outcome', 'artifactDigest', 'manifestDigest', 'targetResourceFingerprint',
+  'id', 'attempt', 'outcome', 'artifactDigest', 'manifestDigest', 'targetResourceFingerprint',
 ]);
+const RESTORE_ATTEMPTS = Object.freeze(['new', 'existing']);
 const RESTORE_OUTCOMES = Object.freeze(['succeeded', 'refused', 'possibly-partial']);
 const HOSTILE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 const NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -57,6 +59,7 @@ const UTC_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const TOOL_VERSION = /^(?:\d+(?:\.\d+){0,3}|fixture-\d+(?:\.\d+){0,3})$/;
 const OPERATION_ID = /^[a-z0-9][a-z0-9._:-]*$/i;
 const frameworkErrors = new WeakSet();
+const nativeLockedTargets = new WeakMap();
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost', '::ffff:127.0.0.1']);
 
 function failure(code, message, details = { contract: BACKUP_CONTRACT }) {
@@ -182,9 +185,15 @@ function safeEnvironment(value) {
     for (const required of ['PGHOST', 'PGPORT', 'PGDATABASE', 'PGUSER']) {
       if (!Object.hasOwn(result, required)) refuse('BACKUP_CONNECTION_INVALID', 'backup connection environment is incomplete');
     }
+    if (Object.hasOwn(result, 'PGGSSENCMODE') && result.PGGSSENCMODE !== 'disable') {
+      refuse('BACKUP_CONNECTION_TLS_REFUSED', 'backup connections require GSS encryption negotiation to be disabled');
+    }
     if (result.PGSSLMODE === 'verify-full') {
       if (!Object.hasOwn(result, 'PGSSLROOTCERT')) {
         refuse('BACKUP_CONNECTION_TLS_REFUSED', 'backup connection requires authenticated TLS verification');
+      }
+      if (!Object.hasOwn(result, 'PGHOSTADDR') || isIP(result.PGHOSTADDR) === 0) {
+        refuse('BACKUP_CONNECTION_ENDPOINT_REFUSED', 'remote backup connections require a deployment-pinned network endpoint');
       }
     } else if (result.PGSSLMODE === 'disable') {
       if (Object.hasOwn(result, 'PGSSLROOTCERT')
@@ -238,7 +247,9 @@ async function beginRestore(control, actor, intent, operationId) {
   );
   const accepted = snapshot(receipt, RESTORE_RECEIPT_KEYS, 'BACKUP_RESTORE_RECEIPT_INVALID');
   if (!exactString(accepted.id, 200)
+    || !RESTORE_ATTEMPTS.includes(accepted.attempt)
     || !(accepted.outcome === null || RESTORE_OUTCOMES.includes(accepted.outcome))
+    || (accepted.attempt === 'new' && accepted.outcome !== null)
     || accepted.artifactDigest !== intent.artifactDigest
     || accepted.manifestDigest !== intent.manifestDigest
     || accepted.targetResourceFingerprint !== intent.targetResourceFingerprint) {
@@ -294,6 +305,14 @@ function affineConnection(environment, resourceFingerprint) {
   });
 }
 
+function sqlLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function psqlPath(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
 async function useAffineConnection(connection, consumer) {
   return useConnection(connection, async (environment) => {
     let pinnedDirectory = null;
@@ -316,6 +335,7 @@ async function useAffineConnection(connection, consumer) {
         await chmod(pinnedPath, 0o400);
         pinnedEnvironment = Object.freeze({ ...environment, PGSSLROOTCERT: pinnedPath });
       }
+      pinnedEnvironment = Object.freeze({ ...pinnedEnvironment, PGGSSENCMODE: 'disable' });
       const affine = affineConnection(pinnedEnvironment, connection.resourceFingerprint);
       try { return await consumer(affine.connection); } finally { affine.close(); }
     } finally {
@@ -697,6 +717,14 @@ export function createBackupOperations(options) {
         }
         await providerCall('prepare-restore', () => provider.prepareRestore());
         receipt = await beginRestore(restoreControl, actor, intent, request.operationId);
+        if (receipt.attempt === 'existing' && receipt.outcome === null) {
+          receipt = null;
+          throw failure(
+            'BACKUP_RESTORE_RECONCILIATION_REQUIRED',
+            'restore operation has an indeterminate prior attempt and requires explicit operator reconciliation',
+            { contract: BACKUP_CONTRACT, targetState: 'indeterminate' },
+          );
+        }
         if (receipt.outcome !== null) {
           const replayedOutcome = receipt.outcome;
           receipt = null;
@@ -718,12 +746,30 @@ export function createBackupOperations(options) {
           let restoredResult = null;
           await runWithTargetLock(provider, boundConnection, async (state) => {
             try {
-              const inspected = snapshot(state, ['empty'], 'BACKUP_TARGET_INSPECTION_INVALID');
-              if (typeof inspected.empty !== 'boolean') refuse('BACKUP_TARGET_INSPECTION_INVALID', 'restore target inspection is invalid');
+              const inspected = snapshot(
+                state,
+                ['empty', 'lockedTarget', 'inspectAuthority'],
+                'BACKUP_TARGET_INSPECTION_INVALID',
+              );
+              if (typeof inspected.empty !== 'boolean' || !inspected.lockedTarget
+                || (typeof inspected.lockedTarget !== 'object' && typeof inspected.lockedTarget !== 'function')
+                || typeof inspected.inspectAuthority !== 'function') {
+                refuse('BACKUP_TARGET_INSPECTION_INVALID', 'restore target inspection is invalid');
+              }
               if (!inspected.empty) refuse('BACKUP_TARGET_NOT_EMPTY', 'restore target is not explicitly empty');
               targetMutationStarted = true;
               try {
-                await providerCall('restore', () => provider.restoreArtifact({ artifactPath: scratchArtifact, connection: boundConnection }));
+                await providerCall('restore', () => provider.restoreArtifact({
+                  artifactPath: scratchArtifact,
+                  connection: boundConnection,
+                  lockedTarget: inspected.lockedTarget,
+                  expectedAuthority: {
+                    bindingUuid: verified.manifest.source.bindingUuid,
+                    tenantFingerprint: verified.manifest.source.tenantFingerprint,
+                    resourceFingerprint: verified.manifest.source.resourceFingerprint,
+                    migrationSetFingerprint: verified.manifest.source.migrationSetFingerprint,
+                  },
+                }));
               } catch {
                 throw failure('BACKUP_RESTORE_PARTIAL', 'restore failed and the target must be treated as possibly partial', {
                   contract: BACKUP_CONTRACT,
@@ -734,7 +780,7 @@ export function createBackupOperations(options) {
                 refuse('BACKUP_ARTIFACT_CHANGED_DURING_RESTORE', 'the executed backup artifact changed during restore');
               }
               const restored = acceptedObservedAuthority(
-                await providerCall('inspect-restored', () => provider.inspectAuthority({ connection: boundConnection })),
+                await providerCall('inspect-restored-locked', () => inspected.inspectAuthority()),
                 'BACKUP_RESTORED_AUTHORITY_MISMATCH',
               );
               compareLiveAuthority(
@@ -783,21 +829,27 @@ async function inspectRestoredAuthority(connection, createPool) {
   return useConnection(connection, async (environment) => {
     try {
       return await withNativeClient(environment, async (client) => {
-        const marker = await client.query('SELECT tenant_slug, data_plane_id FROM accordo.spine_data_plane_binding');
-        const audit = await client.query(`SELECT tenant_fingerprint, resource_fingerprint, migration_set_fingerprint
-          FROM accordo.startup_audit WHERE plane = 'data' ORDER BY created_at DESC, id DESC LIMIT 1`);
-        if (marker.rowCount !== 1 || audit.rowCount !== 1) refuse('BACKUP_RESTORED_AUTHORITY_MISMATCH', 'restored database has no singular binding authority');
-        return Object.freeze({
-          bindingUuid: String(marker.rows[0].data_plane_id),
-          tenantFingerprint: String(audit.rows[0].tenant_fingerprint),
-          resourceFingerprint: String(audit.rows[0].resource_fingerprint),
-          migrationSetFingerprint: String(audit.rows[0].migration_set_fingerprint),
-        });
+        return inspectRestoredAuthorityClient(client);
       }, createPool);
     } catch (error) {
       if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
       refuse('BACKUP_RESTORED_AUTHORITY_MISMATCH', 'restored database authority could not be verified');
     }
+  });
+}
+
+async function inspectRestoredAuthorityClient(client) {
+  const marker = await client.query('SELECT tenant_slug, data_plane_id FROM accordo.spine_data_plane_binding');
+  const audit = await client.query(`SELECT tenant_fingerprint, resource_fingerprint, migration_set_fingerprint
+    FROM accordo.startup_audit WHERE plane = 'data' ORDER BY created_at DESC, id DESC LIMIT 1`);
+  if (marker.rowCount !== 1 || audit.rowCount !== 1) {
+    refuse('BACKUP_RESTORED_AUTHORITY_MISMATCH', 'restored database has no singular binding authority');
+  }
+  return Object.freeze({
+    bindingUuid: String(marker.rows[0].data_plane_id),
+    tenantFingerprint: String(audit.rows[0].tenant_fingerprint),
+    resourceFingerprint: String(audit.rows[0].resource_fingerprint),
+    migrationSetFingerprint: String(audit.rows[0].migration_set_fingerprint),
   });
 }
 
@@ -983,7 +1035,7 @@ async function runTool(command, args, environment, timeoutMs, capture = false) {
 async function toolIdentity(command, expectedName, timeoutMs) {
   const value = await runTool(command, ['--version'], {}, timeoutMs, true);
   const match = typeof value === 'string'
-    ? value.match(/^(pg_dump|pg_restore) \(PostgreSQL\) (\d+(?:\.\d+){0,3})(?:\s.*)?$/)
+    ? value.match(/^(pg_dump|pg_restore|psql) \(PostgreSQL\) (\d+(?:\.\d+){0,3})(?:\s.*)?$/)
     : null;
   if (!match || match[1] !== expectedName) refuse('BACKUP_TOOL_VERSION_REFUSED', 'PostgreSQL backup tool identity is invalid');
   const version = match[2];
@@ -993,9 +1045,15 @@ async function toolIdentity(command, expectedName, timeoutMs) {
 }
 
 export function createPostgresqlNativeBackupProvider(options = {}) {
-  const configuration = snapshotOptional(options, ['pgDump', 'pgRestore', 'timeoutMs', 'createPool'], [], 'BACKUP_PROVIDER_INVALID');
+  const configuration = snapshotOptional(
+    options,
+    ['pgDump', 'pgRestore', 'psql', 'timeoutMs', 'createPool'],
+    [],
+    'BACKUP_PROVIDER_INVALID',
+  );
   const dumpCommand = toolCommand(configuration.pgDump, 'pg_dump');
   const restoreCommand = toolCommand(configuration.pgRestore, 'pg_restore');
+  const psqlCommand = toolCommand(configuration.psql, 'psql');
   const timeoutMs = Number.isInteger(configuration.timeoutMs) && configuration.timeoutMs > 0 && configuration.timeoutMs <= 300_000
     ? configuration.timeoutMs : BACKUP_TOOL_TIMEOUT_MS;
   return defineBackupProvider({
@@ -1015,36 +1073,162 @@ export function createPostgresqlNativeBackupProvider(options = {}) {
       ));
       return tool;
     },
-    async prepareRestore() { await toolIdentity(restoreCommand, 'pg_restore', timeoutMs); },
+    async prepareRestore() {
+      await toolIdentity(restoreCommand, 'pg_restore', timeoutMs);
+      await toolIdentity(psqlCommand, 'psql', timeoutMs);
+    },
     async withTargetLock({ connection }, operation) {
       if (typeof operation !== 'function') refuse('BACKUP_TARGET_LOCK_INVALID', 'restore target lock operation is invalid');
       return useConnection(connection, async (environment) => {
         return withNativeClient(environment, async (client) => {
+          const witness = Object.freeze({
+            classId: 1094927188,
+            objectId: randomBytes(4).readInt32BE(0) || 1,
+          });
+          const lockedTarget = Object.freeze({});
+          const state = { witness, authority: null };
+          nativeLockedTargets.set(lockedTarget, state);
+          let admissionHeld = false;
+          let witnessHeld = false;
           try {
             const lock = await client.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [
               DATA_ADVISORY_LOCK.classId, DATA_ADVISORY_LOCK.objectId,
             ]);
             if (lock.rows[0]?.acquired !== true) refuse('BACKUP_TARGET_BUSY', 'restore target authority lock is already held');
-            return await operation(await inspectEmptyClient(client));
+            admissionHeld = true;
+            await client.query('SELECT pg_advisory_lock($1, $2)', [witness.classId, witness.objectId]);
+            witnessHeld = true;
+            const inspected = await inspectEmptyClient(client);
+            return await operation(Object.freeze({
+              empty: inspected.empty,
+              lockedTarget,
+              async inspectAuthority() {
+                if (!state.authority) {
+                  refuse('BACKUP_RESTORED_AUTHORITY_MISMATCH', 'restore child returned no committed authority');
+                }
+                const observed = await inspectRestoredAuthorityClient(client);
+                compareLiveAuthority(
+                  observed,
+                  state.authority,
+                  'BACKUP_RESTORED_AUTHORITY_MISMATCH',
+                  'restore child and held-lock backend authority differ',
+                );
+                return state.authority;
+              },
+            }));
           } catch (error) {
             if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
             refuse('BACKUP_TARGET_LOCK_FAILED', 'restore target authority lock failed');
           } finally {
-            await client.query('SELECT pg_advisory_unlock($1, $2)', [DATA_ADVISORY_LOCK.classId, DATA_ADVISORY_LOCK.objectId]).catch(() => {});
+            nativeLockedTargets.delete(lockedTarget);
+            if (witnessHeld) {
+              await client.query('SELECT pg_advisory_unlock($1, $2)', [witness.classId, witness.objectId]).catch(() => {});
+            }
+            if (admissionHeld) {
+              await client.query('SELECT pg_advisory_unlock($1, $2)', [DATA_ADVISORY_LOCK.classId, DATA_ADVISORY_LOCK.objectId]).catch(() => {});
+            }
           }
         }, configuration.createPool);
       });
     },
-    async restoreArtifact({ artifactPath, connection }) {
-      await useConnection(connection, (environment) => {
-        const { PGDATABASE, ...toolEnvironment } = environment;
-        return runTool(
+    async restoreArtifact({ artifactPath, connection, lockedTarget, expectedAuthority }) {
+      const locked = nativeLockedTargets.get(lockedTarget);
+      if (!locked) refuse('BACKUP_TARGET_LOCK_INVALID', 'restore target fence is unavailable');
+      const expected = acceptedObservedAuthority(expectedAuthority, 'BACKUP_RESTORED_AUTHORITY_MISMATCH');
+      const sqlPath = `${artifactPath}.restore.sql`;
+      const preludePath = `${artifactPath}.prelude.sql`;
+      const postludePath = `${artifactPath}.postlude.sql`;
+      const authorityPath = `${artifactPath}.authority`;
+      try {
+        await runTool(
           restoreCommand,
-          ['--exit-on-error', '--single-transaction', '--no-owner', '--no-privileges', '--no-password', '--schema=accordo', '--dbname=', artifactPath],
-          { ...toolEnvironment, PGDATABASE },
+          ['--no-owner', '--no-privileges', '--schema=accordo', `--file=${sqlPath}`, artifactPath],
+          {},
           timeoutMs,
         );
-      });
+        await writeFile(preludePath, `\\set ON_ERROR_STOP on
+BEGIN;
+SET LOCAL search_path TO pg_catalog;
+SELECT pg_advisory_xact_lock(${DATA_RESTORE_CHILD_LOCK.classId}, ${DATA_RESTORE_CHILD_LOCK.objectId});
+DO $accordo_restore_fence$
+BEGIN
+  IF pg_try_advisory_lock(${locked.witness.classId}, ${locked.witness.objectId}) THEN
+    PERFORM pg_advisory_unlock(${locked.witness.classId}, ${locked.witness.objectId});
+    RAISE EXCEPTION 'restore coordinator witness is absent' USING ERRCODE = '55000';
+  END IF;
+END
+$accordo_restore_fence$;
+`, { mode: 0o600, flag: 'wx' });
+        // psql truncates this file through \o, so the coordinator owns its mode:
+        // the child authority evidence must never be world- or group-readable.
+        await writeFile(authorityPath, '', { mode: 0o600, flag: 'wx' });
+        await writeFile(postludePath, `
+DO $accordo_restore_authority$
+BEGIN
+  IF (SELECT count(*) FROM accordo.spine_data_plane_binding) <> 1
+    OR NOT EXISTS (
+      SELECT 1 FROM accordo.spine_data_plane_binding
+      WHERE data_plane_id::text = ${sqlLiteral(expected.bindingUuid)}
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM accordo.startup_audit
+      WHERE plane = 'data'
+        AND tenant_fingerprint = ${sqlLiteral(expected.tenantFingerprint)}
+        AND resource_fingerprint = ${sqlLiteral(expected.resourceFingerprint)}
+        AND migration_set_fingerprint = ${sqlLiteral(expected.migrationSetFingerprint)}
+      ORDER BY created_at DESC, id DESC LIMIT 1
+    ) THEN
+    RAISE EXCEPTION 'restored authority mismatch' USING ERRCODE = '55000';
+  END IF;
+END
+$accordo_restore_authority$;
+\\o ${psqlPath(authorityPath)}
+SELECT concat_ws('|', 'accordo-restore-authority-v1', b.data_plane_id::text,
+  a.tenant_fingerprint, a.resource_fingerprint, a.migration_set_fingerprint)
+FROM accordo.spine_data_plane_binding b
+CROSS JOIN LATERAL (
+  SELECT tenant_fingerprint, resource_fingerprint, migration_set_fingerprint
+  FROM accordo.startup_audit WHERE plane = 'data'
+  ORDER BY created_at DESC, id DESC LIMIT 1
+) a;
+\\o
+COMMIT;
+`, { mode: 0o600, flag: 'wx' });
+        await useConnection(connection, async (environment) => {
+          const { PGDATABASE, ...toolEnvironment } = environment;
+          await runTool(
+            psqlCommand,
+            ['-X', '--set=ON_ERROR_STOP=1', '--quiet', '--tuples-only', '--no-align', '--no-password', '--dbname=',
+              `--file=${preludePath}`, `--file=${sqlPath}`, `--file=${postludePath}`],
+            { ...toolEnvironment, PGDATABASE },
+            timeoutMs,
+          );
+        });
+        let evidence;
+        try {
+          evidence = readTrustedRegularFile(authorityPath, {
+            maxBytes: 1024,
+            untrusted: () => refuse('BACKUP_RESTORED_AUTHORITY_MISMATCH', 'restore child authority evidence is untrusted'),
+          });
+        } catch (error) {
+          if (error && (typeof error === 'object' || typeof error === 'function') && frameworkErrors.has(error)) throw error;
+          refuse('BACKUP_RESTORED_AUTHORITY_MISMATCH', 'restore child returned no readable authority');
+        }
+        const authority = evidence.trim().split('|');
+        if (authority.length !== 5 || authority[0] !== 'accordo-restore-authority-v1') {
+          refuse('BACKUP_RESTORED_AUTHORITY_MISMATCH', 'restore child returned invalid authority');
+        }
+        locked.authority = acceptedObservedAuthority({
+          bindingUuid: authority[1],
+          tenantFingerprint: authority[2],
+          resourceFingerprint: authority[3],
+          migrationSetFingerprint: authority[4],
+        }, 'BACKUP_RESTORED_AUTHORITY_MISMATCH');
+      } finally {
+        await Promise.all([sqlPath, preludePath, postludePath, authorityPath].map(
+          (path) => rm(path, { force: true }).catch(() => {}),
+        ));
+      }
     },
   });
 }
@@ -1057,6 +1241,7 @@ export function backupVocabulary() {
     evidenceKeys: EVIDENCE_KEYS,
     expectedIntentKeys: EXPECTED_KEYS,
     restoreControlKeys: RESTORE_CONTROL_KEYS,
+    restoreAttempts: RESTORE_ATTEMPTS,
     restoreOutcomes: RESTORE_OUTCOMES,
     bundleEntries: Object.freeze([BACKUP_ARTIFACT_NAME, BACKUP_MANIFEST_NAME]),
     nativeToolMajor: BACKUP_TOOL_MAJOR,

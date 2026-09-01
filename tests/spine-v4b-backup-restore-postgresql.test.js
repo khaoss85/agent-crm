@@ -32,7 +32,7 @@ function restoreControl(receipts) {
         assert.equal(existing.manifestDigest, input.manifestDigest);
         assert.equal(existing.targetResourceFingerprint, input.targetResourceFingerprint);
         return {
-          id: existing.id, outcome: existing.outcome,
+          id: existing.id, attempt: 'existing', outcome: existing.outcome,
           artifactDigest: existing.artifactDigest,
           manifestDigest: existing.manifestDigest,
           targetResourceFingerprint: existing.targetResourceFingerprint,
@@ -48,7 +48,7 @@ function restoreControl(receipts) {
       operations.set(input.operationId, state);
       receipts.push({ phase: 'attempted', input });
       return {
-        id: state.id, outcome: null,
+        id: state.id, attempt: 'new', outcome: null,
         artifactDigest: state.artifactDigest,
         manifestDigest: state.manifestDigest,
         targetResourceFingerprint: state.targetResourceFingerprint,
