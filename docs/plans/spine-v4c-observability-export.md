@@ -604,6 +604,32 @@ Three of the four were found by someone who had not written the code, and the
 fourth by replaying the real flow instead of the described one. Neither is a
 substitute for tests; both are what tests are checked against.
 
+### The bridge: the same mechanism, applied to a person
+
+The tool cases above and the record cases below are one mechanism, not two.
+
+A truncated `grep | head`, `git diff --stat` after a mutation run, a
+`.git/MERGE_HEAD` path inside a worktree, a regex that stops at the first
+delimiter, a check that the sentinel had left the test file: five commands that
+answered, with confidence, **a question slightly different from the one we
+believed we were asking** — and every time the wrong answer was the more
+comfortable one.
+
+The record failures are the same act performed by a person rather than a
+command. Each was verified — and each verification was run **against the map
+that had produced the gap**. The mutation was checked by re-running the
+analysis that already had the hole in it. The false reason was checked against
+the four sites the same author had enumerated, so it could not find the fifth,
+because the enumeration was itself the hypothesis under test. The exclusion was
+checked against the field the author had added, not the file that publishes it.
+
+Which is why self-confirmation is not evidence and self-refutation is. Testing
+your own map never expands it: an analysis with a hole in it, re-run, returns
+the same hole with more confidence attached. The only check that can pay is the
+one that tries to break the claim — and the practical form of that is to ask
+what would have to be true for it to be wrong, rather than whether it looks
+right.
+
 ## Progress — 2026-09-01 delta review: a bypass, and a claim of mine that was wrong
 
 Two material findings, and the second corrects the record rather than the code.
@@ -729,7 +755,11 @@ message as closely as the change.
 ## Progress — 2026-09-01 the sentinel that was too convincing
 
 GitGuardian failed on `f299da1` with one finding, and it was the leak-scan
-sentinel: `postgresql://operator:hunter2@db.internal.invalid:5432/accordo`.
+sentinel — a full connection string of the form
+`scheme://plausible-user:password@fully.qualified.host:port/database`. It is
+described rather than quoted here, for the reason the next paragraph gives:
+writing it out reproduces exactly the shape that was flagged, and a plan is
+scanned like any other file.
 
 The useful part is not "a fake password was used". `hunter2` appears five times
 in this repository and has never tripped anything — including
@@ -759,3 +789,15 @@ appears, since GitGuardian cannot be run here.
 Worth noting for the campaign record: this is the first GitGuardian failure of
 the campaign, and V4A/V4B's `v4b-postgresql-password-sentinel`-style tokens have
 never tripped it. Form, not vocabulary.
+
+**And the fix reintroduced the problem twice while describing it.** The first
+version of this section quoted the offending string in full, and so does the
+commit message of `294d73b`. Both were written *after* the string was removed
+from the test, by someone who had just verified the fix — against the test
+file, which was the map again. The prose is corrected here; the commit message
+is pushed history and a force-push is not available under the campaign rules,
+so it is reported rather than rewritten.
+
+It is the sixth instance of the same thing and the most compact: the check
+asked "is the string out of the code?", the question that mattered was "is the
+string out of the repository?", and the answer to the first was yes.
