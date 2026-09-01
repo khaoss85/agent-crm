@@ -2797,7 +2797,7 @@
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
     "packages/core/src/definition-version-store.js": "87ad1979e37b77e0fb1ce196c85d16dd8b0032025b3939a5cf04d4ad19eff2fb",
     "packages/core/src/execution-run-store.js": "73c5f36371b21b02b7e476d93cc06a29cbae6c5ea9ef8539579a62c94e1545ac",
-    "packages/core/src/external-operation.js": "e6d47f0c5f9592fb398120e28f5e6178fd856ac4c20b29fb18d4778e11887216",
+    "packages/core/src/external-operation.js": "12c6e1affbeafac2db2d23a8b1ecd8564dbbe12e2d5418cb5afd312292e55fe9",
     "packages/core/src/money.js": "67d7c03a14cf053e1e6f52d73ed2ca96608a8c3992615fe6a6738bcfc930e705",
     "packages/core/src/operation-runtime.js": "ab227ce568a781221aa6a424946ff257683e51926ee24d61e829a20c43ef2d4e",
     "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325",

@@ -212,5 +212,6 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 - [ ] Shared-database row tenancy only if economics justify it.
 - [ ] Actual public→private migration after human repository creation; no history rewrite.
 - [ ] Package remote install/update/uninstall/registry.
-- [ ] Spine v3 outbox/scheduler and Spine v4 observability export. Bounded self-host secret-provider and PostgreSQL backup/verify/restore contracts are complete in v4A/v4B; managed secret and backup custody, scheduling and retention remain Cloud work.
+- [ ] Spine v3 timer consumers and Spine v4 observability export. The durable job store and its transactional outbox are merged in v3A/v3B; bounded self-host secret-provider and PostgreSQL backup/verify/restore contracts are complete in v4A/v4B; managed secret and backup custody, scheduling and retention remain Cloud work.
+- [ ] Disambiguate the `durable jobs, outbox or scheduler (Spine v3)` entry in `SPINE_NOT_MODELED`, or reclassify `spine.durable_jobs.implemented`, with every surface bound to it. V3B made the default PostgreSQL write path the first production consumer of the durable job store, so the published absence now reads two ways (ADR-041 V3B addendum). Integration campaign work, not a documentation follow-up.
 - [ ] Real Codex/Gemini comparative benchmark when both harnesses exist.

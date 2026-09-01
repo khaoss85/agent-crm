@@ -18,6 +18,12 @@ import { isSyncStorage, storageApi } from './storage-runtime.js';
 import { nowIso } from './time.js';
 import { deterministicUuid, snapshotWriteIds, withWriteIds } from './write-ids.js';
 import {
+  dispatchTransactionalOutboxJob,
+  enqueueWriteOutcomeEffects,
+  ensureCommittedWriteOutcomeEffects,
+  transactionalOutboxEffectIdentity,
+} from './transactional-outbox.js';
+import {
   createWriteOutcomeStore,
   isUnknownCommit,
   unknownCommitError,
@@ -57,6 +63,7 @@ const ENVELOPE = new AsyncLocalStorage();
  *   phase?: string,
  *   now?: () => string,
  *   clock?: () => string,
+ *   externalFinalizeDeclared?: boolean,
  * }} spec
  * @param {(ctx: {
  *   emit: (event: string, payload: unknown) => any,
@@ -130,7 +137,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
     const existing = await store.lookup(tenantNs, rawKey, phase);
     if (existing) {
       assertOutcomeScope(existing, scope);
-      await promoteAndFinalize(database, events, store, existing, { settleTrace });
+      await promoteAndFinalize(database, events, store, existing, { settleTrace, tenantId: spec.tenantId });
       return {
         replayed: true,
         idempotencyKey: rawKey,
@@ -152,6 +159,8 @@ export async function runIdempotentWrite(database, events, spec, execute) {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     /** @type {Array<{name: string, status: string, output?: unknown, error?: string}>} */
     const steps = [];
+    /** @type {any[]} */
+    let effectJobs = [];
     try {
       const result = await ENVELOPE.run({
         idempotencyKey: rawKey,
@@ -191,7 +200,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
               startedAt,
               steps: steps.slice(),
             };
-            await store.insert({
+            const persistedOutcome = {
               tenantNamespace: tenantNs,
               rawKey,
               phase,
@@ -201,33 +210,44 @@ export async function runIdempotentWrite(database, events, spec, execute) {
               eventIntents: outbox.peek(),
               traceIntent,
               runId,
+              externalFinalizeDeclared: spec.externalFinalizeDeclared === true,
               createdAt: now(),
+            };
+            await store.insert(persistedOutcome);
+            effectJobs = await enqueueWriteOutcomeEffects({
+              database,
+              tenantId: spec.tenantId,
+              outcome: persistedOutcome,
+              transaction: storageApi(database),
+              clock: now,
             });
             return encoded;
           });
           return inner;
         });
-        const committed = await store.lookup(tenantNs, rawKey, phase);
-        if (committed) {
-          const won = await store.tryPromoteEvents(committed);
-          if (won) {
-            try {
-              await outbox.commit();
-            } catch (dispatchError) {
-              console.error(
-                `[accordo] ${operation} run ${runId}: business writes committed but event dispatch failed: `
-                + `${dispatchError instanceof Error ? dispatchError.message : String(dispatchError)}`,
-              );
-            }
-          } else {
-            outbox.discard();
-          }
-          if (settleTrace) await finalizePendingTrace(database, committed.traceIntent);
-        } else {
-          outbox.discard();
-        }
+        outbox.discard();
         return value;
       }));
+      const committed = await store.lookup(tenantNs, rawKey, phase);
+      if (committed) {
+        for (const job of effectJobs.filter((entry) => entry.handler.name === 'promote-write-outcome-events')) {
+          try {
+            const dispatched = await dispatchTransactionalOutboxJob({
+              database, events, tenantId: spec.tenantId, clock: now,
+              workerId: `write-outcome-${runId}`,
+            }, job.id);
+            if (dispatched && dispatched.state !== 'succeeded') {
+              console.error(`[accordo] ${operation} run ${runId}: committed outbox dispatch is pending recovery: ${dispatched.lastErrorCode ?? 'TRANSACTIONAL_OUTBOX_DISPATCH_PENDING'}`);
+            }
+          } catch (dispatchError) {
+            console.error(
+              `[accordo] ${operation} run ${runId}: committed outbox dispatch is pending recovery: `
+              + `TRANSACTIONAL_OUTBOX_DISPATCH_FAILED: ${boundedFailureCode(dispatchError)}`,
+            );
+          }
+        }
+        if (settleTrace) await finalizePendingTrace(database, committed.traceIntent);
+      }
       return {
         replayed: false,
         idempotencyKey: rawKey,
@@ -245,7 +265,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
           const winner = await store.lookup(tenantNs, rawKey, phase);
           if (winner) {
             assertOutcomeScope(winner, scope);
-            await promoteAndFinalize(database, events, store, winner, { settleTrace });
+            await promoteAndFinalize(database, events, store, winner, { settleTrace, tenantId: spec.tenantId });
             return {
               replayed: true,
               idempotencyKey: rawKey,
@@ -255,6 +275,10 @@ export async function runIdempotentWrite(database, events, spec, execute) {
             };
           }
         } catch (lookupError) {
+          console.error(
+            `[accordo] ${operation} run ${runId}: committed winner could not be replayed: `
+            + `${boundedFailureCode(lookupError)}`,
+          );
           if (lookupError && typeof lookupError === 'object' && /** @type {any} */ (lookupError).code === 'DIVERGENT_REPLAY') {
             throw lookupError;
           }
@@ -311,7 +335,7 @@ export async function reconcileWriteOutcome(database, events, spec) {
     const existing = await store.lookup(tenantNs, rawKey, phase);
     if (existing) {
       assertOutcomeScope(existing, scope);
-      await promoteAndFinalize(database, events, store, existing);
+      await promoteAndFinalize(database, events, store, existing, { tenantId: spec.tenantId });
       return Object.freeze({
         status: 'committed',
         retryAuthorized: false,
@@ -336,6 +360,33 @@ export async function reconcileWriteOutcome(database, events, spec) {
   }
 }
 
+const FAILURE_CODE = /^[A-Z][A-Z0-9_]*$/;
+const FAILURE_KIND = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/**
+ * Bounded structured cause for a swallowed post-commit dispatch. A fixed label
+ * made a serialization contest, a network fault and an identity collision read
+ * identically in the only trace those cases leave. The message stays out: a
+ * driver constraint violation carries tenant ids and fingerprints in its text,
+ * and this line is written where no leak scan follows. What is left is a
+ * validated code, the retryable flag that separates a bounded contest from a
+ * genuine conflict, and — only when no code survives validation — the error
+ * class name, which is a constructor, never caller data.
+ *
+ * @param {unknown} error
+ */
+export function boundedFailureCode(error) {
+  if (!error || typeof error !== 'object') return 'UNKNOWN';
+  const raw = /** @type {any} */ (error).code;
+  const code = typeof raw === 'string' && raw.length <= 64 && FAILURE_CODE.test(raw) ? raw : null;
+  const transient = /** @type {any} */ (error).details?.transient === true ? ' transient' : '';
+  if (code) return `${code}${transient}`;
+  const kind = error.constructor?.name;
+  return typeof kind === 'string' && kind.length <= 64 && FAILURE_KIND.test(kind)
+    ? `UNKNOWN(${kind})${transient}`
+    : `UNKNOWN${transient}`;
+}
+
 /**
  * @param {any} database
  * @param {any} events
@@ -343,18 +394,32 @@ export async function reconcileWriteOutcome(database, events, spec) {
  * @param {any} outcome
  */
 async function promoteAndFinalize(database, events, store, outcome, options = {}) {
-  const won = await store.tryPromoteEvents(outcome);
-  if (won) {
-    for (const entry of outcome.eventIntents ?? []) {
-      if (!entry || typeof entry !== 'object') continue;
-      try {
-        await events.emit(entry.event, entry.payload);
-      } catch (error) {
-        console.error(
-          `[accordo] ${outcome.operation} run ${outcome.runId}: recovery event dispatch failed: `
-          + `${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+  if (Array.isArray(outcome.eventIntents) && outcome.eventIntents.length > 0) {
+    // Ownership absorbs only a contest it can prove harmless; an ownership
+    // failure that reaches here means this outcome may own no effect at all and
+    // must not be traded for a silent replay. Dispatch is different: the effect
+    // row is durable by then, so a later replay of the same key re-dispatches
+    // it. No autostarted worker exists to sweep it (ADR-041 V3B addendum).
+    await ensureCommittedWriteOutcomeEffects({
+      database,
+      tenantId: options.tenantId,
+      outcome,
+    });
+    const effect = transactionalOutboxEffectIdentity(
+      options.tenantId,
+      outcome,
+      'internal-event-promotion',
+    );
+    try {
+      await dispatchTransactionalOutboxJob({
+        database, events, tenantId: options.tenantId,
+        workerId: `write-outcome-${outcome.runId}`,
+      }, effect.jobId);
+    } catch (error) {
+      console.error(
+        `[accordo] ${outcome.operation} run ${outcome.runId}: committed outbox recovery remains pending: `
+        + `TRANSACTIONAL_OUTBOX_DISPATCH_FAILED: ${boundedFailureCode(error)}`,
+      );
     }
   }
   if (options.settleTrace !== false) await finalizePendingTrace(database, outcome.traceIntent);

@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS write_outcomes (
   trace_intent_json TEXT NOT NULL,
   run_id TEXT NOT NULL,
   events_promoted INTEGER NOT NULL DEFAULT 0,
+  external_finalize_declared INTEGER,
   created_at TIMESTAMPTZ NOT NULL,
   acknowledged_at TIMESTAMPTZ,
   PRIMARY KEY (tenant_namespace, raw_key, phase)
@@ -50,6 +51,16 @@ function decodeJson(value) {
   } catch {
     return value;
   }
+}
+
+function decodeFinalizeDeclared(value) {
+  if (value === null || value === undefined) return null;
+  const numeric = Number(value);
+  if (numeric === 0) return false;
+  if (numeric === 1) return true;
+  throw new AppError('Write-outcome finalize declaration is invalid', {
+    code: 'WRITE_OUTCOME_FINALIZE_DECLARATION_INVALID', status: 500,
+  });
 }
 
 /**
@@ -72,6 +83,7 @@ function mapOutcome(row) {
     traceIntent: decodeJson(row.trace_intent_json),
     runId: String(row.run_id),
     eventsPromoted: Number(row.events_promoted ?? 0) === 1,
+    externalFinalizeDeclared: decodeFinalizeDeclared(row.external_finalize_declared),
     createdAt: row.created_at,
     acknowledgedAt: row.acknowledged_at ?? null,
   });
@@ -109,6 +121,21 @@ export function createWriteOutcomeStore(database) {
       return mapOutcome(row);
     },
 
+    /** Lookup one exact phase by its stable run identity without exposing the raw key to jobs. */
+    async lookupByRun(tenantNamespace, runId, phase) {
+      const row = await api().maybeOne({
+        kind: 'select',
+        table: WRITE_OUTCOMES,
+        columns: '*',
+        where: [
+          { column: 'tenant_namespace', op: 'eq', value: tenantNamespace },
+          { column: 'run_id', op: 'eq', value: runId },
+          { column: 'phase', op: 'eq', value: phase },
+        ],
+      });
+      return mapOutcome(row);
+    },
+
     /**
      * @param {{
      *   tenantNamespace: string,
@@ -124,6 +151,7 @@ export function createWriteOutcomeStore(database) {
      *   eventIntents: unknown,
      *   traceIntent: unknown,
      *   runId: string,
+     *   externalFinalizeDeclared?: boolean,
      *   createdAt: string,
      * }} outcome
      */
@@ -150,14 +178,15 @@ export function createWriteOutcomeStore(database) {
           { column: 'trace_intent_json', value: JSON.stringify(outcome.traceIntent ?? null) },
           { column: 'run_id', value: outcome.runId },
           { column: 'events_promoted', value: 0 },
+          { column: 'external_finalize_declared', value: outcome.externalFinalizeDeclared === true ? 1 : 0 },
           { column: 'created_at', value: outcome.createdAt },
         ],
       });
     },
 
     /**
-     * Compare-and-set event promotion. Returns true when this caller won the
-     * right to dispatch the stored intents exactly once.
+     * Compare-and-set terminal event-promotion evidence. Call only after every
+     * stored intent was dispatched; V3A job ownership prevents concurrent dispatch.
      *
      * @param {{ tenantNamespace: string, rawKey: string, phase?: string }} outcome
      */

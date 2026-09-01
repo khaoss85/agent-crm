@@ -58,6 +58,7 @@ export function durableJobStorageFor(storage) {
 const COLUMNS = [
   'id', 'contract_version', 'tenant_id', 'kind', 'handler_name', 'handler_contract', 'handler_version',
   'payload_json', 'payload_fingerprint', 'schedule_intent', 'schedule_at', 'state', 'attempt',
+  'recovery_policy',
   'max_attempts', 'claim_worker_id', 'claim_id', 'claim_generation',
   'claim_expires_at', 'execution_started_at', 'idempotency_root', 'outcome_reference', 'created_at',
   'updated_at', 'last_error_code',
@@ -76,24 +77,49 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
     get: `SELECT ${selectColumns} FROM spine_jobs WHERE tenant_id = ? AND id = ?`,
     byRoot: `SELECT ${selectColumns} FROM spine_jobs WHERE tenant_id = ? AND idempotency_root = ?`,
     due: `
-    SELECT id, claim_generation FROM spine_jobs
+    SELECT id, claim_generation, execution_started_at FROM spine_jobs
      WHERE tenant_id = ?
        AND ((state IN ('pending', 'failed_retryable') AND attempt < max_attempts AND schedule_at <= ?)
-         OR (state = 'claimed' AND claim_expires_at <= ? AND execution_started_at IS NULL))
+         OR (state = 'claimed' AND claim_expires_at <= ?
+             AND (execution_started_at IS NULL
+               OR (execution_started_at IS NOT NULL AND recovery_policy = 'reconcilable_at_least_once'
+                   AND attempt < max_attempts))))
      ORDER BY schedule_at, created_at, id
      LIMIT 1
   `,
+    dueById: `
+    SELECT id, claim_generation, execution_started_at FROM spine_jobs
+     WHERE tenant_id = ? AND id = ?
+       AND ((state IN ('pending', 'failed_retryable') AND attempt < max_attempts AND schedule_at <= ?)
+         OR (state = 'claimed' AND claim_expires_at <= ?
+             AND (execution_started_at IS NULL
+               OR (execution_started_at IS NOT NULL AND recovery_policy = 'reconcilable_at_least_once'
+                   AND attempt < max_attempts))))
+     LIMIT 1
+  `,
     expired: `
-    SELECT id, claim_generation FROM spine_jobs
+    SELECT id, claim_generation, recovery_policy FROM spine_jobs
      WHERE tenant_id = ? AND state = 'claimed' AND claim_expires_at <= ?
        AND execution_started_at IS NOT NULL
+       AND (recovery_policy = 'terminal_unknown' OR attempt >= max_attempts)
      ORDER BY claim_expires_at, id
      LIMIT 100
+  `,
+    expiredById: `
+    SELECT id, claim_generation, recovery_policy FROM spine_jobs
+     WHERE tenant_id = ? AND id = ? AND state = 'claimed' AND claim_expires_at <= ?
+       AND execution_started_at IS NOT NULL
+       AND (recovery_policy = 'terminal_unknown' OR attempt >= max_attempts)
+     LIMIT 1
   `,
     terminalizeExpired: `
     UPDATE spine_jobs
        SET state = 'failed_terminal', updated_at = ?,
-           last_error_code = 'JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED',
+           last_error_code = CASE
+             WHEN recovery_policy = 'reconcilable_at_least_once'
+               THEN 'JOB_RECONCILABLE_OUTCOME_MAX_ATTEMPTS'
+             ELSE 'JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED'
+           END,
            claim_worker_id = NULL, claim_id = NULL, claim_expires_at = NULL
      WHERE tenant_id = ? AND id = ? AND state = 'claimed'
        AND claim_expires_at <= ? AND execution_started_at IS NOT NULL
@@ -101,13 +127,19 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
     claim: `
     UPDATE spine_jobs
        SET state = 'claimed',
-           attempt = CASE WHEN state = 'claimed' THEN attempt ELSE attempt + 1 END,
+           attempt = CASE
+             WHEN state = 'claimed' AND execution_started_at IS NULL THEN attempt
+             ELSE attempt + 1
+           END,
            claim_worker_id = ?, claim_id = ?, claim_generation = claim_generation + 1,
            claim_expires_at = ?, execution_started_at = NULL,
            updated_at = ?, last_error_code = NULL
      WHERE tenant_id = ? AND id = ? AND claim_generation = ?
        AND ((state IN ('pending', 'failed_retryable') AND attempt < max_attempts AND schedule_at <= ?)
-         OR (state = 'claimed' AND claim_expires_at <= ? AND execution_started_at IS NULL))
+         OR (state = 'claimed' AND claim_expires_at <= ?
+             AND (execution_started_at IS NULL
+               OR (execution_started_at IS NOT NULL AND recovery_policy = 'reconcilable_at_least_once'
+                   AND attempt < max_attempts))))
   `,
     beginExecution: `
     UPDATE spine_jobs SET execution_started_at = ?, updated_at = ?
@@ -158,12 +190,22 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
     get(tenantId, id) { return statement('get').get(tenantId, id) ?? null; },
     getByRoot(tenantId, root) { return statement('byRoot').get(tenantId, root) ?? null; },
     claim(input) {
-      const terminalized = statement('expired').all(input.tenantId, input.now);
+      const terminalized = input.id == null
+        ? statement('expired').all(input.tenantId, input.now)
+        : statement('expiredById').all(input.tenantId, input.id, input.now);
       for (const row of terminalized) {
         statement('terminalizeExpired').run(input.now, input.tenantId, row.id, input.now);
       }
-      const candidate = statement('due').get(input.tenantId, input.now, input.now);
-      if (!candidate) return { row: null, terminalized };
+      const terminalEvidence = terminalized.map((row) => ({
+        ...row,
+        last_error_code: row.recovery_policy === 'reconcilable_at_least_once'
+          ? 'JOB_RECONCILABLE_OUTCOME_MAX_ATTEMPTS'
+          : 'JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED',
+      }));
+      const candidate = input.id == null
+        ? statement('due').get(input.tenantId, input.now, input.now)
+        : statement('dueById').get(input.tenantId, input.id, input.now, input.now);
+      if (!candidate) return { row: null, terminalized: terminalEvidence, recovered: false };
       const changed = statement('claim').run(
         input.workerId, input.claimId, input.expiresAt, input.now,
         input.tenantId, candidate.id, candidate.claim_generation,
@@ -171,7 +213,8 @@ export function registerSqliteDurableJobStorage(storage, raw, owner) {
       );
       return {
         row: Number(changed.changes) === 1 ? statement('get').get(input.tenantId, candidate.id) : null,
-        terminalized,
+        terminalized: terminalEvidence,
+        recovered: candidate.execution_started_at !== null && candidate.execution_started_at !== undefined,
       };
     },
     finish(input) {
@@ -229,42 +272,59 @@ export function registerPostgresqlDurableJobStorage(storage, { query, table, own
       const exhaustedResult = await query(`
         WITH exhausted AS (
           SELECT "id" FROM ${table}
-           WHERE "tenant_id" = $2 AND "state" = 'claimed' AND "claim_expires_at" <= $1
+           WHERE "tenant_id" = $2 AND ($3::text IS NULL OR "id" = $3)
+             AND "state" = 'claimed' AND "claim_expires_at" <= $1
              AND "execution_started_at" IS NOT NULL
+             AND ("recovery_policy" = 'terminal_unknown' OR "attempt" >= "max_attempts")
            ORDER BY "claim_expires_at", "id"
            FOR UPDATE SKIP LOCKED
            LIMIT 100
         )
         UPDATE ${table} AS j
            SET "state" = 'failed_terminal', "updated_at" = $1,
-               "last_error_code" = 'JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED',
+               "last_error_code" = CASE
+                 WHEN j."recovery_policy" = 'reconcilable_at_least_once'
+                   THEN 'JOB_RECONCILABLE_OUTCOME_MAX_ATTEMPTS'
+                 ELSE 'JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED'
+               END,
                "claim_worker_id" = NULL, "claim_id" = NULL, "claim_expires_at" = NULL
           FROM exhausted
          WHERE j."id" = exhausted."id" AND j."tenant_id" = $2
-         RETURNING j."id", j."claim_generation"
-      `, [input.now, input.tenantId]);
+         RETURNING j."id", j."claim_generation", j."last_error_code"
+      `, [input.now, input.tenantId, input.id ?? null]);
       const result = await query(`
         WITH candidate AS (
-          SELECT "id" FROM ${table}
-           WHERE "tenant_id" = $1
+          SELECT "id", ("execution_started_at" IS NOT NULL) AS recovered FROM ${table}
+           WHERE "tenant_id" = $1 AND ($6::text IS NULL OR "id" = $6)
              AND (("state" IN ('pending', 'failed_retryable') AND "attempt" < "max_attempts" AND "schedule_at" <= $2)
-               OR ("state" = 'claimed' AND "claim_expires_at" <= $2 AND "execution_started_at" IS NULL))
+               OR ("state" = 'claimed' AND "claim_expires_at" <= $2
+                   AND ("execution_started_at" IS NULL
+                     OR ("execution_started_at" IS NOT NULL
+                         AND "recovery_policy" = 'reconcilable_at_least_once'
+                         AND "attempt" < "max_attempts"))))
            ORDER BY "schedule_at", "created_at", "id"
            FOR UPDATE SKIP LOCKED
            LIMIT 1
         )
         UPDATE ${table} AS j
            SET "state" = 'claimed',
-               "attempt" = CASE WHEN j."state" = 'claimed' THEN j."attempt" ELSE j."attempt" + 1 END,
+               "attempt" = CASE
+                 WHEN j."state" = 'claimed' AND j."execution_started_at" IS NULL THEN j."attempt"
+                 ELSE j."attempt" + 1
+               END,
                "claim_worker_id" = $3, "claim_id" = $4,
                "claim_generation" = j."claim_generation" + 1,
                "claim_expires_at" = $5, "execution_started_at" = NULL, "updated_at" = $2,
                "last_error_code" = NULL
           FROM candidate
          WHERE j."id" = candidate."id" AND j."tenant_id" = $1
-         RETURNING ${returning}
-      `, [input.tenantId, input.now, input.workerId, input.claimId, input.expiresAt]);
-      return { row: result.rows[0] ?? null, terminalized: exhaustedResult.rows };
+         RETURNING ${returning}, candidate.recovered AS _recovered_unknown
+      `, [input.tenantId, input.now, input.workerId, input.claimId, input.expiresAt, input.id ?? null]);
+      return {
+        row: result.rows[0] ?? null,
+        terminalized: exhaustedResult.rows,
+        recovered: result.rows[0]?._recovered_unknown === true,
+      };
     },
     async beginExecution(input) {
       const result = await query(`

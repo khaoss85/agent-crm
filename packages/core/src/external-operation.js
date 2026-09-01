@@ -7,11 +7,17 @@ import { writeTrace, sanitizeJsonSafe } from './action-runtime.js';
 import { requestFingerprint, resolveIdempotencyKey, tenantNamespace } from './idempotency.js';
 import { deterministicUuid } from './write-ids.js';
 import {
+  boundedFailureCode,
   isUnknownCommit,
   runIdempotentWrite,
   usesWriteOutcomes,
 } from './write-outcome-runtime.js';
 import { createWriteOutcomeStore, unknownCommitError } from './write-outcome-store.js';
+import {
+  dispatchTransactionalOutboxJob,
+  ensureCommittedWriteOutcomeEffects,
+  transactionalOutboxEffectIdentity,
+} from './transactional-outbox.js';
 
 /**
  * The bounded external-operation contract (ADR-017).
@@ -238,6 +244,33 @@ function receiptMismatch() {
   });
 }
 
+function divergentFinalizeDeclaration() {
+  return new AppError('External operation finalize declaration differs from the committed receipt', {
+    code: 'DIVERGENT_REPLAY', status: 409,
+  });
+}
+
+function unknownFinalizeDeclaration() {
+  return new AppError('Committed receipt finalize declaration requires operator reconciliation', {
+    code: 'EXTERNAL_FINALIZE_DECLARATION_RECONCILIATION_REQUIRED', status: 409,
+  });
+}
+
+async function assertFinalizeDeclaration(args, stored) {
+  if (stored.externalFinalizeDeclared === null) {
+    await ensureCommittedWriteOutcomeEffects({
+      database: args.database,
+      tenantId: args.specBase.tenantId,
+      outcome: stored,
+      clock: args.now,
+    });
+    throw unknownFinalizeDeclaration();
+  }
+  if (stored.externalFinalizeDeclared !== args.finalizeDeclared) {
+    throw divergentFinalizeDeclaration();
+  }
+}
+
 /**
  * @param {any} remote
  * @param {{
@@ -331,6 +364,7 @@ async function runExternalOperationV2(operation) {
       actor,
       now,
       external: operation.external,
+      finalizeDeclared: typeof operation.finalize === 'function',
     });
   }
 
@@ -357,6 +391,36 @@ async function runExternalOperationV2(operation) {
     }),
   ));
 
+  if (usesWriteOutcomes(database)) {
+    const receiptOutcome = await createWriteOutcomeStore(database).lookup(
+      tenantNamespace(tenantId), rawKey, 'receipt',
+    );
+    if (receiptOutcome) {
+      await ensureCommittedWriteOutcomeEffects({
+        database,
+        tenantId,
+        outcome: receiptOutcome,
+        clock: now,
+      });
+      const effect = transactionalOutboxEffectIdentity(
+        tenantId,
+        receiptOutcome,
+        'external-finalize-continuation',
+      );
+      try {
+        await dispatchTransactionalOutboxJob({
+          database, events, tenantId, clock: now,
+          workerId: `external-finalize-${receiptOutcome.runId}`,
+        }, effect.jobId);
+      } catch (error) {
+        console.error(
+          `[accordo] ${name} run ${receiptOutcome.runId}: finalize continuation evidence remains pending: `
+          + `TRANSACTIONAL_OUTBOX_DISPATCH_FAILED: ${boundedFailureCode(error)}`,
+        );
+      }
+    }
+  }
+
   return {
     result: finalized.result,
     runId: finalized.runId,
@@ -379,6 +443,7 @@ async function runExternalOperationV2(operation) {
  *   actor: unknown,
  *   now: () => string,
  *   external?: Function | null,
+ *   finalizeDeclared: boolean,
  * }} args
  */
 async function obtainProviderReceipt(args) {
@@ -390,7 +455,10 @@ async function obtainProviderReceipt(args) {
   const rawKey = specBase.idempotencyKey;
   if (store) {
     const stored = await store.lookup(tenantNamespace(specBase.tenantId), rawKey, 'receipt');
-    if (stored) return stored.response;
+    if (stored) {
+      await assertFinalizeDeclaration(args, stored);
+      return stored.response;
+    }
     const attempted = await store.lookup(tenantNamespace(specBase.tenantId), rawKey, 'call');
     if (attempted) {
       if (provider && typeof provider.reconcile === 'function') {
@@ -491,6 +559,7 @@ async function persistReceipt(args, receipt) {
       target: 'receipt',
       phase: 'receipt',
       settleTrace: false,
+      externalFinalizeDeclared: args.finalizeDeclared === true,
     }, async () => receipt);
     return outcome.result;
   } catch (error) {
@@ -501,7 +570,10 @@ async function persistReceipt(args, receipt) {
       resolveIdempotencyKey(specBase.idempotencyKey, specBase.now),
       'receipt',
     );
-    if (existing) return existing.response;
+    if (existing) {
+      await assertFinalizeDeclaration(args, existing);
+      return existing.response;
+    }
     if (args.provider && typeof args.provider.reconcile === 'function') {
       const remote = await args.provider.reconcile({
         idempotencyKey: args.providerKey,

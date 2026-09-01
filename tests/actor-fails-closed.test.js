@@ -224,10 +224,10 @@ test('a body actor spoof reaches nothing, over the real HTTP boundary', async (t
  *
  * The claim is now stated narrowly, and this test is what keeps it true — it
  * measures the two counts the doc asserts instead of asserting them in prose.
- * Both are zero today, which is the strongest state available: the privileged
- * path exists and nothing in the framework needs it.
+ * V3B adds exactly one named use for committed outbox effect transitions; direct
+ * SYSTEM_ACTOR references remain zero.
  */
-test('framework self-authority stays at zero, measured rather than asserted', async () => {
+test('framework self-authority stays at its reviewed named outbox boundary', async () => {
   const { execFileSync } = await import('node:child_process');
   const { fileURLToPath } = await import('node:url');
   const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -246,8 +246,11 @@ test('framework self-authority stays at zero, measured rather than asserted', as
   const isReExport = (line) => line.includes('packages/core/index.js');
 
   const trusted = grep('trustedSystemActor(')
-    .filter((line) => !isComment(line) && !inActorModule(line) && !isReExport(line));
-  assert.deepEqual(trusted, [],
+    .filter((line) => !isComment(line) && !inActorModule(line) && !isReExport(line))
+    .map((line) => line.replace(/:\d+:/, ':<line>:'));
+  assert.deepEqual(trusted, [
+    "packages/core/src/transactional-outbox.js:<line>:const OUTBOX_ACTOR = trustedSystemActor('dispatching committed transactional outbox effects');",
+  ],
     'a new trustedSystemActor call site is a new place the framework claims root — '
     + 'justify it here and update this expectation deliberately');
 

@@ -3984,7 +3984,8 @@ widening from `site/` to `docs/` for a single noun.
 Accordo has one versioned durable-job contract on the tenant data plane. A job
 persists a named handler identity and canonical JSON-safe payload, never source
 code or a command. Every row carries the already-bound application tenant,
-schedule intent plus instant, bounded attempt policy, idempotency root, claim generation and
+schedule intent plus instant, bounded attempt policy, persisted recovery policy,
+idempotency root, claim generation and
 claim fingerprint, plus nullable execution-start time for the active generation. Omitted schedules persist as `immediate`, so the same
 idempotency root joins across clock drift without collapsing into an explicitly
 scheduled request. Every completion is compare-and-set on tenant, worker,
@@ -4002,7 +4003,8 @@ Immediately before a registered handler is invoked, the worker compare-and-sets
 `execution_started_at` under tenant, worker, claim fingerprint, generation and
 live lease, then records `durable_job.execution_started` in that same
 transaction. Expiry can therefore recover an unstarted claim without consuming
-another attempt. Expiry after execution start instead becomes
+another attempt. Under V3A's default `terminal_unknown` recovery policy, expiry
+after execution start becomes
 `JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED`; the claim is cleared, the start
 timestamp remains durable terminal evidence, and no worker invokes it again.
 This is deliberately conservative: a crash after the CAS and before the
@@ -4028,8 +4030,10 @@ validation, authorization and policy failures collapse to framework-owned
 terminal codes. An expired `external-operation-v2` claim with no durable
 execution-start evidence is reclaimed on the same attempt and may invoke once.
 Once execution start is durable, expiry or an unknown handler outcome is never
-replayed: the stable idempotency root remains its external operation identity
-and the job becomes reconciliation-required.
+replayed under that default: the stable idempotency root remains its external
+operation identity and the job becomes reconciliation-required. ADR-041's V3B
+addendum later introduces one persisted opt-in for locally reconcilable outbox
+effects; it does not change this provider-safe default.
 
 ### Context
 
@@ -4099,6 +4103,72 @@ tenancy or a tenant switcher.
   outbox, timer consumer, provider adapter, operator command, public app facade,
   Cloud queue, production-readiness claim or JTBD promotion. Those boundaries
   remain for V3B, V3C and the integration campaign.
+
+### V3B addendum — committed effect intents are dispatched through exact durable jobs
+
+The existing PostgreSQL `write_outcomes.event_intents_json` remains the sole
+effect-intent authority. The transaction that inserts an outcome also enqueues
+one deterministic V3A job for each applicable closed effect family on the same
+affine storage handle: internal event promotion, and external-operation receipt
+continuation only when that receipt durably records that the operation declared
+a finalize phase. Provider-only operations record the closed false value and
+create no poison continuation. A legacy receipt with no declaration retains
+`unknown`, creates bounded reconciliation evidence, and never infers callback
+authority. Replaying a known receipt under the opposite declaration refuses as
+a divergent contract. The job carries only contract, run, phase and
+source-fingerprint identity. Event/domain/provider payloads, idempotency keys,
+actors, credentials and secret references remain in neither job nor job audit.
+Rollback therefore leaves no dispatchable identity; commit followed by process
+death leaves a pending one. A committed event outcome from before V3B is
+recovered by deterministically backfilling that same identity on explicit
+replay. Historical receipt continuation is backfilled only with committed
+declaration authority; an ambiguous legacy receipt requires explicit operator
+reconciliation.
+
+Internal events are dispatched from the committed outcome. A subscriber failure
+does not starve later stored intents: every valid intent is attempted, failures
+are collapsed to one bounded retryable result, and `events_promoted` is
+compare-and-set only when the complete pass succeeds. The
+old mark-before-dispatch path is gone. Transport is **at least once**: when a
+later subscriber fails, a retry may repeat an earlier subscriber. Concurrent
+workers cannot own the same claim. V3B effect jobs persist the closed
+`reconcilable_at_least_once` recovery policy: expiry after durable execution
+start advances attempt and generation, clears the old execution fence, and may
+invoke the same effect identity again until `maxAttempts`. That closes the
+zero-delivery crash window and honestly permits duplicates after partial
+delivery. Exhaustion is visible terminal evidence and late completion remains
+fenced. Every existing/generic job defaults to `terminal_unknown`; in
+particular external-operation-v2 provider work is never replayed by this
+policy. No intent is silently deleted and no exactly-once delivery claim is
+made.
+
+The external continuation handler accepts only a registered local-finalize
+operation. It reloads the committed intent and receipt, returns successfully if
+finalize already exists, and otherwise requires the callback to prove a
+committed finalize outcome before the job succeeds. Provider `call` and
+`reconcile` handles never enter this runtime, so recovering a receipt cannot
+implicitly replay an external side effect. This is a continuation fence, not a
+managed integration service or a general event platform.
+
+Construction still starts no worker. SQLite keeps its immediate in-process
+event compatibility and gains no durable-outbox or multi-node claim. The
+authoritative security audit path is not migrated into effect dispatch, and
+V3B adds no timer consumer, CLI/MCP/operator surface, Cloud backend,
+production-readiness claim or JTBD promotion.
+
+**One published absence becomes ambiguous here, and the integration campaign
+owns it.** `spine.durable_jobs.implemented` is `absent`, declared by the entry
+`durable jobs, outbox or scheduler (Spine v3)` in `SPINE_NOT_MODELED`
+(`packages/app/src/spine.js`). The intended reading — no Spine surface, no
+autostarted worker, no operator command — stays true after V3B, and this
+addendum states each of those absences directly. The literal reading, that the
+framework has no outbox at all, does not: from this milestone the default
+PostgreSQL write path enqueues an effect row for every committed write that
+carries event intents, which is the first production consumer of the durable
+job store. This delta deliberately leaves the authority string untouched,
+because rewriting it reclassifies the fact and moves every surface bound to it.
+The integration PR must either disambiguate that entry or reclassify the fact,
+together with the dependent surfaces — not as a documentation follow-up.
 
 ---
 
