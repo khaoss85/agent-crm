@@ -726,7 +726,7 @@ test('a declared-absence fact whose declaration is gone is refused, never defaul
   mutated.spineNotModeled = [];
   const { facts, problems } = buildFacts(mutated);
   assert.deepEqual(codes(problems), ['TRUTH_AUTHORITY_UNAVAILABLE']);
-  for (const id of ['spine.durable_jobs.implemented', 'spine.secrets_backups.implemented']) {
+  for (const id of ['spine.managed_jobs_service.implemented', 'spine.secrets_backups.implemented']) {
     assert.equal(facts.some((fact) => fact.id === id), false, `${id} was published from an absent declaration`);
     problemNaming(problems, id);
   }
@@ -789,7 +789,7 @@ test('building the thing SPINE_NOT_MODELED says is absent contradicts the senten
   // sentence standing moved nothing at all — a claim outliving the code it
   // describes, which is the failure this contract exists to close.
   for (const [id, resource] of [
-    ['spine.durable_jobs.implemented', 'job-run'],
+    ['spine.managed_jobs_service.implemented', 'managed-jobs-run'],
     ['spine.secrets_backups.implemented', 'managed-backup-run'],
   ]) {
     const mutated = await bundle();
@@ -802,7 +802,11 @@ test('building the thing SPINE_NOT_MODELED says is absent contradicts the senten
   // And the boundary the fact actually states still holds: follow-up tasks and
   // work tasks exist, a person moves every one of them, and neither is a job.
   const clean = buildFacts(await bundle());
-  assert.equal(clean.facts.find((fact) => fact.id === 'spine.durable_jobs.implemented').value, 'absent');
+  assert.equal(clean.facts.find((fact) => fact.id === 'spine.managed_jobs_service.implemented').value, 'absent');
+  // V3C split the old umbrella: the store, its outbox and its timers are their
+  // own facts now, and each says implemented on its own probe.
+  assert.equal(clean.facts.find((fact) => fact.id === 'spine.durable_job_store.implemented').value, 'implemented');
+  assert.equal(clean.facts.find((fact) => fact.id === 'spine.timer_consumers.implemented').value, 'implemented');
   assert.equal(clean.facts.find((fact) => fact.id === 'spine.secret_provider.implemented').value, 'implemented');
   assert.equal(clean.facts.find((fact) => fact.id === 'spine.backup_restore.implemented').value, 'implemented');
   assert.equal(clean.facts.find((fact) => fact.id === 'spine.secrets_backups.implemented').value, 'absent');

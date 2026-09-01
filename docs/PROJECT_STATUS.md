@@ -111,14 +111,17 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **Spine v3 outbox/scheduler** in parallel with **Spine v4 minimum
-   observability export**, then Accordo Cloud C0–C3 and an Arvo adapter.
+1. **Spine v4 minimum observability export**, then the public production-operations
+   integration and one exact measurement, then Accordo Cloud C0–C3 and an Arvo adapter.
+   Spine v3 is merged: durable jobs (v3A), the transactional outbox (v3B) and
+   scheduled timer consumers (v3C) are on this branch.
    Dedicated-database PostgreSQL, dual bundled graphs, leases and write-outcome
    keys are merged. Shared-database row tenancy remains deferred.
 
 The GTM stack and production promotion are complete; they are not queued work.
 The independent longer-horizon tracks remain the private/public repository
-migration, Spine v3 jobs/outbox/scheduler, Spine v4 secrets/backups/observability,
+migration, Spine v4 observability export and the managed custody the self-host
+contracts still lack,
 Customer Data Operations v2, Interactions, Billing, Marketing/Analytics, DX9,
 DX13 and a real comparative benchmark once both harnesses exist.
 
@@ -140,7 +143,7 @@ boundaries prevent a production PostgreSQL deployment from being claimed:
 |---|---|
 | No deployment authentication verifier | identity is only as trustworthy as the deployment adapter; the framework ships no verifier |
 | Shared-database row tenancy | dedicated-database PostgreSQL composition exists; shared-database row-level tenancy does not |
-| No durable outbox or scheduler | post-commit delivery, renewal triggers, SLA timers and unattended work do not survive process loss |
+| No worker service runs the durable work for you | the job store, its transactional outbox and scheduled timer consumers are merged and survive process loss, but the composing application starts every worker itself: nothing autostarts, and no operator surface or managed jobs service ships |
 | No managed secret/backup custody or production-observability backend | the bounded self-host contracts still need authenticated operator composition, durable policy/custody and external telemetry before recoverability can be operated as a managed service |
 | Browser E2E remains outside CI | current Chromium receipts are manual and Admin regressions are not browser-gated on every push |
 | No real provider adapters | provider behavior remains offline fixture behavior |
@@ -175,8 +178,9 @@ caller-supplied portable selected graph.
 <!-- truth: spine.storage.contract=1 -->
 M3C boots `createAccordoAppAsync()` and `accordo serve` on dedicated-database PostgreSQL after startup attestation. M4A–M4C add write-outcome keys, leases and HTTP/SDK/Admin/CLI transport. Shared-database row tenancy is not implemented.
 
-**Not implemented:** Spine v3 jobs/outbox/scheduler; Spine v4
-secrets/backups/observability; Cloud; deployment authentication; billing, invoicing and revenue
+**Not implemented:** an autostarted or operator-managed worker service, and any managed
+jobs service; Spine v4 observability export; managed secret and backup custody, scheduling
+and retention; Cloud; deployment authentication; billing, invoicing and revenue
 recognition; Interactions; Marketing/Analytics; remote package registry
 install/update/uninstall; shared-database row tenancy. The AX3
 benchmark remains observation-only (`comparative: false`), not a product

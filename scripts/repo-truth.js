@@ -121,6 +121,10 @@ export const TRUTH_LIMITATIONS = Object.freeze([
     + 'PostgreSQL 16 provider, which needs pg_dump, pg_restore and psql present. It is PostgreSQL-only — SQLite is '
     + 'refused, not degraded — and it is not managed artifact custody, scheduling, retention, PITR, clone promotion, '
     + 'an operator surface or a recoverability SLA'],
+  ['SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY',
+    'the durable job store, its transactional outbox and its scheduled timer consumers are a bounded self-host '
+    + 'contract whose worker the composing application starts explicitly. Nothing autostarts, no operator surface '
+    + 'or managed jobs service ships with them, and a timer opens an ask rather than deciding one'],
   ['MANAGED_SECRETS_BACKUPS_OBSERVABILITY_ABSENT',
     'the managed Spine v4 remainder is absent: no managed secret custody/service, backup custody/scheduling/retention '
     + 'or observability backend is implemented by this fact; bounded self-host contracts are separate positive facts'],
@@ -322,12 +326,18 @@ export const NAMESPACE_PROBES = Object.freeze({
  * authorities must agree, or neither answer is published.
  */
 const DECLARED_ABSENCE = Object.freeze({
-  'spine.durable_jobs.implemented': {
+  // V3C retired the umbrella `spine.durable_jobs.implemented`. It said "durable
+  // jobs, outbox or scheduler: absent" and three of those became true one after
+  // another, so a single fact could only keep being read wrongly. What remains
+  // absent is narrower and is stated as itself; what exists is published as
+  // three positive facts with their own probes.
+  'spine.managed_jobs_service.implemented': {
     in: 'SPINE_NOT_MODELED',
-    match: /durable jobs|outbox|scheduler/i,
+    match: /autostarted or operator-managed worker service/i,
     // Not `follow-up` or `work-task`: those records exist and a person moves
-    // every one of them, which is precisely the boundary this fact states.
-    absentPrefixes: ['scheduler', 'job', 'jobs', 'outbox', 'cron', 'timer', 'reminder', 'queue', 'worker', 'dispatcher'],
+    // every one of them. Not `job` or `timer` either — the store and its timers
+    // exist now; what is absent is a service that runs them for you.
+    absentPrefixes: ['managed-jobs', 'jobs-service', 'worker-service', 'job-runner', 'cron', 'dispatcher'],
   },
   'spine.secrets_backups.implemented': {
     in: 'SPINE_NOT_MODELED',
@@ -833,6 +843,23 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
       && typeof publicCore.defineBackupProvider === 'function'
       && typeof publicCore.createBackupOperations === 'function'
       && typeof publicCore.createPostgresqlNativeBackupProvider === 'function';
+    const scheduledAsks = publicCore.scheduledAskVocabulary();
+    bundle.durableJobStoreProbe = typeof publicCore.createDurableJobStore === 'function'
+      && typeof publicCore.createDurableJobWorker === 'function'
+      && typeof publicCore.createDurableJobHandlerRegistry === 'function';
+    bundle.transactionalOutboxProbe = typeof publicCore.registerTransactionalOutboxHandlers === 'function'
+      && typeof publicCore.createTransactionalOutboxWorker === 'function';
+    bundle.timerConsumerContract = scheduledAsks.contract;
+    bundle.timerConsumerProbe = scheduledAsks.contract === 1
+      && scheduledAsks.kinds?.length === 2
+      && scheduledAsks.kinds.includes('work-follow-up')
+      && scheduledAsks.kinds.includes('renewal-review')
+      && scheduledAsks.states?.includes('cancelled')
+      && scheduledAsks.autostart === false
+      && typeof publicCore.scheduleAsk === 'function'
+      && typeof publicCore.registerScheduledAskHandlers === 'function'
+      && typeof publicCore.cancelScheduledAsk === 'function'
+      && typeof publicCore.rescheduleAsk === 'function';
     // A limitation string is `CODE — prose`; the code is the structural half.
     bundle.tenantLimitationCodes = [...tenantStorage.TENANT_LIMITATIONS]
       .map((entry) => /^([A-Z][A-Z0-9_]+)/.exec(String(entry))?.[1] ?? '')
@@ -2024,6 +2051,47 @@ export function buildFacts(bundle) {
     ],
     scope: 'framework',
     limitations: ['SELF_HOST_POSTGRESQL_BACKUP_CONTRACT_ONLY', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
+  });
+
+  // V3C. Three boundaries that used to hide inside one umbrella absence. Each
+  // is proved by its own public surface, and all three carry the same bound:
+  // the composition starts the worker, and nothing runs it for you.
+  add({
+    id: 'spine.durable_job_store.implemented',
+    value: bundle.durableJobStoreProbe === true ? 'implemented' : 'absent',
+    authority: 'spine.contract',
+    evidence: [
+      'packages/core/src/durable-jobs.js#createDurableJobStore',
+      'packages/core/src/durable-jobs.js#createDurableJobWorker',
+      'executable-probe:durable-job-store-surface',
+    ],
+    scope: 'framework',
+    limitations: ['SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
+  });
+  add({
+    id: 'spine.transactional_outbox.implemented',
+    value: bundle.transactionalOutboxProbe === true ? 'implemented' : 'absent',
+    authority: 'spine.contract',
+    evidence: [
+      'packages/core/src/transactional-outbox.js#registerTransactionalOutboxHandlers',
+      'executable-probe:transactional-outbox-surface',
+    ],
+    scope: 'framework',
+    limitations: ['SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
+  });
+  add({
+    id: 'spine.timer_consumers.implemented',
+    value: bundle.timerConsumerContract === 1 && bundle.timerConsumerProbe === true
+      ? 'implemented'
+      : 'absent',
+    authority: 'spine.contract',
+    evidence: [
+      'packages/core/src/domain-timers.js#scheduledAskVocabulary',
+      'packages/core/src/domain-timers.js#scheduleAsk',
+      'executable-probe:scheduled-ask-vocabulary',
+    ],
+    scope: 'framework',
+    limitations: ['SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
   });
 
   for (const [id, rule] of Object.entries(DECLARED_ABSENCE)) {

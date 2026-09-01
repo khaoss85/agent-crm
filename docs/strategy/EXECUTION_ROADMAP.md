@@ -56,7 +56,9 @@ intended, and a fact contract has nothing to say about an intention.
 <!-- truth: spine.authentication.framework_verifier=absent -->
 <!-- truth: spine.multi_tenant_single_instance=refused_at_startup -->
 <!-- truth: spine.postgresql.implemented=implemented -->
-<!-- truth: spine.durable_jobs.implemented=absent -->
+<!-- truth: spine.durable_job_store.implemented=implemented -->
+<!-- truth: spine.timer_consumers.implemented=implemented -->
+<!-- truth: spine.managed_jobs_service.implemented=absent -->
 <!-- truth: spine.secret_provider.implemented=implemented -->
 <!-- truth: spine.backup_restore.implemented=implemented -->
 <!-- truth: spine.secrets_backups.implemented=absent -->
@@ -124,7 +126,7 @@ M16 Analytics Studio v1
 
 **Parallelization and hard dependencies — this sequence does NOT gate Cloud.** The workstream milestones and the platform phases run in parallel, exactly as M0–M8 ran alongside strategy work:
 
-- **Hard dependencies inside the track:** M10 → M11 (an Order snapshots a signed Quote) → **M12** (a contract and its subscriptions are activated from an Order) → **M13** (a delivery project is created from the Order/Contract scope) → **M14** → **M15**. M9 is independent of M10–M15. **M16** closes the sequence pragmatically because its value grows with each preceding milestone, but the semantic layer plus pipeline metrics need only M8 and may be pulled earlier. Renewal scheduling inside M12 is additionally gated on `JOBS_AND_OUTBOX.md`: without a scheduler nothing can fire on a future date, so M12 stops at activation.
+- **Hard dependencies inside the track:** M10 → M11 (an Order snapshots a signed Quote) → **M12** (a contract and its subscriptions are activated from an Order) → **M13** (a delivery project is created from the Order/Contract scope) → **M14** → **M15**. M9 is independent of M10–M15. **M16** closes the sequence pragmatically because its value grows with each preceding milestone, but the semantic layer plus pipeline metrics need only M8 and may be pulled earlier. Renewal scheduling inside M12 was gated on `JOBS_AND_OUTBOX.md`; Spine v3 lifted that gate. A person can now schedule a renewal review and a worker the application starts presents it at the instant. What M12 still stops short of is deciding anything on that instant: the review is an ask, and the renewal decision stays the human action lifecycle owns.
 - **The Production Spine (Phase 6) is a parallel hard gate, not a sequel.** **v1 is merged**: organizations/tenancy, memberships and RBAC exist and are enforced. Still owed by v2–v4: PostgreSQL, shared-database tenancy, durable jobs, secrets, backups, remote-safe MCP — and, outside the framework by design, the identity verifier a deployment supplies. **Accordo Cloud work begins when the Spine is done — not when all domains are done**, and "done" means the whole phase, not v1.
 - **What the Spine specifically gates within the workstreams:** manual-reassignment permission validation with real users (M9), partner/customer access boundaries and portals (M13–M15), role-aware dashboards (M16), and every remote or multi-user claim. v1 moved the blocker: the permission enforcement now exists, so what those rows still wait on is a **verified** user rather than an asserted one. Until a deployment supplies a verifier, they stay boundary-tested against declared actors, and the JTBD matrix must not claim them validated.
 
@@ -292,7 +294,7 @@ MK7  Attribution and Closed-loop Optimization      hard-blocked on ANALYTICS_STU
 
 - **Outcome:** rolling, triggered and multi-step multichannel journeys that survive a restart.
 - **Deliverables:** `packages/journeys`; JourneyDefinition/Version, Enrollment, StepExecution, durable waits, retry/backoff, exit criteria, version pinning.
-- **Dependencies:** **Durable Automation (`JOBS_AND_OUTBOX.md`) — hard.** Journeys on the current in-process post-commit event buffer (ADR-012) would drop steps in production; this milestone does not start before the outbox lands.
+- **Dependencies:** **Durable Automation (`JOBS_AND_OUTBOX.md`) — hard.** Journeys on the in-process post-commit event buffer (ADR-012) would drop steps in production. The transactional outbox landed in Spine v3B, so this dependency is met; what a journey still needs beyond it is MK2 Data Governance, which is unchanged.
 - **Acceptance:** exactly-once step semantics under restart and concurrency; publishing a version does not mutate active enrolments; a stuck journey fails loudly rather than silently.
 
 ### MK5 — Experiments, Control Groups and Holdouts
