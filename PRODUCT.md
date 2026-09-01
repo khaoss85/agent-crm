@@ -30,7 +30,10 @@ Each of those sentences is bound to a generated fact (ADR-039) and re-checked by
 <!-- truth: spine.authorization.enforced=enforced -->
 <!-- truth: spine.tenant.isolation.mode=one_tenant_per_instance -->
 <!-- truth: spine.postgresql.implemented=implemented -->
-<!-- truth: spine.durable_jobs.implemented=absent -->
+<!-- truth: spine.durable_job_store.implemented=implemented -->
+<!-- truth: spine.transactional_outbox.implemented=implemented -->
+<!-- truth: spine.timer_consumers.implemented=implemented -->
+<!-- truth: spine.managed_jobs_service.implemented=absent -->
 <!-- truth: billing.implemented=absent -->
 <!-- truth: marketing_runtime.implemented=absent -->
 

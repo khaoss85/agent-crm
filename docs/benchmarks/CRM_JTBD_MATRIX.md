@@ -36,7 +36,7 @@ have been caught surviving its own fix.
 <!-- truth: billing.implemented=absent -->
 <!-- truth: marketing_runtime.implemented=absent -->
 <!-- truth: cloud_control_plane.implemented=absent -->
-<!-- truth: spine.durable_jobs.implemented=absent -->
+<!-- truth: spine.managed_jobs_service.implemented=absent -->
 
 ---
 

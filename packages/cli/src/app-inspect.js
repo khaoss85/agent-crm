@@ -396,7 +396,9 @@ export async function inspectApplication({ rootDir: requested }) {
       // truth: spine.tenant.crm_data_plane_enforced=enforced_by_binding
       // truth: spine.multi_tenant_single_instance=refused_at_startup
       // truth: spine.postgresql.implemented=implemented
-      // truth: spine.durable_jobs.implemented=absent
+      // truth: spine.durable_job_store.implemented=implemented
+      // truth: spine.timer_consumers.implemented=implemented
+      // truth: spine.managed_jobs_service.implemented=absent
       // truth: spine.secret_provider.implemented=implemented
       // truth: spine.backup_restore.implemented=implemented
       // truth: spine.secrets_backups.implemented=absent
