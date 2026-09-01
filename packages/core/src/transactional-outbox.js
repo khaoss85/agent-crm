@@ -9,6 +9,12 @@ import {
 } from './durable-jobs.js';
 import { AppError, ValidationError } from './errors.js';
 import { tenantNamespace } from './idempotency.js';
+import {
+  reportOutboxDispatch,
+  requireTelemetrySink,
+  telemetryDurationMs,
+  telemetryErrorCode,
+} from './observability-export.js';
 import { deterministicUuid } from './write-ids.js';
 import { createWriteOutcomeStore } from './write-outcome-store.js';
 
@@ -188,9 +194,58 @@ function temporaryDispatchFailure() {
   });
 }
 
+/**
+ * Wrap one effect consumer so its dispatch attempt is reported (Spine v4C).
+ *
+ * The wrapper observes and re-raises: the error the worker sees is the error
+ * the handler threw, byte for byte, and a telemetry failure cannot turn a
+ * failed dispatch into a succeeded one or the reverse.
+ *
+ * **What `outcome` means, precisely.** It reports how this handler *attempt*
+ * settled, and it is emitted when `execute` returns — before the worker commits
+ * `store.succeed`. A commit that then fails leaves `dispatch: succeeded` beside
+ * `execution: failed_retryable` for the same attempt, and both are accurate
+ * about different things: the effect was delivered, the job row was not
+ * advanced. The committed outcome is `accordo.durable_job.execution`, which is
+ * read back from the settled row; this signal is never the authority on it. Only the effect name —
+ * a closed V3B constant — the attempt number, an elapsed duration and a
+ * charset-validated error code leave here. The committed outcome row, the
+ * event payloads and the source fingerprint do not.
+ *
+ * @param {any} telemetry
+ * @param {string} effect
+ * @param {(context: any) => Promise<any>} execute
+ */
+function instrumentedDispatch(telemetry, effect, execute) {
+  if (!telemetry) return execute;
+  requireTelemetrySink(telemetry, (message) => {
+    throw new ValidationError(`Transactional-outbox ${message}`, { field: 'telemetry' });
+  });
+  return async (context) => {
+    const clock = typeof context?.now === 'function' ? context.now : () => new Date().toISOString();
+    const startedAt = clock();
+    const attempt = context?.job?.attempt;
+    try {
+      const result = await execute(context);
+      reportOutboxDispatch(telemetry, {
+        effect, outcome: 'succeeded', attempt,
+        durationMs: telemetryDurationMs(startedAt, clock()),
+      });
+      return result;
+    } catch (error) {
+      reportOutboxDispatch(telemetry, {
+        effect, outcome: 'failed', attempt,
+        durationMs: telemetryDurationMs(startedAt, clock()),
+        errorCode: telemetryErrorCode(error),
+      });
+      throw error;
+    }
+  };
+}
+
 /** Register the two closed effect consumers on a V3A named-handler registry. */
 export function registerTransactionalOutboxHandlers(registry, {
-  database, events, tenantId, resolveExternalFinalize,
+  database, events, tenantId, resolveExternalFinalize, telemetry = null,
 }) {
   const tenantNs = tenantNamespace(tenantId);
   const outcomes = createWriteOutcomeStore(database);
@@ -198,7 +253,7 @@ export function registerTransactionalOutboxHandlers(registry, {
     kind: OUTBOX_KIND,
     name: EVENT_HANDLER,
     version: 1,
-    async execute({ job }) {
+    execute: instrumentedDispatch(telemetry, 'internal-event-promotion', async ({ job }) => {
       const source = boundedSource(job, 'internal-event-promotion');
       const outcome = await loadSource(outcomes, tenantNs, source);
       if (outcome.eventsPromoted) return { outcomeReference: `outbox:${source.sourceFingerprint}` };
@@ -224,7 +279,7 @@ export function registerTransactionalOutboxHandlers(registry, {
       }
       if (dispatchFailed) throw temporaryDispatchFailure();
       return { outcomeReference: `outbox:${source.sourceFingerprint}` };
-    },
+    }),
     async complete({ job, transaction }) {
       const source = boundedSource(job, 'internal-event-promotion');
       const transactionalOutcomes = createWriteOutcomeStore({ storage: transaction });
@@ -241,7 +296,7 @@ export function registerTransactionalOutboxHandlers(registry, {
     kind: OUTBOX_KIND,
     name: EXTERNAL_HANDLER,
     version: 1,
-    async execute({ job }) {
+    execute: instrumentedDispatch(telemetry, 'external-finalize-continuation', async ({ job }) => {
       const source = boundedSource(job, 'external-finalize-continuation');
       if (source.phase !== 'receipt') {
         throw new AppError('External continuation requires a receipt source', {
@@ -284,18 +339,18 @@ export function registerTransactionalOutboxHandlers(registry, {
         });
       }
       return { outcomeReference: `outbox:${source.sourceFingerprint}` };
-    },
+    }),
   });
   return registry;
 }
 
 export function createTransactionalOutboxWorker({
   database, events, tenantId, resolveExternalFinalize, workerId = 'transactional-outbox', clock,
-  pollIntervalMs = 1_000, leaseMs = 30_000, backoff,
+  pollIntervalMs = 1_000, leaseMs = 30_000, backoff, telemetry = null,
 }) {
   const registry = createDurableJobHandlerRegistry();
   registerTransactionalOutboxHandlers(registry, {
-    database, events, tenantId, resolveExternalFinalize,
+    database, events, tenantId, resolveExternalFinalize, telemetry,
   });
   return createDurableJobWorker({
     store: createStore(database, tenantId, clock),
@@ -306,6 +361,7 @@ export function createTransactionalOutboxWorker({
     pollIntervalMs,
     leaseMs,
     ...(backoff ? { backoff } : {}),
+    ...(telemetry ? { telemetry } : {}),
   });
 }
 

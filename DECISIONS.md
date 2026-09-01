@@ -4325,3 +4325,129 @@ Cloud adapter are two concrete consumers of the same manifest and restore
 fences; forcing either to deep-import private source or recreate those fences
 would fail the DX Simplicity Gate. No storage handle, locator, generic process
 runner, custody service or operator command enters the public surface.
+
+## ADR-043 — Telemetry exports a closed vocabulary, never a filtered payload
+
+**Status:** accepted. **Milestone:** Production Spine v4C.
+**Plan:** `docs/plans/spine-v4c-observability-export.md`.
+
+The public core provides one closed, versioned contract for handing bounded
+operational evidence to an observability system the deployment already runs.
+It is not an observability backend: nothing here stores, aggregates, queries,
+retains or displays anything, and no managed observability service is claimed.
+The security audit remains the database authority — a telemetry failure can
+never rewrite business truth, and no signal replaces an audit write.
+
+The leak fence is the shape of what may be said, not a filter over what a
+caller passed. A signal name must be in a frozen registry; an attribute key
+must be declared for that signal; an attribute value must be a member of a
+kernel-enumerated closed set, a `boundedFailureCode`-charset code, a
+registration identifier, a bounded integer or a boolean. Attributes are flat,
+so no nested structure exists for a payload to travel in, and a record that
+fails any of those checks is refused whole and counted, never silently
+repaired. Rejecting a record rather than stripping the offending key is
+deliberate: stripping hides the producer defect that put it there.
+
+The envelope and its attributes are copied into data-only snapshots before any
+check runs, so a value is read exactly once. Validating one read and exporting
+another is the whole of the bug this closes: an accessor could satisfy the
+allowlist and then return free text, a nested object, or an exception thrown
+out of the public sink from a read that sat outside every `try`.
+
+Each snapshot has a **null prototype**. On an ordinary object
+`snapshot.__proto__ = v` reaches `Object.prototype`'s accessor and replaces the
+prototype instead of creating an own property, so an envelope whose only own
+key was `__proto__` produced a snapshot with no own keys, passed the closed-key
+check with nothing to refuse, and had `signal`, `attributes` and `value` read
+through getters the caller supplied. With no prototype there is no inherited
+accessor for any key to reach, which is why this is stated as a property of the
+object rather than as a list of keys to watch for.
+
+Refusing accessors is a separate guard from reading once, and both are load
+bearing. Reading once prevents the two-read leak. Refusing accessors closes a
+case reading once does not: the three zero-attribute metric signals, where an
+accessor on `attributes` collapses to `undefined`, `?? {}` supplies a valid
+empty set, and nothing is required to be missing — so the record is accepted.
+
+No record identifier is exportable in v1 — not the tenant id or any
+fingerprint, not the job, run or worker id, not the idempotency root or the
+outcome reference. Tenant identity is leak material in this repository by
+precedent (ADR-041's bounded diagnostics exist because a driver message
+carries tenant ids), caller-chosen bounded text stays domain data however
+short, and a job id is a durable key into tenant-scoped rows that the audit
+log already correlates behind authorization while telemetry has none. The
+stated consequence is that v1 telemetry is aggregate-shaped rather than
+per-record traceable; correlation requires a later, deliberately authorized
+contract version rather than a widened attribute list.
+
+Two limits inside that fence are narrower than "no identifier is exportable"
+and are stated rather than left to be discovered. A job `kind` and `handler`
+name are chosen by whoever enqueued the work — `enqueue` bounds them to the
+identifier charset and checks no membership against the handler registry — so a
+caller who names a job after a uuid, a tenant slug or a dotted email localpart
+sees exactly that exported. Every attribute the kernel itself fills stays
+closed. Narrowing this by refusing uuid-shaped or address-shaped values would
+be a denylist, which is the thing this ADR refuses; closing it properly means
+checking registry membership at the seam, and that is a v2 contract change.
+
+Failure is best effort and bounded, stated exactly. An emission returns a
+boolean and never throws; no producer awaits one. Delivery is tracked in a
+bounded in-flight set rather than a growing queue, so backpressure is a counted
+drop with no batch to lose and no timer to schedule. **That drop is not
+necessarily transient**, and "backpressure" invites the wrong reading: nothing
+evicts an in-flight entry, so once `maxInFlight` emissions hang, every later
+signal drops for the life of the process, `inFlight` never returns to zero and
+every `close()` reports a timeout. It stays bounded and never crashes, as
+promised — but a permanently wedged exporter permanently silences telemetry
+instead of degrading it. Evicting would need a timer per emission, which is the
+timer-free property this sink is built on, so v1 declares the behaviour rather
+than buying it back. Flush and close each have
+a deadline built on the same race-and-clear shape as the V3A worker drain, so a
+hung exporter cannot hang application shutdown and no timer is leaked. Close is
+memoized: the exporter is closed at most once, and a later emission is a
+counted drop, not an exception raised into a shutdown path.
+
+`requireTelemetrySink` catches the composition error, not an adversary. A
+shape check is not a security barrier: a hostile composer already controls the
+process, so it is outside the threat model. A legitimate decorator that wraps a
+sink and forwards its six operations passes the check, and it is right that it
+passes — it forwards to a real sink. What makes the residual case non-fatal is
+not the discriminator but the thenable swallow in `report()`; saying where the
+defence is *not* without saying where it *is* would leave a reader who defeats
+the shape check concluding there is none.
+
+Lifecycle is application-owned. Constructing a sink starts no timer, socket or
+process, and the default async application factory gains no telemetry option in
+v4C. **Not because there is nothing there to instrument** — an earlier draft of
+this ADR said that and it was false: `createAccordoAppAsync` reaches
+`startPostgresqlLifecycle`, which calls `bootstrapPostgresqlApplication`, and
+that is the readiness producer. The reason is that giving the factory a
+telemetry option is a lifecycle decision — who constructs the sink, who owns
+its shutdown order relative to the data plane — and v4C deliberately leaves it
+to the composition that will own it rather than inventing an owner here.
+
+The measured consequence, stated because it is a real limit rather than a
+detail: `startPostgresqlLifecycle` forwards a closed option list that does not
+include `telemetry`, so `accordo.postgresql.readiness` and
+`accordo.postgresql.writer_lease_remaining_ms` are **unreachable from every
+supported composition** in v4C. Only a direct call to
+`bootstrapPostgresqlApplication` emits them, which is what the hosted test
+does. They are implemented and proven, and no application can turn them on
+yet.
+
+**OpenTelemetry and OTLP are not implemented and not claimed.** They would add
+a large dependency tree against the rule that a production dependency must
+remove more complexity than it adds, and bring a global provider, context
+propagation and shutdown lifecycle of their own. The exporter shape is kept
+adapter-compatible — five operations, flat string-keyed attributes, bounded
+scalars — so an OTLP adapter can be written outside the kernel later without a
+contract change. `telemetryVocabulary().openTelemetry` is `false` so a reader
+of generated truth cannot infer support that does not exist.
+
+The eight construction symbols are exported from `packages/core/index.js` for
+the reason ADR-042's are: self-host composition and a future Cloud control
+plane are two concrete consumers of the same allowlist, and forcing either to
+deep-import private source or rebuild the redaction fence would fail the DX
+Simplicity Gate. No storage handle, locator, event bus or operator command
+enters the public surface, and this adds no agent-facing command, tool or
+namespace at all.

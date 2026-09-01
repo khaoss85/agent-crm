@@ -11,6 +11,12 @@ import { tmpdir } from 'node:os';
 import { isIP } from 'node:net';
 import { requireActor } from './actor.js';
 import { AppError } from './errors.js';
+import {
+  reportBackupOperation,
+  requireTelemetrySink,
+  telemetryDurationMs,
+  telemetryErrorCode,
+} from './observability-export.js';
 import { DATA_ADVISORY_LOCK, DATA_RESTORE_CHILD_LOCK } from './postgresql-authority.js';
 import { readTrustedRegularFile } from './trusted-file.js';
 
@@ -588,7 +594,7 @@ async function runWithTargetLock(provider, connection, operation) {
 export function createBackupOperations(options) {
   const configuration = snapshotOptional(
     options,
-    ['adapter', 'provider', 'evidence', 'connection', 'restoreControl', 'clock'],
+    ['adapter', 'provider', 'evidence', 'connection', 'restoreControl', 'clock', 'telemetry'],
     ['adapter', 'provider', 'evidence', 'connection', 'restoreControl'],
     'BACKUP_CONTRACT_INVALID',
   );
@@ -603,6 +609,47 @@ export function createBackupOperations(options) {
     refuse('BACKUP_CLOCK_INVALID', 'backup clock is invalid');
   }
   const clock = configuration.clock ?? (() => new Date().toISOString());
+  const telemetry = requireTelemetrySink(
+    configuration.telemetry,
+    (message) => refuse('BACKUP_TELEMETRY_INVALID', message),
+  );
+
+  /**
+   * Report one backup operation (Spine v4C), observing and re-raising.
+   *
+   * The bundle path, the connection, the manifest, every fingerprint and the
+   * native tool identity stay inside: only the operation kind, the outcome and
+   * a charset-validated refusal code cross the boundary. A refusal that also
+   * left the target possibly partial is reported as such rather than as a
+   * clean refusal, because those are operationally different situations. The
+   * clock is read defensively — `create` has its own BACKUP_CLOCK_INVALID
+   * path, and telemetry must not pre-empt it.
+   *
+   * @param {'create'|'verify'|'restore'} operation
+   * @param {(input: any) => Promise<any>} run
+   */
+  const instrumented = (operation, run) => {
+    if (!telemetry) return run;
+    const instant = () => { try { return clock(); } catch { return null; } };
+    return async (input) => {
+      const startedAt = instant();
+      const settle = (outcome, errorCode) => reportBackupOperation(telemetry, {
+        operation,
+        outcome,
+        durationMs: telemetryDurationMs(startedAt, instant()),
+        errorCode,
+      });
+      try {
+        const result = await run(input);
+        settle('succeeded');
+        return result;
+      } catch (error) {
+        const partial = /** @type {any} */ (error)?.details?.targetState === 'possibly-partial';
+        settle(partial ? 'possibly-partial' : 'refused', telemetryErrorCode(error));
+        throw error;
+      }
+    };
+  };
 
   async function verify(input) {
     const request = snapshot(input, ['bundlePath', 'expected'], 'BACKUP_VERIFY_INPUT_INVALID');
@@ -612,7 +659,7 @@ export function createBackupOperations(options) {
   return Object.freeze({
     contract: BACKUP_CONTRACT,
     adapter: 'postgresql',
-    async create(input) {
+    create: instrumented('create', async (input) => {
       const request = snapshot(input, ['bundlePath'], 'BACKUP_CREATE_INPUT_INVALID');
       if (!exactString(request.bundlePath, 4096)) refuse('BACKUP_PATH_INVALID', 'backup bundle path is invalid');
       if (connection.resourceFingerprint !== evidence.resourceFingerprint) {
@@ -687,9 +734,9 @@ export function createBackupOperations(options) {
           throw error;
         }
       });
-    },
-    verify,
-    async restore(input) {
+    }),
+    verify: instrumented('verify', verify),
+    restore: instrumented('restore', async (input) => {
       const request = snapshot(
         input,
         ['bundlePath', 'expected', 'target', 'actor', 'operationId'],
@@ -822,7 +869,7 @@ export function createBackupOperations(options) {
         await chmod(scratchArtifact, 0o600).catch(() => {});
         await rm(scratch, { recursive: true, force: true }).catch(() => {});
       }
-    },
+    }),
   });
 }
 

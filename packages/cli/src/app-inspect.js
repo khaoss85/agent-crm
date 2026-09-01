@@ -397,12 +397,14 @@ export async function inspectApplication({ rootDir: requested }) {
       // truth: spine.multi_tenant_single_instance=refused_at_startup
       // truth: spine.postgresql.implemented=implemented
       // truth: spine.durable_job_store.implemented=implemented
+      // truth: spine.transactional_outbox.implemented=implemented
       // truth: spine.timer_consumers.implemented=implemented
       // truth: spine.managed_jobs_service.implemented=absent
       // truth: spine.secret_provider.implemented=implemented
       // truth: spine.backup_restore.implemented=implemented
+      // truth: spine.observability_export.implemented=implemented
       // truth: spine.secrets_backups.implemented=absent
-      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite or dedicated-database PostgreSQL, with bounded self-host secret-provider and PostgreSQL backup/verify/restore contracts; shared-database tenancy, durable jobs, managed secret custody, managed backup custody/scheduling/retention and an observability backend are absent',
+      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite or dedicated-database PostgreSQL, with bounded self-host contracts for secret provision, PostgreSQL backup/verify/restore, the durable job store, its transactional outbox, scheduled timer consumers and observability export — nothing autostarts, and the composing application starts every worker. Absent: shared-database tenancy, an autostarted or operator-managed worker service, any managed jobs service, managed secret custody, managed backup custody/scheduling/retention and an observability backend',
     },
     packages,
     capabilities,

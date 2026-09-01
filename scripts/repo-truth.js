@@ -121,6 +121,15 @@ export const TRUTH_LIMITATIONS = Object.freeze([
     + 'PostgreSQL 16 provider, which needs pg_dump, pg_restore and psql present. It is PostgreSQL-only — SQLite is '
     + 'refused, not degraded — and it is not managed artifact custody, scheduling, retention, PITR, clone promotion, '
     + 'an operator surface or a recoverability SLA'],
+  ['SELF_HOST_TELEMETRY_EXPORT_CONTRACT_ONLY',
+    'the implemented fact covers the bounded export contract itself: a closed signal vocabulary, an injected '
+    + 'exporter, the built-in no-op/JSON-stderr/capture exporters and an application-owned lifecycle. It is not '
+    + 'an observability backend, a log store, an APM, a second audit system, dashboards, alerting, retention or '
+    + 'a managed telemetry service, and it implements no OpenTelemetry or OTLP support. No attribute the kernel '
+    + 'fills carries a tenant, record, run or worker identifier, so telemetry is aggregate-shaped rather than '
+    + 'per-record traceable — with one declared exception: a durable job kind and handler name are chosen by '
+    + 'whoever enqueued the work and are exported verbatim, so a caller who names a job after a uuid or a tenant '
+    + 'slug will see it'],
   ['SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY',
     'the durable job store, its transactional outbox and its scheduled timer consumers are a bounded self-host '
     + 'contract whose worker the composing application starts explicitly. Nothing autostarts, no operator surface '
@@ -843,6 +852,44 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
       && typeof publicCore.defineBackupProvider === 'function'
       && typeof publicCore.createBackupOperations === 'function'
       && typeof publicCore.createPostgresqlNativeBackupProvider === 'function';
+    const telemetryVocabulary = publicCore.telemetryVocabulary();
+    bundle.telemetryExportContract = publicCore.TELEMETRY_EXPORT_CONTRACT;
+    // The probe asks the contract, not this file's prose: an exporter that is
+    // exactly the five operations, a closed registry, the flat attribute kinds
+    // the allowlist is built from, the three built-in exporters, and the
+    // explicit statement that no OpenTelemetry/OTLP support exists. It also
+    // asks the fence directly — a record naming an undeclared attribute must
+    // be refused, so the fact rests on observed behaviour, not on a shape.
+    const telemetryCapture = publicCore.createCaptureTelemetryExporter();
+    const telemetrySink = publicCore.createTelemetrySink({ exporter: telemetryCapture.exporter });
+    const telemetryAccepted = telemetrySink.emitLog({
+      signal: 'accordo.durable_job.claimed',
+      attributes: { kind: 'write-outcome-effect', handler: 'promote-write-outcome-events', attempt: 1 },
+    });
+    const telemetryRefused = telemetrySink.emitLog({
+      signal: 'accordo.durable_job.claimed',
+      attributes: { kind: 'write-outcome-effect', handler: 'promote-write-outcome-events', attempt: 1, tenantId: 'acme' },
+    });
+    // Read the capture BEFORE closing: close flushes the sink's own cumulative
+    // rejected/dropped counters, which are themselves records.
+    const telemetryCaptured = telemetryCapture.records().map((record) => record.signal);
+    await telemetrySink.close();
+    bundle.telemetryExportProbe = telemetryVocabulary.contract === 1
+      && telemetryVocabulary.openTelemetry === false
+      && telemetryVocabulary.operations?.length === 5
+      && telemetryVocabulary.signals?.length === Object.keys(publicCore.TELEMETRY_SIGNALS).length
+      && telemetryVocabulary.exporters?.includes('noop')
+      && telemetryVocabulary.exporters?.includes('json-stderr')
+      && telemetryVocabulary.exporters?.includes('capture')
+      && !telemetryVocabulary.attributeKinds?.includes('object')
+      && telemetryVocabulary.exportsRecordIdentifiers === 'kernel-filled-attributes-only'
+      && telemetryVocabulary.callerNamedAttributes?.length === 2
+      && telemetryAccepted === true
+      && telemetryRefused === false
+      && telemetryCaptured.length === 1
+      && telemetryCaptured[0] === 'accordo.durable_job.claimed'
+      && typeof publicCore.defineTelemetryExporter === 'function'
+      && typeof publicCore.createTelemetrySink === 'function';
     const scheduledAsks = publicCore.scheduledAskVocabulary();
     bundle.durableJobStoreProbe = typeof publicCore.createDurableJobStore === 'function'
       && typeof publicCore.createDurableJobWorker === 'function'
@@ -2051,6 +2098,23 @@ export function buildFacts(bundle) {
     ],
     scope: 'framework',
     limitations: ['SELF_HOST_POSTGRESQL_BACKUP_CONTRACT_ONLY', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
+  });
+
+  add({
+    id: 'spine.observability_export.implemented',
+    value: bundle.telemetryExportContract === 1 && bundle.telemetryExportProbe === true
+      ? 'implemented'
+      : 'absent',
+    authority: 'spine.contract',
+    evidence: [
+      'packages/core/src/observability-export.js#TELEMETRY_EXPORT_CONTRACT',
+      'packages/core/src/observability-export.js#TELEMETRY_SIGNALS',
+      'packages/core/src/observability-export.js#createTelemetrySink',
+      'packages/core/index.js#bounded-observability-export',
+      'executable-probe:telemetry-allowlist-refuses-undeclared-attribute',
+    ],
+    scope: 'framework',
+    limitations: ['SELF_HOST_TELEMETRY_EXPORT_CONTRACT_ONLY', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
   });
 
   // V3C. Three boundaries that used to hide inside one umbrella absence. Each
