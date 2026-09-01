@@ -200,7 +200,16 @@ function dataSnapshot(value) {
     return null;
   }
   if (Object.getOwnPropertySymbols(descriptors).length > 0) return null;
-  const snapshot = /** @type {Record<string, unknown>} */ ({});
+  // **Null prototype, deliberately.** On a normal object `snapshot.__proto__ = v`
+  // invokes `Object.prototype`'s accessor and replaces the prototype instead of
+  // creating an own property — so an envelope whose only own key is `__proto__`
+  // produced a snapshot with no own keys at all, walked straight through the
+  // closed-key check, and had `signal`, `attributes` and `value` read through
+  // getters the caller supplied. Demonstrated, not theorised. With no prototype
+  // there is no inherited accessor for any key to reach, so every assignment
+  // below creates an own data property and `__proto__` is refused as the
+  // undeclared key it is.
+  const snapshot = /** @type {Record<string, unknown>} */ (Object.create(null));
   for (const [key, descriptor] of Object.entries(descriptors)) {
     if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) return null;
     snapshot[key] = descriptor.value;
@@ -273,7 +282,11 @@ function validateSignal(expectedKind, input) {
   for (const key of attributeKeys.sort()) {
     const value = attributes[key];
     if (!attributeAllowed(declared.attributes[key], value)) return null;
-    exported[key] = value;
+    // Same hazard, one level down. No declared signal names `__proto__`, so the
+    // key check above already excludes it — this is the belt to that braces.
+    Object.defineProperty(exported, key, {
+      value, enumerable: true, writable: true, configurable: true,
+    });
   }
 
   if (declared.kind === 'metric') {
@@ -429,7 +442,17 @@ export function createTelemetrySink(options) {
       counters.dropped += 1;
       return false;
     }
-    const record = validateSignal(expectedKind, input);
+    // Wrapped, not argued: `emit` is the public surface, and a caller-supplied
+    // object must not be able to raise out of it whatever it does. The
+    // producers were always covered by `report()`; a direct caller of the sink
+    // was not, and a `__proto__`-injected getter reached exactly that gap.
+    let record;
+    try {
+      record = validateSignal(expectedKind, input);
+    } catch {
+      counters.rejected += 1;
+      return false;
+    }
     if (record === null) {
       counters.rejected += 1;
       return false;

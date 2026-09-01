@@ -600,3 +600,82 @@ The shape they share is that each one *looked* correct, and the gates agreed.
 Three of the four were found by someone who had not written the code, and the
 fourth by replaying the real flow instead of the described one. Neither is a
 substitute for tests; both are what tests are checked against.
+
+## Progress — 2026-09-01 delta review: a bypass, and a claim of mine that was wrong
+
+Two material findings, and the second corrects the record rather than the code.
+
+### M1 — `__proto__` walked through the TOCTOU fix (fixed)
+
+`snapshot[key] = descriptor.value` does not create an own property when `key`
+is `__proto__`: it reaches `Object.prototype`'s accessor and replaces the
+snapshot's prototype. An envelope whose only own key was `__proto__` therefore
+produced a snapshot with **no own keys at all** — the closed-key check had
+nothing to refuse — and `signal`, `attributes` and `value` were then read
+through getters the caller had supplied on the injected prototype. Reproduced
+here before fixing, both halves:
+
+```
+own keys of the envelope: [ '__proto__' ]
+emitLog(envelope whose only own key is __proto__) -> true
+captured: [{"signal":"accordo.durable_job.claimed", ...}]
+!!! EXCEPTION ESCAPED THE PUBLIC SINK: ESCAPED-FROM-PUBLIC-SINK
+```
+
+So one of the three damages `5cc4778` claims to have closed was open again by
+another route. Fixed by giving each snapshot a **null prototype**, which is a
+property of the object rather than a list of special keys to remember, plus
+`Object.defineProperty` for the exported attribute map and a `try` around
+`validateSignal` inside `emit`. Three tests pin it: the `__proto__`-only
+envelope, a getter reaching `emit` through it, and `__proto__` as an ordinary
+undeclared attribute key. Both fixes are mutation-red.
+
+Note for a future reader: the test previously named *"a prototype-polluting
+emission"* used `Object.create({...})`, which `plainObject` already refused. It
+covered the variant that does not work and missed the one that does.
+
+### M2 — the eighth mutation is observable, and my stated reason was wrong
+
+The previous entry recorded the accessor refusal as "not independently
+mutation-observable", reasoning that removing it leaves `descriptor.value ===
+undefined`, which every attribute kind rejects. That reasoning was sound for
+every case I considered and **I did not consider the one that matters**: the
+three zero-attribute metric signals. There, an accessor on `attributes` itself
+collapses to `undefined`, `?? {}` turns it into a valid empty set, `required` is
+empty so nothing can be missing, and the record is accepted. Original against
+mutated, run here:
+
+```
+ORIGINAL accessor-attributes envelope -> false []
+MUTATED  accessor-attributes envelope -> true  [{"signal":"accordo.telemetry.dropped","value":4,"attributes":{}}]
+```
+
+The mutation is now red, against a test that exercises all three signals.
+
+**The formulation that replaces the old one, and it is the durable part:
+"not covered by a test we wrote" is not "not observable".** The first is a fact
+about our tests; the second is a claim about the code, and it is much stronger
+than the evidence a green mutation supplies. `5cc4778`'s message carries the
+superseded claim and is left as history.
+
+There is a second-order lesson worth recording beside it. Before the review I
+had verified my own claim, found it confirmed, and deliberately withheld that
+verification from the reviewer to avoid anchoring her. That was the right call
+and this is the proof: had she received my map, she would have been checking
+it — and my map did not contain the zero-attribute signals.
+
+### The two guards that stayed green, stated on the corrected terms
+
+Neither is claimed as "not observable". Each is what was actually tested:
+
+- **`Object.defineProperty` on the exported attribute map.** No current input
+  reaches it: attribute keys are filtered by `Object.hasOwn(declared.attributes,
+  key)` first, and no declared signal names `__proto__`. It guards a future
+  registry-authoring mistake, not a caller.
+- **The `try` around `validateSignal`.** Empirically nothing escapes without it
+  once the null-prototype fix is in place — four hostile Proxy shapes
+  (`ownKeys`, `getOwnPropertyDescriptor`, an accessor descriptor, and a `get`
+  trap) and the `__proto__` getter were all run against the module with the
+  `try` removed, and every one returned `false` rather than throwing. It guards
+  a future regression, and it is why the public-surface guarantee is now a
+  property of the function rather than an argument about its callers.

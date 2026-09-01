@@ -228,6 +228,66 @@ test('the allowlist refuses the whole record for anything it did not declare', (
   assertStructurallyBounded(capture.records());
 });
 
+test('a __proto__ own key cannot smuggle an envelope past the closed-key check', async () => {
+  // `snapshot.__proto__ = v` on a normal object invokes Object.prototype's
+  // accessor and replaces the prototype instead of creating an own property.
+  // The snapshot then had no own keys, the closed-key check saw nothing to
+  // refuse, and signal/attributes/value were read through caller getters.
+  // Demonstrated against the previous fix, so it is pinned three ways.
+  const { capture, sink } = captureSink();
+
+  const envelope = {};
+  Object.defineProperty(envelope, '__proto__', {
+    enumerable: true, configurable: true,
+    value: {
+      get signal() { return 'accordo.durable_job.claimed'; },
+      get attributes() { return { kind: 'named-action', handler: 'h', attempt: 1 }; },
+    },
+  });
+  assert.deepEqual(Object.getOwnPropertyNames(envelope), ['__proto__'], 'the fixture is the hazard it claims');
+  assert.equal(sink.emitLog(envelope), false, 'an envelope whose only own key is __proto__ is refused');
+
+  // A getter reached that way must not raise out of the public sink either.
+  const throwing = {};
+  Object.defineProperty(throwing, '__proto__', {
+    enumerable: true, configurable: true,
+    value: { get signal() { throw new Error(SENTINELS.errorMessage); } },
+  });
+  assert.doesNotThrow(() => {
+    assert.equal(sink.emitLog(throwing), false);
+  }, 'a caller-supplied getter never escapes emit');
+
+  // And the same key as an ordinary undeclared attribute.
+  assert.equal(sink.emitLog({
+    signal: 'accordo.durable_job.claimed',
+    attributes: { kind: 'named-action', handler: 'h', attempt: 1, __proto__: { leak: SENTINELS.tenantId } },
+  }), false);
+
+  await sink.close();
+  assert.equal(capture.records().every((r) => r.signal.startsWith('accordo.telemetry.')), true);
+  assertNoSentinel(capture.records(), 'proto-smuggled records');
+});
+
+test('an accessor on `attributes` is refused even where no attribute is required', async () => {
+  // The case that made the accessor guard observable after all: the three
+  // zero-attribute metric signals. Collapse `attributes` to undefined and
+  // `?? {}` yields a valid empty set with nothing required to miss, so the
+  // record is accepted. Every other accessor path rejects downstream because
+  // no kind accepts undefined — this one has no kind to fail.
+  const { capture, sink } = captureSink();
+  for (const signal of ['accordo.telemetry.dropped', 'accordo.telemetry.rejected', 'accordo.telemetry.exporter_failed']) {
+    const envelope = { signal, value: 4 };
+    Object.defineProperty(envelope, 'attributes', {
+      enumerable: true, get() { return { leak: SENTINELS.tenantId }; },
+    });
+    assert.equal(sink.emitMetric(envelope), false, `${signal} must refuse an accessor on attributes`);
+  }
+  assert.equal(capture.records().length, 0, 'nothing was exported');
+  assert.equal(sink.status().rejected, 3);
+  await sink.close();
+  assertNoSentinel(capture.records(), 'zero-attribute accessor');
+});
+
 test('a caught error contributes only a charset-valid code, and a junk code costs the signal nothing', () => {
   const withCode = (code) => Object.assign(new Error(SENTINELS.errorMessage), { code });
   assert.equal(telemetryErrorCode(withCode('BACKUP_TARGET_NOT_EMPTY')), 'BACKUP_TARGET_NOT_EMPTY');

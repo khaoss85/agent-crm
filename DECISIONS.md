@@ -4352,9 +4352,22 @@ The envelope and its attributes are copied into data-only snapshots before any
 check runs, so a value is read exactly once. Validating one read and exporting
 another is the whole of the bug this closes: an accessor could satisfy the
 allowlist and then return free text, a nested object, or an exception thrown
-out of the public sink from a read that sat outside every `try`. Reading once
-is what prevents the leak; refusing accessors outright is the stricter policy
-layered on top, because no legitimate producer passes one.
+out of the public sink from a read that sat outside every `try`.
+
+Each snapshot has a **null prototype**. On an ordinary object
+`snapshot.__proto__ = v` reaches `Object.prototype`'s accessor and replaces the
+prototype instead of creating an own property, so an envelope whose only own
+key was `__proto__` produced a snapshot with no own keys, passed the closed-key
+check with nothing to refuse, and had `signal`, `attributes` and `value` read
+through getters the caller supplied. With no prototype there is no inherited
+accessor for any key to reach, which is why this is stated as a property of the
+object rather than as a list of keys to watch for.
+
+Refusing accessors is a separate guard from reading once, and both are load
+bearing. Reading once prevents the two-read leak. Refusing accessors closes a
+case reading once does not: the three zero-attribute metric signals, where an
+accessor on `attributes` collapses to `undefined`, `?? {}` supplies a valid
+empty set, and nothing is required to be missing — so the record is accepted.
 
 No record identifier is exportable in v1 — not the tenant id or any
 fingerprint, not the job, run or worker id, not the idempotency root or the
