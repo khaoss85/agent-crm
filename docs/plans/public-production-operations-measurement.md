@@ -21,19 +21,27 @@ of it, including the parts that could not be taken here and why.
 `scripts/measure-suite.js` refuses to record numbers from a suite that failed,
 and `npm test` fails on this machine, for a reason that is this machine's rather
 than the repository's. It was run and reported
-`npm run verify exited 1 with 2 failing`. **The count is two and only one is
-named here**: across three full-suite attempts the only failure that ever
-appeared was the one below, and the runs that would have carried a summary line
-were interrupted before printing one. The second is unidentified, and saying so
-is more useful than guessing which test it was.
-`tests/agent-tool-selection-prompts.test.js` fails its `guardedWrites > 0`
-self-check locally at every commit tried, including `origin/main` with nothing
-applied, while **CI passes the same file at the same commit**. The corpus is a
-pure cross-product of hardcoded constants — no repository read, no randomness —
-and the failing criterion depends on running real `bash` and observing real
-filesystem writes. The concrete lead, unconfirmed: `bash` on this machine is
+`npm run verify exited 1 with 2 failing`, and a completed full run named both:
+**2211 tests, 2144 passing, 2 failing.** Both are macOS artefacts, and CI passes
+both at the same commit.
+**1. `tests/spine-v2-m0-characterization.test.js` — `M0 records
+PostgreSQL-shaped --db input as legacy SQLite path semantics`.** Certain, and
+the diff says it outright: expected `/var/folders/…`, got
+`/private/var/folders/…`. On macOS `/var` is a symlink to `/private/var`, so
+`os.tmpdir()` and a resolved path disagree by a prefix. On Linux they do not.
+The characterization baseline records the Linux form.
+
+**2. `tests/agent-tool-selection-prompts.test.js` — `the shell classifier agrees
+with bash over the whole cross-product`.** Fails its `guardedWrites > 0`
+self-check at every commit tried, including `origin/main` with nothing applied.
+The corpus is a pure cross-product of hardcoded constants — no repository read,
+no randomness — and the failing criterion depends on running real `bash` and
+observing real filesystem writes. The lead, not confirmed: `bash` here is
 3.2.57, CI runs Linux bash 5.x, and the oracle's axes include an empty `for`
-list, a `trap`, a backgrounded group and a pipeline. Filed in `TASKS.md`.
+list, a `trap`, a backgrounded group and a pipeline.
+
+Both are filed in `TASKS.md`. Neither is a defect in the repository, and neither
+is caused by this campaign.
 
 So the published claim record is left exactly as it is. That is not a
 workaround: `site:check` passes against it, which is the gate that decides
