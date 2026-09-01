@@ -242,7 +242,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
           } catch (dispatchError) {
             console.error(
               `[accordo] ${operation} run ${runId}: committed outbox dispatch is pending recovery: `
-              + 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED',
+              + `TRANSACTIONAL_OUTBOX_DISPATCH_FAILED: ${boundedFailureCode(dispatchError)}`,
             );
           }
         }
@@ -362,23 +362,50 @@ export async function reconcileWriteOutcome(database, events, spec) {
  * @param {ReturnType<typeof createWriteOutcomeStore>} store
  * @param {any} outcome
  */
+const FAILURE_CODE = /^[A-Z][A-Z0-9_]*$/;
+const FAILURE_KIND = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/**
+ * Bounded structured cause for a swallowed post-commit dispatch. A fixed label
+ * made a serialization contest, a network fault and an identity collision read
+ * identically in the only trace those cases leave. The message stays out: a
+ * driver constraint violation carries tenant ids and fingerprints in its text,
+ * and this line is written where no leak scan follows. What is left is a
+ * validated code, the retryable flag that separates a bounded contest from a
+ * genuine conflict, and — only when no code survives validation — the error
+ * class name, which is a constructor, never caller data.
+ *
+ * @param {unknown} error
+ */
+export function boundedFailureCode(error) {
+  if (!error || typeof error !== 'object') return 'UNKNOWN';
+  const raw = /** @type {any} */ (error).code;
+  const code = typeof raw === 'string' && raw.length <= 64 && FAILURE_CODE.test(raw) ? raw : null;
+  const transient = /** @type {any} */ (error).details?.transient === true ? ' transient' : '';
+  if (code) return `${code}${transient}`;
+  const kind = error.constructor?.name;
+  return typeof kind === 'string' && kind.length <= 64 && FAILURE_KIND.test(kind)
+    ? `UNKNOWN(${kind})${transient}`
+    : `UNKNOWN${transient}`;
+}
+
 async function promoteAndFinalize(database, events, store, outcome, options = {}) {
   if (Array.isArray(outcome.eventIntents) && outcome.eventIntents.length > 0) {
+    // Ownership absorbs only a contest it can prove harmless; an ownership
+    // failure that reaches here means this outcome may own no effect at all and
+    // must not be traded for a silent replay. Dispatch is different: the effect
+    // row is durable by then, so the outbox worker still recovers it.
+    await ensureCommittedWriteOutcomeEffects({
+      database,
+      tenantId: options.tenantId,
+      outcome,
+    });
     const effect = transactionalOutboxEffectIdentity(
       options.tenantId,
       outcome,
       'internal-event-promotion',
     );
-    // The outcome is already committed, so neither owning the effect nor
-    // dispatching it may fail this replay. A concurrent first attempt races this
-    // caller for the same effect row, and losing that contest leaves the effect
-    // pending under its stable idempotency root, which is safe to repeat.
     try {
-      await ensureCommittedWriteOutcomeEffects({
-        database,
-        tenantId: options.tenantId,
-        outcome,
-      });
       await dispatchTransactionalOutboxJob({
         database, events, tenantId: options.tenantId,
         workerId: `write-outcome-${outcome.runId}`,
@@ -386,7 +413,7 @@ async function promoteAndFinalize(database, events, store, outcome, options = {}
     } catch (error) {
       console.error(
         `[accordo] ${outcome.operation} run ${outcome.runId}: committed outbox recovery remains pending: `
-        + 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED',
+        + `TRANSACTIONAL_OUTBOX_DISPATCH_FAILED: ${boundedFailureCode(error)}`,
       );
     }
   }

@@ -585,7 +585,7 @@ test('dispatch begun at lease expiry retries at least once and may duplicate par
   await recovery.close();
 });
 
-test('a committed outcome replays even when its effect ownership cannot be established', { timeout: 90_000 }, async (t) => {
+test('a committed outcome refuses to replay when its effect ownership cannot be proved', { timeout: 90_000 }, async (t) => {
   const clock = () => '2026-09-01T09:00:00.000Z';
   const booted = await bootPostgresqlApp(t, { moduleMigrations: [] });
   if (!booted) return;
@@ -608,8 +608,10 @@ test('a committed outcome replays even when its effect ownership cannot be estab
   assert.equal(first.replayed, false);
 
   // Strand the committed outcome exactly as a source committed before V3B, then
-  // make owning its effect impossible. A concurrent first attempt reaches the
-  // same state by losing the serialization contest for this very effect row.
+  // occupy its effect identity root with unrelated work so ownership can never
+  // be established or proved. Absorbing a lost contest is only safe when the
+  // effect row is durable; here nothing would ever create it, so the replay must
+  // refuse loudly rather than answer a caller that will never retry.
   const jobs = createDurableJobStore({ storage, tenantId: booted.tenantId });
   const [effect] = await jobs.list();
   await probePostgresqlQuery(storage,
@@ -621,13 +623,13 @@ test('a committed outcome replays even when its effect ownership cannot be estab
     idempotencyRoot: effect.idempotencyRoot,
   }, { actor });
 
-  const replay = await runIdempotentWrite(database, events, spec, async () => {
-    throw new Error('a committed outcome must never re-execute its work');
-  });
-  assert.equal(replay.replayed, true,
-    'post-commit effect ownership never decides whether a committed write replays');
-  assert.deepEqual(replay.result, first.result);
+  await assert.rejects(
+    runIdempotentWrite(database, events, spec, async () => {
+      throw new Error('a committed outcome must never re-execute its work');
+    }),
+    (error) => error.code === 'DURABLE_JOB_IDEMPOTENCY_MISMATCH',
+  );
   assert.equal((await jobs.list()).filter(
     (entry) => entry.handler.name === 'promote-write-outcome-events').length, 0,
-    'the unrecoverable effect stays absent and visibly pending recovery, never silently promoted');
+    'a refused replay never leaves a half-owned effect behind');
 });

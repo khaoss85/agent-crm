@@ -71,6 +71,17 @@ function createStore(database, tenantId, clock, idSource) {
   });
 }
 
+function applicableEffects(outcome) {
+  const effects = [];
+  if (Array.isArray(outcome.eventIntents) && outcome.eventIntents.length > 0) {
+    effects.push('internal-event-promotion');
+  }
+  if (outcome.phase === 'receipt' && outcome.externalFinalizeDeclared !== false) {
+    effects.push('external-finalize-continuation');
+  }
+  return effects;
+}
+
 /**
  * Enqueue applicable effect identities on the caller's live transaction.
  * Event/provider/domain content remains solely in write_outcomes.
@@ -79,13 +90,7 @@ export async function enqueueWriteOutcomeEffects({
   database, tenantId, outcome, transaction, clock,
 }) {
   const tenantNs = tenantNamespace(tenantId);
-  const effects = [];
-  if (Array.isArray(outcome.eventIntents) && outcome.eventIntents.length > 0) {
-    effects.push('internal-event-promotion');
-  }
-  if (outcome.phase === 'receipt' && outcome.externalFinalizeDeclared !== false) {
-    effects.push('external-finalize-continuation');
-  }
+  const effects = applicableEffects(outcome);
   const jobs = [];
   for (const effect of effects) {
     const { sourceFingerprint, jobId } = transactionalOutboxEffectIdentity(tenantId, outcome, effect);
@@ -117,10 +122,34 @@ export async function enqueueWriteOutcomeEffects({
  * own transaction and the stable idempotency root makes an interrupted backfill
  * safe to repeat.
  */
-export function ensureCommittedWriteOutcomeEffects({
+export async function ensureCommittedWriteOutcomeEffects({
   database, tenantId, outcome, clock,
 }) {
-  return enqueueWriteOutcomeEffects({ database, tenantId, outcome, clock });
+  try {
+    return await enqueueWriteOutcomeEffects({ database, tenantId, outcome, clock });
+  } catch (error) {
+    // A concurrent caller owning the same committed source contests this
+    // insert. Losing that contest is only harmless when the effect identity is
+    // already durable, so prove it on a fresh read: an absent row means nothing
+    // else would ever create it, and the original failure must stand. This
+    // containment belongs to the backfill wrapper alone — the caller-transaction
+    // path above must still abort its domain transaction on any failure.
+    const effects = applicableEffects(outcome);
+    if (effects.length === 0) throw error;
+    const owned = [];
+    for (const effect of effects) {
+      const { jobId } = transactionalOutboxEffectIdentity(tenantId, outcome, effect);
+      // A probe that cannot answer proves nothing, and its own failure must not
+      // replace the cause the operator needs to read.
+      let existing;
+      try {
+        existing = await createStore(database, tenantId, clock).get(jobId);
+      } catch { throw error; }
+      if (!existing) throw error;
+      owned.push(existing);
+    }
+    return Object.freeze(owned);
+  }
 }
 
 function boundedSource(job, effect) {

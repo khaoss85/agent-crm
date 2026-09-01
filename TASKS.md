@@ -213,4 +213,5 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 - [ ] Actual public→private migration after human repository creation; no history rewrite.
 - [ ] Package remote install/update/uninstall/registry.
 - [ ] Spine v3 jobs/outbox/scheduler; Spine v4 backup/restore and observability export. The bounded self-host secret-provider contract is complete in v4A; managed secret custody/service remains Cloud work.
+- [ ] Disambiguate the `durable jobs, outbox or scheduler (Spine v3)` entry in `SPINE_NOT_MODELED`, or reclassify `spine.durable_jobs.implemented`, with every surface bound to it. V3B made the default PostgreSQL write path the first production consumer of the durable job store, so the published absence now reads two ways (ADR-041 V3B addendum). Integration campaign work, not a documentation follow-up.
 - [ ] Real Codex/Gemini comparative benchmark when both harnesses exist.

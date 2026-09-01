@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDatabase } from '../packages/core/src/database.js';
+import { AppError } from '../packages/core/src/errors.js';
+import {
+  durableJobStorageOwnerFor,
+  registerDurableJobStorageOwner,
+} from '../packages/core/src/durable-job-storage.js';
 import { AuditLog } from '../packages/core/src/audit.js';
 import { EventBus } from '../packages/core/src/event-bus.js';
 import {
@@ -232,4 +237,54 @@ test('reconcilable partial delivery may duplicate, fences late completion, and e
   const exhausted = await store.get(poison.id);
   assert.equal(exhausted.state, 'failed_terminal');
   assert.equal(exhausted.lastErrorCode, 'JOB_RECONCILABLE_OUTCOME_MAX_ATTEMPTS');
+});
+
+test('committed effect ownership absorbs a lost contest only when the identity is already durable', async (t) => {
+  const database = createDatabase({ path: ':memory:', plane: 'data' });
+  t.after(() => database.close());
+  const committed = {
+    runId: 'contested-committed-run',
+    phase: 'root',
+    requestFingerprint: 'c'.repeat(64),
+    eventIntents: [{ event: 'company.created', payload: { id: 'contested' } }],
+  };
+  const [owned] = await ensureCommittedWriteOutcomeEffects({
+    database, tenantId: 'tenant-a', outcome: committed,
+  });
+
+  // One lost contest, then an honest storage: exactly the shape a concurrent
+  // caller produces while owning the same committed source.
+  const contested = (remaining) => {
+    const storage = Object.freeze({
+      ...database.storage,
+      transaction(fn) {
+        if (remaining.count > 0) {
+          remaining.count -= 1;
+          throw new AppError('the write lost a serialization contest', {
+            code: 'CONFLICT', status: 409, details: { transient: true },
+          });
+        }
+        return database.storage.transaction(fn);
+      },
+    });
+    registerDurableJobStorageOwner(storage, durableJobStorageOwnerFor(database.storage));
+    return { storage };
+  };
+
+  const [absorbed] = await ensureCommittedWriteOutcomeEffects({
+    database: contested({ count: 1 }), tenantId: 'tenant-a', outcome: committed,
+  });
+  assert.equal(absorbed.id, owned.id,
+    'a lost contest over an already durable effect answers with the row that owns the work');
+
+  // The identical failure for a source that owns no effect must stand: nothing
+  // else would ever create that row, so absorbing it would lose the work.
+  await assert.rejects(
+    ensureCommittedWriteOutcomeEffects({
+      database: contested({ count: 1 }),
+      tenantId: 'tenant-a',
+      outcome: { ...committed, runId: 'contested-absent-run' },
+    }),
+    (error) => error.code === 'CONFLICT',
+  );
 });

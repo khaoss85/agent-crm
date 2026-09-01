@@ -4156,6 +4156,20 @@ authoritative security audit path is not migrated into effect dispatch, and
 V3B adds no timer consumer, CLI/MCP/operator surface, Cloud backend,
 production-readiness claim or JTBD promotion.
 
+**One published absence becomes ambiguous here, and the integration campaign
+owns it.** `spine.durable_jobs.implemented` is `absent`, declared by the entry
+`durable jobs, outbox or scheduler (Spine v3)` in `SPINE_NOT_MODELED`
+(`packages/app/src/spine.js`). The intended reading — no Spine surface, no
+autostarted worker, no operator command — stays true after V3B, and this
+addendum states each of those absences directly. The literal reading, that the
+framework has no outbox at all, does not: from this milestone the default
+PostgreSQL write path enqueues an effect row for every committed write that
+carries event intents, which is the first production consumer of the durable
+job store. This delta deliberately leaves the authority string untouched,
+because rewriting it reclassifies the fact and moves every surface bound to it.
+The integration PR must either disambiguate that entry or reclassify the fact,
+together with the dependent surfaces — not as a documentation follow-up.
+
 ---
 
 ## ADR-040 — Runtime secrets are named references resolved before use, never deployment values

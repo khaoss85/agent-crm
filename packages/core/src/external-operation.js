@@ -7,6 +7,7 @@ import { writeTrace, sanitizeJsonSafe } from './action-runtime.js';
 import { requestFingerprint, resolveIdempotencyKey, tenantNamespace } from './idempotency.js';
 import { deterministicUuid } from './write-ids.js';
 import {
+  boundedFailureCode,
   isUnknownCommit,
   runIdempotentWrite,
   usesWriteOutcomes,
@@ -414,7 +415,7 @@ async function runExternalOperationV2(operation) {
       } catch (error) {
         console.error(
           `[accordo] ${name} run ${receiptOutcome.runId}: finalize continuation evidence remains pending: `
-          + 'TRANSACTIONAL_OUTBOX_DISPATCH_FAILED',
+          + `TRANSACTIONAL_OUTBOX_DISPATCH_FAILED: ${boundedFailureCode(error)}`,
         );
       }
     }
