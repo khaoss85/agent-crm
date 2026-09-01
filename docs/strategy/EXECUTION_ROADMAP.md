@@ -40,9 +40,10 @@ is only as trustworthy as the adapter a deployment supplies. Dedicated-database
 Dedicated-database PostgreSQL application composition exists through Spine v2 M5;
 shared-database tenancy and durable jobs remain unimplemented. Spine v4A supplies
 a bounded self-host secret-provider contract, and Spine v4B supplies a bounded
-PostgreSQL backup/verify/restore contract. Managed secret custody/service,
-managed backup custody/scheduling/retention and an observability backend remain
-absent (Spine v3–v4).
+PostgreSQL backup/verify/restore contract, and Spine v4C supplies a bounded
+observability export contract. Managed secret custody/service, managed backup
+custody/scheduling/retention and an observability backend remain absent
+(Spine v3–v4).
 
 The paragraph above is this roadmap's **current-status block**, and every
 load-bearing sentence in it is bound to a generated fact (ADR-039). The rest of the
@@ -61,6 +62,7 @@ intended, and a fact contract has nothing to say about an intention.
 <!-- truth: spine.managed_jobs_service.implemented=absent -->
 <!-- truth: spine.secret_provider.implemented=implemented -->
 <!-- truth: spine.backup_restore.implemented=implemented -->
+<!-- truth: spine.observability_export.implemented=implemented -->
 <!-- truth: spine.secrets_backups.implemented=absent -->
 
 ## Phase overview

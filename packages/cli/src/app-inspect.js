@@ -401,8 +401,9 @@ export async function inspectApplication({ rootDir: requested }) {
       // truth: spine.managed_jobs_service.implemented=absent
       // truth: spine.secret_provider.implemented=implemented
       // truth: spine.backup_restore.implemented=implemented
+      // truth: spine.observability_export.implemented=implemented
       // truth: spine.secrets_backups.implemented=absent
-      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite or dedicated-database PostgreSQL, with bounded self-host secret-provider and PostgreSQL backup/verify/restore contracts; shared-database tenancy, durable jobs, managed secret custody, managed backup custody/scheduling/retention and an observability backend are absent',
+      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite or dedicated-database PostgreSQL, with bounded self-host secret-provider, PostgreSQL backup/verify/restore and observability export contracts; shared-database tenancy, durable jobs, managed secret custody, managed backup custody/scheduling/retention and an observability backend are absent',
     },
     packages,
     capabilities,

@@ -4394,6 +4394,15 @@ hung exporter cannot hang application shutdown and no timer is leaked. Close is
 memoized: the exporter is closed at most once, and a later emission is a
 counted drop, not an exception raised into a shutdown path.
 
+`requireTelemetrySink` catches the composition error, not an adversary. A
+shape check is not a security barrier: a hostile composer already controls the
+process, so it is outside the threat model. A legitimate decorator that wraps a
+sink and forwards its six operations passes the check, and it is right that it
+passes — it forwards to a real sink. What makes the residual case non-fatal is
+not the discriminator but the thenable swallow in `report()`; saying where the
+defence is *not* without saying where it *is* would leave a reader who defeats
+the shape check concluding there is none.
+
 Lifecycle is application-owned. Constructing a sink starts no timer, socket or
 process, and the default async application factory gains no telemetry option in
 v4C. **Not because there is nothing there to instrument** — an earlier draft of
