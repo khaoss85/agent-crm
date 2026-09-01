@@ -1201,6 +1201,8 @@ done
     new RegExp(`pg_advisory_xact_lock\\(${DATA_RESTORE_CHILD_LOCK.classId}, ${DATA_RESTORE_CHILD_LOCK.objectId}\\)`),
     'the child holds the lock startup and a later restore both wait on',
   );
+  assert.match(prelude, /^CREATE SCHEMA accordo;$/m,
+    'the child creates the schema pg_restore --schema never emits, and refuses one that exists');
   // The witness objectId is chosen per run, so the fence is pinned by shape:
   // acquiring the coordinator's witness proves the coordinator is not there.
   // The witness object is a signed 32-bit draw, so half of all runs render it

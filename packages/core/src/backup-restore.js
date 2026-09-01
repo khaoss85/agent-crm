@@ -1155,10 +1155,15 @@ export function createPostgresqlNativeBackupProvider(options = {}) {
           {},
           timeoutMs,
         );
+        // `pg_restore --schema` filters the objects inside the schema but never
+        // emits the schema itself, so the child creates it — unqualified and
+        // without IF NOT EXISTS, because a schema that already exists means the
+        // target was not the empty one this restore was admitted for.
         await writeFile(preludePath, `\\set ON_ERROR_STOP on
 BEGIN;
 SET LOCAL search_path TO pg_catalog;
 SELECT pg_advisory_xact_lock(${DATA_RESTORE_CHILD_LOCK.classId}, ${DATA_RESTORE_CHILD_LOCK.objectId});
+CREATE SCHEMA accordo;
 DO $accordo_restore_fence$
 BEGIN
   IF pg_try_advisory_lock(${locked.witness.classId}, ${locked.witness.objectId}) THEN
