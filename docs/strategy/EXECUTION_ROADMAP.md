@@ -38,10 +38,12 @@ enforced authorization, memberships and one tenant per application instance — 
 framework authenticates nobody and ships no verifier, so who a membership belongs to
 is only as trustworthy as the adapter a deployment supplies. Dedicated-database
 Dedicated-database PostgreSQL application composition exists through Spine v2 M5;
-shared-database tenancy and durable jobs remain unimplemented. Spine v4A supplies
-a bounded self-host secret-provider contract, and Spine v4B supplies a bounded
-PostgreSQL backup/verify/restore contract, and Spine v4C supplies a bounded
-observability export contract. Managed secret custody/service, managed backup
+shared-database tenancy remains unimplemented. Spine v3A, v3B and v3C supply a
+bounded self-host durable job store, its transactional outbox and scheduled timer
+consumers, whose worker the composing application starts; Spine v4A, v4B and v4C
+supply bounded self-host secret-provider, PostgreSQL backup/verify/restore and
+observability export contracts. An autostarted or operator-managed worker
+service, any managed jobs service, managed secret custody/service, managed backup
 custody/scheduling/retention and an observability backend remain absent
 (Spine v3–v4).
 
@@ -58,6 +60,7 @@ intended, and a fact contract has nothing to say about an intention.
 <!-- truth: spine.multi_tenant_single_instance=refused_at_startup -->
 <!-- truth: spine.postgresql.implemented=implemented -->
 <!-- truth: spine.durable_job_store.implemented=implemented -->
+<!-- truth: spine.transactional_outbox.implemented=implemented -->
 <!-- truth: spine.timer_consumers.implemented=implemented -->
 <!-- truth: spine.managed_jobs_service.implemented=absent -->
 <!-- truth: spine.secret_provider.implemented=implemented -->
