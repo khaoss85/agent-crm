@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createDatabase } from '../../core/src/database.js';
+import { runWithAffineStorage } from '../../core/src/storage-runtime.js';
 import { validateActionDefinition } from '../../core/src/action-registry.js';
 import { AppError, ValidationError } from '../../core/src/errors.js';
 import { resolvePackageComposition } from '../../core/src/package-composition.js';
@@ -180,6 +181,7 @@ export function preflightSelectedGraph(selected) {
  *   dbPath?: string,
  *   busyTimeoutMs?: number,
  *   assemble?: (ctx: { accepted: ReturnType<typeof preflightSelectedGraph>, storage: any }) => any,
+ *   moduleMigrations?: Array<{name: string, sql: string}>,
  *   openDatabase?: (options: { path?: string, busyTimeoutMs?: number }) => { storage: any, close: () => void },
  *   providers?: unknown,
  *   listen?: unknown,
@@ -196,6 +198,10 @@ export async function startSqliteLifecycle(options = {}) {
   const opened = openDatabase({
     path: options.dbPath,
     busyTimeoutMs: options.busyTimeoutMs,
+    // `createDatabase` has always accepted these; only this hop dropped them,
+    // so on SQLite no supported composition could apply a contract's own
+    // migration — the scheduled-ask table among them.
+    moduleMigrations: options.moduleMigrations,
   });
 
   let closed = false;
@@ -207,7 +213,10 @@ export async function startSqliteLifecycle(options = {}) {
 
   let assembled;
   try {
-    assembled = await assemble({ accepted, storage: opened.storage });
+    // The adapter's own handle, whose `transactionAsync` is the one that opens
+    // the durable-job ownership scope on SQLite. It travels in the assembly
+    // context, never on the frozen receipt, which stays pinned shut.
+    assembled = await assemble({ accepted, storage: opened.storage, database: opened });
   } catch (error) {
     try {
       closeAdapter();
@@ -275,13 +284,23 @@ export async function startPostgresqlLifecycle(options) {
     acquisitionDeadlineMs: options.acquisitionDeadlineMs,
     rebind: options.rebind,
     promoteClone: options.promoteClone,
+    // Spine v4C. Without this hop the bootstrap's writer-readiness observer is
+    // unreachable from every supported composition: it was built, exported and
+    // tested, and no application could ever hand it a sink.
+    telemetry: options.telemetry,
     selectedExtra: accepted.packages.map((pkg) => pkg.name),
   });
 
+  // Connection-affine, which it was not until something used it. Nothing did:
+  // this handle reached `assemble` and no caller read it, so a statement run
+  // inside its transaction would have gone to the pool instead of the open
+  // connection. Composing production operations over it is what showed that.
   const handle = {
     storage: bootstrap.dataStorage,
     transactionAsync(fn) {
-      return bootstrap.dataStorage.transaction(fn);
+      return bootstrap.dataStorage.transaction(
+        async (tx) => runWithAffineStorage(handle, tx, () => fn(tx)),
+      );
     },
   };
 

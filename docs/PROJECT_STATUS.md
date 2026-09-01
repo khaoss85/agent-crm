@@ -111,17 +111,21 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **Spine v4 minimum observability export**, then the public production-operations
-   integration and one exact measurement, then Accordo Cloud C0–C3 and an Arvo adapter.
-   Spine v3 is merged: durable jobs (v3A), the transactional outbox (v3B) and
-   scheduled timer consumers (v3C) are on this branch.
+1. **Accordo Cloud C0–C3 and an Arvo adapter**, after one exact measurement of
+   what this branch now carries. Spine v3 and the v4 minimum are merged: durable
+   jobs (v3A), the transactional outbox (v3B), scheduled timer consumers (v3C),
+   the secret provider (v4A), backup/verify/restore (v4B) and the observability
+   export (v4C), composed by one application into a single operations handle
+   whose construction starts nothing. Finishing v3 and v4 does not open the
+   Cloud gate: the v4 remainder also names remote-safe MCP, and C0 is blocked on
+   a human action — the private `accordo-platform` repository.
    Dedicated-database PostgreSQL, dual bundled graphs, leases and write-outcome
    keys are merged. Shared-database row tenancy remains deferred.
 
 The GTM stack and production promotion are complete; they are not queued work.
 The independent longer-horizon tracks remain the private/public repository
-migration, Spine v4 observability export and the managed custody the self-host
-contracts still lack,
+migration, remote-safe MCP and the managed custody the self-host contracts still
+lack,
 Customer Data Operations v2, Interactions, Billing, Marketing/Analytics, DX9,
 DX13 and a real comparative benchmark once both harnesses exist.
 
@@ -179,8 +183,9 @@ caller-supplied portable selected graph.
 M3C boots `createAccordoAppAsync()` and `accordo serve` on dedicated-database PostgreSQL after startup attestation. M4A–M4C add write-outcome keys, leases and HTTP/SDK/Admin/CLI transport. Shared-database row tenancy is not implemented.
 
 **Not implemented:** an autostarted or operator-managed worker service, and any managed
-jobs service; Spine v4 observability export; managed secret and backup custody, scheduling
-and retention; Cloud; deployment authentication; billing, invoicing and revenue
+jobs service; managed secret and backup custody, scheduling
+and retention; an observability backend — the export is an interface, and an
+interface is not a backend; Cloud; deployment authentication; billing, invoicing and revenue
 recognition; Interactions; Marketing/Analytics; remote package registry
 install/update/uninstall; shared-database row tenancy. The AX3
 benchmark remains observation-only (`comparative: false`), not a product

@@ -397,6 +397,47 @@ export async function rescheduleAsk(context, id, scheduledFor) {
  * @param {any} registry
  * @param {{database: any, tenantId: string, domains?: any, modules?: any, clock?: () => string}} composition
  */
+/**
+ * Answer, before anything is composed over it, whether this database can serve
+ * the scheduled-ask table.
+ *
+ * The table is not core schema in either dialect: `scheduledAskMigration` ships
+ * with this contract and the composing application applies it, the same way it
+ * starts the worker. That is deliberate, and it has one failure mode — compose
+ * the timers, forget the migration, and learn about it at the first poll, in a
+ * worker, as a job that fails. This turns that into a refusal at the wiring.
+ *
+ * Three states, not a boolean, because the two adapters do not know the same
+ * amount. SQLite says `no such table` and can be believed. PostgreSQL wraps
+ * every failure as `STORAGE_UNAVAILABLE` with no cause and no code, so a
+ * missing table and an unreachable database are the same sentence there. The
+ * honest answer is `unreadable`: something is wrong, and this cannot say which.
+ * Reporting that as `missing` would send a reader to apply a migration while
+ * their database was down.
+ *
+ * @param {any} database
+ * @param {string} tenantId
+ * @returns {Promise<'ready' | 'missing' | 'unreadable'>}
+ */
+export async function scheduledAskStorageReady(database, tenantId) {
+  try {
+    await storageApi(database).maybeOne({
+      kind: 'select',
+      table: SCHEDULED_ASK_TABLE,
+      columns: '*',
+      where: [{ column: 'tenant_id', op: 'eq', value: String(tenantId) }],
+    });
+    return 'ready';
+  } catch (error) {
+    const code = /** @type {any} */ (error)?.code;
+    if (code === '42P01') return 'missing';
+    const message = String(/** @type {any} */ (error)?.message ?? '');
+    if (/no such table/i.test(message)) return 'missing';
+    if (code === 'STORAGE_UNAVAILABLE') return 'unreadable';
+    throw error;
+  }
+}
+
 export function registerScheduledAskHandlers(registry, composition) {
   const { database, tenantId } = composition;
   const now = typeof composition.clock === 'function' ? composition.clock : nowIso;
@@ -446,7 +487,12 @@ export function registerScheduledAskHandlers(registry, composition) {
       // re-proves it against that package's own declared requirements, so an
       // instruction naming a package that never declared the capability is
       // refused there rather than trusted here.
-      const seam = domains.capability({
+      // Awaited, and it must be: under packageContract 2 the registry wraps every
+      // capability seam, so `capability()` hands back a promise. Read
+      // synchronously it is an object with no `createFollowUp` on it, and this
+      // handler refused every real v2 composition while passing against a
+      // synchronous double. Integration found it; no unit test could.
+      const seam = await domains.capability({
         consumer: record.consumerPackage,
         capability: record.capabilityName,
         version: record.capabilityVersion,

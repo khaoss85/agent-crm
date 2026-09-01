@@ -403,8 +403,9 @@ export async function inspectApplication({ rootDir: requested }) {
       // truth: spine.secret_provider.implemented=implemented
       // truth: spine.backup_restore.implemented=implemented
       // truth: spine.observability_export.implemented=implemented
+      // truth: spine.production_operations.implemented=implemented
       // truth: spine.secrets_backups.implemented=absent
-      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite or dedicated-database PostgreSQL, with bounded self-host contracts for secret provision, PostgreSQL backup/verify/restore, the durable job store, its transactional outbox, scheduled timer consumers and observability export — nothing autostarts, and the composing application starts every worker. Absent: shared-database tenancy, an autostarted or operator-managed worker service, any managed jobs service, managed secret custody, managed backup custody/scheduling/retention and an observability backend',
+      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite or dedicated-database PostgreSQL, with bounded self-host contracts for secret provision, PostgreSQL backup/verify/restore, the durable job store, its transactional outbox, scheduled timer consumers and observability export. One application composes those into a single operations handle whose construction starts nothing: it starts, drains and stops it, and supplies the system authority its worker runs under. Nothing autostarts. Absent: shared-database tenancy, an autostarted or operator-managed worker service, any managed jobs service, managed secret custody, managed backup custody/scheduling/retention and an observability backend',
     },
     packages,
     capabilities,

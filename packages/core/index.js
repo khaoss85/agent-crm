@@ -43,6 +43,7 @@ export {
   rescheduleAsk,
   scheduleAsk,
   scheduledAskMigration,
+  scheduledAskStorageReady,
   scheduledAskVocabulary,
 } from './src/domain-timers.js';
 
