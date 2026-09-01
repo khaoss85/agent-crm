@@ -13,6 +13,7 @@ import {
   reportDurableJobClaimed,
   reportDurableJobExecution,
   reportDurableJobWorkerError,
+  requireTelemetrySink,
   telemetryDurationMs,
 } from './observability-export.js';
 import { resolveClock } from './time.js';
@@ -633,7 +634,9 @@ export function createDurableJobWorker(options) {
   // Spine v4C. Optional and best effort: nothing here is awaited by the job
   // path, no signal is emitted inside a store transaction or beside an audit
   // write, and the security audit remains the only authority on what happened.
-  const telemetry = options.telemetry ?? null;
+  const telemetry = requireTelemetrySink(options.telemetry, (message) => {
+    throw new ValidationError(`Durable-job worker ${message}`, { field: 'telemetry' });
+  });
   const workerId = boundedText(options.workerId, 'workerId');
   const actor = mutationActor({ actor: options.actor }, []);
   if (actor.type !== 'system') {

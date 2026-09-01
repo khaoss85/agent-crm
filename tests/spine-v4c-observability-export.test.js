@@ -5,7 +5,9 @@ import assert from 'node:assert/strict';
 import { inspect } from 'node:util';
 
 import { createDatabase } from '../packages/core/src/database.js';
-import { AppError } from '../packages/core/src/errors.js';
+import { EventBus } from '../packages/core/src/event-bus.js';
+import { createTransactionalOutboxWorker } from '../packages/core/src/transactional-outbox.js';
+import { AppError, ValidationError } from '../packages/core/src/errors.js';
 import {
   DURABLE_JOB_STATES,
   createDurableJobHandlerRegistry,
@@ -22,6 +24,7 @@ import {
   createTelemetrySink,
   createWriterReadinessObserver,
   defineTelemetryExporter,
+  isTelemetrySink,
   reportBackupOperation,
   telemetryErrorCode,
   telemetryVocabulary,
@@ -247,6 +250,81 @@ test('a caught error contributes only a charset-valid code, and a junk code cost
   assert.equal(sink.status().rejected, 0);
   assertStructurallyBounded(capture.records());
   assertNoSentinel(capture.records(), 'junk error code');
+});
+
+test('a producer refuses the exporter where the sink belongs, at construction', async (t) => {
+  // Every containment this contract promises lives in the sink. An exporter
+  // handed to a producer directly receives records the allowlist never saw,
+  // and its returned promise reaches a caller that does not await it — an
+  // unhandled rejection, which on Node 22 ends the process. A telemetry
+  // backend going down would take the application with it, which is the exact
+  // inverse of the best-effort guarantee. So the seam refuses it by shape.
+  const rejecting = defineTelemetryExporter({
+    name: 'raw-exporter', contract: 1,
+    emitLog: async () => { throw new Error(SENTINELS.errorMessage); },
+    emitMetric: async () => { throw new Error(SENTINELS.errorMessage); },
+    emitRun: async () => { throw new Error(SENTINELS.errorMessage); },
+  });
+
+  assert.equal(isTelemetrySink(rejecting), false, 'an exporter is not a sink');
+  assert.equal(isTelemetrySink(createNoopTelemetryExporter()), false);
+  assert.equal(isTelemetrySink(captureSink().sink), true, 'a sink is');
+  for (const junk of [null, undefined, 0, 'sink', [], {}, { contract: 1 }, () => {}]) {
+    assert.equal(isTelemetrySink(junk), false, `${inspect(junk)} is not a sink`);
+  }
+
+  const database = createDatabase({ path: ':memory:', plane: 'data' });
+  t.after(() => { try { database.close(); } catch { /* already closed */ } });
+  const store = createDurableJobStore({ storage: database.storage, tenantId: SENTINELS.tenantId });
+
+  assert.throws(() => createDurableJobWorker({
+    store, registry: createDurableJobHandlerRegistry(),
+    workerId: 'w', actor: jobActor, telemetry: rejecting,
+  }), (error) => {
+    assert.ok(error instanceof ValidationError);
+    assert.match(error.message, /not the exporter it wraps/);
+    return true;
+  });
+
+  assert.throws(() => createTransactionalOutboxWorker({
+    database, events: new EventBus(), tenantId: SENTINELS.tenantId, telemetry: rejecting,
+  }), (error) => error instanceof ValidationError);
+});
+
+test('the backup seam refuses a non-sink in its own refusal register', async (t) => {
+  await assert.rejects(
+    async () => backupFixture(t, createNoopTelemetryExporter()),
+    (error) => {
+      assert.equal(error.code, 'BACKUP_TELEMETRY_INVALID');
+      return true;
+    },
+  );
+});
+
+test('a sink-shaped object that returns a promise cannot reject into a producer', async () => {
+  const rejections = [];
+  const listener = (reason) => rejections.push(reason);
+  process.on('unhandledRejection', listener);
+  try {
+    // Sink-shaped by every structural check, but its emit returns a rejecting
+    // thenable. `report` swallows it, so "an emission never throws into a
+    // producer" is a property of that function, not a promise about callers.
+    const hostileSink = Object.freeze({
+      contract: 1,
+      emitLog: () => Promise.reject(new Error(SENTINELS.errorMessage)),
+      emitMetric: () => Promise.reject(new Error(SENTINELS.errorMessage)),
+      emitRun: () => Promise.reject(new Error(SENTINELS.errorMessage)),
+      flush: async () => ({}), close: async () => ({}), status: () => ({}),
+    });
+    assert.equal(isTelemetrySink(hostileSink), true);
+    assert.equal(reportBackupOperation(hostileSink, {
+      operation: 'create', outcome: 'succeeded', durationMs: 1,
+    }), false, 'a thenable settlement is not reported as a delivered signal');
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
+    assert.deepEqual(rejections, [], 'no unhandled rejection escaped the report adapter');
+  } finally {
+    process.off('unhandledRejection', listener);
+  }
 });
 
 // ───────────────────────────────────────────── producer 1: durable jobs

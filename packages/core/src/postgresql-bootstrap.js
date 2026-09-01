@@ -9,7 +9,7 @@ import {
   createPostgresqlPool,
   createPostgresqlStorage,
 } from './postgresql-storage.js';
-import { createWriterReadinessObserver } from './observability-export.js';
+import { createWriterReadinessObserver, requireTelemetrySink } from './observability-export.js';
 import { DATA_ADVISORY_LOCK, DATA_RESTORE_CHILD_LOCK } from './postgresql-authority.js';
 import { attestPostgresqlStartup, fingerprintMigrationSet } from './startup-attestation.js';
 
@@ -865,7 +865,10 @@ export async function bootstrapPostgresqlApplication(options) {
     // one signal per refused write. The observer holds one boolean and reports
     // transitions; the lease row stays the authority and no state is added for
     // telemetry. Absent `options.telemetry`, every call below is a no-op.
-    const readiness = createWriterReadinessObserver(options.telemetry ?? null);
+    const readiness = createWriterReadinessObserver(requireTelemetrySink(
+      options.telemetry,
+      (message) => refuse('POSTGRESQL_TELEMETRY_INVALID', message),
+    ));
     const observeReadiness = (snapshot) => readiness.observe(snapshot, {
       expiresAt: leaseState.holder.expiresAt,
       now: new Date(epochNow(options.now)).toISOString(),

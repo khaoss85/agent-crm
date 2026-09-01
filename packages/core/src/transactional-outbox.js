@@ -11,6 +11,7 @@ import { AppError, ValidationError } from './errors.js';
 import { tenantNamespace } from './idempotency.js';
 import {
   reportOutboxDispatch,
+  requireTelemetrySink,
   telemetryDurationMs,
   telemetryErrorCode,
 } from './observability-export.js';
@@ -209,6 +210,9 @@ function temporaryDispatchFailure() {
  */
 function instrumentedDispatch(telemetry, effect, execute) {
   if (!telemetry) return execute;
+  requireTelemetrySink(telemetry, (message) => {
+    throw new ValidationError(`Transactional-outbox ${message}`, { field: 'telemetry' });
+  });
   return async (context) => {
     const clock = typeof context?.now === 'function' ? context.now : () => new Date().toISOString();
     const startedAt = clock();

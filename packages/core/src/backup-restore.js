@@ -13,6 +13,7 @@ import { requireActor } from './actor.js';
 import { AppError } from './errors.js';
 import {
   reportBackupOperation,
+  requireTelemetrySink,
   telemetryDurationMs,
   telemetryErrorCode,
 } from './observability-export.js';
@@ -608,7 +609,10 @@ export function createBackupOperations(options) {
     refuse('BACKUP_CLOCK_INVALID', 'backup clock is invalid');
   }
   const clock = configuration.clock ?? (() => new Date().toISOString());
-  const telemetry = configuration.telemetry ?? null;
+  const telemetry = requireTelemetrySink(
+    configuration.telemetry,
+    (message) => refuse('BACKUP_TELEMETRY_INVALID', message),
+  );
 
   /**
    * Report one backup operation (Spine v4C), observing and re-raising.

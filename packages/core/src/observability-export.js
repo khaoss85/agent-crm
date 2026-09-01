@@ -524,13 +524,65 @@ export function createCaptureTelemetryExporter(options = {}) {
 // runtime files. Each swallows its own failure: a malformed producer call is a
 // rejected signal, never an exception raised into a business path.
 
+/**
+ * Is this the sink, and not the exporter it wraps?
+ *
+ * The distinction is load-bearing, not pedantry. Every containment this
+ * contract promises — the allowlist, the bounded in-flight set, rejection
+ * capture, the deadlines, the post-close drop — lives in the sink. An exporter
+ * handed to a producer directly receives an envelope that was never validated,
+ * and its returned promise reaches a caller that does not await it, which is
+ * an unhandled rejection and, on Node 22, a dead process. A telemetry backend
+ * going down would then take the application with it — the exact opposite of
+ * the best-effort guarantee in ADR-043.
+ *
+ * A sink carries `status` and always carries `flush`/`close`; an exporter
+ * carries `name` and may carry neither. That is the discriminator.
+ *
+ * @param {unknown} value
+ */
+export function isTelemetrySink(value) {
+  if (!value || (typeof value !== 'object' && typeof value !== 'function')) return false;
+  const candidate = /** @type {any} */ (value);
+  return candidate.contract === TELEMETRY_EXPORT_CONTRACT
+    && ['emitLog', 'emitMetric', 'emitRun', 'flush', 'close', 'status']
+      .every((operation) => typeof candidate[operation] === 'function');
+}
+
+/**
+ * Refuse anything that is not a sink, in the caller's own refusal register.
+ * Construction time, not first emission: a misconfigured telemetry wiring must
+ * fail where it was written, not silently bypass the fence under load.
+ *
+ * @param {unknown} value
+ * @param {(message: string) => never} refuse
+ */
+export function requireTelemetrySink(value, refuse) {
+  if (value === undefined || value === null) return null;
+  if (isTelemetrySink(value)) return value;
+  const looksLikeExporter = Boolean(value) && typeof (/** @type {any} */ (value).emitLog) === 'function';
+  return refuse(looksLikeExporter
+    ? 'telemetry must be the sink from createTelemetrySink, not the exporter it wraps: '
+      + 'an exporter passed here receives unvalidated records and its rejections reach nobody'
+    : 'telemetry must be the sink returned by createTelemetrySink');
+}
+
 function report(telemetry, operation, input) {
   if (!telemetry || typeof telemetry[operation] !== 'function') return false;
+  let settlement;
   try {
-    return telemetry[operation](input);
+    settlement = telemetry[operation](input);
   } catch {
     return false;
   }
+  // A sink's emit is synchronous and returns a boolean. Swallowing a thenable
+  // anyway is what makes "an emission never throws into a producer" a property
+  // of this function rather than a promise about its callers.
+  if (settlement && typeof settlement.then === 'function') {
+    Promise.resolve(settlement).catch(() => {});
+    return false;
+  }
+  return settlement === true;
 }
 
 /** Milliseconds between two ISO instants from the caller's own clock, bounded. */

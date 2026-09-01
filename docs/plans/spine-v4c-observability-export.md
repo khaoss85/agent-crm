@@ -393,3 +393,54 @@ not a regression, and CI provisions the client tools.
 whole suite in one process and this host has 16 GB, where the campaign rule is
 one test file at a time. `npm run check` plus the file-by-file runs above stand
 in for it, and the gap is stated rather than hidden.
+
+## Progress — 2026-09-01 post-red-team: the sink/exporter seam
+
+Integration review asked whether `telemetry` should be validated at the
+producer seams, describing it as an ambiguous contract rather than a defect and
+leaving the decision open. Probed rather than reasoned about, it was a defect,
+and a worse one than the question implied.
+
+`createDurableJobWorker({ ..., telemetry: <a raw exporter> })` constructed
+without complaint, and running one job **terminated the process** with an
+unhandled rejection. The mechanism: `report()` called `exporter.emitLog(input)`
+directly, so the returned promise reached a caller that never awaits it. Two
+guarantees this slice makes were false in that configuration —
+
+- *"non-security telemetry is best effort"*: a telemetry backend going down
+  took the application with it, which is the exact inverse;
+- *"the allowlist validates every emission"*: the exporter received the raw
+  `{signal, attributes}` envelope, which `validateSignal` had never seen.
+
+Every containment in this design lives in the sink. An exporter is the thing
+the sink wraps, and handing one to a producer silently removes the allowlist,
+the bounded in-flight set, rejection capture, both deadlines and the post-close
+drop, all at once.
+
+Fixed at the boundary rather than defended at the call site:
+
+- `isTelemetrySink()` discriminates by shape — a sink carries `status` and
+  always carries `flush`/`close`; an exporter carries `name` and may carry
+  neither.
+- `requireTelemetrySink(value, refuse)` refuses anything else at
+  **construction**, in each caller's own refusal register: `ValidationError` in
+  durable-jobs and the outbox, `refuse('POSTGRESQL_TELEMETRY_INVALID', …)` in
+  bootstrap, `refuse('BACKUP_TELEMETRY_INVALID', …)` in backup-restore. A
+  misconfigured wiring now fails where it was written, not under load. When the
+  value looks like an exporter the message says so, because that is the mistake
+  a composer will actually make.
+- `report()` swallows any thenable settlement and returns `false`. A valid sink
+  emits synchronously, so this changes nothing today; it makes "an emission
+  never throws into a producer" a property of that function rather than a
+  promise about its callers.
+
+Five further mutations, all RED: the `isTelemetrySink` discriminator, the
+`requireTelemetrySink` refusal, the `report` thenable swallow, and the
+durable-jobs and backup seams. **28 guards, 28 covered.**
+
+Re-verified after the fix: V4C 20 pass · V4C hosted 3 pass · V3A SQLite 27 ·
+V3B SQLite 9 · V3B hosted 10 · V4A 13 · V4B deterministic 20 · M4B hosted 12 ·
+characterization 23 (baseline unmoved) · `npm run check` 470 files ·
+`npm run repo:truth -- --check` clean. The truth document needed a regenerate
+whose diff is **only** `sourceSha`, with the fingerprint unchanged — no fact
+moved, which is exactly the case the campaign rule allows regenerating.
