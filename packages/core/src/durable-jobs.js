@@ -9,6 +9,12 @@ import {
   durableJobStorageFor,
   durableJobStorageOwnerFor,
 } from './durable-job-storage.js';
+import {
+  reportDurableJobClaimed,
+  reportDurableJobExecution,
+  reportDurableJobWorkerError,
+  telemetryDurationMs,
+} from './observability-export.js';
 import { resolveClock } from './time.js';
 
 export const DURABLE_JOB_CONTRACT = 1;
@@ -622,8 +628,12 @@ function defaultBackoff(attempt) {
 /** Explicit worker. Constructing it starts no timers and claims no work. */
 export function createDurableJobWorker(options) {
   closedObject(options,
-    ['store', 'registry', 'workerId', 'actor', 'clock', 'pollIntervalMs', 'leaseMs', 'backoff'],
+    ['store', 'registry', 'workerId', 'actor', 'clock', 'pollIntervalMs', 'leaseMs', 'backoff', 'telemetry'],
     ['store', 'registry', 'workerId', 'actor'], 'Durable-job worker options');
+  // Spine v4C. Optional and best effort: nothing here is awaited by the job
+  // path, no signal is emitted inside a store transaction or beside an audit
+  // write, and the security audit remains the only authority on what happened.
+  const telemetry = options.telemetry ?? null;
   const workerId = boundedText(options.workerId, 'workerId');
   const actor = mutationActor({ actor: options.actor }, []);
   if (actor.type !== 'system') {
@@ -645,6 +655,20 @@ export function createDurableJobWorker(options) {
   const recordPollFailure = (error) => {
     const code = boundedOwnErrorCode(error, 'DURABLE_JOB_POLL_FAILED');
     lastWorkerErrorCode = WORKER_STATUS_ERRORS.has(code) ? code : 'DURABLE_JOB_POLL_FAILED';
+    reportDurableJobWorkerError(telemetry, { errorCode: lastWorkerErrorCode });
+  };
+
+  /** Reported from a settled store row, so classification never outruns truth. */
+  const reportExecution = (settled, startedAt) => {
+    if (!settled || typeof settled !== 'object') return;
+    reportDurableJobExecution(telemetry, {
+      kind: settled.kind,
+      handler: settled.handler?.name,
+      state: settled.state,
+      attempt: settled.attempt,
+      durationMs: telemetryDurationMs(startedAt, clock()),
+      errorCode: settled.lastErrorCode,
+    });
   };
 
   const clearWake = () => {
@@ -726,9 +750,21 @@ export function createDurableJobWorker(options) {
         ? await options.store.claim(workerId, leaseMs, { actor })
         : await options.store.claimById(jobId, workerId, leaseMs, { actor });
       if (!job) return null;
-      if (!accepting || closed) return options.store.release(job, workerId, { actor });
+      reportDurableJobClaimed(telemetry, {
+        kind: job.kind, handler: job.handler?.name, attempt: job.attempt,
+      });
+      const startedAt = clock();
+      if (!accepting || closed) {
+        const released = await options.store.release(job, workerId, { actor });
+        reportExecution(released, startedAt);
+        return released;
+      }
       inFlight = execute(job);
-      try { return await inFlight; } finally { inFlight = null; }
+      try {
+        const settled = await inFlight;
+        reportExecution(settled, startedAt);
+        return settled;
+      } finally { inFlight = null; }
     })();
     try {
       const result = await pollPromise;

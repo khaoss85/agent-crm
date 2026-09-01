@@ -9,6 +9,7 @@ import {
   createPostgresqlPool,
   createPostgresqlStorage,
 } from './postgresql-storage.js';
+import { createWriterReadinessObserver } from './observability-export.js';
 import { DATA_ADVISORY_LOCK, DATA_RESTORE_CHILD_LOCK } from './postgresql-authority.js';
 import { attestPostgresqlStartup, fingerprintMigrationSet } from './startup-attestation.js';
 
@@ -859,17 +860,29 @@ export async function bootstrapPostgresqlApplication(options) {
     }
 
     const leaseState = { holder: writerLease, closed: false };
+    // Spine v4C. Readiness is a pull here — `health()` is asked and
+    // `writerGuard` runs per write — so an expired lease would otherwise emit
+    // one signal per refused write. The observer holds one boolean and reports
+    // transitions; the lease row stays the authority and no state is added for
+    // telemetry. Absent `options.telemetry`, every call below is a no-op.
+    const readiness = createWriterReadinessObserver(options.telemetry ?? null);
+    const observeReadiness = (snapshot) => readiness.observe(snapshot, {
+      expiresAt: leaseState.holder.expiresAt,
+      now: new Date(epochNow(options.now)).toISOString(),
+    });
     dataStorage = createPostgresqlStorage(dataPool, {
       schema: POSTGRES_APPLICATION_SCHEMA,
       acquisitionDeadlineMs,
       queryDeadlineMs,
       writerGuard: () => {
         const snapshot = describeWriterHealth(leaseState.holder, options.now, leaseState.closed);
+        observeReadiness(snapshot);
         if (!snapshot.ready) {
           refuse(snapshot.reason ?? 'WRITER_LEASE_EXPIRED', 'this process does not hold an unexpired writer lease');
         }
       },
     });
+    observeReadiness(describeWriterHealth(leaseState.holder, options.now, false));
     return Object.freeze({
       adapter: 'postgresql',
       schema: POSTGRES_APPLICATION_SCHEMA,
@@ -894,11 +907,14 @@ export async function bootstrapPostgresqlApplication(options) {
         repositoryFingerprint,
       }),
       health() {
-        return describeWriterHealth(leaseState.holder, options.now, leaseState.closed);
+        const snapshot = describeWriterHealth(leaseState.holder, options.now, leaseState.closed);
+        observeReadiness(snapshot);
+        return snapshot;
       },
       async close() {
         if (leaseState.closed) return;
         leaseState.closed = true;
+        observeReadiness(describeWriterHealth(leaseState.holder, options.now, true));
         const releaser = await connectBounded(controlPool, acquisitionDeadlineMs).catch(() => null);
         if (releaser) {
           try {

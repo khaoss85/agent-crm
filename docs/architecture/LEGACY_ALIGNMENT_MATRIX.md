@@ -341,6 +341,47 @@ Closing a `partial` cell requires the later authenticated operator composition
 and executable deployment policy. V4B does not retrofit domains, claim managed
 backups or grant a restored clone writer authority.
 
+### Bounded observability export contract v1 assessment (Production Spine v4C)
+
+This horizontal runtime capability hands bounded operational evidence to an
+observability system the deployment already runs, through a closed signal
+vocabulary rather than a filtered payload. It sits below domain packages and
+above nothing: no domain receives a sink, an exporter, a signal name or the
+ability to add one, and no domain can widen the allowlist. It is not an
+observability backend, a log store, an APM or a second audit system, it
+implements no OpenTelemetry or OTLP support, and it exports no tenant id,
+fingerprint, record identifier, payload, connection locator, secret or
+filesystem path — so v1 telemetry is aggregate-shaped, not per-record
+traceable.
+
+Every `not_applicable` below says the same structural thing and it is worth
+stating once: the three instrumented producers — durable jobs and the
+transactional outbox, PostgreSQL writer-lease readiness, and backup/verify/
+restore — are all infrastructure the kernel owns. A domain package cannot emit
+a signal, and that is the contract, not a gap awaiting a backfill.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | its writes flow through the instrumented job/outbox and PostgreSQL readiness paths, but no project record, action or module emits or names a signal, and no application/operator composition ships in V4C |
+| Pipeline | `not_applicable` | lifecycle definitions run no instrumented unit of work and own no exporter seam |
+| Lead Intelligence | `not_applicable` | package operations are reported only as the generic durable-job runs they already are; the package owns no signal |
+| Commercial Operations | `not_applicable` | provider sync is reported only as a generic durable-job run; catalog and pricing state is never an attribute |
+| Signature & Order | `not_applicable` | external-operation identity stays outside telemetry by design — an `externalOperationId` is a record identifier and v1 exports none |
+| Contract Activation | `not_applicable` | activation emits no signal and receives no sink |
+| Delivery | `not_applicable` | delivery emits no signal and receives no sink |
+| Service | `not_applicable` | service emits no signal and receives no sink |
+| Work | `not_applicable` | task and follow-up state is domain data; a job that moves it is reported only by kind |
+| Customer Data | `not_applicable` | projected records and source provenance are domain payload, which no attribute kind can represent |
+| Lifecycle | `not_applicable` | lifecycle emits no signal and receives no sink |
+| Custom-package fixture | `not_applicable` | custom packages receive no sink, exporter or signal-registration seam |
+| Custom-package score-disclosure fixture | `not_applicable` | the read-only capability fixture runs no instrumented unit of work |
+
+Closing the one `partial` cell requires the later application/operator
+composition that constructs a sink and owns its shutdown order, plus whatever
+correlation contract a Cloud control plane turns out to need — which is a
+deliberate widening of the allowlist, reviewed as such, not a refactor. V4C
+retrofits no domain, promotes no JTBD row, and claims no managed observability.
+
 ### Public site provenance contract v2 assessment
 
 `/version.json` v2 is a horizontal discovery contract for the generated public

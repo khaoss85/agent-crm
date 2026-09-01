@@ -67,6 +67,28 @@ export {
   backupVocabulary,
 } from './src/backup-restore.js';
 
+// ---- bounded observability export (Spine v4C) ----
+// One closed, versioned way to hand bounded operational evidence to an
+// observability system the deployment already runs. Published here for the
+// same reason the backup contract is: a self-host or future Cloud composition
+// must not deep-import a private implementation or rebuild the allowlist.
+//
+// It is NOT an observability backend, a log store, an APM or a second audit
+// system, and it implements NO OpenTelemetry or OTLP support. It exposes no
+// tenant id, fingerprint, record identifier, payload, connection locator,
+// secret or filesystem path — v1 telemetry is aggregate-shaped, not
+// per-record traceable, and constructing a sink starts no background process.
+export {
+  TELEMETRY_EXPORT_CONTRACT,
+  TELEMETRY_SIGNALS,
+  defineTelemetryExporter,
+  createTelemetrySink,
+  createNoopTelemetryExporter,
+  createJsonStderrTelemetryExporter,
+  createCaptureTelemetryExporter,
+  telemetryVocabulary,
+} from './src/observability-export.js';
+
 // ---- the framework clock ----
 // One ISO-8601 clock, so a package never stamps a record from its own.
 export { nowIso } from './src/time.js';

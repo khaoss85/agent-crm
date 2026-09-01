@@ -4325,3 +4325,68 @@ Cloud adapter are two concrete consumers of the same manifest and restore
 fences; forcing either to deep-import private source or recreate those fences
 would fail the DX Simplicity Gate. No storage handle, locator, generic process
 runner, custody service or operator command enters the public surface.
+
+## ADR-043 — Telemetry exports a closed vocabulary, never a filtered payload
+
+**Status:** accepted. **Milestone:** Production Spine v4C.
+**Plan:** `docs/plans/spine-v4c-observability-export.md`.
+
+The public core provides one closed, versioned contract for handing bounded
+operational evidence to an observability system the deployment already runs.
+It is not an observability backend: nothing here stores, aggregates, queries,
+retains or displays anything, and no managed observability service is claimed.
+The security audit remains the database authority — a telemetry failure can
+never rewrite business truth, and no signal replaces an audit write.
+
+The leak fence is the shape of what may be said, not a filter over what a
+caller passed. A signal name must be in a frozen registry; an attribute key
+must be declared for that signal; an attribute value must be a member of a
+kernel-enumerated closed set, a `boundedFailureCode`-charset code, a
+registration identifier, a bounded integer or a boolean. Attributes are flat,
+so no nested structure exists for a payload to travel in, and a record that
+fails any of those checks is refused whole and counted, never silently
+repaired. Rejecting a record rather than stripping the offending key is
+deliberate: stripping hides the producer defect that put it there.
+
+No record identifier is exportable in v1 — not the tenant id or any
+fingerprint, not the job, run or worker id, not the idempotency root or the
+outcome reference. Tenant identity is leak material in this repository by
+precedent (ADR-041's bounded diagnostics exist because a driver message
+carries tenant ids), caller-chosen bounded text stays domain data however
+short, and a job id is a durable key into tenant-scoped rows that the audit
+log already correlates behind authorization while telemetry has none. The
+stated consequence is that v1 telemetry is aggregate-shaped rather than
+per-record traceable; correlation requires a later, deliberately authorized
+contract version rather than a widened attribute list.
+
+Failure is best effort and bounded, stated exactly. An emission returns a
+boolean and never throws; no producer awaits one. Delivery is tracked in a
+bounded in-flight set rather than a growing queue, so backpressure is a counted
+drop with no batch to lose and no timer to schedule. Flush and close each have
+a deadline built on the same race-and-clear shape as the V3A worker drain, so a
+hung exporter cannot hang application shutdown and no timer is leaked. Close is
+memoized: the exporter is closed at most once, and a later emission is a
+counted drop, not an exception raised into a shutdown path.
+
+Lifecycle is application-owned. Constructing a sink starts no timer, socket or
+process, and the default async application factory gains no telemetry option —
+it composes no job worker, outbox worker or backup operations, so there is
+nothing there to instrument and a factory option would be exactly the hidden
+lifecycle this ADR refuses.
+
+**OpenTelemetry and OTLP are not implemented and not claimed.** They would add
+a large dependency tree against the rule that a production dependency must
+remove more complexity than it adds, and bring a global provider, context
+propagation and shutdown lifecycle of their own. The exporter shape is kept
+adapter-compatible — five operations, flat string-keyed attributes, bounded
+scalars — so an OTLP adapter can be written outside the kernel later without a
+contract change. `telemetryVocabulary().openTelemetry` is `false` so a reader
+of generated truth cannot infer support that does not exist.
+
+The eight construction symbols are exported from `packages/core/index.js` for
+the reason ADR-042's are: self-host composition and a future Cloud control
+plane are two concrete consumers of the same allowlist, and forcing either to
+deep-import private source or rebuild the redaction fence would fail the DX
+Simplicity Gate. No storage handle, locator, event bus or operator command
+enters the public surface, and this adds no agent-facing command, tool or
+namespace at all.
