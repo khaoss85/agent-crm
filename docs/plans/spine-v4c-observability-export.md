@@ -725,3 +725,37 @@ record over-stating the work, and none would have been caught by any gate: a
 commit message is prose, and the only reader who checks it is a person reading
 the diff beside it. That is the argument for why this repository reviews the
 message as closely as the change.
+
+## Progress — 2026-09-01 the sentinel that was too convincing
+
+GitGuardian failed on `f299da1` with one finding, and it was the leak-scan
+sentinel: `postgresql://operator:hunter2@db.internal.invalid:5432/accordo`.
+
+The useful part is not "a fake password was used". `hunter2` appears five times
+in this repository and has never tripped anything — including
+`postgres://u:hunter2@h/db` in `tests/project-verify.test.js` and a comment in
+`packages/cli/src/project-verify-command.js` calling it *"the commonest secret
+in a connection string"*. **A secret scanner judges the shape of a string, not
+whether the value is real**, and the existing occurrences are stripped to the
+bone — one-character user, one-character host, no port, no database name —
+while this one had a plausible user, an FQDN, a port and a real database name.
+It was flagged because it was better built.
+
+Which is an ironic compliment to the test: the sentinel worked *because* it was
+realistic, and that is exactly why it was picked up.
+
+Aligned to the form the repository already carries and that already passes, with
+the reason written beside it so a later author does not "improve" it back. **No
+assertion weakens.** Nothing here depends on the sentinel being plausible: the
+leak scan needs it to be *unique*, and the two refusal tests need it to fail the
+NAME and CODE charsets, which a minimal connection string does just as
+completely — verified rather than assumed.
+
+The one remaining URI-shaped sentinel is `vault://accordo/prod/postgres#current`,
+which carries no `user:pass@` and so is not credential-shaped by the
+discriminator above. Recorded as the first place to look if a second finding
+appears, since GitGuardian cannot be run here.
+
+Worth noting for the campaign record: this is the first GitGuardian failure of
+the campaign, and V4A/V4B's `v4b-postgresql-password-sentinel`-style tokens have
+never tripped it. Form, not vocabulary.
