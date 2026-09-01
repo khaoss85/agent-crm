@@ -304,9 +304,9 @@ test('a consumer that never declared the capability cannot open an ask through i
   assert.equal((await operations.timers.read(scheduled.id)).state, 'scheduled');
 });
 
+/** Wait for the started worker to reach the ask, without nudging it. */
 async function settle(operations, askId) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    await operations.jobs.list(1);
     const record = await operations.timers.read(askId);
     if (record.state !== 'scheduled') return record;
     await new Promise((resolve) => { setTimeout(resolve, 25); });
