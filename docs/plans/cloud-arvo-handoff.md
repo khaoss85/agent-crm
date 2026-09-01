@@ -14,12 +14,22 @@ identity verifier is by design supplied by the deployment. Because *"done"
 means the whole phase, not v1*, finishing v3 and v4 does not open the Cloud
 gate by itself.
 
-## 0. The blocking human action
+## 0. The human action that was blocking, and is now taken
 
-**`HUMAN_ACTION_REQUIRED` — the private repository `khaoss85/accordo-platform`
-does not exist and must not be created by an agent.** C0 is blocked on it
-regardless of everything else in this document. A person creates it and grants
-access; nothing below can start first.
+**Closed.** `khaoss85/accordo-platform` now exists, private, created on the
+repository owner's explicit authorisation at the close of this campaign. It is
+empty: a README stating the boundary and pointing back at this document, and
+nothing else. C0 has not started.
+
+The rule that produced the block has not changed and should not be read as
+relaxed: no agent creates a repository on its own initiative. What changed is
+that a person decided, which is exactly what the block was there to require.
+
+**What this does not unblock.** C0 was gated on the repository *and* on
+everything else in this document. Access grants, branch protection and the
+migration sequence in `docs/editions/PRIVATE_REPOSITORY_MIGRATION.md` are still
+human steps, and the Arvo pilot's own precondition — whether the B2B layer is
+real enough to pilot against, §3 Correction 3 — is still unanswered.
 
 ## 1. What this campaign made representable, and what it did not
 

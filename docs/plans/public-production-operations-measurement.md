@@ -50,8 +50,10 @@ is unchanged at **five evidence-backed `partially supported` rows out of 600**;
 no infrastructure milestone promotes a business JTBD by itself. Managed secret
 custody, managed backup custody and an observability backend remain absent — an
 export contract is an interface, and an interface is not a backend. Accordo
-Cloud C0 remains blocked on a human action: the private repository
-`khaoss85/accordo-platform` does not exist, and no agent may create it.
+Cloud C0 has not started. Its blocking human action was taken at the close of
+this campaign — `khaoss85/accordo-platform` now exists, private and empty, on
+the owner's explicit authorisation — which removes one precondition and none of
+the others.
 
 ## Two corrections this measurement records about itself
 

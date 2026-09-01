@@ -202,7 +202,7 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 - [x] Enforce the candidate-owner / reviewed-override / human-deferral boundary in the canonical JTBD gate, including the registered non-candidate pillar mutation regression.
 
 - [ ] Spine v2 PostgreSQL per-tenant production storage.
-- [ ] Managed Cloud C0 organizations/projects/environments/deployments — blocked on human creation and scoped access to `accordo-platform`.
+- [ ] Managed Cloud C0 organizations/projects/environments/deployments — no longer blocked on repository creation — `khaoss85/accordo-platform` exists, private and empty, created on the owner's explicit authorisation on 2026-09-01. Still blocked on scoped access to `accordo-platform`.
 - [ ] Customer Data Operations v2; Interactions; Billing; Marketing; Analytics.
 - [ ] Vercel Accordo project/account scope and `public-surface-check` after private-repository creation.
 - [ ] Repository Truth Contract v2 generated `productionPosture`.
