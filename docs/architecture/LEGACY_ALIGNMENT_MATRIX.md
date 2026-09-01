@@ -409,6 +409,46 @@ a signal, and that is the contract, not a gap awaiting a backfill.
 | Custom-package fixture | `not_applicable` | custom packages receive no sink, exporter or signal-registration seam |
 | Custom-package score-disclosure fixture | `not_applicable` | the read-only capability fixture runs no instrumented unit of work |
 
+
+### Application-composed production operations v1 assessment (Production Spine integration)
+
+This horizontal capability is the one that holds the other six together: one
+application composes the durable job store, the transactional outbox, scheduled
+timer consumers, the secret provider, backup/verify/restore and the telemetry
+sink into a single handle, and **constructing it starts nothing**. The
+application starts, drains and stops it, and supplies the system authority its
+worker runs under.
+
+It sits beside domain packages rather than beneath them, and that placement is
+what most rows below record. A domain does not receive the handle, does not
+start a worker, and cannot cause one to start; nothing about composing
+operations changes what a domain may do. The two rows that are not
+`not_applicable` are the two domains a composed timer can actually reach — and
+it reaches them only through the capability seam they already declared, which
+is the pre-existing contract, not something this slice grants.
+
+One row is worth reading as a finding rather than a status. Until this slice,
+`domains.capability()` was read synchronously by the timer while returning a
+promise under `packageContract: 2`, so **no v2 domain could be reached by a
+scheduled ask at all**. Every row here that says a domain is reachable became
+true in this PR; before it, the honest value would have been `deferred`.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | its writes already flow through the composed job and outbox handlers, but no project record, action or module composes, starts or observes the handle |
+| Pipeline | `not_applicable` | lifecycle definitions declare no capability a timer can open and start no unit of work |
+| Lead Intelligence | `not_applicable` | package operations are enqueued as durable jobs by the composition; the package neither composes nor starts one |
+| Commercial Operations | `not_applicable` | provider sync runs as a generic durable job; the package owns no operations handle |
+| Signature & Order | `not_applicable` | external-operation identity is settled before any worker claims the job, and the package composes nothing |
+| Contract Activation | `not_applicable` | activation neither composes operations nor declares a capability a scheduled ask opens |
+| Delivery | `not_applicable` | delivery composes no operations and declares no timer-reachable capability |
+| Service | `partial` | it declares `work/follow-up@1` when composed with `followUp`, so a scheduled ask can reach it — through the requirement it already declared, and never to decide anything |
+| Work | `aligned` | it provides `follow-up@1`, which is the only capability a timer may open; the ask is opened as work, and every closing action still refuses a non-human actor |
+| Customer Data | `not_applicable` | projection runs as durable jobs the composition already carries; the package composes nothing and declares no timer-reachable capability |
+| Lifecycle | `partial` | it declares `work/follow-up@1` when composed with `followUp`, so a renewal review can present an ask to it; the renewal decision stays the human action it owns |
+| Custom-package fixture | `not_applicable` | custom packages receive no operations handle and no worker-start seam |
+| Custom-package score-disclosure fixture | `not_applicable` | the read-only capability fixture runs no unit of work and opens no ask |
+
 Closing the one `partial` cell requires the later application/operator
 composition that constructs a sink and owns its shutdown order, plus whatever
 correlation contract a Cloud control plane turns out to need — which is a
