@@ -309,6 +309,39 @@ Closing milestone for a `deferred` row is the corresponding real provider
 adapter with executable zero-leak evidence. This PR does not refactor a domain,
 ship a third-party credential or make provider work retryable.
 
+### Scheduled timer consumers assessment (Production Spine v3C)
+
+This horizontal capability lets a person schedule an ask — open this follow-up
+on that date, review this renewal when notice opens — as a visible instruction
+record whose durable job carries only its identity and fingerprint. An
+explicitly started worker presents it at that instant through the capability
+seam the domain already offers, using the consumer identity the record carries.
+It is infrastructure beside domain packages, not inside them: `work` still
+schedules nothing and `lifecycle` still schedules nothing, both literally, and
+no package version moves. A timer opens an ask and decides nothing; every
+closing action stays refused to its authority. Nothing autostarts, and an
+application that starts no worker behaves exactly as it did before.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | its records can be the subject of a scheduled ask, but no operator surface schedules one and the composition must start the worker itself |
+| Pipeline | `not_applicable` | lifecycle definitions own no instant and no ask of their own |
+| Lead Intelligence | `not_applicable` | scoring produces no ask a person schedules for later |
+| Commercial Operations | `partial` | a commercial follow-up is the first ask a timer opens, through `work/follow-up@1` with lifecycle's declared identity |
+| Signature & Order | `not_applicable` | signature timing belongs to the provider and its receipts, never to a local timer |
+| Contract Activation | `partial` | a renewal review becomes due on notice, and the renewal decision stays the human action lifecycle already owns |
+| Delivery | `not_applicable` | delivery obligations carry their own evidence and open no scheduled ask |
+| Service | `not_applicable` | escalation is immediate by contract; nothing about it waits for an instant |
+| Work | `aligned` | it receives asks through its existing capability and gains no scheduling behaviour of its own — its published claim that it schedules nothing stays true |
+| Lifecycle | `aligned` | it is named as the consumer identity on renewal and commercial asks and gains no scheduling behaviour — its published claim stays true |
+| Customer Data | `not_applicable` | projections are read models; a timer opens no projection |
+| Custom-package fixture | `not_applicable` | custom packages receive no timer seam |
+| Custom-package score-disclosure fixture | `not_applicable` | the capability fixture receives no timer seam |
+
+Closing a `partial` cell requires the operator composition the integration slice
+adds. V3C retrofits no domain, adds no recurrence syntax, sends nothing, and
+grants a timer no authority to decide anything a person decides today.
+
 ### Backup, verify and restore contract v1 assessment (Production Spine v4B)
 
 This horizontal runtime capability creates and verifies a closed PostgreSQL 16

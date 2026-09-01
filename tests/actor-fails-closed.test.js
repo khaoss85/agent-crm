@@ -249,6 +249,12 @@ test('framework self-authority stays at its reviewed named outbox boundary', asy
     .filter((line) => !isComment(line) && !inActorModule(line) && !isReExport(line))
     .map((line) => line.replace(/:\d+:/, ':<line>:'));
   assert.deepEqual(trusted, [
+    // V3C. A scheduled ask is an instruction a person wrote: the human boundary
+    // is enforced when it is written, and this authority only presents it at the
+    // instant they chose. It opens an ask and cannot decide one — the timer
+    // reaches a domain solely through the capability identity the record
+    // carries, and the domain still refuses it every human action.
+    "packages/core/src/domain-timers.js:<line>:const TIMER_ACTOR = trustedSystemActor('presenting a human-written scheduled ask at its instant');",
     "packages/core/src/transactional-outbox.js:<line>:const OUTBOX_ACTOR = trustedSystemActor('dispatching committed transactional outbox effects');",
   ],
     'a new trustedSystemActor call site is a new place the framework claims root — '

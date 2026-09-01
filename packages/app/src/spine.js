@@ -84,7 +84,7 @@ export const DEFAULT_ACTION_PERMISSION = 'records.write';
  */
 export const SPINE_NOT_MODELED = Object.freeze([
   'shared-database row-level tenancy (Spine v2 remainder)',
-  'durable jobs, outbox or scheduler (Spine v3)',
+  'an autostarted or operator-managed worker service, and any managed jobs service (Spine v3 remainder)',
   'managed secret custody or service, managed backup custody, scheduling or retention, managed observability backend, deploy or rollback (Spine v4 remainder)',
   'password, session or credential storage — the framework authenticates nobody',
   'email invitations',

@@ -220,11 +220,14 @@ something nobody checked. No number in any of these sentences is checked either
   protocol, not a result.
   <!-- truth: benchmark.build_rate.measured=not_measured -->
   <!-- truth: benchmark.tool_selection.comparative=false -->
-- **No scheduler, no reminders, nothing on a timer.** Follow-up Tasks and an Activity
-  timeline exist as one shared model (`docs/WORK_TASKS.md`) and a person moves every one of
-  them: a due date changes no state, nothing recurring exists, nothing is assigned or
-  notified, and renewal notice periods are recorded and never fire.
-  <!-- truth: spine.durable_jobs.implemented=absent -->
+- **Timers exist; a service that runs them for you does not.** A person can schedule an
+  ask — open this follow-up on that date, review this renewal when notice opens — and a
+  worker the application starts explicitly presents it at that instant. Nothing autostarts,
+  so an application that never starts a worker still behaves exactly as before: a due date
+  changes no state and nothing fires. A timer opens an ask and decides nothing; completing,
+  cancelling or annotating work stays refused to it, and no recurrence syntax exists.
+  <!-- truth: spine.timer_consumers.implemented=implemented -->
+  <!-- truth: spine.managed_jobs_service.implemented=absent -->
 - **No email, calendar or marketing integrations.** A notification provider contract exists;
   no adapter sends anything to anyone.
   <!-- truth: marketing_runtime.implemented=absent -->

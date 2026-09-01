@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "b5d42fd42f66a4a45665d0697deb5668f3fa7d6ce8336140e495002012e2a0df",
+  "sourceSha": "7b3ffd2b5da39a04f2afec8ab1fe2753785d5c65dc21948a5fe4993a3da0d82c",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -666,17 +666,18 @@
       ]
     },
     {
-      "id": "spine.durable_jobs.implemented",
-      "value": "absent",
+      "id": "spine.durable_job_store.implemented",
+      "value": "implemented",
       "authority": "spine.contract",
       "evidence": [
-        "declared:durable jobs, outbox or scheduler (Spine v3)",
-        "namespace-probe:scheduler|job|jobs|outbox|cron|timer|reminder|queue|worker|dispatcher",
-        "packages/app/src/spine.js#SPINE_NOT_MODELED"
+        "executable-probe:durable-job-store-surface",
+        "packages/core/src/durable-jobs.js#createDurableJobStore",
+        "packages/core/src/durable-jobs.js#createDurableJobWorker"
       ],
       "scope": "framework",
       "status": "current",
       "limitations": [
+        "SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY",
         "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
       ]
     },
@@ -691,6 +692,21 @@
       "scope": "framework",
       "status": "current",
       "limitations": []
+    },
+    {
+      "id": "spine.managed_jobs_service.implemented",
+      "value": "absent",
+      "authority": "spine.contract",
+      "evidence": [
+        "declared:an autostarted or operator-managed worker service, and any managed jobs service (Spine v3 remainder)",
+        "namespace-probe:managed-jobs|jobs-service|worker-service|job-runner|cron|dispatcher",
+        "packages/app/src/spine.js#SPINE_NOT_MODELED"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": [
+        "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
+      ]
     },
     {
       "id": "spine.multi_tenant_single_instance",
@@ -830,6 +846,37 @@
       "scope": "framework",
       "status": "current",
       "limitations": []
+    },
+    {
+      "id": "spine.timer_consumers.implemented",
+      "value": "implemented",
+      "authority": "spine.contract",
+      "evidence": [
+        "executable-probe:scheduled-ask-vocabulary",
+        "packages/core/src/domain-timers.js#scheduleAsk",
+        "packages/core/src/domain-timers.js#scheduledAskVocabulary"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": [
+        "SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY",
+        "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
+      ]
+    },
+    {
+      "id": "spine.transactional_outbox.implemented",
+      "value": "implemented",
+      "authority": "spine.contract",
+      "evidence": [
+        "executable-probe:transactional-outbox-surface",
+        "packages/core/src/transactional-outbox.js#registerTransactionalOutboxHandlers"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": [
+        "SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY",
+        "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
+      ]
     }
   ],
   "limitations": [
@@ -848,6 +895,10 @@
     {
       "code": "SELF_HOST_POSTGRESQL_BACKUP_CONTRACT_ONLY",
       "message": "the implemented fact covers the bounded provider-neutral create/verify/restore contract and its native PostgreSQL 16 provider, which needs pg_dump, pg_restore and psql present. It is PostgreSQL-only — SQLite is refused, not degraded — and it is not managed artifact custody, scheduling, retention, PITR, clone promotion, an operator surface or a recoverability SLA"
+    },
+    {
+      "code": "SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY",
+      "message": "the durable job store, its transactional outbox and its scheduled timer consumers are a bounded self-host contract whose worker the composing application starts explicitly. Nothing autostarts, no operator surface or managed jobs service ships with them, and a timer opens an ask rather than deciding one"
     },
     {
       "code": "MANAGED_SECRETS_BACKUPS_OBSERVABILITY_ABSENT",
@@ -906,5 +957,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "13cb47891e541e9687659e41db26c8f45b3cd248281b8cfbfd3cf5dbeb998bbc"
+  "fingerprint": "3c541c03281b2b2d754ed01e7ca3c4fed87a6a5068370e9edc1e06166e312b57"
 }

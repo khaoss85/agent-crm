@@ -617,15 +617,16 @@
     },
     {
       "id": "L-04",
-      "headline": "No scheduler, no reminders, nothing on a timer.",
-      "text": "Follow-up Tasks and an Activity timeline are one shared model that a person moves by hand: a due date changes no state. There is no recurring work, no delayed workflow, no queue — so nothing fires on a renewal notice period either.",
+      "headline": "Timers exist; a service that runs them for you does not.",
+      "text": "A person can schedule an ask; a worker the application starts explicitly presents it at that instant. Nothing autostarts, so an application that starts none behaves as before. A timer opens an ask and decides nothing; no recurrence.",
       "evidence": {
         "jtbd": "JTBD-07, JTBD-10",
         "docs": [
           "docs/strategy/JOBS_AND_OUTBOX.md"
         ],
         "facts": [
-          "spine.durable_jobs.implemented=absent"
+          "spine.timer_consumers.implemented=implemented",
+          "spine.managed_jobs_service.implemented=absent"
         ]
       },
       "surfaces": [

@@ -36,6 +36,29 @@ Three alternatives were considered and rejected:
 
 The chosen shape leaves every package sentence literally true: `lifecycle` still schedules nothing. The *application* schedules an ask, and `lifecycle` owns the ask once it exists.
 
+## The chain of authority, verified against live code
+
+Implementation found two constraints the plan above did not know, and both narrow the design rather than break it:
+
+- **A capability records provenance, and the registry proves it.** `PackageRegistry.capability({consumer, ...})` looks the consumer package up in the composition and refuses unless *that package* declares the requirement (`CAPABILITY_NOT_DECLARED`), then hands the resolved identity to the provider, overwriting anything the context carried. A caller cannot invent a consumer that is not composed and declared.
+- **Every lifecycle writing action requires a human.** Its own metadata says so: *"every writing action requires actor.type === 'user'; agent actors are refused 403 HUMAN_APPROVAL_REQUIRED"*. No timer can invoke one, and none should.
+- **A composition cannot declare actions.** Actions come from `generatedActions` and from packages; `createAccordoAppAsync` takes `moduleMigrations` but no `actions`. So the scheduling entry point is a composition *function*, in the shape `createFollowUp` already is — not a registered action.
+
+The resulting chain, in order of authority:
+
+1. **Scheduling is human.** A composition function requires a human actor and writes the intent record and its job in one transaction. The record carries the ask, the subject, the instant, the consumer package the human named, and a fingerprint over all of it.
+2. **Firing is system, and narrow.** At the instant, the worker marks the record due under one `trustedSystemActor` whose stated reason is exactly that. The timer decides nothing.
+3. **Opening the task uses the existing seam with the recorded identity.** The timer passes the consumer package *from the record*, never one of its own choosing, and the registry re-proves it. The fingerprint is checked first, so the timer can only execute an instruction a human literally wrote: not the consumer, not the content, not the instant is the timer's to choose.
+
+This is deliberately not impersonation, and a test proves the difference: an intent record whose provenance or fingerprint has been tampered with is refused, so "the timer may pass any consumer" is false in the only sense that matters — it may pass only what an intact record gives it.
+
+Two further alternatives were rejected here:
+
+4. **The timer chooses the consumer itself.** That is impersonation: the identity would come from the timer rather than from the instruction, and nothing would bind what it opened to what anyone asked for.
+5. **A system-actor action inside `lifecycle`.** It contradicts that package's published human-approval boundary, which is the guarantee its users actually rely on.
+
+The renewal consumer walks the same chain and stops at step 2: it marks a review due, and the renewal decision stays entirely human through the action that already exists. How far along the chain each consumer travels is what makes the two materially different.
+
 ## Chosen design
 
 Each consumer is a named V3A handler under its own job kind, registered by the caller who composes it, in the shape `registerTransactionalOutboxHandlers` already established: the composition passes `domains`, `modules` and the database, and the handler reaches a domain only through `domains.capability(...)` — the same seam `lifecycle` uses to open `work/follow-up@1`. No package imports another, and nothing self-registers: no handler is reachable without an explicitly started worker.
@@ -87,3 +110,39 @@ The scheduled follow-up is built and proved first, in full. The renewal review f
 Started from `2c8bc33`, the merge of V4B, with V3A/V3B and V4A/V4B on main and CI green there.
 
 **Design complete, implementation not started.** The design above was reached by exploring three constraints in sequence, each of which invalidated the shape before it: the closed activity vocabulary (so a timer records no overdue entry), the payload-free discipline (so the ask is a record and the job carries a reference), and the two package claims quoted above (so the timer composes rather than joins a domain). Writing any of it as code before those were known would have produced a slice that had to be taken apart in review.
+
+## Progress — implementation
+
+Both consumers are implemented and green. What implementation found, beyond the
+plan above:
+
+- **The composition cannot declare actions**, so scheduling is a composition
+  *function* in the shape `createFollowUp` already is, and it demands a human
+  actor at the moment the instruction is written. That is where the human
+  boundary belongs: the timer that later presents it holds no authority of its
+  own.
+- **Writing from a job's `execute` deadlocks on SQLite**, because the worker
+  already holds a transaction. The state moves in `complete` instead, on the
+  handle that transaction owns — which is also the stronger contract: a settled
+  timer whose instruction still says `scheduled` is a pair this cannot produce.
+- **The two dialects need two renderings** of the module migration: PostgreSQL
+  keeps tables in the application schema and SQLite has none. One string would
+  have been wrong on one of them.
+- **Publishing timers meant publishing how to run them.** `packages/core/index.js`
+  exported nothing of the job store, so `scheduleAsk` alone would have been a
+  contract nobody could execute. The smallest operating surface — store,
+  registry, worker, and the outbox handlers — is now exported. Ergonomic
+  composition stays with the integration slice, and nothing autostarts.
+
+### The truth debt this slice closed
+
+The umbrella `spine.durable_jobs.implemented` published "durable jobs, outbox or
+scheduler: absent" while all three became true one after another. It is retired
+rather than inverted: an id that flips its meaning under consumers is worse than
+a new one. Three positive facts with their own executable probes replace it, all
+bounded by `SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY`, and what stays absent is stated
+as itself — an autostarted or operator-managed worker service, and any managed
+jobs service. Six surfaces cited the retired id and moved with it: PRODUCT,
+README, the execution roadmap, the JTBD matrix, the claims ledger and
+`app inspect`. The README sentence that said renewal notice periods "never fire"
+is now true as written rather than true by omission.

@@ -17,6 +17,35 @@
  */
 
 // ---- the package contract ----
+// V3C publishes the timer consumers, and a timer nobody can run is not a
+// contract. These are the smallest surface a self-host composition needs to
+// execute one: the store its instructions live in, the registry its handlers
+// join, and the worker it starts explicitly. Ergonomic composition
+// (`startWorkers()` and friends) belongs to the integration slice; nothing here
+// starts anything on its own.
+export {
+  createDurableJobHandlerRegistry,
+  createDurableJobStore,
+  createDurableJobWorker,
+} from './src/durable-jobs.js';
+
+export {
+  createTransactionalOutboxWorker,
+  registerTransactionalOutboxHandlers,
+} from './src/transactional-outbox.js';
+
+export {
+  DOMAIN_TIMER_CONTRACT,
+  SCHEDULED_ASK_KINDS,
+  SCHEDULED_ASK_STATES,
+  cancelScheduledAsk,
+  registerScheduledAskHandlers,
+  rescheduleAsk,
+  scheduleAsk,
+  scheduledAskMigration,
+  scheduledAskVocabulary,
+} from './src/domain-timers.js';
+
 export {
   definePackage,
   validatePackageDefinition,
