@@ -14,7 +14,10 @@ import {
   createDurableJobStore,
   createDurableJobWorker,
 } from '../packages/core/src/durable-jobs.js';
-import { ensureCommittedWriteOutcomeEffects } from '../packages/core/src/transactional-outbox.js';
+import {
+  ensureCommittedWriteOutcomeEffects,
+  transactionalOutboxEffectIdentity,
+} from '../packages/core/src/transactional-outbox.js';
 import { runIdempotentWrite } from '../packages/core/src/write-outcome-runtime.js';
 
 const actor = Object.freeze({ type: 'user', id: 'sqlite-outbox-operator' });
@@ -289,7 +292,7 @@ test('committed effect ownership absorbs a lost contest only when the identity i
   );
 });
 
-test('a receipt source owns both effects or none, and an identity collision is never absorbed', async (t) => {
+test('a receipt source owns both effects or none', async (t) => {
   const database = createDatabase({ path: ':memory:', plane: 'data' });
   t.after(() => database.close());
   const receipt = {
@@ -339,5 +342,32 @@ test('a receipt source owns both effects or none, and an identity collision is n
       database: { storage: contested }, tenantId: 'tenant-a', outcome: receipt,
     }),
     (error) => error.code === 'CONFLICT',
+  );
+});
+
+test('an identity collision under the effect root is refused, never absorbed', async (t) => {
+  const database = createDatabase({ path: ':memory:', plane: 'data' });
+  t.after(() => database.close());
+  const source = {
+    runId: 'collision-run',
+    phase: 'root',
+    requestFingerprint: 'e'.repeat(64),
+    eventIntents: [{ event: 'company.created', payload: { id: 'collision' } }],
+  };
+  const { sourceFingerprint } = transactionalOutboxEffectIdentity(
+    'tenant-a', source, 'internal-event-promotion',
+  );
+  await createDurableJobStore({ storage: database.storage, tenantId: 'tenant-a' }).enqueue({
+    kind: 'unrelated-work',
+    handler: { name: 'unrelated-handler', contract: 1, version: 1 },
+    payload: { note: 'occupies the effect identity root' },
+    idempotencyRoot: `outbox:internal-event-promotion:${sourceFingerprint}`,
+  }, { actor });
+
+  // Proving existence would read the colliding row itself, so the collision is
+  // refused before any probe runs.
+  await assert.rejects(
+    ensureCommittedWriteOutcomeEffects({ database, tenantId: 'tenant-a', outcome: source }),
+    (error) => error.code === 'DURABLE_JOB_IDEMPOTENCY_MISMATCH',
   );
 });
