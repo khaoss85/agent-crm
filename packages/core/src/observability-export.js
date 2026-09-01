@@ -536,7 +536,16 @@ export function createTelemetrySink(options) {
   });
 }
 
-/** Does nothing, allocates nothing, and is what a producer gets when given no sink. */
+/**
+ * Emits nothing, and is what a producer gets when given no sink.
+ *
+ * Not "allocates nothing": `postgresql-bootstrap.js` builds its readiness
+ * observer — a closure and one frozen object — on every boot whether or not
+ * telemetry was supplied. That allocation is once per process and buying it
+ * back with a lazy branch on a startup path would cost more than it saves, so
+ * the wording is corrected instead of the code. What the contract actually
+ * guarantees is that nothing is *emitted*, which is the half a reader depends on.
+ */
 export function createNoopTelemetryExporter() {
   return defineTelemetryExporter({
     name: 'noop',

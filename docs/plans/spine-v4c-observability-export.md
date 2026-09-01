@@ -105,7 +105,8 @@ isolates failure and owns the deadlines. It returns
 `{ contract, emitLog, emitMetric, emitRun, flush, close, status }`, frozen.
 
 **Built-in exporters**: `createNoopTelemetryExporter()` (the default when a
-producer is given no sink — zero cost, no allocation per signal),
+producer is given no sink — nothing is emitted, and no record is built per
+signal; see the L7 note below on why that is not the same as allocating nothing),
 `createJsonStderrTelemetryExporter()` (one JSON line per record on **stderr**,
 per the repository's "stdout is reserved for JSON-RPC" convention) and
 `createCaptureTelemetryExporter()` (a bounded in-memory ring for tests).
@@ -561,3 +562,41 @@ merely un-wired. Recorded in the ADR, this plan and TASKS.
 Twenty-eight guards from the first two commits remain covered; seven of the
 eight new mutations are red, and the eighth is recorded as a redundant layer
 rather than claimed.
+
+## Progress — 2026-09-01 close-out: L7, and a fourth case for the method note
+
+**L7, chosen wording over code.** `postgresql-bootstrap.js` constructs the
+readiness observer — one closure, one frozen object — on every boot regardless
+of whether telemetry was supplied, so "with no sink composed, nothing is
+allocated" was very slightly overstated. Every emit path is a no-op exactly as
+claimed; only the allocation happens anyway. Making it lazy would add a branch
+to a startup path to save one object per process, so the sentence is corrected
+rather than the code: the guarantee is that nothing is **emitted**, which is the
+half anything depends on. Recorded because the difference between "no cost" and
+"no emission" is precisely the kind of small over-claim this repository's
+gates cannot see.
+
+### The method note, now with four cases
+
+Reading gave green on something execution broke, four times in this campaign,
+and it is worth writing down where it will be read again:
+
+1. **V4B's restore fence** was deletable with all eighteen tests passing. An
+   independent reviewer found it — someone who had not written it.
+2. **The V4C sink accepted a raw exporter** and ended the process with an
+   unhandled rejection on the first job. Integration review formulated it; a
+   probe proved it. Reading the same code had left it standing.
+3. **The V4C allowlist validated one value and exported another.** A reviewer
+   executed a two-faced getter and got free text, a nested object into a record
+   the contract calls flat, and an exception out of the public sink. Three
+   consequences, none visible by inspection.
+4. **V4B's hosted lane could never have restored anything**, because
+   `pg_restore --schema` filters the objects inside a schema and never emits the
+   schema itself. Found by the integration Lead by rebuilding dump, render and
+   apply inside a real container — invisible to any amount of reading, and
+   hidden behind a provider boundary in every failure message.
+
+The shape they share is that each one *looked* correct, and the gates agreed.
+Three of the four were found by someone who had not written the code, and the
+fourth by replaying the real flow instead of the described one. Neither is a
+substitute for tests; both are what tests are checked against.
