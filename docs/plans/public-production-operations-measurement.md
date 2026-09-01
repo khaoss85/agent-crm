@@ -21,9 +21,12 @@ of it, including the parts that could not be taken here and why.
 `scripts/measure-suite.js` refuses to record numbers from a suite that failed,
 and `npm test` fails on this machine, for a reason that is this machine's rather
 than the repository's. It was run and reported
-`npm run verify exited 1 with 2 failing`, and a completed full run named both:
-**2211 tests, 2144 passing, 2 failing.** Both are macOS artefacts, and CI passes
-both at the same commit.
+`npm run verify exited 1 with 2 failing`, and a completed full run named both.
+Both are macOS artefacts, and CI passes both at the same commit. The counts
+themselves are deliberately not typed here — `site:check` refuses a
+hand-written test count, which is the gate `measure-suite` exists to feed, and
+this document ran into it while describing why the measurement could not be
+taken.
 **1. `tests/spine-v2-m0-characterization.test.js` — `M0 records
 PostgreSQL-shaped --db input as legacy SQLite path semantics`.** Certain, and
 the diff says it outright: expected `/var/folders/…`, got
