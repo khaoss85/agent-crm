@@ -584,3 +584,50 @@ test('dispatch begun at lease expiry retries at least once and may duplicate par
   await first.close();
   await recovery.close();
 });
+
+test('a committed outcome replays even when its effect ownership cannot be established', { timeout: 90_000 }, async (t) => {
+  const clock = () => '2026-09-01T09:00:00.000Z';
+  const booted = await bootPostgresqlApp(t, { moduleMigrations: [] });
+  if (!booted) return;
+  const storage = postgresqlTestStorage(booted.app);
+  const database = databaseHandle(storage, booted.tenantId);
+  const events = new EventBus();
+  events.subscribe('company.created', () => {});
+  const spec = {
+    tenantId: booted.tenantId,
+    idempotencyKey: 'v1.20260901.ffffffffffffffffffffffffffffffff',
+    actor,
+    operation: 'company.create',
+    input: { name: 'Replay Safe' },
+    now: clock,
+  };
+  const first = await runIdempotentWrite(database, events, spec, async ({ emit }) => {
+    await emit('company.created', { id: 'company-replay' });
+    return { id: 'company-replay' };
+  });
+  assert.equal(first.replayed, false);
+
+  // Strand the committed outcome exactly as a source committed before V3B, then
+  // make owning its effect impossible. A concurrent first attempt reaches the
+  // same state by losing the serialization contest for this very effect row.
+  const jobs = createDurableJobStore({ storage, tenantId: booted.tenantId });
+  const [effect] = await jobs.list();
+  await probePostgresqlQuery(storage,
+    'DELETE FROM "accordo"."spine_jobs" WHERE id = $1', [effect.id]);
+  await jobs.enqueue({
+    kind: 'unrelated-work',
+    handler: { name: 'unrelated-handler', contract: 1, version: 1 },
+    payload: { note: 'occupies the effect identity root' },
+    idempotencyRoot: effect.idempotencyRoot,
+  }, { actor });
+
+  const replay = await runIdempotentWrite(database, events, spec, async () => {
+    throw new Error('a committed outcome must never re-execute its work');
+  });
+  assert.equal(replay.replayed, true,
+    'post-commit effect ownership never decides whether a committed write replays');
+  assert.deepEqual(replay.result, first.result);
+  assert.equal((await jobs.list()).filter(
+    (entry) => entry.handler.name === 'promote-write-outcome-events').length, 0,
+    'the unrecoverable effect stays absent and visibly pending recovery, never silently promoted');
+});

@@ -364,17 +364,21 @@ export async function reconcileWriteOutcome(database, events, spec) {
  */
 async function promoteAndFinalize(database, events, store, outcome, options = {}) {
   if (Array.isArray(outcome.eventIntents) && outcome.eventIntents.length > 0) {
-    await ensureCommittedWriteOutcomeEffects({
-      database,
-      tenantId: options.tenantId,
-      outcome,
-    });
     const effect = transactionalOutboxEffectIdentity(
       options.tenantId,
       outcome,
       'internal-event-promotion',
     );
+    // The outcome is already committed, so neither owning the effect nor
+    // dispatching it may fail this replay. A concurrent first attempt races this
+    // caller for the same effect row, and losing that contest leaves the effect
+    // pending under its stable idempotency root, which is safe to repeat.
     try {
+      await ensureCommittedWriteOutcomeEffects({
+        database,
+        tenantId: options.tenantId,
+        outcome,
+      });
       await dispatchTransactionalOutboxJob({
         database, events, tenantId: options.tenantId,
         workerId: `write-outcome-${outcome.runId}`,
