@@ -81,6 +81,8 @@ const CALLER_NAME_KIND = Object.freeze({ kind: 'name' });
 const NUMBER_KIND = Object.freeze({ kind: 'number' });
 const BOOLEAN_KIND = Object.freeze({ kind: 'boolean' });
 
+export const TELEMETRY_RUN_STATES = RUN_STATES;
+
 /**
  * Every signal this framework may export, and every attribute each one may
  * carry. Nothing outside this table can be emitted.
@@ -95,8 +97,6 @@ const BOOLEAN_KIND = Object.freeze({ kind: 'boolean' });
  * as one, not an oversight — and see {@link CALLER_NAME_KIND} for the one
  * declared exception, where the caller names the work.
  */
-export const TELEMETRY_RUN_STATES = RUN_STATES;
-
 export const TELEMETRY_SIGNALS = Object.freeze({
   'accordo.durable_job.claimed': Object.freeze({
     kind: 'log',
@@ -849,9 +849,13 @@ export function telemetryVocabulary() {
     openTelemetry: false,
     // The same reason `openTelemetry` is stated rather than omitted: a
     // programmatic consumer must be able to read the boundary, not infer it.
-    // `false` here means no attribute carries a tenant, record, run or worker
-    // identifier — with the one declared exception that a caller-chosen job
-    // kind or handler name is whatever the caller named it.
-    exportsRecordIdentifiers: false,
+    //
+    // Not a boolean, deliberately. `false` was the shape here first and it
+    // over-claimed in exactly the way the published limitation did: a consumer
+    // reading it takes "no identifiers" absolutely, while `kind` and `handler`
+    // carry whatever the caller named the work. A qualified value cannot be
+    // read that way, and the two named attributes say where to look.
+    exportsRecordIdentifiers: 'kernel-filled-attributes-only',
+    callerNamedAttributes: Object.freeze(['handler', 'kind']),
   });
 }

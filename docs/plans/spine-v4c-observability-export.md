@@ -367,7 +367,10 @@ after its `not ok` lines. It fails six subtests. The detection now counts
   put a telemetry parameter on every kernel write. An application that composes
   its own outbox worker gets the signals; the inline recovery dispatch does not.
 - **`createAccordoAppAsync` gains no telemetry option**, for the reason in
-  §Lifecycle: it composes none of the three producer families.
+  §Lifecycle — which is *not* "it composes nothing instrumentable". It reaches
+  `bootstrapPostgresqlApplication` and therefore composes the readiness
+  producer. Ownership of a sink's construction and shutdown order is the
+  lifecycle decision this slice declines to make.
 - **No exporter for any real backend.** No OTLP, no vendor SDK, no HTTP
   exporter. `json-stderr` is the self-host default and the rest is the
   deployment's business.
@@ -679,3 +682,46 @@ Neither is claimed as "not observable". Each is what was actually tested:
   `try` removed, and every one returned `false` rather than throwing. It guards
   a future regression, and it is why the public-surface guarantee is now a
   property of the function rather than an argument about its callers.
+
+## Progress — 2026-09-01 delta review, second batch: three claims, no code defects
+
+M2, M3 and M4 share one shape and it is worth naming: each is a **statement of
+having done something that was not done**. None is a code defect.
+
+- **M2** — a mutation declared unobservable, on reasoning that held for every
+  case considered and missed the one that mattered.
+- **M3** — a false reason declared "corrected here and in the ADR" while it
+  survived in the plan's own *Decision log* eleven lines away, and in
+  `TASKS.md` — a **fifth** site the enumeration of four never contained.
+- **M4** — the identifier exclusion declared "machine-readable" in a commit
+  that never touched `scripts/repo-truth.js`. The published limitation still
+  read *"v1 exports no tenant, record or run identifier"* with no
+  qualification, contradicting `CALLER_NAME_KIND` in the same slice.
+
+M4 is the one that mattered most, and the reviewer's distinction is the reason:
+for a **human** reader the exception was declared in every place they would
+look — module doc, the kind's own JSDoc, TASKS, ADR, a dedicated test. For the
+**consumer reading the generated fact** it was not declared anywhere, and that
+is the only *contractual* surface of the two.
+
+A fourth surface carried the same absolute and was not in the finding:
+`telemetryVocabulary().exportsRecordIdentifiers` was the boolean `false`,
+introduced by the very commit that claimed machine-readability. Its comment
+qualified it; its value did not, and a machine reads the value. Fixing only
+what was reported would have repeated M4 one field to the left. It is now
+`'kernel-filled-attributes-only'` with `callerNamedAttributes: ['handler',
+'kind']` beside it — a shape that cannot be read as an absolute — and a test
+derives that list from the registry, so adding a third caller-named attribute
+without updating it turns red. The truth probe rests on the qualified shape,
+so the published fact cannot regress to the unqualified one.
+
+L1 is the same failure in miniature: the JSDoc listing the deliberately
+excluded attributes was attached to `TELEMETRY_RUN_STATES`, and `5cc4778`
+added the pointer to `CALLER_NAME_KIND` — the exception — onto the symbol
+nobody opens. Re-homed onto `TELEMETRY_SIGNALS`.
+
+**What this batch says about the register.** Three of five findings were the
+record over-stating the work, and none would have been caught by any gate: a
+commit message is prose, and the only reader who checks it is a person reading
+the diff beside it. That is the argument for why this repository reviews the
+message as closely as the change.

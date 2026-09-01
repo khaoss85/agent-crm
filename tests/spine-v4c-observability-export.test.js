@@ -128,8 +128,21 @@ test('V4C publishes one closed contract, claims no OpenTelemetry support, and ca
   assert.deepEqual(vocabulary.operations, ['emitLog', 'emitMetric', 'emitRun', 'flush', 'close']);
   assert.deepEqual(vocabulary.exporters, ['capture', 'json-stderr', 'noop']);
   assert.equal(vocabulary.openTelemetry, false, 'no OTLP/OpenTelemetry support is implemented or claimed');
-  assert.equal(vocabulary.exportsRecordIdentifiers, false,
-    'the identifier exclusion is machine-readable, not only prose');
+  // Machine-readable AND qualified: an unqualified `false` here read as an
+  // absolute a consumer could rely on, while `kind` and `handler` carry
+  // whatever the caller named the work.
+  assert.equal(vocabulary.exportsRecordIdentifiers, 'kernel-filled-attributes-only');
+  assert.deepEqual(vocabulary.callerNamedAttributes, ['handler', 'kind']);
+  assert.deepEqual(
+    Object.entries(TELEMETRY_SIGNALS)
+      .flatMap(([, declared]) => Object.entries(declared.attributes))
+      .filter(([, kind]) => kind.kind === 'name')
+      .map(([key]) => key)
+      .filter((key, index, all) => all.indexOf(key) === index)
+      .sort(),
+    [...vocabulary.callerNamedAttributes],
+    'the caller-named list is exactly the attributes carrying the caller-chosen kind',
+  );
   assert.deepEqual(vocabulary.signals, Object.keys(TELEMETRY_SIGNALS).sort());
 
   // The duplicated state list in observability-export.js may not drift from

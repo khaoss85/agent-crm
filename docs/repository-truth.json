@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "4feb348780c560a9cd11e9d6eee6c11a0b2cec02a88a511c86a9dd226bb8250c",
+  "sourceSha": "a1b2884f535e75fe381c8a14fe4afe0f22ca1ca89c2a45baa5cf2ff0bf84cd7d",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -916,7 +916,7 @@
     },
     {
       "code": "SELF_HOST_TELEMETRY_EXPORT_CONTRACT_ONLY",
-      "message": "the implemented fact covers the bounded export contract itself: a closed signal vocabulary, an injected exporter, the built-in no-op/JSON-stderr/capture exporters and an application-owned lifecycle. It is not an observability backend, a log store, an APM, a second audit system, dashboards, alerting, retention or a managed telemetry service, it implements no OpenTelemetry or OTLP support, and v1 exports no tenant, record or run identifier, so telemetry is aggregate-shaped rather than per-record traceable"
+      "message": "the implemented fact covers the bounded export contract itself: a closed signal vocabulary, an injected exporter, the built-in no-op/JSON-stderr/capture exporters and an application-owned lifecycle. It is not an observability backend, a log store, an APM, a second audit system, dashboards, alerting, retention or a managed telemetry service, and it implements no OpenTelemetry or OTLP support. No attribute the kernel fills carries a tenant, record, run or worker identifier, so telemetry is aggregate-shaped rather than per-record traceable — with one declared exception: a durable job kind and handler name are chosen by whoever enqueued the work and are exported verbatim, so a caller who names a job after a uuid or a tenant slug will see it"
     },
     {
       "code": "SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY",
@@ -979,5 +979,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "57a48600e96da9b6a11b33e8b149aa0691e911101d60e9ce23efe85368061aed"
+  "fingerprint": "311d4b663d5ed1c2223a809e5a6fc6157705eea560ea2fe4a25a0f069d6d5c96"
 }

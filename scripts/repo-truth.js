@@ -125,8 +125,11 @@ export const TRUTH_LIMITATIONS = Object.freeze([
     'the implemented fact covers the bounded export contract itself: a closed signal vocabulary, an injected '
     + 'exporter, the built-in no-op/JSON-stderr/capture exporters and an application-owned lifecycle. It is not '
     + 'an observability backend, a log store, an APM, a second audit system, dashboards, alerting, retention or '
-    + 'a managed telemetry service, it implements no OpenTelemetry or OTLP support, and v1 exports no tenant, '
-    + 'record or run identifier, so telemetry is aggregate-shaped rather than per-record traceable'],
+    + 'a managed telemetry service, and it implements no OpenTelemetry or OTLP support. No attribute the kernel '
+    + 'fills carries a tenant, record, run or worker identifier, so telemetry is aggregate-shaped rather than '
+    + 'per-record traceable — with one declared exception: a durable job kind and handler name are chosen by '
+    + 'whoever enqueued the work and are exported verbatim, so a caller who names a job after a uuid or a tenant '
+    + 'slug will see it'],
   ['SELF_HOST_EXPLICIT_WORKER_JOBS_ONLY',
     'the durable job store, its transactional outbox and its scheduled timer consumers are a bounded self-host '
     + 'contract whose worker the composing application starts explicitly. Nothing autostarts, no operator surface '
@@ -879,6 +882,8 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
       && telemetryVocabulary.exporters?.includes('json-stderr')
       && telemetryVocabulary.exporters?.includes('capture')
       && !telemetryVocabulary.attributeKinds?.includes('object')
+      && telemetryVocabulary.exportsRecordIdentifiers === 'kernel-filled-attributes-only'
+      && telemetryVocabulary.callerNamedAttributes?.length === 2
       && telemetryAccepted === true
       && telemetryRefused === false
       && telemetryCaptured.length === 1
