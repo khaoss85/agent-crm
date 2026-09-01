@@ -398,8 +398,8 @@ export async function rescheduleAsk(context, id, scheduledFor) {
  * @param {{database: any, tenantId: string, domains?: any, modules?: any, clock?: () => string}} composition
  */
 /**
- * Answer, before anything is composed over it, whether this database has the
- * scheduled-ask table.
+ * Answer, before anything is composed over it, whether this database can serve
+ * the scheduled-ask table.
  *
  * The table is not core schema in either dialect: `scheduledAskMigration` ships
  * with this contract and the composing application applies it, the same way it
@@ -407,13 +407,17 @@ export async function rescheduleAsk(context, id, scheduledFor) {
  * the timers, forget the migration, and learn about it at the first poll, in a
  * worker, as a job that fails. This turns that into a refusal at the wiring.
  *
- * Only a missing table is answered `false`. Every other storage failure is the
- * caller's to see: swallowing them here would report a broken database as a
- * forgotten migration and send the reader to fix the wrong thing.
+ * Three states, not a boolean, because the two adapters do not know the same
+ * amount. SQLite says `no such table` and can be believed. PostgreSQL wraps
+ * every failure as `STORAGE_UNAVAILABLE` with no cause and no code, so a
+ * missing table and an unreachable database are the same sentence there. The
+ * honest answer is `unreadable`: something is wrong, and this cannot say which.
+ * Reporting that as `missing` would send a reader to apply a migration while
+ * their database was down.
  *
  * @param {any} database
  * @param {string} tenantId
- * @returns {Promise<boolean>}
+ * @returns {Promise<'ready' | 'missing' | 'unreadable'>}
  */
 export async function scheduledAskStorageReady(database, tenantId) {
   try {
@@ -423,13 +427,13 @@ export async function scheduledAskStorageReady(database, tenantId) {
       columns: '*',
       where: [{ column: 'tenant_id', op: 'eq', value: String(tenantId) }],
     });
-    return true;
+    return 'ready';
   } catch (error) {
     const code = /** @type {any} */ (error)?.code;
-    // PostgreSQL names it; SQLite only says it.
-    if (code === '42P01') return false;
+    if (code === '42P01') return 'missing';
     const message = String(/** @type {any} */ (error)?.message ?? '');
-    if (/no such table/i.test(message)) return false;
+    if (/no such table/i.test(message)) return 'missing';
+    if (code === 'STORAGE_UNAVAILABLE') return 'unreadable';
     throw error;
   }
 }

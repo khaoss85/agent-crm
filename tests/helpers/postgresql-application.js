@@ -121,6 +121,8 @@ export async function bootPostgresqlApp(t, overrides = {}) {
     queryDeadlineMs: overrides.queryDeadlineMs,
     rebind: overrides.rebind,
     promoteClone: overrides.promoteClone,
+    telemetry: overrides.telemetry,
+    productionOperations: overrides.productionOperations,
   });
   t.after(() => app.close());
   return { app, planes, tenantId, data };

@@ -561,13 +561,25 @@ async function composeProductionOperations(database, graph, requested, adapter, 
   });
   if (requested.timers !== undefined && requested.timers !== false) {
     const tenantId = boundTenantId ?? requested.tenantId;
-    if (!await scheduledAskStorageReady(database, tenantId)) {
+    const migration = adapter === 'postgresql'
+      ? "moduleMigrations: [scheduledAskMigration({ dialect: 'postgresql' })]"
+      : 'moduleMigrations: [SCHEDULED_ASK_MIGRATION]';
+    const readiness = await scheduledAskStorageReady(database, tenantId);
+    if (readiness === 'missing') {
       throw new AppError(
-        'scheduled asks need their table: pass moduleMigrations: '
-          + (adapter === 'postgresql'
-            ? "[scheduledAskMigration({ dialect: 'postgresql' })]"
-            : '[SCHEDULED_ASK_MIGRATION]'),
+        `scheduled asks need their table: pass ${migration}`,
         { code: 'SCHEDULED_ASK_STORAGE_MISSING', status: 500 },
+      );
+    }
+    if (readiness === 'unreadable') {
+      // Named rather than guessed. The PostgreSQL adapter reports a missing
+      // relation and an unreachable database with the same words, so this
+      // refuses with both possibilities stated instead of sending a reader to
+      // apply a migration while their database is down.
+      throw new AppError(
+        'the scheduled-ask table could not be read, and this adapter does not distinguish a missing '
+          + `table from an unreachable database. Check both: the migration is ${migration}`,
+        { code: 'SCHEDULED_ASK_STORAGE_UNREADABLE', status: 500 },
       );
     }
   }
@@ -616,7 +628,7 @@ function closingOperations(operations, close) {
  * }} [options]
  */
 export async function startPortableSqliteApp(options = {}) {
-  /** Captured from the assembly context, which is the only place it travels. */
+  /** The adapter's own handle, captured from the assembly context. */
   let database;
   // On SQLite the composed operations are the only telemetry producers there
   // are — the writer-readiness observer belongs to the PostgreSQL bootstrap. A
@@ -704,7 +716,7 @@ export async function startPortableSqliteApp(options = {}) {
  * }} options
  */
 export async function startPortablePostgresqlApp(options) {
-  /** Captured from the assembly context, which is the only place it travels. */
+  /** The adapter's own handle, captured from the assembly context. */
   let database;
   const lifecycle = await startPostgresqlLifecycle({
     selected: options.selected,

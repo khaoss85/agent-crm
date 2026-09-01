@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createDatabase } from '../../core/src/database.js';
+import { runWithAffineStorage } from '../../core/src/storage-runtime.js';
 import { validateActionDefinition } from '../../core/src/action-registry.js';
 import { AppError, ValidationError } from '../../core/src/errors.js';
 import { resolvePackageComposition } from '../../core/src/package-composition.js';
@@ -212,9 +213,9 @@ export async function startSqliteLifecycle(options = {}) {
 
   let assembled;
   try {
-    // The transaction seam travels with the storage it belongs to, into the
-    // assembly the factory controls — never onto the frozen receipt, which is
-    // pinned shut precisely so it cannot become a back door to the raw database.
+    // The adapter's own handle, whose `transactionAsync` is the one that opens
+    // the durable-job ownership scope on SQLite. It travels in the assembly
+    // context, never on the frozen receipt, which stays pinned shut.
     assembled = await assemble({ accepted, storage: opened.storage, database: opened });
   } catch (error) {
     try {
@@ -290,10 +291,16 @@ export async function startPostgresqlLifecycle(options) {
     selectedExtra: accepted.packages.map((pkg) => pkg.name),
   });
 
+  // Connection-affine, which it was not until something used it. Nothing did:
+  // this handle reached `assemble` and no caller read it, so a statement run
+  // inside its transaction would have gone to the pool instead of the open
+  // connection. Composing production operations over it is what showed that.
   const handle = {
     storage: bootstrap.dataStorage,
     transactionAsync(fn) {
-      return bootstrap.dataStorage.transaction(fn);
+      return bootstrap.dataStorage.transaction(
+        async (tx) => runWithAffineStorage(handle, tx, () => fn(tx)),
+      );
     },
   };
 
