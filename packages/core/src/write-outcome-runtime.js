@@ -275,6 +275,10 @@ export async function runIdempotentWrite(database, events, spec, execute) {
             };
           }
         } catch (lookupError) {
+          console.error(
+            `[accordo] ${operation} run ${runId}: committed winner could not be replayed: `
+            + `${boundedFailureCode(lookupError)}`,
+          );
           if (lookupError && typeof lookupError === 'object' && /** @type {any} */ (lookupError).code === 'DIVERGENT_REPLAY') {
             throw lookupError;
           }
@@ -356,12 +360,6 @@ export async function reconcileWriteOutcome(database, events, spec) {
   }
 }
 
-/**
- * @param {any} database
- * @param {any} events
- * @param {ReturnType<typeof createWriteOutcomeStore>} store
- * @param {any} outcome
- */
 const FAILURE_CODE = /^[A-Z][A-Z0-9_]*$/;
 const FAILURE_KIND = /^[A-Za-z][A-Za-z0-9_]*$/;
 
@@ -389,12 +387,19 @@ export function boundedFailureCode(error) {
     : `UNKNOWN${transient}`;
 }
 
+/**
+ * @param {any} database
+ * @param {any} events
+ * @param {ReturnType<typeof createWriteOutcomeStore>} store
+ * @param {any} outcome
+ */
 async function promoteAndFinalize(database, events, store, outcome, options = {}) {
   if (Array.isArray(outcome.eventIntents) && outcome.eventIntents.length > 0) {
     // Ownership absorbs only a contest it can prove harmless; an ownership
     // failure that reaches here means this outcome may own no effect at all and
     // must not be traded for a silent replay. Dispatch is different: the effect
-    // row is durable by then, so the outbox worker still recovers it.
+    // row is durable by then, so a later replay of the same key re-dispatches
+    // it. No autostarted worker exists to sweep it (ADR-041 V3B addendum).
     await ensureCommittedWriteOutcomeEffects({
       database,
       tenantId: options.tenantId,

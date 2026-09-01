@@ -288,3 +288,56 @@ test('committed effect ownership absorbs a lost contest only when the identity i
     (error) => error.code === 'CONFLICT',
   );
 });
+
+test('a receipt source owns both effects or none, and an identity collision is never absorbed', async (t) => {
+  const database = createDatabase({ path: ':memory:', plane: 'data' });
+  t.after(() => database.close());
+  const receipt = {
+    runId: 'two-effect-receipt-run',
+    phase: 'receipt',
+    requestFingerprint: 'd'.repeat(64),
+    externalFinalizeDeclared: true,
+    eventIntents: [{ event: 'partner.notified', payload: { id: 'two-effect' } }],
+  };
+  const owned = await ensureCommittedWriteOutcomeEffects({
+    database, tenantId: 'tenant-a', outcome: receipt,
+  });
+  assert.deepEqual(owned.map((job) => job.handler.name).sort(),
+    ['continue-external-finalize', 'promote-write-outcome-events']);
+
+  const store = createDurableJobStore({ storage: database.storage, tenantId: 'tenant-a' });
+  const contested = Object.freeze({
+    ...database.storage,
+    transaction(fn) {
+      if (contest.pending > 0) {
+        contest.pending -= 1;
+        throw new AppError('the write lost a serialization contest', {
+          code: 'CONFLICT', status: 409, details: { transient: true },
+        });
+      }
+      return database.storage.transaction(fn);
+    },
+  });
+  const contest = { pending: 0 };
+  registerDurableJobStorageOwner(contested, durableJobStorageOwnerFor(database.storage));
+
+  // Both effect rows are durable, so a lost contest is absorbed for the pair.
+  contest.pending = 1;
+  const absorbed = await ensureCommittedWriteOutcomeEffects({
+    database: { storage: contested }, tenantId: 'tenant-a', outcome: receipt,
+  });
+  assert.deepEqual(absorbed.map((job) => job.id).sort(), owned.map((job) => job.id).sort());
+
+  // Half-owned is not owned: with one row gone the same contest must stand,
+  // rather than answer as if the pair existed.
+  const [dropped] = owned.filter((job) => job.handler.name === 'continue-external-finalize');
+  database.raw.prepare('DELETE FROM spine_jobs WHERE id = ?').run(dropped.id);
+  assert.equal(await store.get(dropped.id), null);
+  contest.pending = 1;
+  await assert.rejects(
+    ensureCommittedWriteOutcomeEffects({
+      database: { storage: contested }, tenantId: 'tenant-a', outcome: receipt,
+    }),
+    (error) => error.code === 'CONFLICT',
+  );
+});

@@ -134,6 +134,10 @@ export async function ensureCommittedWriteOutcomeEffects({
     // else would ever create it, and the original failure must stand. This
     // containment belongs to the backfill wrapper alone — the caller-transaction
     // path above must still abort its domain transaction on any failure.
+    // An identity collision is the one failure that already answers the
+    // question: a row exists under this root and it is not this work. Proving
+    // existence would read that very row and absorb it, so refuse first.
+    if (/** @type {any} */ (error)?.code === 'DURABLE_JOB_IDEMPOTENCY_MISMATCH') throw error;
     const effects = applicableEffects(outcome);
     if (effects.length === 0) throw error;
     const owned = [];
@@ -145,7 +149,10 @@ export async function ensureCommittedWriteOutcomeEffects({
       try {
         existing = await createStore(database, tenantId, clock).get(jobId);
       } catch { throw error; }
-      if (!existing) throw error;
+      // Existence alone is the wrong proposition: the row must also carry the
+      // handler this effect dispatches, or ownership is claimed over work that
+      // no registered consumer would run.
+      if (!existing || existing.handler?.name !== effectHandler(effect)) throw error;
       owned.push(existing);
     }
     return Object.freeze(owned);
