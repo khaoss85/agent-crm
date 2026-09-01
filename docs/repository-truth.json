@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "603911a9e6273f3f5e3a361686e28958415fa21da48c55144d68520c9084c64e",
+  "sourceSha": "b5d42fd42f66a4a45665d0697deb5668f3fa7d6ce8336140e495002012e2a0df",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -84,7 +84,9 @@
       "kind": "source",
       "reads": [
         "packages/app/src/spine.js",
-        "packages/core/src/authorization.js"
+        "packages/core/index.js",
+        "packages/core/src/authorization.js",
+        "packages/core/src/backup-restore.js"
       ]
     },
     {
@@ -646,6 +648,24 @@
       "limitations": []
     },
     {
+      "id": "spine.backup_restore.implemented",
+      "value": "implemented",
+      "authority": "spine.contract",
+      "evidence": [
+        "executable-probe:backup-vocabulary-closed-contract",
+        "packages/core/index.js#bounded-self-host-backup-export",
+        "packages/core/src/backup-restore.js#BACKUP_CONTRACT",
+        "packages/core/src/backup-restore.js#createBackupOperations",
+        "packages/core/src/backup-restore.js#createPostgresqlNativeBackupProvider"
+      ],
+      "scope": "framework",
+      "status": "current",
+      "limitations": [
+        "SELF_HOST_POSTGRESQL_BACKUP_CONTRACT_ONLY",
+        "TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME"
+      ]
+    },
+    {
       "id": "spine.durable_jobs.implemented",
       "value": "absent",
       "authority": "spine.contract",
@@ -725,8 +745,8 @@
       "value": "absent",
       "authority": "spine.contract",
       "evidence": [
-        "declared:managed secret custody or service, backups, restore, deploy or rollback (Spine v4 remainder)",
-        "namespace-probe:backup|backups|restore",
+        "declared:managed secret custody or service, managed backup custody, scheduling or retention, managed observability backend, deploy or rollback (Spine v4 remainder)",
+        "namespace-probe:managed-backup|backup-policy|backup-retention|backup-schedule|backup-scheduler|retention-policy|observability-backend",
         "packages/app/src/spine.js#SPINE_NOT_MODELED"
       ],
       "scope": "framework",
@@ -826,8 +846,12 @@
       "message": "the implemented fact covers the bounded provider-neutral runtime contract and its local/test/provider-plugin boundaries. It is not managed secret custody, rotation, availability or provider health"
     },
     {
+      "code": "SELF_HOST_POSTGRESQL_BACKUP_CONTRACT_ONLY",
+      "message": "the implemented fact covers the bounded provider-neutral create/verify/restore contract and its native PostgreSQL 16 provider, which needs pg_dump, pg_restore and psql present. It is PostgreSQL-only — SQLite is refused, not degraded — and it is not managed artifact custody, scheduling, retention, PITR, clone promotion, an operator surface or a recoverability SLA"
+    },
+    {
       "code": "MANAGED_SECRETS_BACKUPS_OBSERVABILITY_ABSENT",
-      "message": "the combined Spine v4 remainder is absent: no managed secret custody/service, backup/restore contract or observability export/backend is implemented by this fact"
+      "message": "the managed Spine v4 remainder is absent: no managed secret custody/service, backup custody/scheduling/retention or observability backend is implemented by this fact; bounded self-host contracts are separate positive facts"
     },
     {
       "code": "REFERENCE_COMPOSITION_NOT_THE_PROJECT",
@@ -882,5 +906,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "37c4dfb760bc9dca63d3ff75f0678997252260bb67f043e8189d4151a7dae7d6"
+  "fingerprint": "13cb47891e541e9687659e41db26c8f45b3cd248281b8cfbfd3cf5dbeb998bbc"
 }

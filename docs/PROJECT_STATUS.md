@@ -111,8 +111,8 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
 
 ## Next planned development
 
-1. **Spine v3 jobs/outbox/scheduler** in parallel with **Spine v4 minimum
-   secrets/backup/observability**, then Accordo Cloud C0–C3 and an Arvo adapter.
+1. **Spine v3 outbox/scheduler** in parallel with **Spine v4 minimum
+   observability export**, then Accordo Cloud C0–C3 and an Arvo adapter.
    Dedicated-database PostgreSQL, dual bundled graphs, leases and write-outcome
    keys are merged. Shared-database row tenancy remains deferred.
 
@@ -141,7 +141,7 @@ boundaries prevent a production PostgreSQL deployment from being claimed:
 | No deployment authentication verifier | identity is only as trustworthy as the deployment adapter; the framework ships no verifier |
 | Shared-database row tenancy | dedicated-database PostgreSQL composition exists; shared-database row-level tenancy does not |
 | No durable outbox or scheduler | post-commit delivery, renewal triggers, SLA timers and unattended work do not survive process loss |
-| No secret, backup or production-observability system | real provider credentials and recoverability cannot be operated safely |
+| No managed secret/backup custody or production-observability backend | the bounded self-host contracts still need authenticated operator composition, durable policy/custody and external telemetry before recoverability can be operated as a managed service |
 | Browser E2E remains outside CI | current Chromium receipts are manual and Admin regressions are not browser-gated on every push |
 | No real provider adapters | provider behavior remains offline fixture behavior |
 

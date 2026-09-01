@@ -116,9 +116,14 @@ export const TRUTH_LIMITATIONS = Object.freeze([
   ['SELF_HOST_SECRET_PROVIDER_ONLY',
     'the implemented fact covers the bounded provider-neutral runtime contract and its local/test/provider-plugin '
     + 'boundaries. It is not managed secret custody, rotation, availability or provider health'],
+  ['SELF_HOST_POSTGRESQL_BACKUP_CONTRACT_ONLY',
+    'the implemented fact covers the bounded provider-neutral create/verify/restore contract and its native '
+    + 'PostgreSQL 16 provider, which needs pg_dump, pg_restore and psql present. It is PostgreSQL-only — SQLite is '
+    + 'refused, not degraded — and it is not managed artifact custody, scheduling, retention, PITR, clone promotion, '
+    + 'an operator surface or a recoverability SLA'],
   ['MANAGED_SECRETS_BACKUPS_OBSERVABILITY_ABSENT',
-    'the combined Spine v4 remainder is absent: no managed secret custody/service, backup/restore contract or '
-    + 'observability export/backend is implemented by this fact'],
+    'the managed Spine v4 remainder is absent: no managed secret custody/service, backup custody/scheduling/retention '
+    + 'or observability backend is implemented by this fact; bounded self-host contracts are separate positive facts'],
   ['REFERENCE_COMPOSITION_NOT_THE_PROJECT',
     'packages/domains/generated/index.js is empty in this repository, so package facts are read from a named '
     + 'REFERENCE composition of the nine checked-in domain packages. That is what the framework can compose, '
@@ -202,6 +207,8 @@ export const AUTHORITY_SOURCES = Object.freeze([
   'packages/core/src/tenant-binding.js',
   'packages/core/src/storage-contract.js',
   'packages/core/src/secret-provider.js',
+  'packages/core/src/backup-restore.js',
+  'packages/core/src/postgresql-authority.js',
   'packages/core/src/database.js',
   'packages/core/src/errors.js',
   'packages/core/src/validation.js',
@@ -324,8 +331,11 @@ const DECLARED_ABSENCE = Object.freeze({
   },
   'spine.secrets_backups.implemented': {
     in: 'SPINE_NOT_MODELED',
-    match: /managed secret custody|backups/i,
-    absentPrefixes: ['backup', 'backups', 'restore'],
+    match: /managed secret custody|managed backup custody/i,
+    absentPrefixes: [
+      'managed-backup', 'backup-policy', 'backup-retention', 'backup-schedule',
+      'backup-scheduler', 'retention-policy', 'observability-backend',
+    ],
   },
 });
 
@@ -775,6 +785,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     const runtimeMode = await import(url('packages/core/src/runtime-mode.js'));
     const tenantStorage = await import(url('packages/core/src/tenant-storage.js'));
     const secretProvider = await import(url('packages/core/src/secret-provider.js'));
+    const publicCore = await import(url('packages/core/index.js'));
     const spine = await import(url('packages/app/src/spine.js'));
 
     bundle.identityContract = identity.IDENTITY_CONTRACT;
@@ -810,6 +821,18 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     bundle.secretProviderProbe = await truthSecretLease.use(
       (value) => value === 'repository-truth-secret-provider-probe',
     ) && truthSecretLease.disposed === true;
+    const backupVocabulary = publicCore.backupVocabulary();
+    bundle.backupRestoreContract = publicCore.BACKUP_CONTRACT;
+    bundle.backupRestoreProbe = backupVocabulary.contract === 1
+      && backupVocabulary.adapters?.length === 1
+      && backupVocabulary.adapters[0] === 'postgresql'
+      && backupVocabulary.expectedIntentKeys?.includes('artifactDigest')
+      && backupVocabulary.expectedIntentKeys?.includes('manifestDigest')
+      && backupVocabulary.expectedIntentKeys?.includes('targetResourceFingerprint')
+      && backupVocabulary.restoreControlKeys?.includes('recordOutcome')
+      && typeof publicCore.defineBackupProvider === 'function'
+      && typeof publicCore.createBackupOperations === 'function'
+      && typeof publicCore.createPostgresqlNativeBackupProvider === 'function';
     // A limitation string is `CODE — prose`; the code is the structural half.
     bundle.tenantLimitationCodes = [...tenantStorage.TENANT_LIMITATIONS]
       .map((entry) => /^([A-Z][A-Z0-9_]+)/.exec(String(entry))?.[1] ?? '')
@@ -1986,6 +2009,23 @@ export function buildFacts(bundle) {
     limitations: ['SELF_HOST_SECRET_PROVIDER_ONLY', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
   });
 
+  add({
+    id: 'spine.backup_restore.implemented',
+    value: bundle.backupRestoreContract === 1 && bundle.backupRestoreProbe === true
+      ? 'implemented'
+      : 'absent',
+    authority: 'spine.contract',
+    evidence: [
+      'packages/core/src/backup-restore.js#BACKUP_CONTRACT',
+      'packages/core/src/backup-restore.js#createBackupOperations',
+      'packages/core/src/backup-restore.js#createPostgresqlNativeBackupProvider',
+      'packages/core/index.js#bounded-self-host-backup-export',
+      'executable-probe:backup-vocabulary-closed-contract',
+    ],
+    scope: 'framework',
+    limitations: ['SELF_HOST_POSTGRESQL_BACKUP_CONTRACT_ONLY', 'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME'],
+  });
+
   for (const [id, rule] of Object.entries(DECLARED_ABSENCE)) {
     const declaration = (bundle.spineNotModeled ?? []).find((entry) => rule.match.test(String(entry)));
     if (!declaration) {
@@ -2312,7 +2352,7 @@ export function buildFacts(bundle) {
 
   const authorities = [
     { id: 'identity.contract', kind: 'source', reads: ['packages/core/src/identity.js'] },
-    { id: 'spine.contract', kind: 'source', reads: ['packages/app/src/spine.js', 'packages/core/src/authorization.js'] },
+    { id: 'spine.contract', kind: 'source', reads: ['packages/app/src/spine.js', 'packages/core/src/authorization.js', 'packages/core/src/backup-restore.js', 'packages/core/index.js'] },
     { id: 'runtime.mode', kind: 'source', reads: ['packages/core/src/runtime-mode.js'] },
     { id: 'tenant.storage', kind: 'source', reads: ['packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js'] },
     { id: 'storage.contract', kind: 'source', reads: ['scripts/repo-truth.js', 'packages/core/src/storage-contract.js', 'packages/core/src/database.js', 'packages/core/src/errors.js', 'packages/core/src/validation.js', 'packages/core/src/time.js', 'packages/core/src/actor.js', 'packages/core/src/module-manifest.js', 'packages/core/src/module-evolution.js', 'packages/core/src/timeout.js', 'packages/core/src/action-runtime.js', 'packages/core/src/external-operation.js', 'packages/core/src/core-adapters.js', 'packages/core/src/definition-fingerprint.js', 'packages/core/src/money.js', 'packages/core/src/solution-plan.js', 'packages/core/src/implementation-evidence.js', 'packages/core/src/spine-store.js', 'packages/core/src/package-registry.js', 'packages/core/src/package-composition.js', 'packages/core/src/identity.js', 'packages/core/src/runtime-mode.js', 'packages/core/src/authorization.js', 'packages/core/src/tenant-storage.js', 'packages/core/src/tenant-binding.js', 'packages/modules/company/src/company-service.js', 'packages/cli/src/module-factory.js', 'packages/work/src/legacy-tasks.js', 'packages/work/src/follow-up.js', 'packages/core/index.js'] },

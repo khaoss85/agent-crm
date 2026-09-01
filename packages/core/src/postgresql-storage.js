@@ -812,6 +812,7 @@ export async function probePostgresqlQueryDeadline(storage, seconds) {
  *   ssl?: false | object,
  *   max?: number,
  *   acquisitionDeadlineMs?: number,
+ *   queryDeadlineMs?: number,
  * }} endpoint
  */
 export function createPostgresqlPool(endpoint) {
@@ -827,6 +828,9 @@ export function createPostgresqlPool(endpoint) {
     ssl: endpoint.ssl ?? false,
     max: endpoint.max ?? 4,
     connectionTimeoutMillis: endpoint.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS,
+    ...(Number.isInteger(endpoint.queryDeadlineMs) && endpoint.queryDeadlineMs > 0
+      ? { query_timeout: endpoint.queryDeadlineMs, statement_timeout: endpoint.queryDeadlineMs }
+      : {}),
     idleTimeoutMillis: 10_000,
     allowExitOnIdle: true,
   });

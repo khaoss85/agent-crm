@@ -9,11 +9,13 @@ import {
   createPostgresqlPool,
   createPostgresqlStorage,
 } from './postgresql-storage.js';
+import { DATA_ADVISORY_LOCK, DATA_RESTORE_CHILD_LOCK } from './postgresql-authority.js';
 import { attestPostgresqlStartup, fingerprintMigrationSet } from './startup-attestation.js';
+
+export { DATA_ADVISORY_LOCK, DATA_RESTORE_CHILD_LOCK } from './postgresql-authority.js';
 
 export const POSTGRES_APPLICATION_SCHEMA = POSTGRES_SCHEMA_NAME;
 export const CONTROL_ADVISORY_LOCK = Object.freeze({ classId: 1094927186, objectId: 1129598001 });
-export const DATA_ADVISORY_LOCK = Object.freeze({ classId: 1094927186, objectId: 1145197617 });
 export const PROVISIONING_ADVISORY_LOCK = Object.freeze({ classId: 1094927187 });
 export const WRITER_LEASE_TTL_MS = 60_000;
 export const WRITER_LEASE_TABLE = 'spine_writer_leases';
@@ -76,7 +78,7 @@ export function fingerprintPostgresqlRepository(extra = []) {
   return createHash('sha256').update(JSON.stringify({ core, extra })).digest('hex');
 }
 
-function tenantFingerprint(tenantId) {
+export function fingerprintPostgresqlTenant(tenantId) {
   return createHash('sha256').update(`accordo.tenant.v1\0${tenantId}`).digest('hex');
 }
 
@@ -233,7 +235,7 @@ async function recordStartupAudit(client, {
     [
       randomUUID(),
       plane,
-      tenantFingerprint(tenantId),
+      fingerprintPostgresqlTenant(tenantId),
       attestation.evidence.identityFingerprint,
       attestation.evidence.evidenceFingerprint,
       attestation.resource.resourceFingerprint,
@@ -595,6 +597,11 @@ async function bootstrapPlane(pool, {
     await exec(client, 'BEGIN');
     active = true;
     await exec(client, 'SELECT pg_advisory_xact_lock($1, $2)', [lock.classId, lock.objectId]);
+    if (lock.classId === DATA_ADVISORY_LOCK.classId && lock.objectId === DATA_ADVISORY_LOCK.objectId) {
+      await exec(client, 'SELECT pg_advisory_xact_lock($1, $2)', [
+        DATA_RESTORE_CHILD_LOCK.classId, DATA_RESTORE_CHILD_LOCK.objectId,
+      ]);
+    }
     await exec(client, 'SET LOCAL search_path TO pg_catalog');
     await exec(client, `CREATE SCHEMA IF NOT EXISTS ${quotePostgresIdent(POSTGRES_APPLICATION_SCHEMA)}`);
     await ensureLedger(client);
@@ -760,6 +767,9 @@ export async function bootstrapPostgresqlApplication(options) {
       await exec(dataClient, 'BEGIN');
       dataActive = true;
       await exec(dataClient, 'SELECT pg_advisory_xact_lock($1, $2)', [DATA_ADVISORY_LOCK.classId, DATA_ADVISORY_LOCK.objectId]);
+      await exec(dataClient, 'SELECT pg_advisory_xact_lock($1, $2)', [
+        DATA_RESTORE_CHILD_LOCK.classId, DATA_RESTORE_CHILD_LOCK.objectId,
+      ]);
       await exec(dataClient, 'SET LOCAL search_path TO pg_catalog');
 
       const marker = await inspectDataMarker(dataClient);
@@ -873,6 +883,15 @@ export async function bootstrapPostgresqlApplication(options) {
       attestation: Object.freeze({
         control: controlAttestation.control.evidence,
         data: dataAttestation.data.evidence,
+      }),
+      backupEvidence: Object.freeze({
+        contract: 1,
+        adapter: 'postgresql',
+        bindingUuid: binding.dataPlaneId,
+        tenantFingerprint: fingerprintPostgresqlTenant(options.tenantId),
+        resourceFingerprint: dataAttestation.data.resource.resourceFingerprint,
+        migrationSetFingerprint: dataAttestation.data.migrationSetFingerprint,
+        repositoryFingerprint,
       }),
       health() {
         return describeWriterHealth(leaseState.holder, options.now, leaseState.closed);

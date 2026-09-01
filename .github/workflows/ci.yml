@@ -43,6 +43,13 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Install and verify PostgreSQL 16 backup client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-16
+          pg_dump --version | grep -E '^pg_dump \(PostgreSQL\) 16\.'
+          pg_restore --version | grep -E '^pg_restore \(PostgreSQL\) 16\.'
+          psql --version | grep -E '^psql \(PostgreSQL\) 16\.'
       - run: npm ci
       - run: npm run verify
       - run: npm run smoke

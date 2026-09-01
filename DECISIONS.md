@@ -4253,3 +4253,75 @@ telemetry consumer receives a lease, reference or value.
   intentional consumption and prevent best-effort late disposal.
 - A vendor SDK or managed store adds a service and lifecycle this milestone
   neither needs nor owns.
+
+---
+
+## ADR-042 — Restore imports bytes only behind independent identity, authority and receipt fences
+
+**Status:** accepted. **Milestone:** Production Spine v4B.
+**Plan:** `docs/plans/spine-v4b-backup-restore.md`.
+
+The public core provides a provider-neutral PostgreSQL-only backup contract; the
+built-in provider uses PostgreSQL 16 `pg_dump`, `pg_restore` and `psql`, and
+refuses when any of the three is absent or reports another major. Create returns
+independent SHA-256 identities for the artifact and canonical manifest bytes;
+the caller must retain both. Verify and restore compare the bundle against both
+identities, so a coherent replacement or altered manifest authority metadata
+does not become authority.
+
+Restore accepts no ambient target, and it does not import through a connection
+`pg_restore` opens for itself, because holding a lock on one backend never
+proved that a second tool reached the same one — behind a proxy or a failover
+the coordinator could fence A while the archive landed in B. `pg_restore` runs
+with an empty environment and only renders the archive to local SQL. A single
+`psql` session then applies it inside one transaction: it takes a
+transaction-level child lock, refuses unless the coordinator's session-level
+witness lock is still held by someone else, applies the rendered SQL, re-checks
+the restored authority and writes non-secret evidence of it, and only then
+commits. A child that reached elsewhere acquires the witness, and refuses before
+any DDL. That fence proves same cluster and same database rather than literally
+the same backend; every divergence it cannot distinguish — replica, failover,
+pooled connection, a coordinator that died — resolves toward refusal. Normal
+startup takes the same child lock, so a child that outlives its coordinator
+still fences bootstrap. The coordinator holds an exclusive advisory lock across
+the whole operation, enumerates database-local emptiness before admitting the
+child, and re-verifies artifact bytes and restored binding/migration identity on
+the connection that holds the lock.
+The connection carries a non-secret resource fingerprint supplied by deployment
+authority; expected intent and the durable receipt bind it, so replaying a
+successful operation against a second endpoint refuses before target access.
+The target must be empty; normal startup attestation remains the only path to
+writer authority, and a physical clone is never promoted or rebound here.
+
+A restore also carries a stable caller operation id and verified actor through
+a caller-owned control-plane seam. That seam must durably append the attempt
+outside the target before target access and idempotently append exactly one
+closed outcome for the same operation/bundle/target identity. A seam asked for an
+outcome that diverges from one it already closed is a caller defect: the core
+records the first closed outcome and never depends on a second being accepted.
+Success and possible partial mutation are recorded while the target lock remains
+held. A terminal
+replay never touches the target again. This core interface cannot prove an
+arbitrary caller persisted its receipt; public operator composition must supply
+the durable append-only implementation before exposing restore.
+
+Connection transport is explicit. Plaintext is accepted only when declared for
+a loopback development/test endpoint. Remote operation requires `verify-full`,
+a trusted CA and verified logical hostname. Each affine operation pins the
+trusted CA bytes into one private owner-only file consumed by both Node probes
+and native libpq, then removes it before settlement.
+Credentials and database locators live only in a bounded allowlisted child
+environment, never argv, manifests, receipts or errors. Native tools run in a
+separate process group; timeout or output overflow kills and observes the group
+before settlement.
+
+This is a bounded self-host contract, not managed artifact custody, scheduling,
+retention, PITR, clone promotion, an operator UI/CLI, or a recoverability SLA.
+SQLite is explicitly unsupported.
+
+The five closed construction symbols are intentionally exported from
+`packages/core/index.js`. Self-host runtime composition and the future private
+Cloud adapter are two concrete consumers of the same manifest and restore
+fences; forcing either to deep-import private source or recreate those fences
+would fail the DX Simplicity Gate. No storage handle, locator, generic process
+runner, custody service or operator command enters the public surface.

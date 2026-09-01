@@ -53,6 +53,20 @@ export { AppError, ValidationError, NotFoundError, ConflictError, ForbiddenError
 // package cannot reach into it.
 export { withTimeout } from './src/timeout.js';
 
+// ---- bounded self-host backup / verify / restore (Spine v4B) ----
+// One intentional operator/runtime seam. Publishing the closed contract here
+// prevents every self-host or future Cloud composition from deep-importing a
+// private implementation or rebuilding manifest, authority and restore fences.
+// It exposes no connection locator, tool runner, storage handle or managed
+// custody API; callers still supply verified authority and durable receipts.
+export {
+  BACKUP_CONTRACT,
+  defineBackupProvider,
+  createBackupOperations,
+  createPostgresqlNativeBackupProvider,
+  backupVocabulary,
+} from './src/backup-restore.js';
+
 // ---- the framework clock ----
 // One ISO-8601 clock, so a package never stamps a record from its own.
 export { nowIso } from './src/time.js';
