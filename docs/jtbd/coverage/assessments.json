@@ -74,11 +74,12 @@
    "factIds": [
     "spine.authorization.enforced",
     "spine.authentication.framework_verifier",
-    "spine.durable_jobs.implemented"
+    "spine.durable_job_store.implemented",
+    "spine.managed_jobs_service.implemented"
    ],
    "limitations": [
     "nothing is routed: the record parks for any human holding the permission, and there is no approval matrix, no named approver and no ownership assignment — the canonical outcome 'assign each record once, to the correct owner' is not met",
-    "no SLA is measured end to end, because no scheduler and no durable job runtime exist (spine.durable_jobs.implemented=absent)",
+    "no SLA is measured end to end: a durable job store and scheduled timers now exist (spine.durable_job_store.implemented=implemented), but nothing measures an SLA against them, no worker service runs them for you (spine.managed_jobs_service.implemented=absent), and a timer opens an ask rather than escalating one",
     "the canonical acceptance criterion requires sources, freshness and confidence to be shown before the decision; the approval surface shows the record and the policy outcome only",
     "no identity verifier ships, so the human who decided is only as trustworthy as the adapter a deployment supplies"
    ]
