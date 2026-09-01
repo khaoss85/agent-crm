@@ -325,7 +325,8 @@ test('the restore child refuses a backend where the coordinator witness is absen
     return;
   }
   const planes = await openIsolatedPostgresqlPlanes(t, { dataCount: 1 });
-  const [endpoint] = planes.data;
+  if (!planes) return;
+  const [endpoint] = planes.dataPlanes;
   const witness = Object.freeze({ classId: 1094927188, objectId: 987654321 });
   const root = await mkdtemp(join(tmpdir(), 'accordo-v4b-fence-runtime-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -380,4 +381,62 @@ COMMIT;
       'fence_must_not_create',
     );
   } finally { await created.end(); }
+});
+
+test('startup waits on the restore child lock rather than racing a surviving child', { timeout: 90_000 }, async (t) => {
+  if (!PG_REQUIRED) {
+    t.skip('PostgreSQL is not required in this lane');
+    return;
+  }
+  const planes = await openIsolatedPostgresqlPlanes(t, { dataCount: 2 });
+  if (!planes) return;
+  const [fencedData, freeData] = planes.dataPlanes;
+
+  const heldFor = async (endpoint) => {
+    const observer = await client(endpoint);
+    try {
+      const { rows } = await observer.query(
+        `SELECT count(*)::int AS waiting FROM pg_catalog.pg_locks
+         WHERE locktype = 'advisory' AND classid = $1 AND objid = $2 AND NOT granted`,
+        [DATA_RESTORE_CHILD_LOCK.classId, DATA_RESTORE_CHILD_LOCK.objectId],
+      );
+      return rows[0].waiting;
+    } finally { await observer.end(); }
+  };
+
+  // A restore child that outlived its coordinator still holds the child lock.
+  const survivor = await client(fencedData);
+  let settled = false;
+  let booting;
+  try {
+    await survivor.query('BEGIN');
+    await survivor.query('SELECT pg_advisory_xact_lock($1, $2)',
+      [DATA_RESTORE_CHILD_LOCK.classId, DATA_RESTORE_CHILD_LOCK.objectId]);
+
+    booting = bootstrap(planes.control, fencedData, testResource('v4b-fenced-startup'), 'v4b-fenced-tenant')
+      .then((app) => { settled = true; return app; }, (error) => { settled = true; throw error; });
+
+    // Proving a positive server-side fact, never a timeout: some backend is
+    // waiting on exactly this key.
+    const deadline = Date.now() + 20_000;
+    let waiting = 0;
+    while (Date.now() < deadline && waiting === 0) {
+      waiting = await heldFor(fencedData);
+      if (waiting === 0) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(waiting, 1, 'startup blocks on the restore child lock while a child still holds it');
+    assert.equal(settled, false, 'startup has not proceeded past the fence');
+  } finally {
+    await survivor.query('ROLLBACK').catch(() => {});
+    await survivor.end().catch(() => {});
+  }
+  const fenced = await booting;
+  assert.equal(settled, true, 'releasing the child lock lets the same startup finish');
+  await fenced.close();
+
+  // The other direction, which is what fails if the child lock is removed from
+  // startup: with nothing holding it, nobody ever waits.
+  const free = await bootstrap(planes.control, freeData, testResource('v4b-free-startup'), 'v4b-free-tenant');
+  assert.equal(await heldFor(freeData), 0, 'an unfenced startup waits on nothing');
+  await free.close();
 });
