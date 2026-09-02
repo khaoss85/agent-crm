@@ -238,7 +238,29 @@ that composes timers and a web that does not are a supported pair, and tables
 the reader never names cannot be misread by code that never mentions them. The
 asymmetry is pinned by a test so it cannot be tidied into symmetry.
 
-**What the three have in common** is worth more than the fixes. Each was a
+**D. A definition the database knows at another version fell between both
+cases.** The lookup keys on `(type, name, version)`, so a row registered at a
+different version is not a match — no fingerprint to compare — and is not
+"never seen" either, because the database knows that definition perfectly well.
+
+It is the only one of the three states this mode creates. A writer cannot
+produce it: a writer inserts, and code and database agree from then on. The
+reader is the one composition that can run a definition version the database has
+never registered — precisely because absence was made tolerable.
+
+What it looks like when it bites: a policy moves from v1 to v2, the web is
+redeployed and the worker is not. Rows written under v1 are read back through v2
+logic — a total nobody ever wrote and the worker would not reproduce — with
+`health()` answering ready, no error and no audit row, because an audit row
+would be a write.
+
+Closed by selecting on `(type, name)` and refusing when rows exist but none at
+the rendered version. The tolerated case is untouched: nothing registered under
+that identity is a different composition, and there are no rows beneath a
+definition nobody ever registered. It is the same third term already written for
+module migrations, which this level was missing.
+
+**What the four have in common** is worth more than the fixes. Each was a
 property asserted about a seam by someone who had verified the seam's own side
 of it. The reviewer found all three by asking who is on the *other* side — and
 none of them would have been found by looking harder at the diff.

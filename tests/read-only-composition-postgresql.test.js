@@ -294,6 +294,56 @@ test('a reader composes a graph that carries packages, and registers nothing', a
     'verifying fingerprints must not write any of them');
 });
 
+/**
+ * The case between the two, found by an independent reviewer and reproduced
+ * here: a definition the database knows at **another version**.
+ *
+ * It is not "never seen" — the database knows that policy — and it is not a
+ * fingerprint mismatch, because keying the lookup on the version means there is
+ * no row to compare. And it is the only one of the three that this mode
+ * creates: a writer cannot produce it, since a writer inserts and the two agree
+ * from then on.
+ */
+test('a definition registered at another version refuses, rather than falling between the cases', async (t) => {
+  const booted = await bootPostgresqlApp(t, { selected: POLICY_GRAPH });
+  if (!booted) return;
+
+  const moved = JSON.parse(JSON.stringify({ ...POLICY_GRAPH, packages: POLICY_GRAPH.packages }));
+  moved.packages = [{
+    ...POLICY_GRAPH.packages[0],
+    policies: [{
+      kind: 'probe',
+      definition: {
+        name: 'probe-policy',
+        version: 2,
+        config: {},
+        classifyComponent: () => ({ commercialActivation: 'non_subscription', obligations: [] }),
+      },
+    }],
+    metadata: () => ({}),
+  }];
+
+  await assert.rejects(
+    () => bootPostgresqlReader(t, { data: booted.data, tenantId: booted.tenantId, selected: moved }),
+    (error) => /registered at v1/.test(String(error.message)),
+  );
+});
+
+/**
+ * And the case it must not disturb: a package the reader composes and the
+ * writer never did. Nothing is registered under that identity, so there are no
+ * rows beneath it to read wrongly.
+ */
+test('a definition nothing has ever registered is a different composition, not a refusal', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+
+  const reader = await bootPostgresqlReader(t, {
+    data: booted.data, tenantId: booted.tenantId, selected: POLICY_GRAPH,
+  });
+  assert.equal(reader.storage.mode, 'read-only');
+});
+
 test('the composition refuses the inputs that would make it a writer', async (t) => {
   const booted = await bootPostgresqlApp(t);
   if (!booted) return;

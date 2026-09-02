@@ -325,17 +325,43 @@ export function createDefinitionVersionStore(database, options = {}) {
       if (storage.readOnly === true) {
         return (async () => {
           for (const entry of bounded) {
-            const persisted = await storage.maybeOne({
+            // Selected on `(type, name)` and **not** on the version, which is
+            // the whole difference. Keying on the version too makes a
+            // definition registered at another version invisible: not a match,
+            // so no fingerprint to compare — and not "never seen" either,
+            // because the database knows that definition perfectly well, just
+            // at a different version. It falls between the two cases below, and
+            // it is the only one this mode creates: a writer cannot produce it,
+            // because a writer inserts and the two agree from then on.
+            //
+            // What it looks like when it bites: a policy moves from v1 to v2,
+            // the web is redeployed and the worker is not. Rows written under
+            // v1 are then read back through v2 logic — a total nobody ever
+            // wrote and the worker would not reproduce — with `health()`
+            // answering ready, no error, and no audit row, because an audit row
+            // would be a write.
+            const registered = await storage.many({
               kind: 'select',
               table: TABLE,
-              columns: ['fingerprint'],
+              columns: ['version', 'fingerprint'],
               where: [
                 { column: 'type', op: 'eq', value: entry.type },
                 { column: 'name', op: 'eq', value: entry.name },
-                { column: 'version', op: 'eq', value: entry.version },
               ],
             });
-            if (persisted) assertFingerprintMatch(entry, persisted);
+            // Nothing under this identity at all: a different composition. The
+            // web may compose a package the worker does not, and there are no
+            // rows beneath a definition nobody ever registered.
+            if (registered.length === 0) continue;
+            const persisted = registered.find((row) => Number(row.version) === Number(entry.version));
+            if (!persisted) {
+              throw new ValidationError(
+                `${entry.type} "${entry.name}" is registered at ${registered.map((row) => `v${row.version}`).join(', ')}`
+                  + ` and this application renders v${entry.version}; a read-only composition may not read rows written`
+                  + ' under a version it does not carry',
+              );
+            }
+            assertFingerprintMatch(entry, persisted);
           }
         })();
       }
