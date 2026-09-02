@@ -769,18 +769,28 @@ test('a loaded read-only document reaches the reader composition, not a refusal'
   assert.equal(prepared.identityVerifier, null, 'a reader resolves no signing identity');
 
   const { createAccordoAppAsync } = await import('../packages/app/src/index.js');
+  // Asserted **positively**, on the one code this path produces, and not as a
+  // denylist of the two codes that would mean failure. The first draft of this
+  // test excluded two codes and returned true, so it accepted every other
+  // outcome — a reviewer showed it staying green under two mutations that each
+  // violate its own stated criterion: a reader that refuses before creating any
+  // pool, and a read-only document that composes the *writer* and dies signing
+  // a startup attestation. Deducing the right answer by excluding two wrong
+  // ones accepts everything nobody thought to name.
+  //
+  // What this proves: the document loaded, the factory accepted the selection,
+  // refused none of its inputs, and got as far as opening a data-plane pool.
+  // What it does not prove: that a reader composed and read a row — that needs
+  // a PostgreSQL serving the TLS this document requires, which the local test
+  // instance does not. `tests/read-only-composition-postgresql.test.js` proves
+  // the composition itself over the harness channel; this proves the document
+  // reaches it.
   await assert.rejects(
     () => createAccordoAppAsync({
       deployment: prepared,
       projectRoot: root,
       acquisitionDeadlineMs: 250,
     }),
-    (error) => {
-      assert.notEqual(error.code, 'PORTABLE_POSTGRESQL_BINDING_REQUIRED',
-        'the document was refused as incomplete, so the read-only branch is still unreachable');
-      assert.notEqual(error.code, 'READ_ONLY_COMPOSITION_REFUSED',
-        'the factory refused an input the document did not contain');
-      return true;
-    },
+    (error) => error.code === 'STORAGE_UNAVAILABLE',
   );
 });
