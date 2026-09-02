@@ -260,7 +260,25 @@ that identity is a different composition, and there are no rows beneath a
 definition nobody ever registered. It is the same third term already written for
 module migrations, which this level was missing.
 
-**What the four have in common** is worth more than the fixes. Each was a
+**E. The wiring from a document to the reader's arguments was covered by
+nothing.** Discarding `pinnedBindingUuid` on the document branch left the whole
+suite green — measured, not argued. The harness tests take the other side of
+every ternary in that block; the document test dies at a connection that by
+construction never succeeds; and `pinnedBindingUuid` and `tenantId` are both
+read only *after* that connection. So the two values a reader needs from an
+operator's document reached it through a line no test exercised.
+
+This is the corollary of A refusing to close. A said the document could not
+describe the composition; fixing that made the description possible and left
+untested whether the description *arrives*. The pin is precisely the term the
+limitation says a reader carries in place of the cross-check it cannot perform,
+so a pin that silently fails to arrive removes the payment and keeps the claim.
+
+Closed by extracting the mapping into an exported function and asserting what a
+document turns into — no database, no TLS. Wiring, not composition, which is the
+level the defect lives at.
+
+**What the five have in common** is worth more than the fixes. Each was a
 property asserted about a seam by someone who had verified the seam's own side
 of it. The reviewer found all three by asking who is on the *other* side — and
 none of them would have been found by looking harder at the diff.

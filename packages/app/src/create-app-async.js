@@ -361,6 +361,53 @@ function loopbackEndpoint(endpoint) {
 }
 
 /**
+ * The wiring from a selection to the reader's arguments, exported because it is
+ * the only place where the document's values become the composition's, and
+ * nothing could observe it.
+ *
+ * A reviewer measured the gap: discarding `pinnedBindingUuid` on the document
+ * branch left the whole suite green. The harness tests take the other side of
+ * every ternary here, and the document test dies at a connection that by
+ * construction never succeeds — and `pinnedBindingUuid` and `tenantId` are both
+ * read only *after* that connection. So the two values the reader needs from
+ * the document reached it through a line no test exercised.
+ *
+ * Pulling it out makes it observable without a database and without TLS, which
+ * is the level the defect lives at: not composition, wiring.
+ *
+ * @param {any} options
+ * @param {{ selected: any, listenMode: string }} context
+ */
+export function readerArgumentsFrom(options, { selected, listenMode }) {
+  const selection = options.deployment?.selection;
+  const tenantId = selection ? selection.spine.tenant.id : options.spine.tenant.id;
+  return {
+    selected,
+    listenMode,
+    tenantId,
+    data: selection
+      ? postgresqlEndpoint(
+        selection.connection,
+        options.deployment.secretResolver,
+        'postgresql-data-password',
+        tenantId,
+        options.projectRoot,
+      )
+      : loopbackEndpoint(options.testHarness.data),
+    pinnedBindingUuid: selection
+      ? selection.pinnedBindingUuid
+      : options.testHarness.pinnedBindingUuid,
+    moduleMigrations: options.moduleMigrations,
+    clock: options.clock,
+    approvalThresholdCents: options.approvalThresholdCents,
+    catalogTimeoutMs: options.catalogTimeoutMs,
+    signatureTimeoutMs: options.signatureTimeoutMs,
+    queryDeadlineMs: options.queryDeadlineMs ?? options.testHarness?.queryDeadlineMs,
+    acquisitionDeadlineMs: options.acquisitionDeadlineMs ?? options.testHarness?.acquisitionDeadlineMs,
+  };
+}
+
+/**
  * Own one portable application. Startup is unconditionally async.
  *
  * @param {{
@@ -399,32 +446,7 @@ export async function createAccordoAppAsync(options = {}) {
     ?? 'local-development';
 
   if (isReadOnlyPostgres(options)) {
-    const selection = options.deployment?.selection;
-    const tenantId = selection ? selection.spine.tenant.id : options.spine.tenant.id;
-    return startPortablePostgresqlReaderApp({
-      selected,
-      listenMode,
-      tenantId,
-      data: selection
-        ? postgresqlEndpoint(
-          selection.connection,
-          options.deployment.secretResolver,
-          'postgresql-data-password',
-          tenantId,
-          options.projectRoot,
-        )
-        : loopbackEndpoint(options.testHarness.data),
-      pinnedBindingUuid: selection
-        ? selection.pinnedBindingUuid
-        : options.testHarness.pinnedBindingUuid,
-      moduleMigrations: options.moduleMigrations,
-      clock: options.clock,
-      approvalThresholdCents: options.approvalThresholdCents,
-      catalogTimeoutMs: options.catalogTimeoutMs,
-      signatureTimeoutMs: options.signatureTimeoutMs,
-      queryDeadlineMs: options.queryDeadlineMs ?? options.testHarness?.queryDeadlineMs,
-      acquisitionDeadlineMs: options.acquisitionDeadlineMs ?? options.testHarness?.acquisitionDeadlineMs,
-    });
+    return startPortablePostgresqlReaderApp(readerArgumentsFrom(options, { selected, listenMode }));
   }
 
   if (isCompletePostgres(options) && options.deployment?.selection?.adapter === 'postgresql') {

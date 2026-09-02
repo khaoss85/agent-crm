@@ -794,3 +794,50 @@ test('a loaded read-only document reaches the reader composition, not a refusal'
     (error) => error.code === 'STORAGE_UNAVAILABLE',
   );
 });
+
+/**
+ * The wiring, at the level the defect lives.
+ *
+ * A reviewer measured that discarding the document's `pinnedBindingUuid` left
+ * the whole suite green: the harness tests take the other side of every ternary
+ * in that block, and the document test dies at a connection that by
+ * construction never succeeds — while `pinnedBindingUuid` and `tenantId` are
+ * both read only *after* the connection. So the two values the reader needs
+ * from an operator's document reached it through a line no test exercised.
+ *
+ * This needs no database and no TLS: it asks what the document turns into.
+ */
+test('the document’s pinned binding and tenant reach the reader’s arguments', async (t) => {
+  const root = scratch();
+  fs.mkdirSync(join(root, 'tls'), { recursive: true });
+  fs.writeFileSync(join(root, 'tls/deployment-ca.pem'),
+    '-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n', { mode: 0o600 });
+  const pin = '4c8a2b1e-9d3f-4a6b-8c1d-2e5f7a9b0c3d';
+  const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({
+    access: 'read-only',
+    controlPlane: undefined,
+    identityVerifier: undefined,
+    spine: { mode: 'local-development', tenant: { id: 'northwind' } },
+    secretProvider: { kind: 'environment' },
+    pinnedBindingUuid: pin,
+  })));
+
+  const { prepareDeploymentPreconnect } = await import('../packages/core/src/identity-verifier.js');
+  const prepared = await prepareDeploymentPreconnect({
+    configPath,
+    projectRoot: root,
+    env: { ACCORDO_TEST_DATA_PASSWORD: 'not-a-real-password' },
+  });
+
+  const { readerArgumentsFrom } = await import('../packages/app/src/create-app-async.js');
+  const args = readerArgumentsFrom(
+    { deployment: prepared, projectRoot: root },
+    { selected: undefined, listenMode: 'local-development' },
+  );
+
+  assert.equal(args.pinnedBindingUuid, pin,
+    'the pin is the one term of the binding cross-check a reader can carry; dropping it is silent');
+  assert.equal(args.tenantId, 'northwind');
+  assert.equal(args.data.host, '127.0.0.1');
+  assert.equal(typeof args.data.password, 'function', 'the credential stays a resolver, never a value');
+});
