@@ -143,7 +143,11 @@ function refuseUnavailableOptions(options) {
   }
 }
 
-function sslFromEndpoint(endpoint, projectRoot) {
+/**
+ * Exported for the same reason `passwordFromEndpoint` is: the refusals here are
+ * the security properties, and a test that cannot reach them tests prose.
+ */
+export function sslFromEndpoint(endpoint, projectRoot) {
   const caFile = endpoint.tls?.caFile;
   if (typeof caFile !== 'string' || caFile === '') {
     throw new AppError(
@@ -161,11 +165,66 @@ function sslFromEndpoint(endpoint, projectRoot) {
       );
     },
   });
+  // A managed database that issues a per-instance certificate names no host in
+  // it: the subject is an instance id and there is no SAN. Hostname
+  // verification therefore cannot pass, and `servername` cannot rescue it —
+  // the `pg` driver copies the caller's TLS options and then overwrites
+  // `servername` with the host for any non-IP host (`pg/lib/connection.js`,
+  // where the assign at 103 is undone at 118). The seam this function offered
+  // was inert with the driver this repository pins, which is worse than an
+  // absent option because callers build on it.
+  //
+  // So a caller may pin the certificate itself instead. This is deliberately
+  // NOT a `checkServerIdentity` hook: a hook accepts `() => undefined`, which
+  // turns the one seam that exists into the hole that disables verification.
+  // A fingerprint can only exchange *which* property is proved, never whether
+  // one is. What it proves is narrower and the name says so: possession of the
+  // pinned key, not the identity of the host that answered.
+  const pinned = endpoint.tls.pinnedCertificateSha256;
+  if (pinned !== undefined) {
+    const expected = normaliseFingerprint(pinned);
+    if (expected === null) {
+      throw new AppError(
+        'a pinned certificate fingerprint must be 32 bytes of hex, with or without separators',
+        { code: 'DEPLOYMENT_STORAGE_TLS_REFUSED', status: 500 },
+      );
+    }
+    return {
+      rejectUnauthorized: true,
+      ca,
+      // Still sent, and still overwritten by the driver. Kept so the intent is
+      // legible next to the check that actually holds.
+      servername: endpoint.tls.servername ?? endpoint.host,
+      checkServerIdentity: (_host, cert) => {
+        const presented = normaliseFingerprint(cert?.fingerprint256);
+        if (presented === null || presented !== expected) {
+          return new AppError(
+            'the database presented a certificate this deployment has not pinned',
+            { code: 'DEPLOYMENT_STORAGE_TLS_REFUSED', status: 500 },
+          );
+        }
+        return undefined;
+      },
+    };
+  }
   return {
     rejectUnauthorized: true,
     ca,
     servername: endpoint.tls.servername ?? endpoint.host,
   };
+}
+
+/**
+ * Accepts the two shapes a SHA-256 fingerprint is written in — bare hex and
+ * colon-separated, which is what `tls` returns — and refuses everything else.
+ * Comparing the written forms directly would make `AA:BB` and `aabb` disagree
+ * about the same certificate.
+ * @param {unknown} value
+ */
+function normaliseFingerprint(value) {
+  if (typeof value !== 'string') return null;
+  const hex = value.replace(/[:\s]/g, '').toLowerCase();
+  return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
 }
 
 export function passwordFromEndpoint(endpoint, secretResolver, purpose, tenantId) {
