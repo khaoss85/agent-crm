@@ -970,7 +970,14 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     // throws when it is touched separates "refused" from "refused before any
     // SQL", which a real database cannot do — a write that opens, is rejected
     // and rolls back leaves exactly the rows a write that never happened does.
-    {
+    try {
+      // The adapter module imports `pg`, and this generator also runs inside
+      // fixture repositories that carry `packages/` and no `node_modules`. A
+      // probe that throws there does not report a weaker fact — it takes the
+      // whole `spine.contract` authority down with it, and every fact that
+      // authority carries disappears. So an unrunnable probe reports `absent`,
+      // which is the conservative direction: a probe that cannot run does not
+      // get to claim the capability.
       const storageModule = await import(url('packages/core/src/postgresql-storage.js'));
       const appFactory = await import(url('packages/app/src/index.js'));
       const touched = [];
@@ -1009,11 +1016,18 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           },
         });
       } catch (error) {
+        // Named as the caller wrote it: this probe uses the harness channel,
+        // whose key is `control`. The deployment channel calls it
+        // `controlPlane`, and asserting the wrong one here made the probe read
+        // `absent` while the refusal was working perfectly — a probe that fails
+        // for a reason of its own is worse than no probe.
         refusesControlPlane = error?.code === 'READ_ONLY_COMPOSITION_REFUSED'
-          && error?.details?.option === 'controlPlane';
+          && error?.details?.option === 'control';
       }
 
       bundle.readOnlyCompositionProbe = refusedBeforeSql && readsReachThePool && refusesControlPlane;
+    } catch {
+      bundle.readOnlyCompositionProbe = false;
     }
     // A limitation string is `CODE — prose`; the code is the structural half.
     bundle.tenantLimitationCodes = [...tenantStorage.TENANT_LIMITATIONS]
