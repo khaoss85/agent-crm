@@ -196,7 +196,10 @@ test('the composition refuses the inputs that would make it a writer', async (t)
 
   await assert.rejects(
     () => createAccordoAppAsync({ ...base, testHarness: { ...harness, control: booted.planes.control } }),
-    (error) => error.code === 'READ_ONLY_COMPOSITION_REFUSED' && error.details?.option === 'controlPlane',
+    // Named as the caller wrote it. The harness channel calls it `control` and
+    // the deployment channel calls it `controlPlane`; a refusal that reports
+    // the other one sends the reader looking for a key they did not pass.
+    (error) => error.code === 'READ_ONLY_COMPOSITION_REFUSED' && error.details?.option === 'control',
   );
   await assert.rejects(
     () => createAccordoAppAsync({ ...base, testHarness: harness, identityVerifier: { operations: {} } }),
@@ -206,6 +209,32 @@ test('the composition refuses the inputs that would make it a writer', async (t)
     () => createAccordoAppAsync({ ...base, testHarness: harness, productionOperations: {} }),
     (error) => error.code === 'READ_ONLY_COMPOSITION_REFUSED' && error.details?.option === 'productionOperations',
   );
+});
+
+/**
+ * The composition whose entire design is "refuse the inputs that would widen
+ * this" must not be the one composition that accepts them silently. The
+ * read-only carve returns early, so the globally unsupported options had to be
+ * refused before it — otherwise the writer refuses `authorize` and `listen`
+ * and the reader, of all things, does not.
+ */
+test('the reader refuses the globally unsupported options the writer refuses', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+
+  const base = {
+    adapter: 'postgresql',
+    spine: { mode: 'local-development', tenant: { id: booted.tenantId } },
+    testHarness: { loopback: true, access: 'read-only', data: booted.data },
+    moduleMigrations: [GADGET_MIGRATION],
+  };
+  for (const key of ['authorize', 'security', 'openDatabase', 'listen', 'providers']) {
+    await assert.rejects(
+      () => createAccordoAppAsync({ ...base, [key]: {} }),
+      (error) => error.code === 'PORTABLE_OPTION_UNSUPPORTED' && error.details?.option === key,
+      `${key} must be refused by the read-only composition too`,
+    );
+  }
 });
 
 /**

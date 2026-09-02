@@ -158,10 +158,14 @@ function refuseReadOnlyWriterInputs(options) {
   const identityVerifier = options.deployment
     ? options.deployment.identityVerifier
     : options.identityVerifier;
-  if (selection.controlPlane != null || selection.control != null) {
+  // Named as the caller wrote it: the deployment channel calls it
+  // `controlPlane`, the harness calls it `control`, and a refusal that reports
+  // the other one sends the reader looking for a key they did not pass.
+  const controlKey = selection.controlPlane != null ? 'controlPlane' : 'control';
+  if (selection[controlKey] != null) {
     throw new AppError(
       'a read-only composition takes no control-plane endpoint: the writer-lease table lives there',
-      { code: 'READ_ONLY_COMPOSITION_REFUSED', status: 400, details: { option: 'controlPlane' } },
+      { code: 'READ_ONLY_COMPOSITION_REFUSED', status: 400, details: { option: controlKey } },
     );
   }
   if (identityVerifier != null) {
@@ -186,6 +190,11 @@ function refuseUnavailableOptions(options) {
     return;
   }
 
+  // Before the read-only carve, not after it. The composition whose whole
+  // design is "refuse the inputs that would widen this" must not be the one
+  // composition that accepts `authorize`, `listen` or `providers` silently.
+  refuseGloballyUnsupportedOptions(options);
+
   if (isReadOnlyPostgres(options)) {
     refuseReadOnlyWriterInputs(options);
     return;
@@ -207,6 +216,12 @@ function refuseUnavailableOptions(options) {
     }
   }
 
+}
+
+/**
+ * @param {any} options
+ */
+function refuseGloballyUnsupportedOptions(options) {
   for (const key of UNSUPPORTED_KEYS) {
     let value;
     try {
