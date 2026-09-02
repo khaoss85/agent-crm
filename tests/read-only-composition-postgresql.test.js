@@ -108,8 +108,23 @@ test('the facade omits the keys that are purely write capability', async (t) => 
   if (!booted) return;
   const reader = await bootPostgresqlReader(t, { data: booted.data, tenantId: booted.tenantId });
 
-  for (const key of ['leaseRenewer', 'productionOperations', 'reconcileWrite', 'acknowledgeWrite']) {
+  // Already conditional in the ordinary facade — an application that composes
+  // no operations does not carry them either — so absence is what that shape
+  // already means.
+  for (const key of ['leaseRenewer', 'productionOperations']) {
     assert.equal(reader[key], undefined, `${key} is write capability and must not be exposed`);
+  }
+  // Always present, so they refuse instead of vanishing. A generic consumer
+  // calls these without asking whether they exist — the framework's own HTTP
+  // surface does exactly that — and a missing key there is a TypeError at the
+  // call site rather than a boundary.
+  for (const key of ['runAction', 'reconcileWrite', 'acknowledgeWrite']) {
+    assert.equal(typeof reader[key], 'function', `${key} must be present so that it can refuse`);
+    await assert.rejects(
+      async () => reader[key]({}),
+      (error) => error.code === 'READ_ONLY_COMPOSITION' && error.details?.surface === key,
+      `${key} must refuse with a typed error, not a TypeError`,
+    );
   }
   // Reads of the write-outcome ledger are still reads.
   assert.equal(typeof reader.lookupWrite, 'function');

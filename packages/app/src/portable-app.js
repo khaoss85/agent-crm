@@ -809,16 +809,20 @@ export async function startPortablePostgresqlApp(options) {
  * The owner's constraints are two different sentences and they get two
  * different treatments, because collapsing them would produce a worse facade.
  *
- * *Expose no write capability* → the keys that are purely write capability are
- * **omitted**: `leaseRenewer` (there is no lease to renew), `productionOperations`
- * (workers are the thing that must not start), `reconcileWrite` and
- * `acknowledgeWrite` (both write). A key that is absent cannot be called by
- * mistake.
+ * The rule, in the form that survived meeting a real consumer: **a key that is
+ * already conditional in the ordinary facade stays absent; a key that is always
+ * present refuses.**
  *
- * *Refuse every mutation* → `runAction` is present and **refuses**, typed. It
- * is the entry point every application shape has and the one a caller reaches
- * for first; a missing key there would produce a `TypeError` at the call site,
- * which is an accident rather than a boundary.
+ * So `leaseRenewer` and `productionOperations` are **omitted** — an application
+ * that composes no operations does not carry them today either, so absence is
+ * already what that shape means, and there is no lease here to renew.
+ *
+ * And `runAction`, `reconcileWrite` and `acknowledgeWrite` are present and
+ * **refuse**, typed. The first draft omitted the latter two, which was the same
+ * rule applied to one key and not the other two: a generic consumer calls them
+ * without asking whether they exist — the framework's own HTTP surface does
+ * exactly that — and a missing key there produces a `TypeError` at the call
+ * site, which is an accident rather than a boundary.
  *
  * Module services keep their write methods. That is deliberate: the storage
  * seam refuses before rendering a statement, so `services.companies.create()`
@@ -891,6 +895,8 @@ export async function startPortablePostgresqlReaderApp(options) {
     notifications: graph.notifications,
     // Present and refusing, not absent. See the note above.
     runAction: () => refuseMutation('runAction'),
+    reconcileWrite: () => refuseMutation('reconcileWrite'),
+    acknowledgeWrite: () => refuseMutation('acknowledgeWrite'),
     // A read of the write-outcome ledger is still a read.
     lookupWrite: graph.lookupWrite,
     listUnacknowledgedWrites: graph.listUnacknowledgedWrites,

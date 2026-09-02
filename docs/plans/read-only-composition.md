@@ -108,11 +108,23 @@ It was checked, not assumed.
 The owner's constraint 4 and constraint 6 are not the same instruction, and
 collapsing them would produce a worse composition.
 
-- *"must not expose write capability"* → **omit** the keys that are purely
-  write capability: `leaseRenewer`, `productionOperations`, `reconcileWrite`,
-  `acknowledgeWrite`. A key that is absent cannot be called by mistake.
-- *"refuse every mutation"* → **typed refusal** on the entry points every app
-  shape has and that a caller will reasonably reach for: `runAction`.
+The first draft of this section drew the line in the wrong place, and a real
+consumer moved it. It said: omit `leaseRenewer`, `productionOperations`,
+`reconcileWrite` and `acknowledgeWrite`; refuse `runAction`. That is the same
+rule applied to one key and not to the other two — the framework's own HTTP
+surface calls `reconcileWrite` and `acknowledgeWrite` **without asking whether
+they exist**, so omitting them produces a `TypeError` at the call site, which
+is exactly the accident the `runAction` decision was made to avoid.
+
+The rule, in the form that survived contact:
+
+- **A key already conditional in the ordinary facade stays absent.**
+  `leaseRenewer` and `productionOperations` are absent from an ordinary
+  application that composes no operations, so absence is already what that
+  shape means — and there is no lease here to renew.
+- **A key always present refuses, typed.** `runAction`, `reconcileWrite` and
+  `acknowledgeWrite`. A caller who reaches for one gets a boundary rather than
+  a crash.
 
 Module services keep their write methods on their objects. That is deliberate:
 the storage refusal is what backstops them, and a caller who finds
