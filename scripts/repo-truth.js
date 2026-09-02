@@ -139,9 +139,16 @@ export const TRUTH_LIMITATIONS = Object.freeze([
     + 'reaches a reader only as an optional pin it must be configured with, so an unpinned reader can be aimed at '
     + 'a superseded data plane carrying the right tenant slug. Schema skew refuses in both directions — a ledger '
     + 'missing a migration this code renders, and a ledger carrying a core migration it does not — but module '
-    + 'migrations a reader does not render are a different composition rather than skew, and are accepted. A '
-    + 'read-only database role, where a provider offers one, is a second and independent layer that this fact '
-    + 'does not cover'],
+    + 'migrations a reader does not render are a different composition rather than skew, and are accepted. '
+    + 'Definition versions are checked on the same three-term rule and it is worth stating all three: a '
+    + 'definition this code renders that the data plane has registered only at other versions refuses; a '
+    + 'definition nothing has ever registered is a different composition and is accepted, because no rows exist '
+    + 'beneath it; and a reader rendering an *older* version that is itself registered composes, because code '
+    + 'carrying that version has already run legitimately against this data plane — so the reader is not the '
+    + 'first thing to read rows under it. That last case is a deliberate tolerance, not an oversight: refusing '
+    + 'it would require every reader to sit at the highest registered version, which is lockstep on every '
+    + 'policy bump and would refuse a web that composes an older package on purpose. A read-only database role, '
+    + 'where a provider offers one, is a second and independent layer that this fact does not cover'],
   ['SELF_HOST_APPLICATION_STARTED_OPERATIONS_ONLY',
     'the implemented fact covers one application composing the shipped job, outbox, timer, backup and telemetry '
     + 'contracts into a single handle whose construction starts nothing. The application starts it, drains it and '
