@@ -330,3 +330,67 @@ export async function startPostgresqlLifecycle(options) {
     close,
   });
 }
+
+/**
+ * Own one PostgreSQL data plane opened for reading only.
+ *
+ * The difference from `startPostgresqlLifecycle` is what is absent: no control
+ * endpoint, no identity verifier, no lease, no migrations. The handle's
+ * `transactionAsync` is kept and forwarded unchanged — it reaches storage that
+ * refuses to open a transaction, so a write path that assumes it exists gets a
+ * typed refusal from the seam rather than a `TypeError` from a missing key.
+ *
+ * @param {{
+ *   selected: any,
+ *   tenantId: string,
+ *   data: object,
+ *   pinnedBindingUuid?: string,
+ *   moduleMigrations?: Array<{name: string, sql: string}>,
+ *   queryDeadlineMs?: number,
+ *   acquisitionDeadlineMs?: number,
+ *   assemble?: (ctx: { accepted: any, storage: any, bootstrap: any, handle: any }) => any,
+ * }} options
+ */
+export async function startPostgresqlReaderLifecycle(options) {
+  const accepted = preflightSelectedGraph(options.selected);
+  refuseLegacyExternalOperations(accepted);
+  const assemble = options.assemble ?? (() => undefined);
+  const { bootstrapPostgresqlReader } = await import('../../core/src/postgresql-bootstrap.js');
+  const bootstrap = await bootstrapPostgresqlReader({
+    data: options.data,
+    tenantId: options.tenantId,
+    pinnedBindingUuid: options.pinnedBindingUuid,
+    moduleMigrations: options.moduleMigrations,
+    queryDeadlineMs: options.queryDeadlineMs,
+    acquisitionDeadlineMs: options.acquisitionDeadlineMs,
+  });
+
+  const handle = {
+    storage: bootstrap.dataStorage,
+    transactionAsync(fn) {
+      return bootstrap.dataStorage.transaction(
+        async (tx) => runWithAffineStorage(handle, tx, () => fn(tx)),
+      );
+    },
+  };
+
+  let assembled;
+  try {
+    assembled = await assemble({ accepted, storage: bootstrap.dataStorage, bootstrap, handle });
+  } catch (error) {
+    try {
+      await bootstrap.close();
+    } catch (cleanupError) {
+      attachCleanupError(error, cleanupError);
+    }
+    throw error;
+  }
+
+  let closePromise;
+  const close = () => {
+    if (!closePromise) closePromise = bootstrap.close();
+    return closePromise;
+  };
+
+  return Object.freeze({ accepted, storage: bootstrap.dataStorage, bootstrap, assembled, close });
+}

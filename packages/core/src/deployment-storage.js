@@ -24,11 +24,20 @@ const LEGACY_ENVELOPE_KEYS = Object.freeze([
   'contract', 'adapter', 'connection', 'controlPlane', 'spine', 'identityVerifier',
 ]);
 const ENVELOPE_KEYS = Object.freeze([
-  ...LEGACY_ENVELOPE_KEYS, 'secretProvider',
+  ...LEGACY_ENVELOPE_KEYS, 'secretProvider', 'access', 'pinnedBindingUuid',
 ]);
 const ENVELOPE_REQUIRED_KEYS = Object.freeze([
   'contract', 'adapter', 'connection', 'controlPlane', 'spine',
 ]);
+// A read-only deployment names no control plane, because that is where the
+// writer-lease table lives: a document that cannot mention it describes a
+// process that holds no credential able to reach it. So `controlPlane` stops
+// being required — and becomes refused — exactly when `access` says read-only.
+const READ_ONLY_ENVELOPE_REQUIRED_KEYS = Object.freeze([
+  'contract', 'adapter', 'connection', 'spine',
+]);
+const READ_ONLY_ACCESS = 'read-only';
+const BINDING_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SQLITE_ENDPOINT_KEYS = Object.freeze(['path']);
 const POSTGRES_SECRET_ENDPOINT_KEYS = Object.freeze([
   'host', 'port', 'database', 'user', 'passwordSecret', 'sslmode', 'tls',
@@ -268,8 +277,34 @@ function parseEnvelope(envelope) {
       'deployment-storage contract is not supported',
     );
   }
-  closedObject(envelope, ENVELOPE_KEYS, ENVELOPE_REQUIRED_KEYS);
+  const access = parseAccess(envelope.access);
+  closedObject(
+    envelope,
+    ENVELOPE_KEYS,
+    access === READ_ONLY_ACCESS ? READ_ONLY_ENVELOPE_REQUIRED_KEYS : ENVELOPE_REQUIRED_KEYS,
+  );
   if (envelope.adapter !== 'sqlite' && envelope.adapter !== 'postgresql') invalidEnvelope();
+  const pinnedBindingUuid = parsePinnedBindingUuid(envelope.pinnedBindingUuid, access);
+  if (access === READ_ONLY_ACCESS) {
+    if (envelope.adapter !== 'postgresql') {
+      refuse(
+        'DEPLOYMENT_STORAGE_READ_ONLY_UNSUPPORTED',
+        'read-only deployment storage is PostgreSQL only',
+      );
+    }
+    // Refused, not ignored. A document that names either of these describes a
+    // process that could take the writer lease or sign a startup attestation,
+    // and silently dropping the field would compose something weaker than the
+    // document says.
+    for (const key of ['controlPlane', 'identityVerifier']) {
+      if (envelope[key] != null) {
+        refuse(
+          'DEPLOYMENT_STORAGE_READ_ONLY_REFUSED',
+          `a read-only deployment names no ${key}`,
+        );
+      }
+    }
+  }
   const identityVerifier = parseOptionalIdentityVerifier(envelope.identityVerifier);
   const spine = parseSpine(envelope.spine);
   const secretProvider = Object.hasOwn(envelope, 'secretProvider')
@@ -293,8 +328,14 @@ function parseEnvelope(envelope) {
   }
 
   const connection = parsePostgresSecretEndpoint(envelope.connection);
-  const controlPlane = parsePostgresSecretEndpoint(envelope.controlPlane);
-  if (endpointIdentity(connection) === endpointIdentity(controlPlane)) {
+  // A read-only document has no control plane to parse, and this line parsing
+  // one unconditionally is what made the whole read-only branch unreachable
+  // from the only producer of a selection — the routing accepted it and no
+  // document could ever get there.
+  const controlPlane = access === READ_ONLY_ACCESS
+    ? null
+    : parsePostgresSecretEndpoint(envelope.controlPlane);
+  if (controlPlane && endpointIdentity(connection) === endpointIdentity(controlPlane)) {
     refuse(
       'DEPLOYMENT_STORAGE_PLANES_ALIAS',
       'PostgreSQL control and data planes must not share an endpoint identity',
@@ -307,8 +348,51 @@ function parseEnvelope(envelope) {
     secretProvider,
     spine,
     connection,
-    controlPlane,
+    ...(controlPlane ? { controlPlane } : {}),
+    ...(access ? { access } : {}),
+    ...(pinnedBindingUuid ? { pinnedBindingUuid } : {}),
   });
+}
+
+/**
+ * `read-only` or absent. A closed vocabulary of one, because the alternative —
+ * accepting any string and letting the composition decide — is how a typo
+ * silently composes a writer.
+ * @param {unknown} value
+ */
+function parseAccess(value) {
+  if (value === undefined || value === null) return null;
+  if (value !== READ_ONLY_ACCESS) {
+    refuse(
+      'DEPLOYMENT_STORAGE_ACCESS_UNSUPPORTED',
+      `deployment-storage access is "${READ_ONLY_ACCESS}" or absent`,
+    );
+  }
+  return READ_ONLY_ACCESS;
+}
+
+/**
+ * The binding a reader expects the data plane to present.
+ *
+ * A reader holds no control-plane credential, so it cannot perform the
+ * cross-check a writer does between the control mapping and the data marker:
+ * it sees one term. This is the other term, configured. It is refused outside a
+ * read-only document rather than ignored, because a field nothing reads is
+ * indistinguishable from a field that works.
+ *
+ * @param {unknown} value
+ * @param {string | null} access
+ */
+function parsePinnedBindingUuid(value, access) {
+  if (value === undefined || value === null) return null;
+  if (access !== READ_ONLY_ACCESS) {
+    refuse(
+      'DEPLOYMENT_STORAGE_READ_ONLY_REFUSED',
+      'a pinned binding uuid is only meaningful for a read-only deployment',
+    );
+  }
+  if (typeof value !== 'string' || !BINDING_UUID.test(value)) invalidEnvelope();
+  return value;
 }
 
 /** @param {string} dbPath */

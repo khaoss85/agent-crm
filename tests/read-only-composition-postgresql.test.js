@@ -1,0 +1,416 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import pg from 'pg';
+
+import { bootPostgresqlApp, bootPostgresqlReader, GADGET_MIGRATION } from './helpers/postgresql-application.js';
+import { createAccordoAppAsync } from '../packages/app/src/index.js';
+
+const { Client } = pg;
+
+/**
+ * A graph that carries a package with a versioned policy — which is what makes
+ * `persistFingerprints` do anything at all. Every earlier test here composed
+ * the empty kernel graph, where the loop returns before its first statement,
+ * which is why finding B stayed invisible.
+ */
+const POLICY_GRAPH = Object.freeze({
+  packageContract: 2,
+  packages: [{
+    packageContract: 2,
+    name: 'readonly-probe-domain',
+    version: 1,
+    label: 'Read-only probe domain',
+    actions: [],
+    policies: [{
+      kind: 'probe',
+      definition: {
+        name: 'probe-policy',
+        version: 1,
+        config: {},
+        classifyComponent: () => ({ commercialActivation: 'non_subscription', obligations: [] }),
+      },
+    }],
+    metadata: () => ({}),
+  }],
+  actions: [],
+  modules: [],
+});
+
+/**
+ * The composition a managed pilot's Web Admin runs on: a human can see the
+ * customer and the review, and the process cannot write.
+ *
+ * These run against a real database because the two properties that matter are
+ * about what is *absent* from a live process — no lease taken, no migration
+ * applied, no audit row — and absence is only provable against something that
+ * would have recorded the presence.
+ */
+
+async function connectTo(plane) {
+  const client = new Client({
+    host: plane.host, port: plane.port, user: plane.user, password: plane.password,
+    database: plane.database, connectionTimeoutMillis: 2000,
+  });
+  await client.connect();
+  return client;
+}
+
+async function snapshotDataPlane(plane) {
+  const client = await connectTo(plane);
+  try {
+    const audit = await client.query('SELECT count(*)::int AS n FROM "accordo"."startup_audit"');
+    const ledger = await client.query('SELECT version, checksum FROM "accordo"."schema_migrations" ORDER BY version');
+    const modules = await client.query('SELECT name, checksum FROM "accordo"."module_migrations" ORDER BY name');
+    return {
+      startupAudit: audit.rows[0].n,
+      ledger: ledger.rows.map((row) => `${row.version}:${row.checksum}`).join(','),
+      modules: modules.rows.map((row) => `${row.name}:${row.checksum}`).join(','),
+    };
+  } finally {
+    await client.end();
+  }
+}
+
+test('a reader composes over a live data plane and reads while the writer still holds the lease', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+  await booted.app.services.companies.create({ name: 'Northwind' });
+
+  // The writer is not closed. This is the pilot's real shape: a worker holding
+  // the lease and a web process reading the same data plane beside it.
+  const reader = await bootPostgresqlReader(t, { data: booted.data, tenantId: booted.tenantId });
+
+  const companies = await reader.services.companies.list();
+  assert.equal(companies.length, 1);
+  assert.equal(companies[0].name, 'Northwind');
+  assert.equal(reader.storage.mode, 'read-only');
+});
+
+test('composing a reader writes nothing: no audit row, no lease, ledger unchanged', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+  const before = await snapshotDataPlane(booted.data);
+
+  const reader = await bootPostgresqlReader(t, { data: booted.data, tenantId: booted.tenantId });
+  await reader.services.companies.list();
+
+  const after = await snapshotDataPlane(booted.data);
+  assert.deepEqual(after, before, 'a reader that changed the data plane is not a reader');
+
+  // The lease lives in the control plane, and the reader was handed no
+  // credential for it. One row is the writer's, taken before the reader existed.
+  const control = await connectTo(booted.planes.control);
+  try {
+    const leases = await control.query('SELECT count(*)::int AS n FROM "accordo"."spine_writer_leases"');
+    assert.equal(leases.rows[0].n, 1, 'the reader must not have taken a second lease');
+  } finally {
+    await control.end();
+  }
+});
+
+test('every mutation surface refuses, and the refusal is typed rather than an accident', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+  const reader = await bootPostgresqlReader(t, { data: booted.data, tenantId: booted.tenantId });
+
+  // A module service still carries its write methods. It is the storage seam
+  // that refuses, before a statement is rendered.
+  await assert.rejects(
+    () => reader.services.companies.create({ name: 'Refused Ltd' }),
+    (error) => error.code === 'STORAGE_READ_ONLY',
+  );
+  // `runAction` refuses in the facade: it is the entry point every application
+  // shape has, and a missing key there would be a TypeError, not a boundary.
+  await assert.rejects(
+    async () => reader.runAction({ action: 'anything', input: {} }),
+    (error) => error.code === 'READ_ONLY_COMPOSITION',
+  );
+
+  const after = await snapshotDataPlane(booted.data);
+  const companies = await reader.services.companies.list();
+  assert.equal(companies.length, 0, 'nothing was written by the refused calls');
+  assert.equal(after.startupAudit, (await snapshotDataPlane(booted.data)).startupAudit);
+});
+
+test('the facade omits the keys that are purely write capability', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+  const reader = await bootPostgresqlReader(t, { data: booted.data, tenantId: booted.tenantId });
+
+  // Already conditional in the ordinary facade — an application that composes
+  // no operations does not carry them either — so absence is what that shape
+  // already means.
+  for (const key of ['leaseRenewer', 'productionOperations']) {
+    assert.equal(reader[key], undefined, `${key} is write capability and must not be exposed`);
+  }
+  // Always present, so they refuse instead of vanishing. A generic consumer
+  // calls these without asking whether they exist — the framework's own HTTP
+  // surface does exactly that — and a missing key there is a TypeError at the
+  // call site rather than a boundary.
+  for (const key of ['runAction', 'reconcileWrite', 'acknowledgeWrite']) {
+    assert.equal(typeof reader[key], 'function', `${key} must be present so that it can refuse`);
+    await assert.rejects(
+      async () => reader[key]({}),
+      (error) => error.code === 'READ_ONLY_COMPOSITION' && error.details?.surface === key,
+      `${key} must refuse with a typed error, not a TypeError`,
+    );
+  }
+  // Reads of the write-outcome ledger are still reads.
+  assert.equal(typeof reader.lookupWrite, 'function');
+  assert.equal(typeof reader.listUnacknowledgedWrites, 'function');
+});
+
+test('a data plane bound to another tenant is refused', async (t) => {
+  const booted = await bootPostgresqlApp(t, { tenantId: 'acme' });
+  if (!booted) return;
+
+  await assert.rejects(
+    () => bootPostgresqlReader(t, { data: booted.data, tenantId: 'globex' }),
+    (error) => error.code === 'TENANT_BINDING_MISMATCH',
+  );
+});
+
+/**
+ * The cross-check the reader loses by holding no control-plane credential: the
+ * writer compares the control mapping against the data marker and refuses on
+ * disagreement. A reader sees one term, so the other has to be configured —
+ * the shape #171 established for the pinned certificate.
+ */
+test('a pinned binding that the data plane does not present is refused', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+
+  await assert.rejects(
+    () => bootPostgresqlReader(t, {
+      data: booted.data,
+      tenantId: booted.tenantId,
+      pinnedBindingUuid: '00000000-0000-4000-8000-000000000000',
+    }),
+    (error) => error.code === 'READER_BINDING_MISMATCH',
+  );
+
+  // And the matching pin composes, so the refusal above is about the value and
+  // not about pinning being broken.
+  const client = await connectTo(booted.data);
+  let actual;
+  try {
+    const row = await client.query('SELECT data_plane_id FROM "accordo"."spine_data_plane_binding" WHERE singleton = 1');
+    actual = row.rows[0].data_plane_id;
+  } finally {
+    await client.end();
+  }
+  const reader = await bootPostgresqlReader(t, {
+    data: booted.data, tenantId: booted.tenantId, pinnedBindingUuid: actual,
+  });
+  assert.equal(reader.storage.mode, 'read-only');
+});
+
+/**
+ * Version skew is not hypothetical here: the pilot pins its web service and its
+ * worker to different refs, so a reader rendering migration set N against a
+ * database left at N−1 is a shape this deployment can produce.
+ */
+test('a reader whose code renders a migration the data plane has not applied is refused', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+
+  await assert.rejects(
+    () => bootPostgresqlReader(t, {
+      data: booted.data,
+      tenantId: booted.tenantId,
+      moduleMigrations: [GADGET_MIGRATION, {
+        name: 'pg_reader_skew_probe',
+        sql: 'CREATE TABLE IF NOT EXISTS "accordo"."widgets" (id TEXT PRIMARY KEY)',
+      }],
+    }),
+    (error) => error.code === 'READER_SCHEMA_SKEW',
+  );
+});
+
+/**
+ * Finding C, from an independent review. The check ran in one direction only,
+ * and the direction it left open is the likelier one: **the writer migrates**,
+ * so the database sits at the worker's ref and the web follows later.
+ */
+test('a data plane carrying a core migration this reader does not render is refused', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+
+  const client = await connectTo(booted.data);
+  try {
+    // A row the reader's code does not render, of the shape the ledger holds.
+    await client.query(
+      'INSERT INTO "accordo"."schema_migrations" (version, name, applied_at, checksum) VALUES ($1,$2,now(),$3)',
+      [999_999, 'pg_core_from_a_later_framework', 'f'.repeat(64)],
+    );
+  } finally {
+    await client.end();
+  }
+
+  await assert.rejects(
+    () => bootPostgresqlReader(t, { data: booted.data, tenantId: booted.tenantId }),
+    (error) => error.code === 'READER_SCHEMA_SKEW',
+  );
+});
+
+/**
+ * The asymmetry, pinned so it cannot be "tidied" into symmetry. A worker that
+ * composes timers and a web that does not are a supported pair; the tables the
+ * reader never names cannot be misread by code that never mentions them.
+ */
+test('a module migration this reader does not render is a different composition, not skew', async (t) => {
+  const booted = await bootPostgresqlApp(t, {
+    moduleMigrations: [GADGET_MIGRATION, {
+      name: 'pg_module_only_the_writer_composes',
+      sql: 'CREATE TABLE IF NOT EXISTS "accordo"."writer_only" (id TEXT PRIMARY KEY)',
+    }],
+  });
+  if (!booted) return;
+
+  const reader = await bootPostgresqlReader(t, {
+    data: booted.data, tenantId: booted.tenantId, moduleMigrations: [GADGET_MIGRATION],
+  });
+  assert.equal(reader.storage.mode, 'read-only');
+});
+
+/**
+ * Finding B. `persistFingerprints` opened a transaction unconditionally — even
+ * when every fingerprint already matched and there was nothing to write — so a
+ * reader composing any package at all refused to boot. It was invisible because
+ * every test here composed the empty kernel graph, where the loop never runs.
+ */
+test('a reader composes a graph that carries packages, and registers nothing', async (t) => {
+  const booted = await bootPostgresqlApp(t, { selected: POLICY_GRAPH });
+  if (!booted) return;
+  const before = await snapshotDataPlane(booted.data);
+
+  const reader = await bootPostgresqlReader(t, {
+    data: booted.data, tenantId: booted.tenantId, selected: POLICY_GRAPH,
+  });
+  assert.equal(reader.storage.mode, 'read-only');
+  await reader.services.companies.list();
+
+  assert.deepEqual(await snapshotDataPlane(booted.data), before,
+    'verifying fingerprints must not write any of them');
+});
+
+/**
+ * The case between the two, found by an independent reviewer and reproduced
+ * here: a definition the database knows at **another version**.
+ *
+ * It is not "never seen" — the database knows that policy — and it is not a
+ * fingerprint mismatch, because keying the lookup on the version means there is
+ * no row to compare. And it is the only one of the three that this mode
+ * creates: a writer cannot produce it, since a writer inserts and the two agree
+ * from then on.
+ */
+test('a definition registered at another version refuses, rather than falling between the cases', async (t) => {
+  const booted = await bootPostgresqlApp(t, { selected: POLICY_GRAPH });
+  if (!booted) return;
+
+  const moved = JSON.parse(JSON.stringify({ ...POLICY_GRAPH, packages: POLICY_GRAPH.packages }));
+  moved.packages = [{
+    ...POLICY_GRAPH.packages[0],
+    policies: [{
+      kind: 'probe',
+      definition: {
+        name: 'probe-policy',
+        version: 2,
+        config: {},
+        classifyComponent: () => ({ commercialActivation: 'non_subscription', obligations: [] }),
+      },
+    }],
+    metadata: () => ({}),
+  }];
+
+  await assert.rejects(
+    () => bootPostgresqlReader(t, { data: booted.data, tenantId: booted.tenantId, selected: moved }),
+    (error) => /registered at v1/.test(String(error.message)),
+  );
+});
+
+/**
+ * And the case it must not disturb: a package the reader composes and the
+ * writer never did. Nothing is registered under that identity, so there are no
+ * rows beneath it to read wrongly.
+ */
+test('a definition nothing has ever registered is a different composition, not a refusal', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+
+  const reader = await bootPostgresqlReader(t, {
+    data: booted.data, tenantId: booted.tenantId, selected: POLICY_GRAPH,
+  });
+  assert.equal(reader.storage.mode, 'read-only');
+});
+
+test('the composition refuses the inputs that would make it a writer', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+
+  const base = {
+    adapter: 'postgresql',
+    spine: { mode: 'local-development', tenant: { id: booted.tenantId } },
+    moduleMigrations: [GADGET_MIGRATION],
+  };
+  const harness = { loopback: true, access: 'read-only', data: booted.data };
+
+  await assert.rejects(
+    () => createAccordoAppAsync({ ...base, testHarness: { ...harness, control: booted.planes.control } }),
+    // Named as the caller wrote it. The harness channel calls it `control` and
+    // the deployment channel calls it `controlPlane`; a refusal that reports
+    // the other one sends the reader looking for a key they did not pass.
+    (error) => error.code === 'READ_ONLY_COMPOSITION_REFUSED' && error.details?.option === 'control',
+  );
+  await assert.rejects(
+    () => createAccordoAppAsync({ ...base, testHarness: harness, identityVerifier: { operations: {} } }),
+    (error) => error.code === 'READ_ONLY_COMPOSITION_REFUSED' && error.details?.option === 'identityVerifier',
+  );
+  await assert.rejects(
+    () => createAccordoAppAsync({ ...base, testHarness: harness, productionOperations: {} }),
+    (error) => error.code === 'READ_ONLY_COMPOSITION_REFUSED' && error.details?.option === 'productionOperations',
+  );
+});
+
+/**
+ * The composition whose entire design is "refuse the inputs that would widen
+ * this" must not be the one composition that accepts them silently. The
+ * read-only carve returns early, so the globally unsupported options had to be
+ * refused before it — otherwise the writer refuses `authorize` and `listen`
+ * and the reader, of all things, does not.
+ */
+test('the reader refuses the globally unsupported options the writer refuses', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+
+  const base = {
+    adapter: 'postgresql',
+    spine: { mode: 'local-development', tenant: { id: booted.tenantId } },
+    testHarness: { loopback: true, access: 'read-only', data: booted.data },
+    moduleMigrations: [GADGET_MIGRATION],
+  };
+  for (const key of ['authorize', 'security', 'openDatabase', 'listen', 'providers']) {
+    await assert.rejects(
+      () => createAccordoAppAsync({ ...base, [key]: {} }),
+      (error) => error.code === 'PORTABLE_OPTION_UNSUPPORTED' && error.details?.option === key,
+      `${key} must be refused by the read-only composition too`,
+    );
+  }
+});
+
+/**
+ * The inertness twin, one level up from the storage test. A writer composed
+ * beside all of this must be the application it was before any of it existed.
+ */
+test('a writer application is unchanged by the reader existing', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+  const { app } = booted;
+
+  assert.equal(app.storage.mode, undefined, 'a writer facade carries no mode key');
+  assert.notEqual(app.leaseRenewer, undefined);
+  assert.equal(typeof app.reconcileWrite, 'function');
+  assert.equal(typeof app.acknowledgeWrite, 'function');
+  const company = await app.services.companies.create({ name: 'Still Writing' });
+  assert.ok(company.id);
+});

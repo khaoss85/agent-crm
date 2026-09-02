@@ -118,9 +118,18 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
    export (v4C), composed by one application into a single operations handle
    whose construction starts nothing. Finishing v3 and v4 does not open the
    Cloud gate: the v4 remainder also names remote-safe MCP. The private
-   `accordo-platform` repository now exists and is empty; C0 has not started.
+   `accordo-platform` repository now exists and carries work; what it contains
+   is not reportable from this repository and is not claimed here.
    Dedicated-database PostgreSQL, dual bundled graphs, leases and write-outcome
-   keys are merged. Shared-database row tenancy remains deferred.
+   keys are merged. Shared-database row tenancy remains deferred. A PostgreSQL
+   data plane can also be composed **read-only** — no control-plane credential,
+   so no writer lease; no migrations; and `execute`/`transaction` refused before
+   a statement is rendered — which is the composition an operator surface that
+   may look but not touch runs on, and the only one that can read a tenant while
+   a worker holds that tenant's exclusive writer lease. A deployment-storage
+   document describes it with `access: "read-only"`. It records no
+   `startup_audit` row, because recording one would be a write.
+   <!-- truth: spine.read_only_composition.implemented=implemented -->
 
 The GTM stack and production promotion are complete; they are not queued work.
 The independent longer-horizon tracks remain the private/public repository

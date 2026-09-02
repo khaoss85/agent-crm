@@ -2795,7 +2795,7 @@
     "packages/commercial/src/verify-terms.js": "e3c4e150fc4e6a0efe925f8db6d14698e4a69e9c6518d5e3f7ee90473db8871c",
     "packages/core/src/action-runtime.js": "b8870679dfe76d2293912866085c83713aa1bdbe8509acaabaa81fe6a100c851",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
-    "packages/core/src/definition-version-store.js": "87ad1979e37b77e0fb1ce196c85d16dd8b0032025b3939a5cf04d4ad19eff2fb",
+    "packages/core/src/definition-version-store.js": "fde9bbfcd95687fb0aa7bd7bddb1eb6bb69104f6dc291a3773f70412677b0ca3",
     "packages/core/src/execution-run-store.js": "73c5f36371b21b02b7e476d93cc06a29cbae6c5ea9ef8539579a62c94e1545ac",
     "packages/core/src/external-operation.js": "12c6e1affbeafac2db2d23a8b1ecd8564dbbe12e2d5418cb5afd312292e55fe9",
     "packages/core/src/money.js": "67d7c03a14cf053e1e6f52d73ed2ca96608a8c3992615fe6a6738bcfc930e705",

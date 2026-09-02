@@ -232,6 +232,7 @@ function releaseClient(client) {
  *   lockTimeoutMs?: number,
  *   statementTimeoutMs?: number,
  *   writerGuard?: () => void,
+ *   readOnly?: true,
  * }} [options]
  */
 export function createPostgresqlStorage(pool, options = {}) {
@@ -251,10 +252,42 @@ export function createPostgresqlStorage(pool, options = {}) {
     : quoteStorageIdentifier('spine_jobs', 'table');
   const durableJobOwner = Object.freeze({});
   const writerGuard = typeof options.writerGuard === 'function' ? options.writerGuard : null;
+  // Read-only is not a weaker `writerGuard`. The guard is applied uniformly to
+  // all four entry points because holding the lease is required even to read;
+  // this policy is asymmetric — reads untouched, writes refused — so it is its
+  // own mode rather than a guard that happens to always throw.
+  if (options.readOnly !== undefined && options.readOnly !== true) {
+    throw new AppError('read-only storage is requested with `readOnly: true` or not at all', {
+      code: 'STORAGE_READ_ONLY_INVALID', status: 500,
+    });
+  }
+  const readOnly = options.readOnly === true;
+  // A lease guard in a composition that holds no lease is a contradiction, and
+  // a silent one: the guard would refuse reads this mode is meant to allow.
+  if (readOnly && writerGuard) {
+    throw new AppError('read-only storage holds no writer lease, so it accepts no writer guard', {
+      code: 'STORAGE_READ_ONLY_INVALID', status: 500,
+    });
+  }
   const checkedOut = new Set();
 
   function assertWriter() {
     if (writerGuard) writerGuard();
+  }
+
+  /**
+   * Raised before the statement is rendered, so a refused mutation issues no
+   * SQL at all — not a statement the database rejects, and not a transaction
+   * that opens and rolls back. "Refused" and "refused before any SQL" are
+   * different claims; only the second is the constraint.
+   *
+   * @param {string} method
+   */
+  function refuseMutation(method) {
+    throw new AppError(
+      `this application is composed read-only, so storage "${method}" is refused`,
+      { code: 'STORAGE_READ_ONLY', status: 403, details: { method } },
+    );
   }
 
   /** @type {object} */
@@ -551,6 +584,7 @@ export function createPostgresqlStorage(pool, options = {}) {
   }
 
   async function runTransaction(fn) {
+    if (readOnly) refuseMutation('transaction');
     assertWriter();
     const current = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
     if (current && current.poolStorage === poolStorage && !current.closed) {
@@ -591,8 +625,15 @@ export function createPostgresqlStorage(pool, options = {}) {
 
   Object.assign(poolStorage, {
     contract: STORAGE_CONTRACT,
+    // Published so a consumer can ask the storage what it is instead of being
+    // told by whoever composed it. A registry that writes on a code path it
+    // believes to be read-only cannot check a flag it was never passed — and
+    // the flag would have to be threaded through every `persistFingerprints`
+    // signature to reach one. The storage already knows.
+    ...(readOnly ? { readOnly: true } : {}),
     activeTransaction: () => null,
     async execute(statement) {
+      if (readOnly) refuseMutation('execute');
       assertWriter();
       return withAutocommitWrite((client) => executeOn(client, statement));
     },

@@ -130,6 +130,25 @@ export const TRUTH_LIMITATIONS = Object.freeze([
     + 'per-record traceable — with one declared exception: a durable job kind and handler name are chosen by '
     + 'whoever enqueued the work and are exported verbatim, so a caller who names a job after a uuid or a tenant '
     + 'slug will see it'],
+  ['READ_ONLY_LEAVES_NO_STARTUP_AUDIT',
+    'the implemented fact covers a PostgreSQL data plane opened for reading only: no control-plane credential, no '
+    + 'writer lease, no migration, and a storage seam that refuses execute and transaction before a statement is '
+    + 'rendered. It is PostgreSQL-only. Two consequences are declared rather than closed: a reader records no '
+    + 'startup_audit row, because recording one is a write, so a reader\'s startup is invisible where a writer\'s '
+    + 'is visible; and the binding cross-check the writer performs between the control mapping and the data marker '
+    + 'reaches a reader only as an optional pin it must be configured with, so an unpinned reader can be aimed at '
+    + 'a superseded data plane carrying the right tenant slug. Schema skew refuses in both directions — a ledger '
+    + 'missing a migration this code renders, and a ledger carrying a core migration it does not — but module '
+    + 'migrations a reader does not render are a different composition rather than skew, and are accepted. '
+    + 'Definition versions are checked on the same three-term rule and it is worth stating all three: a '
+    + 'definition this code renders that the data plane has registered only at other versions refuses; a '
+    + 'definition nothing has ever registered is a different composition and is accepted, because no rows exist '
+    + 'beneath it; and a reader rendering an *older* version that is itself registered composes, because code '
+    + 'carrying that version has already run legitimately against this data plane — so the reader is not the '
+    + 'first thing to read rows under it. That last case is a deliberate tolerance, not an oversight: refusing '
+    + 'it would require every reader to sit at the highest registered version, which is lockstep on every '
+    + 'policy bump and would refuse a web that composes an older package on purpose. A read-only database role, '
+    + 'where a provider offers one, is a second and independent layer that this fact does not cover'],
   ['SELF_HOST_APPLICATION_STARTED_OPERATIONS_ONLY',
     'the implemented fact covers one application composing the shipped job, outbox, timer, backup and telemetry '
     + 'contracts into a single handle whose construction starts nothing. The application starts it, drains it and '
@@ -951,6 +970,106 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         && posture.composed.backup === false
         && posture.composed.telemetry === false;
       await withOperations.close();
+    }
+
+    // The read-only composition, proved without a database.
+    //
+    // Its two load-bearing properties do not need one: a mutation is refused
+    // *before a statement is rendered*, and a composition handed the inputs
+    // that would make it a writer refuses to compose at all. A pool that
+    // throws when it is touched separates "refused" from "refused before any
+    // SQL", which a real database cannot do — a write that opens, is rejected
+    // and rolls back leaves exactly the rows a write that never happened does.
+    try {
+      // The adapter module imports `pg`, and this generator also runs inside
+      // fixture repositories that carry `packages/` and no `node_modules`. A
+      // probe that throws there does not report a weaker fact — it takes the
+      // whole `spine.contract` authority down with it, and every fact that
+      // authority carries disappears. So an unrunnable probe reports `absent`,
+      // which is the conservative direction: a probe that cannot run does not
+      // get to claim the capability.
+      const storageModule = await import(url('packages/core/src/postgresql-storage.js'));
+      const appFactory = await import(url('packages/app/src/index.js'));
+      const touched = [];
+      const screamingPool = {
+        connect() { touched.push('connect'); throw new Error('read-only storage took a connection'); },
+        query() { touched.push('query'); throw new Error('read-only storage issued SQL'); },
+        async end() {},
+        on() {},
+      };
+      const readOnlyStorage = storageModule.createPostgresqlStorage(screamingPool, {
+        schema: 'accordo', readOnly: true,
+      });
+      let refusedBeforeSql = false;
+      try {
+        await readOnlyStorage.execute({ kind: 'insert', table: 'companies', values: { id: 'probe' } });
+      } catch (error) {
+        refusedBeforeSql = error?.code === 'STORAGE_READ_ONLY' && touched.length === 0;
+      }
+      let readsReachThePool = false;
+      try {
+        await readOnlyStorage.many({ kind: 'select', table: 'companies', columns: '*' });
+      } catch {
+        readsReachThePool = touched.includes('connect');
+      }
+
+      let refusesControlPlane = false;
+      try {
+        await appFactory.createAccordoAppAsync({
+          adapter: 'postgresql',
+          spine: { mode: 'local-development', tenant: { id: 'repository-truth-probe' } },
+          testHarness: {
+            loopback: true,
+            access: 'read-only',
+            data: { host: '127.0.0.1', port: 5432, database: 'probe', user: 'probe', password: '' },
+            control: { host: '127.0.0.1', port: 5432, database: 'probe', user: 'probe', password: '' },
+          },
+        });
+      } catch (error) {
+        // Named as the caller wrote it: this probe uses the harness channel,
+        // whose key is `control`. The deployment channel calls it
+        // `controlPlane`, and asserting the wrong one here made the probe read
+        // `absent` while the refusal was working perfectly — a probe that fails
+        // for a reason of its own is worse than no probe.
+        refusesControlPlane = error?.code === 'READ_ONLY_COMPOSITION_REFUSED'
+          && error?.details?.option === 'control';
+      }
+
+      // The document an operator writes, not only the options an internal
+      // caller can construct. The routing accepting a read-only selection and a
+      // deployment document being able to express one are two different facts,
+      // and this fact claimed the second while proving only the first.
+      let documentDescribesIt = false;
+      try {
+        const { loadDeploymentStorage } = await import(url('packages/core/src/deployment-storage.js'));
+        const { mkdtempSync, writeFileSync } = await import('node:fs');
+        const { tmpdir } = await import('node:os');
+        const { join: joinPath } = await import('node:path');
+        const dir = mkdtempSync(joinPath(tmpdir(), 'accordo-truth-readonly-'));
+        const documentPath = joinPath(dir, 'deployment-storage.json');
+        writeFileSync(documentPath, JSON.stringify({
+          contract: 2,
+          adapter: 'postgresql',
+          access: 'read-only',
+          connection: {
+            host: 'db.invalid', port: 5432, database: 'accordo', user: 'accordo',
+            passwordSecret: 'ACCORDO_TRUTH_PROBE_PASSWORD',
+            sslmode: 'verify-full',
+            tls: { enabled: true, verify: 'full', caFile: './tls/ca.pem' },
+          },
+          spine: { mode: 'local-development', tenant: { id: 'repository-truth-probe' } },
+          secretProvider: { kind: 'environment' },
+        }), { mode: 0o600 });
+        const selection = loadDeploymentStorage({ configPath: documentPath, env: {} });
+        documentDescribesIt = selection.access === 'read-only'
+          && selection.controlPlane === undefined
+          && selection.identityVerifier === null;
+      } catch { documentDescribesIt = false; }
+
+      bundle.readOnlyCompositionProbe = refusedBeforeSql && readsReachThePool
+        && refusesControlPlane && documentDescribesIt;
+    } catch {
+      bundle.readOnlyCompositionProbe = false;
     }
     // A limitation string is `CODE — prose`; the code is the structural half.
     bundle.tenantLimitationCodes = [...tenantStorage.TENANT_LIMITATIONS]
@@ -2218,6 +2337,25 @@ export function buildFacts(bundle) {
     scope: 'framework',
     limitations: [
       'SELF_HOST_APPLICATION_STARTED_OPERATIONS_ONLY',
+      'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME',
+    ],
+  });
+
+  // The composition a managed pilot's Web Admin runs on. What the probe proves
+  // is the promise: the refusal lands before any SQL, reads are untouched, and
+  // the inputs that would make it a writer are refused rather than ignored.
+  add({
+    id: 'spine.read_only_composition.implemented',
+    value: bundle.readOnlyCompositionProbe === true ? 'implemented' : 'absent',
+    authority: 'spine.contract',
+    evidence: [
+      'packages/core/src/postgresql-bootstrap.js#bootstrapPostgresqlReader',
+      'packages/app/src/portable-app.js#startPortablePostgresqlReaderApp',
+      'executable-probe:read-only-refuses-before-any-sql',
+    ],
+    scope: 'framework',
+    limitations: [
+      'READ_ONLY_LEAVES_NO_STARTUP_AUDIT',
       'TRUTH_IS_SOURCE_AND_RECEIPTS_NOT_RUNTIME',
     ],
   });

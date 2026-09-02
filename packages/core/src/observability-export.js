@@ -795,7 +795,9 @@ export function reportBackupOperation(telemetry, { operation, outcome, durationM
  *
  * The one boolean this holds is de-duplication, not a second source of truth:
  * a `writerGuard` refusal storm would otherwise emit one signal per refused
- * write. The lease row stays the authority, the snapshot is recomputed from
+ * storage call — reads included, since holding the lease is required to read
+ * as well, so the storm this damps is larger than "per write" suggests. The
+ * lease row stays the authority, the snapshot is recomputed from
  * `describeWriterHealth` on every observation, and deleting this object changes
  * signal volume and nothing else. No table, column or file is added for it.
  *

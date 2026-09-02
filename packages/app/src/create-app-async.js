@@ -3,7 +3,11 @@
 import { isAbsolute, resolve } from 'node:path';
 import { AppError } from '../../core/src/errors.js';
 import { readTrustedRegularFile } from '../../core/src/trusted-file.js';
-import { startPortablePostgresqlApp, startPortableSqliteApp } from './portable-app.js';
+import {
+  startPortablePostgresqlApp,
+  startPortablePostgresqlReaderApp,
+  startPortableSqliteApp,
+} from './portable-app.js';
 
 /**
  * Public portable async factory. It composes kernel Company, Contact,
@@ -109,10 +113,90 @@ function isCompletePostgres(options) {
 }
 
 /**
+ * A read-only composition is a *complete* PostgreSQL shape, not an incomplete
+ * one. It is deliberately not routed through `isCompletePostgres`, because the
+ * two things that function requires are the two things a reader must not have:
+ *
+ * - a **control-plane endpoint**, which is where the writer-lease table lives.
+ *   Holding no credential that can reach it is how "must not acquire or renew
+ *   the lease" stops being a rule and becomes unsayable.
+ * - an **identity verifier**, whose `operations` *sign* the startup
+ *   attestation. A reader attests nothing, and a web process a human logs into
+ *   is the last place the platform signing key should be.
+ *
+ * Both are refused rather than ignored, so a misconfiguration that hands the
+ * reader either one fails at composition instead of quietly widening it.
+ *
+ * @param {any} options
+ */
+function isReadOnlyPostgres(options) {
+  try {
+    const selection = options?.deployment?.selection;
+    if (selection && selection.adapter === 'postgresql' && selection.access === 'read-only') {
+      return Boolean(selection.spine?.tenant?.id && selection.connection);
+    }
+    // The same two channels the writer has. A composition reachable only from
+    // the deployment selection could not be tested against a real database
+    // without TLS material, and one reachable only from the harness would be
+    // the defect this campaign has now found twice: a contract nobody in
+    // production can compose.
+    if (options?.adapter === 'postgresql' && options.testHarness?.loopback === true
+      && options.testHarness.access === 'read-only') {
+      return Boolean(options.spine?.tenant?.id && options.testHarness.data);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {any} options
+ */
+function refuseReadOnlyWriterInputs(options) {
+  const selection = options.deployment?.selection ?? options.testHarness;
+  const identityVerifier = options.deployment
+    ? options.deployment.identityVerifier
+    : options.identityVerifier;
+  // Named as the caller wrote it: the deployment channel calls it
+  // `controlPlane`, the harness calls it `control`, and a refusal that reports
+  // the other one sends the reader looking for a key they did not pass.
+  const controlKey = selection.controlPlane != null ? 'controlPlane' : 'control';
+  if (selection[controlKey] != null) {
+    throw new AppError(
+      'a read-only composition takes no control-plane endpoint: the writer-lease table lives there',
+      { code: 'READ_ONLY_COMPOSITION_REFUSED', status: 400, details: { option: controlKey } },
+    );
+  }
+  if (identityVerifier != null) {
+    throw new AppError(
+      'a read-only composition attests nothing, so it takes no identity verifier',
+      { code: 'READ_ONLY_COMPOSITION_REFUSED', status: 400, details: { option: 'identityVerifier' } },
+    );
+  }
+  if (options.productionOperations != null) {
+    throw new AppError(
+      'a read-only composition starts no workers, so it composes no production operations',
+      { code: 'READ_ONLY_COMPOSITION_REFUSED', status: 400, details: { option: 'productionOperations' } },
+    );
+  }
+}
+
+/**
  * @param {any} options
  */
 function refuseUnavailableOptions(options) {
   if (options == null || typeof options !== 'object' || Array.isArray(options)) {
+    return;
+  }
+
+  // Before the read-only carve, not after it. The composition whose whole
+  // design is "refuse the inputs that would widen this" must not be the one
+  // composition that accepts `authorize`, `listen` or `providers` silently.
+  refuseGloballyUnsupportedOptions(options);
+
+  if (isReadOnlyPostgres(options)) {
+    refuseReadOnlyWriterInputs(options);
     return;
   }
 
@@ -132,6 +216,12 @@ function refuseUnavailableOptions(options) {
     }
   }
 
+}
+
+/**
+ * @param {any} options
+ */
+function refuseGloballyUnsupportedOptions(options) {
   for (const key of UNSUPPORTED_KEYS) {
     let value;
     try {
@@ -271,6 +361,53 @@ function loopbackEndpoint(endpoint) {
 }
 
 /**
+ * The wiring from a selection to the reader's arguments, exported because it is
+ * the only place where the document's values become the composition's, and
+ * nothing could observe it.
+ *
+ * A reviewer measured the gap: discarding `pinnedBindingUuid` on the document
+ * branch left the whole suite green. The harness tests take the other side of
+ * every ternary here, and the document test dies at a connection that by
+ * construction never succeeds — and `pinnedBindingUuid` and `tenantId` are both
+ * read only *after* that connection. So the two values the reader needs from
+ * the document reached it through a line no test exercised.
+ *
+ * Pulling it out makes it observable without a database and without TLS, which
+ * is the level the defect lives at: not composition, wiring.
+ *
+ * @param {any} options
+ * @param {{ selected: any, listenMode: string }} context
+ */
+export function readerArgumentsFrom(options, { selected, listenMode }) {
+  const selection = options.deployment?.selection;
+  const tenantId = selection ? selection.spine.tenant.id : options.spine.tenant.id;
+  return {
+    selected,
+    listenMode,
+    tenantId,
+    data: selection
+      ? postgresqlEndpoint(
+        selection.connection,
+        options.deployment.secretResolver,
+        'postgresql-data-password',
+        tenantId,
+        options.projectRoot,
+      )
+      : loopbackEndpoint(options.testHarness.data),
+    pinnedBindingUuid: selection
+      ? selection.pinnedBindingUuid
+      : options.testHarness.pinnedBindingUuid,
+    moduleMigrations: options.moduleMigrations,
+    clock: options.clock,
+    approvalThresholdCents: options.approvalThresholdCents,
+    catalogTimeoutMs: options.catalogTimeoutMs,
+    signatureTimeoutMs: options.signatureTimeoutMs,
+    queryDeadlineMs: options.queryDeadlineMs ?? options.testHarness?.queryDeadlineMs,
+    acquisitionDeadlineMs: options.acquisitionDeadlineMs ?? options.testHarness?.acquisitionDeadlineMs,
+  };
+}
+
+/**
  * Own one portable application. Startup is unconditionally async.
  *
  * @param {{
@@ -307,6 +444,10 @@ export async function createAccordoAppAsync(options = {}) {
     ?? options.deployment?.selection?.spine?.mode
     ?? options.spine?.mode
     ?? 'local-development';
+
+  if (isReadOnlyPostgres(options)) {
+    return startPortablePostgresqlReaderApp(readerArgumentsFrom(options, { selected, listenMode }));
+  }
 
   if (isCompletePostgres(options) && options.deployment?.selection?.adapter === 'postgresql') {
     const selection = options.deployment.selection;

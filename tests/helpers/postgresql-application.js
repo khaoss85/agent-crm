@@ -136,3 +136,30 @@ export function assertNoSecrets(value, extras = []) {
     }
   }
 }
+
+/**
+ * Compose a read-only application over a data plane a writer has already
+ * bootstrapped. There is no control plane here on purpose: the reader is
+ * handed no credential that could reach the writer-lease table.
+ *
+ * @param {import('node:test').TestContext} t
+ * @param {object} [overrides]
+ */
+export async function bootPostgresqlReader(t, overrides = {}) {
+  const app = await createAccordoAppAsync({
+    adapter: 'postgresql',
+    testHarness: {
+      loopback: true,
+      access: 'read-only',
+      data: overrides.data,
+      pinnedBindingUuid: overrides.pinnedBindingUuid,
+      queryDeadlineMs: overrides.queryDeadlineMs,
+    },
+    spine: { mode: 'local-development', tenant: { id: overrides.tenantId ?? 'acme' } },
+    selected: overrides.selected,
+    moduleMigrations: overrides.moduleMigrations ?? [GADGET_MIGRATION],
+    clock: overrides.clock,
+  });
+  t.after(() => app.close());
+  return app;
+}

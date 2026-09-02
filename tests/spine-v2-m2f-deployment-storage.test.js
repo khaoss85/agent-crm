@@ -651,3 +651,193 @@ test('M2-22 parser still stores an opaque relative path and does not import it',
   assert.equal(/pathToFileURL/.test(source), false);
   assert.equal(pathToFileURL(configPath).href.startsWith('file:'), true);
 });
+
+/**
+ * The read-only deployment document.
+ *
+ * A reviewer found this section's predecessor claiming a read-only composition
+ * was reachable "through both channels", and proved otherwise: the only
+ * producer of `deployment.selection` validates against a closed key set that
+ * knew neither `access` nor `pinnedBindingUuid`, and required `controlPlane`.
+ * So the composition the framework routed to could not be described by any
+ * document an operator could write, and existed only for the test harness —
+ * which is exactly the defect that section warned about.
+ *
+ * These tests exist because the routing code passing is not the same fact as
+ * the document being loadable.
+ */
+
+test('a read-only deployment document loads, and names no control plane', (t) => {
+  const root = scratch();
+  const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({
+    access: 'read-only',
+    controlPlane: undefined,
+    identityVerifier: undefined,
+    pinnedBindingUuid: '4c8a2b1e-9d3f-4a6b-8c1d-2e5f7a9b0c3d',
+  })));
+  const selected = loadDeploymentStorage({ configPath, env: {} });
+
+  assert.equal(selected.adapter, 'postgresql');
+  assert.equal(selected.access, 'read-only');
+  assert.equal(selected.pinnedBindingUuid, '4c8a2b1e-9d3f-4a6b-8c1d-2e5f7a9b0c3d');
+  assert.equal(selected.controlPlane, undefined);
+  assert.equal(selected.identityVerifier, null);
+});
+
+test('an ordinary deployment document still requires a control plane', (t) => {
+  const root = scratch();
+  const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({ controlPlane: undefined })));
+  assertCode(() => loadDeploymentStorage({ configPath, env: {} }), 'DEPLOYMENT_STORAGE_ENVELOPE_INVALID', [configPath]);
+});
+
+test('a read-only document that names a control plane or a verifier is refused, not trimmed', (t) => {
+  for (const key of ['controlPlane', 'identityVerifier']) {
+    const root = scratch();
+    const overrides = { access: 'read-only', controlPlane: undefined, identityVerifier: undefined };
+    if (key === 'controlPlane') overrides.controlPlane = postgresEnvelope().controlPlane;
+    else overrides.identityVerifier = './providers/identity-verifier.js';
+    const configPath = writeConfig(root, JSON.stringify(postgresEnvelope(overrides)));
+    assertCode(
+      () => loadDeploymentStorage({ configPath, env: {} }),
+      'DEPLOYMENT_STORAGE_READ_ONLY_REFUSED',
+      [configPath],
+    );
+  }
+});
+
+test('access is a closed vocabulary of one, so a typo composes nothing', (t) => {
+  for (const access of ['readonly', 'read_only', 'READ-ONLY', 'writer', true, 1]) {
+    const root = scratch();
+    const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({ access })));
+    assertCode(
+      () => loadDeploymentStorage({ configPath, env: {} }),
+      'DEPLOYMENT_STORAGE_ACCESS_UNSUPPORTED',
+      [configPath],
+    );
+  }
+});
+
+/**
+ * A field nothing reads is indistinguishable from a field that works, which is
+ * the failure this whole section is a correction for.
+ */
+test('a pinned binding uuid outside a read-only document is refused rather than ignored', (t) => {
+  const root = scratch();
+  const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({
+    pinnedBindingUuid: '4c8a2b1e-9d3f-4a6b-8c1d-2e5f7a9b0c3d',
+  })));
+  assertCode(
+    () => loadDeploymentStorage({ configPath, env: {} }),
+    'DEPLOYMENT_STORAGE_READ_ONLY_REFUSED',
+    [configPath],
+  );
+});
+
+/**
+ * The end of the chain, and the only step that makes the four tests above mean
+ * anything: a document an operator can write, loaded by the only producer of a
+ * selection, **routed by the factory to the read-only composition**.
+ *
+ * Proved by how far it gets. The endpoint is unreachable on purpose, so success
+ * here is a *connection* failure: reaching the connection means the factory
+ * accepted the selection, refused none of its inputs, and built the reader. A
+ * composition refusal — `PORTABLE_POSTGRESQL_BINDING_REQUIRED` or
+ * `READ_ONLY_COMPOSITION_REFUSED` — would mean the document still cannot reach
+ * the thing it describes, which was the finding.
+ */
+test('a loaded read-only document reaches the reader composition, not a refusal', async (t) => {
+  const root = scratch();
+  fs.mkdirSync(join(root, 'tls'), { recursive: true });
+  fs.writeFileSync(join(root, 'tls/deployment-ca.pem'),
+    '-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n', { mode: 0o600 });
+  const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({
+    access: 'read-only',
+    controlPlane: undefined,
+    identityVerifier: undefined,
+    spine: { mode: 'local-development', tenant: { id: 'acme' } },
+    secretProvider: { kind: 'environment' },
+    pinnedBindingUuid: '4c8a2b1e-9d3f-4a6b-8c1d-2e5f7a9b0c3d',
+  })));
+
+  const { prepareDeploymentPreconnect } = await import('../packages/core/src/identity-verifier.js');
+  const prepared = await prepareDeploymentPreconnect({
+    configPath,
+    projectRoot: root,
+    env: { ACCORDO_TEST_DATA_PASSWORD: 'not-a-real-password' },
+  });
+  assert.equal(prepared.selection.access, 'read-only');
+  assert.equal(prepared.identityVerifier, null, 'a reader resolves no signing identity');
+
+  const { createAccordoAppAsync } = await import('../packages/app/src/index.js');
+  // Asserted **positively**, on the one code this path produces, and not as a
+  // denylist of the two codes that would mean failure. The first draft of this
+  // test excluded two codes and returned true, so it accepted every other
+  // outcome — a reviewer showed it staying green under two mutations that each
+  // violate its own stated criterion: a reader that refuses before creating any
+  // pool, and a read-only document that composes the *writer* and dies signing
+  // a startup attestation. Deducing the right answer by excluding two wrong
+  // ones accepts everything nobody thought to name.
+  //
+  // What this proves: the document loaded, the factory accepted the selection,
+  // refused none of its inputs, and got as far as opening a data-plane pool.
+  // What it does not prove: that a reader composed and read a row — that needs
+  // a PostgreSQL serving the TLS this document requires, which the local test
+  // instance does not. `tests/read-only-composition-postgresql.test.js` proves
+  // the composition itself over the harness channel; this proves the document
+  // reaches it.
+  await assert.rejects(
+    () => createAccordoAppAsync({
+      deployment: prepared,
+      projectRoot: root,
+      acquisitionDeadlineMs: 250,
+    }),
+    (error) => error.code === 'STORAGE_UNAVAILABLE',
+  );
+});
+
+/**
+ * The wiring, at the level the defect lives.
+ *
+ * A reviewer measured that discarding the document's `pinnedBindingUuid` left
+ * the whole suite green: the harness tests take the other side of every ternary
+ * in that block, and the document test dies at a connection that by
+ * construction never succeeds — while `pinnedBindingUuid` and `tenantId` are
+ * both read only *after* the connection. So the two values the reader needs
+ * from an operator's document reached it through a line no test exercised.
+ *
+ * This needs no database and no TLS: it asks what the document turns into.
+ */
+test('the document’s pinned binding and tenant reach the reader’s arguments', async (t) => {
+  const root = scratch();
+  fs.mkdirSync(join(root, 'tls'), { recursive: true });
+  fs.writeFileSync(join(root, 'tls/deployment-ca.pem'),
+    '-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n', { mode: 0o600 });
+  const pin = '4c8a2b1e-9d3f-4a6b-8c1d-2e5f7a9b0c3d';
+  const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({
+    access: 'read-only',
+    controlPlane: undefined,
+    identityVerifier: undefined,
+    spine: { mode: 'local-development', tenant: { id: 'northwind' } },
+    secretProvider: { kind: 'environment' },
+    pinnedBindingUuid: pin,
+  })));
+
+  const { prepareDeploymentPreconnect } = await import('../packages/core/src/identity-verifier.js');
+  const prepared = await prepareDeploymentPreconnect({
+    configPath,
+    projectRoot: root,
+    env: { ACCORDO_TEST_DATA_PASSWORD: 'not-a-real-password' },
+  });
+
+  const { readerArgumentsFrom } = await import('../packages/app/src/create-app-async.js');
+  const args = readerArgumentsFrom(
+    { deployment: prepared, projectRoot: root },
+    { selected: undefined, listenMode: 'local-development' },
+  );
+
+  assert.equal(args.pinnedBindingUuid, pin,
+    'the pin is the one term of the binding cross-check a reader can carry; dropping it is silent');
+  assert.equal(args.tenantId, 'northwind');
+  assert.equal(args.data.host, '127.0.0.1');
+  assert.equal(typeof args.data.password, 'function', 'the credential stays a resolver, never a value');
+});
