@@ -136,9 +136,12 @@ export const TRUTH_LIMITATIONS = Object.freeze([
     + 'rendered. It is PostgreSQL-only. Two consequences are declared rather than closed: a reader records no '
     + 'startup_audit row, because recording one is a write, so a reader\'s startup is invisible where a writer\'s '
     + 'is visible; and the binding cross-check the writer performs between the control mapping and the data marker '
-    + 'is available to a reader only as an optional configured pin, so an unpinned reader can be aimed at a '
-    + 'superseded data plane carrying the right tenant slug. A read-only database role, where a provider offers '
-    + 'one, is a second and independent layer that this fact does not cover'],
+    + 'reaches a reader only as an optional pin it must be configured with, so an unpinned reader can be aimed at '
+    + 'a superseded data plane carrying the right tenant slug. Schema skew refuses in both directions — a ledger '
+    + 'missing a migration this code renders, and a ledger carrying a core migration it does not — but module '
+    + 'migrations a reader does not render are a different composition rather than skew, and are accepted. A '
+    + 'read-only database role, where a provider offers one, is a second and independent layer that this fact '
+    + 'does not cover'],
   ['SELF_HOST_APPLICATION_STARTED_OPERATIONS_ONLY',
     'the implemented fact covers one application composing the shipped job, outbox, timer, backup and telemetry '
     + 'contracts into a single handle whose construction starts nothing. The application starts it, drains it and '
@@ -1025,7 +1028,39 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
           && error?.details?.option === 'control';
       }
 
-      bundle.readOnlyCompositionProbe = refusedBeforeSql && readsReachThePool && refusesControlPlane;
+      // The document an operator writes, not only the options an internal
+      // caller can construct. The routing accepting a read-only selection and a
+      // deployment document being able to express one are two different facts,
+      // and this fact claimed the second while proving only the first.
+      let documentDescribesIt = false;
+      try {
+        const { loadDeploymentStorage } = await import(url('packages/core/src/deployment-storage.js'));
+        const { mkdtempSync, writeFileSync } = await import('node:fs');
+        const { tmpdir } = await import('node:os');
+        const { join: joinPath } = await import('node:path');
+        const dir = mkdtempSync(joinPath(tmpdir(), 'accordo-truth-readonly-'));
+        const documentPath = joinPath(dir, 'deployment-storage.json');
+        writeFileSync(documentPath, JSON.stringify({
+          contract: 2,
+          adapter: 'postgresql',
+          access: 'read-only',
+          connection: {
+            host: 'db.invalid', port: 5432, database: 'accordo', user: 'accordo',
+            passwordSecret: 'ACCORDO_TRUTH_PROBE_PASSWORD',
+            sslmode: 'verify-full',
+            tls: { enabled: true, verify: 'full', caFile: './tls/ca.pem' },
+          },
+          spine: { mode: 'local-development', tenant: { id: 'repository-truth-probe' } },
+          secretProvider: { kind: 'environment' },
+        }), { mode: 0o600 });
+        const selection = loadDeploymentStorage({ configPath: documentPath, env: {} });
+        documentDescribesIt = selection.access === 'read-only'
+          && selection.controlPlane === undefined
+          && selection.identityVerifier === null;
+      } catch { documentDescribesIt = false; }
+
+      bundle.readOnlyCompositionProbe = refusedBeforeSql && readsReachThePool
+        && refusesControlPlane && documentDescribesIt;
     } catch {
       bundle.readOnlyCompositionProbe = false;
     }

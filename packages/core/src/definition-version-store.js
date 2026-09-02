@@ -311,6 +311,34 @@ export function createDefinitionVersionStore(database, options = {}) {
           assertFingerprintMatch(entry, persisted);
         }
       };
+      // A read-only composition verifies what is registered and registers
+      // nothing. The transaction below opens unconditionally — even when every
+      // fingerprint already matches and there is nothing to write — so a
+      // read-only storage refuses it and the application does not compose at
+      // all. That is the whole point of the mode, applied to the one caller
+      // that runs before anything else.
+      //
+      // Absence is tolerated on purpose. A definition the database has never
+      // seen carries nothing that could be misread: there are no rows under it.
+      // A definition that *is* registered under a different fingerprint is the
+      // dangerous case, and that still refuses.
+      if (storage.readOnly === true) {
+        return (async () => {
+          for (const entry of bounded) {
+            const persisted = await storage.maybeOne({
+              kind: 'select',
+              table: TABLE,
+              columns: ['fingerprint'],
+              where: [
+                { column: 'type', op: 'eq', value: entry.type },
+                { column: 'name', op: 'eq', value: entry.name },
+                { column: 'version', op: 'eq', value: entry.version },
+              ],
+            });
+            if (persisted) assertFingerprintMatch(entry, persisted);
+          }
+        })();
+      }
       if (sync) {
         storage.transaction(() => {
           for (const [index, entry] of bounded.entries()) {

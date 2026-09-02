@@ -651,3 +651,136 @@ test('M2-22 parser still stores an opaque relative path and does not import it',
   assert.equal(/pathToFileURL/.test(source), false);
   assert.equal(pathToFileURL(configPath).href.startsWith('file:'), true);
 });
+
+/**
+ * The read-only deployment document.
+ *
+ * A reviewer found this section's predecessor claiming a read-only composition
+ * was reachable "through both channels", and proved otherwise: the only
+ * producer of `deployment.selection` validates against a closed key set that
+ * knew neither `access` nor `pinnedBindingUuid`, and required `controlPlane`.
+ * So the composition the framework routed to could not be described by any
+ * document an operator could write, and existed only for the test harness —
+ * which is exactly the defect that section warned about.
+ *
+ * These tests exist because the routing code passing is not the same fact as
+ * the document being loadable.
+ */
+
+test('a read-only deployment document loads, and names no control plane', (t) => {
+  const root = scratch();
+  const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({
+    access: 'read-only',
+    controlPlane: undefined,
+    identityVerifier: undefined,
+    pinnedBindingUuid: '4c8a2b1e-9d3f-4a6b-8c1d-2e5f7a9b0c3d',
+  })));
+  const selected = loadDeploymentStorage({ configPath, env: {} });
+
+  assert.equal(selected.adapter, 'postgresql');
+  assert.equal(selected.access, 'read-only');
+  assert.equal(selected.pinnedBindingUuid, '4c8a2b1e-9d3f-4a6b-8c1d-2e5f7a9b0c3d');
+  assert.equal(selected.controlPlane, undefined);
+  assert.equal(selected.identityVerifier, null);
+});
+
+test('an ordinary deployment document still requires a control plane', (t) => {
+  const root = scratch();
+  const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({ controlPlane: undefined })));
+  assertCode(() => loadDeploymentStorage({ configPath, env: {} }), 'DEPLOYMENT_STORAGE_ENVELOPE_INVALID', [configPath]);
+});
+
+test('a read-only document that names a control plane or a verifier is refused, not trimmed', (t) => {
+  for (const key of ['controlPlane', 'identityVerifier']) {
+    const root = scratch();
+    const overrides = { access: 'read-only', controlPlane: undefined, identityVerifier: undefined };
+    if (key === 'controlPlane') overrides.controlPlane = postgresEnvelope().controlPlane;
+    else overrides.identityVerifier = './providers/identity-verifier.js';
+    const configPath = writeConfig(root, JSON.stringify(postgresEnvelope(overrides)));
+    assertCode(
+      () => loadDeploymentStorage({ configPath, env: {} }),
+      'DEPLOYMENT_STORAGE_READ_ONLY_REFUSED',
+      [configPath],
+    );
+  }
+});
+
+test('access is a closed vocabulary of one, so a typo composes nothing', (t) => {
+  for (const access of ['readonly', 'read_only', 'READ-ONLY', 'writer', true, 1]) {
+    const root = scratch();
+    const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({ access })));
+    assertCode(
+      () => loadDeploymentStorage({ configPath, env: {} }),
+      'DEPLOYMENT_STORAGE_ACCESS_UNSUPPORTED',
+      [configPath],
+    );
+  }
+});
+
+/**
+ * A field nothing reads is indistinguishable from a field that works, which is
+ * the failure this whole section is a correction for.
+ */
+test('a pinned binding uuid outside a read-only document is refused rather than ignored', (t) => {
+  const root = scratch();
+  const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({
+    pinnedBindingUuid: '4c8a2b1e-9d3f-4a6b-8c1d-2e5f7a9b0c3d',
+  })));
+  assertCode(
+    () => loadDeploymentStorage({ configPath, env: {} }),
+    'DEPLOYMENT_STORAGE_READ_ONLY_REFUSED',
+    [configPath],
+  );
+});
+
+/**
+ * The end of the chain, and the only step that makes the four tests above mean
+ * anything: a document an operator can write, loaded by the only producer of a
+ * selection, **routed by the factory to the read-only composition**.
+ *
+ * Proved by how far it gets. The endpoint is unreachable on purpose, so success
+ * here is a *connection* failure: reaching the connection means the factory
+ * accepted the selection, refused none of its inputs, and built the reader. A
+ * composition refusal — `PORTABLE_POSTGRESQL_BINDING_REQUIRED` or
+ * `READ_ONLY_COMPOSITION_REFUSED` — would mean the document still cannot reach
+ * the thing it describes, which was the finding.
+ */
+test('a loaded read-only document reaches the reader composition, not a refusal', async (t) => {
+  const root = scratch();
+  fs.mkdirSync(join(root, 'tls'), { recursive: true });
+  fs.writeFileSync(join(root, 'tls/deployment-ca.pem'),
+    '-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n', { mode: 0o600 });
+  const configPath = writeConfig(root, JSON.stringify(postgresEnvelope({
+    access: 'read-only',
+    controlPlane: undefined,
+    identityVerifier: undefined,
+    spine: { mode: 'local-development', tenant: { id: 'acme' } },
+    secretProvider: { kind: 'environment' },
+    pinnedBindingUuid: '4c8a2b1e-9d3f-4a6b-8c1d-2e5f7a9b0c3d',
+  })));
+
+  const { prepareDeploymentPreconnect } = await import('../packages/core/src/identity-verifier.js');
+  const prepared = await prepareDeploymentPreconnect({
+    configPath,
+    projectRoot: root,
+    env: { ACCORDO_TEST_DATA_PASSWORD: 'not-a-real-password' },
+  });
+  assert.equal(prepared.selection.access, 'read-only');
+  assert.equal(prepared.identityVerifier, null, 'a reader resolves no signing identity');
+
+  const { createAccordoAppAsync } = await import('../packages/app/src/index.js');
+  await assert.rejects(
+    () => createAccordoAppAsync({
+      deployment: prepared,
+      projectRoot: root,
+      acquisitionDeadlineMs: 250,
+    }),
+    (error) => {
+      assert.notEqual(error.code, 'PORTABLE_POSTGRESQL_BINDING_REQUIRED',
+        'the document was refused as incomplete, so the read-only branch is still unreachable');
+      assert.notEqual(error.code, 'READ_ONLY_COMPOSITION_REFUSED',
+        'the factory refused an input the document did not contain');
+      return true;
+    },
+  );
+});

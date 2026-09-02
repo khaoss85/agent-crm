@@ -8,6 +8,35 @@ import { createAccordoAppAsync } from '../packages/app/src/index.js';
 const { Client } = pg;
 
 /**
+ * A graph that carries a package with a versioned policy — which is what makes
+ * `persistFingerprints` do anything at all. Every earlier test here composed
+ * the empty kernel graph, where the loop returns before its first statement,
+ * which is why finding B stayed invisible.
+ */
+const POLICY_GRAPH = Object.freeze({
+  packageContract: 2,
+  packages: [{
+    packageContract: 2,
+    name: 'readonly-probe-domain',
+    version: 1,
+    label: 'Read-only probe domain',
+    actions: [],
+    policies: [{
+      kind: 'probe',
+      definition: {
+        name: 'probe-policy',
+        version: 1,
+        config: {},
+        classifyComponent: () => ({ commercialActivation: 'non_subscription', obligations: [] }),
+      },
+    }],
+    metadata: () => ({}),
+  }],
+  actions: [],
+  modules: [],
+});
+
+/**
  * The composition a managed pilot's Web Admin runs on: a human can see the
  * customer and the review, and the process cannot write.
  *
@@ -196,6 +225,73 @@ test('a reader whose code renders a migration the data plane has not applied is 
     }),
     (error) => error.code === 'READER_SCHEMA_SKEW',
   );
+});
+
+/**
+ * Finding C, from an independent review. The check ran in one direction only,
+ * and the direction it left open is the likelier one: **the writer migrates**,
+ * so the database sits at the worker's ref and the web follows later.
+ */
+test('a data plane carrying a core migration this reader does not render is refused', async (t) => {
+  const booted = await bootPostgresqlApp(t);
+  if (!booted) return;
+
+  const client = await connectTo(booted.data);
+  try {
+    // A row the reader's code does not render, of the shape the ledger holds.
+    await client.query(
+      'INSERT INTO "accordo"."schema_migrations" (version, name, applied_at, checksum) VALUES ($1,$2,now(),$3)',
+      [999_999, 'pg_core_from_a_later_framework', 'f'.repeat(64)],
+    );
+  } finally {
+    await client.end();
+  }
+
+  await assert.rejects(
+    () => bootPostgresqlReader(t, { data: booted.data, tenantId: booted.tenantId }),
+    (error) => error.code === 'READER_SCHEMA_SKEW',
+  );
+});
+
+/**
+ * The asymmetry, pinned so it cannot be "tidied" into symmetry. A worker that
+ * composes timers and a web that does not are a supported pair; the tables the
+ * reader never names cannot be misread by code that never mentions them.
+ */
+test('a module migration this reader does not render is a different composition, not skew', async (t) => {
+  const booted = await bootPostgresqlApp(t, {
+    moduleMigrations: [GADGET_MIGRATION, {
+      name: 'pg_module_only_the_writer_composes',
+      sql: 'CREATE TABLE IF NOT EXISTS "accordo"."writer_only" (id TEXT PRIMARY KEY)',
+    }],
+  });
+  if (!booted) return;
+
+  const reader = await bootPostgresqlReader(t, {
+    data: booted.data, tenantId: booted.tenantId, moduleMigrations: [GADGET_MIGRATION],
+  });
+  assert.equal(reader.storage.mode, 'read-only');
+});
+
+/**
+ * Finding B. `persistFingerprints` opened a transaction unconditionally — even
+ * when every fingerprint already matched and there was nothing to write — so a
+ * reader composing any package at all refused to boot. It was invisible because
+ * every test here composed the empty kernel graph, where the loop never runs.
+ */
+test('a reader composes a graph that carries packages, and registers nothing', async (t) => {
+  const booted = await bootPostgresqlApp(t, { selected: POLICY_GRAPH });
+  if (!booted) return;
+  const before = await snapshotDataPlane(booted.data);
+
+  const reader = await bootPostgresqlReader(t, {
+    data: booted.data, tenantId: booted.tenantId, selected: POLICY_GRAPH,
+  });
+  assert.equal(reader.storage.mode, 'read-only');
+  await reader.services.companies.list();
+
+  assert.deepEqual(await snapshotDataPlane(booted.data), before,
+    'verifying fingerprints must not write any of them');
 });
 
 test('the composition refuses the inputs that would make it a writer', async (t) => {

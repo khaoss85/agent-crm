@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "24d627f269ba45d30ab8494b17c57f40f9b33c3b73302ea107a0f17fa6926d57",
+  "sourceSha": "4c1a17348606a3229f38500a56e2f246390b2a559214523c7324619dd5cf9e1a",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -952,7 +952,7 @@
     },
     {
       "code": "READ_ONLY_LEAVES_NO_STARTUP_AUDIT",
-      "message": "the implemented fact covers a PostgreSQL data plane opened for reading only: no control-plane credential, no writer lease, no migration, and a storage seam that refuses execute and transaction before a statement is rendered. It is PostgreSQL-only. Two consequences are declared rather than closed: a reader records no startup_audit row, because recording one is a write, so a reader's startup is invisible where a writer's is visible; and the binding cross-check the writer performs between the control mapping and the data marker is available to a reader only as an optional configured pin, so an unpinned reader can be aimed at a superseded data plane carrying the right tenant slug. A read-only database role, where a provider offers one, is a second and independent layer that this fact does not cover"
+      "message": "the implemented fact covers a PostgreSQL data plane opened for reading only: no control-plane credential, no writer lease, no migration, and a storage seam that refuses execute and transaction before a statement is rendered. It is PostgreSQL-only. Two consequences are declared rather than closed: a reader records no startup_audit row, because recording one is a write, so a reader's startup is invisible where a writer's is visible; and the binding cross-check the writer performs between the control mapping and the data marker reaches a reader only as an optional pin it must be configured with, so an unpinned reader can be aimed at a superseded data plane carrying the right tenant slug. Schema skew refuses in both directions — a ledger missing a migration this code renders, and a ledger carrying a core migration it does not — but module migrations a reader does not render are a different composition rather than skew, and are accepted. A read-only database role, where a provider offers one, is a second and independent layer that this fact does not cover"
     },
     {
       "code": "SELF_HOST_APPLICATION_STARTED_OPERATIONS_ONLY",
@@ -1019,5 +1019,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "273eb6b8038983b5ffae186954827124d7b18d285cd655b9e2f7d5a5234cbe0d"
+  "fingerprint": "eb43a735408aa70e783d21bdc6b6ae92947488f0c61274e11b7bc3759438b03c"
 }

@@ -282,6 +282,14 @@ async function applyUnits(client, {
     fault({ faultInject }, `${prefix}-after-audit-${migration.version}`);
   }
 
+  // Deliberately not symmetric with the core check above, and the asymmetry is
+  // the point. The core set is the framework's own and is identical for any two
+  // processes at the same version, so an extra row means one of them is behind.
+  // Module migrations belong to whatever each process composes: a worker that
+  // runs timers and a web that does not are a supported pair, and the tables the
+  // reader never names cannot be misread by code that never mentions them.
+  // Absence of a module the reader does not render is a different composition;
+  // a module it *does* render, recorded under another checksum, is skew.
   const moduleApplied = await exec(client, `SELECT name, checksum FROM ${qualify(MODULE_LEDGER_TABLE)}`);
   const moduleRecorded = new Map((moduleApplied.rows ?? []).map((row) => [String(row.name), String(row.checksum)]));
   for (const migration of moduleMigrations) {
@@ -1041,6 +1049,22 @@ async function verifyReaderSchema(client, { migrations, moduleMigrations }) {
     }
     if (String(existing.name) !== migration.name || String(existing.checksum) !== migration.checksum) {
       refuse('READER_SCHEMA_SKEW', 'a core migration in the data plane does not match the one this code renders');
+    }
+  }
+  // The other direction, which is the likelier one and was open here until a
+  // reviewer walked it: **the writer is what migrates**, so the database sits at
+  // the worker's ref and the web follows later. A reader whose code renders set
+  // N against a database at N+1 was composing happily and reporting ready.
+  //
+  // It is not a hypothetical shape. This repository's own core set contains
+  // `ALTER TABLE ... ADD COLUMN` and `ALTER COLUMN ... DROP NOT NULL` on
+  // `write_outcomes` — a column whose meaning moved under a reader that never
+  // learned it did. Checking only for absence proved the reader was not ahead,
+  // which is the direction nothing could produce.
+  const rendered = new Set(migrations.map((migration) => migration.version));
+  for (const version of recorded.keys()) {
+    if (!rendered.has(version)) {
+      refuse('READER_SCHEMA_SKEW', 'the data plane carries a core migration this code does not render, so it is ahead of this reader');
     }
   }
   if (moduleMigrations.length === 0) return;

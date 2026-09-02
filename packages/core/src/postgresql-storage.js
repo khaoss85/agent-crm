@@ -625,6 +625,12 @@ export function createPostgresqlStorage(pool, options = {}) {
 
   Object.assign(poolStorage, {
     contract: STORAGE_CONTRACT,
+    // Published so a consumer can ask the storage what it is instead of being
+    // told by whoever composed it. A registry that writes on a code path it
+    // believes to be read-only cannot check a flag it was never passed — and
+    // the flag would have to be threaded through every `persistFingerprints`
+    // signature to reach one. The storage already knows.
+    ...(readOnly ? { readOnly: true } : {}),
     activeTransaction: () => null,
     async execute(statement) {
       if (readOnly) refuseMutation('execute');

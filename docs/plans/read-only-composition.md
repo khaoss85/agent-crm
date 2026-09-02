@@ -188,3 +188,57 @@ plan and serve nothing.
 `looksLikePostgres` without one throws `PORTABLE_POSTGRESQL_BINDING_REQUIRED`.
 The reader does not attest, so it should not need a verifier — the carve must
 be deliberate and stated, not incidental.
+
+
+## Three findings from an independent review, and what each one changed
+
+None of the three was in the files the branch touches. All three were found by
+reading the *consumers* — who produces a selection, who calls
+`persistFingerprints`, who writes to the ledger — rather than the diff.
+
+**A. The deployment channel could not describe this composition.** The only
+producer of `deployment.selection` is `loadDeploymentStorage`, whose envelope is
+a closed key set that knew neither `access` nor `pinnedBindingUuid`, and which
+required `controlPlane` and parsed it unconditionally. So a document with
+`access: "read-only"` was refused with `DEPLOYMENT_STORAGE_ENVELOPE_INVALID`
+before composition began, and the reader existed only for the test harness.
+
+This section had already claimed the opposite, in the paragraph warning about
+exactly this failure. The check that had been run was that the *factory routes*
+a read-only selection — which is a different fact from a document being able to
+reach it, and the difference is the whole finding.
+
+The corollary was worse than the finding: `pinnedBindingUuid` was described in
+the truth limitation as "available to a reader as an optional configured pin",
+and no supported deployment could configure it. **The gap the pin was introduced
+to pay was unpaid everywhere except in tests.**
+
+**B. A reader could not compose any graph carrying a package.**
+`persistFingerprints` opens a transaction unconditionally — including in
+persist-or-verify mode when every fingerprint already matches and there is
+nothing to write — so read-only storage refused it during graph assembly. Every
+test here composed the empty kernel graph, where the loop returns before its
+first statement.
+
+The fix asks the storage what it is rather than threading a flag through every
+`persistFingerprints` signature. Absence is tolerated deliberately: a definition
+the database has never seen has no rows under it to misread. A definition
+registered under a *different* fingerprint still refuses.
+
+**C. The skew check ran in one direction, and the open one was the likelier.**
+It verified that every migration the reader renders is in the ledger. It did not
+refuse a ledger carrying *more*. But the writer is what migrates, so the database
+sits at the worker's ref and the web follows: DB at N+1, reader at N. This
+repository's own core set contains `ALTER TABLE … ADD COLUMN` and
+`ALTER COLUMN … DROP NOT NULL` on `write_outcomes` — a column whose meaning
+moved under a reader that never learned it had.
+
+Core is now checked both ways. Module migrations deliberately are not: a worker
+that composes timers and a web that does not are a supported pair, and tables
+the reader never names cannot be misread by code that never mentions them. The
+asymmetry is pinned by a test so it cannot be tidied into symmetry.
+
+**What the three have in common** is worth more than the fixes. Each was a
+property asserted about a seam by someone who had verified the seam's own side
+of it. The reviewer found all three by asking who is on the *other* side — and
+none of them would have been found by looking harder at the diff.

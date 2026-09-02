@@ -125,8 +125,10 @@ with declared capabilities, a validation CLI and a customer-authoring path (M13)
    data plane can also be composed **read-only** — no control-plane credential,
    so no writer lease; no migrations; and `execute`/`transaction` refused before
    a statement is rendered — which is the composition an operator surface that
-   may look but not touch runs on. It records no `startup_audit` row, because
-   recording one would be a write.
+   may look but not touch runs on, and the only one that can read a tenant while
+   a worker holds that tenant's exclusive writer lease. A deployment-storage
+   document describes it with `access: "read-only"`. It records no
+   `startup_audit` row, because recording one would be a write.
    <!-- truth: spine.read_only_composition.implemented=implemented -->
 
 The GTM stack and production promotion are complete; they are not queued work.
