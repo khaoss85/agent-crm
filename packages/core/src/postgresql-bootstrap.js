@@ -10,6 +10,7 @@ import {
   createPostgresqlStorage,
 } from './postgresql-storage.js';
 import { createWriterReadinessObserver, requireTelemetrySink } from './observability-export.js';
+import { createWriterLeaseRenewer } from './writer-lease-renewer.js';
 import { DATA_ADVISORY_LOCK, DATA_RESTORE_CHILD_LOCK } from './postgresql-authority.js';
 import { attestPostgresqlStartup, fingerprintMigrationSet } from './startup-attestation.js';
 
@@ -867,6 +868,42 @@ export async function bootstrapPostgresqlApplication(options) {
     }
 
     const leaseState = { holder: writerLease, closed: false };
+    // The lease has a sixty-second fuse and `renewWriterLease` had no caller
+    // anywhere in this repository, so a PostgreSQL application stopped being
+    // able to read — not only write — one minute after it started. This is the
+    // caller. It is built inert: a worker runs because something started it,
+    // and every composition that does not start it behaves exactly as before.
+    const leaseRenewer = createWriterLeaseRenewer({
+      leaseTtlMs,
+      renewOnce: async () => {
+        if (leaseState.closed) return;
+        const client = await connectBounded(controlPool, acquisitionDeadlineMs);
+        try {
+          await exec(client, 'BEGIN');
+          await exec(client, 'SET LOCAL search_path TO pg_catalog');
+          const renewed = await renewWriterLease(client, {
+            tenantId: options.tenantId,
+            resourceFingerprint: dataAttestation.data.resource.resourceFingerprint,
+            evidenceFingerprint: dataAttestation.data.evidence.evidenceFingerprint,
+            now: options.now,
+            leaseTtlMs,
+            expectedLeaseId: leaseState.holder.leaseId,
+            expectedGeneration: leaseState.holder.generation,
+            expectedExpiresAt: leaseState.holder.expiresAt,
+          });
+          await exec(client, 'COMMIT');
+          // The guard and the readiness observer both read from here, so the
+          // renewal is not complete until this is the new truth.
+          leaseState.holder = { ...leaseState.holder, ...renewed };
+          observeReadiness(describeWriterHealth(leaseState.holder, options.now, leaseState.closed));
+        } catch (error) {
+          await rollbackQuietly(client);
+          throw error;
+        } finally {
+          releaseClient(client);
+        }
+      },
+    });
     // Spine v4C. Readiness is a pull here — `health()` is asked and
     // `writerGuard` runs per write — so an expired lease would otherwise emit
     // one signal per refused write. The observer holds one boolean and reports
@@ -900,6 +937,10 @@ export async function bootstrapPostgresqlApplication(options) {
         generation: leaseState.holder.generation,
         expiresAt: leaseState.holder.expiresAt,
       }),
+      // Inert until the composing application starts it. A process that holds
+      // this lease for longer than its TTL and never starts this stops being
+      // able to read, which is the defect this exists to close.
+      leaseRenewer,
       attestation: Object.freeze({
         control: controlAttestation.control.evidence,
         data: dataAttestation.data.evidence,
@@ -921,6 +962,10 @@ export async function bootstrapPostgresqlApplication(options) {
       async close() {
         if (leaseState.closed) return;
         leaseState.closed = true;
+        // Before the release below, and not after: a renewal in flight while
+        // the row is being expired would be two writers disagreeing about the
+        // same lease, and the renewal could win.
+        await leaseRenewer.stop();
         observeReadiness(describeWriterHealth(leaseState.holder, options.now, true));
         const releaser = await connectBounded(controlPool, acquisitionDeadlineMs).catch(() => null);
         if (releaser) {

@@ -788,6 +788,12 @@ export async function startPortablePostgresqlApp(options) {
     schema: graph.schema,
     config: graph.config,
     ...(operations ? { productionOperations: operations } : {}),
+    // The writer lease has a TTL and renewing it is the application's job, so
+    // the application has to be able to reach the renewer. It is inert until
+    // started; a composition that ignores it behaves exactly as it did before
+    // this existed — and stops being able to read one TTL later, which is the
+    // defect, not this key.
+    ...(lifecycle.bootstrap?.leaseRenewer ? { leaseRenewer: lifecycle.bootstrap.leaseRenewer } : {}),
     close: closingOperations(operations, lifecycle.close),
   });
   if (lifecycle.bootstrap?.dataStorage) {
