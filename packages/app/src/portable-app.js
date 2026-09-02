@@ -1,6 +1,6 @@
 // @ts-check
 
-import { startPostgresqlLifecycle, startSqliteLifecycle } from './async-lifecycle.js';
+import { startPostgresqlLifecycle, startPostgresqlReaderLifecycle, startSqliteLifecycle } from './async-lifecycle.js';
 import { createProductionOperations } from './production-operations.js';
 import { AppError } from '../../core/src/errors.js';
 import { scheduledAskStorageReady } from '../../core/src/domain-timers.js';
@@ -800,4 +800,103 @@ export async function startPortablePostgresqlApp(options) {
     POSTGRES_TEST_STORAGE.set(facade, lifecycle.bootstrap.dataStorage);
   }
   return facade;
+}
+
+/**
+ * Own one PostgreSQL data plane opened for reading, and assemble the portable
+ * graph over it.
+ *
+ * The owner's constraints are two different sentences and they get two
+ * different treatments, because collapsing them would produce a worse facade.
+ *
+ * *Expose no write capability* → the keys that are purely write capability are
+ * **omitted**: `leaseRenewer` (there is no lease to renew), `productionOperations`
+ * (workers are the thing that must not start), `reconcileWrite` and
+ * `acknowledgeWrite` (both write). A key that is absent cannot be called by
+ * mistake.
+ *
+ * *Refuse every mutation* → `runAction` is present and **refuses**, typed. It
+ * is the entry point every application shape has and the one a caller reaches
+ * for first; a missing key there would produce a `TypeError` at the call site,
+ * which is an accident rather than a boundary.
+ *
+ * Module services keep their write methods. That is deliberate: the storage
+ * seam refuses before rendering a statement, so `services.companies.create()`
+ * fails with `STORAGE_READ_ONLY` and no SQL. Two layers, and the second is
+ * where the property actually lives.
+ *
+ * @param {{
+ *   selected: any,
+ *   tenantId: string,
+ *   data: object,
+ *   pinnedBindingUuid?: string,
+ *   moduleMigrations?: Array<{name: string, sql: string}>,
+ *   clock?: () => string,
+ *   approvalThresholdCents?: number,
+ *   catalogTimeoutMs?: number,
+ *   signatureTimeoutMs?: number,
+ *   listenMode?: string,
+ *   queryDeadlineMs?: number,
+ *   acquisitionDeadlineMs?: number,
+ * }} options
+ */
+export async function startPortablePostgresqlReaderApp(options) {
+  const lifecycle = await startPostgresqlReaderLifecycle({
+    selected: options.selected,
+    tenantId: options.tenantId,
+    data: options.data,
+    pinnedBindingUuid: options.pinnedBindingUuid,
+    moduleMigrations: options.moduleMigrations,
+    queryDeadlineMs: options.queryDeadlineMs,
+    acquisitionDeadlineMs: options.acquisitionDeadlineMs,
+    assemble: ({ accepted, storage, bootstrap }) => assemblePortableGraph({
+      accepted,
+      storage,
+      options: {
+        ...options,
+        boundTenantId: options.tenantId,
+        health: () => bootstrap.health(),
+      },
+    }),
+  });
+  const graph = lifecycle.assembled;
+  const refuseMutation = (surface) => {
+    throw new AppError(
+      `this application is composed read-only, so "${surface}" is refused`,
+      { code: 'READ_ONLY_COMPOSITION', status: 403, details: { surface } },
+    );
+  };
+  return Object.freeze({
+    storage: Object.freeze({ adapter: 'postgresql', available: true, mode: 'read-only' }),
+    listenMode: options.listenMode ?? 'local-development',
+    tenantBinding: describePortableTenantBinding({
+      adapter: 'postgresql',
+      tenantBound: true,
+      controlPlaneAdapter: 'postgresql',
+      dataPlaneIsolation: 'dedicated_database',
+    }),
+    packageContract: graph.packageContract,
+    health: graph.health,
+    metrics: graph.metrics,
+    services: graph.services,
+    modules: graph.modules,
+    actions: graph.actions,
+    operations: graph.operations,
+    pipelines: graph.pipelines,
+    domains: graph.domains,
+    workflows: graph.workflows,
+    audit: graph.audit,
+    events: graph.events,
+    providers: graph.providers,
+    notifications: graph.notifications,
+    // Present and refusing, not absent. See the note above.
+    runAction: () => refuseMutation('runAction'),
+    // A read of the write-outcome ledger is still a read.
+    lookupWrite: graph.lookupWrite,
+    listUnacknowledgedWrites: graph.listUnacknowledgedWrites,
+    now: graph.now,
+    schema: graph.schema,
+    config: graph.config,
+    close: lifecycle.close,
+  });
 }

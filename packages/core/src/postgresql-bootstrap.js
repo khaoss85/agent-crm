@@ -904,11 +904,15 @@ export async function bootstrapPostgresqlApplication(options) {
         }
       },
     });
-    // Spine v4C. Readiness is a pull here — `health()` is asked and
-    // `writerGuard` runs per write — so an expired lease would otherwise emit
-    // one signal per refused write. The observer holds one boolean and reports
-    // transitions; the lease row stays the authority and no state is added for
-    // telemetry. Absent `options.telemetry`, every call below is a no-op.
+    // Spine v4C. Readiness is a pull here — `health()` is asked, and
+    // `writerGuard` runs on every storage call: `execute`, `transaction`,
+    // `maybeOne` and `many` all pass through `assertWriter`, because a process
+    // whose lease has expired may no longer be the one reading either. The
+    // comment here used to say "per write", which understated the refusal storm
+    // this observer exists to damp by exactly the read traffic. The observer
+    // holds one boolean and reports transitions; the lease row stays the
+    // authority and no state is added for telemetry. Absent
+    // `options.telemetry`, every call below is a no-op.
     const readiness = createWriterReadinessObserver(telemetry);
     const observeReadiness = (snapshot) => readiness.observe(snapshot, {
       expiresAt: leaseState.holder.expiresAt,
@@ -1003,3 +1007,175 @@ export async function bootstrapPostgresqlApplication(options) {
 }
 
 export { fingerprintMigrationSet, describeWriterHealth };
+
+/**
+ * Verify, without writing, that the schema this code renders is the schema the
+ * database carries.
+ *
+ * The writer's protection against schema skew is attestation-then-DDL: it
+ * proves what it is about to apply, then applies it. A reader has no authority
+ * to apply anything, so its analog has to be a read — the same question, asked
+ * by something that cannot answer it by writing.
+ *
+ * This is not defensive decoration. The pilot pins its web service and its
+ * worker to different refs, so a reader whose code renders migration set N
+ * against a database left at N−1 is a shape this deployment can actually
+ * produce. It would not fail loudly: it would name columns that do not exist,
+ * or worse, columns that have since come to mean something else.
+ */
+async function verifyReaderSchema(client, { migrations, moduleMigrations }) {
+  const ledgerPresent = await exec(
+    client,
+    'SELECT to_regclass($1) AS name',
+    [`${POSTGRES_APPLICATION_SCHEMA}.${LEDGER_TABLE}`],
+  );
+  if (!ledgerPresent.rows?.[0]?.name) {
+    refuse('READER_SCHEMA_UNMIGRATED', 'the data plane carries no migration ledger, so nothing has bootstrapped it');
+  }
+  const applied = await exec(client, `SELECT version, name, checksum FROM ${qualify(LEDGER_TABLE)}`);
+  const recorded = new Map((applied.rows ?? []).map((row) => [Number(row.version), row]));
+  for (const migration of migrations) {
+    const existing = recorded.get(migration.version);
+    if (!existing) {
+      refuse('READER_SCHEMA_SKEW', 'the data plane is missing a core migration this code renders');
+    }
+    if (String(existing.name) !== migration.name || String(existing.checksum) !== migration.checksum) {
+      refuse('READER_SCHEMA_SKEW', 'a core migration in the data plane does not match the one this code renders');
+    }
+  }
+  if (moduleMigrations.length === 0) return;
+  const modulePresent = await exec(
+    client,
+    'SELECT to_regclass($1) AS name',
+    [`${POSTGRES_APPLICATION_SCHEMA}.${MODULE_LEDGER_TABLE}`],
+  );
+  if (!modulePresent.rows?.[0]?.name) {
+    refuse('READER_SCHEMA_SKEW', 'the data plane is missing a module migration this code renders');
+  }
+  const moduleApplied = await exec(client, `SELECT name, checksum FROM ${qualify(MODULE_LEDGER_TABLE)}`);
+  const moduleRecorded = new Map((moduleApplied.rows ?? []).map((row) => [String(row.name), String(row.checksum)]));
+  for (const migration of moduleMigrations) {
+    const existing = moduleRecorded.get(migration.name);
+    if (existing === undefined) {
+      refuse('READER_SCHEMA_SKEW', 'the data plane is missing a module migration this code renders');
+    }
+    if (existing !== sqlChecksum(migration.sql)) {
+      refuse('READER_SCHEMA_SKEW', 'a module migration in the data plane does not match the one this code renders');
+    }
+  }
+}
+
+/**
+ * Open a PostgreSQL data plane for reading only.
+ *
+ * Six constraints govern this composition, and the two that matter are met by
+ * absence rather than by a guard:
+ *
+ * - **It cannot acquire or renew the writer lease.** The lease table lives in
+ *   the control plane, and this function is handed no control endpoint. There
+ *   is no credential in the process that can reach it. The constraint is not a
+ *   rule the code follows; it is a sentence the process cannot express.
+ * - **It cannot run migrations.** The code that applies them is not in here.
+ *   A `readOnly` flag on `bootstrapPostgresqlApplication` would instead have
+ *   meant skipping eight write sites behind conditionals — a path held open by
+ *   discipline, which is the defect class this spine keeps finding.
+ *
+ * The remaining four: it starts nothing (construction has never started
+ * anything here); it returns no writer handles; storage refuses `execute` and
+ * `transaction` before a statement is rendered; and a genuinely read-only
+ * database role, where the provider allows one, is a **second and independent**
+ * layer that this one neither replaces nor depends on.
+ *
+ * **Declared:** a reader records no startup audit row. It cannot — writing is
+ * the thing being removed. A writer's startup is visible in `startup_audit`
+ * and a reader's is not.
+ *
+ * @param {{
+ *   data: { host: string, port?: number, database: string, user: string, password: string, ssl?: false | object, max?: number, acquisitionDeadlineMs?: number, queryDeadlineMs?: number },
+ *   tenantId: string,
+ *   pinnedBindingUuid?: string,
+ *   moduleMigrations?: Array<{name: string, sql: string}>,
+ *   queryDeadlineMs?: number,
+ *   acquisitionDeadlineMs?: number,
+ * }} options
+ */
+export async function bootstrapPostgresqlReader(options) {
+  if (options?.control != null) {
+    refuse(
+      'READER_CONTROL_PLANE_REFUSED',
+      'a read-only composition takes no control-plane endpoint: holding no credential for the lease table is how it cannot take the lease',
+    );
+  }
+  if (typeof options?.tenantId !== 'string' || options.tenantId.length === 0) {
+    refuse('READER_TENANT_REQUIRED', 'a read-only composition still has to say which tenant it expects to be reading');
+  }
+  const moduleMigrations = options.moduleMigrations ?? [];
+  const acquisitionDeadlineMs = options.acquisitionDeadlineMs
+    ?? options.data?.acquisitionDeadlineMs
+    ?? DEFAULT_ACQUISITION_MS;
+  const queryDeadlineMs = options.queryDeadlineMs ?? options.data?.queryDeadlineMs ?? DEFAULT_QUERY_MS;
+  const dataPool = createPostgresqlPool({ ...options.data, acquisitionDeadlineMs });
+  /** @type {any} */
+  let dataStorage;
+  try {
+    const client = await connectBounded(dataPool, acquisitionDeadlineMs);
+    /** @type {{ tenantSlug: string, dataPlaneId: string } | null} */
+    let marker;
+    try {
+      await exec(client, 'SET search_path TO pg_catalog');
+      marker = await inspectDataMarker(client);
+      if (!marker) {
+        refuse('READER_BINDING_ABSENT', 'the data plane carries no binding marker, so no writer has ever claimed it');
+      }
+      if (marker.tenantSlug !== options.tenantId) {
+        refuse('TENANT_BINDING_MISMATCH', 'the PostgreSQL data plane is bound to a different tenant than this reader expects');
+      }
+      // The writer cross-checks the control mapping against this marker and
+      // refuses on disagreement. A reader sees only one of the two terms, so a
+      // reader aimed at a *superseded* data plane carrying the right tenant
+      // slug would serve stale truth and look perfectly healthy.
+      //
+      // Same shape as the pinned certificate: it was never the observation that
+      // had to move, it was the other term of the comparison. The deployment
+      // already knows this value — it is `backupEvidence.bindingUuid` in the
+      // receipt. Left unpinned, the gap is declared rather than absent.
+      if (options.pinnedBindingUuid !== undefined) {
+        if (typeof options.pinnedBindingUuid !== 'string' || options.pinnedBindingUuid.length === 0) {
+          refuse('READER_BINDING_PIN_INVALID', 'a pinned binding uuid must be the non-empty identifier the deployment receipt carries');
+        }
+        if (options.pinnedBindingUuid !== marker.dataPlaneId) {
+          refuse('READER_BINDING_MISMATCH', 'the data plane presents a different binding than the one this reader was pinned to');
+        }
+      }
+      await verifyReaderSchema(client, { migrations: postgresqlDataMigrations(), moduleMigrations });
+    } finally {
+      releaseClient(client);
+    }
+    dataStorage = createPostgresqlStorage(dataPool, {
+      schema: POSTGRES_APPLICATION_SCHEMA,
+      acquisitionDeadlineMs,
+      queryDeadlineMs,
+      readOnly: true,
+    });
+    return Object.freeze({
+      adapter: 'postgresql',
+      mode: 'read-only',
+      schema: POSTGRES_APPLICATION_SCHEMA,
+      dataStorage,
+      binding: Object.freeze({ tenantSlug: marker.tenantSlug, dataPlaneId: marker.dataPlaneId }),
+      // No lease is held, so readiness is not a lease question here. It reports
+      // what this composition actually is, and never claims to be ready to
+      // write.
+      health() {
+        return Object.freeze({ ready: true, mode: 'read-only', writer: false });
+      },
+      async close() {
+        try { await dataStorage.close(); } catch { try { await dataPool.end(); } catch { /* ignore */ } }
+      },
+    });
+  } catch (error) {
+    try { await dataStorage?.close(); } catch { try { await dataPool.end(); } catch { /* ignore */ } }
+    if (dataStorage === undefined) { try { await dataPool.end(); } catch { /* ignore */ } }
+    throw error;
+  }
+}
