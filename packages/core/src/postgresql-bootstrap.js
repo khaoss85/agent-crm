@@ -905,10 +905,19 @@ export async function bootstrapPostgresqlApplication(options) {
       },
     });
     // Spine v4C. Readiness is a pull here — `health()` is asked and
-    // `writerGuard` runs per write — so an expired lease would otherwise emit
-    // one signal per refused write. The observer holds one boolean and reports
-    // transitions; the lease row stays the authority and no state is added for
-    // telemetry. Absent `options.telemetry`, every call below is a no-op.
+    // `writerGuard` runs on **every storage operation, reads included** — so an
+    // expired lease would otherwise emit one signal per refused call. The
+    // observer holds one boolean and reports transitions; the lease row stays
+    // the authority and no state is added for telemetry. Absent
+    // `options.telemetry`, every call below is a no-op.
+    //
+    // "Reads included" is not a detail. This comment said "runs per write" and
+    // was wrong: `assertWriter()` guards `execute`, `maybeOne`, `many` **and**
+    // `transaction` (`postgresql-storage.js`). A lapsed lease therefore does not
+    // degrade a process to read-only — it stops it entirely, which is the
+    // behaviour the renewal loop exists to prevent and the one a reader of this
+    // file most needs to know. `tests/writer-guard-covers-reads.test.js` pins
+    // it, so the sentence cannot drift from the code again.
     const readiness = createWriterReadinessObserver(telemetry);
     const observeReadiness = (snapshot) => readiness.observe(snapshot, {
       expiresAt: leaseState.holder.expiresAt,
