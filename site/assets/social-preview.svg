@@ -70,6 +70,6 @@
     <circle cx="900" cy="28" r="6" fill="{{flow.evidence}}" />
     <text class="m" x="890" y="14" font-size="13" font-weight="700" fill="#00677a">AUDIT RECORDED</text>
 
-    <text class="m" x="0" y="72" font-size="14" fill="#6f6a5a">{{measured.tests}} tests · 0 runtime dependencies · MIT · measured at {{measured.sha}}</text>
+    <text class="m" x="0" y="72" font-size="14" fill="#6f6a5a">{{measured.tests}} tests · self-hosted source · MIT · measured at {{measured.sha}}</text>
   </g>
 </svg>
