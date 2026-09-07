@@ -57,8 +57,13 @@ through `data-accordo-event`. Optional attribution is exactly `source` (one of
 read only when `utm_campaign=quote-approval`; all other query data is ignored.
 Attribution lasts for that document only: no cookie or local storage carries it
 to another page. Page views carry the canonical URL without query or fragment;
-custom payloads are reconstructed from the allowlist. No text, form values, CRM
-records, MCP queries or runtime activity is instrumented.
+our CTA payloads are reconstructed from the allowlist. No text, form values, CRM
+records, MCP queries or runtime activity is instrumented. This is minimization at
+our checked-in call sites, not a sandbox around Vercel's global API: its other
+commands and options can send routes, flags or additional metadata outside this
+hook. This integration never calls those APIs. Adding another analytics caller or
+script requires a new payload and privacy review; the current tests do not certify
+arbitrary third-party JavaScript.
 
 The project owner must enable Web Analytics in Vercel before deployment. Custom
 events require the account's supported plan. Verify collector and event responses

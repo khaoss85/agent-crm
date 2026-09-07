@@ -43,7 +43,7 @@ test('site analytics loads only on the canonical production origin and respects 
   assert.equal(enabled.appended[0].referrerPolicy, 'no-referrer');
 });
 
-test('site analytics never forwards arbitrary URLs, properties, text or event names', () => {
+test('the site CTA and beforeSend call sites sanitize URLs, payloads and event names', () => {
   const app = boot({ href: 'https://accordo.dev/developers.html?email=secret&utm_source=dev&utm_campaign=quote-approval#token' });
   assert.deepEqual(app.beforeSend({ type: 'pageview', url: 'https://evil.example/customer/secret?password=secret', payload: { secret: true } }),
     { type: 'pageview', url: 'https://accordo.dev/developers.html' });
@@ -80,6 +80,7 @@ test('site attribution admits only the fixed campaign and source enum, with no p
     assert.deepEqual(app.events(), [['event', { name: 'example_open' }]]);
   }
   assert.doesNotMatch(script, /localStorage|sessionStorage|document\.cookie|enableCookie/);
+  assert.doesNotMatch(script, /options\s*:|flags\s*:|route\s*:|window\.va\(['"](?:identify|group|pageview)['"]/);
 });
 
 test('site analytics uses the shared emitter and same-origin CSP without inline execution', () => {

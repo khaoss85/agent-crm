@@ -39,7 +39,8 @@
     if (disabled()) return null;
     if (event.type === 'pageview') return { type: 'pageview', url: canonical.href };
     if (event.type !== 'event' || !events.has(event.payload?.name)) return null;
-    // Reconstruct, never forward an arbitrary payload, URL, label or DOM text.
+    // Reconstruct our CTA payload; this hook is not a sandbox for other scripts.
+    // Vercel also exposes route/flag APIs, which this integration never calls.
     return { type: 'event', url: canonical.href,
       payload: { name: event.payload.name, ...(attribution ? { data: attribution } : {}) } };
   });
