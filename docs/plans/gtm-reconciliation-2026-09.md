@@ -81,6 +81,13 @@ passed because citations are opt-in and prose is not generated from facts.
   than denying all deployment. Pinned the registry quickstart to its documented
   version and executed it successfully against the published package.
 
+- 2026-09-07: reproduced the full CI failure in two stale SEO expectations and
+  corrected both. GitHub review also exposed default-starter security wording
+  and remaining detailed matrix/glossary denials. The generated runtime is now
+  explicitly tested with its spine disabled; docs describe optional support
+  separately. Signed-term and customer-data text reconciled without changing
+  any JTBD status. Failure diagnostics now flush completely before exit.
+
 ## Boundaries and decisions
 
 No business runtime expansion, fabricated benchmark, outreach, spend, public
