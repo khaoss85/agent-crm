@@ -17,7 +17,10 @@ Considered wrapping the full starter (too many unrelated journeys), copying an e
 ## Progress
 
 - Read current authorities and existing commercial end-to-end journey. New recipe paths agreed with integrator.
+- Added recipe, downloadable brief, actual transcript and article. Initial module ordering failure fixed using the existing dependency order. Generated empty-composition assertion updated to require commercial; both findings disclosed.
+- Final recipe ran successfully into independent empty directories. Generated project verification passed. Occupied target refused without changing its database. Existing commercial end-to-end tests passed. Site-page checks initially found root-absolute recipe links; changed them to relative links. The documented page inventory must be refreshed by the integrator for the added article.
+- Site build passes; local site check reports only literal brand strings in the preserved transcript. Integrator supplied an exact-path exemption in its shared checker (`cd1bd11`), retaining other claim scans. Final integrated site/full verification belongs to the integrator.
 
 ## Outcome and follow-up
 
-Pending implementation and independent integrator review. No external publication from this branch.
+Implemented and focused validation complete. Artifacts and command receipts are in the local traction execution handoff. No database or generated project is committed. Independent integrator review, final CI and publication remain with the release owner. The tutorial deliberately uses source checkout, not an unpublished npm payload.
