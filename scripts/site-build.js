@@ -415,6 +415,9 @@ function emit(path, html, options = {}) {
 
   const depth = path.split('/').length - 1;
   const output = html
+    // The one recorded recipe asset is enhanced into a native, script-free player.
+    .replace('<a href="../recipes/quote-approval-result.webm">Watch the recorded result</a>',
+      '<video controls preload="none" width="1440" height="1000" style="max-width:100%;height:auto" poster="../recipes/quote-approved.png" aria-label="Recorded synthetic quote approval result and audit"><source src="../recipes/quote-approval-result.webm" type="video/webm"><a href="../recipes/quote-approval-result.webm">Download the recorded result</a></video>')
     .replaceAll('{{page.root}}', '../'.repeat(depth))
     .replace('{{page.seo}}', () => seoBlock(path, title, description, options.jsonLd ?? []))
     .replace(/<a\b([^>]*?)href="([^"]+)"([^>]*)>/g, (anchor, before, href, after) => {

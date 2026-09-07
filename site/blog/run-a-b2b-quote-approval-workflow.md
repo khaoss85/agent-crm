@@ -11,6 +11,10 @@ A customer asks for 25% off. Your CRM needs to calculate the proposal, hold it f
 
 [Download the client brief](../recipes/quote-approval-brief.md), then run the example below. It creates a local project you can inspect. The [recorded execution](../recipes/quote-approval-transcript.txt) includes the result and the setup mistake corrected during development.
 
+## See the recorded result
+
+[Watch the recorded result](../recipes/quote-approval-result.webm). The short recording inspects the completed synthetic replay: the approved quote, its decision and the real audit API response. It does not show an authenticated human session or a coding agent building an application.
+
 ## The customer request
 
 Northwind Studio is a synthetic customer buying 30 seats of the fixture Enterprise Plan. Its catalog has a EUR 5,000 setup charge, a EUR 2,000 monthly platform charge and EUR 40 per seat per month at this quantity. The requested 25% discount applies to each component.
