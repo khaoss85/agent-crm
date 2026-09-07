@@ -26,7 +26,7 @@ Product Truth describes the coherent system Accordo is designed to let a coding 
 | create-medusa-app | create-project CLI (Phase 5) |
 | Recipes docs | CI-tested recipes |
 | Agent skills repo + docs MCP + llms.txt | Same trio, free from day one |
-| Cloud (monetization, core stays MIT) | **Accordo Cloud** — optional managed operating layer; explicit product track in `AGENT_CRM_CLOUD.md` (design only, unbuilt) |
+| Cloud (monetization, core stays MIT) | **Accordo Cloud** — optional managed operating layer; explicit product track in `AGENT_CRM_CLOUD.md` (public product specification; private implementation has separate authority) |
 
 Full analysis and what *not* to copy: `MEDUSA_PLAYBOOK.md`.
 
@@ -47,7 +47,7 @@ Brief + business process + design reference → the agent scaffolds, generates m
 
 0 Foundation → 1 Brand/license → 2 CRM core (Activity/Task/pipelines) → 3 Manifest-driven generation → 4 Admin+SDK generation → 5 create-CLI → 6 Production spine (Postgres/auth/tenancy) → 7 Providers/plugins → 8 Agent surface (Skills, Docs MCP, Project MCP) → 9 Deploy/observe → 10 Three starters → 11 Distribution → 12 Public launch → 13 Flywheel. Per-phase outcomes, dependencies, acceptance criteria and human-approval points: `EXECUTION_ROADMAP.md`.
 
-**Accordo Cloud** is the named product track for the optional managed operating layer — Control Plane, managed runtime, agent operations CLI/MCP, plugin operations, public benchmark deployment — gated by the Production Spine (Phase 6) and specified in `AGENT_CRM_CLOUD.md` (design only; nothing implemented). The open-source framework and the self-hosting path remain first-class forever; Cloud is optional and must never create lock-in.
+**Accordo Cloud** is the named product track for the optional managed operating layer — Control Plane, managed runtime, agent operations CLI/MCP, plugin operations, public benchmark deployment — gated by the Production Spine (Phase 6) and specified in `AGENT_CRM_CLOUD.md` (public product specification; private implementation and acceptance are recorded in their own repositories). The open-source framework and the self-hosting path remain first-class forever; Cloud is optional and must never create lock-in.
 
 ### Product workstreams
 
@@ -83,20 +83,26 @@ The pillars are *what* the framework can do. The **objective-driven agent experi
 
 The complete vision, deliberately **modular**: these are optional domain packages and parallel tracks (ADR-018, and the public package contract in addenda 3–4), not one monolith that must ship whole before anything is useful. A project can take the framework and Lead Intelligence and nothing else; a Cloud release can serve an M11-era CRM.
 
-| # | Pillar | Status | Where |
-|---|---|---|---|
-| 1 | Agent-native development framework | merged (M1–M6) | `ARCHITECTURE.md` |
-| 2 | Deterministic CRM runtime | merged (M0–M8) | `ARCHITECTURE.md`, `DECISIONS.md` |
-| 3 | Revenue lifecycle | merged (M9–M11) | `REVENUE_OPERATIONS.md` |
-| 4 | Contract / subscription / renewal | design only | `CONTRACT_SUBSCRIPTION_RENEWAL.md` |
-| 5 | Delivery & service | design only | `DELIVERY_SERVICE.md` |
-| 6 | Analytics Studio | design only | `ANALYTICS_STUDIO.md` |
-| 7 | Data governance | design only | `DATA_GOVERNANCE.md` |
-| 8 | Design-to-CRM | design only (Admin exists; the design pipeline does not) | `DESIGN_TO_CRM.md` |
-| 9 | Integration & jobs platform | design only | `INTEGRATION_RUNTIME.md`, `JOBS_AND_OUTBOX.md` |
-| 10 | Accordo Cloud | design only | `AGENT_CRM_CLOUD.md`, `CLOUD_JTBD.md` |
-| 11 | JTBD and benchmark evidence | matrix live; benchmark not executed | `../benchmarks/CRM_JTBD_MATRIX.md`, `CRM_BUILD_BENCHMARK.md` |
-| 12 | Marketing & Growth Operations | design only | `MARKETING_GROWTH_OPERATIONS.md` | Sequencing, parallelization and the Production Spine gate: `EXECUTION_ROADMAP.md` (workstream milestones M9–M15). The workstreams do not gate Accordo Cloud: Cloud work begins when the Production Spine is done, not when all domains are done.
+This is a map of durable product areas, not an implementation-status table.
+For coverage, consult `../PROJECT_STATUS.md`, the JTBD overlays and claims ledger.
+
+| Pillar | Strategy |
+|---|---|
+| Agent-native development and deterministic CRM runtime | `ARCHITECTURE.md`, `DECISIONS.md` |
+| Revenue lifecycle | `REVENUE_OPERATIONS.md` |
+| Contract / subscription / renewal | `CONTRACT_SUBSCRIPTION_RENEWAL.md` |
+| Delivery & service | `DELIVERY_SERVICE.md` |
+| Analytics Studio | `ANALYTICS_STUDIO.md` |
+| Data governance | `DATA_GOVERNANCE.md` |
+| Design-to-CRM | `DESIGN_TO_CRM.md` |
+| Integration & jobs platform | `INTEGRATION_RUNTIME.md`, `JOBS_AND_OUTBOX.md` |
+| Accordo Cloud | `AGENT_CRM_CLOUD.md`, `CLOUD_JTBD.md` |
+| JTBD and benchmark evidence | `../benchmarks/CRM_JTBD_MATRIX.md`, `CRM_BUILD_BENCHMARK.md` |
+| Marketing & Growth Operations | `MARKETING_GROWTH_OPERATIONS.md` |
+
+Sequencing and the Production Spine gate belong in `EXECUTION_ROADMAP.md`.
+Cloud's operational readiness depends on deployment evidence, not completion of
+every optional domain. Private pilot evidence does not establish public availability.
 
 ## 7. Discovery model (three layers, never conflated)
 
@@ -133,7 +139,7 @@ Trademark clearance, telemetry policy, marketplace submissions, public launch ti
 1b. `../PROJECT_STATUS.md` — what is true in the repository **today**.
 1c. `PLATFORM_ALIGNMENT_GATE.md` — the post-M11 architecture and roadmap checkpoint, and the index of the tracks it created (`PLATFORM_CAPABILITIES.md`, `CONTRACT_SUBSCRIPTION_RENEWAL.md`, `INTEGRATION_RUNTIME.md`, `JOBS_AND_OUTBOX.md`, `DATA_GOVERNANCE.md`, `DESIGN_TO_CRM.md`, `CLOUD_JTBD.md`, `../QUALITY_GATES.md`).
 2. `CATEGORY.md` — category, positioning, ICP, JTBD, promise.
-   (Product track deep-dives, all design only: `AGENT_CRM_CLOUD.md` — the managed operating layer; `REVENUE_OPERATIONS.md` — lead intelligence, routing and CPQ; `DELIVERY_SERVICE.md` — post-sale delivery and service; `ANALYTICS_STUDIO.md` — safe semantic analytics.)
+   (Product track specifications; resolve coverage through the operational authorities: `AGENT_CRM_CLOUD.md` — the managed operating layer; `REVENUE_OPERATIONS.md` — lead intelligence, routing and CPQ; `DELIVERY_SERVICE.md` — post-sale delivery and service; `ANALYTICS_STUDIO.md` — safe semantic analytics.)
 3. `NORTH_STAR_EXPERIENCE.md` — the target experience and its acceptance criteria.
 4. `COMPETITOR_MAP.md` — Twenty, Frappe, Relaticle, Comp AI, legacy, templates, DIY; the gap and its caveats.
 5. `MEDUSA_PLAYBOOK.md` — the adoption playbook and its limits.

@@ -1,7 +1,15 @@
 # Data governance
 
-**Status: design only. None of this is implemented, and nothing here is legal
-advice or a compliance claim.**
+> **Historical design baseline, scoped on 2026-09-07.** The specification and
+> snapshot below preserve the original planning context. Past-tense implementation
+> gaps in that baseline are not current capability claims. Current coverage and
+> limitations are resolved through `../PROJECT_STATUS.md`, `../repository-truth.json`
+> and `GTM_TECHNICAL_EVIDENCE_HANDOFF.md`; use those before publishing or planning a fix.
+
+
+**Original governance specification.** Customer Data Foundation implements bounded import, duplicate candidates and human-governed identity linking; the full retention/export/erasure program below is not established by that slice. No compliance claim follows.
+<!-- truth: domain.customer_data.package_native=package_native -->
+<!-- truth: cdf.full_cdp.implemented=absent -->
 
 A CRM is a personal-data system by definition: it exists to hold names, email
 addresses, phone numbers, job titles, meeting notes and behavioral signals about

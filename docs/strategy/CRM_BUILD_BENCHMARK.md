@@ -115,10 +115,13 @@ Each prompt scores on six gates, all-or-nothing per gate:
 
 ### Editions: what can actually be scored today
 
-The six gates above are the full benchmark, and the full benchmark cannot be run.
-G5 and G6 need a public deployment; this framework has no authentication, tenancy
-or RBAC and reports `productionPosture: "local development only"`. Running them
-would mean exposing an unauthenticated CRM on the internet to earn 25 points.
+The six gates above are the full benchmark. G5 and G6 require a verified deployed
+instance with a deployment-supplied identity verifier and real access checks.
+Framework tenancy and RBAC exist; that does not supply a benchmark deployment
+receipt. Edition D stays unscored until its own harness, environment and proof
+are ready. Do not widen the frozen edition on the strength of later source changes.
+<!-- truth: spine.authorization.enforced=enforced -->
+<!-- truth: spine.authentication.framework_verifier=absent -->
 
 Rather than quietly drop two gates and publish the remaining four as if they were
 the whole thing, the benchmark splits into two named editions. **The split is the
@@ -127,7 +130,7 @@ honest part; erasing it would be the dishonest part.**
 | Edition | Gates | Status | Instrument |
 |---|---|---|---|
 | **L** (local) | G1–G4 | runnable today | `benchmarks/harness/score.js` |
-| **D** (deployed) | G5–G6 | **blocked on the Production Spine** | none, deliberately |
+| **D** (deployed) | G5–G6 | **blocked on verified benchmark deployment and its harness** | none, deliberately |
 
 Four rules govern Edition L, and each exists because the obvious alternative is a
 number that reads better than it is:
@@ -164,7 +167,7 @@ ADR-024 records this decision and what would have to change to retire it.
 
 ### Managed-deployment gates (Cloud track, future)
 
-Once Accordo Cloud exists (`AGENT_CRM_CLOUD.md`; design only today), the full benchmark additionally tests the managed path:
+Once Accordo Cloud exists (`AGENT_CRM_CLOUD.md`; public product target; private pilot evidence is separate), the full benchmark additionally tests the managed path:
 
 ```text
 brief → generated project → tests → managed deployment → public CRM login

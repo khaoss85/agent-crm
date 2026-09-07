@@ -1,6 +1,17 @@
 # Jobs and durable outbox
 
-**Status: design only. Nothing here is implemented.**
+> **Historical design baseline, scoped on 2026-09-07.** The specification and
+> snapshot below preserve the original planning context. Past-tense implementation
+> gaps in that baseline are not current capability claims. Current coverage and
+> limitations are resolved through `../PROJECT_STATUS.md`, `../repository-truth.json`
+> and `GTM_TECHNICAL_EVIDENCE_HANDOFF.md`; use those before publishing or planning a fix.
+
+
+**Original design specification.** Bounded durable jobs, transactional outbox and timer consumers are now implemented; applications start workers explicitly, with no managed jobs service. The design below is broader than that shipped slice.
+<!-- truth: spine.durable_job_store.implemented=implemented -->
+<!-- truth: spine.transactional_outbox.implemented=implemented -->
+<!-- truth: spine.timer_consumers.implemented=implemented -->
+<!-- truth: spine.managed_jobs_service.implemented=absent -->
 
 The framework has no notion of *later*. Every mutation is caused by a request
 in flight; when the process ends, so does everything it was going to do. That is

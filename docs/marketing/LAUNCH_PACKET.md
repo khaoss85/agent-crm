@@ -3,9 +3,10 @@
 Copy for the two launch channels, written now so that it is written carefully rather
 than under launch-day pressure, and **deliberately not fired**.
 
-> **Gate.** Nothing in this file may be posted until every item in
-> `docs/marketing/PENDING_HUMAN_SUBMISSION.md` is cleared by a person. An agent prepares
-> a submission; an agent never submits one (`docs/strategy/MASTER_PLAN.md` §10.4).
+> **Gate.** Draft only. Refresh against the released package and current ledger,
+> then obtain the owner's instruction for the specific post and benchmark
+> commitment. Completed repository, domain and registry setup are not blockers.
+> `PENDING_HUMAN_SUBMISSION.md` tracks remaining decisions.
 
 Every product statement below resolves to an id in `site/claims.json`. Ids are cited
 inline in square brackets so the check in `scripts/site-check.js` can verify that a claim
@@ -16,17 +17,16 @@ sentence to the test behind it. Strip the bracketed ids before posting; keep the
 
 ## 1. Why this is not ready to fire
 
-| Blocker | Consequence for the launch |
+| Prerequisite | Completion evidence |
 |---|---|
-| Trademark clearance | The chosen name and registered domain are canonical in `site/brand.json`; formal clearance remains human-governed. |
-| Repository not public | The primary call to action is "read the test". A 404 is a worse first impression than silence |
-| Benchmark not run [L-03] | The strongest version of this story is a scoreboard with failures in it. Without a number, the launch is an announcement, and announcements about frameworks with no users do not travel |
-| No production spine [L-01] | The first comment on any thread will be "can I deploy it". The answer is no, and it needs to be *our* sentence, not a commenter's discovery |
+| Release alignment | Package installed from the registry, advertised journey verified and site version checked |
+| Benchmark result for Product Hunt [L-03] | Frozen edition, actual sessions, transcript and failure evidence; owner-approved publication |
+| Deployment claims [L-01] | Named deployment with its own verifier, access checks and operational evidence |
+| Owner launch instruction | Approved refreshed copy, channel and timing; trademark decision remains separate owner work |
 
-**Recommended order:** repository public → Show HN on the engineering story → benchmark
-executed and published → Product Hunt, once, on the benchmark edition. Product Hunt is a
-single-use asset; spending it before there is a number wastes it on a traffic spike that
-converts nobody in this audience.
+Repository, domain, MIT, npm scaffolder and Docs MCP distribution are already
+live. The next launch story should demonstrate one B2B quote-and-approval flow on
+the released artifact. `../strategy/GO_TO_MARKET.md` owns the sequence.
 
 ---
 
@@ -61,10 +61,9 @@ before a commenter gets to say them.
 >
 > Before anyone has to find these out for themselves, the things that will annoy you:
 >
-> - **No authentication ships.** A deployment must supply the verifier, and the server is local-development-only
->   and an actor header is an assertion, not an identity. So the refusal above holds against an
->   honest agent, not against anyone with network access. The framework reports this itself:
->   `crm app inspect --json` returns a `productionPosture` that opens "not a readiness claim: the framework authenticates nobody…". [L-01]
+> - **Authentication is deployment-supplied.** The framework enforces authorization
+>   and one tenant per instance, but local actor assertions are not authenticated
+>   identity. A production deployment needs a trusted verifier and its own checks. [L-01]
 > - **The deterministic policy is proven on one built-in object and one value threshold.** There
 >   is no general policy engine over arbitrary custom objects yet. If your reaction to the
 >   headline is "so it's a hardcoded if-statement with a test on it" — that is a fair reading of
@@ -76,16 +75,17 @@ before a commenter gets to say them.
 >   wrong order to sell it in. [C-06]
 > - **"Own the CRM it builds" means vendored source**, not a versioned dependency.
 >   `npm create accordo` (the published `create-accordo@0.1.0`) scaffolds the project by copying
->   the framework source into it — what it installs is the scaffolder, not a framework library —
+>   the framework source into it. This dated release predates newer main capabilities; verify
+>   the version being promoted. It installs a scaffolder, not a framework library —
 >   so upgrading means merging source rather than bumping a version. [L-08]
-> - **Do not put real customer data in it.** No framework authentication verifier, no export and no erasure path; authorization is enforced and isolation is one tenant per application instance — so
->   you could not service a data-subject access or deletion request. If you are in the EU that is
->   disqualifying today, and it should be. (What does hold: lead scoring is deterministic,
->   versioned and explainable, not a model's judgement about a person.) [L-09]
+> - **Customer data operations are bounded.** Import previews/apply, duplicate
+>   candidates and human-governed identity linking exist in current source; they
+>   do not provide a complete export/erasure or compliance program. Deployment
+>   authentication and data-governance requirements need their own review. [L-09]
 > - **It is a framework, not a product.** There is nothing to sign up for. [L-07]
 >
 > If you want to judge it in a minute rather than read about it: clone and run `npm run tour`.
-> There is nothing to install. It composes the whole application from manifests —
+> Install the checkout dependencies first. It composes the whole application from manifests —
 > 76 modules, 71 resources, 64 actions, 7 policies, 1 providers — drives it end to
 > end, and then prints the eleven things its own inspector says it cannot see. [C-22]
 >
@@ -113,13 +113,13 @@ command rather than an assertion.
 
 | Objection | Reply |
 |---|---|
-| "So the guardrail is an unauthenticated header check on one threshold." | Yes, today. The actor is asserted, not authenticated, and the policy is proven on the built-in renewal object with a single value threshold. Both limits are in the ledger next to the claim, and the production spine is the next platform milestone. What the test buys you now is that the boundary cannot be quietly deleted by the agent that is writing the rest of the code. |
+| "So the guardrail is an unauthenticated header check on one threshold." | Local-development actors are asserted. Framework authorization and instance tenancy are enforced; production needs a deployment verifier. The named renewal and commercial refusal tests prove their own decision boundaries, not deployment authentication. |
 | "Why not just use Twenty?" | If you want a CRM your team can log into next week, or SSO, or a hosted option, use Twenty — it is more finished and has the release train to prove it. The difference that survives is where the agent's output runs: theirs writes extensions into Twenty's runtime, this writes an application that runs without us. Our own competitor map says narrative convergence is the standing risk, and it is in the repository. |
 | "Agent-generated code in the part of the system that touches money — no thanks." | That is the correct instinct and it is why the money-touching parts are not what the agent improvises. Pricing is server-side, quote versions and orders are immutable, discount policy is versioned, and approval is deferred to a person by policy. The agent composes those primitives; it does not invent them per project. |
 | The test count as a quality claim | A test count measures effort, not correctness. The useful artifact is `docs/QUALITY_GATES.md` §2 — the sixteen adversarial categories every milestone is attacked with before it merges, including transaction fault injection, two-connection concurrency, replay, and hostile input. Read that and judge the tests by it. |
-| "Is this just a wrapper around an LLM?" | There is no model in the runtime at all. The framework is deterministic code; the agent is the thing that writes against it, at development time. Nothing calls a model at request time. |
-| "Why SQLite?" | Because the production spine is not built, and shipping PostgreSQL support before auth and tenancy would imply a deployability that does not exist. It is a real limitation, listed as one. |
-| "This is a solution looking for a problem." | Possibly. The honest test is the jobs-to-be-done matrix in the repository, where "not supported" is the default status and seventeen core jobs are tracked with evidence. Five are still marked not supported. If the ones you need are in that column, this is not for you yet. |
+| "Is this just a wrapper around an LLM?" | CRM state changes follow deterministic policies and human approval boundaries. AI-assisted development does not authorize a model to override those decisions. |
+| "Why SQLite?" | The synchronous factory uses SQLite; the async factory supports dedicated PostgreSQL. Check the installed release and supply a deployment verifier; neither adapter alone is a readiness claim. |
+| "This is a solution looking for a problem." | Possibly. The honest test is the jobs-to-be-done matrix in the repository, where "not supported" is the default status and each job has a scoped coverage status and evidence. If the ones you need are in that column, this is not for you yet. |
 | "Show me it working." | `npm run verify` then `npm run demo`. SQLite needs no extra driver; PostgreSQL is the one pinned `pg@8.23.0`. The demo is asserted by `scripts/smoke.js` on every push, so if it does not do what I said, CI is lying. |
 
 ---
@@ -145,7 +145,7 @@ gallery images 1270×760 with at least two required.
 
 > An open-source framework Claude Code and Codex use to build a CRM as code you own —
 > deterministic workflows, versioned policies, audit and trace. The agent writes the rules;
-> a merged test refuses to let it make the human's approval decision. Local-development only.
+> a merged test refuses to let it make the human's approval decision. Authentication is deployment-supplied.
 
 **Gallery** — generate with `npm run site:shots`, then crop to 1270×760:
 
