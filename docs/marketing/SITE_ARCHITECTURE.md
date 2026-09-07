@@ -21,7 +21,7 @@ Volatile facts do not belong in a product template. Authentication-verifier stat
 
 Human navigation is intent-led: Product, Solutions, How it works, Developers, For AI agents, Product proof, Resources and GitHub. Retrieval clusters remain crawlable and linked from Resources; existing URLs are retained.
 
-Generated inventory (checked against the build): `jobs.html` over 77 job pages; `answers.html` over 15 answer pages.
+Generated inventory: 162 HTML pages, including six blog posts (checked against the build). `jobs.html` over 77 job pages; `answers.html` over 15 answer pages.
 
 | Cluster | Hub | Spokes |
 |---|---|---:|

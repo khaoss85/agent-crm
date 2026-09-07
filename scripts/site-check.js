@@ -308,16 +308,19 @@ const brandLeaks = [
 ];
 // Text assets are authored copy too, so they are held to the same rule.
 //
-// Vendored font licences are the one exception, and only because the rule cannot apply to them:
+// Vendored font licences retain their upstream identity:
 // site/assets/fonts/OFL.txt reproduces two upstream SIL Open Font Licence notices verbatim,
 // carrying the font authors' own project URLs. That text is not ours to route through
 // brand.json — the licence requires it to travel unaltered with the files — and a rename of this
 // project would not make a word of it wrong. Scoped to that directory, so a new .txt anywhere
 // else in assets is still authored copy.
 const vendoredFonts = join(siteDir, 'assets', 'fonts');
+// This exact recipe stdout is execution evidence, not renameable authored copy.
+// Preserve its bytes; the normal claim/count/content scans still include it.
+const recipeTranscript = join(siteDir, 'assets', 'recipes', 'quote-approval-transcript.txt');
 const authored = templates
   .concat(collect(join(siteDir, 'assets'), '.txt'), collect(join(siteDir, 'assets'), '.svg'))
-  .filter((path) => !path.startsWith(vendoredFonts));
+  .filter((path) => !path.startsWith(vendoredFonts) && path !== recipeTranscript);
 for (const path of authored) {
   const source = readFileSync(path, 'utf8');
   for (const line of source.split('\n')) {

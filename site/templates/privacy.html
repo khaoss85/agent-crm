@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
 {{include:head.html}}
-  <title>Privacy — the {{brand.name}} Docs MCP data boundary</title>
-  <meta name="description" content="What the {{brand.name}} documentation MCP receives, what its application code stores, what infrastructure may log, and the boundary between public framework documentation and customer data." />
+  <title>Privacy — {{brand.name}} website and Docs MCP</title>
+  <meta name="description" content="Website analytics, browser controls, Docs MCP request handling and hosting metadata: what {{brand.name}} collects and what stays outside this public site." />
 {{page.seo}}
 </head>
 <body>
@@ -12,7 +12,7 @@
 <main id="main">
   <div class="shell">
     <header class="hero">
-      <p class="eyebrow">Privacy · Docs MCP</p>
+      <p class="eyebrow">Privacy · Website and Docs MCP</p>
       <h1>Public documentation in; no customer records out.</h1>
       <p class="lede">
         The {{brand.name}} Docs MCP is a read-only knowledge surface for this framework. It serves the
@@ -34,7 +34,38 @@
 
   <div class="narrow">
     <section aria-labelledby="received-h" class="spine-evidence">
-      <h2 id="received-h">What a request contains</h2>
+      <h2 id="website-analytics-h">Website statistics</h2>
+      <p>
+        The public website uses Vercel Web Analytics to count page views and clicks on tutorial,
+        example and quickstart links. The page URL sent to analytics is the published canonical
+        URL, without query parameters or fragments. Clicks have one of three fixed names:
+        <code>tutorial_open</code>, <code>example_open</code> or <code>quickstart_open</code>.
+        They are signals of interest, not proof that someone installed or used a CRM.
+      </p>
+      <p>
+        A campaign link can add only two event properties: a source from <code>dev</code>,
+        <code>hashnode</code>, <code>skills</code>, <code>gemini</code> or <code>smithery</code>,
+        and the fixed campaign <code>quote-approval</code>. Other query values, link labels,
+        entered text, customer records and MCP queries are not included in these events.
+        Attribution is not stored in a cookie or local storage and does not persist across pages.
+      </p>
+      <p>
+        Vercel also processes request metadata to produce statistics about browsers, devices,
+        approximate geography and referral origins. An external referrer with a path, query or
+        fragment causes our script to skip analytics for that page. Vercel describes its
+        visitor hashing and retention in its
+        <span class="mono">vercel.com/docs/analytics/privacy-policy</span>.
+        We do not enable analytics cookies, advertising pixels or session replay.
+      </p>
+      <p>
+        If your browser sends Do Not Track or Global Privacy Control, our script does not load
+        the analytics collector. Blocking JavaScript or the analytics endpoint also leaves
+        navigation and documentation available. Analytics runs only on the public site origin,
+        not on previews, local copies, generated CRM applications or the Docs MCP endpoint.
+        Ordinary hosting requests still reach Vercel when analytics is disabled.
+      </p>
+
+      <h2 id="received-h">What a Docs MCP request contains</h2>
       <p>
         A client sends a JSON-RPC method and, for a tool call, a documentation query, capability
         identifier or CRM job question. Normal HTTP metadata also reaches the hosting platform,
@@ -43,7 +74,7 @@
         server neither needs nor asks for them.
       </p>
 
-      <h2 id="storage-h">What the {{brand.name}} application code stores</h2>
+      <h2 id="storage-h">What the Docs MCP application code stores</h2>
       <p>
         Nothing. The Docs MCP has no database, account, cookie, analytics SDK or write tool. Its
         application code processes a request in memory and returns public documentation. It does
@@ -56,9 +87,8 @@
       <p>
         The endpoint runs on Vercel. Vercel may process and retain ordinary infrastructure,
         security and function-log metadata under its own service terms and published privacy
-        policy at <span class="mono">vercel.com/legal/privacy-policy</span>. {{brand.name}} does not add
-        a separate telemetry or advertising system, does not sell request data and does not use
-        Docs MCP requests to train a model. Infrastructure retention is controlled by the hosting
+        policy at <span class="mono">vercel.com/legal/privacy-policy</span>. The website analytics described above are separate from the Docs MCP. {{brand.name}}
+        does not sell Docs MCP request data or use Docs MCP requests to train a model. Infrastructure retention is controlled by the hosting
         account and platform, not by the read-only MCP code.
       </p>
 
@@ -86,7 +116,7 @@
       <p>
         This notice is versioned with the source. A change that adds authentication, persistence,
         telemetry, a non-public resource or a write tool must update this page and pass review
-        before deployment. Last substantive update: 9 August 2026.
+        before deployment. Last substantive update: 7 September 2026.
       </p>
     </section>
   </div>

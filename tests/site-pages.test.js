@@ -35,6 +35,23 @@ test('the site builds before anything here is inspected', () => {
   assert.equal(run.status, 0, run.stderr);
   assert.ok(existsSync(join(dist, 'jobs.html')), 'the catalogue hub must exist');
   assert.ok(existsSync(join(dist, 'answers.html')), 'the answers hub must exist');
+  const assets = readFileSync(join(dist, 'analytics.js'), 'utf8');
+  assert.equal(assets, readFileSync(join(repo, 'site/assets/analytics.js'), 'utf8'));
+  for (const path of ['index.html', 'developers.html', 'privacy.html', 'answers/can-i-run-this-in-production.html']) {
+    const page = readFileSync(join(dist, path), 'utf8');
+    const analytics = page.match(/<script defer src="([^"]*analytics\.js)" data-page="([^"]+)" referrerpolicy="no-referrer"><\/script>/g) ?? [];
+    assert.equal(analytics.length, 1, `${path} has exactly one guarded analytics loader`);
+    assert.ok(analytics[0].includes(`data-page="https://accordo.dev/${path === 'index.html' ? '' : path}"`));
+    assert.ok(existsSync(resolve(dist, dirname(path), analytics[0].match(/src="([^"]+)"/)[1])));
+  }
+  assert.match(readFileSync(join(dist, 'privacy.html'), 'utf8'), /Do Not Track or Global Privacy Control/);
+  const tutorial = readFileSync(join(dist, 'blog/run-a-b2b-quote-approval-workflow.html'), 'utf8');
+  for (const href of ['../recipes/quote-approval-brief.md', 'https://github.com/khaoss85/agent-crm/blob/main/examples/recipes/quote-approval/run.mjs']) {
+    const anchor = tutorial.match(/<a\b[^>]*>/g).find((item) => item.includes(`href="${href}"`));
+    assert.ok(anchor?.includes('data-site-event="example_open"'), `${href} must have a usable example CTA`);
+  }
+  assert.match(readFileSync(join(dist, 'index.html'), 'utf8'), /data-site-event="tutorial_open"/);
+
 });
 
 test('the documented site inventory is derived from the pages the build emits', () => {

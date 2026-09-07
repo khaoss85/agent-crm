@@ -111,7 +111,7 @@ be a visual element — chips, a grid, a marquee of honesty:
 
 **Nobody else publishes their own blind spots.** That is the brand.
 
-## 5. Page inventory — 161 pages, seven clusters
+## 5. Page inventory — 162 pages, seven clusters
 
 Hub-and-spoke: each pillar page links down to its spokes, each spoke links back up.
 
@@ -121,11 +121,11 @@ Hub-and-spoke: each pillar page links down to its spokes, each spoke links back 
 | **Capabilities** | `capabilities.html` | 6 | one business domain: what it models, what the framework refuses, what proves it |
 | **Concepts** | `concepts.html` | 8 | why it is built this way — the vision layer |
 | **Compare** | `compare.html` | 9 | opens by naming where the *alternative* wins |
-| **Jobs** | `jobs.html` | 76 | one CRM job, its support status, its evidence |
+| **Jobs** | `jobs.html` | 77 | one CRM job, its support status, its evidence |
 | **Answers** | `answers.html` | 15 | one blunt question, answered, plus 15 published refusals |
 
 Plus: `index.html`, `evidence.html` (the full claims ledger as a table), `blog.html`
-(the first evidence-backed post now ships; the honest zero-post state remains a renderer requirement),
+(six evidence-backed posts, including the quote approval recipe; the honest zero-post state remains a renderer requirement),
 `privacy.html` (the hosted Docs MCP data boundary), and `404.html`.
 
 **Only five content templates are needed:** homepage · pillar · spoke ·

@@ -607,6 +607,7 @@
       "observed": [
         "examples/journeys/contract-renewal-execution/journey.mjs",
         "examples/journeys/service-sla-escalation/journey.mjs",
+        "examples/recipes/quote-approval/run.mjs",
         "examples/starters/b2b-lead-qualification/install.mjs"
       ],
       "surface": "sdk"

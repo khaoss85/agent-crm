@@ -495,6 +495,7 @@ footer { border-top: 1px solid var(--line); padding: 44px 0 60px; color: var(--m
 .section-block > ul, .section-block > ol { margin: 0 0 12px; padding-left: 20px; max-width: 72ch; font-size: 15.5px; }
 .section-block > ul > li + li, .section-block > ol > li + li { margin-top: 6px; }
 .section-block code { font-family: var(--mono); font-size: 13.5px; color: var(--ink); }
+.section-block pre { max-width: 100%; overflow-x: auto; padding: 16px; border-radius: 8px; background: var(--paper); }
 .section-block a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line); }
 .section-block a:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
