@@ -15,7 +15,9 @@ Use `--json` for the versioned machine-readable contract.
 
 The package carries the framework source it copies, so project creation needs no
 network request after npm has installed this package and the resulting project
-needs no `npm install`. The project includes the CLI, local HTTP application,
+needs no `npm install` for its default SQLite path. The copied PostgreSQL adapter
+requires `npm install` for the declared exact `pg@8.23.0` dependency and explicit
+deployment configuration. The project includes the CLI, local HTTP application,
 Admin, published coding-agent skills, its own tests and smoke check. It starts
 with zero domain packages composed; the coding agent adds only the business
 model the user describes.
@@ -33,14 +35,22 @@ proves:
 - its smoke workflow runs end to end;
 - the same checked-in source produces a byte-identical package archive.
 
+The archive includes `framework-source.json`: the package version, SHA-256
+inventory of every copied framework file and its combined fingerprint. The
+bootstrap JSON report returns the same fingerprint. This identifies the bytes;
+registry origin and signing are verified separately through npm provenance.
+
 ## Boundaries
 
 The generated application is local-development software, not a hosted CRM:
 
 - no authentication ships, and a deployment must supply the verifier;
-- SQLite only;
-- no scheduler or durable outbox;
-- provider implementations are offline fixtures;
+- SQLite by default; dedicated-database PostgreSQL source is also included;
+- durable jobs, transactional outbox and scheduled timer consumers are source
+  capabilities: workers must be explicitly composed and started;
+- secret-provider, backup and telemetry contracts need application configuration;
+  no managed custody or telemetry backend ships;
+- business provider implementations are offline fixtures;
 - zero domain packages are composed by default;
 - source is vendored into the project, so upgrading means merging source rather
   than bumping a dependency version.

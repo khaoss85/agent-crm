@@ -42,9 +42,9 @@ const accordoBin = join(repoRoot, 'packages/cli/bin/accordo.js');
 
 /** Every limitation code the report is allowed to publish. */
 const LIMITATION_CODES = [
-  'SOURCE_ORIGIN_NOT_VERIFIED', 'NO_AUTHENTICATION', 'NO_TENANCY', 'NO_RBAC',
-  'SQLITE_ONLY', 'LOCAL_DEVELOPMENT_ONLY', 'NO_DOMAIN_PACKAGES_COMPOSED', 'NO_NETWORK_ACCESS',
-  'SOURCE_IS_A_COPY_NOT_A_DEPENDENCY', 'PROVIDERS_ARE_OFFLINE_FIXTURES', 'NO_SCHEDULER_OR_OUTBOX',
+  'SOURCE_ORIGIN_NOT_VERIFIED', 'NO_AUTHENTICATION', 'ONE_TENANT_PER_INSTANCE',
+  'SQLITE_DEFAULT', 'LOCAL_DEVELOPMENT_ONLY', 'NO_DOMAIN_PACKAGES_COMPOSED', 'NO_NETWORK_ACCESS',
+  'SOURCE_IS_A_COPY_NOT_A_DEPENDENCY', 'PROVIDERS_ARE_OFFLINE_FIXTURES', 'OPERATIONS_REQUIRE_EXPLICIT_COMPOSITION',
   'SOURCE_IS_TRUSTED', 'CONFORMANCE_IS_NOT_CORRECTNESS', 'FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY',
 ];
 
@@ -109,11 +109,10 @@ test('a bootstrapped project boots, inspects, passes the doctor and passes its o
     assert.equal(existsSync(join(target, marker)), true, `${marker} was copied`);
   }
 
-  // No install step: the framework has no third-party runtime dependencies, so
-  // a project that needed one would be a regression this test must catch.
+  // SQLite remains runnable without installing the optional-use PostgreSQL driver.
   const manifest = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'));
   assert.equal(manifest.name, 'acme-crm');
-  assert.equal(manifest.dependencies, undefined, 'the generated project has no dependencies to install');
+  assert.deepEqual(manifest.dependencies, { pg: '8.23.0' }, 'PostgreSQL has the same exact driver pin as the framework');
   assert.equal(manifest.private, true, 'a customer application is not something to publish by accident');
 
   // AX1: the composition is valid, and it is *this* project.

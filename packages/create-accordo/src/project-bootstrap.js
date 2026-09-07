@@ -40,9 +40,8 @@ import { projectFiles } from './project-files.js';
  * generated `packages/domains/generated/index.js` is the empty one this
  * repository ships, because a project that arrives carrying somebody else's
  * Lead model is a guess about a business nobody described. It runs **no
- * migration** and opens **no database**. And it publishes nothing to npm: the
- * registry names are reservations, and turning one into a real package is a
- * human decision this code cannot take.
+ * migration** and opens **no database**. And it publishes nothing to npm:
+ * releasing a new version uses the separate staged-publication workflow.
  *
  * Dry-run is the default; `--apply` is the only thing that writes.
  */
@@ -106,15 +105,14 @@ const EXCLUDED_NAMES = Object.freeze([/^\.DS_Store$/, /^\.scaffold-/, /^\.accord
 const LIMITATIONS = Object.freeze([
   ['SOURCE_ORIGIN_NOT_VERIFIED', 'the command found framework source beside itself, either in a checkout or in a bundled package. That proves the bytes are present, not where they came from, whether npm served them or whether a provenance attestation exists'],
   ['NO_AUTHENTICATION', 'the generated project has no authentication. Actor headers are not identity, and its HTTP server is local-development-only'],
-  ['NO_TENANCY', 'there is no data boundary between customers. One database is one undivided dataset'],
-  ['NO_RBAC', 'there is no role-based access control. Approval keys are labels, and only the actor *type* is enforced'],
-  ['SQLITE_ONLY', 'the only database adapter is SQLite through node:sqlite. No PostgreSQL adapter exists'],
-  ['LOCAL_DEVELOPMENT_ONLY', 'nothing in the generated project is deployable. There is no deploy path, no hosting and no production configuration, and the three gaps above are why'],
+  ['ONE_TENANT_PER_INSTANCE', 'the framework enforces one tenant per application instance and membership permissions; shared-database row tenancy is absent'],
+  ['SQLITE_DEFAULT', 'the generated app selects local SQLite. Dedicated-database PostgreSQL source is included but requires npm install for the pinned pg driver and explicit deployment configuration'],
+  ['LOCAL_DEVELOPMENT_ONLY', 'the generated project supplies no deployment authentication verifier, hosting, production credentials or managed operations'],
   ['NO_DOMAIN_PACKAGES_COMPOSED', 'the project starts with the kernel only: packages/domains/generated/index.js composes zero domain packages, exactly as the framework repository does. The domain source is on disk and inert until one line composes it — `accordo package scaffold <name>` writes a new one'],
   ['NO_NETWORK_ACCESS', 'nothing is fetched, downloaded, installed, published or registered. The project is a copy of source that was already on this disk'],
   ['SOURCE_IS_A_COPY_NOT_A_DEPENDENCY', 'the framework is vendored into the project rather than depended on by version. You own the result outright, and upgrading means merging changes rather than bumping a version'],
-  ['PROVIDERS_ARE_OFFLINE_FIXTURES', 'every provider adapter in the copied source is an offline fixture. No real enrichment, signature or catalog provider has ever been contacted'],
-  ['NO_SCHEDULER_OR_OUTBOX', 'there is no scheduler and no durable outbox. Nothing fires on a date, and post-commit event delivery dies with the process'],
+  ['PROVIDERS_ARE_OFFLINE_FIXTURES', 'the business provider adapters in the copied source are offline fixtures. No real enrichment, signature or catalog provider has ever been contacted'],
+  ['OPERATIONS_REQUIRE_EXPLICIT_COMPOSITION', 'durable jobs, transactional outbox, timer consumers, secret-provider, backup and telemetry contracts are included as source. The application must explicitly compose and start workers; no managed custody or telemetry backend ships'],
   ['SOURCE_IS_TRUSTED', 'the copied source runs with the operator’s authority. Nothing here is sandboxed, signed or verified, and this command executes none of it'],
   ['CONFORMANCE_IS_NOT_CORRECTNESS', 'the generated project boots, inspects cleanly and passes its own declared checks. It models no business, and none of that is evidence that anything you build on it is right'],
   ['FINALIZATION_REPLACES_AN_EMPTY_DIRECTORY', 'the project is committed by one `rename` onto the target, which POSIX refuses for a file, a symlink and a non-empty directory but allows onto an *empty* one. A target checked as free microseconds earlier and created empty in between would therefore be replaced. Nothing is lost — an empty directory has no content — and Windows refuses every existing destination'],
@@ -508,7 +506,7 @@ export function planProjectBootstrap({ directory, name, cwd = process.cwd(), sou
       // Stated, not discovered: the generated composition file is the empty one.
       composedPackages: [],
       databaseBackend: 'sqlite (node:sqlite)',
-      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite or dedicated-database PostgreSQL, with a bounded self-host secret-provider contract; shared-database tenancy, durable jobs, managed secret custody/service and backups are absent',
+      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite by default; dedicated-database PostgreSQL and bounded self-host operations are included as source and require explicit configuration. Shared-database tenancy, managed custody and a telemetry backend are absent',
     },
     source: {
       resolved: Boolean(sourceRoot),
