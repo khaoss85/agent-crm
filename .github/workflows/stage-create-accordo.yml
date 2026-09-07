@@ -16,6 +16,23 @@ jobs:
   stage:
     runs-on: ubuntu-latest
     environment: npm-stage
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_USER: postgres
+          POSTGRES_DB: accordo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ACCORDO_TEST_POSTGRES: '1'
+      ACCORDO_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/accordo_test
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -42,6 +59,14 @@ jobs:
 
       - name: Use an npm CLI that supports trusted staged publishing
         run: npm install --global npm@11.15.0
+
+      - name: Install and verify PostgreSQL 16 backup client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-16
+          pg_dump --version | grep -E '^pg_dump \(PostgreSQL\) 16\.'
+          pg_restore --version | grep -E '^pg_restore \(PostgreSQL\) 16\.'
+          psql --version | grep -E '^psql \(PostgreSQL\) 16\.'
 
       - name: Verify repository and publication contract
         run: |
