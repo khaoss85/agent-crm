@@ -32,6 +32,9 @@ The static site is built by scripts/site-build.js from site/templates and site/b
 ## Progress
 - 2026-09-07: Baseline verified unchanged. Three agents assigned isolated sibling worktrees for tutorial, site measurement and distribution. Integrator owns shared docs, linking, publication and receipts.
 
+- 2026-09-07: Recipe passed independent empty-directory replay and generated-project verification. Added a real recorded Admin/audit demo, fixed mobile code overflow, and moved standing article limitations after the useful content while retaining inline local-identity boundaries.
+- 2026-09-07: Web Analytics enabled through the documented Vercel toggle API and read back as an empty live dataset. Collection depends on the new deployment. Full CI includes the recipe replay; source-only measurement remains dated until the generated artifact is imported.
+
 ## Decision log
 - The first article describes a reproducible workflow recipe, not a fabricated Claude/Codex build session or external adoption claim.
 - No JTBD promotion and no hand-edited suite measurement. Added meaningful tests require a fresh generated measurement after green CI.
@@ -39,4 +42,4 @@ The static site is built by scripts/site-build.js from site/templates and site/b
 - User authorization resolves routine publication/merge steps; genuine access/2FA boundaries are reported with concrete prepared artifacts.
 
 ## Outcome and follow-up
-In progress. Longitudinal organic traffic and repeat use require elapsed time and external participation; report setup and observations separately.
+Implementation complete; integration review and production/publication closeout in progress. Longitudinal organic traffic and repeat use require elapsed time and external participation; report setup and observations separately.

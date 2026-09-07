@@ -23,12 +23,23 @@ Current dated channel receipts belong in `../strategy/DISTRIBUTION_SUBMISSIONS.m
 
 | Decision or action | Reviewable input | What closes it |
 |---|---|---|
-| Telemetry policy | Proposed events, purpose, consent, retention and opt-out, before collection code | Approved policy; no assumption that existing aggregate downloads are active users |
+| CRM runtime telemetry policy | Proposed runtime events, purpose, retention and opt-out, before any runtime collection code | Remains separate from the owner-authorized site-only measurement below; downloads are not active users |
 | Trademark clearance | Name and intended software/services scope | Owner-provided clearance decision; no claim here that a legal review happened |
 | Benchmark publication commitment and launch timing | Frozen edition/protocol, honest results including failures, `BENCHMARK_PUBLICATION.md`, refreshed `LAUNCH_PACKET.md` | Explicit owner approval of the commitment and publication |
 | Staged npm release approval where required by publisher | Verified candidate, source/provenance identity and clean-install receipt | Maintainer staged approval followed by live registry verification |
 | Pilot-user recruitment or direct outreach | Named recipients, message and selected B2B brief | Explicit instruction to contact; no outreach was sent in this reconciliation |
 | Directory and launch submissions | Updated copy, links and channel prerequisites | Explicit instruction or destination-required human submission; then a public receipt |
+
+## September traction wave authorization
+
+The owner authorized autonomous execution of the reviewed traction plan on
+2026-09-07: the quote approval tutorial and demo, site-only Web Analytics,
+existing directory corrections, DEV/Hashnode syndication and a public opt-in
+call for three pilot sessions. Publication and source merge do not require a
+second routine confirmation for this wave. Authentication, npm 2FA, platform
+acceptance and actual participant responses still require their own evidence.
+The public privacy page describes the bounded website measurement; the
+framework and Docs MCP receive no new instrumentation.
 
 ## Remaining external channels
 
