@@ -424,3 +424,17 @@ statuses become `current` in the same regeneration.
 record and its provenance) · ADR-038 (what the spine owns and what it does not) ·
 `docs/QUALITY_GATES.md` §6 · `docs/plans/repository-truth-contract-v1.md` ·
 `scripts/repo-truth.js` · `tests/repository-truth-contract.test.js`.
+
+## GTM surface reconciliation (September 2026)
+
+Current answers, comparisons, capabilities, concepts, glossary and the operating
+GTM entry points are now included in `BOUND_SURFACES`. The finite
+`RETIRED_CLAIMS` list includes the audit's obsolete PostgreSQL, lifecycle and
+customer-data negatives. `site:check` reuses the same list on authored and
+rendered current content, without needing Git history or executing authorities.
+
+`tests/gtm-current-claims.test.js` restores these false negatives beside valid
+citations and requires refusal. New false wording can still escape: this is
+regression prevention for observed failures, not natural-language verification.
+The scoped limitations for shared tenancy, managed workers, physical merge,
+billing and automatic renewals remain explicit and are tested as allowed.

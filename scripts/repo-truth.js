@@ -425,6 +425,17 @@ export const BOUND_SURFACES = Object.freeze([
   'docs/benchmarks/CRM_JTBD_MATRIX.md',
   'docs/benchmarks/jobs.json',
   'site/claims.json',
+  'site/answers.json',
+  'site/compare.json',
+  'site/capabilities.json',
+  'site/concepts.json',
+  'site/glossary.json',
+  'docs/strategy/MASTER_PLAN.md',
+  'docs/strategy/GO_TO_MARKET.md',
+  'docs/strategy/GTM_TECHNICAL_EVIDENCE_HANDOFF.md',
+  'docs/strategy/DISTRIBUTION_SUBMISSIONS.md',
+  'docs/marketing/PENDING_HUMAN_SUBMISSION.md',
+  'docs/marketing/FOUNDER_CHECKLIST.md',
   'site/assets/llms.txt',
   'site/assets/llms-full.txt',
   'examples/scenarios/contract-renewal-execution.scenario.json',
@@ -534,6 +545,13 @@ export const RETIRED_CLAIMS = Object.freeze([
   // authorization — and ADR-038 had already made all three true. A person found
   // it. It is the first of the two failures ADR-039 opens by naming.
   'no authentication, tenancy or RBAC exists',
+  // September GTM audit: exact false negatives published after the corresponding
+  // capabilities shipped. Scoped absences (managed workers, shared tenancy,
+  // physical merge, automatic renewals) remain legal and must stay explicit.
+  'PostgreSQL is on the Production Spine track and is not implemented',
+  'Nothing bills, renews, amends or cancels',
+  'No import, export, dedupe, merge, bulk edit, saved views or global search',
+  'no auth, no scheduler, no integrations, SQLite only',
 ]);
 
 /**
@@ -3115,7 +3133,7 @@ export async function checkRepository({ rootDir }) {
       problems.push({
         code: 'TRUTH_CLAIM_RETIRED',
         message: `${surface}:${line}: states "${claim}", a claim this repository deliberately retired. It is the `
-          + 'first of the two failures ADR-039 opens by naming, and the citations beside it prove nothing about it '
+          + 'recorded regressions in ADR-039, and the citations beside it prove nothing about it '
           + '— they bind values, not sentences. Remove it, or declare `truth: retired-claim ' + claim + ' — why` '
           + 'in this file if the surface names it as history.',
       });

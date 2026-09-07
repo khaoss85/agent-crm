@@ -226,3 +226,15 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 - [ ] **Reword the sentinel comment in `tests/spine-v4c-observability-export.test.js`.** It explains its choice of test sentinel by quoting the very form that triggers the secret scanner, which is why that finding went from one detection to two. It is harmless on main — the check gates no merge here — but it stays a live trigger for any future PR that touches the file. Describe the shape without spelling it out.
 - [ ] Decide whether a Cloud control plane needs telemetry correlation, and if so widen the V4C allowlist deliberately in a contract version 2. no attribute the kernel fills carries a tenant, record, run or worker identifier, so a signal cannot be traced to a job, a tenant or a request — except through the one declared exception above, where a caller-named job kind or handler is exported verbatim; that is a stated limitation, and closing it is an authorization decision reviewed on its own, never an attribute quietly added to the registry (ADR-043, V4C).
 - [ ] Real Codex/Gemini comparative benchmark when both harnesses exist.
+
+## GTM reconciliation — September 2026
+
+- [ ] Complete `docs/plans/gtm-reconciliation-2026-09.md`: current source claims,
+  distribution receipts, packed bootstrap and production site reconciled.
+- [ ] Refresh the suite measurement on a clean green CI runner using the
+  measurement workflow; copy its generated record, never transcribe counts.
+- [ ] Complete owner-approved npm staged publication after verifying the exact
+  candidate. Public registry status must follow a live readback.
+- [ ] Run clean-session build pilots and record completion, interventions and
+  elapsed time before a comparative or adoption claim. External participants
+  and publication remain separate decisions, not fabricated test results.

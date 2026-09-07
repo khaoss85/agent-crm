@@ -31,6 +31,7 @@ import {
   scansForLooseCounts,
 } from './measurement.js';
 import { inspectStrategicSurfaces } from './site-strategic-pages.js';
+import { findRetiredClaims } from './repo-truth.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -62,6 +63,24 @@ for (const path of [
   const text = readFileSync(path, 'utf8');
   for (const pattern of staleNegativeClaims) {
     if (pattern.test(text)) fail(`${relative(root, path)}: stale negative merges authentication, authorization and tenant isolation; state them separately from repository truth.`);
+  }
+}
+
+// The same recorded false negatives are refused by both maintenance entry
+// points. Checking the rendered output catches a stale template as well as a
+// stale JSON source. Dated articles retain their historical wording; this is
+// a bounded regression list, not a natural-language truth engine.
+for (const path of [
+  ...collect(join(siteDir, 'templates'), '.html'),
+  ...collect(join(siteDir, 'partials'), '.html'),
+  ...collect(siteDir, '.json'),
+  ...collect(join(siteDir, 'assets'), '.txt'),
+  ...collect(outDir, '.html'),
+  ...collect(outDir, '.md'),
+]) {
+  if (relative(siteDir, path).split(sep).includes('blog')) continue;
+  for (const { line, claim } of findRetiredClaims(readFileSync(path, 'utf8'))) {
+    fail(`${relative(root, path)}:${line}: retired public claim: ${claim}`);
   }
 }
 
