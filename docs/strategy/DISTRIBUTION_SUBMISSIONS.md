@@ -39,7 +39,7 @@ All four entries were sent 2026-08-26. The audit checked the following states on
 
 The latter two current README files did not contain Accordo during the audit.
 That does not establish a rejection reason or exclude another publication path.
-No new submission or outreach was sent by this reconciliation.
+No new listing submission was sent; the single clarification is recorded above.
 
 ## Historical receipts not freshly revalidated
 
