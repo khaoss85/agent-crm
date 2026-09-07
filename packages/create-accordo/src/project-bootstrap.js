@@ -105,7 +105,7 @@ const EXCLUDED_NAMES = Object.freeze([/^\.DS_Store$/, /^\.scaffold-/, /^\.accord
 const LIMITATIONS = Object.freeze([
   ['SOURCE_ORIGIN_NOT_VERIFIED', 'the command found framework source beside itself, either in a checkout or in a bundled package. That proves the bytes are present, not where they came from, whether npm served them or whether a provenance attestation exists'],
   ['NO_AUTHENTICATION', 'the generated project has no authentication. Actor headers are not identity, and its HTTP server is local-development-only'],
-  ['ONE_TENANT_PER_INSTANCE', 'the framework enforces one tenant per application instance and membership permissions; shared-database row tenancy is absent'],
+  ['SPINE_NOT_COMPOSED', 'the generated default does not compose the optional Production Spine, so tenant isolation and membership authorization are not enabled. The copied source can enforce one tenant per application instance and membership permissions when the spine is explicitly configured; shared-database row tenancy is absent'],
   ['SQLITE_DEFAULT', 'the generated app selects local SQLite. Dedicated-database PostgreSQL source is included but requires npm install for the pinned pg driver and explicit deployment configuration'],
   ['LOCAL_DEVELOPMENT_ONLY', 'the generated project supplies no deployment authentication verifier, hosting, production credentials or managed operations'],
   ['NO_DOMAIN_PACKAGES_COMPOSED', 'the project starts with the kernel only: packages/domains/generated/index.js composes zero domain packages, exactly as the framework repository does. The domain source is on disk and inert until one line composes it — `accordo package scaffold <name>` writes a new one'],
@@ -506,7 +506,7 @@ export function planProjectBootstrap({ directory, name, cwd = process.cwd(), sou
       // Stated, not discovered: the generated composition file is the empty one.
       composedPackages: [],
       databaseBackend: 'sqlite (node:sqlite)',
-      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite by default; dedicated-database PostgreSQL and bounded self-host operations are included as source and require explicit configuration. Shared-database tenancy, managed custody and a telemetry backend are absent',
+      productionPosture: 'not a readiness claim: the default generated application uses SQLite without a spine; tenant isolation and membership authorization are not enabled. The framework authenticates nobody; a deployment supplies verified identity. The copied source offers an optional spine enforcing one tenant per application instance and membership permissions when explicitly composed. Dedicated-database PostgreSQL and bounded self-host operations require explicit configuration. Shared-database tenancy, managed custody and a telemetry backend are absent',
     },
     source: {
       resolved: Boolean(sourceRoot),

@@ -101,10 +101,11 @@ An Accordo CRM project. The framework source is checked in under \`packages/\`
 and \`apps/\` — you own it outright, and you change it the way you change any
 other code in this repository.
 
-**It starts in local-development mode with SQLite.** The framework enforces
-one tenant per application instance and membership permissions, but ships no
-deployment authentication verifier. Production configuration is an application
-responsibility; this scaffold is not a production-readiness claim.
+**It starts in local-development mode with SQLite.** This default composition
+does not enable tenant isolation or membership authorization. The copied framework
+offers an optional Production Spine that enforces those boundaries when explicitly
+configured; the starter does not compose it. No deployment authentication verifier
+ships. This scaffold is not a production-readiness claim.
 
 ## Run it
 
@@ -159,8 +160,10 @@ code, and none of them is scheduled here.
 
 - **No authentication.** Actor headers are not identity. The HTTP server is
   local-development-only.
-- **One tenant per application instance.** Membership permissions are enforced;
-  shared-database row tenancy is absent.
+- **Tenant and membership enforcement is not enabled by default.** The optional
+  Production Spine can enforce one tenant per application instance and membership
+  permissions, but requires explicit composition, verified identity and storage
+  configuration. Shared-database row tenancy is absent.
 - **SQLite is the default.** Dedicated-database PostgreSQL source is included,
   but requires installing the pinned driver and deployment configuration.
 - **Operations require explicit composition.** Durable jobs, transactional
@@ -233,6 +236,8 @@ already inconsistent, and it is cheap enough to run before every change.
 ## What this project is not
 
 The default is local SQLite with no deployment authentication verifier.
+The optional Production Spine is not composed: tenant isolation and membership
+authorization are not enabled. Explicitly composing that spine can enable them.
 PostgreSQL requires the declared pinned driver and explicit configuration.
 Workers require explicit composition and start; no managed custody or telemetry
 backend ships, and business provider adapters remain offline fixtures. Do not write
