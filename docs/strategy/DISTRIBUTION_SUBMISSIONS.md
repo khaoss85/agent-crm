@@ -34,8 +34,8 @@ All four entries were sent 2026-08-26. The audit checked the following states on
 |---|---|---|
 | [MCP servers #12938](https://github.com/punkpeye/awesome-mcp-servers/pull/12938) | OPEN | Monitor maintainer feedback |
 | [Claude skills #1173](https://github.com/travisvn/awesome-claude-skills/pull/1173) | OPEN | Monitor maintainer feedback |
-| [Open-source CRM #4](https://github.com/sneg55/awesome-open-source-crm/pull/4) | CLOSED, not merged | Read closure rationale before proposing any retry |
-| [Claude Code #2637](https://github.com/hesreallyhim/awesome-claude-code/issues/2637) | CLOSED; acceptance unverified | Verify destination acceptance and closure rationale; human recommendation rule still applies |
+| [Open-source CRM #4](https://github.com/sneg55/awesome-open-source-crm/pull/4) | CLOSED, not merged | No rationale disclosed. [One clarification sent](https://github.com/sneg55/awesome-open-source-crm/pull/4#issuecomment-5573948740) on 2026-09-07 and read back; await a response before considering any retry |
+| [Claude Code #2637](https://github.com/hesreallyhim/awesome-claude-code/issues/2637) | CLOSED; not found in current resource lists | Full resource table and alternate lists checked on 2026-09-07; no maintainer rationale disclosed. No extra promotional follow-up; human recommendation rule still applies |
 
 The latter two current README files did not contain Accordo during the audit.
 That does not establish a rejection reason or exclude another publication path.

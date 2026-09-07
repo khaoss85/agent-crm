@@ -106,7 +106,16 @@ checked against the commit and test-tree identity. The packed starter passed
 offline installation and generated-project verification.
 
 Private documentation corrections merged in accordo-platform PR #55 and
-accordo-arvo-pilot PR #28 after green CI. Framework publication, live-site
-verification and npm staged approval remain release steps; the site continues
+accordo-arvo-pilot PR #28 after green CI. Framework PR #173 merged at `85c873e`; the live site identifies that source.
+Production claims and machine answers match the final build, Docs MCP responses
+match the ledger, and every sitemap URL returned successfully. GitHub About and
+the regenerated social image were updated and read back. The site continues
 to identify the registry version separately until publication is verified.
+
+The first npm staging run, #34147657492, failed because its environment omitted
+PostgreSQL, now required when the suite runs in CI. The publication workflow is
+aligned with ordinary CI: ephemeral PostgreSQL 16, explicit test connection and
+verified native backup clients. Runtime source, the test corpus and the candidate
+assembly are unchanged. Staging must pass before maintainer approval with 2FA;
+no failed run is treated as a staged or published package.
 External adoption evidence and the unrun build benchmark remain GTM follow-up.
