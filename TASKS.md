@@ -241,10 +241,10 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 
 ## First working example traction wave — September 2026
 
-- [ ] Complete the versioned quote approval recipe, transcript and downloadable brief.
-- [ ] Add bounded site analytics and connect key landing pages to the working example.
-- [ ] Correct existing directory metadata and verify fresh host installs.
+- [x] Complete the versioned quote approval recipe, transcript and downloadable brief.
+- [x] Add bounded site analytics and connect key landing pages to the working example.
+- [x] Correct existing Smithery metadata and verify fresh host installs. Gemini gallery refresh remains an upstream crawler wait.
 - [ ] Publish the canonical tutorial and adapted syndication with public readback.
 - [ ] Record actual external trial responses and sessions separately from invitations.
 
-Execution: `docs/plans/traction-first-working-example.md`.
+Execution: `docs/plans/traction-first-working-example.md`. Live publication receipts, external responses and dated follow-up are tracked in [issue #176](https://github.com/khaoss85/agent-crm/issues/176).

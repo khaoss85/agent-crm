@@ -41,5 +41,8 @@ The static site is built by scripts/site-build.js from site/templates and site/b
 - Source version remains explicit while npm approval is pending. Directory acceptance, human participation and retention require external evidence.
 - User authorization resolves routine publication/merge steps; genuine access/2FA boundaries are reported with concrete prepared artifacts.
 
+- 2026-09-07: Smithery description/homepage/repository publicly verified. DEV and Hashnode drafts prepared with canonical attribution. Issue #176 tracks deployment, publications and external pilot outcomes, with a channel review on 2026-09-21 and an organic discovery review on 2026-10-05–19.
+- 2026-09-07: Full CI exposed the newly added recipe in the commercial importer inventory. Refreshed that observed baseline only; unchanged behavior fingerprint and 24/24 focused characterization tests passed.
+
 ## Outcome and follow-up
 Implementation complete; integration review and production/publication closeout in progress. Longitudinal organic traffic and repeat use require elapsed time and external participation; report setup and observations separately.
