@@ -416,7 +416,8 @@ function emit(path, html, options = {}) {
   const depth = path.split('/').length - 1;
   const output = html
     .replaceAll('{{page.root}}', '../'.repeat(depth))
-    .replace('{{page.seo}}', () => seoBlock(path, title, description, options.jsonLd ?? []));
+    .replace('{{page.seo}}', () => seoBlock(path, title, description, options.jsonLd ?? []))
+    .replace('</head>', `  <script defer src="${'../'.repeat(depth)}analytics.js" data-page="${escapeHtml(`${ORIGIN}/${path}`)}" referrerpolicy="no-referrer"></script>\n</head>`);
   if (output.includes('{{page.seo}}')) unresolved.push({ file: path, token: 'page.seo' });
   if (output.includes('{{')) unresolved.push({ file: path, token: 'a token survived the whole render' });
 
@@ -430,8 +431,8 @@ function emit(path, html, options = {}) {
  * Canonical, social cards and structured data for one page.
  *
  * Structured data is emitted as `application/ld+json`, which the site's own CSP
- * (`default-src 'none'` with no `script-src`) does not block — measured in headless Chromium
- * rather than assumed, because a silently dropped block would be invisible in the HTML source.
+ * does not treat as executable inline JavaScript. Keep it inert JSON: the policy allows
+ * only same-origin executable scripts, and analytics does not change that boundary.
  *
  * @param {string} path @param {string} title @param {string} description @param {any[]} jsonLd
  */

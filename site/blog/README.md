@@ -59,8 +59,8 @@ A deliberately small Markdown subset, because the alternative is this repository
 dependency: `##`–`####` headings, paragraphs, `-`/`*` and numbered lists, fenced code blocks,
 blockquotes, and inline `` `code` ``, `**bold**`, `*italic*` and `[links](href)`. Everything is
 HTML-escaped before any markup is added — raw HTML in a post is printed, not executed. The site
-serves `default-src 'none'` with no `script-src` at all, and post markup should not be the first
-thing to test that.
+permits same-origin scripts for site analytics; inline scripts remain blocked, and posts
+must never introduce executable markup.
 
 `#` is not rendered as a heading: the `<h1>` is the `title` field, and a second one would give the
 page two.

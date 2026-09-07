@@ -35,6 +35,16 @@ test('the site builds before anything here is inspected', () => {
   assert.equal(run.status, 0, run.stderr);
   assert.ok(existsSync(join(dist, 'jobs.html')), 'the catalogue hub must exist');
   assert.ok(existsSync(join(dist, 'answers.html')), 'the answers hub must exist');
+  const assets = readFileSync(join(dist, 'analytics.js'), 'utf8');
+  assert.equal(assets, readFileSync(join(repo, 'site/assets/analytics.js'), 'utf8'));
+  for (const path of ['index.html', 'developers.html', 'privacy.html', 'answers/can-i-run-this-in-production.html']) {
+    const page = readFileSync(join(dist, path), 'utf8');
+    const analytics = page.match(/<script defer src="([^"]*analytics\.js)" data-page="([^"]+)" referrerpolicy="no-referrer"><\/script>/g) ?? [];
+    assert.equal(analytics.length, 1, `${path} has exactly one guarded analytics loader`);
+    assert.ok(analytics[0].includes(`data-page="https://accordo.dev/${path}"`));
+    assert.ok(existsSync(resolve(dist, dirname(path), analytics[0].match(/src="([^"]+)"/)[1])));
+  }
+  assert.match(readFileSync(join(dist, 'privacy.html'), 'utf8'), /Do Not Track or Global Privacy Control/);
 });
 
 test('the documented site inventory is derived from the pages the build emits', () => {
