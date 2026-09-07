@@ -13,7 +13,8 @@ commercial primitives. No real data or provider credentials are needed.
 
 Requires Git, Node.js 22.16 or newer, npm and internet access for the checkout
 and dependency installation. The business journey uses only localhost and a
-fixture catalog. The script installs the generated project's dependencies.
+fixture catalog. The script installs the generated project's dependencies and updates its
+empty-composition test to require the commercial package.
 
 ```sh
 git clone https://github.com/khaoss85/agent-crm.git framework-source

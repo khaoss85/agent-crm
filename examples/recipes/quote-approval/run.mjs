@@ -46,6 +46,14 @@ export const generatedDomains = [createCommercialDomain({
   catalogProviders: [fixtureSaasCatalogProvider], discountPolicies: [standardSalesDiscountV1],
 })];
 `);
+// The scaffolder's composition test starts empty; this recipe deliberately composes commercial.
+const testPath = join(target, 'tests/project.test.js');
+const baselineTest = readFileSync(testPath, 'utf8');
+const emptyAssertion = "assert.deepEqual(generatedDomains, [], 'add a domain by importing it here, deliberately, one line at a time');";
+assert.ok(baselineTest.includes(emptyAssertion), 'review the bootstrap composition test if its contract changes');
+writeFileSync(testPath, baselineTest
+  .replace('this project composes zero domain packages, which is its declared starting point', 'this project deliberately composes the commercial package')
+  .replace(emptyAssertion, "assert.deepEqual(generatedDomains.map((domain) => domain.name), ['commercial']);"));
 console.log('Composed the existing commercial package, fixture catalog and 10% auto-approval policy.');
 const { createAccordoApp } = await import(pathToFileURL(join(target, 'packages/app/src/index.js')).href);
 const { createHttpServer } = await import(pathToFileURL(join(target, 'apps/server/src/index.js')).href);
