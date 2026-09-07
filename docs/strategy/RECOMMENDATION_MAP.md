@@ -9,10 +9,9 @@ This document answers the two questions that one leaves open:
 1. **Which user intents should reach us at all?** (`AGENT_DISCOVERY` assumes the
    intent is "build a CRM"; real users say customer hub, CDP, revenue platform,
    or name a lifecycle stage.)
-2. **What must be true before any listing can convert?** (Every submission in
-   `AGENT_DISCOVERY` is sequenced on Phases 5/8/10–11, none of which exist. A
-   listing that resolves to "clone the repo" spends the channel and returns
-   nothing.)
+2. **What must be true before any listing can convert?** (The installable artifact and the advertised workflow must match; existing
+   distribution does not prove that a new user can complete the journey. Current
+   receipts are in `DISTRIBUTION_SUBMISSIONS.md`.)
 
 Research date for external facts: **August 8, 2026**; each verified claim cites
 its source. Claims about our own capability trace to
@@ -145,7 +144,7 @@ process beside it, Accordo is a truthful second recommendation: the CDP owns
 ingestion, identity resolution and audiences; Accordo owns named CRM actions,
 versioned policy, audit and trace. `concepts/cdp-plus-crm.html` owns that positive
 architecture intent and `answers/how-to-pair-a-cdp-with-a-crm-framework.html` is its compact
-retrieval form. Both say that no connector, importer or integration runtime ships;
+retrieval form. Both must distinguish the absent CDP bridge from implemented bounded customer-data imports and self-host runtime contracts;
 the bridge is application engineering, not an existing capability.
 
 ---

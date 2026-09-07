@@ -46,7 +46,7 @@
         {
           "heading": "Where it stops",
           "body": [
-            "There is no real data vendor, no ranked work queue, no manual reassignment and no capacity calendar. The parts that would make any of those safe — authentication, tenancy and role enforcement — are Production Spine work that has not been done, and the boundary is stated here rather than left for a reader to discover after they have loaded real people into it."
+            "No real enrichment data vendor, ranked sales work queue, manual reassignment or capacity calendar ships. The framework enforces authorization and one tenant per application instance; the deployment supplies authentication. Self-hosted SQLite and dedicated-database PostgreSQL compositions exist, but are not a general production-readiness claim (L-01, L-02). A routing target is not a membership or an authorization grant."
           ]
         }
       ],
@@ -104,8 +104,18 @@
         },
         {
           "q": "Does routing assign leads automatically in production?",
-          "a": "Routing is deterministic against a versioned policy and routing targets, proven by tests on one developer's machine. There is no production deployment story: no authentication ships and no scheduler exists, so nothing routes anywhere unattended."
+          "a": "Routing is deterministic against a versioned policy and target set. The framework enforces authorization and per-instance tenancy; deployment authentication must be supplied. Explicitly started self-host workers can run durable jobs and scheduled asks, but timers do not make lead routing automatic. No managed worker service or general production readiness is claimed."
         }
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent",
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent"
       ]
     },
     {
@@ -265,8 +275,8 @@
         "The signed document is canonical JSON with the media type application/vnd.accordo.quote-package+json. It is not a PDF and is never called one.",
         "The artifact hash is provider-reported. The framework never downloads the artifact bytes and verifies no signature cryptographically; what it does verify locally is that the stored canonical document re-hashes to the document hash at completion.",
         "Signer identity assurance is not claimed. All signers are required, one to five of them, and the declared order is recorded and displayed but not sequentially gated — no reminders, no delegation, no conditional routing.",
-        "A failed envelope cannot be re-sent. There is no resend framework and no scheduler; reconciliation is an explicit call a human, a test or the starter makes.",
-        "An Order carries no fulfillment, billing, payment or invoice state, no ARR, MRR or TCV, and no amendment or cancellation path."
+        "A failed envelope cannot be re-sent. Reconciliation remains an explicit audited call; durable workers do not supply a signature resend policy.",
+        "An Order remains immutable and carries no billing, payment or invoice state. Governed amendment execution in Lifecycle creates a new signed successor agreement instead of editing that Order."
       ],
       "claims": [
         "C-09",
@@ -285,12 +295,14 @@
         "JTBD-14"
       ],
       "docs": [
-        "docs/SIGNATURE_ORDER.md"
+        "docs/SIGNATURE_ORDER.md",
+        "docs/RENEWAL_AMENDMENT.md"
       ],
       "tests": [
         "tests/signature-order-e2e.test.js",
         "tests/signature-contract.test.js",
-        "tests/admin-signature.test.js"
+        "tests/admin-signature.test.js",
+        "tests/lifecycle-amendment-execution-e2e.test.js"
       ],
       "related": [
         "quote-to-cash-cpq",
@@ -309,6 +321,13 @@
           "q": "Can an Order be edited after signature?",
           "a": "No. The Order is immutable by construction: it is derived once from the signed envelope and the approved quote version, and changing commercial terms afterwards means a new quote version through the same policy path, not an edit."
         }
+      ],
+      "facts": [
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent",
+        "domain.lifecycle.package_native=package_native"
       ]
     },
     {
@@ -317,8 +336,8 @@
       "title": "Turning a signed order into a contract and a subscription",
       "plainName": "Contract and subscription activation",
       "intent": "activate a subscription and contract from a signed order",
-      "summary": "A signed immutable Order activates, through a versioned policy and one human decision, into a Commercial Contract, an immutable contract version, one contract line per order component, a Subscription with its lines, and explicitly pending delivery and service obligations. Two things must be said first: the term was never signed — the document package carries no dates, so every date here is operational metadata a human enters after signature with a required reason — and nothing bills, renews, amends or cancels, because there is no scheduler and no billing anywhere in this framework.",
-      "metaDescription": "A signed Order activates into a contract, a contract version, a subscription and pending obligations. A human enters the term; nothing bills, renews or amends.",
+      "summary": "A signed immutable Order activates through versioned policy and a human decision into a Contract, immutable version, Subscription and pending delivery/service obligations. Terms frozen into the signed quote document retain signed-order provenance; legacy orders without signed terms can use explicitly labelled post-signature operational metadata. Operational dates are never promoted to signed terms. Governed renewal and amendment execution creates a successor agreement from its own signed Order, with immutable lineage and a derived line delta. Historical contracts and subscriptions are not edited. There is no automatic renewal, cancellation execution, billing or customer notification.",
+      "metaDescription": "Signed Orders activate contracts and subscriptions; governed changes create signed successors. Provenance stays explicit. No billing or automatic renewal.",
       "sections": [
         {
           "heading": "What it models",
@@ -339,7 +358,7 @@
           "heading": "What the framework refuses",
           "body": [
             "Only a user actor may activate; an agent is 403 HUMAN_APPROVAL_REQUIRED. A plan is not an authorization token — activation recomputes the whole classification inside the transaction from the Order, so a plan that looked activatable a minute ago does not make an activation succeed unless the same decisions are supplied again.",
-            "The client never supplies an amount, a product, a tier or a source hash. The only client inputs are the policy identity, three calendar dates and their required reason, two recorded renewal flags, and human overrides. Everything commercial is copied from the Order snapshot.",
+            "The client never supplies amounts or source hashes. Signed Order terms are copied with their provenance; only the legacy operational-term path accepts human-entered dates and a required reason. Policy classification and human overrides remain explicit.",
             "Activation refuses anything it cannot prove, each with a stable code: an order that is not accepted, an order with no completed signature evidence, an envelope, artifact and order that do not belong together, a disagreement on the signed document hash, a snapshot missing lines, components or totals, an order already activated, and a term that ended before the activation.",
             "A policy that returns a Promise, an unknown type, an unbounded reason or that throws is a 500 and nothing is activated. Dates are validated by round-trip, so 2026-02-30 and 2026-13-01 are refused rather than normalized into a different day; autoRenew must be a strict boolean and a notice period requires it, because a notice against a renewal that cannot happen is a clause that can never apply."
           ]
@@ -355,15 +374,15 @@
         {
           "heading": "Where it stops",
           "body": [
-            "Schema metadata publishes an explicit notModeled list, the plan payload carries its own, and the Admin prints it on the screen. The list is long on purpose: billing, invoicing, payment, usage rating, proration, ramps, minimum commitments, tax, FX, revenue recognition, MRR, ARR, TCV, amendments, seat changes, renewal, cancellation, and every downstream execution concept that later packages add."
+            "Schema, plans and Admin retain explicit domain limitations. Activation itself does not bill or schedule renewal. Lifecycle can execute a governed successor from independently signed evidence; it never changes historical contract rows."
           ]
         }
       ],
       "boundaries": [
         "Nothing bills. There is no invoice, no payment, no usage rating, no proration and no dunning, and the contract package does not pretend otherwise.",
-        "The term was never signed. The signed document package carries priced lines, parties and signers and no dates at all, so effective date, term start and end, auto-renew and notice period are post-signature operational metadata a human types in with a required reason — stamped as such on the contract, its version and the activation run.",
-        "There is no scheduler, so a term starting tomorrow produces a contract and subscription that are scheduled and stay scheduled forever, and a renewal notice period passes without anything firing.",
-        "No amendment exists. Seats and quantities cannot change, nothing can be cancelled or non-renewed with an audited reason, and there is no amendment history to read.",
+        "Terms frozen into the signed quote document retain signed-order provenance; legacy orders without signed terms can use explicitly labelled post-signature operational metadata. Operational dates are never promoted to signed terms.",
+        "Contract autoRenew and notice-period metadata do not execute a renewal or send a notice. Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04).",
+        "Governed renewal and amendment execution creates a successor agreement from its own signed Order, with immutable lineage and a derived line delta. Historical contracts and subscriptions are not edited. There is no automatic renewal, cancellation execution, billing or customer notification. A human can record non-renewal intent with a reason; that is not cancellation execution.",
         "MRR, ARR and TCV are not calculated from contract data, and no expansion or contraction is classified at the time of change.",
         "A Subscription here is a commercial activation record — what was sold as a recurring right, per period, copied from the Order. Nothing consumes it, meters it or invoices it.",
         "A pending delivery or service obligation is a recorded fact, not a queued job. Nothing executes it and nothing activates it until a human, in a later domain, chooses to."
@@ -388,12 +407,14 @@
         "JTBD-10"
       ],
       "docs": [
-        "docs/CONTRACT_ACTIVATION.md"
+        "docs/CONTRACT_ACTIVATION.md",
+        "docs/RENEWAL_AMENDMENT.md"
       ],
       "tests": [
         "tests/contracts-activation-e2e.test.js",
         "tests/contracts-contract.test.js",
-        "tests/admin-contracts.test.js"
+        "tests/admin-contracts.test.js",
+        "tests/lifecycle-amendment-execution-e2e.test.js"
       ],
       "related": [
         "signature-to-order",
@@ -412,6 +433,16 @@
           "q": "What happens to the contract if the package is removed?",
           "a": "The domain is optional and detaches cleanly: the kernel fingerprint is unchanged with the package absent, and a database written before removal boots again with its rows intact when the package returns. That boundary is held by tests, not convention."
         }
+      ],
+      "facts": [
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent",
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent",
+        "domain.lifecycle.package_native=package_native"
       ]
     },
     {
@@ -475,7 +506,7 @@
         "A delivery partner is a business reference and a name snapshot, not an account. It grants no login, portal, invitation, permission or role; there is no fee, revenue share or partner SLA; nothing notifies the partner and nothing can be sent to them from here. One partner per project, deliberately, rather than an unreviewed array.",
         "A delivery contribution estimate is not a margin. No revenue recognition, no cost of goods sold, no gross or accounting margin, no profit, no payroll and no FX — and a project carrying any recurring obligation returns no estimate at all and names the reason.",
         "Nothing bills on an accepted milestone. There are no billing-milestone primitives, no invoice, no payment and no billing eligibility.",
-        "Customer acceptance is what a user actor recorded a customer as saying. It is not an authenticated customer action, not a legal signature, not a verified identity and not authorization to bill; there is no customer portal and nothing is sent anywhere.",
+        "Approving a delivery change records a commercial-followup candidate and amends no agreement. Lifecycle successor execution is a separate governed flow; a delivery candidate is not authority to execute it.",
         "An approved commercial change amends nothing. It raises an immutable candidate for a Commercial Amendment milestone that does not exist yet, and the tests assert every quote, order, contract and subscription row is byte-identical before and after.",
         "No file, receipt, document or binary is stored. A deliverable is a record with a state, not an artifact you can download.",
         "Planning dates are post-sale planning data. They were not signed, they are not a customer commitment, and nothing fires on them."
@@ -641,7 +672,7 @@
         },
         {
           "q": "Does escalation notify anyone automatically?",
-          "a": "No. Escalation is recorded, not delivered: there is no notification channel, no on-call rotation and no scheduler. The record states plainly that nothing was notified, which is the honest shape until a notification exists."
+          "a": "Escalation is recorded, not delivered: no notification channel or on-call rotation ships. Explicitly started workers can present service-SLA asks, but timers neither send notifications nor decide escalations."
         }
       ]
     }

@@ -3,7 +3,7 @@
   "name": "accordo",
   "displayName": "Accordo — agent-native CRM framework",
   "version": "0.1.0",
-  "description": "Build custom CRMs and Customer Hubs as code you own. For Smart CRM, the agent composes while deterministic policy governs; for CDP + CRM, Accordo is the CRM process layer, not ingestion, identity resolution or segmentation. Includes skills and a local project MCP; code generation stays dry-run until --apply.",
+  "description": "Build custom CRMs and Customer Hubs as code you own. For Smart CRM, the agent composes while deterministic policy governs; for CDP + CRM, Accordo is the CRM process layer with bounded JSON imports and logical identity; no streaming ingestion, audience segmentation or CDP activation. Includes skills and a local project MCP; code generation stays dry-run until --apply.",
   "author": {
     "name": "Aetha",
     "url": "https://github.com/khaoss85"

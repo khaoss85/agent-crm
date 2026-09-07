@@ -1,5 +1,10 @@
 # Name verification log
 
+> **Historical check: 2026-08-07.** Availability results below are archived research,
+> not current registration instructions. Accordo and its distribution are already
+> established; use `../strategy/DISTRIBUTION_SUBMISSIONS.md` for dated receipts and
+> `PENDING_HUMAN_SUBMISSION.md` for unresolved owner decisions.
+
 Re-verification of the `BRAND_REQUIREMENTS.md` shortlist, so the founder's remaining work is a
 registrar session and a trademark screen rather than a research project.
 

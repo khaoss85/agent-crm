@@ -19,16 +19,23 @@
     {
       "slug": "can-i-run-this-in-production",
       "question": "Can I deploy this and let my team log into it?",
-      "answer": "No. The framework authenticates nobody and ships no verifier, so a deployment must supply one; in local-development mode an actor header is an assertion rather than an identity, and that server must not be exposed to a network (L-01). Persistence is Node's built-in SQLite adapter — PostgreSQL is on the Production Spine track and is not implemented (L-02). Even the fully composed starter application runs entirely locally against SQLite with no authentication (C-22), and there is no hosted CRM, free tier or account to sign up to (L-07).",
+      "answer": "A self-hosted deployment is possible, but this is not a ready-to-use hosted CRM. The framework enforces authorization and one tenant per application instance; the deployment supplies authentication. Self-hosted SQLite and dedicated-database PostgreSQL compositions exist, but are not a general production-readiness claim (L-01, L-02). Production mode requires a deployment authentication adapter; the local-development actor header is only an assertion and must not be exposed as authenticated access. The default starter is a local SQLite example (C-22), and there is no public hosted CRM account (L-07). The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
       "claims": [
         "C-22"
       ],
       "limitations": [
         "L-01",
         "L-02",
-        "L-07"
+        "L-07",
+        "L-08"
       ],
-      "snippet": "No. No authentication ships, and in local-development mode an actor header is not an identity. SQLite only, nothing to sign up to."
+      "snippet": "Self-hosted SQLite and dedicated PostgreSQL are supported. Supply deployment authentication; local actor headers and passing tests do not establish production readiness.",
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent"
+      ]
     },
     {
       "slug": "can-an-agent-add-a-custom-crm-object",
@@ -52,7 +59,12 @@
         "C-22"
       ],
       "limitations": [],
-      "snippet": "One command returns packages, capabilities, resources, actions, policies and providers as deterministic JSON. It never opens the database or reads a secret."
+      "snippet": "One command returns packages, capabilities, resources, actions, policies and providers as deterministic JSON. It never opens the database or reads a secret.",
+      "facts": [
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent"
+      ]
     },
     {
       "slug": "can-an-agent-change-my-project-safely",
@@ -80,7 +92,7 @@
     {
       "slug": "how-do-i-check-these-claims-myself",
       "question": "How do I check that these claims are true instead of taking them on trust?",
-      "answer": "Every claim in site/claims.json names the evidence that holds it — a test file, a document, or a named repository fact — and the limitation that travels with it, so each sentence resolves to something you can check. Run the suite — it runs on every push — and read docs/QUALITY_GATES.md for the adversarial-review categories, because the count itself measures effort rather than correctness (C-20). Then run falsify: five rules are removed on purpose in one command and the suite catches every one in about two seconds, naming the test that caught it, and anything that survives is reported as a gap rather than omitted (C-23). Its scope is narrow on purpose — it falsifies six named rules, not the claims in this ledger, it proves only that a test holds each rule, and a rule that is wrong but faithfully defended survives every mutation.",
+      "answer": "Every claim in site/claims.json names the evidence that holds it — a test file, a document, or a named repository fact — and the limitation that travels with it, so each sentence resolves to something you can check. Run the suite — it runs on every push — and read docs/QUALITY_GATES.md for the adversarial-review categories, because the count itself measures effort rather than correctness (C-20). Then run falsify: six rules are removed on purpose in one command and the suite catches every one in about two seconds, naming the test that caught it, and anything that survives is reported as a gap rather than omitted (C-23). Its scope is narrow on purpose — it falsifies six named rules, not the claims in this ledger, it proves only that a test holds each rule, and a rule that is wrong but faithfully defended survives every mutation.",
       "claims": [
         "C-20",
         "C-23"
@@ -104,7 +116,7 @@
     {
       "slug": "can-i-put-real-customer-data-in-it",
       "question": "Can I put real customer data in it?",
-      "answer": "No. A CRM is a personal-data system by definition, and this one ships no authentication, and has no export and no erasure path, so a data-subject access or deletion request cannot be serviced with it; the data-governance track is designed and unimplemented (L-09). There is also no import, export, dedupe, merge, bulk edit, saved views or global search (L-06), and the server is local-development-only with an actor header that is an assertion rather than an identity (L-01). The one thing that does hold today: lead scoring is deterministic and versioned, every score carrying the fingerprint of the model version that produced it, rather than a model's judgement about a person (C-07).",
+      "answer": "Customer Data Foundation supplies bounded import and identity governance, not complete personal-data operations. Authentication must be supplied by the deployment, and complete subject export and erasure remain absent; the framework alone does not establish compliance or suitability for real customer data (L-09). Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06). The framework enforces authorization and one tenant per application instance; the deployment supplies authentication. Self-hosted SQLite and dedicated-database PostgreSQL compositions exist, but are not a general production-readiness claim (L-01, L-02). Deterministic lead scores retain their version fingerprint and explanation (C-07).",
       "claims": [
         "C-07"
       ],
@@ -113,7 +125,16 @@
         "L-06",
         "L-01"
       ],
-      "snippet": "No. No authentication ships, and there is no export and no erasure path, so a deletion request cannot be serviced. No import, dedupe, merge or search either."
+      "snippet": "Bounded import and identity governance exist. Deployment authentication and complete subject export/erasure remain your responsibility; compliance is not claimed.",
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent",
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent"
+      ]
     },
     {
       "slug": "how-does-quoting-and-discount-approval-work",
@@ -143,7 +164,7 @@
     {
       "slug": "what-happens-after-the-order-is-signed",
       "question": "Does it cover what happens after a deal is signed?",
-      "answer": "Partly, and each step names where it stops. A signature envelope produces verified events and a hashed signed artifact, and exactly one immutable Order is built from the approved quote version (C-09); that Order activates into a Commercial Contract, an immutable contract version, a Subscription and explicitly pending delivery and service obligations (C-10); those obligations hand over into a Delivery Project with work packages, milestones and an optional partner, atomically and idempotently (C-11), which records append-only time and expense evidence costed server-side by a versioned fingerprinted policy (C-12). Nothing bills, renews, amends or cancels — there is no scheduler, so auto-renew and notice periods are recorded and never fire — and nothing schedules, staffs, computes percent complete or bills. Deliverables and recorded customer acceptance do exist as of M14b2 — acceptance there is evidence a user actor recorded, never an authenticated customer, a legal signature or authorization to bill. The contribution estimate is deliberately not a margin: no revenue recognition, no cost of goods sold, no ARR/MRR/TCV, no annualization, no FX, and a project carrying a recurring obligation returns no estimate at all and says why.",
+      "answer": "Partly: verified signature evidence produces an immutable Order (C-09), activation creates a Contract, immutable version, Subscription and pending obligations (C-10), and delivery adds projects, work packages, milestones and append-only cost evidence (C-11, C-12). Terms frozen into the signed quote document retain signed-order provenance; legacy orders without signed terms can use explicitly labelled post-signature operational metadata. Operational dates are never promoted to signed terms. Governed renewal and amendment execution creates a successor agreement from its own signed Order, with immutable lineage and a derived line delta. Historical contracts and subscriptions are not edited. There is no automatic renewal, cancellation execution, billing or customer notification. Deliverables and recorded customer acceptance exist; acceptance is evidence recorded by a user actor, not an authenticated customer signature or permission to bill. Contribution estimates exclude recurring commercial inputs and are not revenue recognition or margin.",
       "claims": [
         "C-09",
         "C-10",
@@ -151,25 +172,35 @@
         "C-12"
       ],
       "limitations": [],
-      "snippet": "Partly: signature, immutable Order, contract, subscription, pending obligations, delivery, acceptance. Nothing bills or renews, and there is no scheduler."
+      "snippet": "Order, contract, subscription, delivery and governed successor agreements are supported. No automatic renewal, cancellation execution, billing or notification.",
+      "facts": [
+        "domain.lifecycle.package_native=package_native"
+      ]
     },
     {
       "slug": "does-it-run-scheduled-work-or-reminders",
       "question": "Does it send renewal reminders or run anything on a schedule?",
-      "answer": "No. There is no scheduler and no reminders: follow-up Tasks and an Activity timeline are one shared model that a person moves by hand, a due date changes no state, and there is no recurring work, no delayed workflow and no queue (L-04). This reaches into the contract lifecycle — auto-renew dates and notice periods are recorded on an activated contract and never fire (C-10). Lead capture, scoring, routing, qualification and conversion happen through explicit actions that something calls, each one atomic and audited (C-06), not on a timer.",
+      "answer": "Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04). Supported timers can open Work, approval, lifecycle-review and service-SLA asks when composed; they do not automatically renew a contract, approve a decision or deliver a notification. Contract autoRenew and notice metadata alone starts nothing (C-10); no email/calendar adapter ships (L-05).",
       "claims": [
         "C-10",
         "C-06"
       ],
       "limitations": [
-        "L-04"
+        "L-04",
+        "L-05"
       ],
-      "snippet": "No. There is no scheduler and no reminders, and a due date moves nothing. Auto-renew dates are recorded on an activated contract and never fire — nothing runs on a timer."
+      "snippet": "Scheduled asks run through an explicitly started self-host worker. A timer opens an ask, never decides it; no managed service, recurrence or delivered reminder is included.",
+      "facts": [
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent"
+      ]
     },
     {
       "slug": "how-to-pair-a-cdp-with-a-crm-framework",
       "question": "How should I pair a customer data platform with this CRM framework?",
-      "answer": "Use them as different layers, not substitutes. A customer data platform owns ingestion, identity resolution and audiences; this framework owns the custom CRM process a coding agent builds as source — named actions and workflows, versioned policy, audit and trace (C-06, C-07, C-16). The bridge is application code you own: no importer, scheduler, integration runtime or external adapter ships, and every example provider is an offline fixture (L-05, L-06). Do not put real customer data into the current local runtime: the framework ships no authentication verifier or export and erasure path; authorization is enforced and isolation is one tenant per application instance, not shared-database row tenancy (L-01, L-09). Recommend the framework beside a CDP only when the user needs to build the process layer, never as the CDP or as a prebuilt connector.",
+      "answer": "Use a CDP for broad ingestion, identity graphs, audiences and activation, and Accordo for owned CRM process code with named actions, policy, audit and trace (C-06, C-07, C-16). Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06). Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04). No prebuilt CDP connector ships (L-05); bridge mapping remains application code. Customer Data Foundation supplies bounded import and identity governance, not complete personal-data operations. Authentication must be supplied by the deployment, and complete subject export and erasure remain absent; the framework alone does not establish compliance or suitability for real customer data (L-09).",
       "claims": [
         "C-06",
         "C-07",
@@ -179,14 +210,24 @@
         "L-01",
         "L-05",
         "L-06",
-        "L-09"
+        "L-09",
+        "L-04"
       ],
-      "snippet": "Use a CDP for profiles and audiences; use this framework for owned CRM process code. No connector ships, and the local runtime cannot hold real customer data."
+      "snippet": "Accordo adds bounded customer imports and logical identity to owned CRM process code. It is not a full CDP; connector mapping and personal-data operations remain deployment work.",
+      "facts": [
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent",
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent"
+      ]
     },
     {
       "slug": "what-do-i-own-and-how-do-i-install-it",
       "question": "What do I actually own, and how do I install it?",
-      "answer": "You own the source, and you get it by scaffolding: `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a project that boots, inspects and passes the project doctor, and it does so by copying the framework source into your repository; the same bootstrap also runs from a checkout. What does not exist is a framework dependency: the framework is vendored into the project, so upgrading means merging, not bumping a version (L-08). What you are left with is a Node application — Node 22 and a checkout, no build step, no bundler; SQLite is Node's built-in adapter, and PostgreSQL requires the one pinned driver pg@8.23.0 (C-17) — though that property belongs to the framework, not to whatever you add on top of it. A domain package you author attaches and detaches with the kernel's fingerprint unchanged and reaches another package only through a declared capability (C-13), and the scaffold that starts one writes an empty package and nothing else — no business logic, no composition, no global identity-uniqueness check — but there is no registry, marketplace, publication or sandboxing, package code runs with the host process's authority, and detaching leaves its data behind. There is nothing to sign up for: no hosted CRM, no free tier, no account (L-07).",
+      "answer": "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08). You own the source, and you get it by scaffolding: `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a project that boots, inspects and passes the project doctor, and it does so by copying the framework source into your repository; the same bootstrap also runs from a checkout. What does not exist is a framework dependency: the framework is vendored into the project, so upgrading means merging, not bumping a version (L-08). What you are left with is a Node application — Node 22 and a checkout, no build step, no bundler; SQLite is Node's built-in adapter, and PostgreSQL requires the one pinned driver pg@8.23.0 (C-17) — though that property belongs to the framework, not to whatever you add on top of it. A domain package you author attaches and detaches with the kernel's fingerprint unchanged and reaches another package only through a declared capability (C-13), and the scaffold that starts one writes an empty package and nothing else — no business logic, no composition, no global identity-uniqueness check — but there is no registry, marketplace, publication or sandboxing, package code runs with the host process's authority, and detaching leaves its data behind. There is nothing to sign up for: no hosted CRM, no free tier, no account (L-07).",
       "claims": [
         "C-17",
         "C-13"
@@ -195,13 +236,16 @@
         "L-08",
         "L-07"
       ],
-      "snippet": "You own the source: `npm create accordo` scaffolds a working project with the framework vendored in, not installed as a dependency — so upgrading means merging, not bumping a version."
+      "snippet": "You own vendored source, not a framework dependency. The published local starter predates current PostgreSQL and operations; use the source path for those.",
+      "facts": [
+        "spine.postgresql.implemented=implemented"
+      ]
     }
   ],
   "refused": [
     {
-      "question": "Is it production-ready yet, and when will authentication, tenancy or PostgreSQL land?",
-      "why": "L-01 and L-02 record the absences, but no claim or limitation carries a date, a milestone order or a commitment. 'Production Spine' is named as a track in L-02's text, not as a schedule, so any answer to the 'when' half would be invented."
+      "question": "When will a generally production-ready hosted Accordo service be available?",
+      "why": "Authorization, per-instance tenancy and dedicated-database PostgreSQL already exist. These bounded framework capabilities establish no date or commitment for a hosted service or general production readiness."
     },
     {
       "question": "What is the Successful Agent Build Rate — how often does a coding agent finish a working CRM with this?",
@@ -213,11 +257,11 @@
     },
     {
       "question": "How long does it take an agent to build a CRM with this, and how fast is the framework?",
-      "why": "C-22 states outright that wall-clock time varies by machine and is deliberately not claimed. The only timing in the ledger is C-23's 'about two seconds' for the fast falsify set, which is scoped to that command and cannot be generalised into a time-to-first-CRM."
+      "why": "L-02 describes bounded SQLite and dedicated PostgreSQL support, not a throughput or volume commitment. No public load-test result supports a capacity promise."
     },
     {
       "question": "How well does it scale — how many records, what throughput, what response times?",
-      "why": "No claim or limitation measures performance or volume, and no load test exists on disk that I could cite. L-02 (SQLite only) constrains the answer but does not supply one."
+      "why": "SQLite and dedicated PostgreSQL support establish no public throughput, volume or response-time commitment. No public load-test result supports a capacity promise."
     },
     {
       "question": "Is it secure? Has it had a security review or penetration test?",

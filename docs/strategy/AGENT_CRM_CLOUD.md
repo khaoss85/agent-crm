@@ -1,6 +1,7 @@
 # Accordo Cloud
 
-**Status: product design and roadmap track only. Nothing in this document is implemented.** No control plane, no managed runtime, no Cloud CLI, no project MCP deployment tools exist today. This document defines what "Accordo Cloud" means so the roadmap can name it, sequence it, and gate it honestly.
+**Status: public product specification, not an available managed offer.** This repository does not implement the Cloud control plane. Private platform and pilot repositories have separate implementation and deployment records; their receipts must distinguish deployed from validated and cannot establish public availability. The target below is broader than any private pilot slice.
+<!-- truth: cloud_control_plane.implemented=absent -->
 
 ## 1. What Accordo Cloud is
 
@@ -56,7 +57,11 @@ Zero-downtime deployment · Health checks · Preview environments
 Production environments · Domain and TLS management
 ```
 
-**Hard gate:** the first six items are the **Production Spine** (EXECUTION_ROADMAP Phase 6). **No public managed deployment may be considered production-ready before the Production Spine exists.** The current framework is explicitly local-development-only (no auth, no tenancy, actor headers are identity claims, SQLite file storage); putting it on the public internet as-is would be negligent, and no Cloud milestone may shortcut that gate.
+**Hard gate:** the first six items are the **Production Spine** (EXECUTION_ROADMAP Phase 6). **No public managed deployment may be considered production-ready before the Production Spine exists.** Framework authorization, instance tenancy, dedicated PostgreSQL and bounded self-host operations exist. An externally exposed deployment still requires its own identity verifier and security/operating evidence; no Cloud milestone may shortcut that gate.
+<!-- truth: spine.authorization.enforced=enforced -->
+<!-- truth: spine.tenant.isolation.mode=one_tenant_per_instance -->
+<!-- truth: spine.postgresql.implemented=implemented -->
+<!-- truth: spine.authentication.framework_verifier=absent -->
 
 ## 4. Agent Operations track (future)
 

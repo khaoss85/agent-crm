@@ -4,7 +4,7 @@
  * The files a project bootstrap writes itself, as opposed to the framework
  * source it copies.
  *
- * There are nine of them and none contains a business guess. No Company field,
+ * There are ten of them and none contains a business guess. No Company field,
  * no pipeline stage, no policy threshold, no sample record: a generated domain
  * model is a claim about a business nobody has described, and an agent reads
  * generated code as a decision already taken. What the project gets instead is
@@ -77,6 +77,7 @@ function packageJson(name) {
       verify: 'npm run check && npm test',
       smoke: 'node --no-warnings scripts/smoke.js',
     },
+    dependencies: { pg: '8.23.0' },
     license: 'MIT',
   }, null, 2)}\n`;
 }
@@ -100,17 +101,19 @@ An Accordo CRM project. The framework source is checked in under \`packages/\`
 and \`apps/\` — you own it outright, and you change it the way you change any
 other code in this repository.
 
-**It is local-development software.** No authentication ships, and
-no role-based access control; it stores data in SQLite on this machine; and
-nothing in it is deployable. Read the limitations below before building
-anything on top of it that touches money.
+**It starts in local-development mode with SQLite.** This default composition
+does not enable tenant isolation or membership authorization. The copied framework
+offers an optional Production Spine that enforces those boundaries when explicitly
+configured; the starter does not compose it. No deployment authentication verifier
+ships. This scaffold is not a production-readiness claim.
 
 ## Run it
 
 SQLite is Node's built-in adapter and needs no extra install. PostgreSQL
-requires the pinned \`pg@8.23.0\` driver; this generated project does not
-select PostgreSQL, so Node 22.16+ and this directory are the whole SQLite
-toolchain.
+requires the pinned \`pg@8.23.0\` driver declared in \`package.json\`: run
+\`npm install\` before selecting it with explicit deployment configuration.
+This generated project selects SQLite, so Node 22.16+ and this directory
+are the whole default toolchain.
 
 \`\`\`bash
 npm run verify     # syntax check, then this project's own tests
@@ -157,15 +160,17 @@ code, and none of them is scheduled here.
 
 - **No authentication.** Actor headers are not identity. The HTTP server is
   local-development-only.
-- **No tenancy.** There is no data boundary between customers. One database is
-  one undivided dataset.
-- **No RBAC.** Approval keys are labels; only the actor *type* is enforced —
-  which is real (an agent actor cannot take a human approval decision, and this
-  project's own tests prove it) and is not authorization.
-- **SQLite only.** Storage is \`node:sqlite\`. There is no PostgreSQL adapter.
-- **No scheduler and no durable outbox.** Nothing fires on a date, and
-  post-commit event delivery dies with the process.
-- **Every provider is an offline fixture.** No enrichment, signature or catalog
+- **Tenant and membership enforcement is not enabled by default.** The optional
+  Production Spine can enforce one tenant per application instance and membership
+  permissions, but requires explicit composition, verified identity and storage
+  configuration. Shared-database row tenancy is absent.
+- **SQLite is the default.** Dedicated-database PostgreSQL source is included,
+  but requires installing the pinned driver and deployment configuration.
+- **Operations require explicit composition.** Durable jobs, transactional
+  outbox, scheduled timer consumers, secret-provider, backup and telemetry
+  contracts are included. No worker autostarts, and no managed custody or
+  telemetry backend ships.
+- **Business provider adapters are offline fixtures.** No enrichment, signature or catalog
   provider has ever been contacted over a network.
 - **The framework is a copy, not a dependency.** You own it, and upgrading means
   merging changes rather than bumping a version.
@@ -230,8 +235,12 @@ already inconsistent, and it is cheap enough to run before every change.
 
 ## What this project is not
 
-No authentication ships, SQLite only, no scheduler, no durable
-outbox, every provider an offline fixture, and nothing deployable. Do not write
+The default is local SQLite with no deployment authentication verifier.
+The optional Production Spine is not composed: tenant isolation and membership
+authorization are not enabled. Explicitly composing that spine can enable them.
+PostgreSQL requires the declared pinned driver and explicit configuration.
+Workers require explicit composition and start; no managed custody or telemetry
+backend ships, and business provider adapters remain offline fixtures. Do not write
 a claim into this repository that these limits contradict — state a capability
 and its limitation in the same breath.
 `;

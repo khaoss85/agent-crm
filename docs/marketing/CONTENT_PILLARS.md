@@ -52,7 +52,7 @@ tempting violations, named so they stay named:
 
 | Topic | Why it is held | The honest version, if we want it |
 |---|---|---|
-| Renewals firing, SLA timers, unattended follow-up | There is no scheduler (`L-04`) | *"The renewal policy is finished. Nothing fires it, and here is why we shipped it anyway"* — a good article, labelled an **architecture** post, not a capability post |
+| Renewal and SLA timer contracts | Self-host timers require explicit worker startup; they open requests and do not approve renewals (`L-04`) | Show the tested request boundary and worker setup; do not imply a managed scheduler, automatic renewal or provider notification |
 | Cloud, Analytics Studio, Marketing MK0–MK7, Data Governance, Integration Runtime | Design-only | A clearly labelled roadmap post, once, not a series |
 | `npm create <name>` as a thing a reader can run | **Hold lifted 2026-08-19** — `create-accordo@0.1.0` is live and the command scaffolds a verifying project, so this is now a capability topic | What stays held is the neighbouring overclaim: the framework as an installable *library*. `accordo` on npm is an empty reservation by design, and no post may blur the scaffolder into a dependency |
 | Any number from the build benchmark | Not executed (`L-03`) | Nothing. Not a range, not an estimate, not a placeholder in a mockup |

@@ -129,7 +129,7 @@
       "id": "JTBD-07",
       "section": "CRM JTBD validation matrix",
       "status": "partially supported",
-      "summary": "the *tracking* half is now reusable and the *scheduling* half still does not exist. Work v1 (ADR-030) replaced the bespoke Lead slice with one package-native Task and Activity model that three business events consume, over an explicit transition table with a human-actor boundary. Nothing is scheduled: there is no scheduler, no delayed-workflow primitive, no reminder, no queue, no recurring work, and dueAt is evidence that changes no state — the word *schedule* in this row's title is still unsupported.",
+      "summary": "Work supplies reusable Tasks and Activity. Explicitly composed self-host timer consumers can open a Work ask through an application-started worker; dueAt alone starts nothing. No recurrence, notification delivery, assignment automation or managed worker service is included.",
       "tests": [
         "tests/lead-qualification-e2e.test.js",
         "tests/work-operations-e2e.test.js",
@@ -164,14 +164,16 @@
     },
     {
       "docs": [
-        "docs/CONTRACT_ACTIVATION.md"
+        "docs/CONTRACT_ACTIVATION.md",
+        "docs/RENEWAL_AMENDMENT.md"
       ],
       "id": "JTBD-10",
       "section": "CRM JTBD validation matrix",
       "status": "partially supported",
-      "summary": "a contract can now be *activated* from a signed Order with an explicit term (M12), and the renewal-approval workflow slice is validated. Renewal itself is not supported: auto-renew and the notice period are recorded only, nothing fires on them (no scheduler), and amendments, cancellation and non-renewal do not exist.",
+      "summary": "contract activation, human renewal intent and governed successor execution exist, retaining signed-term provenance and immutable lineage. Timer consumers can open lifecycle-review asks when an application explicitly starts its worker. They do not automatically renew, cancel, bill or notify; historical contracts are not edited.",
       "tests": [
         "tests/contracts-activation-e2e.test.js",
+        "tests/lifecycle-amendment-execution-e2e.test.js",
         "tests/workflow.test.js"
       ],
       "title": "Manage contracts and renewals"
@@ -400,8 +402,9 @@
       "id": "JTBD-CM-04",
       "section": "Communications (no milestone assigned)",
       "status": "partially supported",
-      "summary": "tracked, never scheduled. Work v1 (ADR-030): one reusable Task and Activity model with an explicit transition table, consumed by Lead qualification, Lifecycle's commercial follow-up and Service escalation, each opening exactly one task under a deterministic business key inside its own transaction, and refusing to write at all when that transaction is not there — tests/work-operations-e2e.test.js, tests/work-operations-evidence.test.js, tests/work-provenance-and-actor.test.js, tests/work-source-key-stability.test.js. Scheduling is still absent: no scheduler, no reminder, no notification and no assignment, and dueAt changes no state — the same limit JTBD-07 states",
+      "summary": "Work provides one reusable Task and Activity model. Self-host timer consumers can open scheduled Work asks through an explicitly started worker; dueAt alone starts nothing. Still partial: no recurrence, notification delivery, automatic assignment or managed worker service. See tests/work-operations-e2e.test.js, tests/work-operations-evidence.test.js, tests/work-provenance-and-actor.test.js, tests/work-source-key-stability.test.js and tests/spine-v3c-timer-consumers-postgresql.test.js.",
       "tests": [
+        "tests/spine-v3c-timer-consumers-postgresql.test.js",
         "tests/work-operations-e2e.test.js",
         "tests/work-operations-evidence.test.js",
         "tests/work-provenance-and-actor.test.js",
@@ -488,10 +491,12 @@
       "id": "JTBD-CS-01",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
       "status": "partially supported",
-      "summary": "order.activate-contract (human actor only) creates one contract, its immutable version and one line per order component, atomically and idempotently, with every amount copied from the signed Order — but the term is not signed: the document package carries no dates, so effective/start/end, auto-renew and notice are operational metadata recorded after signature (termsSource, with a required reason). A signed commercial agreement end to end needs a pre-signature term snapshot, which does not exist. Evidence: tests/contracts-activation-e2e.test.js, tests/contracts-review.test.js, starter install.mjs",
+      "summary": "order.activate-contract (human actor only) creates one contract, its immutable version and one line per order component, atomically and idempotently, with every amount copied from the signed Order. If the quote carries a term, submission freezes it before signature; the canonical document hash covers its dates, auto-renew and notice fields, verified completion copies it to the Order, and activation preserves it as signed-order-terms, refusing manual overrides. Still partial: termless Orders use explicitly reasoned post-signature-operational-activation metadata, not signed terms, and no signed term is backfilled. Signature providers remain offline fixtures, so this does not validate a real external signing deployment. Evidence: tests/signed-terms-e2e.test.js, tests/signed-terms-integrity.test.js, tests/contracts-activation-e2e.test.js, tests/contracts-review.test.js, starter install.mjs",
       "tests": [
         "tests/contracts-activation-e2e.test.js",
-        "tests/contracts-review.test.js"
+        "tests/contracts-review.test.js",
+        "tests/signed-terms-e2e.test.js",
+        "tests/signed-terms-integrity.test.js"
       ],
       "title": "Activate a commercial contract from a signed Order"
     },
@@ -500,8 +505,12 @@
       "id": "JTBD-CS-02",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
       "status": "partially supported",
-      "summary": "one subscription per contract, with a line for every component whose commercial axis is subscription — including recurring components that also carry a service or delivery obligation, so no recurring commitment is lost. It is a commercial activation record only: nothing bills, prorates, renews or cancels it; a future-dated subscription is scheduled and nothing transitions it (no scheduler); and the term itself is post-signature operational metadata",
-      "tests": [],
+      "summary": "one subscription per contract, with a line for every component whose commercial axis is subscription — including recurring components that also carry a service or delivery obligation, so no recurring commitment is lost. Its term inherits the signed Order snapshot when present, or explicitly reasoned operational metadata for a termless Order; the provenance remains visible. Still partial: activation creates commercial records, not billing, proration or cancellation. A future-dated subscription is scheduled; self-host timers can request lifecycle review but do not automatically activate or renew it. Governed amendment execution creates a separate successor agreement without modifying the existing subscription. Evidence: tests/signed-terms-e2e.test.js, tests/contracts-activation-e2e.test.js, tests/lifecycle-amendment-execution-e2e.test.js",
+      "tests": [
+        "tests/contracts-activation-e2e.test.js",
+        "tests/lifecycle-amendment-execution-e2e.test.js",
+        "tests/signed-terms-e2e.test.js"
+      ],
       "title": "Activate a subscription with lines and an initial term"
     },
     {
@@ -544,7 +553,7 @@
       "id": "JTBD-CS-06",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
       "status": "not supported",
-      "summary": "needs both this layer and a scheduler (JOBS_AND_OUTBOX.md)",
+      "summary": "self-host timer consumers can open a lifecycle review ask when an application explicitly starts its worker, but full renewal scheduling and execution are not established by that primitive; automatic renewal and delivered notices remain absent (JOBS_AND_OUTBOX.md)",
       "tests": [],
       "title": "Schedule a renewal ahead of term end"
     },
@@ -697,7 +706,7 @@
       "id": "JTBD-DG-05",
       "section": "Data governance (no milestone assigned — DATA_GOVERNANCE.md)",
       "status": "not supported",
-      "summary": "needs the scheduler",
+      "summary": "retention policy and evidence-producing retention execution are not implemented; generic durable jobs and scheduled asks do not supply them",
       "tests": [],
       "title": "Apply a retention policy and evidence that it ran"
     },

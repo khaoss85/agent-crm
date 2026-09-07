@@ -76,7 +76,9 @@ Intended permission model, enforced at **service boundaries, not UI**:
 | Customer | approved milestones/deliverables, acceptance actions |
 | Finance | budget, cost, margin, billing |
 
-**Stated clearly: real partner and customer access cannot be validated before authentication, tenancy and RBAC exist (Production Spine, `EXECUTION_ROADMAP.md` Phase 6).** Today the framework has no authentication and its actor headers are identity claims on a local-development surface. Until the Spine exists, partner/customer boundaries can be *designed* into service contracts and *tested* against declared actors, but no JTBD involving a real external partner or customer login may be claimed validated, and no benchmark gate involving real access enforcement may be scored.
+**Real partner/customer login requires deployment evidence.** Framework tenancy and RBAC exist; authentication is supplied by a deployment verifier. Service policy tests alone do not establish an authenticated external portal, so a JTBD or benchmark involving real external access needs its own live proof.
+<!-- truth: spine.authorization.enforced=enforced -->
+<!-- truth: spine.authentication.framework_verifier=absent -->
 
 ## 6. Economics
 

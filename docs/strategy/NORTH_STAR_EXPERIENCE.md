@@ -65,7 +65,7 @@ The North Star experience is **achieved** when all of the following hold, measur
 
 ## The zero-friction journey (Cloud extension)
 
-When the optional managed layer exists (`AGENT_CRM_CLOUD.md` — design only today), the target journey extends end to end:
+When the optional managed layer exists (`AGENT_CRM_CLOUD.md` — public product target; private pilot evidence is separate), the target journey extends end to end:
 
 ```text
 1.  User asks Claude Code or Codex to build a CRM.

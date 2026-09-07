@@ -207,7 +207,13 @@ test('strategic Markdown preserves executable blocks and block boundaries', (t) 
   const site = build();
   t.after(site.cleanup);
   const developers = site.read('developers.md');
-  assert.match(developers, /```text\nnpm create accordo my-crm\ncd my-crm\nnpm run crm -- app inspect --json\n```/);
+  assert.ok(developers.includes([
+    '```text',
+    `${brand.npm.createCommand}@${brand.npm.publishedVersion} my-crm -- --apply`,
+    'cd my-crm',
+    'npm run crm -- app inspect --json',
+    '```',
+  ].join('\n')));
 
   const how = site.read('how-it-works.md');
   assert.match(how, /1\. See[\s\S]*2\. Plan[\s\S]*3\. Build[\s\S]*4\. Prove technical health[\s\S]*5\. Prove one business journey/);
@@ -415,7 +421,10 @@ test('the CDP + CRM intent has one bounded search identity', (t) => {
   const html = site.read(path);
   assert.equal(/<title>([\s\S]*?)<\/title>/.exec(html)?.[1], 'CDP + CRM: profile beside process | Accordo');
   assert.equal(canonicalOf(html), `${ORIGIN}/${path}`);
-  assert.match(metaContent(html, 'description') ?? '', /Pair a CDP profile layer/);
+  const description = metaContent(html, 'description') ?? '';
+  assert.match(description, /Pair CDP profiles and audiences/);
+  assert.match(description, /bounded import and logical identity/);
+  assert.match(description, /connector remains application work/);
   assert.equal(metaContent(html, 'og:url'), `${ORIGIN}/${path}`);
 
   const structured = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]

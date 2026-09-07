@@ -33,7 +33,6 @@ const LABELS = ['modules', 'packages', 'resources', 'actions', 'policies', 'prov
  */
 const QUOTING_SURFACES = [
   { path: 'docs/marketing/LAUNCH_PACKET.md', order: 'count-first' },
-  { path: 'docs/strategy/GO_TO_MARKET.md', order: 'count-first' },
   { path: 'README.md', order: 'label-first' },
   // The answer pages quote the composition in prose, and they are the pages an answer engine
   // is most likely to lift a number out of.

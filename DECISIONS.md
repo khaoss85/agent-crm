@@ -4451,3 +4451,18 @@ deep-import private source or rebuild the redaction fence would fail the DX
 Simplicity Gate. No storage handle, locator, event bus or operator command
 enters the public surface, and this adds no agent-facing command, tool or
 namespace at all.
+
+### ADR-039 amendment — current GTM surfaces and release measurement
+
+The September 2026 audit found updated facts beside obsolete public prose: the
+site served current main, while its FAQ denied PostgreSQL and its own attached
+L-02 evidence affirmed it. The same failure affected lifecycle and customer
+data. The existing surface list now includes current public JSON and operating
+GTM entry points; the existing retired-claim mechanism rejects the observed
+false wording through both Repository Truth and the site check. It remains a
+finite lexical regression, not a semantic verifier or a new agent-facing rail.
+
+CI emits the existing measure-suite record from the verification it already
+runs. No count is transcribed; publication reconciles the artifact's commit and
+ancestry, the npm artifact and the deployed site separately. This changes
+repository maintenance and distribution evidence, not domain/runtime contracts.

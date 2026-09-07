@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "4d54983626fed6402eb1dd400b29f489ce774936bcdd40d0b8e22192d1c83be0",
+  "sourceSha": "160d1461b9c4f0bf5279b7112e904ed96659af7ef6ba438f6ba592703eba9514",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -463,7 +463,7 @@
       "authority": "measurement.git",
       "evidence": [
         "git merge-base --is-ancestor <sha> HEAD",
-        "sha:84a3efe"
+        "sha:451d797"
       ],
       "scope": "measurement",
       "status": "current",
@@ -471,50 +471,50 @@
     },
     {
       "id": "measurement.source_sha",
-      "value": "84a3efe",
+      "value": "451d797",
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.sha"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_count",
-      "value": 2068,
+      "value": 2275,
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.tests"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_file_count",
-      "value": 165,
+      "value": 185,
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.testFiles"
       ],
       "scope": "measurement",
-      "status": "stale",
+      "status": "current",
       "limitations": [
         "MEASUREMENT_DESCRIBES_COMMITTED_TREE"
       ]
     },
     {
       "id": "measurement.test_tree_current",
-      "value": "false",
+      "value": "true",
       "authority": "measurement.git",
       "evidence": [
         "git rev-parse <sha>:tests versus HEAD:tests",
-        "measuredTree:a338d698d55e"
+        "measuredTree:030b202c94e9"
       ],
       "scope": "measurement",
       "status": "current",
@@ -1019,5 +1019,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "ceb6b5a2d89a4c7b2d0ca72e8519f7b022ac83343ad018cfbff637fc71326f5f"
+  "fingerprint": "54dfc43d341e9e8fab392c11aa57255e2bfaf9ab2427ee2038c85fe31aa9a0c2"
 }

@@ -18,9 +18,9 @@ A copied test fixture has no Git metadata. Only `NODE_ENV=test` may inject a ful
 
 `llms.txt`, `llms-full.txt`, JSON contracts, Markdown peers and `/version.json` are CORS-readable with explicit content types. Strategic HTML is canonical and advertises its generated Markdown peer. The Content Security Policy permits static styles and images but no executable site JavaScript.
 
-## Human-only production check
+## Production verification
 
-Vercel project settings, production branch and the `accordo.dev` alias are account state. After the canonical PR merges, an account holder must:
+Vercel project settings, production branch and the `accordo.dev` alias are account state. After the canonical PR merges, the release owner or an explicitly authorized agent must:
 
 1. confirm the production branch is `main` and the alias targets its latest successful deployment;
 2. fetch `https://accordo.dev/version.json`;
@@ -28,3 +28,17 @@ Vercel project settings, production branch and the `accordo.dev` alias are accou
 4. inspect the homepage and representative product journeys on the production alias.
 
 No secret is required to perform the public comparison. A mismatch is deployment drift even if the repository build is green.
+
+## Match the installation to the site
+
+`site/brand.json` records the registry-verified `npm.publishedVersion` separately
+from the source publication candidate. The developer page names the published
+local snapshot and offers a current-source path; a candidate is never presented
+as an installed release. After staged approval, read the registry version and
+artifact integrity, install that exact tarball into an empty directory, and only
+then update the published-version record and the corresponding page copy.
+
+CI uploads `claims-measurement-<sha>` from its actual verification run. Confirm
+that the named commit is the reviewed source and an ancestor of the publication
+commit before copying the generated `measuredAgainst` record. A green site build
+with an old measurement is not evidence that the current suite was measured.

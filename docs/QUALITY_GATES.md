@@ -76,9 +76,12 @@ record. What the gate adds is that each of its non-default rows now names the de
 a claim about, or says in writing that none exists
 (`docs/jtbd/coverage/MATRIX_CROSSWALK.md`).
 
-## 4. Production gates (future, not met today)
+## 4. Production assessment
 
-Each is a hard gate before public multi-user use; none exists yet.
+Assess these per deployment. PostgreSQL conformance, tenant isolation, permission
+matrices and bounded backup/restore contracts now have executable coverage; that
+is not evidence of a complete publicly managed service. Browser CI, real provider
+operations and deployment custody retain their separately documented gaps.
 
 - PostgreSQL conformance suite (same tests, both adapters).
 - Browser E2E in CI (today it is manual — the largest coverage gap).
@@ -216,3 +219,23 @@ The boundaries, which are as much of the gate as the rules:
   refused rather than ignored (`TRUTH_CITATION_MALFORMED`).
 - **No JTBD row is a fact.** §3 is a person reading merged tests, and it stays
   one.
+
+### September GTM reconciliation
+
+The current FAQ, comparison, capability, concept, glossary and GTM entry points
+now participate in the existing Repository Truth surface set. `site:check` also
+refuses the exact retired false negatives on current authored and rendered
+content. The regression test restores stale text while retaining valid fact
+citations: a correct citation no longer excuses those recorded falsehoods.
+
+This remains a finite regression set. It does not infer arbitrary prose or
+replace independent editorial review. Dated articles and plans preserve their
+historical scope; scoped absences remain valid.
+
+The CI verification job invokes `scripts/measure-suite.js`, which runs the same
+`npm run verify` and emits its machine-generated measurement as an artifact.
+The artifact names the actual checked-out commit. Use the push run for the
+reviewed branch, verify its ancestry, and copy the generated record into the
+ledger in a follow-up commit. Never relabel a PR synthetic-merge measurement as
+a measurement of a different commit. Registry publication still requires its
+own installed-artifact and live-registry receipts.

@@ -36,7 +36,7 @@ windowed identity-conflict detector to replace v1's correctness-first whole-tabl
 read. **Production Spine v1 is implemented** (ADR-038), so this data now sits behind
 enforced authorization, memberships and one tenant per application instance — but the
 framework authenticates nobody and ships no verifier, so who a membership belongs to
-is only as trustworthy as the adapter a deployment supplies. Dedicated-database
+is only as trustworthy as the adapter a deployment supplies.
 Dedicated-database PostgreSQL application composition exists through Spine v2 M5;
 shared-database tenancy remains unimplemented. Spine v3A, v3B and v3C supply a
 bounded self-host durable job store, its transactional outbox and scheduled timer
@@ -78,7 +78,7 @@ intended, and a fact contract has nothing to say about an intention.
 | 3 | Declarative generation | manifest → module/service/tests |
 | 4 | Admin and SDK generation | manifest → UI and typed client |
 | 5 | create-project CLI | zero-to-project in one command |
-| 6 | Production spine | **v1 merged**: identity, tenancy, permissions · v2–v4: PostgreSQL, jobs, self-host interfaces |
+| 6 | Production spine | Identity, tenancy and permissions; dedicated PostgreSQL; bounded jobs and self-host interfaces |
 | 7 | Providers and plugins | integration surface |
 | 8 | Agent surface | Skills, Docs MCP, Project MCP |
 | 9 | Deploy and operate | deploy, logs, trace in production |
@@ -89,7 +89,7 @@ intended, and a fact contract has nothing to say about an intention.
 
 Phases 2–4 and 8 can overlap; 6 gates 9; 10 gates 11–12.
 
-**Accordo Cloud track** (specified in `AGENT_CRM_CLOUD.md`; design only, unbuilt): a named product track layered on these phases rather than a renumbering of them —
+**Accordo Cloud track** (specified in `AGENT_CRM_CLOUD.md`; public product target, with private implementation tracked separately): a named product track layered on these phases rather than a renumbering of them —
 
 ```text
 Production Spine (Phase 6)
@@ -132,7 +132,7 @@ M16 Analytics Studio v1
 **Parallelization and hard dependencies — this sequence does NOT gate Cloud.** The workstream milestones and the platform phases run in parallel, exactly as M0–M8 ran alongside strategy work:
 
 - **Hard dependencies inside the track:** M10 → M11 (an Order snapshots a signed Quote) → **M12** (a contract and its subscriptions are activated from an Order) → **M13** (a delivery project is created from the Order/Contract scope) → **M14** → **M15**. M9 is independent of M10–M15. **M16** closes the sequence pragmatically because its value grows with each preceding milestone, but the semantic layer plus pipeline metrics need only M8 and may be pulled earlier. Renewal scheduling inside M12 was gated on `JOBS_AND_OUTBOX.md`; Spine v3 lifted that gate. A person can now schedule a renewal review and a worker the application starts presents it at the instant. What M12 still stops short of is deciding anything on that instant: the review is an ask, and the renewal decision stays the human action lifecycle owns.
-- **The Production Spine (Phase 6) is a parallel hard gate, not a sequel.** **v1 is merged**: organizations/tenancy, memberships and RBAC exist and are enforced. Still owed by v2–v4: PostgreSQL, shared-database tenancy, durable jobs, secrets, backups, remote-safe MCP — and, outside the framework by design, the identity verifier a deployment supplies. **Accordo Cloud work begins when the Spine is done — not when all domains are done**, and "done" means the whole phase, not v1.
+- **The Production Spine (Phase 6) is a parallel hard gate, not a sequel.** **v1 is merged**: organizations/tenancy, memberships and RBAC exist and are enforced. Dedicated-database PostgreSQL, bounded durable jobs/outbox/timers and self-host operations now exist. Shared-database tenancy, managed operational services and deployment-specific remote access/security proof remain separate gaps; the identity verifier remains supplied by the deployment. **Accordo Cloud work begins when the Spine is done — not when all domains are done**, and "done" means the whole phase, not v1.
 - **What the Spine specifically gates within the workstreams:** manual-reassignment permission validation with real users (M9), partner/customer access boundaries and portals (M13–M15), role-aware dashboards (M16), and every remote or multi-user claim. v1 moved the blocker: the permission enforcement now exists, so what those rows still wait on is a **verified** user rather than an asserted one. Until a deployment supplies a verifier, they stay boundary-tested against declared actors, and the JTBD matrix must not claim them validated.
 
 Each milestone below follows the standard per-phase format.
@@ -328,7 +328,7 @@ MK7  Attribution and Closed-loop Optimization      hard-blocked on ANALYTICS_STU
 
 ## Agent Experience track (AX0–AX5)
 
-Cross-cutting, and **not** a pillar of its own: it is how a user reaches every other pillar. It does not renumber or delay the M-lane or the Marketing MK track. Design: `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`. **AX1 is implemented; AX2–AX5 are not.**
+Cross-cutting, and **not** a pillar of its own: it is how a user reaches every other pillar. It does not renumber or delay the M-lane or the Marketing MK track. Design: `OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`. This lane describes target outcomes; App Inspect, Solution Plan checking and the proof rails have implemented slices recorded in `GTM_TECHNICAL_EVIDENCE_HANDOFF.md`, while autonomous objective completion remains unproven.
 
 ```text
 AX0  Goal-to-Solution strategy + Skill
@@ -389,7 +389,7 @@ as two:
 
 ## Parallel platform track
 
-The product milestones above are one lane. These run **alongside** them and are not gated by domain progress. Each is design-only today unless `docs/PROJECT_STATUS.md` says otherwise.
+The product milestones above are one lane. These run **alongside** them and are not gated by domain progress. The dependency map is a plan; implementation status comes from `docs/PROJECT_STATUS.md` and the current-status block above.
 
 ```text
 domain package boundary      ADR-018 — staged, behavior-preserving extraction
@@ -479,7 +479,7 @@ Two consequences worth stating plainly: **a Cloud release serving an M11-era CRM
 
 ## Phase 6 — Production spine: identity, tenancy, permissions, PostgreSQL
 
-- **Outcome:** a generated CRM can be exposed to real users. **v1 is merged (PR #98, ADR-038); v2–v4 are not.**
+- **Outcome:** a generated CRM can be exposed to real users. Framework contracts are implemented through the bounded v2–v4 slices described above; real deployment readiness still requires its own verification.
 - **v1 — done.** Verified identity as an adapter contract (`IDENTITY_CONTRACT = 1`, four kinds), organizations and memberships, eleven bounded permissions in five role bundles enforced server-authoritatively, `ACCORDO_MODE` with no default and a production mode that fails startup without a verifier, one tenant per application instance enforced structurally, and a fail-closed actor boundary. **The framework authenticates nobody** — no login, password, session or OIDC implementation ships, and that is the deliberate boundary, not an oversight.
 - **v2 — dedicated-database PostgreSQL (merged through M5).** Storage Contract v1, explicit dialect intent, `pg@8.23.0` on PostgreSQL 16, dual bundled v1/v2 graphs, `createAccordoAppAsync()` / PostgreSQL `accordo serve`, write-outcome idempotency, control-plane leases and HTTP/SDK/Admin/CLI key transport. **Shared-database row-level tenancy remains deferred** — one tenant per application instance / dedicated data plane. Not a production-readiness claim.
 - **v3 — durable jobs, outbox and scheduler.**

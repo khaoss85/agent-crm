@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirmation:
-        description: Type create-accordo@0.1.0 to assemble and stage this version
+        description: Type create-accordo@0.2.0 to assemble and stage this version
         required: true
         type: string
 
@@ -22,8 +22,11 @@ jobs:
           fetch-depth: 0
 
       - name: Refuse anything except the reviewed default branch and version
+        env:
+          RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
         run: |
-          test "${{ inputs.confirmation }}" = "create-accordo@0.1.0"
+          test "$RELEASE_CONFIRMATION" = "create-accordo@0.2.0"
+          test "$(node -p 'JSON.parse(require("fs").readFileSync("packages/create-accordo/package.json")).version')" = "0.2.0"
           git fetch origin main
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
 
@@ -34,7 +37,7 @@ jobs:
       # configured at all; npm defaults to registry.npmjs.org without help.
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Use an npm CLI that supports trusted staged publishing
@@ -42,6 +45,7 @@ jobs:
 
       - name: Verify repository and publication contract
         run: |
+          npm ci --ignore-scripts --no-audit --no-fund
           npm run verify
           npm run gtm:check
 

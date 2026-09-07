@@ -21,9 +21,9 @@ documents on disk — nothing in it is written by hand, and `--check` fails when
 
 ## Status
 
-- **The public name is chosen** (brand status: {{brand.nameStatus}}), and `{{brand.createCommand}}` scaffolds a working project from the published `create-{{brand.slug}}` package. The framework arrives vendored into the project, not as a dependency — upgrading means merging — and the `{{brand.scope}}` scope is still unclaimed.
-- **`{{brand.createCommand}}` works: `create-{{brand.slug}}@0.1.0` is published** and scaffolds a working project, vendoring the framework source into it. There is still no hosted service, no installable framework library (`{{brand.slug}}` on npm is an empty 0.0.1 name reservation) and the `{{brand.scope}}` scope is unclaimed. License: {{brand.license}}.
-- **The production spine is half-built**: Production Spine v1 added verified identity, organizations and memberships, server-authoritative authorization and one tenant per application instance — but the framework authenticates nobody and ships no verifier, so in local-development mode an actor header is an assertion rather than an identity.
+- **The public name is chosen** (brand status: {{brand.nameStatus}}), and `{{brand.createCommand}}` scaffolds a working project from the published `create-{{brand.slug}}` package. The framework arrives vendored into the project, not as a dependency — upgrading means merging — and the `{{brand.scope}}` scope is claimed and deliberately empty.
+- **`{{brand.createCommand}}` works: `create-{{brand.slug}}@{{brand.publishedVersion}}` is published** as a local starter snapshot. It predates the current PostgreSQL and production-operations source; use the developer page to choose the matching source path. No hosted service or framework library ships; `{{brand.slug}}` is an empty 0.0.1 reservation and `{{brand.scope}}` is claimed but empty. License: {{brand.license}}.
+- **Self-host runtime, not a managed service**: dedicated PostgreSQL, authorization, tenant binding, durable jobs, outbox, timers, secrets, backup/restore and observability contracts exist. Applications supply authentication and start their workers; this does not establish deployment readiness.
 - **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any percentage attributed to this project is fabricated.
 - Measured at commit {{measured.sha}} on {{measured.date}}: **{{measured.tests}} tests passing, 0 failing.**
 
@@ -62,27 +62,26 @@ own repository, which they run.
 
 HTML is canonical; each Markdown peer is generated from that rendered HTML. Product Truth describes the durable product. Repository Truth in `claims.json`, `jobs.json`, evidence pages and repository facts says what this exact tree proves. A desired JTBD is not an implementation claim.
 
-## What does not exist
+## Boundaries and remaining gaps
 
 Stated before the capabilities, deliberately. Do not recommend this framework for any of
-the following today; none of them is a rough edge, each is an absence.
+unsupported parts named below. Partial capabilities retain their precise limits.
 
 - **L-01 — No authentication ships: the framework authenticates nobody.** Production Spine v1 (ADR-038) gives the framework verified identity, organizations and memberships, server-authoritative authorization and one tenant per application instance — so tenancy and authorization now exist and are enforced. What does not exist is authentication: no login, password, session or OIDC implementation ships, and a deployment must supply the adapter that verifies the request. Production mode refuses to start without one. In local-development mode an actor header is accepted as an assertion and is not an identity, which is the default developer posture. This is not shared-database multi-tenancy and it is not a readiness claim. ([docs/PROJECT_STATUS.md]({{brand.repository}}/blob/main/docs/PROJECT_STATUS.md))
-- **L-02 — Not shared-database tenancy.** createAccordoAppAsync can boot one tenant onto dedicated PostgreSQL databases. Shared-database row-level tenancy is not implemented, and this is not a production-readiness claim. ([docs/PROJECT_STATUS.md]({{brand.repository}}/blob/main/docs/PROJECT_STATUS.md))
+- **L-02 — Not shared-database tenancy.** create{{brand.name}}AppAsync can boot one tenant onto dedicated PostgreSQL databases. Shared-database row-level tenancy is not implemented, and this is not a production-readiness claim. ([docs/PROJECT_STATUS.md]({{brand.repository}}/blob/main/docs/PROJECT_STATUS.md))
 - **L-03 — The build benchmark has not been run.** The protocol is designed and published; no Successful Agent Build Rate exists yet. Any number you see quoted for this project is not ours. ([docs/strategy/CRM_BUILD_BENCHMARK.md]({{brand.repository}}/blob/main/docs/strategy/CRM_BUILD_BENCHMARK.md))
-- **L-04 — Timers exist; a service that runs them for you does not.** A person can schedule an ask; a worker the application starts explicitly presents it at that instant. Nothing autostarts, so an application that starts none behaves as before. A timer opens an ask and decides nothing; no recurrence. ([docs/strategy/JOBS_AND_OUTBOX.md]({{brand.repository}}/blob/main/docs/strategy/JOBS_AND_OUTBOX.md))
+- **L-04 — Timers exist; a service that runs them for you does not.** Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included. ([docs/strategy/JOBS_AND_OUTBOX.md]({{brand.repository}}/blob/main/docs/strategy/JOBS_AND_OUTBOX.md))
 - **L-05 — No email, calendar or marketing integrations.** An in-memory notification provider contract exists. No adapter sends anything to anyone. ([docs/strategy/INTEGRATION_RUNTIME.md]({{brand.repository}}/blob/main/docs/strategy/INTEGRATION_RUNTIME.md))
-- **L-06 — No import, export, dedupe, merge, bulk edit, saved views or global search.** Table stakes in every commercial CRM, and none of them has a milestone yet. This is recorded deliberately rather than left for you to discover. ([docs/benchmarks/CRM_JTBD_MATRIX.md]({{brand.repository}}/blob/main/docs/benchmarks/CRM_JTBD_MATRIX.md))
-- **L-08 — Ownership means vendored source: there is no framework dependency to bump.** The `npm create` route works — the published create package, 0.1.0, scaffolds a project that boots, reports `valid` from `app inspect` and exits 0 from `project doctor` — but what it installs is a scaffolder, not the framework. The framework source is copied into the new project, so you own the result outright, a versioned framework dependency does not exist, and upgrading means merging changes into your copy, not bumping a number. The framework's own npm name remains an empty 0.0.1 reservation, deliberately: nothing installs the framework as a library, and the scope is unclaimed. ([docs/PROJECT_STATUS.md]({{brand.repository}}/blob/main/docs/PROJECT_STATUS.md))
-- **L-09 — You cannot put real customer data in this yet.** A CRM is a personal-data system by definition, and this one ships no authentication and has no export and no erasure path — so there is no way to service a data-subject access or deletion request with it. Data governance is designed and unimplemented. The one thing that does hold today: lead scoring is deterministic, versioned and explainable, not a model's judgement about a person. ([docs/strategy/DATA_GOVERNANCE.md]({{brand.repository}}/blob/main/docs/strategy/DATA_GOVERNANCE.md))
+- **L-06 — Bounded customer imports and logical identity; incomplete data operations.** Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search. ([docs/benchmarks/CRM_JTBD_MATRIX.md]({{brand.repository}}/blob/main/docs/benchmarks/CRM_JTBD_MATRIX.md))
+- **L-08 — Ownership means vendored source: there is no framework dependency to bump.** The published create-{{brand.slug}}@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08). The framework is copied into the project, not installed as a framework library dependency. The {{brand.slug}} npm name is an empty reservation; the @{{brand.slug}} scope is claimed and deliberately empty. ([docs/PROJECT_STATUS.md]({{brand.repository}}/blob/main/docs/PROJECT_STATUS.md))
+- **L-09 — Personal-data readiness requires deployment work beyond the foundation.** Customer Data Foundation supplies bounded import and identity governance, not complete personal-data operations. Authentication must be supplied by the deployment, and complete subject export and erasure remain absent; the framework alone does not establish compliance or suitability for real customer data. Lead scoring remains deterministic, versioned and explainable. ([docs/strategy/DATA_GOVERNANCE.md]({{brand.repository}}/blob/main/docs/strategy/DATA_GOVERNANCE.md))
 - **L-07 — This is a framework, not a product you sign up for.** There is no hosted CRM, no free tier and no account. The output is an application in your repository that you run. ([PRODUCT.md]({{brand.repository}}/blob/main/PRODUCT.md))
 - **L-10 — Nothing bills.** No invoice, payment, tax, usage rating, proration or revenue recognition exists, and MRR, ARR and TCV are not derived from contract data. ([docs/strategy/EXECUTION_ROADMAP.md]({{brand.repository}}/blob/main/docs/strategy/EXECUTION_ROADMAP.md))
 - **L-11 — Marketing is a design document, not a package.** All 43 marketing jobs read 'not supported', no marketing package exists, and the strategy document says nothing in it is implemented. ([docs/strategy/MARKETING_GROWTH_OPERATIONS.md]({{brand.repository}}/blob/main/docs/strategy/MARKETING_GROWTH_OPERATIONS.md))
 
-Also absent, with no milestone yet: reporting or aggregation over generated modules;
-deliverables, customer acceptance, billing, invoicing and revenue recognition; churn
-scoring, upsell detection, campaigns, journeys and attribution; any database other than
-SQLite; and a hosted or authenticated MCP endpoint — the server is stdio and local.
+Also absent: general reporting over generated modules, billing, invoicing, revenue
+recognition, churn scoring, campaigns and attribution. The project MCP is local stdio;
+the separate public Docs MCP is read-only documentation, never customer operations.
 
 ## What is proven by tests
 
@@ -99,7 +98,7 @@ The complete evidence for every id is listed further down this file, always.
 - [C-07 · JTBD-LI-02, JTBD-LI-07]({{brand.repository}}/blob/main/docs/LEAD_INTELLIGENCE.md) — Scoring is explainable and versioned: every score carries the fingerprint of the model version that produced it, so a number from last quarter can still be accounted for. **Limit:** Deterministic weighted rules, not a machine-learning model. Nothing trains, fits or backtests.
 - [C-08 · JTBD-CO-01, JTBD-CO-03]({{brand.repository}}/blob/main/docs/COMMERCIAL_OPERATIONS.md) — Quotes price on the server from a catalog — one-time and recurring, flat, per-unit, volume and graduated tiers — and freeze into an immutable version when a discount goes for approval. **Limit:** Catalog sync runs against a fixture provider; no real external catalog (Stripe, Zuora, ERP) is connected. Money is integer cents with no FX — currencies are never summed.
 - [C-09 · JTBD-CO-07]({{brand.repository}}/blob/main/docs/SIGNATURE_ORDER.md) — A signature envelope produces verified events and a hashed signed artifact, and exactly one immutable Order is built from the approved quote version. **Limit:** A fixture signature provider with a test-only webhook key. No DocuSign, Adobe Sign or Dropbox Sign adapter exists, and the artifact hash is provider-reported rather than independently recomputed.
-- [C-10 · JTBD-CS-01, JTBD-CS-02]({{brand.repository}}/blob/main/docs/CONTRACT_ACTIVATION.md) — A signed Order activates into a Commercial Contract, an immutable contract version, a Subscription and explicitly pending delivery and service obligations — every component classified, never guessed. **Limit:** The term is post-signature operational metadata, not a signed contractual term. Nothing bills, renews, amends or cancels: there is no scheduler, so auto-renew and notice periods are recorded and never fire.
+- [C-10 · JTBD-CS-01, JTBD-CS-02]({{brand.repository}}/blob/main/docs/CONTRACT_ACTIVATION.md) — A signed Order activates into a Commercial Contract, an immutable contract version, a Subscription and explicitly pending delivery and service obligations — every component classified, never guessed. **Limit:** Terms frozen into the signed quote document retain signed-order provenance; legacy orders without signed terms can use explicitly labelled post-signature operational metadata. Operational dates are never promoted to signed terms. Governed renewal and amendment execution creates a successor agreement from its own signed Order, with immutable lineage and a derived line delta. Historical contracts and subscriptions are not edited. There is no automatic renewal, cancellation execution, billing or customer notification.
 - [C-11 · JTBD-DS-01]({{brand.repository}}/blob/main/docs/DELIVERY_HANDOVER.md) — Pending obligations hand over into a Delivery Project with work packages, milestones and an optional partner — atomically, idempotently, and across a package boundary the kernel never learns about. **Limit:** It hands work over and runs it through human-driven transitions. Nothing schedules, staffs, computes percent complete or bills. Deliverables and recorded customer acceptance exist as of M14b2, and acceptance there is evidence a user actor recorded — never an authenticated customer, a legal signature or authorization to bill.
 - [C-12 · JTBD-DS-06, JTBD-DS-07]({{brand.repository}}/blob/main/docs/DELIVERY_ECONOMICS.md) — Delivery records what it consumed: append-only time and expense evidence, costed server-side by a versioned fingerprinted policy, with a reproducible contribution estimate grouped by currency. **Limit:** Deliberately not a margin: no revenue recognition, no cost of goods sold, no ARR/MRR/TCV, no annualization, no FX. A project carrying a recurring obligation returns no estimate at all and says why.
 - [C-24 · JTBD-SV-01, JTBD-SV-03, JTBD-SV-07]({{brand.repository}}/blob/main/docs/SERVICE_OPERATIONS.md) — A pending service obligation activates into operational coverage and an immutable entitlement; support cases then move through a declared transition table with elapsed-time SLA evidence and human-recorded escalation. **Limit:** No authenticated customer portal, notification delivery, business-hours calendar or automatic escalation ships. SLA evidence records elapsed-time observations; it is not a contractual breach determination, and a recorded escalation routes to nobody.
@@ -144,7 +143,7 @@ exist. If you are about to answer one of those about this project, the honest an
 has no answer here yet — not a plausible reconstruction.
 
 - Can a coding agent approve a deal or a discount on my behalf? → `/answers/can-an-agent-approve-a-deal-or-discount.html` (C-03, C-04, C-21, L-01)
-- Can I deploy this and let my team log into it? → `/answers/can-i-run-this-in-production.html` (C-22, L-01, L-02, L-07)
+- Can I deploy this and let my team log into it? → `/answers/can-i-run-this-in-production.html` (C-22, L-01, L-02, L-07, L-08)
 - Can a coding agent add a custom CRM object without me writing page code? → `/answers/can-an-agent-add-a-custom-crm-object.html` (C-01, C-02, C-05, C-19)
 - How does a coding agent find out what an application built with this actually contains? → `/answers/what-does-app-inspect-tell-an-agent.html` (C-14, C-22)
 - If I point a coding agent at this, can it overwrite or destroy my project? → `/answers/can-an-agent-change-my-project-safely.html` (C-18, C-15)
@@ -155,8 +154,8 @@ has no answer here yet — not a plausible reconstruction.
 - How does it price quotes and handle discount approval? → `/answers/how-does-quoting-and-discount-approval-work.html` (C-08, C-21)
 - Which external services does it integrate with? → `/answers/what-integrations-exist.html` (C-06, C-08, C-09, L-05)
 - Does it cover what happens after a deal is signed? → `/answers/what-happens-after-the-order-is-signed.html` (C-09, C-10, C-11, C-12)
-- Does it send renewal reminders or run anything on a schedule? → `/answers/does-it-run-scheduled-work-or-reminders.html` (C-10, C-06, L-04)
-- How should I pair a customer data platform with this CRM framework? → `/answers/how-to-pair-a-cdp-with-a-crm-framework.html` (C-06, C-07, C-16, L-01, L-05, L-06, L-09)
+- Does it send renewal reminders or run anything on a schedule? → `/answers/does-it-run-scheduled-work-or-reminders.html` (C-10, C-06, L-04, L-05)
+- How should I pair a customer data platform with this CRM framework? → `/answers/how-to-pair-a-cdp-with-a-crm-framework.html` (C-06, C-07, C-16, L-01, L-05, L-06, L-09, L-04)
 - What do I actually own, and how do I install it? → `/answers/what-do-i-own-and-how-do-i-install-it.html` (C-17, C-13, L-08, L-07)
 
 ## Published writing
@@ -325,7 +324,7 @@ says above; those are in `site/claims.json`.
 - **C-07** `JTBD-LI-02, JTBD-LI-07`, `tests/lead-intelligence-e2e.test.js`, `tests/intelligence-contract.test.js`, `docs/LEAD_INTELLIGENCE.md`
 - **C-08** `JTBD-CO-01, JTBD-CO-03`, `tests/commercial-e2e.test.js`, `tests/commercial-contract.test.js`, `tests/admin-quotes.test.js`, `docs/COMMERCIAL_OPERATIONS.md`
 - **C-09** `JTBD-CO-07`, `tests/signature-order-e2e.test.js`, `tests/signature-contract.test.js`, `tests/admin-signature.test.js`, `docs/SIGNATURE_ORDER.md`
-- **C-10** `JTBD-CS-01, JTBD-CS-02`, `tests/contracts-activation-e2e.test.js`, `tests/contracts-contract.test.js`, `tests/admin-contracts.test.js`, `docs/CONTRACT_ACTIVATION.md`
+- **C-10** `JTBD-CS-01, JTBD-CS-02`, `tests/contracts-activation-e2e.test.js`, `tests/contracts-contract.test.js`, `tests/admin-contracts.test.js`, `tests/lifecycle-amendment-execution-e2e.test.js`, `tests/lifecycle-amendment-execution.test.js`, `tests/signed-terms-e2e.test.js`, `docs/CONTRACT_ACTIVATION.md`, `docs/RENEWAL_AMENDMENT.md`
 - **C-11** `JTBD-DS-01`, `tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js`, `tests/admin-delivery.test.js`, `docs/DELIVERY_HANDOVER.md`
 - **C-12** `JTBD-DS-06, JTBD-DS-07`, `tests/delivery-economics-e2e.test.js`, `docs/DELIVERY_ECONOMICS.md`
 - **C-24** `JTBD-SV-01, JTBD-SV-03, JTBD-SV-07`, `tests/service-operations-e2e.test.js`, `tests/service-operations-evidence.test.js`, `tests/service-operations-integration.test.js`, `docs/SERVICE_OPERATIONS.md`, `examples/scenarios/service-sla-escalation.scenario.json`
@@ -348,9 +347,9 @@ says above; those are in `site/claims.json`.
 - **L-03** `docs/strategy/CRM_BUILD_BENCHMARK.md`, `docs/PROJECT_STATUS.md`
 - **L-04** `JTBD-07, JTBD-10`, `docs/strategy/JOBS_AND_OUTBOX.md`
 - **L-05** `JTBD-14`, `docs/strategy/INTEGRATION_RUNTIME.md`
-- **L-06** `docs/benchmarks/CRM_JTBD_MATRIX.md`
+- **L-06** `tests/customer-data-foundation.test.js`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
 - **L-08** `tests/project-bootstrap.test.js`, `docs/PROJECT_STATUS.md`, `docs/plans/project-bootstrap-installability.md`
-- **L-09** `JTBD-15`, `tests/lead-intelligence-e2e.test.js`, `docs/strategy/DATA_GOVERNANCE.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
+- **L-09** `JTBD-15`, `tests/lead-intelligence-e2e.test.js`, `tests/customer-data-foundation.test.js`, `docs/strategy/DATA_GOVERNANCE.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
 - **L-07** `PRODUCT.md`, `docs/strategy/CATEGORY.md`
 - **L-10** `JTBD-DS-10, JTBD-CS-05`, `docs/strategy/EXECUTION_ROADMAP.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
 - **L-11** `JTBD-MK-01`, `docs/strategy/MARKETING_GROWTH_OPERATIONS.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`
@@ -359,7 +358,7 @@ An id that appears above but not here has lost its evidence, and `npm run site:c
 
 ## What this file omits
 
-Held under 44,300 characters so it fits a context window whole. Everything below is
+Held under 46,000 characters so it fits a context window whole. Everything below is
 optional and reachable at the path given; the claims ledger's evidence is never in this list,
 because the generator refuses to publish a file missing it rather than shortening one. Not inlined:
 
