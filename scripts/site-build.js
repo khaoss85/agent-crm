@@ -648,8 +648,8 @@ function resolve(token) {
       : `\u201c${brand.name.value}\u201d is a working title, not the public name.`,
     'status.headline': repositoryIsPublic ? 'Open source.' : 'Open source; repository not yet public.',
     'status.text': repositoryIsPublic
-      ? 'Not deployable to production. This page states what the tests prove and what is missing — nothing else.'
-      : 'The repository opens shortly; until it does, every source link here will not resolve for you. Not deployable to production either. This page states what the tests prove and what is missing — nothing else.',
+      ? 'Self-host framework source. Deployments require an application-supplied authentication verifier and operational configuration. Passing tests does not certify production readiness.'
+      : 'The repository is not public; source links here will not resolve for you. Deployments require an application-supplied authentication verifier and operational configuration. Passing tests does not certify production readiness.',
   };
   if (token in derived) return escapeHtml(derived[token]);
 

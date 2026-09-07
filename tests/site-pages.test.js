@@ -548,6 +548,15 @@ test('the helpers behave at the edges the pages actually hit', () => {
 
 test('the developer quickstart explicitly applies before entering the project', () => {
   const html = read('developers.html');
-  assert.match(html, /npm create accordo my-crm -- --apply\ncd my-crm/);
+  const brand = JSON.parse(readFileSync(join(repo, 'site/brand.json'), 'utf8'));
+  assert.ok(html.includes(`npm create accordo@${brand.npm.publishedVersion} my-crm -- --apply\ncd my-crm`),
+    'the command installs the exact registry version described on the page');
   assert.match(html, /Creation defaults to a dry run/);
+});
+
+test('the shared footer states deployment prerequisites without certifying readiness', () => {
+  const html = read('developers.html');
+  assert.doesNotMatch(html, /not deployable to production/i);
+  assert.match(html, /application-supplied authentication verifier and operational configuration/);
+  assert.match(html, /Passing tests does not certify production readiness/);
 });

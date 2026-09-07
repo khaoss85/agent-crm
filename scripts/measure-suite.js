@@ -68,12 +68,14 @@ const pass = lastNumber(output, /^[^\n]*\bpass\s+(\d+)\s*$/gm);
 const fail = lastNumber(output, /^[^\n]*\bfail\s+(\d+)\s*$/gm);
 
 if (pass === null || fail === null) {
-  process.stderr.write(output);
+  process.stderr.write(`measure-suite: child exit=${run.status}, signal=${run.signal}, error=${run.error?.message ?? 'none'}.\n`);
+  await new Promise((resolve) => process.stderr.write(output, () => resolve(undefined)));
   process.stderr.write('measure-suite: could not read pass/fail counts out of the run. The reporter changed; fix this parser rather than typing a number.\n');
   process.exit(1);
 }
 if (run.status !== 0 || fail !== 0) {
-  process.stderr.write(output);
+  process.stderr.write(`measure-suite: suite failed: exit=${run.status}, failures=${fail}, signal=${run.signal}, error=${run.error?.message ?? 'none'}.\n`);
+  await new Promise((resolve) => process.stderr.write(output, () => resolve(undefined)));
   process.stderr.write(`measure-suite: \`${command}\` exited ${run.status} with ${fail} failing. A claims ledger rests on a green run; nothing recorded.\n`);
   process.exit(1);
 }

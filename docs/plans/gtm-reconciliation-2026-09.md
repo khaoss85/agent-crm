@@ -72,6 +72,15 @@ passed because citations are opt-in and prose is not generated from facts.
   registry quickstart missing the required apply flag. Corrected descriptions,
   skill mirrors and the discovery boundary gate; added targeted regressions.
 
+- 2026-09-07: both private documentation PRs merged after independent review and
+  green CI. Final scaffolder packed installation, doctor, smoke and infrastructure
+  imports pass. GitHub About copy updated and read back. Hosted preview provenance
+  and Docs MCP capability/boundary pairs verified.
+- 2026-09-07: corrected the global footer after independent semantic review: it
+  states deployment prerequisites and refuses readiness certification, rather
+  than denying all deployment. Pinned the registry quickstart to its documented
+  version and executed it successfully against the published package.
+
 ## Boundaries and decisions
 
 No business runtime expansion, fabricated benchmark, outreach, spend, public
