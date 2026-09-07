@@ -231,10 +231,20 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 
 - [ ] Complete `docs/plans/gtm-reconciliation-2026-09.md`: current source claims,
   distribution receipts, packed bootstrap and production site reconciled.
-- [ ] Refresh the suite measurement on a clean green CI runner using the
-  measurement workflow; copy its generated record, never transcribe counts.
+- [x] Refresh the reconciliation suite measurement on a clean green CI runner;
+  imported the generated record at 451d797 without manually transcribing counts.
 - [ ] Complete owner-approved npm staged publication after verifying the exact
   candidate. Public registry status must follow a live readback.
 - [ ] Run clean-session build pilots and record completion, interventions and
   elapsed time before a comparative or adoption claim. External participants
   and publication remain separate decisions, not fabricated test results.
+
+## First working example traction wave — September 2026
+
+- [ ] Complete the versioned quote approval recipe, transcript and downloadable brief.
+- [ ] Add bounded site analytics and connect key landing pages to the working example.
+- [ ] Correct existing directory metadata and verify fresh host installs.
+- [ ] Publish the canonical tutorial and adapted syndication with public readback.
+- [ ] Record actual external trial responses and sessions separately from invitations.
+
+Execution: `docs/plans/traction-first-working-example.md`.
