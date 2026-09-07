@@ -417,7 +417,19 @@ function emit(path, html, options = {}) {
   const output = html
     .replaceAll('{{page.root}}', '../'.repeat(depth))
     .replace('{{page.seo}}', () => seoBlock(path, title, description, options.jsonLd ?? []))
-    .replace('</head>', `  <script defer src="${'../'.repeat(depth)}analytics.js" data-page="${escapeHtml(`${ORIGIN}/${path}`)}" referrerpolicy="no-referrer"></script>\n</head>`);
+    .replace(/<a\b([^>]*?)href="([^"]+)"([^>]*)>/g, (anchor, before, href, after) => {
+      if (anchor.includes('data-site-event=')) return anchor;
+      const knownTargets = new Map([
+        [`${ORIGIN}/blog/run-a-b2b-quote-approval-workflow.html`, 'tutorial_open'],
+        [`${ORIGIN}/recipes/quote-approval-brief.md`, 'example_open'],
+        [`${brand.repository.value}/blob/main/examples/recipes/quote-approval/run.mjs`, 'example_open'],
+        [`${ORIGIN}/developers.html`, 'quickstart_open'],
+      ]);
+      let event;
+      try { event = knownTargets.get(new URL(href, `${ORIGIN}/${path}`).href); } catch { return anchor; }
+      return event ? `<a${before}href="${href}"${after} data-site-event="${event}">` : anchor;
+    })
+    .replace('</head>', `  <script defer src="${'../'.repeat(depth)}analytics.js" data-page="${escapeHtml(path === 'index.html' ? `${ORIGIN}/` : `${ORIGIN}/${path}`)}" referrerpolicy="no-referrer"></script>\n</head>`);
   if (output.includes('{{page.seo}}')) unresolved.push({ file: path, token: 'page.seo' });
   if (output.includes('{{')) unresolved.push({ file: path, token: 'a token survived the whole render' });
 

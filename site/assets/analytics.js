@@ -47,8 +47,8 @@
 
   document.addEventListener('click', (event) => {
     if (disabled()) return;
-    const target = event.target?.closest?.('[data-accordo-event]');
-    const name = target?.getAttribute('data-accordo-event');
+    const target = event.target?.closest?.('[data-site-event]');
+    const name = target?.getAttribute('data-site-event');
     if (events.has(name)) window.va('event', { name, ...(attribution ? { data: attribution } : {}) });
   });
   const collector = document.createElement('script');

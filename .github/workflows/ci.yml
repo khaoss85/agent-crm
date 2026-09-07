@@ -57,6 +57,10 @@ jobs:
       - name: Verify and emit the measured claim record
         run: node scripts/measure-suite.js > "$RUNNER_TEMP/measurement.json"
       - run: npm run smoke
+      - name: Replay the published quote approval recipe
+        run: |
+          node --no-warnings examples/recipes/quote-approval/run.mjs "$RUNNER_TEMP/quote-approval-crm"
+          npm --prefix "$RUNNER_TEMP/quote-approval-crm" run verify
       - uses: actions/upload-artifact@v4
         with:
           name: claims-measurement-${{ github.sha }}

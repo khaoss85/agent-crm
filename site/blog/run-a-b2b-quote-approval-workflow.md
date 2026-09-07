@@ -24,6 +24,7 @@ Use Git, Node.js 22.16 or newer and npm. Start in an empty working directory wit
 ```sh
 git clone https://github.com/khaoss85/agent-crm.git framework-source
 cd framework-source
+git checkout 3b5b5f0c4c3e582e48d54501136024b064756daa
 git rev-parse HEAD
 node --no-warnings examples/recipes/quote-approval/run.mjs ../my-quote-crm
 ```
