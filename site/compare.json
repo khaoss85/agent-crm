@@ -17,7 +17,7 @@
           "heading": "Where building from scratch wins",
           "body": [
             "Total control is the real advantage, not a slogan: nothing in your schema is shaped by someone else's idea of what a Company is, and no upgrade ever asks you to reconcile your domain with a framework's opinion of it. That advantage is larger here than usual, because ownership in this project means vendored source rather than a dependency — `npm create accordo`, the published `create-accordo@0.1.0`, scaffolds a project that boots, inspects and passes the project doctor by copying the framework source into it, so upgrading means merging, not bumping (L-08). If the end state was going to be a fork you maintain, starting from your own repository means every convention in it is one you chose.",
-            "The second win is everything this framework does not have. No authentication ships — the framework authenticates nobody, and a deployment must supply the verifier — so in local-development mode an actor header is an assertion rather than an identity (L-01). Persistence is Node's built-in SQLite; PostgreSQL is not implemented (L-02). Import, export, dedupe, merge, bulk edit, saved views and global search do not exist, and none of them has a milestone (L-06). No email, calendar or marketing adapter sends anything to anyone (L-05). Nothing is scheduled, delayed or recurring, because there is no scheduler and no queue (L-04). If those are the hard parts of what you are building — and for plenty of CRMs they are the entire thing — starting here has not reduced your work; you write them once on either path.",
+            "Work remains on both paths: deployment authentication and hosting, business-service adapters and complete personal-data operations. The synchronous factory uses SQLite; the async factory supports one tenant on dedicated PostgreSQL databases. Shared-database row tenancy and general production readiness are not claimed (L-02). Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06). Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04). These bounded contracts reduce framework work; they do not supply an operated CRM.",
             "The third win is the first week. A form, a table and a list against a database you already run is a day of work, with no manifest, no policy version and no migration convention standing between you and a working screen. This framework starts paying on the second commercial rule, not on the first screen, and if there is never a second commercial rule it does not start paying at all."
           ]
         },
@@ -32,7 +32,7 @@
         {
           "heading": "How to choose",
           "body": [
-            "Build it yourself if the CRM is a form, a list and a few statuses; if the hard part is authentication or billing; if you need PostgreSQL on day one; if import, export and search are the feature list rather than an afterthought; or if real customer data goes in immediately, because it cannot go in here yet (L-09).",
+            "Build it yourself when an existing stack already supplies the needed process, or when generic CRUD is the whole requirement. Accordo can supply policy, approvals, persistence and bounded import machinery; authentication, hosting, billing and complete personal-data operations still need separate work (L-01, L-06, L-09).",
             "Start from this framework if the process is the product — stages, approvals, discount policy, obligations, handovers — and someone will ask in six months why a number was what it was. It fits when a coding agent is doing most of the typing and you want the output as reviewable source with conventions the agent can read back, and when you would otherwise be deriving approvals, audit and trace by hand for the third time. You keep the repository either way; the question is only whether the first thousand lines in it are yours or the framework's."
           ]
         },
@@ -49,9 +49,9 @@
         "This is a framework, not an application you sign up for. There is no hosted CRM, no free tier and no account (L-07).",
         "Ownership means vendored source, not a dependency: `npm create accordo` scaffolds a project with the framework source copied in, and upgrading means merging rather than bumping (L-08).",
         "The framework authenticates nobody, and ships no verifier. In local-development mode an actor header is an assertion, not an identity, and that server must not be exposed to a network (L-01).",
-        "SQLite only. PostgreSQL is on a track, not in the code (L-02).",
-        "No import, export, dedupe, merge, bulk edit, saved views or global search — table stakes in every commercial CRM, recorded here rather than left for you to discover (L-06).",
-        "No scheduler, queue or reminders: follow-up Tasks are a shared model a person moves by hand, a due date changes no state, and nothing recurring or delayed fires anywhere (L-04).",
+        "The synchronous factory uses SQLite; the async factory supports one tenant on dedicated PostgreSQL databases. Shared-database row tenancy and general production readiness are not claimed (L-02).",
+        "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06).",
+        "Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04).",
         "No email, calendar or marketing integration. A notification provider contract exists; no adapter sends anything to anyone (L-05).",
         "No claim about how quickly an agent finishes a CRM with this, because the benchmark has not been run (L-03).",
         "Real customer data does not go in yet: no export and no erasure path, so a subject access or deletion request cannot be serviced (L-09)."
@@ -96,7 +96,8 @@
       "tests": [
         "tests/module-factory-e2e.test.js",
         "tests/workflow.test.js",
-        "tests/module-evolution.test.js"
+        "tests/module-evolution.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
       "related": [
         "vs-twenty",
@@ -110,8 +111,21 @@
         },
         {
           "q": "What do I still have to build myself?",
-          "a": "Everything the ledger lists as absent: authentication, hosting, billing, schedulers, real provider adapters. The framework generates a local, SQLite-backed application — production hardening is explicitly not included."
+          "a": "The framework supports SQLite and dedicated PostgreSQL, with authorization and per-instance tenancy. Deployment authentication and hosting remain application work. Durable jobs, outbox and scheduled asks need explicitly started self-host workers; no managed service ships. Live business adapters, billing and complete personal-data operations remain gaps."
         }
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent",
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent",
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent"
       ]
     },
     {
@@ -121,7 +135,7 @@
       "plainName": "Twenty, the open-source CRM platform",
       "intent": "twenty crm alternative for building a custom crm with a coding agent",
       "verifiedOn": "2026-08-04",
-      "summary": "Twenty is an open-source CRM platform with an apps SDK; this is a framework that generates a CRM into your repository. The comparison is about where the extension code lives and what runtime it runs inside — not about which has more features, because Twenty is a working product with a hosted option and this has no authentication and no PostgreSQL. Every fact here about Twenty traces to one dated internal research file, nothing was installed or run, and anything that file does not carry is absent from this page rather than inferred.",
+      "summary": "Twenty is an open-source CRM platform with an apps SDK; Accordo is a framework that generates CRM source into your repository. The comparison concerns extension ownership and runtime boundaries. Accordo supports dedicated PostgreSQL and enforced authorization, but requires deployment authentication and operation. Competitor facts retain their dated research scope; no competitor was installed or run.",
       "metaDescription": "Twenty is a working CRM platform with an apps SDK; this generates a CRM into your repository. One dated research file, and nothing was installed or run.",
       "sections": [
         {
@@ -129,7 +143,7 @@
           "body": [
             "As of the research date this page carries, August 4, 2026, Twenty is the largest project in the researched set by GitHub stars — 54.3k — with YC S23 backing, roughly $5.5M raised, and weekly releases. It runs as a NestJS/React/PostgreSQL platform you can self-host with Docker, or as a cloud product; the per-seat cloud pricing in the research file came from third-party teardowns rather than a primary page, so treat the figures there as indicative and do not budget from this page. The headline fact is simpler than any of that: it is a CRM a technical team can run and use, and this framework is not.",
             "Its coding-agent story is real rather than a slide. The research file records an MIT-licensed SDK, a create-twenty-app command, a CLAUDE.md checked into the repository, AI agents inside the product, and native MCP confirmed for cloud workspaces — with self-host parity explicitly unverified. Measured on getting an agent productive against a running CRM this afternoon, that is ahead of where this project stands: `npm create accordo` scaffolds a local development project with the framework vendored in — ownership means keeping that copied source, and upgrading means merging (L-08) — and the MCP server here is stdio and local only, with no hosted or authenticated endpoint (C-18).",
-            "And the plain asymmetry. Twenty 2.0 added an apps platform, in-product AI agents and git-backed workspace config, and its customization surface spans a settings UI, APIs and an Apps SDK covering entities, serverless logic functions and UI widgets. This framework ships no authentication at all (L-01), stores everything in SQLite (L-02), and is not a product you sign up for (L-07). If what you want is a CRM, that comparison is not close, and pretending otherwise here would forfeit your trust in everything else on this site."
+            "And the plain asymmetry. Twenty 2.0 added an apps platform, in-product AI agents and git-backed workspace config, and its customization surface spans a settings UI, APIs and an Apps SDK covering entities, serverless logic functions and UI widgets. This framework ships no authentication at all (L-01), supports SQLite and dedicated-database PostgreSQL (L-02), and is not a product you sign up for (L-07). If what you want is a CRM, that comparison is not close, and pretending otherwise here would forfeit your trust in everything else on this site."
           ]
         },
         {
@@ -144,7 +158,7 @@
           "heading": "How to choose",
           "body": [
             "Choose Twenty if you want a CRM to use and extend rather than a substrate to build one from; if a hosted option, a community and weekly releases matter; if a platform runtime is a feature rather than a constraint; and if AGPL share-alike on derivatives plus enterprise-gated SSO and RBAC are acceptable for what you are shipping.",
-            "Choose this framework in a narrow case: the deliverable is one bespoke commercial process — approvals, discount policy, obligations, handovers — that must exist as source in your repository, reviewed as a diff, with the approval boundary asserted by a test rather than configured in a UI. That case also requires you to supply authentication, hosting, PostgreSQL, import and export yourself, because none of them is here.",
+            "Choose this framework in a narrow case: the deliverable is one bespoke commercial process — approvals, discount policy, obligations, handovers — that must exist as source in your repository, reviewed as a diff, with the approval boundary asserted by a test rather than configured in a UI. That case also requires you to supply deployment authentication, hosting, connector mapping and complete personal-data operations; dedicated PostgreSQL and bounded customer imports already exist.",
             "If your actual requirement is SSO or role-based access control, the honest answer is that neither column is this one: the research file puts Twenty's behind an enterprise licence, and this project does not have it in any form.",
             "The research file names Twenty as the strongest competitive threat to this project and says the convergence is in narrative more than in product. Read that as a reason to check its current state yourself before deciding, not as a verdict either way."
           ]
@@ -182,7 +196,9 @@
         "L-02",
         "L-03",
         "L-07",
-        "L-08"
+        "L-08",
+        "L-06",
+        "L-09"
       ],
       "jobs": [
         "JTBD-AX-01",
@@ -204,7 +220,8 @@
       "tests": [
         "tests/custom-package-e2e.test.js",
         "tests/app-inspect.test.js",
-        "tests/mcp.test.js"
+        "tests/mcp.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
       "related": [
         "vs-odoo",
@@ -220,6 +237,12 @@
           "q": "Is this a fork of or plugin for Twenty?",
           "a": "Neither. They share nothing: Twenty is an application you run and extend; this generates a bespoke application from your process description. Every fact about Twenty on this page is single-sourced from the dated competitor review, and nothing was installed or run."
         }
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent"
       ]
     },
     {
@@ -236,7 +259,7 @@
           "heading": "Where Odoo wins",
           "body": [
             "It is a suite, and CRM is one app inside it: the CRM arrives attached to the rest of the business system rather than as something you integrate later. The research file records a community edition under LGPL, deployment on Odoo.sh or self-hosted, a monorepo at roughly 53.5k GitHub stars as of August 4, 2026, and a target buyer running from SMB to mid-market — a buyer with a purchase order, not a repository. Its summary of the position is blunt and worth repeating rather than softening: Odoo owns the self-host SMB buyer, not the developer builder, and this project does not compete for that buyer directly.",
-            "Against this framework's own ledger the asymmetry is not subtle. No authentication ships, and a deployment must supply the verifier (L-01). No email, calendar or marketing integration — a notification provider contract exists and no adapter sends anything to anyone (L-05). No import, export, dedupe, merge, bulk edit, saved views or global search (L-06). No hosted product to sign up for; the output is an application in your repository (L-07). And you cannot put real customer data in this yet: with no export and no erasure path, a data-subject access or deletion request cannot be serviced at all (L-09). If a sales team is meant to log in on Monday, that list is the whole answer.",
+            "Against this framework's own ledger the asymmetry is not subtle. No authentication ships, and a deployment must supply the verifier (L-01). No email, calendar or marketing integration — a notification provider contract exists and no adapter sends anything to anyone (L-05). Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06). No hosted product to sign up for; the output is an application in your repository (L-07). And you cannot put real customer data in this yet: with no export and no erasure path, a data-subject access or deletion request cannot be serviced at all (L-09). If a sales team is meant to log in on Monday, that list is the whole answer.",
             "Pipeline reporting is the same story in miniature. Reporting pipeline is recorded here as partially supported, not as a feature: there are no saved views, no dashboards and no report builder to hand to a sales manager."
           ]
         },
@@ -253,7 +276,7 @@
           "body": [
             "Choose Odoo if you are buying a CRM rather than building one — especially if you also need the rest of the suite around it, if it has to be running this quarter, if configuration by an admin or an implementation partner is how customization is meant to happen at your company, and if the Enterprise gating fits your budget.",
             "Choose this framework in the narrow case: one commercial process specific enough that no suite app fits it, which must live as reviewable code in your repository, where a coding agent does most of the writing, and where you can supply authentication, hosting and data governance yourself — because this supplies none of them.",
-            "If both are true — you already run a suite and one process does not fit it — these are not mutually exclusive and this page does not argue that they are. It does have to say that no integration exists in this direction: there is no integration runtime, no adapter and no import, so connecting the two is engineering work you would own (L-05, L-06)."
+            "A suite and a custom process can coexist. No prebuilt suite connector ships; bounded JSON customer imports can receive mapped rows, while integration mapping and orchestration remain application work (L-05, L-06)."
           ]
         },
         {
@@ -263,7 +286,7 @@
             "No feature comparison. That file does not enumerate Odoo's CRM features, so this page cannot and does not — no statement is made about its pipeline, its reporting, its mobile app or its AI features beyond the licensing note above.",
             "No pricing. The file carries no Odoo price, so this page carries none either, and the Enterprise-only-AI point is repeated with the same secondary-source hedge it was recorded under.",
             "Licence descriptions are factual summaries of published texts and third-party commentary, not legal advice. Open-core, LGPL and share-alike questions belong with counsel before anyone relies on them.",
-            "No migration path and no upgrade analysis. There is no import of any kind here (L-06), and nothing is claimed about Odoo's upgrade behaviour beyond the file's own word for it, upgrade-fragile. When that research is refreshed, this entry must be re-read against it."
+            "No prebuilt Odoo migration or upgrade analysis is claimed. Bounded customer imports exist, but source mapping and complete export do not ship (L-06). Competitor descriptions retain their dated research scope."
           ]
         }
       ],
@@ -274,7 +297,7 @@
         "Licence descriptions are factual summaries, not legal advice.",
         "This framework is not a product a business buys: no hosted CRM, no free tier, no account (L-07).",
         "No authentication ships, so nothing here is ready for a sales team to log into (L-01).",
-        "No email, calendar or marketing integration, and no import or export, so this does not connect to a suite you already run (L-05, L-06).",
+        "No prebuilt connector to a suite ships. Bounded customer-row import exists; mapping source data and completing export remain application work (L-05, L-06).",
         "Real customer data cannot go in yet: no export and no erasure path means a subject request cannot be serviced (L-09)."
       ],
       "claims": [
@@ -314,7 +337,8 @@
       ],
       "tests": [
         "tests/commercial-e2e.test.js",
-        "tests/workflow.test.js"
+        "tests/workflow.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
       "related": [
         "vs-twenty",
@@ -330,41 +354,46 @@
           "q": "Does this replace an ERP?",
           "a": "No, and it does not try: there is no accounting, inventory, purchasing, manufacturing or HR here, and no billing at all. The scope is the commercial process chain — lead to quote to signature to contract to delivery to service — as generated, tested source."
         }
+      ],
+      "facts": [
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent"
       ]
     },
     {
       "id": "cmp-customer-data-platform",
       "slug": "vs-a-customer-data-platform",
-      "title": "Is this a customer data platform? No — no ingestion, no identity resolution, no segments",
+      "title": "Is this a customer data platform? Bounded customer foundation, not a full CDP",
       "metaTitle": "Is this a customer data platform? No",
       "plainName": "Not a customer data platform",
       "intent": "open source customer data platform with identity resolution and segmentation",
       "verifiedOn": "2026-08-04",
-      "summary": "This is a CRM framework, not a customer data platform. Nothing ingests events or records from other systems, nothing resolves identities into a single profile, and nothing builds, freezes or syncs a segment. If you arrived looking for a CDP, the accurate answer is that you are in the wrong place, and this page exists to say so quickly rather than to keep you reading. It also names no CDP product: the competitor research this site is allowed to cite covers CRM and CRM-adjacent projects and carries no CDP research at all.",
-      "metaDescription": "Not a customer data platform: nothing ingests events, resolves identities or syncs a segment. This page exists to send you elsewhere quickly, and names no CDP.",
+      "summary": "Accordo is a CRM framework with bounded customer imports, deterministic matching, logical canonical identity and a consolidated profile. It is not a full customer data platform: no streaming ingestion, audiences or destination activation. This category comparison names no CDP vendor and claims no tested connector.",
+      "metaDescription": "Customer import and logical identity support CRM process code. Accordo is not a full CDP: no streaming ingestion, segmentation or destination activation.",
       "sections": [
         {
           "heading": "Where a customer data platform wins",
           "body": [
-            "A CDP exists to do three things this framework does not do in any form: ingest records and events continuously from many source systems; resolve them into one profile per person or account; and build segments over those profiles that can be frozen, suppressed, and synced to downstream destinations. If any one of those sentences describes your problem, the comparison is already finished and the answer is not this. That is a description of the category by the jobs it is bought to do — not an evaluation of any product, for the reason given in the last section.",
-            "On ingestion, the absences are total. There is no CSV import (JTBD-DO-01), no email or calendar sync (JTBD-CM-01, JTBD-CM-02), and no integration adapter of any kind — a notification provider contract exists and nothing sends (L-05). There is also no scheduler or queue, so even if an adapter existed there is nothing to run it on a cadence (L-04). A pipeline needs both halves and this has neither.",
-            "On identity resolution, the same. No duplicate detection on import or entry (JTBD-DO-02), no merge of two Companies or Contacts (JTBD-DO-03), no search across modules (JTBD-DO-07), no unified activity timeline for a record (JTBD-DO-08). Every record here is what a person or a workflow wrote, and two records for the same human stay two records forever.",
-            "On segmentation, the same again. No dynamic audience from CRM data (JTBD-MK-01), no frozen audience snapshot for a send (JTBD-MK-02), no exclusions or suppression sets (JTBD-MK-03), no audience sync to a provider (JTBD-MK-06). And on the governance a CDP buyer usually asks about first: no consent or lawful-basis record (JTBD-DG-01), no export of everything held about a subject (JTBD-DG-03), no view of what was shared with which provider (JTBD-DG-06), no restriction of sensitive fields by role (JTBD-DG-07) — because there are no roles (L-01). The framework states the conclusion itself: you cannot put real customer data in this yet (L-09)."
+            "A CDP serves broad ingestion, profile and audience needs across source systems. Accordo implements a narrower customer foundation for CRM applications, not that complete platform. This is a category boundary, not a vendor evaluation.",
+            "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06). Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04). No email/calendar sync or production CDP connector ships (L-05).",
+            "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06). Matching runs on imports, not on arbitrary manual record entry. Ambiguity is left unresolved; physical source records remain intact.",
+            "No marketing audiences, snapshots, suppression or destination sync ship. Consent, complete subject export/erasure and field-level privacy policies remain gaps; framework authorization does not supply those domain operations (L-01, L-09)."
           ]
         },
         {
           "heading": "Where this is different",
           "body": [
             "What does exist is the opposite shape — per-record decision history rather than a population view. A lead is captured, enriched, scored, routed, qualified and converted through explicit actions, each one atomic and audited (C-06); a score carries the fingerprint of the model version that produced it, with one contribution row per rule, so a number from last quarter can still be accounted for (C-07); every mutation leaves an audit event and a step-level trace (C-16). The question that answers is why this one record got this outcome and under which policy version, a year later. The question it cannot answer is how many people match a rule across your systems — which is the question a CDP is bought for.",
-            "The one thing here that superficially resembles ingestion is not ingestion. Lead enrichment calls a provider outside the write transaction and stores an immutable snapshot with its provenance — and that provider is a checked-in fixture. No external data source is wired and no credential ships (C-06). One provider call inside one action is not a pipeline, and describing it as one would be the kind of sentence this site exists to avoid."
+            "Customer Data Foundation imports bounded JSON rows and retains provenance with receipts (L-06). Lead enrichment remains a separate fixture-provider action (C-06). Neither is a streaming CDP pipeline or a prebuilt connector."
           ]
         },
         {
           "heading": "How to choose",
           "body": [
-            "If the sentence you would write is unify our customer data across systems, stop here. Nothing in this framework does that, and building it on top would not be an extension but a different product: there is no ingestion path and no scheduler to run one (L-04, L-05).",
+            "For broad cross-system ingestion, identity graphs, audiences and activation, choose a CDP. Accordo offers a bounded customer foundation for a custom CRM process; it does not implement that complete platform (L-06).",
             "If the sentence is our commercial process needs stages, quotes, approvals and an audit trail, and one record's outcome has to be explainable afterwards, that is the narrow case this exists for — with the standing caveats that there is no authentication and no place for real customer data yet (L-01, L-09).",
-            "If both sentences are true, they are different layers rather than competing options: the CDP owns the profile and this owns a process. They do not connect today, because there is no integration runtime and no import (L-05, L-06), so any bridge between them is engineering work you would own outright.",
+            "A CDP and this framework are distinct layers. Bounded JSON import can receive mapped customer rows, but no prebuilt connector ships; the bridge remains application engineering (L-05, L-06).",
             "If what you actually need is marketing execution — audiences, campaigns, journeys, attribution — the answer is the same and is recorded rather than implied: every one of those jobs is marked not supported in the job matrix, so you can confirm the refusal instead of taking it on trust."
           ]
         },
@@ -379,10 +408,10 @@
         }
       ],
       "boundaries": [
-        "No ingestion: no import, no email or calendar sync, no integration adapter, and no scheduler or queue to run one on a cadence (L-04, L-05).",
-        "No identity resolution: no duplicate detection, no merge, no cross-module search, no unified activity timeline (L-06).",
+        "Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04). No CSV importer, streaming ingestion or prebuilt CDP connector ships (L-05, L-06).",
+        "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06).",
         "No segmentation engine: no dynamic audiences, no frozen snapshots, no suppression sets, no sync to a destination.",
-        "No consent, lawful-basis, retention or subject-export machinery, and no role restriction on sensitive fields because there are no roles (L-01).",
+        "No complete consent, retention, subject export/erasure or field-level privacy policy ships. Authorization and per-instance tenancy are separate implemented framework controls (L-01, L-09).",
         "Real customer data does not belong in this yet — there is no export and no erasure path, so a subject request cannot be serviced (L-09).",
         "The one provider call that exists runs against a checked-in fixture. No external data source is wired and no credential ships.",
         "This page names no CDP product, because the only permitted competitor source carries no CDP research."
@@ -426,7 +455,8 @@
         "docs/strategy/MARKETING_GROWTH_OPERATIONS.md"
       ],
       "tests": [
-        "tests/lead-intelligence-e2e.test.js"
+        "tests/lead-intelligence-e2e.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
       "related": [
         "cdp-plus-crm",
@@ -437,12 +467,24 @@
       "faq": [
         {
           "q": "Can this ingest events from my warehouse or website?",
-          "a": "No. Nothing ingests: no import, no email or calendar sync, no integration adapter, no scheduler to run one. A CDP owns ingestion, identity resolution and audiences; this framework owns the deterministic commercial process beside it."
+          "a": "No, Accordo is not a full CDP. Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06). Audiences, segmentation and destination activation remain outside the implemented foundation."
         },
         {
           "q": "How do the two work together?",
           "a": "Split the job: the CDP resolves identities and builds segments, and the agent-built CRM owns the governed process — quotes, approvals, orders, contracts, delivery, service — as code in your repository. Neither replaces the other, and this page states the seam rather than blurring it."
         }
+      ],
+      "facts": [
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent",
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent",
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent"
       ]
     },
     {
@@ -459,7 +501,7 @@
         {
           "heading": "Where Frappe CRM wins",
           "body": [
-            "It is a CRM your team can use. The research file this page reads — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records Frappe CRM as an end-user CRM app on the Frappe low-code framework (Python, MariaDB, Vue) at 3.1k GitHub stars, deployable on Frappe Cloud, Docker or bench, with SMBs and the ERPNext ecosystem as its customer. This framework is none of that: there is no hosted product and no account (L-07), no authentication ships, and a deployment must supply the verifier (L-01), persistence is local SQLite (L-02), and nothing installs from npm — the bootstrap runs from a checkout, so ownership means copying source and upgrading means merging (L-08). If what you need is a CRM in use this quarter, the comparison ends in Frappe's favour before it starts.",
+            "It is a CRM your team can use. The research file this page reads — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records Frappe CRM as an end-user CRM app on the Frappe low-code framework (Python, MariaDB, Vue) at 3.1k GitHub stars, deployable on Frappe Cloud, Docker or bench, with SMBs and the ERPNext ecosystem as its customer. This framework is none of that: there is no hosted product and no account (L-07), no authentication ships, and a deployment must supply the verifier (L-01), persistence supports SQLite and dedicated-database PostgreSQL (L-02), and the npm scaffolder distributes vendored source at its published version, while a current checkout supplies current capabilities; upgrading means merging (L-08). If what you need is a CRM in use this quarter, the comparison ends in Frappe's favour before it starts.",
             "Its customization model is a strength on its own terms. The file calls the DocType metadata model the most mature metadata-driven customization model in open-source CRM: forms and APIs are auto-generated from metadata in a running system, so an administrator shapes the application without writing code. Where the person doing the customizing is an admin rather than a developer with a repository, that is the better fit — and the huge ERPNext adjacency the file records means a company already inside that ecosystem has every reason to stay in it."
           ]
         },
@@ -475,7 +517,7 @@
           "heading": "How to choose",
           "body": [
             "Choose Frappe CRM if you want a CRM in use soon rather than a repository to build one in; if customization by an administrator in a running system is how your organisation works; if you are in or near the ERPNext ecosystem; if a managed cloud matters; and if the AGPL app licence fits what you are shipping — the file records the app as AGPL while the underlying framework is MIT.",
-            "Choose this framework in the narrow case: the deliverable is a bespoke commercial process that must exist as reviewable code in your repository, written mostly by a coding agent, with approvals, audit and trace as framework primitives — and you can supply authentication, hosting, PostgreSQL, import and export yourself, because none of them is here (L-01, L-02).",
+            "Choose this framework in the narrow case: the deliverable is a bespoke commercial process that must exist as reviewable code in your repository, written mostly by a coding agent, with approvals, audit and trace as framework primitives — and you can supply deployment authentication, hosting, connector mapping and complete personal-data operations; dedicated PostgreSQL and bounded customer imports already exist (L-01, L-02).",
             "If what you actually want is a governed MCP endpoint over a hosted CRM — permissions, audit, an identity behind every call — the honest answer is that neither column has it today: the file records Frappe's MCP as third-party bridges, and the server here is stdio and local only, with no authentication anywhere (L-01)."
           ]
         },
@@ -495,9 +537,9 @@
         "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04.",
         "Licence descriptions are factual summaries of published texts, not legal advice.",
         "This framework ships no authentication; in local-development mode an actor header is an assertion, not an identity (L-01).",
-        "SQLite only. PostgreSQL is on a track, not in the code (L-02).",
+        "The synchronous factory uses SQLite; the async factory supports one tenant on dedicated PostgreSQL databases. Shared-database row tenancy and general production readiness are not claimed (L-02).",
         "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",
-        "Nothing installs from npm: the bootstrap runs from a checkout, ownership is copying source, and upgrading is merging (L-08).",
+        "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
         "No build-rate or speed claim in either direction — the benchmark has not been run (L-03)."
       ],
       "claims": [
@@ -512,7 +554,9 @@
         "L-02",
         "L-03",
         "L-07",
-        "L-08"
+        "L-08",
+        "L-06",
+        "L-09"
       ],
       "jobs": [
         "JTBD-01",
@@ -532,12 +576,16 @@
         "tests/module-factory-e2e.test.js",
         "tests/module-evolution.test.js",
         "tests/mcp.test.js",
-        "tests/app-inspect.test.js"
+        "tests/app-inspect.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
       "related": [
         "vs-twenty",
         "vs-odoo",
         "code-you-own"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented"
       ]
     },
     {
@@ -555,7 +603,7 @@
           "heading": "Where Relaticle wins",
           "body": [
             "On the axis it chose, it is ahead of everything else in the researched set — including this project's own runtime story. The research file — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records a first-party MCP server with 30 tools, calls it the most agent-forward incumbent claim, and names Relaticle the first mover on agent-native CRM language. It is a working application on a modern PHP stack — Laravel, Filament, PHP 8.4, Postgres — that a developer-led team or an AI-forward SMB can self-host and point an agent at today. The MCP server here, by contrast, is stdio and local only, with no hosted or authenticated endpoint (C-18), and there is no product around it to operate: no hosted CRM, no free tier, no account (L-07).",
-            "Runtime flexibility without a deploy. The file records 22 custom field types and no-migration schema changes — a record can be reshaped inside the running app without touching a repository. And the baseline asymmetry holds here as everywhere on this site: Relaticle is a CRM you can use, while this framework has no authentication ships, and a deployment must supply the verifier (L-01), stores everything in local SQLite (L-02), and arrives vendored — `npm create accordo` copies the framework source into the project, so ownership means keeping that copy and upgrading means merging (L-08)."
+            "Runtime flexibility without a deploy. The file records 22 custom field types and no-migration schema changes — a record can be reshaped inside the running app without touching a repository. And the baseline asymmetry holds here as everywhere on this site: Relaticle is a CRM you can use, while this framework has no authentication ships, and a deployment must supply the verifier (L-01), supports SQLite and dedicated-database PostgreSQL (L-02), and arrives vendored — `npm create accordo` copies the framework source into the project, so ownership means keeping that copy and upgrading means merging (L-08)."
           ]
         },
         {
@@ -570,7 +618,7 @@
           "heading": "How to choose",
           "body": [
             "Choose Relaticle if you want a working CRM now, operated by agents through a first-party MCP surface; if a modern PHP stack fits your team; if self-hosting is acceptable — the file records self-host as the only deployment; and if AGPL fits what you are shipping. The file also records solo-maintainer risk at 1.5k stars and 167 forks: weigh that as you would for any dependency this central, and check the current state yourself, because those figures are a snapshot from one date.",
-            "Choose this framework in the narrow case: the deliverable is a bespoke commercial process that must exist as source in your repository, written mostly by a coding agent and reviewed as a diff, with the approval boundary asserted by a test — and you supply authentication, hosting, PostgreSQL, import and export yourself, because none of them is here (L-01, L-02).",
+            "Choose this framework in the narrow case: the deliverable is a bespoke commercial process that must exist as source in your repository, written mostly by a coding agent and reviewed as a diff, with the approval boundary asserted by a test — and you supply deployment authentication, hosting, connector mapping and complete personal-data operations; dedicated PostgreSQL and bounded customer imports already exist (L-01, L-02).",
             "If your requirement is a hosted, authenticated agent endpoint, neither column is the answer today: the file records Relaticle as self-host only, and the MCP server here is stdio and local, with no identity behind any call (L-01)."
           ]
         },
@@ -591,9 +639,9 @@
         "Licence descriptions are factual summaries of published texts, not legal advice.",
         "The MCP server here is stdio and local only, with no hosted or authenticated endpoint, and it inherits the local process's authority.",
         "No authentication ships; in local-development mode an actor header is an assertion, not an identity (L-01).",
-        "SQLite only. PostgreSQL is on a track, not in the code (L-02).",
+        "The synchronous factory uses SQLite; the async factory supports one tenant on dedicated PostgreSQL databases. Shared-database row tenancy and general production readiness are not claimed (L-02).",
         "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",
-        "Nothing installs from npm: ownership is copying source, and upgrading is merging (L-08).",
+        "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
         "No claim that an agent builds faster or more reliably here — the benchmark has not been run (L-03)."
       ],
       "claims": [
@@ -608,7 +656,9 @@
         "L-02",
         "L-03",
         "L-07",
-        "L-08"
+        "L-08",
+        "L-06",
+        "L-09"
       ],
       "jobs": [
         "JTBD-AX-01",
@@ -627,12 +677,16 @@
         "tests/mcp.test.js",
         "tests/custom-package-e2e.test.js",
         "tests/workflow.test.js",
-        "tests/app-inspect.test.js"
+        "tests/app-inspect.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
       "related": [
         "vs-twenty",
         "vs-comp-ai-crm",
         "the-refusal-boundary"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented"
       ]
     },
     {
@@ -649,8 +703,8 @@
         {
           "heading": "Where Comp AI's CRM wins",
           "body": [
-            "It proved the demand is real, and has since proved more than that. The research file this page reads — docs/strategy/COMPETITOR_MAP.md — recorded 4.4k GitHub stars on August 4, 2026; a re-check dated August 20 records 8.7k stars, 1.0k forks and 211 commits, under an MIT licence, TypeScript end-to-end on Next.js, NestJS and Prisma. Its thesis is an autonomous background agent with a work queue, evidence-based facts and a sandboxed design the file calls genuinely novel. If what you want is a CRM in which the agent is a worker inside the product, that is its entire thesis — and nothing in this framework attempts it. There is no background agent here, no work queue, and no scheduler for either: nothing in this framework runs unattended at all (L-04).",
-            "It is also far simpler to stand up. The file records deployment as three Vercel deployments. This project is not a product at all — no hosted CRM, no free tier, no account (L-07) — with no authentication ships, and a deployment must supply the verifier (L-01), persistence in local SQLite (L-02), and a bootstrap that runs from a checkout of the repository rather than from a registry, so ownership means copying source and upgrading means merging (L-08)."
+            "It proved the demand is real, and has since proved more than that. The research file this page reads — docs/strategy/COMPETITOR_MAP.md — recorded 4.4k GitHub stars on August 4, 2026; a re-check dated August 20 records 8.7k stars, 1.0k forks and 211 commits, under an MIT licence, TypeScript end-to-end on Next.js, NestJS and Prisma. Its thesis is an autonomous background agent with a work queue, evidence-based facts and a sandboxed design the file calls genuinely novel. If what you want is a CRM in which the agent is a worker inside the product, that is its entire thesis — and nothing in this framework attempts it. No autonomous sales agent ships here. Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04).",
+            "It is also far simpler to stand up. The file records deployment as three Vercel deployments. This project is not a product at all — no hosted CRM, no free tier, no account (L-07) — with no authentication ships, and a deployment must supply the verifier (L-01), SQLite or dedicated-database PostgreSQL persistence (L-02), and an npm scaffolder shipping the dated 0.1.0 source snapshot or a current-checkout bootstrap; upgrading means merging source (L-08)."
           ]
         },
         {
@@ -665,7 +719,7 @@
           "heading": "How to choose",
           "body": [
             "Choose Comp AI's CRM if you want an autonomous CRM worker inside a product today; if MIT licensing, a TypeScript-end-to-end stack and Vercel deployment fit; and if the fixed schema and single-tenant shape the file records are acceptable for what you are running.",
-            "Choose this framework in the narrow case: the deliverable is a bespoke commercial process as reviewable code in your repository, where the agent does the writing and a human owns every approval — and you can supply authentication, hosting, PostgreSQL and data governance yourself, because none of them is here (L-01, L-02).",
+            "Choose this framework in the narrow case: the deliverable is a bespoke commercial process as reviewable code in your repository, where the agent does the writing and a human owns every approval — and you can supply deployment authentication, hosting, connector mapping and complete personal-data operations; dedicated PostgreSQL and bounded customer imports already exist (L-01, L-02).",
             "If the question is which agent should touch revenue decisions, the two answers differ in kind rather than degree: theirs works the queue, and this one is stopped at the approval and told to wait for a person. Choose by which failure you would rather explain afterwards."
           ]
         },
@@ -684,11 +738,11 @@
         "No hands-on evaluation: nothing from Comp AI was installed, configured or run to produce this page.",
         "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04; the star and commit figures are that date's snapshot.",
         "Licence descriptions are factual summaries of published texts, not legal advice.",
-        "No background agent, no work queue and no scheduler exist in this framework — nothing here runs unattended (L-04).",
+        "No autonomous background sales agent ships. Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04).",
         "No authentication ships; in local-development mode an actor header is an assertion, not an identity (L-01).",
-        "SQLite only. PostgreSQL is on a track, not in the code (L-02).",
+        "The synchronous factory uses SQLite; the async factory supports one tenant on dedicated PostgreSQL databases. Shared-database row tenancy and general production readiness are not claimed (L-02).",
         "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",
-        "Nothing installs from npm: ownership is copying source, and upgrading is merging (L-08).",
+        "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
         "No measured comparison in either direction — the benchmark has not been run (L-03)."
       ],
       "claims": [
@@ -704,7 +758,9 @@
         "L-03",
         "L-04",
         "L-07",
-        "L-08"
+        "L-08",
+        "L-06",
+        "L-09"
       ],
       "jobs": [
         "JTBD-02",
@@ -719,12 +775,20 @@
       ],
       "tests": [
         "tests/workflow.test.js",
-        "tests/commercial-e2e.test.js"
+        "tests/commercial-e2e.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
       "related": [
         "vs-relaticle",
         "vs-twenty",
         "the-refusal-boundary"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent"
       ]
     },
     {
@@ -741,7 +805,7 @@
         {
           "heading": "Where EspoCRM and SuiteCRM win",
           "body": [
-            "They are complete products you can install today. The research file this page reads — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records EspoCRM at 3.2k GitHub stars and SuiteCRM at 5.6k: legacy PHP open-source CRMs, self-hosted or in Docker, serving SMBs and legacy installs, both AGPL. EspoCRM's metadata and admin-panel customization is recorded as strong; SuiteCRM carries a PHP module framework the file describes as aging. Against this framework's own ledger, the asymmetry is total: no authentication ships, and a deployment must supply the verifier (L-01), no email, calendar or marketing integration (L-05), no import, export, dedupe, merge, bulk edit, saved views or global search (L-06), no hosted product (L-07), and no place for real customer data yet — with no export and no erasure path, a data-subject access or deletion request cannot be serviced (L-09).",
+            "They are complete products you can install today. The research file this page reads — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records EspoCRM at 3.2k GitHub stars and SuiteCRM at 5.6k: legacy PHP open-source CRMs, self-hosted or in Docker, serving SMBs and legacy installs, both AGPL. EspoCRM's metadata and admin-panel customization is recorded as strong; SuiteCRM carries a PHP module framework the file describes as aging. Against this framework's own ledger, the asymmetry is total: no authentication ships, and a deployment must supply the verifier (L-01), no email, calendar or marketing integration (L-05), bounded imports and logical identity links, with no complete export, erasure or physical merge (L-06), no hosted product (L-07), and no place for real customer data yet — with no export and no erasure path, a data-subject access or deletion request cannot be serviced (L-09).",
             "The file's own market summary is the honest headline: together with Odoo, the legacy CRMs own the self-host SMB buyer, not the developer builder, and this project does not compete for their buyer directly. If your company is choosing a CRM to run, this page has no third option to offer — pick between them on their merits, which this page does not evaluate."
           ]
         },
@@ -757,8 +821,8 @@
           "heading": "How to choose",
           "body": [
             "Choose EspoCRM or SuiteCRM if you are buying a CRM to use: a self-hosted product for an SMB, customized through an admin panel or an implementation partner — the file records EspoCRM as the stronger of the two on metadata customization — with AGPL acceptable for your deployment.",
-            "Choose this framework in the narrow case: one commercial process specific enough that no packaged CRM fits it, which must live as reviewable code in your repository, written mostly by a coding agent — and you supply authentication, hosting, PostgreSQL, import, export and data governance yourself, because none of them is here (L-01, L-06).",
-            "There is no migration path in either direction. No import of any kind exists here (L-06), so nothing from an existing EspoCRM or SuiteCRM install can be brought over, and this page claims nothing about their export capabilities, because the research file carries nothing about them."
+            "Choose this framework in the narrow case: one commercial process specific enough that no packaged CRM fits it, which must live as reviewable code in your repository, written mostly by a coding agent — and you supply deployment authentication, hosting, connector mapping and complete personal-data operations; dedicated PostgreSQL and bounded customer imports already exist (L-01, L-06).",
+            "No prebuilt migration from EspoCRM or SuiteCRM ships. Bounded JSON customer import can receive application-mapped rows, while complete export remains absent (L-06); this page does not evaluate their export capabilities."
           ]
         },
         {
@@ -778,9 +842,9 @@
         "Licence descriptions are factual summaries of published texts, not legal advice.",
         "This framework is not a product a business buys: no hosted CRM, no free tier, no account (L-07).",
         "No authentication ships, so nothing here is ready for a sales team to log into (L-01).",
-        "No email, calendar or marketing integration, and no import or export, so this does not connect to or migrate from an existing CRM (L-05, L-06).",
+        "No prebuilt CRM migration or business-service connector ships. Bounded customer-row import exists; source mapping and complete export remain application work (L-05, L-06).",
         "Real customer data cannot go in yet: no export and no erasure path means a subject request cannot be serviced (L-09).",
-        "Nothing installs from npm: ownership is copying source, and upgrading is merging (L-08).",
+        "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
         "No measured comparison in either direction — the benchmark has not been run (L-03)."
       ],
       "claims": [
@@ -816,12 +880,16 @@
       "tests": [
         "tests/workflow.test.js",
         "tests/module-factory-e2e.test.js",
-        "tests/app-inspect.test.js"
+        "tests/app-inspect.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
       "related": [
         "vs-odoo",
         "vs-twenty",
         "vs-building-a-crm-from-scratch"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented"
       ]
     },
     {
@@ -839,8 +907,8 @@
           "heading": "Where the templates win",
           "body": [
             "Ownership with no argument attached. The research file this page reads — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records the templates as code-first CRUD starting points under MIT: Atomic CRM is react-admin plus Supabase, distributed through the shadcn registry so the code is copied into your repository; customization is total because it is your code; hosting is wherever you host; and the lock-in column reads none. If the CRM you need is CRUD screens over your own schema on a stack you already know, a template gives you that today, with nothing to learn and nothing to disagree with.",
-            "The stack is one this framework does not offer. Atomic's recorded pairing is react-admin with Supabase, while persistence here is Node's built-in SQLite and PostgreSQL is not implemented (L-02). The file also records .claude/ and .mcp.json checked into Atomic as developer affordances — good for humans working with coding agents, even though it records no runtime MCP surface for any of the templates.",
-            "And the kinship should be stated rather than hidden: distribution here today is closer to a template than to a package. Nothing installs from npm — the bootstrap scaffolds from a checkout of this repository, ownership means copying source, and upgrading means merging (L-08). The file reads Atomic CRM's fork-to-star ratio of about 0.63 as proof that developers want CRM code they own. That is this framework's bet too; the disagreement is only about what the copied code should already contain."
+            "The stack is one this framework does not offer. Atomic's recorded pairing is react-admin with Supabase, while persistence here supports SQLite and dedicated-database PostgreSQL through separate factories (L-02). The file also records .claude/ and .mcp.json checked into Atomic as developer affordances — good for humans working with coding agents, even though it records no runtime MCP surface for any of the templates.",
+            "And the kinship should be stated rather than hidden: distribution here today is closer to a template than to a package. The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08). The file reads Atomic CRM's fork-to-star ratio of about 0.63 as proof that developers want CRM code they own. That is this framework's bet too; the disagreement is only about what the copied code should already contain."
           ]
         },
         {
@@ -855,7 +923,7 @@
           "heading": "How to choose",
           "body": [
             "Choose a template if the CRM is CRUD plus your own logic on your own stack; if react-admin, Refine or Supabase is where your team already lives; if the commercial process is thin enough that writing it by hand is a feature rather than a burden; and if you want no framework opinion between you and the code — the file records total customization and no lock-in, and nothing here contradicts it.",
-            "Choose this framework if the process is the product — stages, approvals, discount policy, audit — and you want it generated as reviewable code with the boundaries tested, while accepting SQLite for now (L-02) and supplying authentication, hosting, import and export yourself (L-01, L-06).",
+            "Choose this framework if the process is the product — stages, approvals, discount policy, audit — and you want it generated as reviewable code with the boundaries tested, while choosing SQLite or dedicated-database PostgreSQL (L-02), supplying authentication and hosting, and completing the data operations your deployment needs (L-01, L-06).",
             "If import, export and search are the feature list, neither column claims them: the file records no CRM semantics for the templates, and this framework records those absences in its own ledger (L-06). Both paths end in a repository you own. The choice is only what the first commit already contains, and who wrote it."
           ]
         },
@@ -875,10 +943,10 @@
         "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04.",
         "Licence descriptions are factual summaries of published texts, not legal advice.",
         "This framework ships no authentication; in local-development mode an actor header is an assertion, not an identity (L-01).",
-        "SQLite only — the templates' recorded Supabase pairing is a stack this framework does not offer (L-02).",
-        "No import, export, dedupe, merge, bulk edit, saved views or global search here (L-06).",
+        "The synchronous factory uses SQLite; the async factory supports one tenant on dedicated PostgreSQL databases. Shared-database row tenancy and general production readiness are not claimed (L-02). This is not a Supabase-specific starter.",
+        "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06).",
         "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",
-        "Nothing installs from npm: like a template, this is code you copy — ownership is copying source, and upgrading is merging (L-08).",
+        "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
         "No measured comparison in either direction — the benchmark has not been run (L-03)."
       ],
       "claims": [
@@ -895,7 +963,8 @@
         "L-03",
         "L-06",
         "L-07",
-        "L-08"
+        "L-08",
+        "L-09"
       ],
       "jobs": [
         "JTBD-01",
@@ -913,12 +982,19 @@
       "tests": [
         "tests/module-factory-e2e.test.js",
         "tests/workflow.test.js",
-        "tests/module-evolution.test.js"
+        "tests/module-evolution.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
       "related": [
         "vs-building-a-crm-from-scratch",
         "vs-twenty",
         "code-you-own"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent"
       ]
     }
   ]

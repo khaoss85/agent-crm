@@ -12,10 +12,12 @@ Human product overview: [accordo.dev](https://accordo.dev/) · coding-agent entr
 [claims ledger](https://accordo.dev/evidence.html).
 
 The name is chosen and the domain registered. `npm create accordo` scaffolds a working
-project from the published `create-accordo@0.1.0`; the `accordo` package itself remains
+project from the published `create-accordo@0.1.0`, the August 19 source snapshot.
+Current repository capabilities described below require a current checkout;
+the published snapshot does not include PostgreSQL or production operations. The `accordo` package itself remains
 an empty `0.0.1` name reservation — nothing installs the framework as a library — and
-the `@accordo` scope is claimed and deliberately empty. No trademark screen has been run, and the project is
-not deployable to production. What that means precisely is in
+the `@accordo` scope is claimed and deliberately empty. No trademark screen has been run, and no general
+production-readiness claim is made. What that means precisely is in
 [Where it stops](#where-it-stops), which is worth reading before the rest.
 
 ```text
@@ -91,8 +93,8 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | Lead capture, enrichment, explainable versioned scoring, deterministic routing, qualification, conversion | enrichment runs against a fixture provider; no real data source is wired | `tests/lead-intelligence-e2e.test.js`, `tests/lead-conversion-e2e.test.js` |
 | Server-priced composite quotes, immutable quote versions, versioned discount policy with approval | fixture catalog provider; integer cents with no FX — currencies are never summed | `tests/commercial-e2e.test.js` |
 | Signature envelope → verified events → signed-artifact evidence → exactly one immutable Order | fixture signature provider, test-only webhook key, provider-reported artifact hash | `tests/signature-order-e2e.test.js` |
-| Order activation into Contract, immutable version, Subscription and pending obligations | nothing bills, renews, amends or cancels; there is no scheduler | `tests/contracts-activation-e2e.test.js` |
-| Delivery handover into a project with work packages, milestones and an optional partner; human-driven execution | nothing schedules, staffs, accepts or bills; deliverables do not exist as objects | `tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js` |
+| Order activation and governed renewal/amendment into signed successor agreements | immutable history; no automatic renewal, cancellation execution or billing | `tests/contracts-activation-e2e.test.js`, `tests/lifecycle-amendment-execution-e2e.test.js` |
+| Delivery handover into a project with work packages, milestones and an optional partner; human-driven execution | no resource scheduling, staffing or billing; deliverables and user-recorded acceptance exist, without authenticating the customer | `tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js`, `tests/delivery-change-acceptance-e2e.test.js` |
 | Append-only time and expense evidence, costed by a versioned policy, with a reproducible contribution estimate | deliberately not a margin: no revenue recognition, no COGS, no ARR/MRR, no FX | `tests/delivery-economics-e2e.test.js` |
 | A customer-authored domain package attaches and detaches with the kernel fingerprint unchanged | the scaffold that starts one writes an empty package and nothing else; no registry, no publication, no sandboxing — package code runs with the host's authority | `tests/package-contract.test.js`, `tests/custom-package-e2e.test.js` |
 | `accordo package scaffold <name>` — a minimal, empty, conforming local package, written atomically, dry-run by default | it invents no business logic, composes nothing, verifies no global identity uniqueness and installs or publishes nothing | `tests/package-scaffold.test.js`, `tests/package-test-command.test.js` |
@@ -244,13 +246,16 @@ something nobody checked. No number in any of these sentences is checked either
   and no complete customer timeline.
   <!-- truth: cdf.full_cdp.implemented=absent -->
   <!-- truth: customer_timeline.complete=absent -->
-- **No import, export, dedupe, merge, bulk edit, saved views or global search.** Table stakes
-  in every commercial CRM, and none of them has a milestone yet.
-- **You cannot put real customer data in this yet.** No authentication ships, and there is no
-  export and no erasure path — so a data-subject access or deletion request cannot be serviced
-  with it.
-  `docs/strategy/DATA_GOVERNANCE.md` is design-only. The one thing that does hold: lead scoring is
-  deterministic, versioned and explainable, not a model's judgement about a person.
+- **Bounded customer imports and logical identity; incomplete data operations.** Preview/apply takes
+  bounded JSON rows, with per-row receipts, idempotency and deterministic matching;
+  a human decides canonical links without deleting or rewriting source records.
+  No CSV importer, physical merge, complete export/erasure, bulk editing, saved views
+  or global search ships. See `tests/customer-data-foundation.test.js`.
+  <!-- truth: domain.customer_data.package_native=package_native -->
+- **Personal-data readiness requires deployment work beyond the foundation.** Supply authentication and
+  complete subject export/erasure for your application; the customer foundation alone
+  establishes neither compliance nor suitability for real customer data.
+  Lead scoring is deterministic, versioned and explainable.
 - **This is a framework, not a product you sign up for.** There is no hosted CRM, no free
   tier, no account, and no control plane that provisions, deploys or meters anything. The
   output is an application you run.

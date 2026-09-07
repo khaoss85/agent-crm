@@ -9,7 +9,7 @@
       "metaTitle": "Agent-native CRM framework for coding agents | Accordo",
       "plainName": "Agent-native CRM framework for coding agents",
       "intent": "agent-native CRM framework for Claude Code Codex and Gemini",
-      "summary": "Accordo is an agent-native CRM framework: a coding agent uses checked files and commands to inspect, plan, compose and verify a CRM as reviewable source. The running commercial process remains deterministic; the model does not become its control plane. It is not a hosted AI CRM, a runtime copilot or an autonomous salesperson. The kernel has no concept of a deal, a quote or a commessa: those belong to optional domain packages. Every wider reading inherits the same absences — no authentication, no scheduler, no integrations, SQLite only — and a category claim is not evidence of anything.",
+      "summary": "Accordo is an agent-native CRM framework: a coding agent uses checked files and commands to inspect, plan, compose and verify a CRM as reviewable source. The running commercial process remains deterministic; the model does not become its control plane. It is not a hosted AI CRM, a runtime copilot or an autonomous salesperson. The kernel has no concept of a deal, a quote or a commessa: those belong to optional domain packages. Every wider reading inherits the same absences — deployment-supplied authentication, explicitly started self-host workers, fixture business integrations, and SQLite or dedicated-database PostgreSQL — and a category claim is not evidence of anything.",
       "metaDescription": "A CRM framework coding agents build with: checked source, deterministic workflows and bounded tools. Not a hosted AI CRM or autonomous runtime.",
       "sections": [
         {
@@ -47,7 +47,7 @@
           "heading": "What the catalogue says about the widened area",
           "body": [
             "The job catalogue spans CRM, marketing, analytics, data operations, governance, commercial, contract, delivery and packaging. A minority of its rows are validated end to end, a band are partial, and most are honestly marked not supported — the live split is published at /jobs.json, which is the copy that cannot go stale. That distribution is the reason this page argues about architecture and not about coverage.",
-            "A wider label describes what the framework is able to be pointed at, not what it already does. Reading the same absence list four ways does not shorten it: no authentication ships and a deployment must supply the verifier (L-01), there is no scheduler, queue or reminders (L-04), no email, calendar or marketing adapter (L-05), and persistence is SQLite (L-02). MRR, ARR and TCV are deliberately not derived because contract term and normalization policy are not modelled (JTBD-CS-05), and there is no semantic metric layer at all (JTBD-AN-01)."
+            "The framework enforces authorization and one tenant per application instance; the deployment supplies authentication. Self-hosted SQLite and dedicated-database PostgreSQL compositions exist, but are not a general production-readiness claim (L-01, L-02). Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04). No email, calendar or marketing adapter ships (L-05). Broader category labels establish no additional domain evidence; MRR, ARR and TCV remain unimplemented (L-10)."
           ]
         },
         {
@@ -63,16 +63,39 @@
         "Claude Code, Codex and Gemini CLI first-contact surfaces are checked source, not evidence of ranking, unaided recommendation or successful builds. Those outcomes remain unmeasured.",
         "Application inspection is source-only, a Solution Plan executes nothing, and the MCP server is local stdio that inherits the operator's authority.",
         "The kernel is not a CRM with the CRM parts hidden. Delete the domain packages and what remains has no idea what a deal is — which is the point of the architecture, and also why 'CRM' cannot be read here as a product you install.",
-        "A wider category name buys no wider capability. CPQ, contract lifecycle and delivery readings inherit exactly the same absences: no authentication, no scheduler, no integrations, SQLite only.",
+        "A wider category name buys no wider capability. CPQ, contract lifecycle and delivery readings inherit exactly the same absences: deployment-supplied authentication, explicitly started self-host workers, fixture business integrations, and SQLite or dedicated-database PostgreSQL.",
         "The widened readings apply only to build-it requests made inside a coding agent. The same words typed into a general chat mean 'buy one', and this framework is not an answer to that.",
         "Service desk, ticketing and SLA positioning stays behind the job catalogue. Two service jobs read 'partially supported' today; nothing on this site may describe a support product.",
         "'AI CRM' and 'customer data platform' are different categories, not smaller versions of this one. Runtime AI features are optional additions, never the control plane.",
         "The composed counts belong to one starter's application, run locally against SQLite with no authentication. They are not a description of what you would get.",
         "Nothing on this page is measured against a competitor or a benchmark. The build benchmark has not been run."
       ],
-      "claims": ["C-13", "C-14", "C-15", "C-16", "C-18", "C-22"],
-      "limitations": ["L-01", "L-02", "L-04", "L-05", "L-07", "L-03"],
-      "jobs": ["JTBD-AX-02", "JTBD-PK-01", "JTBD-PK-02", "JTBD-DS-11", "JTBD-DS-12", "JTBD-CS-05", "JTBD-AN-01", "JTBD-PK-06"],
+      "claims": [
+        "C-13",
+        "C-14",
+        "C-15",
+        "C-16",
+        "C-18",
+        "C-22"
+      ],
+      "limitations": [
+        "L-01",
+        "L-02",
+        "L-04",
+        "L-05",
+        "L-07",
+        "L-03"
+      ],
+      "jobs": [
+        "JTBD-AX-02",
+        "JTBD-PK-01",
+        "JTBD-PK-02",
+        "JTBD-DS-11",
+        "JTBD-DS-12",
+        "JTBD-CS-05",
+        "JTBD-AN-01",
+        "JTBD-PK-06"
+      ],
       "docs": [
         "PRODUCT.md",
         "ARCHITECTURE.md",
@@ -94,7 +117,21 @@
         "tests/mcp.test.js",
         "tests/distribution-intent.test.js"
       ],
-      "related": ["code-you-own", "the-refusal-boundary", "how-we-decide-what-to-build"]
+      "related": [
+        "code-you-own",
+        "the-refusal-boundary",
+        "how-we-decide-what-to-build"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent",
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent"
+      ]
     },
     {
       "id": "concept-refusal-boundary",
@@ -137,23 +174,40 @@
           "heading": "Where the boundary stops",
           "body": [
             "The actor is an assertion, not an identity — in local-development mode, which is the posture this page describes. The framework authenticates nobody and ships no verifier, so an actor header there is a claim the caller makes about itself (L-01). The boundary therefore holds against an honest agent that says what it is, and not against anyone with network access who says otherwise, until a deployment supplies the adapter that verifies the request.",
-            "The approval key is a label. The commercial test asserts requiredApprovalKey equals 'sales-manager' with the comment that this is a LABEL, not enforced security — real Sales-Manager or Finance role enforcement needs authentication, tenancy and roles enforced in services, and none of that exists. Obtaining the required commercial approval on a discount is 'partially supported' in the catalogue (JTBD-CO-04) for this reason, and enforcing team or tenant permissions is not supported at all (JTBD-15).",
-            "The renewal rule is proven on one built-in object with one threshold value. Managing a custom object with an approval rule is 'partially supported' (JTBD-06). And nothing raises an approval because time passed: there is no scheduler, no delayed workflow and no queue, so every approval in this system starts from somebody or something asking for a state change (L-04)."
+            "requiredApprovalKey is a commercial policy label, not an enforced Sales-Manager or Finance membership role. Framework authorization and per-instance tenancy exist separately; the deployment supplies verified identity. JTBD-CO-04 remains partial because a human-actor gate does not prove that specific business role.",
+            "The built-in renewal threshold is proven; arbitrary custom-object approval rules remain partially supported (JTBD-06). Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04)."
           ]
         }
       ],
       "boundaries": [
         "It is not authentication. The actor is asserted in a header, never verified, so the refusal holds against an honest agent and not against an attacker who can reach the port.",
         "The discount refusal has no named test of its own. It is asserted inside a composite commercial end-to-end test, and extracting it is recorded as pending work rather than described as done.",
-        "requiredApprovalKey is a label, not a permission. Nothing checks that the human who approved was a sales manager, because there are no roles to check.",
+        "requiredApprovalKey is a label, not a permission. Nothing checks that the human who approved was a sales manager, the approval label is not mapped to an enforced membership role.",
         "The renewal policy is proven on the built-in Opportunity object at a single threshold value. It is not a general approval engine over arbitrary objects.",
         "Refusing the decision is not refusing the work. An agent may create the quote, add lines, submit it, trigger the policy and read every piece of evidence — it may not be the human at the end.",
         "The framework decides who may decide, not whether the decision was right. There is no second signature, no review of the human's judgement and no way to undo an approval other than a new version.",
-        "No approval is ever raised by the passage of time. Without a scheduler, a renewal notice period fires nothing."
+        "Contract notice metadata alone starts nothing. A composed scheduled-ask timer can present a review request through an explicitly started worker, without deciding it."
       ],
-      "claims": ["C-04", "C-03", "C-21", "C-23", "C-08", "C-16"],
-      "limitations": ["L-01", "L-04"],
-      "jobs": ["JTBD-02", "JTBD-CO-03", "JTBD-CO-04", "JTBD-06", "JTBD-15", "JTBD-LI-06"],
+      "claims": [
+        "C-04",
+        "C-03",
+        "C-21",
+        "C-23",
+        "C-08",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-04"
+      ],
+      "jobs": [
+        "JTBD-02",
+        "JTBD-CO-03",
+        "JTBD-CO-04",
+        "JTBD-06",
+        "JTBD-15",
+        "JTBD-LI-06"
+      ],
       "docs": [
         "DECISIONS.md",
         "ARCHITECTURE.md",
@@ -166,7 +220,19 @@
         "tests/commercial-e2e.test.js",
         "tests/falsify.test.js"
       ],
-      "related": ["deterministic-by-construction", "customer-and-revenue-os"]
+      "related": [
+        "deterministic-by-construction",
+        "customer-and-revenue-os"
+      ],
+      "facts": [
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent",
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent"
+      ]
     },
     {
       "id": "concept-code-you-own",
@@ -203,7 +269,7 @@
         {
           "heading": "What owning it does not buy you yet",
           "body": [
-            "Owning the code does not make it deployable. The framework authenticates nobody and ships no verifier, so a deployment must supply that adapter before the server faces anyone (L-01); persistence is SQLite (L-02); there is no import, export, dedupe, merge, bulk edit, saved view or global search (L-06). You cannot put real customer data in it: a CRM is a personal-data system by definition, and this one has no way to service an access or deletion request (L-09).",
+            "The framework enforces authorization and one tenant per application instance; the deployment supplies authentication. Self-hosted SQLite and dedicated-database PostgreSQL compositions exist, but are not a general production-readiness claim (L-01, L-02). Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06). Customer Data Foundation supplies bounded import and identity governance, not complete personal-data operations. Authentication must be supplied by the deployment, and complete subject export and erasure remain absent; the framework alone does not establish compliance or suitability for real customer data (L-09).",
             "And there is nothing to sign up to. No hosted CRM, no free tier, no account — the output is an application in your repository that you run (L-07). Ownership today is ownership of a framework and a local application, not of a system your team logs into on Monday."
           ]
         }
@@ -213,13 +279,31 @@
         "Neither half of the ejection proof exists yet: there is no examples/ejected application and no test asserting a project still verifies green once the framework dependency is deleted.",
         "SQLite needs no third-party driver; PostgreSQL carries the pinned pg@8.23.0. Everything else you add, you carry.",
         "The MIT confirmation covers this framework only. It decides nothing about a future managed offering and nothing about the licence of the code you generate.",
-        "Owning the source does not make it safe to deploy. No authentication ships, persistence is SQLite, and there is no path to service a data-subject request.",
+        "The framework enforces authorization and one tenant per application instance; the deployment supplies authentication. Self-hosted SQLite and dedicated-database PostgreSQL compositions exist, but are not a general production-readiness claim (L-01, L-02). Customer Data Foundation supplies bounded import and identity governance, not complete personal-data operations. Authentication must be supplied by the deployment, and complete subject export and erasure remain absent; the framework alone does not establish compliance or suitability for real customer data (L-09).",
         "A package detaches without touching the kernel, but its data stays behind and there is no export to take it with you.",
         "There is no registry, marketplace or sandbox. An enabled package runs with the host process's authority."
       ],
-      "claims": ["C-17", "C-13"],
-      "limitations": ["L-08", "L-07", "L-01", "L-02", "L-06", "L-09"],
-      "jobs": ["JTBD-PK-01", "JTBD-PK-02", "JTBD-PK-04", "JTBD-PK-06", "JTBD-PK-07", "JTBD-DO-04", "JTBD-15"],
+      "claims": [
+        "C-17",
+        "C-13"
+      ],
+      "limitations": [
+        "L-08",
+        "L-07",
+        "L-01",
+        "L-02",
+        "L-06",
+        "L-09"
+      ],
+      "jobs": [
+        "JTBD-PK-01",
+        "JTBD-PK-02",
+        "JTBD-PK-04",
+        "JTBD-PK-06",
+        "JTBD-PK-07",
+        "JTBD-DO-04",
+        "JTBD-15"
+      ],
       "docs": [
         "PRODUCT.md",
         "DECISIONS.md",
@@ -231,9 +315,22 @@
       "tests": [
         "tests/custom-package-e2e.test.js",
         "tests/package-contract.test.js",
-        "tests/api.test.js"
+        "tests/api.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
-      "related": ["customer-and-revenue-os", "deterministic-by-construction"]
+      "related": [
+        "customer-and-revenue-os",
+        "deterministic-by-construction"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent",
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent"
+      ]
     },
     {
       "id": "concept-deterministic-by-construction",
@@ -290,11 +387,29 @@
         "Reproducing a decision is not reproducing its inputs. A score run fingerprints the mutable record fields it read rather than copying them, which is why reproducing a historical routing decision exactly stays partially supported.",
         "A code-version fingerprint is not remote-provider reproducibility. Every provider underneath is an offline fixture, and no fixture can promise what a real external service would return.",
         "Module evolution does no data transformation, backfill, field split or merge, and no table rename. Rolling generated source back after a migration has applied is not supported.",
-        "There is no scheduler, so no policy is ever evaluated because time passed."
+        "Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04)."
       ],
-      "claims": ["C-16", "C-07", "C-08", "C-12", "C-19", "C-23"],
-      "limitations": ["L-04", "L-02", "L-01"],
-      "jobs": ["JTBD-LI-07", "JTBD-LI-08", "JTBD-LI-09", "JTBD-CS-10", "JTBD-DG-05", "JTBD-DG-08"],
+      "claims": [
+        "C-16",
+        "C-07",
+        "C-08",
+        "C-12",
+        "C-19",
+        "C-23"
+      ],
+      "limitations": [
+        "L-04",
+        "L-02",
+        "L-01"
+      ],
+      "jobs": [
+        "JTBD-LI-07",
+        "JTBD-LI-08",
+        "JTBD-LI-09",
+        "JTBD-CS-10",
+        "JTBD-DG-05",
+        "JTBD-DG-08"
+      ],
       "docs": [
         "ARCHITECTURE.md",
         "DECISIONS.md",
@@ -309,7 +424,16 @@
         "tests/action-runtime-semantics.test.js",
         "tests/falsify.test.js"
       ],
-      "related": ["the-refusal-boundary", "how-we-decide-what-to-build"]
+      "related": [
+        "the-refusal-boundary",
+        "how-we-decide-what-to-build"
+      ],
+      "facts": [
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent"
+      ]
     },
     {
       "id": "concept-how-we-decide-what-to-build",
@@ -355,7 +479,7 @@
         {
           "heading": "What the document is not",
           "body": [
-            "Not a roadmap — other documents sequence work; this one decides whether work should exist. Not permission to build the rails it lists as future: of the fourteen rails in the table, four are marked future — skill mirror sync (DX2), the context pack (DX9), implementation evidence (DX10) and MCP parity (DX13). Project Verify and the Scenario Runner were on that list and have since shipped, which is why the table carries a status per row rather than a section heading. Every entry is either implemented and verifiable by a command, or future and marked as such, with nothing in between.",
+            "This is a decision rule, not a roadmap. Project Verify, Scenario Runner and Implementation Evidence (solution verify) are implemented. Skill mirror sync, Context Pack and MCP parity remain future work. A rail proves only its own contract; solution verification may report a plan incomplete even when component checks pass.",
             "Not marketing either. Positioning claims live elsewhere and are bounded by evidence and by an explicit list of things not to claim. The reason this page exists on a public site is narrower than a manifesto: the rule is only binding if a reviewer can cite it, and a rule with an exit code can be cited by someone who does not work here."
           ]
         }
@@ -365,13 +489,28 @@
         "It measures the surface an agent must read before starting — not capability, not code quality, not whether the primitive was worth building.",
         "Three of the four measures sit on their ceiling today, so the next agent-facing command has to remove something rather than be added.",
         "The budget is a count plus two description checks. It cannot detect a well-named command that answers the wrong question.",
-        "Four of the fourteen rails in the document are marked future — skill mirror sync, the context pack, implementation evidence and MCP parity. None of those four may be described as available. Project Verify and the Scenario Runner are implemented and may be described as such; PROVE is still only partial, because implementation evidence (DX10) does not exist.",
+        "Solution verification maps declared plan requirements to supplied evidence without executing the plan. Missing evidence remains an explicit gap; source inspection or a successful plan check does not prove implementation.",
         "No number here comes from a benchmark of agent build success. That run has not happened, and any such figure quoted for this project is not ours.",
         "Portability is a target held by contracts, not a measured result across harnesses. The practical test — could a different agent, given only the CLI and the JSON, do this correctly — is applied in review, not by a script."
       ],
-      "claims": ["C-20", "C-14", "C-18"],
-      "limitations": ["L-03", "L-08"],
-      "jobs": ["JTBD-AX-01", "JTBD-AX-02", "JTBD-AX-03", "JTBD-AX-05", "JTBD-AX-06", "JTBD-AX-09", "JTBD-AX-10"],
+      "claims": [
+        "C-20",
+        "C-14",
+        "C-18"
+      ],
+      "limitations": [
+        "L-03",
+        "L-08"
+      ],
+      "jobs": [
+        "JTBD-AX-01",
+        "JTBD-AX-02",
+        "JTBD-AX-03",
+        "JTBD-AX-05",
+        "JTBD-AX-06",
+        "JTBD-AX-09",
+        "JTBD-AX-10"
+      ],
       "docs": [
         "docs/strategy/CODING_AGENT_DX_NORTH_STAR.md",
         "AGENTS.md",
@@ -385,7 +524,11 @@
         "tests/mcp.test.js",
         "tests/project-doctor.test.js"
       ],
-      "related": ["customer-and-revenue-os", "code-you-own", "deterministic-by-construction"]
+      "related": [
+        "customer-and-revenue-os",
+        "code-you-own",
+        "deterministic-by-construction"
+      ]
     },
     {
       "id": "concept-smart-crm",
@@ -430,7 +573,7 @@
           "body": [
             "It does not mean a hosted assistant, an autonomous salesperson or a CRM product a team can sign in to. There is no hosted CRM, free tier or account; the output is source in a repository that its owner runs (L-07). There is no email, calendar or marketing adapter that lets an agent contact a customer, and the in-memory notification provider sends nothing to anyone (L-05).",
             "It also does not mean this repository has proved that no model can run anywhere at runtime. That universal statement has no ledger claim and remains a refused answer. The claim here is narrower and testable: the named commercial policies are deterministic, the named agent decisions are refused, and the named writes carry audit and trace.",
-            "Most importantly, in local-development mode the actor is asserted rather than authenticated. The framework authenticates nobody and ships no verifier, so an actor header there is a claim the caller makes about itself (L-01). The refusal holds against an honest coding agent that identifies itself; it is not a security boundary against a caller that lies, until a deployment supplies the adapter that verifies the request. Persistence is local SQLite (L-02), and real customer data does not belong here because there is no export or erasure path (L-09)."
+            "Most importantly, in local-development mode the actor is asserted rather than authenticated. The framework authenticates nobody and ships no verifier, so an actor header there is a claim the caller makes about itself (L-01). The refusal holds against an honest coding agent that identifies itself; it is not a security boundary against a caller that lies, until a deployment supplies the adapter that verifies the request. Persistence supports SQLite and dedicated-database PostgreSQL (L-02), and real customer data does not belong here because there is no export or erasure path (L-09)."
           ]
         }
       ],
@@ -440,12 +583,31 @@
         "In local-development mode the actor is asserted in a header, not authenticated. With no verifier supplied, this is a behavior boundary for an honest agent and not a security boundary against an attacker.",
         "Lead scoring is a deterministic weighted rule set, not machine learning. Versioning and contributions make it explainable; they do not make the policy correct, unbiased or predictive.",
         "No ledger claim proves that a model never runs anywhere at runtime. This page makes no such universal statement and the broader question remains refused.",
-        "The framework is local-development-only and SQLite-only. There is no hosted product, email or calendar integration, and no safe path for real customer data.",
+        "The framework enforces authorization and one tenant per application instance; the deployment supplies authentication. Self-hosted SQLite and dedicated-database PostgreSQL compositions exist, but are not a general production-readiness claim (L-01, L-02). There is no hosted product or live email/calendar adapter. Customer Data Foundation supplies bounded import and identity governance, not complete personal-data operations. Authentication must be supplied by the deployment, and complete subject export and erasure remain absent; the framework alone does not establish compliance or suitability for real customer data (L-09).",
         "The build benchmark has not been run, so this page makes no measured claim that an agent builds a better CRM."
       ],
-      "claims": ["C-03", "C-04", "C-07", "C-16", "C-21"],
-      "limitations": ["L-01", "L-02", "L-03", "L-05", "L-07", "L-09"],
-      "jobs": ["JTBD-02", "JTBD-LI-02", "JTBD-CO-03", "JTBD-15"],
+      "claims": [
+        "C-03",
+        "C-04",
+        "C-07",
+        "C-16",
+        "C-21"
+      ],
+      "limitations": [
+        "L-01",
+        "L-02",
+        "L-03",
+        "L-05",
+        "L-07",
+        "L-09",
+        "L-06"
+      ],
+      "jobs": [
+        "JTBD-02",
+        "JTBD-LI-02",
+        "JTBD-CO-03",
+        "JTBD-15"
+      ],
       "docs": [
         "ARCHITECTURE.md",
         "DECISIONS.md",
@@ -456,9 +618,25 @@
       "tests": [
         "tests/workflow.test.js",
         "tests/commercial-e2e.test.js",
-        "tests/lead-intelligence-e2e.test.js"
+        "tests/lead-intelligence-e2e.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
-      "related": ["the-refusal-boundary", "deterministic-by-construction", "quote-to-cash-cpq", "lead-intelligence", "customer-hub"]
+      "related": [
+        "the-refusal-boundary",
+        "deterministic-by-construction",
+        "quote-to-cash-cpq",
+        "lead-intelligence",
+        "customer-hub"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent",
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent"
+      ]
     },
     {
       "id": "concept-cdp-plus-crm",
@@ -468,11 +646,11 @@
       "plainName": "Use a CDP for the profile and Accordo for the process",
       "intent": "open source CDP + CRM architecture for coding agents",
       "summary": "A customer data platform and Accordo answer different questions. The CDP assembles profiles and audiences from many systems; Accordo gives a coding agent a framework for building the commercial process that acts on one record under explicit policy, audit and trace. No connector ships between them, so the bridge is application code you own rather than an integration this page pretends already exists.",
-      "metaDescription": "Pair a CDP profile layer with an agent-built CRM process layer. Accordo owns workflow and policy; ingestion, identity and the bridge stay outside.",
+      "metaDescription": "Pair CDP profiles and audiences with owned CRM workflows. Accordo adds bounded import and logical identity; a connector remains application work.",
       "responsibilityMap": {
         "title": "Keep the customer profile and the commercial decision in different layers",
         "caption": "The split is useful only when each system remains responsible for the question it can actually answer.",
-        "bridge": "Application-owned code maps a selected profile into an explicit CRM command. Accordo ships no connector, importer or sync runtime.",
+        "bridge": "Application-owned mapping supplies an explicit CRM command or bounded customer import. No prebuilt CDP connector ships.",
         "layers": [
           {
             "label": "Profile layer",
@@ -492,7 +670,7 @@
               "Apply versioned commercial policy",
               "Record audit events and step-level traces"
             ],
-            "doesNotOwn": "ingestion, identity resolution, audience segmentation or destination sync"
+            "doesNotOwn": "streaming ingestion, probabilistic identity graphs, audience segmentation or destination sync"
           }
         ]
       },
@@ -500,7 +678,7 @@
         {
           "heading": "Start with the question each layer must answer",
           "body": [
-            "A customer data platform answers a population question: which records across our systems belong to the same person or account, and which profiles match this audience? The existing CDP comparison states the boundary in operational terms — ingestion, identity resolution and segment sync — and states that none of those exists in Accordo. If that is the whole job, Accordo is not part of the answer.",
+            "A CDP answers broad cross-system profile and audience questions. Accordo offers bounded JSON imports and deterministic logical identity for a CRM, but no audience builder, streaming ingestion or destination activation.",
             "Accordo answers a process question: what is allowed to happen to this lead, quote, contract or service case now, under which checked-in policy, and what evidence should remain afterwards? A lead can be enriched, scored, routed, qualified and converted through explicit actions, atomically and with an audit trail (C-06). Every deterministic score retains its model version, fingerprint and rule contributions (C-07), and every mutation goes through a module service or named workflow with audit and step-level trace (C-16)."
           ]
         },
@@ -514,7 +692,7 @@
         {
           "heading": "The bridge is deliberately shown as missing",
           "body": [
-            "There is no integration runtime, importer, scheduler, queue or external provider adapter in Accordo. No email, calendar or marketing adapter sends anything, and every provider in the examples is an offline fixture (L-05). There is no import, export, duplicate detection, merge, global search or unified activity timeline (L-06). A bridge from any CDP is therefore application engineering you own, not configuration this framework can perform today.",
+            "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06). Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04). No prebuilt CDP or email/calendar/marketing connector ships (L-05). Mapping the bridge remains application engineering.",
             "That absence also controls the data posture. The framework authenticates nobody, and in local-development mode an actor header is an assertion rather than an identity (L-01). Real customer data does not belong in the current runtime because there is no export or erasure path for a subject request (L-09). The diagram explains where Accordo belongs in an architecture; it is not a deployment guide and cannot be followed into a live integration."
           ]
         },
@@ -527,16 +705,39 @@
         }
       ],
       "boundaries": [
-        "Accordo is the CRM process layer in this architecture, not the customer data platform. It does not ingest events, resolve identities or build and sync audiences.",
-        "No bridge ships between the layers. There is no integration runtime, importer, scheduler, queue or external provider adapter, so connection code is application work the owner must build.",
+        "Accordo adds bounded customer imports and logical identity to CRM process code. It does not implement a full CDP, streaming events, audiences or destination activation.",
+        "No prebuilt CDP connector ships. Bounded customer imports and explicitly started durable workers exist; source mapping and integration handlers remain application work.",
         "The framework authenticates nobody, and ships no verifier. In local-development mode an actor header is asserted rather than authenticated, and that server must not be exposed to a network (L-01).",
         "Real customer data does not belong in the current runtime: there is no export or erasure path, so a subject request cannot be serviced (L-09).",
         "The page names no CDP vendor and makes no claim about one. It describes a category-level responsibility split, not a tested third-party integration.",
         "No benchmark result supports a claim that coding agents build this architecture faster or more reliably (L-03)."
       ],
-      "claims": ["C-06", "C-07", "C-13", "C-16"],
-      "limitations": ["L-01", "L-03", "L-05", "L-06", "L-07", "L-09"],
-      "jobs": ["JTBD-LI-01", "JTBD-LI-02", "JTBD-LI-04", "JTBD-DO-01", "JTBD-DO-02", "JTBD-DO-03", "JTBD-DO-07", "JTBD-MK-01", "JTBD-MK-06", "JTBD-DG-01"],
+      "claims": [
+        "C-06",
+        "C-07",
+        "C-13",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-03",
+        "L-05",
+        "L-06",
+        "L-07",
+        "L-09"
+      ],
+      "jobs": [
+        "JTBD-LI-01",
+        "JTBD-LI-02",
+        "JTBD-LI-04",
+        "JTBD-DO-01",
+        "JTBD-DO-02",
+        "JTBD-DO-03",
+        "JTBD-DO-07",
+        "JTBD-MK-01",
+        "JTBD-MK-06",
+        "JTBD-DG-01"
+      ],
       "docs": [
         "ARCHITECTURE.md",
         "docs/LEAD_INTELLIGENCE.md",
@@ -547,9 +748,25 @@
       "tests": [
         "tests/lead-intelligence-e2e.test.js",
         "tests/custom-package-e2e.test.js",
-        "tests/workflow.test.js"
+        "tests/workflow.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
-      "related": ["vs-a-customer-data-platform", "customer-hub", "smart-crm", "lead-intelligence", "deterministic-by-construction"]
+      "related": [
+        "vs-a-customer-data-platform",
+        "customer-hub",
+        "smart-crm",
+        "lead-intelligence",
+        "deterministic-by-construction"
+      ],
+      "facts": [
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent",
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent"
+      ]
     },
     {
       "id": "concept-customer-hub-intent",
@@ -558,11 +775,11 @@
       "metaTitle": "Customer hub as CRM code you own | Accordo",
       "plainName": "One commercial record chain, from lead to service",
       "intent": "customer hub with a single customer view across crm, marketing, delivery and billing",
-      "summary": "Accordo gives coding agents a deterministic CRM foundation for the commercial journey the application already controls: lead, opportunity, quote, order, contract, delivery and service. Each transition is explicit, audited and test-backed. This is one local chain of application records, not an identity-resolved profile assembled from other systems; marketing, billing and a unified customer screen remain outside the runtime.",
-      "metaDescription": "Build a customer hub as CRM code you own: lead to service in one audited record chain. No ingestion, identity resolution or unified screen.",
+      "summary": "Accordo supports the audited lead-to-service record chain, plus bounded customer imports, deterministic matching, logical canonical identity and a consolidated profile over composed packages. Marketing, billing and a complete cross-channel timeline remain outside the implemented foundation.",
+      "metaDescription": "Build a customer hub with audited CRM records, bounded imports and logical identity. No full CDP, marketing runtime, billing or complete cross-channel timeline.",
       "recordChain": {
         "title": "One customer, six connected operating records",
-        "caption": "Stored identifiers carry provenance forward. They do not ingest or reconcile an identity from another system.",
+        "caption": "Stored identifiers preserve the commercial chain. Customer Data Foundation adds logical identity links without rewriting those source records.",
         "nodes": [
           {
             "label": "Lead intelligence",
@@ -607,10 +824,10 @@
         {
           "heading": "One commercial chain, not an identity graph",
           "body": [
-            "Single customer view, on this page, means the records this application's audited actions, CRUD routes and module services wrote about one customer in one local SQLite database, each carrying the id of the record it came from. A Contact and an Opportunity carry the companyId the conversion action wrote, checked against a Company that exists. A Commercial Contract carries orderId, quoteVersionId, opportunityId and companyId, copied from the immutable Order rather than read back from a live catalog. A Delivery Project and a Service Coverage each carry contractId, orderId and the companyId the contract recorded. A Support Case carries the coverage and the entitlement it was recorded against. Following one customer means reading those ids.",
-            "It is a chain this system wrote, not a profile it assembled. Nothing here builds one profile per person or account out of records held in other systems, because this framework has no pipeline that ingests records or events from external systems: there is no imported identity set to resolve, and no resolution step exists to do it with. Records can still be created through the framework's audited CRUD and service APIs; that is local application input, not cross-system ingestion. Two records for the same human stay two records forever. Detecting duplicates on import or entry (JTBD-DO-02), merging two Companies or Contacts (JTBD-DO-03), searching across modules (JTBD-DO-07) and seeing a unified activity timeline for a record (JTBD-DO-08) all read not supported, and there is no import or export of any kind (L-06).",
-            "This page adds nothing to the customer data platform question and takes nothing away from it. Not a customer data platform states that refusal in full, and this page inherits it rather than re-arguing it in softer words: a platform of that kind ingests records and events continuously from many source systems, resolves them into one profile per person or account, and builds segments over those profiles that can be frozen, suppressed and synced to a destination. None of those three exists here in any form. The word hub on this page never reaches for any of them, and no product in that category is named anywhere on this site, because the only competitor research it may cite carries no research on them at all.",
-            "There is no screen for it either. The Admin navigates by module and by domain — generated modules, pipeline boards, Quotes, Contracts, Delivery, Service — and carries no per-customer page anywhere in it. A single customer view here is a property of how the records reference each other, not a view somebody opens; and every one of those ids is managed storage written by the action that created the record, never a value a client supplied."
+            "The commercial record chain retains explicit identifiers: contacts and opportunities link to company, contracts to signed orders and quotes, delivery and service to contracts, and support cases to their coverage. The consolidated customer profile reads those composed packages under one logical customer identity.",
+            "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06). The consolidated profile reads composed packages and explicitly reports unavailable sections. It is not a complete cross-channel timeline or a full CDP.",
+            "The customer foundation does not establish the full CDP category. It supports bounded imports and deterministic logical identity, but no streaming ingestion, audience segmentation or destination activation (L-06).",
+            "Customer Data Foundation exposes a read-only consolidated profile and an Admin customer-data surface. A package that is not composed is reported unavailable; the profile is not a complete cross-channel activity timeline."
           ]
         },
         {
@@ -618,7 +835,7 @@
           "body": [
             "CRM and lead intelligence — merged, several jobs validated end to end. Capturing, qualifying and converting a lead (JTBD-04, JTBD-05, JTBD-05b) and moving a deal through pipeline stages (JTBD-03) read validated end to end, as do enrichment with snapshot and provenance, explainable scoring, automatic routing under a published policy, and policy versioning (JTBD-LI-01, JTBD-LI-02, JTBD-LI-04, JTBD-LI-07). Four further lead rows read partially supported, and manual reassignment with permission and reason (JTBD-LI-06) reads not supported. Where it stops: the enrichment provider is a checked-in fixture with no external data source wired, routing targets are application identifiers rather than authenticated users, and the Lead model belongs to the starter rather than to the framework core.",
             "Quote, discount approval, signature and order — merged, several jobs validated end to end. Creating a quote from a price book (JTBD-CO-01), requesting a discount under a deterministic policy (JTBD-CO-03) and creating an immutable signed Order snapshot (JTBD-CO-07) read validated end to end; synchronising an external catalog, obtaining the required commercial approval and the two signature rows (JTBD-CO-02, JTBD-CO-04, JTBD-CO-05, JTBD-CO-06) read partially supported. Where it stops: every catalog and signature provider is an offline fixture, no envelope has ever been sent to a real signer, the signed document is canonical JSON rather than a PDF, and the phrase quote-to-cash stops at the quote.",
-            "Contract and subscription — merged, partial. Activating a commercial contract from a signed Order and activating a subscription with lines and an initial term (JTBD-CS-01, JTBD-CS-02) read partially supported. The other eight rows in that section read not supported: amending seats or quantity, recording an expansion or contraction, calculating MRR, ARR and TCV from real contract data, scheduling a renewal, creating a renewal opportunity, applying an uplift policy at renewal, cancelling or non-renewing with an audited reason, and reading a complete amendment history. Where it stops: the term was never signed, so effective date, term dates, auto-renew and notice period are operational metadata a human typed in with a required reason — and there is no scheduler, so a notice period passes without anything firing (L-04).",
+            "Contract activation and subscriptions retain explicit signed or operational term provenance. Terms frozen into the signed quote document retain signed-order provenance; legacy orders without signed terms can use explicitly labelled post-signature operational metadata. Operational dates are never promoted to signed terms. Governed renewal and amendment execution creates a successor agreement from its own signed Order, with immutable lineage and a derived line delta. Historical contracts and subscriptions are not edited. There is no automatic renewal, cancellation execution, billing or customer notification. JTBD-CS-04, CS-09 and CS-10 remain partial; in-place seat changes, price-uplift execution and full renewal scheduling do not inherit support from successor execution.",
             "Delivery and service — merged, partial. Handing a won deal to delivery, tracking hours and costs, and managing a change request with impact and approval (JTBD-DS-01, JTBD-DS-06, JTBD-DS-08) read validated end to end; seven further rows read partially supported, including activating a service contract with entitlements and SLA (JTBD-DS-11) and managing support cases and escalation (JTBD-DS-12). Restricting partner access to assigned work (JTBD-DS-04) and activating billing on accepted milestones (JTBD-DS-10) read not supported. Where it stops: nothing schedules, staffs or computes percent complete; customer acceptance is testimony a user actor recorded rather than an authenticated customer's signature; the SLA clock is elapsed wall-clock minutes with no business-hours calendar and no pause; and nothing escalates, routes or notifies by itself."
           ]
         },
@@ -633,25 +850,60 @@
         {
           "heading": "The boundary every build still inherits",
           "body": [
-            "None of the above changes what the framework is. No authentication ships, persistence is local SQLite, there is no scheduler, and no integration adapter sends anything to anyone — so a hub composed here is a hub on one developer's machine. Real customer data does not belong in it: there is no export and no erasure path, so a data-subject access or deletion request cannot be serviced with it (L-09). Enforcing team or tenant permissions (JTBD-15) reads partially supported: the permissions are enforced, and the identity under them is only as good as a verifier nobody has supplied."
+            "The framework enforces authorization and one tenant per application instance; the deployment supplies authentication. Self-hosted SQLite and dedicated-database PostgreSQL compositions exist, but are not a general production-readiness claim (L-01, L-02). Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04). Customer Data Foundation supplies bounded import and identity governance, not complete personal-data operations. Authentication must be supplied by the deployment, and complete subject export and erasure remain absent; the framework alone does not establish compliance or suitability for real customer data (L-09)."
           ]
         }
       ],
       "boundaries": [
         "This page describes a buildable CRM foundation, not a ready-made Customer Hub product. The commercial chain is merged in slices, and each slice keeps the boundary stated below.",
-        "Single customer view here means records written through this application's audited actions, CRUD routes and module services in one local database. It is a chain, not a profile assembled from other systems: nothing ingests, deduplicates, merges or resolves an identity.",
+        "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06).",
         "This is not a customer data platform, and nothing here softens that refusal. The comparison page states it in full and this page inherits it; no product in that category is named, because the competitor research this site may cite carries none.",
-        "Marketing and billing do not exist as runtime code, and there is no unified customer screen. The Admin navigates by module and domain; no view, query or timeline assembles one customer's chain for a reader.",
-        "None of it is deployable. No authentication ships, SQLite only, no scheduler and no integration adapter — so a hub that works here works on one developer's machine.",
+        "Marketing and billing runtimes remain absent. A consolidated customer profile exists for composed packages, but a complete cross-channel timeline does not.",
+        "The framework enforces authorization and one tenant per application instance; the deployment supplies authentication. Self-hosted SQLite and dedicated-database PostgreSQL compositions exist, but are not a general production-readiness claim (L-01, L-02). Customer Data Foundation supplies bounded import and identity governance, not complete personal-data operations. Authentication must be supplied by the deployment, and complete subject export and erasure remain absent; the framework alone does not establish compliance or suitability for real customer data (L-09).",
         "Nothing here is measured against another product, and no page on this site ranks this against a named vendor. The build benchmark has not been run."
       ],
-      "claims": ["C-06", "C-05", "C-08", "C-21", "C-09", "C-10", "C-11", "C-12", "C-16"],
-      "limitations": ["L-01", "L-04", "L-05", "L-06", "L-08", "L-09", "L-10", "L-11"],
+      "claims": [
+        "C-06",
+        "C-05",
+        "C-08",
+        "C-21",
+        "C-09",
+        "C-10",
+        "C-11",
+        "C-12",
+        "C-16"
+      ],
+      "limitations": [
+        "L-01",
+        "L-04",
+        "L-05",
+        "L-06",
+        "L-08",
+        "L-09",
+        "L-10",
+        "L-11"
+      ],
       "jobs": [
-        "JTBD-04", "JTBD-05b", "JTBD-03", "JTBD-CO-01", "JTBD-CO-03", "JTBD-CO-07",
-        "JTBD-CS-01", "JTBD-CS-05", "JTBD-DS-01", "JTBD-DS-10", "JTBD-DS-11", "JTBD-DS-12",
-        "JTBD-DO-02", "JTBD-DO-03", "JTBD-DO-07", "JTBD-DO-08",
-        "JTBD-MK-01", "JTBD-MK-14", "JTBD-MK-41", "JTBD-15"
+        "JTBD-04",
+        "JTBD-05b",
+        "JTBD-03",
+        "JTBD-CO-01",
+        "JTBD-CO-03",
+        "JTBD-CO-07",
+        "JTBD-CS-01",
+        "JTBD-CS-05",
+        "JTBD-DS-01",
+        "JTBD-DS-10",
+        "JTBD-DS-11",
+        "JTBD-DS-12",
+        "JTBD-DO-02",
+        "JTBD-DO-03",
+        "JTBD-DO-07",
+        "JTBD-DO-08",
+        "JTBD-MK-01",
+        "JTBD-MK-14",
+        "JTBD-MK-41",
+        "JTBD-15"
       ],
       "docs": [
         "docs/benchmarks/CRM_JTBD_MATRIX.md",
@@ -661,16 +913,41 @@
         "docs/strategy/EXECUTION_ROADMAP.md",
         "docs/CONTRACT_ACTIVATION.md",
         "docs/DELIVERY_HANDOVER.md",
-        "docs/SERVICE_OPERATIONS.md"
+        "docs/SERVICE_OPERATIONS.md",
+        "docs/RENEWAL_AMENDMENT.md"
       ],
       "tests": [
         "tests/jobs-json.test.js",
         "tests/lead-conversion-e2e.test.js",
         "tests/contracts-activation-e2e.test.js",
         "tests/delivery-handover-e2e.test.js",
-        "tests/service-operations-e2e.test.js"
+        "tests/service-operations-e2e.test.js",
+        "tests/customer-data-foundation.test.js",
+        "tests/lifecycle-amendment-execution-e2e.test.js"
       ],
-      "related": ["vs-a-customer-data-platform", "customer-and-revenue-os", "lead-intelligence", "quote-to-cash-cpq", "contract-and-subscription", "delivery-projects", "service-and-sla"]
+      "related": [
+        "vs-a-customer-data-platform",
+        "customer-and-revenue-os",
+        "lead-intelligence",
+        "quote-to-cash-cpq",
+        "contract-and-subscription",
+        "delivery-projects",
+        "service-and-sla"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent",
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent",
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent",
+        "domain.lifecycle.package_native=package_native"
+      ]
     }
   ]
 }

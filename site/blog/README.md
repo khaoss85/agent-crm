@@ -76,7 +76,7 @@ Everything on this site is held to the same standard, and a post is not an excep
   evidence is deleted rather than softened.
 - The standing limitations from `site/claims.json` are rendered on every post page automatically:
   authentication verification must be supplied by deployment; authorization and one-tenant-per-instance isolation are enforced (L-01), persistence is local SQLite (L-02), there is
-  no scheduler (L-04), no adapter sends anything to anyone (L-05), the build benchmark has not been
+  explicitly started self-host workers and scheduled asks, with no managed worker service (L-04), no adapter sends anything to anyone (L-05), the build benchmark has not been
   run (L-03), and the published scaffolder vendors framework source rather than installing a versioned framework dependency (L-08). A post cannot opt out of them.
 
 ## Adding one
