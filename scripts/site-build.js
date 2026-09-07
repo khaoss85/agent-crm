@@ -661,6 +661,7 @@ function resolve(token) {
     'brand.repository': brand.repository.value,
     'brand.license': brand.license.value,
     'brand.createCommand': brand.npm.createCommand,
+    'brand.publishedVersion': brand.npm.publishedVersion,
     'brand.scope': brand.npm.scope,
     'brand.nameStatus': brand.name.status,
     'font.sans': brand.typography.sans,

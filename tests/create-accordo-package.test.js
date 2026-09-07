@@ -121,6 +121,7 @@ test('public copy tracks the published create package without conflating it with
   const brand = JSON.parse(readFileSync(join(repoRoot, 'site/brand.json'), 'utf8'));
   assert.equal(brand.npm.sourceScaffolds, true);
   assert.equal(brand.npm.status, 'published');
+  assert.match(brand.npm.publishedVersion, /^\d+\.\d+\.\d+$/);
 
   const surfaces = Object.fromEntries([
     'docs/marketing/PENDING_HUMAN_SUBMISSION.md',
@@ -132,7 +133,7 @@ test('public copy tracks the published create package without conflating it with
   ].map((path) => [path, readFileSync(join(repoRoot, path), 'utf8')]));
 
   for (const [path, source] of Object.entries(surfaces)) {
-    assert.match(source, /0\.1\.0/, `${path} omits the published 0.1.0`);
+    assert.ok(source.includes(brand.npm.publishedVersion), `${path} omits the live version from brand.npm.publishedVersion`);
     // The pre-publication sentences, verbatim: each was true until the registry
     // receipt landed and each is a lie about the live command now.
     assert.doesNotMatch(source, /installs nothing|still (?:reaches|serves) the (?:empty )?(?:`?0\.0\.1`? )?placeholder|registry unchanged|candidate .{0,40}not on the registry/i,
