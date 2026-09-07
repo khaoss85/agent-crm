@@ -566,7 +566,7 @@
       "metaTitle": "CDP vs CRM: what's the difference? | Accordo",
       "plainName": "CDP vs CRM, the split",
       "intent": "cdp vs crm difference, customer data platform versus crm",
-      "summary": "A customer data platform (CDP) assembles one profile per person or account from records and events ingested across many systems — identity resolution, audiences, destination sync. A CRM runs the commercial process on records the business itself works: leads, deals, quotes, approvals, contracts. The split is profile versus process, population versus record. Accordo sits entirely on the CRM-process side: it ingests nothing, resolves no identities and builds no segments, and any bridge between the two layers is application code the owner writes, because no connector ships in either direction.",
+      "summary": "A customer data platform (CDP) assembles one profile per person or account from records and events ingested across many systems — identity resolution, audiences, destination sync. A CRM runs the commercial process on records the business itself works: leads, deals, quotes, approvals, contracts. The split is profile versus process, population versus record. Accordo provides the CRM process layer plus bounded JSON imports, deterministic duplicate matching and human-governed logical identity links. It supplies no streaming ingestion, segmentation or destination activation; a CDP bridge remains application code because no prebuilt connector ships.",
       "metaDescription": "A CDP assembles one profile per person from many systems; a CRM runs the commercial process on its own records. The split, and where an agent-built CRM sits.",
       "sections": [
         {
@@ -596,7 +596,7 @@
         "No bridge ships between the layers. Connecting a CDP to an Accordo application is code the owner writes, not configuration this framework performs (L-05).",
         "No CDP vendor is named or evaluated here. The competitor research this site may cite carries no product-level claims in that category.",
         "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06).",
-        "Import, export, deduplication and merge do not exist on the CRM side either (L-06). The process layer's integrity claims are about mutations, not about data completeness."
+        "The data-operation jobs remain partial: JSON import has no CSV parser, exact duplicate detection runs on import rather than manual entry, and canonical links preserve both records rather than physically merging them. Export remains unsupported (L-06); mutation integrity does not establish data completeness."
       ],
       "claims": [
         "C-06",
@@ -666,7 +666,7 @@
           "heading": "What a matrix row is not",
           "body": [
             "A status is a self-assessment with evidence, not a comparative measurement. Validated end to end means this repository's own suite completes the job against this repository's own fixtures — it does not mean the job was measured against another product, and no row implies a ranking. The one instrument that would produce a comparative number, the build benchmark, is published as a protocol and has not been run (L-03).",
-            "A matrix also does not make the absent rows smaller. All marketing rows read not supported and no marketing package exists (L-11); import, export, dedupe and merge read not supported (L-06). Reading the matrix as a roadmap is a mistake the matrix itself refuses: it records what is true of the checkout, and it changes only when the code does."
+            "A matrix also preserves each partial job's remaining gap. All marketing rows read not supported and no marketing package exists (L-11). Import, duplicate detection and merge read partially supported: the implemented slices are bounded JSON input, deterministic matching on import, and human-governed logical canonical links. CSV parsing, duplicate detection on manual entry and physical merge remain absent; export is not supported (L-06). The matrix records evidenced coverage of the checkout, not a promise to complete the roadmap."
           ]
         }
       ],
@@ -675,7 +675,7 @@
         "Validated end to end means the repository's own suite completes the job against its own fixtures — every provider offline, everything local (L-01, L-05).",
         "A status is not a promise. The matrix records the current checkout, changes only when the code does, and is not a roadmap.",
         "The comparative instrument is the build benchmark, which is published as a protocol and has not been run (L-03).",
-        "The absent rows stay absent: all marketing jobs read not supported (L-11), and import, export, dedupe and merge are not supported (L-06)."
+        "All marketing jobs remain not supported (L-11). Import, duplicate detection and merge remain partially supported only through bounded JSON input, exact matching on import and logical canonical links; export remains not supported, and no partial row promises CSV parsing or physical record merge (L-06)."
       ],
       "claims": [
         "C-20"
