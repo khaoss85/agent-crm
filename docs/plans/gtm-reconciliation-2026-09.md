@@ -68,6 +68,10 @@ passed because citations are opt-in and prose is not generated from facts.
   the packed starter in an empty project. Private repository suites passed;
   framework verification and independent final review are in progress.
 
+- 2026-09-07: independent review found stale installer/plugin metadata and a
+  registry quickstart missing the required apply flag. Corrected descriptions,
+  skill mirrors and the discovery boundary gate; added targeted regressions.
+
 ## Boundaries and decisions
 
 No business runtime expansion, fabricated benchmark, outreach, spend, public

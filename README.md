@@ -46,14 +46,15 @@ rather than trusted.
 - **Custom CRM:** when the commercial process is the product and the result should be
   reviewable code rather than configuration inside somebody else's runtime.
 - **[Customer Hub](https://accordo.dev/concepts/customer-hub.html):** when “hub” means one
-  local commercial record chain with governed actions. Accordo does not ingest sources or
-  resolve customer identities like a CDP.
+  commercial record chain with governed actions, bounded JSON imports and logical
+  customer identity. Accordo is not a full CDP.
 - **[Smart CRM](https://accordo.dev/concepts/smart-crm.html):** when a coding agent should
   compose the application while versioned policy and named humans retain business decisions.
   It is agent-built software, not an autonomous decision-maker.
 - **[CDP + CRM](https://accordo.dev/concepts/cdp-plus-crm.html):** when an external CDP owns
-  ingestion, identity resolution and audiences, and Accordo owns the deterministic CRM
-  process layer beside it. Accordo ships no CDP, connector, importer or sync runtime.
+  broad ingestion, identity graphs and audiences, and Accordo owns the deterministic CRM
+  process layer beside it with bounded JSON imports and logical identity. Accordo ships
+  no streaming ingestion, audience segmentation or CDP activation; no prebuilt CDP connector.
 
 Those adjacent terms are retrieval paths, not extra capability claims. The checked
 [recommendation map](docs/strategy/RECOMMENDATION_MAP.md) binds each one to what the

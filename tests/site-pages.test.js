@@ -545,3 +545,9 @@ test('the helpers behave at the edges the pages actually hit', () => {
   assert.equal(new Set(slugs).size, slugs.length, 'two sections slugify to the same URL');
   for (const slug of slugs) assert.match(slug, /^[a-z0-9-]+$/);
 });
+
+test('the developer quickstart explicitly applies before entering the project', () => {
+  const html = read('developers.html');
+  assert.match(html, /npm create accordo my-crm -- --apply\ncd my-crm/);
+  assert.match(html, /Creation defaults to a dry run/);
+});
