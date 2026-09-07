@@ -27,7 +27,7 @@ Reconciled: **2026-09-07**. The measurement below retains its own date.
 | Fact | Value |
 |---|---|
 | Latest merged milestone | **Production operations and read-only PostgreSQL composition**: Spine v2 dedicated-database PostgreSQL, leases and write-outcome transport; v3 durable jobs, transactional outbox and bounded timers; v4 minimum secrets, backup/restore and observability export; explicit application operations composition. The synchronous factory remains SQLite-only. Shared-database tenancy, managed custody and public Cloud remain outside this framework. <!-- truth: spine.postgresql.implemented=implemented --><!-- truth: spine.durable_job_store.implemented=implemented --><!-- truth: spine.transactional_outbox.implemented=implemented --><!-- truth: spine.timer_consumers.implemented=implemented --><!-- truth: spine.read_only_composition.implemented=implemented --> |
-| Measured at | `84a3efe` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
+| Measured at | `451d797` — the commit `site/claims.json` `measuredAgainst` names. This row repeats the ledger and measures nothing. |
 | Tests | Measured, never typed. `npm run verify` is green on a clean tree at the commit above; **how many** tests that was lives in `site/claims.json` `measuredAgainst` and in no other file (ADR-027). |
 | Smoke | `npm run smoke` green |
 | Starter | `examples/starters/b2b-lead-qualification/install.mjs` green from an empty project |

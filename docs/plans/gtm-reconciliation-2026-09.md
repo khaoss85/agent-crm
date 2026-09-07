@@ -98,4 +98,15 @@ prepare and verify the exact artifact before presenting that final action.
 
 ## Outcome and follow-up
 
-In progress. Record final commits, verification, site and npm receipts here.
+Implementation and independent review are complete at `451d797`. The full
+Node 22 / PostgreSQL 16 CI verification and smoke passed in
+[run 34144523951](https://github.com/khaoss85/agent-crm/actions/runs/34144523951).
+Its uploaded measurement record was imported intact into the claims ledger,
+checked against the commit and test-tree identity. The packed starter passed
+offline installation and generated-project verification.
+
+Private documentation corrections merged in accordo-platform PR #55 and
+accordo-arvo-pilot PR #28 after green CI. Framework publication, live-site
+verification and npm staged approval remain release steps; the site continues
+to identify the registry version separately until publication is verified.
+External adoption evidence and the unrun build benchmark remain GTM follow-up.
