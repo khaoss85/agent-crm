@@ -63,6 +63,11 @@ passed because citations are opt-in and prose is not generated from facts.
   records M1 validation. README corrections cite the dated record without
   inventing a fresh runtime check or a public Cloud release.
 
+- 2026-09-07: integrated all three agents; corrected generated retrieval and
+  inspector limitations at their source, expanded regression checks, and proved
+  the packed starter in an empty project. Private repository suites passed;
+  framework verification and independent final review are in progress.
+
 ## Boundaries and decisions
 
 No business runtime expansion, fabricated benchmark, outreach, spend, public

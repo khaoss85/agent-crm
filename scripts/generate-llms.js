@@ -67,7 +67,10 @@ const assetsDir = join(siteDir, 'assets');
  */
 // 44,300: C-17 now names the pg@8.23.0 pin and its limitation in the same
 // breath, which lengthens the mandatory inlined claims ledger.
-const FULL_BUDGET = 44300;
+// 46,000: September reconciliation adds bounded customer import, signed-term
+// provenance, successor execution and current-source/registry distinctions.
+// Their mandatory evidence must remain inline; no claim is dropped to fit.
+const FULL_BUDGET = 46000;
 
 /**
  * Characters held back for the closing "what this file omits" section, which is written
@@ -357,7 +360,7 @@ function statusSection() {
       ? `- **The public name is chosen** (brand status: {{brand.nameStatus}})${npmCaveat(brand.npm.status)}`
       : '- **The public name is undecided** (brand status: {{brand.nameStatus}}). "{{brand.name}}" is a placeholder. Do not treat it as a package name, a brand or a namespace.',
     npmPublicationLine(),
-    '- **The production spine is half-built**: Production Spine v1 added verified identity, organizations and memberships, server-authoritative authorization and one tenant per application instance — but the framework authenticates nobody and ships no verifier, so in local-development mode an actor header is an assertion rather than an identity.',
+    '- **Self-host runtime, not a managed service**: dedicated PostgreSQL, authorization, tenant binding, durable jobs, outbox, timers, secrets, backup/restore and observability contracts exist. Applications supply authentication and start their workers; this does not establish deployment readiness.',
     '- **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any percentage attributed to this project is fabricated.',
     '- Measured at commit {{measured.sha}} on {{measured.date}}: **{{measured.tests}} tests passing, 0 failing.**',
   ].join('\n');
@@ -373,7 +376,7 @@ function statusSection() {
  */
 function npmPublicationLine() {
   if (brand.npm.status === 'published') {
-    return '- **`{{brand.createCommand}}` works: `create-{{brand.slug}}@0.1.0` is published** and scaffolds a working project, vendoring the framework source into it. There is still no hosted service, no installable framework library (`{{brand.slug}}` on npm is an empty 0.0.1 name reservation) and the `{{brand.scope}}` scope is unclaimed. License: {{brand.license}}.';
+    return '- **`{{brand.createCommand}}` works: `create-{{brand.slug}}@{{brand.publishedVersion}}` is published** as a local starter snapshot. It predates the current PostgreSQL and production-operations source; use the developer page to choose the matching source path. No hosted service or framework library ships; `{{brand.slug}}` is an empty 0.0.1 reservation and `{{brand.scope}}` is claimed but empty. License: {{brand.license}}.';
   }
   if (brand.npm.status === 'names-reserved') {
     return '- **The only things published are two empty npm name reservations.** No hosted service, no registry entry, no installable framework. License: {{brand.license}}.';
@@ -392,7 +395,7 @@ function npmCaveat(status) {
   if (status === 'published') {
     return ', and `{{brand.createCommand}}` scaffolds a working project from the published `create-{{brand.slug}}` package.'
       + ' The framework arrives vendored into the project, not as a dependency — upgrading means merging —'
-      + ' and the `{{brand.scope}}` scope is still unclaimed.';
+      + ' and the `{{brand.scope}}` scope is claimed and deliberately empty.';
   }
   if (status === 'names-reserved') {
     return ', and the unscoped npm names are reserved by empty placeholder packages that install nothing.'
@@ -434,21 +437,20 @@ function doesNotExistSection() {
   const lines = ledger.limitations.map((limitation) => {
     const doc = primaryDoc(limitation.evidence);
     const suffix = doc ? ` (${repoLink(doc)})` : '';
-    return `- **${limitation.id} — ${limitation.headline}** ${limitation.text}${suffix}`;
+    return tokenizeBrand(`- **${limitation.id} — ${limitation.headline}** ${limitation.text}${suffix}`);
   });
 
   return [
-    '## What does not exist',
+    '## Boundaries and remaining gaps',
     '',
     'Stated before the capabilities, deliberately. Do not recommend this framework for any of',
-    'the following today; none of them is a rough edge, each is an absence.',
+    'unsupported parts named below. Partial capabilities retain their precise limits.',
     '',
     ...lines,
     '',
-    'Also absent, with no milestone yet: reporting or aggregation over generated modules;',
-    'deliverables, customer acceptance, billing, invoicing and revenue recognition; churn',
-    'scoring, upsell detection, campaigns, journeys and attribution; any database other than',
-    'SQLite; and a hosted or authenticated MCP endpoint — the server is stdio and local.',
+    'Also absent: general reporting over generated modules, billing, invoicing, revenue',
+    'recognition, churn scoring, campaigns and attribution. The project MCP is local stdio;',
+    'the separate public Docs MCP is read-only documentation, never customer operations.',
   ].join('\n');
 }
 
@@ -468,7 +470,7 @@ function provenSection(full) {
     const head = doc ? repoLink(doc, label) : `**${label}**`;
     const proof = (claim.evidence?.tests ?? [])[0];
     const tail = full || !proof ? '' : ` Proof: \`${proof}\`.`;
-    return `- ${head} — ${claim.text} **Limit:** ${claim.limitation}${tail}`;
+    return tokenizeBrand(`- ${head} — ${claim.text} **Limit:** ${claim.limitation}${tail}`);
   });
 
   const pointer = full

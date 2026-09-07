@@ -236,7 +236,7 @@
         "L-08",
         "L-07"
       ],
-      "snippet": "npm create accordo distributes the 0.1.0 source snapshot. Current repository features require a current checkout; you own vendored source and upgrade by merging.",
+      "snippet": "You own vendored source, not a framework dependency. The published local starter predates current PostgreSQL and operations; use the source path for those.",
       "facts": [
         "spine.postgresql.implemented=implemented"
       ]

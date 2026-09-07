@@ -9,7 +9,7 @@ cd my-crm
 npm run crm -- app inspect --json</pre></div><div class="boundary-note" data-limits><strong>Choose the matching version.</strong> This registry snapshot is a local starter. For current framework capabilities, use the source checkout below. Current source proof and limitations come from the generated <a href="{{page.root}}evidence.html">claims ledger</a>, not from this product description.</div></section></div><div class="shell"><section class="spine-agent"><p class="kicker">Current source</p><h2>Build from the current framework checkout.</h2><p class="section-lede">This route includes the current source while keeping SQLite as the local default. PostgreSQL requires deployment composition and authentication configuration; cloning the source does not provision a service.</p><div class="code"><pre>git clone {{brand.repository}} framework-source
 cd framework-source
 npm ci
-node packages/create-accordo/bin/create-accordo.js ../my-crm --apply
+node packages/create-{{brand.slug}}/bin/create-{{brand.slug}}.js ../my-crm --apply
 cd ../my-crm
 npm install
 npm run verify</pre></div><p class="kicker">Extend and verify</p><h2>Use public package seams and the smallest proof rail.</h2><p class="section-lede">Domain packages import only the public core index.</p><div class="proof-note"><p>{{claim:C-16}}</p><p class="limit"><strong>Boundary:</strong> {{claim:C-16.limitation}}</p></div><div class="cta"><a class="button primary" href="{{brand.repository}}">Read the repository</a><a class="button secondary" href="{{page.root}}tools.html">Agent tool contracts</a></div></section></div></main>

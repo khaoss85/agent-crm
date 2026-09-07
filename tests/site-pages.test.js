@@ -272,8 +272,9 @@ test('the agent-native CRM intent is one authoring model, not a hosted AI produc
 
 test('the Customer Hub intent separates local writes from missing cross-system ingestion', () => {
   const html = read('concepts/customer-hub.html');
-  assert.match(html, /no pipeline that ingests records or events from external systems/);
-  assert.match(html, /audited CRUD and service APIs/);
+  assert.match(html, /bounded.*import|governed.*import/i);
+  assert.match(html, /not a.*CDP|no.*streaming|no.*connector/i);
+  assert.match(html, /audited CRUD and service APIs/i);
   assert.doesNotMatch(
     html,
     /nothing enters this database except through an action|framework(?:'s)? own actions (?:already )?wrote/i,
@@ -392,7 +393,8 @@ test('the CDP + CRM intent separates profile and process without inventing a con
   assert.match(html, /Customer data platform/);
   assert.match(html, /Process layer/);
   assert.match(html, /Accordo CRM framework/);
-  assert.match(html, /Accordo ships no connector, importer or sync runtime/);
+  assert.match(html, /No prebuilt CDP connector ships/);
+  assert.match(html, /Bounded customer imports and explicitly started durable workers exist/);
   assert.ok(
     html.indexOf('boundary-block') < html.indexOf('responsibility-map')
       && html.indexOf('responsibility-map') < html.indexOf('section-block'),
@@ -404,8 +406,9 @@ test('the CDP + CRM intent separates profile and process without inventing a con
 
   assert.match(read('concepts.html'), /concepts\/cdp-plus-crm\.html/);
   assert.match(read('compare/vs-a-customer-data-platform.html'), /concepts\/cdp-plus-crm\.html/);
-  assert.match(answer, /different layers, not substitutes/i);
-  assert.match(answer, /no importer, scheduler, integration runtime or external adapter ships/i);
+  assert.match(answer, /CDP for broad ingestion, identity graphs, audiences and activation/i);
+  assert.match(answer, /bounded JSON imports with preview\/apply/i);
+  assert.match(answer, /No prebuilt CDP connector ships/i);
   assert.match(read('llms.txt'), /\[CDP \+ CRM works when profile and process stay separate\]\(concepts\/cdp-plus-crm\.html\)/);
   assert.match(read('llms.txt'), /answers\/how-to-pair-a-cdp-with-a-crm-framework\.html/);
 });

@@ -33,3 +33,11 @@ test('current GTM sources cannot restore the recorded obsolete claims', () => {
     assert.deepEqual(findRetiredClaims(text), [], surface);
   }
 });
+
+// The inspector's own limitation metadata contradicted its corrected posture.
+// Hold the scoped absence separately from the positive runtime inventory.
+test('source inspection limitations do not deny the self-host runtime they cannot observe', () => {
+  const source = readFileSync(new URL('../packages/cli/src/app-inspect.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /tenancy, durable jobs, managed secret custody\/service, backups and deployment are absent/);
+  assert.match(source, /A source report cannot attest that a deployment configured or operated them/);
+});
