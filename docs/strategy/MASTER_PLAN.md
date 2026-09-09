@@ -34,6 +34,28 @@ Full analysis and what *not* to copy: `MEDUSA_PLAYBOOK.md`.
 
 Brief + business process + design reference → the agent scaffolds, generates modules/workflows/Admin/tests, verifies and deploys a working CRM with no manual coding; humans describe, review and approve. 16 acceptance criteria (functional, quality, safety) in `NORTH_STAR_EXPERIENCE.md`.
 
+### One proposition, two product routes
+
+**Build the customer and revenue system your business actually runs.** The
+framework route serves people authoring the system; the optional managed route
+serves people operating supported customer workflows. Neither route should be
+marketed as proof that the other is complete.
+
+The integrated target is business-shaped software, useful customer context,
+prepared agent work, explicit commercial rules and verifiable outcomes, with
+ownership and a clear adoption/exit path. **Agent-built, agent-operated and
+rule-governed are separate capabilities** that must each earn their claims.
+The workbench target is a prepared business decision, not another chat or a
+technical queue; execution must be reconciled before a result is presented as
+complete. Detailed benefits and boundaries live in `CATEGORY.md`, not in a
+second product roadmap.
+
+This extends the product ambition without changing implementation ownership,
+release gates, the existing workstream sequence or the initial quote/approval
+proof. Public framework wording and explicitly labeled managed-vision copy live
+in `GO_TO_MARKET.md`. Competitive research informs priorities and messaging;
+it does not license a claim of uniqueness, superiority or shipped coverage.
+
 ## 5. Product principles
 
 1. CRM state is deterministic; AI composes and recommends, never silently decides (ARCHITECTURE.md core rule).
@@ -41,7 +63,7 @@ Brief + business process + design reference → the agent scaffolds, generates m
 3. Human approval is deterministic policy; agents cannot impersonate the human decision.
 4. Code generation is dry-run by default; writes are explicit; output is byte-stable for the same input.
 5. Generated code is readable, owned by the customer, and free of hidden conventions.
-6. The framework is what agents use to *author* a CRM — distinct from platforms (Twenty and similar) that agents can *extend* but that keep running the application themselves.
+6. Keep application authorship, agent operation and commercial governance distinct. The framework's role is to help agents author a CRM; its optional managed product must prove the supported operating experience separately. Compare competitors on demonstrated behavior and ownership boundaries rather than claiming that other platforms cannot build or extend software.
 
 ## 6. Roadmap phases (summary)
 
@@ -138,10 +160,10 @@ Trademark clearance, telemetry policy, marketplace submissions, public launch ti
 1. `MASTER_PLAN.md` — this file.
 1b. `../PROJECT_STATUS.md` — what is true in the repository **today**.
 1c. `PLATFORM_ALIGNMENT_GATE.md` — the post-M11 architecture and roadmap checkpoint, and the index of the tracks it created (`PLATFORM_CAPABILITIES.md`, `CONTRACT_SUBSCRIPTION_RENEWAL.md`, `INTEGRATION_RUNTIME.md`, `JOBS_AND_OUTBOX.md`, `DATA_GOVERNANCE.md`, `DESIGN_TO_CRM.md`, `CLOUD_JTBD.md`, `../QUALITY_GATES.md`).
-2. `CATEGORY.md` — category, positioning, ICP, JTBD, promise.
+2. `CATEGORY.md` — category, positioning, ICP, JTBD, integrated value proposition and framework/managed boundaries. `GO_TO_MARKET.md` owns reusable English/Italian copy and its publication gates.
    (Product track specifications; resolve coverage through the operational authorities: `AGENT_CRM_CLOUD.md` — the managed operating layer; `REVENUE_OPERATIONS.md` — lead intelligence, routing and CPQ; `DELIVERY_SERVICE.md` — post-sale delivery and service; `ANALYTICS_STUDIO.md` — safe semantic analytics.)
 3. `NORTH_STAR_EXPERIENCE.md` — the target experience and its acceptance criteria.
-4. `COMPETITOR_MAP.md` — Twenty, Frappe, Relaticle, Comp AI, legacy, templates, DIY; the gap and its caveats.
+4. `COMPETITOR_MAP.md` — the dated baseline for Twenty, Frappe, Relaticle, Comp AI, legacy, templates and DIY. Read `AGENTIC_CRM_RESEARCH_2026_09.md` alongside it for the separately dated Day AI, Frontline, Lightfield, Clarify, item, Cordango and Monaco evidence; neither document silently refreshes the other's observations.
 5. `MEDUSA_PLAYBOOK.md` — the adoption playbook and its limits.
 6. `EXECUTION_ROADMAP.md` — phases, acceptance criteria, metrics.
 7. `CRM_BUILD_BENCHMARK.md` — the proof instrument.
