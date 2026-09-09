@@ -189,7 +189,7 @@ test('M0 freezes the synchronous SQLite composition and mixed sync/async service
   ]);
 });
 
-test('M0 freezes package v1 as synchronous declaration and operation metadata', () => {
+test('M0 freezes package v1 as synchronous declaration and operation metadata', async () => {
   const work = createWorkPackage();
   assert.equal(work.packageContract, 1);
   assert.equal(work.operations, undefined, 'Work v1 declares no application operations');
@@ -205,9 +205,12 @@ test('M0 freezes package v1 as synchronous declaration and operation metadata', 
     modules: { get: () => ({ service: { listWhere: () => [] } }) },
   });
   assert.deepEqual(Object.keys(opened).sort(), ['createFollowUp', 'findBySourceKey']);
-  const exactRead = opened.findBySourceKey('m0:missing');
+  const exactRead = await opened.findBySourceKey('m0:missing');
   assert.equal(exactRead, null);
-  assert.equal(typeof exactRead?.then, 'undefined', 'v1 capability exact reads are synchronous');
+  // Contract evolution (async record-module port): the exact read keeps its
+  // values but is delivered asynchronously, so record-backed v2 packages can
+  // share the interface. The synchronous-delivery pin became a settled-value
+  // pin; see the ExecPlan decision log.
   assert.deepEqual(work.actions.map(({ name, actionContract }) => ({ name, actionContract })), [
     { name: 'complete', actionContract: 1 },
     { name: 'cancel', actionContract: 1 },

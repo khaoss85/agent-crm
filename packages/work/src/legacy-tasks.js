@@ -110,7 +110,10 @@ export async function migrateLegacyTasks(context, options = {}) {
     plan.push({ row, status, sourceKey: legacyKey(String(row.id)) });
   }
 
-  const already = plan.filter((entry) => service.listWhere({ sourceKey: entry.sourceKey }).length > 0);
+  const already = [];
+  for (const entry of plan) {
+    if ((await service.listWhere({ sourceKey: entry.sourceKey })).length > 0) already.push(entry);
+  }
   const pending = plan.filter((entry) => !already.includes(entry));
 
   const report = {

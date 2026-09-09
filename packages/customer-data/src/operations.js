@@ -44,17 +44,19 @@ export function createCustomerDataOperations({ database, modules, events, config
    * the operation was composed.
    */
   const readerFor = () => ({
-    externalIdentity(system, externalId) {
-      return trusted(modules, names.identity)
-        .listWhere({ sourceKey: `${system}:${externalId}` })
-        .find((row) => row.status === 'active') ?? null;
+    async externalIdentity(system, externalId) {
+      const rows = await trusted(modules, names.identity)
+        .listWhere({ sourceKey: `${system}:${externalId}` });
+      return rows.find((row) => row.status === 'active') ?? null;
     },
-    contactByEmail(email) {
+    async contactByEmail(email) {
       // Delegated: core owns email uniqueness and its normalization.
-      return core && typeof core.findContactByEmail === 'function' ? core.findContactByEmail(email) : null;
+      if (!core || typeof core.findContactByEmail !== 'function') return null;
+      return await core.findContactByEmail(email);
     },
-    companiesByName(name) {
-      return core && typeof core.findCompaniesByNormalizedName === 'function' ? core.findCompaniesByNormalizedName(name) : [];
+    async companiesByName(name) {
+      if (!core || typeof core.findCompaniesByNormalizedName !== 'function') return [];
+      return await core.findCompaniesByNormalizedName(name);
     },
   });
 
@@ -87,7 +89,7 @@ export function createCustomerDataOperations({ database, modules, events, config
      * @param {any} request
      */
     async previewCustomerImport(request) {
-      const resolution = resolveBatch({ request, policy, reader: readerFor() });
+      const resolution = await resolveBatch({ request, policy, reader: readerFor() });
       return Object.freeze({
         ...summarize(resolution, 'preview'),
         writes: 'nothing — this is a preview, and it records neither business data nor an import run',
@@ -103,7 +105,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       const actor = normalizeActor(request?.actor);
       // Re-resolve authoritatively. A preview handed in by the caller is
       // deliberately ignored: stale readiness authorises nothing.
-      const resolution = resolveBatch({ request, policy, reader: readerFor() });
+      const resolution = await resolveBatch({ request, policy, reader: readerFor() });
 
       if (resolution.acceptance === 'all_or_nothing' && resolution.counts.rejected + resolution.counts.skipped > 0) {
         throw new AppError(
@@ -116,7 +118,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       }
 
       const runs = trusted(modules, names.run);
-      const existing = runs.listWhere({ idempotencyKey: resolution.idempotencyKey })[0];
+      const existing = (await runs.listWhere({ idempotencyKey: resolution.idempotencyKey }))[0];
       if (existing) {
         // Same payload → same run. A *different* payload cannot reach here:
         // the key is derived from the payload itself.
@@ -253,7 +255,7 @@ export function createCustomerDataOperations({ database, modules, events, config
   async function recordExternalIdentity(row, subject, runId, actor) {
     const identities = trusted(modules, names.identity);
     const sourceKey = `${row.system}:${row.externalId}`;
-    const existing = identities.listWhere({ sourceKey })[0];
+    const existing = (await identities.listWhere({ sourceKey }))[0];
     const now = new Date().toISOString();
     if (existing) {
       await identities.applyManaged(existing.id, { lastObservedRunId: runId, lastObservedAt: now }, { actor });
@@ -280,7 +282,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       for (let j = i + 1; j < list.length; j += 1) {
         const { left, right } = orderedPair(list[i], list[j]);
         const sourceKey = `duplicate:${subjectKey(left)}|${subjectKey(right)}`;
-        if (candidates.listWhere({ sourceKey })[0]) continue;
+        if ((await candidates.listWhere({ sourceKey }))[0]) continue;
         await candidates.createManaged({
           sourceKey,
           ...subjectFields(left, 'left'),
@@ -307,11 +309,11 @@ export function createCustomerDataOperations({ database, modules, events, config
 
   async function recordIssues({ resolution, runId, actor }) {
     const issues = trusted(modules, names.issue);
-    const found = detectIssues({ resolution, modules, names });
+    const found = await detectIssues({ resolution, modules, names });
     let written = 0;
     for (const issue of found) {
       const sourceKey = `issue:${issue.kind}:${issue.subject ? subjectKey(issue.subject) : `run:${runId}:${issue.index ?? 0}`}`;
-      if (issues.listWhere({ sourceKey })[0]) continue;
+      if ((await issues.listWhere({ sourceKey }))[0]) continue;
       await issues.createManaged({
         sourceKey,
         kind: issue.kind,

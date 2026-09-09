@@ -44,23 +44,23 @@ export function createCustomerIdentityCapability(config) {
          * reported honestly as `linked: false`, not as an empty cluster.
          * @param {{resource: string, id: string}} subject
          */
-        canonicalIdentity(subject) {
+        async canonicalIdentity(subject) {
           if (!subject || typeof subject.resource !== 'string' || typeof subject.id !== 'string') return null;
-          return canonicalClusterFor({ modules, names, subject });
+          return await canonicalClusterFor({ modules, names, subject });
         },
 
         /**
          * Active external identifiers for one record, frozen.
          * @param {{resource: string, id: string}} subject
          */
-        externalIdentities(subject) {
+        async externalIdentities(subject) {
           if (!subject || typeof subject.resource !== 'string' || typeof subject.id !== 'string') return Object.freeze([]);
           // A complete read: a consumer asking "what does the outside world
           // call this record" must not be told "nothing" because the answer is
           // older than one display page of the identity table.
-          return Object.freeze(deciding(trusted(modules, names.identity), {
+          return Object.freeze((await deciding(trusted(modules, names.identity), {
             subjectResource: subject.resource, subjectId: subject.id, status: 'active',
-          })
+          }))
             .map((row) => Object.freeze({
               system: row.system,
               externalId: row.externalId,
@@ -74,10 +74,10 @@ export function createCustomerIdentityCapability(config) {
          * second importer needs before it invents a duplicate.
          * @param {string} system @param {string} externalId
          */
-        resolveExternalIdentity(system, externalId) {
+        async resolveExternalIdentity(system, externalId) {
           if (typeof system !== 'string' || typeof externalId !== 'string') return null;
-          const row = trusted(modules, names.identity).listWhere({ sourceKey: `${system}:${externalId}` })
-            .find((entry) => entry.status === 'active');
+          const rows = await trusted(modules, names.identity).listWhere({ sourceKey: `${system}:${externalId}` });
+          const row = rows.find((entry) => entry.status === 'active');
           return row ? subjectOf(row) : null;
         },
 
@@ -86,7 +86,7 @@ export function createCustomerIdentityCapability(config) {
          * a real answer: this package never decides them.
          * @param {{resource: string, id: string}} subject
          */
-        openDuplicateCandidates(subject) {
+        async openDuplicateCandidates(subject) {
           if (!subject || typeof subject.resource !== 'string' || typeof subject.id !== 'string') return Object.freeze([]);
           // A candidate names two records, so both sides are asked for
           // completely and unioned by id.
@@ -96,7 +96,7 @@ export function createCustomerIdentityCapability(config) {
             { leftResource: subject.resource, leftId: subject.id },
             { rightResource: subject.resource, rightId: subject.id },
           ]) {
-            for (const row of deciding(candidates, { ...side, status: 'unresolved' })) rows.set(row.id, row);
+            for (const row of await deciding(candidates, { ...side, status: 'unresolved' })) rows.set(row.id, row);
           }
           return Object.freeze(newestFirst([...rows.values()])
             .map((row) => Object.freeze({
