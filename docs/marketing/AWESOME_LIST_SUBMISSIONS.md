@@ -1,32 +1,16 @@
 # Awesome-list submissions, prepared
 
-Four lists, three different mechanisms, and not one of them is a PR an agent can
-open from this repository. Everything below is written out so submitting is copy,
-paste, send — and so the wording is reviewed here rather than typed into a form
-at speed. `MASTER_PLAN.md` §10.4 stands: an agent prepares, a person submits.
+Original submission packet, sent 2026-08-26. Current states were reconciled on
+2026-09-07: MCP servers #12938 and Claude skills #1173 are OPEN; open-source CRM
+#4 is CLOSED without merge; Claude Code issue #2637 is CLOSED with acceptance
+unverified. These are receipts, not authorization to resubmit. The sent copy below
+is historical and should be refreshed against the current claims ledger before
+any proposed new use. `../strategy/DISTRIBUTION_SUBMISSIONS.md` owns follow-up.
 
-The first two entries became honest only after `create-accordo@0.1.0` went live
-and the MCP Registry entry was published. These lists reject things that cannot
-be installed and used, and until 2026-08-19 that rejection would have been
-correct.
-
-**Two independent reasons the sending step is not agent work**, and they are
-worth separating because only one of them is ours:
-
-- Ours: `MASTER_PLAN.md` §10.4 and `PENDING_HUMAN_SUBMISSION.md`.
-- Theirs: `hesreallyhim/awesome-claude-code` CONTRIBUTING, verbatim — *"Although
-  resources themselves may be partially or entirely written by a coding agent,
-  resource recommendations must be created by human beings."* A submission from
-  an agent violates the destination's own rule, whatever ours says.
-
-A third reason is merely mechanical and should not be mistaken for either: an
-agent session is bound to this repository, and its proxy refuses write access to
-every GitHub path outside it (`POST /repos/…/forks` → 403, *"Write access to
-this GitHub API path is not permitted through this proxy"*). A maintainer PAT
-with full scope was tried against the same call and returned the identical 403 —
-the block is on the path, not on the identity — and `gh` is not installed. That
-is a fact about the sandbox, not a policy, and it would not license sending if
-it were lifted.
+The awesome Claude Code destination requires recommendations from a human.
+Session authorization governs our own external actions; prepare reviewable copy
+before any requested sending step. Old environment/proxy restrictions from the
+submission session are not permanent product or permission boundaries.
 
 ## Running the three PR submissions
 
@@ -119,7 +103,7 @@ with `readOnlyHint: true`.
 
 ## 2. hesreallyhim/awesome-claude-code — an issue form, not a PR
 
-**Status: SENT 2026-08-26** — [hesreallyhim/awesome-claude-code#2637](https://github.com/hesreallyhim/awesome-claude-code/issues/2637), submitted by the maintainer through the web issue form (its CONTRIBUTING requires a human), prefilled from this file. The bot validated it (`validation-passed`); the category landed as "Agent Orchestration" rather than "Skills" via the dropdown.
+**Status: SENT 2026-08-26** — [hesreallyhim/awesome-claude-code#2637](https://github.com/hesreallyhim/awesome-claude-code/issues/2637), **CLOSED, acceptance unverified (checked 2026-09-07)**; submitted by the maintainer through the web issue form (its CONTRIBUTING requires a human), prefilled from this file. The bot validated it (`validation-passed`); the category landed as "Agent Orchestration" rather than "Skills" via the dropdown.
 
 Its CONTRIBUTING is explicit — *"ALL RECOMMENDATIONS MUST BE MADE USING THE WEB
 UI ISSUE FORM TEMPLATE, OR YOU RISK BEING RESTRICTED FROM INTERACTING WITH THIS
@@ -232,7 +216,7 @@ there are enough community skills available"*.
 
 ## 4. sneg55/awesome-open-source-crm — a pull request
 
-**Status: SENT 2026-08-26** — [sneg55/awesome-open-source-crm#4](https://github.com/sneg55/awesome-open-source-crm/pull/4), open, +1/−0. 13 stars, 5 commits. Its retrieval
+**Status: SENT 2026-08-26** — [sneg55/awesome-open-source-crm#4](https://github.com/sneg55/awesome-open-source-crm/pull/4), **CLOSED, not merged (checked 2026-09-07)**. Historical submission: +1/−0. 13 stars, 5 commits. Its retrieval
 value today is close to nothing. It is here for one reason: it is the only list
 found with a section headed **CRM Frameworks** — *"Platforms and frameworks for
 building custom CRM solutions"* — which is precisely and unusually the category

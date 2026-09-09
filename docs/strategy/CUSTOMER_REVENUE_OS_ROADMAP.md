@@ -1,7 +1,13 @@
 # Customer & Revenue OS — roadmap alignment and competitor-informed audit
 
-**Status: strategy. Nothing here is implemented, and nothing here renames
-anything.** It answers four questions a roadmap has to be able to answer, records
+> **Historical design baseline, scoped on 2026-09-07.** The specification and
+> snapshot below preserve the original planning context. Past-tense implementation
+> gaps in that baseline are not current capability claims. Current coverage and
+> limitations are resolved through `../PROJECT_STATUS.md`, `../repository-truth.json`
+> and `GTM_TECHNICAL_EVIDENCE_HANDOFF.md`; use those before publishing or planning a fix.
+
+
+**Status: historical strategy baseline, not a current implementation inventory. Nothing here renames anything.** It answers four questions a roadmap has to be able to answer, records
 what the market has made table stakes, and elevates the pillars that were real
 but under-prioritized. The parallel GTM branch is untouched; this is the
 engineering-side view.
@@ -108,7 +114,7 @@ Read this before positioning anything.
 | **Interactions / communications** (email, calendar, calls, conversations) | **planned** — absent |
 | **Package extension surface** (Admin/UI, HTTP routes) | **planned** — `ADMIN_EXTENSIONS_UNSUPPORTED`; no route contribution |
 | **Package distribution & lifecycle** (install, versions, trust) | **planned** — absent |
-| Production spine, Cloud | **v1 shipped** — identity, tenancy and authorization; no authentication, no PostgreSQL, no Cloud |
+| Production spine, Cloud | Historical v1 snapshot; current dedicated PostgreSQL and bounded operations are in `../PROJECT_STATUS.md`; private Cloud work has separate authority |
 
 ---
 

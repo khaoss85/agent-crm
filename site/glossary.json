@@ -9,7 +9,7 @@
       "metaTitle": "What is a CRM framework? Definition | Accordo",
       "plainName": "CRM framework, defined",
       "intent": "what is a crm framework, open source crm framework for developers",
-      "summary": "A CRM framework is source code a development team composes into its own CRM application: the framework supplies the runtime contracts — records, services, workflows, policies — and the team supplies the domain. A CRM product is configured; a CRM framework is programmed, and the resulting application belongs to whoever wrote it rather than to a vendor. Accordo is an open source CRM framework for developers and their coding agents, MIT-licensed, with SQLite as a Node built-in and one pinned pg@8.23.0 driver for PostgreSQL — and nothing about the term makes the result deployable: this one ships no authentication, application composition is still SQLite, and it has no hosted offering.",
+      "summary": "A CRM framework is source code a development team composes into its own CRM application: the framework supplies the runtime contracts — records, services, workflows, policies — and the team supplies the domain. A CRM product is configured; a CRM framework is programmed, and the resulting application belongs to whoever wrote it rather than to a vendor. Accordo is an open source CRM framework for developers and their coding agents, MIT-licensed, with SQLite as a Node built-in and one pinned pg@8.23.0 driver for PostgreSQL — and nothing about the term makes the result deployable: this one ships no authentication, application composition supports SQLite and dedicated PostgreSQL, and it has no hosted offering.",
       "metaDescription": "A CRM framework is source code developers compose into their own CRM application, not a hosted product they configure. The definition, and where this one stops.",
       "sections": [
         {
@@ -38,15 +38,15 @@
         {
           "heading": "What the term does not buy",
           "body": [
-            "Being a framework does not make the output deployable, and this one is explicit about it. No authentication ships, so a deployment must supply the verifier (L-01); persistence is Node's built-in SQLite adapter (L-02); there is no hosted CRM, free tier or account to sign up for — the output is an application in your repository that you run (L-07).",
+            "Being a framework does not make the output deployable, and this one is explicit about it. No authentication ships, so a deployment must supply the verifier (L-01); persistence supports SQLite and dedicated-database PostgreSQL (L-02); there is no hosted CRM, free tier or account to sign up for — the output is an application in your repository that you run (L-07).",
             "Being a framework also does not make it measurably better than the alternatives. No benchmark has compared building on Accordo with building from scratch or with adopting a product: the build benchmark protocol is published and has not been run, so any number quoted for this project is not ours (L-03)."
           ]
         }
       ],
       "boundaries": [
         "A CRM framework is not a CRM product. There is nothing to sign up for here — no hosted CRM, no account, no free tier; the output is an application in your repository (L-07).",
-        "'Open source CRM framework' describes the licence and the source, not a distribution channel. Nothing installs from npm: the bootstrap scaffolds from a checkout and upgrading means merging (L-08).",
-        "'CRM for developers' does not make the result deployable. No authentication ships (L-01), and persistence is local SQLite (L-02).",
+        "'Open source CRM framework' describes the licence and the source, not a distribution channel. The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
+        "'CRM for developers' does not make the result deployable. No authentication ships (L-01), and persistence supports SQLite and dedicated-database PostgreSQL (L-02).",
         "SQLite needs no third-party driver; PostgreSQL carries the pinned pg@8.23.0. That is a property of the framework, not of the application you build on it.",
         "The definition on this page is not a measured comparison. No benchmark has been run against building from scratch or against any product (L-03)."
       ],
@@ -85,6 +85,9 @@
         "code-you-own",
         "vs-building-a-crm-from-scratch",
         "vs-twenty"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented"
       ]
     },
     {
@@ -94,7 +97,7 @@
       "metaTitle": "What is an agent-built CRM? | Accordo",
       "plainName": "Agent-built CRM, defined",
       "intent": "what is an agent-built crm, build your own crm with a coding agent",
-      "summary": "An agent-built CRM is a CRM application whose source a coding agent composes against a framework's contracts, leaving reviewable code the operator owns rather than configuration inside a vendor's runtime. The agent is the builder at development time; the running application is ordinary deterministic software, and the agent is not its control plane. Accordo gives the agent the rails to build with — inspect, plan, scaffold, verify — and states the limits in the same breath: no measurement exists of how often an agent completes a build, nothing installs from npm, and the result runs locally without authentication.",
+      "summary": "An agent-built CRM is a CRM application whose source a coding agent composes against a framework's contracts, leaving reviewable code the operator owns rather than configuration inside a vendor's runtime. The agent is the builder at development time; the running application is ordinary deterministic software, and the agent is not its control plane. Accordo gives the agent the rails to build with — inspect, plan, scaffold, verify — and states the limits in the same breath: no measurement exists of how often an agent completes a build, npm distributes a dated source snapshot, and deployment authentication must be supplied separately.",
       "metaDescription": "An agent-built CRM is composed as reviewable source by a coding agent working against a framework's contracts. What the term means, and what it does not claim.",
       "sections": [
         {
@@ -115,7 +118,7 @@
         {
           "heading": "What the built application is, and where it runs",
           "body": [
-            "The output of an agent build here is a local application: Node 22, SQLite persistence, and no authentication (L-01, L-02), so it runs on one developer's machine and must not be exposed to a network. It is a working system to develop against and reason about, not a system a team signs in to.",
+            "The default scaffold is a local development application; the production mode requires a deployment authentication adapter. The framework enforces authorization and one tenant per application instance; the deployment supplies authentication. Self-hosted SQLite and dedicated-database PostgreSQL compositions exist, but are not a general production-readiness claim (L-01, L-02). The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
             "Ownership follows the same mechanics as any Accordo project: the framework arrives vendored — `npm create accordo` scaffolds the project and copies the framework source into it, and the same bootstrap runs from a checkout — so upgrading means merging, because no versioned framework dependency exists (L-08). The agent that built the application does not remain attached to it; what remains is source, tests and the evidence trail the framework wrote while the application ran."
           ]
         }
@@ -123,8 +126,8 @@
       "boundaries": [
         "Agent-built names who assembles the source at development time. It does not mean the model operates the CRM at runtime, approves its decisions or acts as its control plane.",
         "No measurement of agent build success exists. The benchmark protocol is published and has not been run, so no completion or reliability figure may be quoted (L-03).",
-        "The built application is local-development-only: no authentication ships (L-01), and persistence is SQLite (L-02).",
-        "Nothing installs from npm. The agent scaffolds from a checkout of this repository, and the framework is vendored into the project (L-08).",
+        "The default scaffold is local development. A self-hosted deployment requires its own authentication adapter and operation; SQLite and dedicated PostgreSQL support alone do not establish production readiness (L-01, L-02).",
+        "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
         "A Solution Plan validates against a real inspection and executes nothing. Planning is a checked file, not an automation.",
         "Code-generating and destructive MCP tools are dry-run unless an explicit apply flag is passed. The default answer to a write is a preview."
       ],
@@ -165,6 +168,12 @@
         "inspect-what-your-project-composed",
         "write-a-checkable-solution-plan",
         "install-into-your-agent"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent"
       ]
     },
     {
@@ -174,35 +183,35 @@
       "metaTitle": "What is a customer hub? Definition | Accordo",
       "plainName": "Customer hub, defined",
       "intent": "what is a customer hub, single view of the customer across crm records",
-      "summary": "A customer hub is a system in which the records of one customer's commercial life — lead, deal, quote, order, contract, delivery, service — connect through explicit identifiers, so following the customer means following the references. The term is used three ways in practice: a profile hub assembled from many systems, a single screen over existing tools, and a record chain one application writes itself. Accordo implements only the third: a locally-run chain of audited records, with no ingestion, no identity resolution, no merge and no per-customer screen.",
+      "summary": "A customer hub connects the records of one customer commercial lifecycle. Accordo combines an audited record chain with a bounded Customer Data Foundation: JSON imports, deterministic matching, human-governed logical identity and a consolidated profile across composed packages. It is not a full CDP or a complete cross-channel timeline.",
       "metaDescription": "A customer hub links one customer's records — lead, deal, quote, contract, delivery, service — through explicit identifiers. Definition and three readings.",
       "sections": [
         {
           "heading": "The definition, and its three readings",
           "body": [
             "A customer hub is a system where one customer's commercial records are connected rather than scattered: the quote knows its opportunity, the contract knows its order, the support case knows its entitlement. The value of the term is navigational — from any record you can reach the rest of the customer's history by following identifiers instead of re-keying names into other tools.",
-            "In practice the phrase covers three different systems, and knowing which one is being sold matters. The first is a profile hub: records and events ingested from many source systems, resolved into one profile per person or account — that is a customer data platform's job. The second is a screen hub: a unified interface laid over tools that stay separate. The third is a record-chain hub: one application writes all the records itself, and each record carries the id of the record it came from. Only the third makes no claim about systems it does not own — and only the third is what this framework builds."
+            "The phrase can mean a profile assembled across systems, an interface over tools, or a commercial record chain. Accordo supplies the chain plus a bounded customer foundation; that combination is not a full CDP."
           ]
         },
         {
           "heading": "The record-chain reading, as Accordo implements it",
           "body": [
             "In an Accordo application the chain is written by the actions that move the process. A lead converts atomically into a Company, a Contact and an Opportunity through explicit, audited actions (C-06); a signed Order activates into a Commercial Contract that carries the orderId, quoteVersionId, opportunityId and companyId it descended from (C-10); delivery and service records carry the contract and company they serve. Every one of those identifiers is managed storage written by the framework, never a value a client supplied, and every mutation leaves an audit event and a step-level trace (C-16).",
-            "That is a single customer view as a property of the data, not as a feature of the interface. There is no per-customer page in the Admin, no cross-module search and no unified activity timeline — following a customer means reading the references, and the honest description of the result is a chain this application wrote, not a profile it assembled."
+            "Customer Data Foundation reads a consolidated profile across composed packages and exposes an Admin surface. Canonical identity remains a logical link; no physical merge, global search or complete cross-channel timeline is supplied."
           ]
         },
         {
           "heading": "What this definition excludes",
           "body": [
-            "The profile-hub reading is excluded entirely: Accordo has no pipeline that ingests records or events from external systems, no identity resolution and no merge, so two records for the same human stay two records. Detecting duplicates, merging Companies or Contacts, importing from CSV and exporting records all read not supported in the job catalogue, and there is no import or export of any kind (L-06).",
+            "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06). The profile reads composed package records; it does not ingest every external channel or infer a probabilistic identity graph.",
             "The deployment reading is excluded too. A hub built here runs on one developer's machine: no authentication ships, and a deployment must supply the verifier (L-01), and no way to service a data-subject access or deletion request, which is why real customer data does not belong in it (L-09). For the fuller argument about what a hub built on this foundation is and is not, the customer hub concept page carries the commercial version of this definition with every status quoted from the catalogue."
           ]
         }
       ],
       "boundaries": [
         "This page defines the term. It does not claim Accordo ships a finished customer hub product — the concept page for customer hub carries that argument with each domain's status attached.",
-        "The definition implemented here is the record chain only. Nothing ingests, deduplicates, merges or resolves identities from other systems, and there is no import or export (L-06).",
-        "There is no per-customer screen. The Admin navigates by module and domain, and no view assembles one customer's chain for a reader.",
+        "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06).",
+        "Customer Data Foundation provides a consolidated profile and Admin surface. It reports absent packages as unavailable and is not a complete cross-channel timeline.",
         "A customer hub is not a customer data platform. The profile-hub reading belongs to a different category this framework explicitly refuses.",
         "None of it is deployable: no authentication ships, and a deployment must supply the verifier (L-01), and no export or erasure path, so real customer data does not belong in it (L-09)."
       ],
@@ -232,13 +241,19 @@
       "tests": [
         "tests/lead-conversion-e2e.test.js",
         "tests/contracts-activation-e2e.test.js",
-        "tests/jobs-json.test.js"
+        "tests/jobs-json.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
       "related": [
         "customer-hub",
         "cdp-plus-crm",
         "vs-a-customer-data-platform",
         "contract-and-subscription"
+      ],
+      "facts": [
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent"
       ]
     },
     {
@@ -342,7 +357,7 @@
           "heading": "What versioning does not claim",
           "body": [
             "A versioned policy is reproducible, not correct. Nothing verifies that version 2 encodes the rule the business meant, and a wrong rule is reproduced exactly as faithfully as a right one. Versioning answers which rule ran, never whether it should have.",
-            "Reproducing the decision is also not reproducing its inputs: a score run fingerprints the mutable record fields it read rather than copying all of them, which is why reproducing a historical routing decision exactly reads partially supported in the job catalogue. And no policy is ever evaluated because time passed — there is no scheduler, so every evaluation starts from an explicit request (L-04)."
+            "A score run fingerprints mutable inputs rather than copying every historical field, so historical routing reproduction remains partial. Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04)."
           ]
         }
       ],
@@ -350,8 +365,8 @@
         "Versioning buys reproducibility, not correctness. Nothing checks that a policy encodes the rule the business intended, and a wrong rule is reproduced exactly.",
         "The fingerprint covers a definition's own source and declared config. Closure state and out-of-file helpers are not captured, and closure analysis is deliberately not attempted.",
         "Reproducing a decision is not reproducing its inputs. Historical routing decisions are only partially reproducible, and the catalogue says so.",
-        "Immutability is enforced at boot for registered versions. It is not a tamper-proof store: the database is a local SQLite file, and no authentication ships in front of it (L-01).",
-        "No policy evaluates on a schedule. There is no scheduler, queue or delayed evaluation, so time passing changes nothing (L-04)."
+        "Registered definition versions are checked at startup. This does not make storage tamper-proof; the operator controls SQLite files or dedicated PostgreSQL and supplies deployment authentication (L-01, L-02).",
+        "Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04)."
       ],
       "claims": [
         "C-07",
@@ -381,6 +396,13 @@
         "deterministic-by-construction",
         "lead-intelligence",
         "quote-to-cash-cpq"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent"
       ]
     },
     {
@@ -411,14 +433,14 @@
           "heading": "What determinism does not cover",
           "body": [
             "Determinism is about reproducibility, not correctness: a workflow that faithfully encodes the wrong business rule reproduces the wrong decision every time, and nothing in the framework can tell. Review of the encoded rule is human work, which is why the rules live in explicit source rather than generated configuration.",
-            "Two mechanical bounds matter as much as the principle. The event buffer is in-process and not durable — a crash between the database commit and the dispatch loses the events, so they cannot back a remote integration. And no workflow ever starts because time passed: there is no scheduler, queue or delayed step, so a follow-up date arriving changes no state (L-04). Everything that runs was explicitly asked to run, by an actor the system records but, with no verifier supplied, never authenticates (L-01)."
+            "The in-process event buffer alone is not durable. A separate transactional outbox and durable job store support explicitly composed self-host workers; a crash-safe remote integration still needs its handler and delivery policy. Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04). The framework enforces authorization and one tenant per application instance; the deployment supplies authentication. Self-hosted SQLite and dedicated-database PostgreSQL compositions exist, but are not a general production-readiness claim (L-01, L-02)."
           ]
         }
       ],
       "boundaries": [
         "Deterministic means reproducible, not correct. A workflow encoding the wrong rule reproduces the wrong decision exactly, and nothing in the framework detects that.",
         "The transaction-scoped event buffer is in-process and not durable. A crash between commit and dispatch loses delivery, so these events cannot back a remote integration.",
-        "No workflow is time-driven. There is no scheduler, queue or delayed step; a due date arriving changes no state (L-04).",
+        "Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04).",
         "In local-development mode the actor a workflow records is asserted in a header, not authenticated (L-01).",
         "Determinism here describes this framework's services and workflows. It is not a claim that no model runs anywhere at runtime in an application an owner extends."
       ],
@@ -450,6 +472,16 @@
         "deterministic-by-construction",
         "the-refusal-boundary",
         "smart-crm"
+      ],
+      "facts": [
+        "spine.postgresql.implemented=implemented",
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent",
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent"
       ]
     },
     {
@@ -480,7 +512,7 @@
           "heading": "Where the boundary stops",
           "body": [
             "In local-development mode the actor is an assertion, not an identity: no authentication ships, so an actor header there is a claim the caller makes about itself (L-01) — the boundary holds against an honest agent that says what it is, and not against any caller that lies, until a deployment supplies the adapter that verifies the request.",
-            "The approval key is a label: nothing checks that the human who approved was a sales manager, because there are no roles to check, which is why obtaining the required commercial approval reads partially supported in the job catalogue and enforcing team or tenant permissions reads not supported. And refusing the decision is not reviewing it — the framework decides who may decide, never whether the human decided well."
+            "The approval key is a label: nothing checks that the human who approved was a sales manager, the approval label is not mapped to an enforced membership role, which is why obtaining the required commercial approval reads partially supported in the job catalogue and team and tenant authorization is separately enforced by the framework. And refusing the decision is not reviewing it — the framework decides who may decide, never whether the human decided well."
           ]
         }
       ],
@@ -520,6 +552,11 @@
         "the-refusal-boundary",
         "smart-crm",
         "quote-to-cash-cpq"
+      ],
+      "facts": [
+        "spine.authorization.enforced=enforced",
+        "spine.tenant.isolation.mode=one_tenant_per_instance",
+        "spine.authentication.framework_verifier=absent"
       ]
     },
     {
@@ -529,7 +566,7 @@
       "metaTitle": "CDP vs CRM: what's the difference? | Accordo",
       "plainName": "CDP vs CRM, the split",
       "intent": "cdp vs crm difference, customer data platform versus crm",
-      "summary": "A customer data platform (CDP) assembles one profile per person or account from records and events ingested across many systems — identity resolution, audiences, destination sync. A CRM runs the commercial process on records the business itself works: leads, deals, quotes, approvals, contracts. The split is profile versus process, population versus record. Accordo sits entirely on the CRM-process side: it ingests nothing, resolves no identities and builds no segments, and any bridge between the two layers is application code the owner writes, because no connector ships in either direction.",
+      "summary": "A customer data platform (CDP) assembles one profile per person or account from records and events ingested across many systems — identity resolution, audiences, destination sync. A CRM runs the commercial process on records the business itself works: leads, deals, quotes, approvals, contracts. The split is profile versus process, population versus record. Accordo provides the CRM process layer plus bounded JSON imports, deterministic duplicate matching and human-governed logical identity links. It supplies no streaming ingestion, segmentation or destination activation; a CDP bridge remains application code because no prebuilt connector ships.",
       "metaDescription": "A CDP assembles one profile per person from many systems; a CRM runs the commercial process on its own records. The split, and where an agent-built CRM sits.",
       "sections": [
         {
@@ -542,24 +579,24 @@
         {
           "heading": "Which one a given job needs",
           "body": [
-            "If the job is collect events from product, billing and support, unify identities and build audiences, it is CDP work — and none of it exists in Accordo: importing records, detecting duplicates, creating audiences and syncing them to a provider all read not supported in the job catalogue, and no ingestion pipeline of any kind exists (L-06).",
+            "For broad event collection, cross-system identity graphs and audiences, use a CDP. Accordo supplies bounded JSON imports and deterministic logical identity, but no streaming ingestion, audience builder or destination activation (L-06).",
             "If the job is run a commercial process with rules that hold — capture and convert leads through atomic, audited actions (C-06), score under versioned explainable policies (C-07), stop a discount for human approval — it is CRM work, and it is what this framework builds as owned source, with every mutation audited and traced (C-16). If the job description contains both halves, that is not a tie to break: it is two layers, each doing the half it can actually answer for."
           ]
         },
         {
           "heading": "Where Accordo sits, and what the bridge costs",
           "body": [
-            "Accordo is the process layer only. It ships no connector, importer, scheduler or external adapter in either direction — every provider in this repository is an offline fixture (L-05) — so a CDP-to-CRM bridge is application engineering the owner writes: a selected profile mapped into an explicit CRM command, validated by the service and governed by the same policy as any other caller. The clean hand-off happens after selection, not before identity.",
+            "Accordo supplies the custom process layer plus bounded customer imports and logical identity. No prebuilt CDP connector ships: mapping a selected profile into an import or explicit CRM command remains application engineering, governed by services and policy (L-05, L-06).",
             "The comparison and architecture pages carry the full versions of this argument: the CDP comparison states operationally what Accordo does not do, and the CDP-plus-CRM concept page describes the two-layer architecture where each side keeps its own question. Both inherit the same posture this page does: no authentication (L-01), and no export or erasure path, so real customer data does not belong in the current runtime (L-09)."
           ]
         }
       ],
       "boundaries": [
-        "This page defines a category split. It does not claim Accordo implements the CDP half in any form: no ingestion, no identity resolution, no segmentation, no destination sync.",
+        "This category split does not claim a full CDP. Bounded JSON import and deterministic logical identity exist; streaming ingestion, segmentation and destination activation do not.",
         "No bridge ships between the layers. Connecting a CDP to an Accordo application is code the owner writes, not configuration this framework performs (L-05).",
         "No CDP vendor is named or evaluated here. The competitor research this site may cite carries no product-level claims in that category.",
-        "The CRM half described is a local development framework: no authentication ships, and a deployment must supply the verifier (L-01), and no path to service a data-subject request (L-09).",
-        "Import, export, deduplication and merge do not exist on the CRM side either (L-06). The process layer's integrity claims are about mutations, not about data completeness."
+        "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06).",
+        "The data-operation jobs remain partial: JSON import has no CSV parser, exact duplicate detection runs on import rather than manual entry, and canonical links preserve both records rather than physically merging them. Export remains unsupported (L-06); mutation integrity does not establish data completeness."
       ],
       "claims": [
         "C-06",
@@ -586,13 +623,19 @@
       ],
       "tests": [
         "tests/lead-conversion-e2e.test.js",
-        "tests/lead-intelligence-e2e.test.js"
+        "tests/lead-intelligence-e2e.test.js",
+        "tests/customer-data-foundation.test.js"
       ],
       "related": [
         "cdp-plus-crm",
         "vs-a-customer-data-platform",
         "customer-hub",
         "lead-intelligence"
+      ],
+      "facts": [
+        "domain.customer_data.package_native=package_native",
+        "cdf.full_cdp.implemented=absent",
+        "customer_timeline.complete=absent"
       ]
     },
     {
@@ -623,7 +666,7 @@
           "heading": "What a matrix row is not",
           "body": [
             "A status is a self-assessment with evidence, not a comparative measurement. Validated end to end means this repository's own suite completes the job against this repository's own fixtures — it does not mean the job was measured against another product, and no row implies a ranking. The one instrument that would produce a comparative number, the build benchmark, is published as a protocol and has not been run (L-03).",
-            "A matrix also does not make the absent rows smaller. All marketing rows read not supported and no marketing package exists (L-11); import, export, dedupe and merge read not supported (L-06). Reading the matrix as a roadmap is a mistake the matrix itself refuses: it records what is true of the checkout, and it changes only when the code does."
+            "A matrix also preserves each partial job's remaining gap. All marketing rows read not supported and no marketing package exists (L-11). Import, duplicate detection and merge read partially supported: the implemented slices are bounded JSON input, deterministic matching on import, and human-governed logical canonical links. CSV parsing, duplicate detection on manual entry and physical merge remain absent; export is not supported (L-06). The matrix records evidenced coverage of the checkout, not a promise to complete the roadmap."
           ]
         }
       ],
@@ -632,7 +675,7 @@
         "Validated end to end means the repository's own suite completes the job against its own fixtures — every provider offline, everything local (L-01, L-05).",
         "A status is not a promise. The matrix records the current checkout, changes only when the code does, and is not a roadmap.",
         "The comparative instrument is the build benchmark, which is published as a protocol and has not been run (L-03).",
-        "The absent rows stay absent: all marketing jobs read not supported (L-11), and import, export, dedupe and merge are not supported (L-06)."
+        "All marketing jobs remain not supported (L-11). Import, duplicate detection and merge remain partially supported only through bounded JSON input, exact matching on import and logical canonical links; export remains not supported, and no partial row promises CSV parsing or physical record merge (L-06)."
       ],
       "claims": [
         "C-20"
@@ -692,15 +735,15 @@
           "heading": "Where the cash is, and is not",
           "body": [
             "The cash segment does not exist. There is no invoice, no payment, no dunning, no tax, no usage rating, no proration and no revenue recognition anywhere in the repository, and MRR, ARR and TCV are deliberately not derived from contract data (L-10). A Subscription here is a commercial activation record — what was sold as a recurring right — and nothing meters or bills it.",
-            "The implemented stretch carries its own bounds too. Every signature provider is an offline fixture: no envelope has ever been sent to a real signer, and the signed document is canonical JSON rather than a PDF (L-05). The contract term was never signed — dates are operational metadata a human enters with a required reason — and there is no scheduler, so a renewal notice period passes without anything firing (L-04). Quote-to-cash, in this framework, honestly means quote-to-contract with the books left open."
+            "Signature business providers are offline fixtures and canonical signed documents are JSON, not PDF (L-05). Terms frozen into the signed quote document retain signed-order provenance; legacy orders without signed terms can use explicitly labelled post-signature operational metadata. Operational dates are never promoted to signed terms. Governed renewal and amendment execution creates a successor agreement from its own signed Order, with immutable lineage and a derived line delta. Historical contracts and subscriptions are not edited. There is no automatic renewal, cancellation execution, billing or customer notification."
           ]
         }
       ],
       "boundaries": [
         "The cash segment does not exist. No invoice, payment, dunning, tax, usage rating, proration or revenue recognition, and MRR, ARR and TCV are not derived (L-10).",
         "Every signature provider is an offline fixture. No envelope has ever reached a real signer, and the signed document is canonical JSON, not a PDF (L-05).",
-        "The contract term was never signed. Effective and term dates are post-signature operational metadata a human types with a required reason.",
-        "There is no scheduler, so nothing renews, expires or fires on a date (L-04). Amendment, cancellation and renewal flows do not exist.",
+        "Terms frozen into the signed quote document retain signed-order provenance; legacy orders without signed terms can use explicitly labelled post-signature operational metadata. Operational dates are never promoted to signed terms.",
+        "Governed renewal and amendment execution creates a successor agreement from its own signed Order, with immutable lineage and a derived line delta. Historical contracts and subscriptions are not edited. There is no automatic renewal, cancellation execution, billing or customer notification. Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04).",
         "The chain runs locally with no authentication, so it is a development artifact, not an operating revenue process (L-01)."
       ],
       "claims": [
@@ -727,18 +770,27 @@
       "docs": [
         "docs/COMMERCIAL_OPERATIONS.md",
         "docs/SIGNATURE_ORDER.md",
-        "docs/CONTRACT_ACTIVATION.md"
+        "docs/CONTRACT_ACTIVATION.md",
+        "docs/RENEWAL_AMENDMENT.md"
       ],
       "tests": [
         "tests/commercial-e2e.test.js",
         "tests/signature-order-e2e.test.js",
-        "tests/contracts-activation-e2e.test.js"
+        "tests/contracts-activation-e2e.test.js",
+        "tests/lifecycle-amendment-execution-e2e.test.js"
       ],
       "related": [
         "quote-to-cash-cpq",
         "signature-to-order",
         "contract-and-subscription",
         "delivery-projects"
+      ],
+      "facts": [
+        "spine.durable_job_store.implemented=implemented",
+        "spine.transactional_outbox.implemented=implemented",
+        "spine.timer_consumers.implemented=implemented",
+        "spine.managed_jobs_service.implemented=absent",
+        "domain.lifecycle.package_native=package_native"
       ]
     }
   ]

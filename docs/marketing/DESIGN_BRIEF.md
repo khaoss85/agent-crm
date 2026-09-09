@@ -13,7 +13,7 @@ commercial process; the agent generates domain modules, deterministic workflows,
 human approval boundaries, and audit and trace, **as reviewable code in the
 developer's own repository** rather than configuration inside someone else's SaaS.
 
-It is pre-release: local SQLite, no authentication ships, no hosted service.
+Use the current claims ledger for release scope: SQLite and dedicated PostgreSQL are framework paths, authentication is deployment-supplied, and no public managed offer is implied.
 Nothing is installable from npm yet. **The site says all of this out loud.** That
 is not a caveat to be designed around — it is the product's argument.
 
@@ -111,7 +111,7 @@ be a visual element — chips, a grid, a marquee of honesty:
 
 **Nobody else publishes their own blind spots.** That is the brand.
 
-## 5. Page inventory — 160 pages, seven clusters
+## 5. Page inventory — 162 pages, seven clusters
 
 Hub-and-spoke: each pillar page links down to its spokes, each spoke links back up.
 
@@ -121,11 +121,11 @@ Hub-and-spoke: each pillar page links down to its spokes, each spoke links back 
 | **Capabilities** | `capabilities.html` | 6 | one business domain: what it models, what the framework refuses, what proves it |
 | **Concepts** | `concepts.html` | 8 | why it is built this way — the vision layer |
 | **Compare** | `compare.html` | 9 | opens by naming where the *alternative* wins |
-| **Jobs** | `jobs.html` | 76 | one CRM job, its support status, its evidence |
+| **Jobs** | `jobs.html` | 77 | one CRM job, its support status, its evidence |
 | **Answers** | `answers.html` | 15 | one blunt question, answered, plus 15 published refusals |
 
 Plus: `index.html`, `evidence.html` (the full claims ledger as a table), `blog.html`
-(the first evidence-backed post now ships; the honest zero-post state remains a renderer requirement),
+(six evidence-backed posts, including the quote approval recipe; the honest zero-post state remains a renderer requirement),
 `privacy.html` (the hosted Docs MCP data boundary), and `404.html`.
 
 **Only five content templates are needed:** homepage · pillar · spoke ·
@@ -159,7 +159,7 @@ Sample, from the CPQ page:
 
 > - Nothing bills. There is no invoice, no payment and no dunning.
 > - Every signature provider is an offline fixture; no envelope has ever been sent.
-> - There is no scheduler, so a renewal date passes without anything firing.
+> - Timers require an explicitly started self-host worker; they open requests, not automatic commercial decisions.
 
 A competitor puts this in 11px grey at the bottom. **We put it in the light.**
 If the design makes this feel like a disclaimer, the design has failed.

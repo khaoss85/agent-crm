@@ -415,8 +415,24 @@ function emit(path, html, options = {}) {
 
   const depth = path.split('/').length - 1;
   const output = html
+    // The one recorded recipe asset is enhanced into a native, script-free player.
+    .replace('<a href="../recipes/quote-approval-result.webm">Watch the recorded result</a>.',
+      '<video controls preload="none" width="1440" height="1000" style="max-width:100%;height:auto" poster="../recipes/quote-approved.png" aria-label="Recorded synthetic quote approval result and audit"><source src="../recipes/quote-approval-result.webm" type="video/webm"><a href="../recipes/quote-approval-result.webm">Download the recorded result</a></video>')
     .replaceAll('{{page.root}}', '../'.repeat(depth))
-    .replace('{{page.seo}}', () => seoBlock(path, title, description, options.jsonLd ?? []));
+    .replace('{{page.seo}}', () => seoBlock(path, title, description, options.jsonLd ?? []))
+    .replace(/<a\b([^>]*?)href="([^"]+)"([^>]*)>/g, (anchor, before, href, after) => {
+      if (anchor.includes('data-site-event=')) return anchor;
+      const knownTargets = new Map([
+        [`${ORIGIN}/blog/run-a-b2b-quote-approval-workflow.html`, 'tutorial_open'],
+        [`${ORIGIN}/recipes/quote-approval-brief.md`, 'example_open'],
+        [`${brand.repository.value}/blob/main/examples/recipes/quote-approval/run.mjs`, 'example_open'],
+        [`${ORIGIN}/developers.html`, 'quickstart_open'],
+      ]);
+      let event;
+      try { event = knownTargets.get(new URL(href, `${ORIGIN}/${path}`).href); } catch { return anchor; }
+      return event ? `<a${before}href="${href}"${after} data-site-event="${event}">` : anchor;
+    })
+    .replace('</head>', `  <script defer src="${'../'.repeat(depth)}analytics.js" data-page="${escapeHtml(path === 'index.html' ? `${ORIGIN}/` : `${ORIGIN}/${path}`)}" referrerpolicy="no-referrer"></script>\n</head>`);
   if (output.includes('{{page.seo}}')) unresolved.push({ file: path, token: 'page.seo' });
   if (output.includes('{{')) unresolved.push({ file: path, token: 'a token survived the whole render' });
 
@@ -430,8 +446,8 @@ function emit(path, html, options = {}) {
  * Canonical, social cards and structured data for one page.
  *
  * Structured data is emitted as `application/ld+json`, which the site's own CSP
- * (`default-src 'none'` with no `script-src`) does not block — measured in headless Chromium
- * rather than assumed, because a silently dropped block would be invisible in the HTML source.
+ * does not treat as executable inline JavaScript. Keep it inert JSON: the policy allows
+ * only same-origin executable scripts, and analytics does not change that boundary.
  *
  * @param {string} path @param {string} title @param {string} description @param {any[]} jsonLd
  */
@@ -648,8 +664,8 @@ function resolve(token) {
       : `\u201c${brand.name.value}\u201d is a working title, not the public name.`,
     'status.headline': repositoryIsPublic ? 'Open source.' : 'Open source; repository not yet public.',
     'status.text': repositoryIsPublic
-      ? 'Not deployable to production. This page states what the tests prove and what is missing — nothing else.'
-      : 'The repository opens shortly; until it does, every source link here will not resolve for you. Not deployable to production either. This page states what the tests prove and what is missing — nothing else.',
+      ? 'Self-host framework source. Deployments require an application-supplied authentication verifier and operational configuration. Passing tests does not certify production readiness.'
+      : 'The repository is not public; source links here will not resolve for you. Deployments require an application-supplied authentication verifier and operational configuration. Passing tests does not certify production readiness.',
   };
   if (token in derived) return escapeHtml(derived[token]);
 
@@ -661,6 +677,7 @@ function resolve(token) {
     'brand.repository': brand.repository.value,
     'brand.license': brand.license.value,
     'brand.createCommand': brand.npm.createCommand,
+    'brand.publishedVersion': brand.npm.publishedVersion,
     'brand.scope': brand.npm.scope,
     'brand.nameStatus': brand.name.status,
     'font.sans': brand.typography.sans,

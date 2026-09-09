@@ -37,11 +37,11 @@ const PROBLEM_CODES = Object.freeze([
 ]);
 
 const LIMITATIONS = Object.freeze([
-  ['NOT_PUBLISHED', 'this is a publication candidate assembled from checked-in source. It does not contact npm, stage a version or make `npm create accordo` work'],
+  ['NOT_PUBLISHED', 'this is a publication candidate assembled from checked-in source. It does not contact npm, stage this version or change what npm latest serves'],
   ['PROVENANCE_NOT_CREATED', 'a local assembly has no provenance attestation. npm creates provenance only when the package is published from the configured trusted GitHub Actions workflow'],
   ['TRUSTED_PUBLISHER_NOT_INSPECTED', 'the npm trusted-publisher setting is external state. This command cannot prove the registry authorizes the workflow, which action it allows or whether 2FA is enabled'],
   ['SOURCE_IS_A_COPY', 'the package carries a copy of the framework source. Projects created from it own that source, and upgrades mean merging rather than changing a dependency version'],
-  ['GENERATED_PROJECT_IS_LOCAL_ONLY', 'the package creates local-development software: SQLite only, and no authentication ships'],
+  ['GENERATED_PROJECT_IS_LOCAL_ONLY', 'the package creates local-development software: SQLite by default, no deployment authentication verifier or production configuration ships'],
 ]);
 
 /** @param {string} path */
@@ -110,7 +110,7 @@ export function publicationManifest(version) {
     type: 'module',
     engines: { node: '>=22.16.0' },
     bin: { 'create-accordo': 'bin/create-accordo.js' },
-    files: ['bin', 'src', 'framework', 'README.md', 'LICENSE'],
+    files: ['bin', 'src', 'framework', 'framework-source.json', 'README.md', 'LICENSE'],
     keywords: [
       'crm', 'crm-framework', 'coding-agent', 'codex', 'claude-code', 'gemini-cli',
       'mcp', 'workflow', 'customer-hub', 'revenue-operations',
@@ -164,6 +164,16 @@ export function collectAssemblyFiles(root = repositoryRoot) {
   const sourceFingerprint = createHash('sha256')
     .update(canonicalJson(framework.files.map((file) => [file.path, file.hash])))
     .digest('hex');
+  files.push({
+    relativePath: 'framework-source.json',
+    content: Buffer.from(`${JSON.stringify({
+      packageAssemblyContract: PACKAGE_ASSEMBLY_CONTRACT,
+      packageVersion: manifest.version,
+      frameworkFingerprint: sourceFingerprint,
+      files: framework.files.map(({ path, hash }) => ({ path, hash })),
+    }, null, 2)}\n`),
+  });
+  files.sort((a, b) => (a.relativePath < b.relativePath ? -1 : 1));
   return { files, packageVersion: manifest.version, sourceFingerprint };
 }
 

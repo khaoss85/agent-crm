@@ -31,6 +31,7 @@ import {
   scansForLooseCounts,
 } from './measurement.js';
 import { inspectStrategicSurfaces } from './site-strategic-pages.js';
+import { findRetiredClaims } from './repo-truth.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -62,6 +63,24 @@ for (const path of [
   const text = readFileSync(path, 'utf8');
   for (const pattern of staleNegativeClaims) {
     if (pattern.test(text)) fail(`${relative(root, path)}: stale negative merges authentication, authorization and tenant isolation; state them separately from repository truth.`);
+  }
+}
+
+// The same recorded false negatives are refused by both maintenance entry
+// points. Checking the rendered output catches a stale template as well as a
+// stale JSON source. Dated articles retain their historical wording; this is
+// a bounded regression list, not a natural-language truth engine.
+for (const path of [
+  ...collect(join(siteDir, 'templates'), '.html'),
+  ...collect(join(siteDir, 'partials'), '.html'),
+  ...collect(siteDir, '.json'),
+  ...collect(join(siteDir, 'assets'), '.txt'),
+  ...collect(outDir, '.html'),
+  ...collect(outDir, '.md'),
+]) {
+  if (relative(siteDir, path).split(sep).includes('blog')) continue;
+  for (const { line, claim } of findRetiredClaims(readFileSync(path, 'utf8'))) {
+    fail(`${relative(root, path)}:${line}: retired public claim: ${claim}`);
   }
 }
 
@@ -289,16 +308,19 @@ const brandLeaks = [
 ];
 // Text assets are authored copy too, so they are held to the same rule.
 //
-// Vendored font licences are the one exception, and only because the rule cannot apply to them:
+// Vendored font licences retain their upstream identity:
 // site/assets/fonts/OFL.txt reproduces two upstream SIL Open Font Licence notices verbatim,
 // carrying the font authors' own project URLs. That text is not ours to route through
 // brand.json — the licence requires it to travel unaltered with the files — and a rename of this
 // project would not make a word of it wrong. Scoped to that directory, so a new .txt anywhere
 // else in assets is still authored copy.
 const vendoredFonts = join(siteDir, 'assets', 'fonts');
+// This exact recipe stdout is execution evidence, not renameable authored copy.
+// Preserve its bytes; the normal claim/count/content scans still include it.
+const recipeTranscript = join(siteDir, 'assets', 'recipes', 'quote-approval-transcript.txt');
 const authored = templates
   .concat(collect(join(siteDir, 'assets'), '.txt'), collect(join(siteDir, 'assets'), '.svg'))
-  .filter((path) => !path.startsWith(vendoredFonts));
+  .filter((path) => !path.startsWith(vendoredFonts) && path !== recipeTranscript);
 for (const path of authored) {
   const source = readFileSync(path, 'utf8');
   for (const line of source.split('\n')) {

@@ -22,7 +22,10 @@ The framework **authenticates nobody** — a deployment adapter verifies the req
 **owns tenancy and authorization completely**, with one tenant per application instance enforced
 by the storage binding rather than by a filter (ADR-038). Persistence for the composed
 application is SQLite or dedicated-database PostgreSQL. Shared-database row-level
-tenancy, durable jobs, billing and any marketing runtime do not exist.
+tenancy, billing and a marketing runtime are not implemented. Durable jobs,
+the transactional outbox and bounded timer consumers are implemented; the
+composing application starts their workers explicitly. No managed worker
+service ships with the framework.
 Each of those sentences is bound to a generated fact (ADR-039) and re-checked by
 `npm run repo:truth -- --check`.
 

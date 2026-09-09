@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { canonicalJson, collectSource } from '../packages/create-accordo/src/project-bootstrap.js';
 import {
   PACKAGE_ASSEMBLY_CONTRACT, applyPackageAssembly, collectAssemblyFiles,
   parseArguments, planPackageAssembly, publicationManifest,
@@ -56,7 +57,7 @@ test('the publication plan is deterministic, bounded and read-only', (t) => {
   assert.equal(first.ok, true);
   assert.equal(first.mode, 'plan');
   assert.equal(first.package.name, 'create-accordo');
-  assert.equal(first.package.version, '0.1.0');
+  assert.equal(first.package.version, '0.2.0');
   assert.equal(first.package.files > 190, true, 'the package carries the declared framework rather than only the bin');
   assert.equal(first.package.fingerprint, second.package.fingerprint);
   assert.equal(first.package.frameworkFingerprint, second.package.frameworkFingerprint);
@@ -98,6 +99,9 @@ test('the private source manifest and public publication manifest cannot be conf
 
 test('the release workflow redirects JSON-only assembly output', (t) => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/stage-create-accordo.yml'), 'utf8');
+  assert.match(workflow, /RELEASE_CONFIRMATION: \$\{\{ inputs\.confirmation \}\}/);
+  assert.match(workflow, /test \"\$RELEASE_CONFIRMATION\" = \"create-accordo@0\.2\.0\"/);
+  assert.match(workflow, /npm ci --ignore-scripts/);
   const invocations = workflow.match(/npm run --silent distribution:assemble-create --[^\n]+--json\s*>/g) ?? [];
   assert.equal(invocations.length, 2, 'both redirected assembly receipts must suppress the npm banner');
 
@@ -110,13 +114,14 @@ test('the release workflow redirects JSON-only assembly output', (t) => {
   const report = JSON.parse(assembled.stdout);
   assert.equal(report.ok, true);
   assert.equal(report.package.name, 'create-accordo');
-  assert.equal(report.package.version, '0.1.0');
+  assert.equal(report.package.version, '0.2.0');
 });
 
 test('public copy tracks the published create package without conflating it with the framework', () => {
   const brand = JSON.parse(readFileSync(join(repoRoot, 'site/brand.json'), 'utf8'));
   assert.equal(brand.npm.sourceScaffolds, true);
   assert.equal(brand.npm.status, 'published');
+  assert.match(brand.npm.publishedVersion, /^\d+\.\d+\.\d+$/);
 
   const surfaces = Object.fromEntries([
     'docs/marketing/PENDING_HUMAN_SUBMISSION.md',
@@ -128,7 +133,7 @@ test('public copy tracks the published create package without conflating it with
   ].map((path) => [path, readFileSync(join(repoRoot, path), 'utf8')]));
 
   for (const [path, source] of Object.entries(surfaces)) {
-    assert.match(source, /0\.1\.0/, `${path} omits the published 0.1.0`);
+    assert.ok(source.includes(brand.npm.publishedVersion), `${path} omits the live version from brand.npm.publishedVersion`);
     // The pre-publication sentences, verbatim: each was true until the registry
     // receipt landed and each is a lie about the live command now.
     assert.doesNotMatch(source, /installs nothing|still (?:reaches|serves) the (?:empty )?(?:`?0\.0\.1`? )?placeholder|registry unchanged|candidate .{0,40}not on the registry/i,
@@ -172,7 +177,7 @@ test('two assemblies pack byte-identically, install offline and create a working
 
   assert.equal(sha256(tarA), sha256(tarB), 'npm pack output is byte-identical from identical assemblies');
   assert.equal(packA.name, 'create-accordo');
-  assert.equal(packA.version, '0.1.0');
+  assert.equal(packA.version, '0.2.0');
   assert.equal(packA.files.some((file) => file.path === 'framework/packages/core/index.js'), true);
   assert.equal(packA.files.some((file) => file.path === 'framework/packages/create-accordo/package.json'), false);
   assert.equal(packA.files.some((file) => file.path.startsWith('framework/site/')), false);
@@ -202,6 +207,43 @@ test('two assemblies pack byte-identically, install offline and create a working
   assert.equal(report.source.files > 190, true);
   assert.equal(report.limitations.some((item) => item.code === 'SOURCE_ORIGIN_NOT_VERIFIED'), true);
   assert.equal(report.limitations.some((item) => item.code === 'PUBLISHED_PLACEHOLDER_DOES_NOT_SCAFFOLD'), false);
+
+  // Verify actual installed bytes, not only assembly metadata or a green local scaffold.
+  const sourceReceipt = JSON.parse(readFileSync(join(consumer, 'node_modules/create-accordo/framework-source.json'), 'utf8'));
+  assert.equal(sourceReceipt.packageVersion, packA.version);
+  assert.equal(sourceReceipt.frameworkFingerprint, report.source.fingerprint);
+  assert.equal(sourceReceipt.frameworkFingerprint, firstReport.package.frameworkFingerprint);
+  assert.deepEqual(sourceReceipt.files, collectSource(repoRoot).files.map(({ path, hash }) => ({ path, hash })));
+  for (const file of sourceReceipt.files) {
+    assert.equal(sha256(join(project, file.path)), file.hash, `generated source matches the release inventory: ${file.path}`);
+  }
+  assert.equal(createHash('sha256').update(canonicalJson(sourceReceipt.files.map(({ path, hash }) => [path, hash]))).digest('hex'), sourceReceipt.frameworkFingerprint);
+  for (const path of [
+    'packages/core/src/postgresql-storage.js',
+    'packages/core/src/durable-jobs.js',
+    'packages/core/src/transactional-outbox.js',
+    'packages/core/src/domain-timers.js',
+    'packages/core/src/backup-restore.js',
+    'packages/core/src/observability-export.js',
+    'packages/app/src/production-operations.js',
+  ]) assert.equal(packA.files.some((file) => file.path === `framework/${path}`), true, `published source includes ${path}`);
+  const projectManifest = JSON.parse(readFileSync(join(project, 'package.json'), 'utf8'));
+  const frameworkManifest = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+  assert.deepEqual(projectManifest.dependencies, { pg: frameworkManifest.dependencies.pg });
+  assert.equal(projectManifest.dependencies.pg, '8.23.0');
+  const infrastructureImports = run(process.execPath, ['--input-type=module', '-e', `
+    import assert from 'node:assert/strict';
+    import { createAccordoAppAsync } from './packages/app/src/index.js';
+    import { createProductionOperations, PRODUCTION_OPERATIONS_CONTRACT } from './packages/app/src/production-operations.js';
+    assert.equal(typeof createAccordoAppAsync, 'function');
+    assert.equal(typeof createProductionOperations, 'function');
+    assert.equal(PRODUCTION_OPERATIONS_CONTRACT, 1);
+  `], { cwd: project });
+  assert.equal(infrastructureImports.exitCode, 0, infrastructureImports.stderr);
+  const generatedReadme = readFileSync(join(project, 'README.md'), 'utf8');
+  assert.match(generatedReadme, /SQLite is the default/);
+  assert.match(generatedReadme, /No worker autostarts/);
+  assert.doesNotMatch(generatedReadme, /No tenancy|No RBAC|There is no PostgreSQL adapter|No scheduler and no durable outbox/);
 
   const generatedBin = join(project, 'packages/cli/bin/accordo.js');
   const inspect = run(process.execPath, [generatedBin, 'app', 'inspect', '--json', '--root', project], { cwd: project });

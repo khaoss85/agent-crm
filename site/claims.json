@@ -2,13 +2,13 @@
   "claimsContract": 2,
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used. Contract 2 (ADR-027): measuredAgainst additionally requires testFiles and testsTree, and no claim, limitation or repoFact may type an exact test count — the one number lives in measuredAgainst and reaches a page as {{measured.tests}}.",
   "measuredAgainst": {
-    "date": "2026-08-30",
-    "sha": "84a3efe",
+    "date": "2026-09-07",
+    "sha": "0f5bc0f",
     "command": "npm run verify",
-    "tests": 2068,
+    "tests": 2279,
     "failures": 0,
-    "testFiles": 165,
-    "testsTree": "a338d698d55eef929053da9e9eb45c698dc8a659",
+    "testFiles": 186,
+    "testsTree": "66f7a6132da4b90ab36c6edfe606e0870f26819b",
     "note": "Written by `node scripts/measure-suite.js --apply` from a real run on a clean tree. Never edit these numbers by hand: scripts/site-check.js verifies sha, testsTree and testFiles against the commit, so a record moved forward without a re-run fails the build."
   },
   "claims": [
@@ -204,13 +204,20 @@
         "tests": [
           "tests/contracts-activation-e2e.test.js",
           "tests/contracts-contract.test.js",
-          "tests/admin-contracts.test.js"
+          "tests/admin-contracts.test.js",
+          "tests/lifecycle-amendment-execution-e2e.test.js",
+          "tests/lifecycle-amendment-execution.test.js",
+          "tests/signed-terms-e2e.test.js"
         ],
         "docs": [
-          "docs/CONTRACT_ACTIVATION.md"
+          "docs/CONTRACT_ACTIVATION.md",
+          "docs/RENEWAL_AMENDMENT.md"
+        ],
+        "facts": [
+          "domain.lifecycle.package_native=package_native"
         ]
       },
-      "limitation": "The term is post-signature operational metadata, not a signed contractual term. Nothing bills, renews, amends or cancels: there is no scheduler, so auto-renew and notice periods are recorded and never fire.",
+      "limitation": "Terms frozen into the signed quote document retain signed-order provenance; legacy orders without signed terms can use explicitly labelled post-signature operational metadata. Operational dates are never promoted to signed terms. Governed renewal and amendment execution creates a successor agreement from its own signed Order, with immutable lineage and a derived line delta. Historical contracts and subscriptions are not edited. There is no automatic renewal, cancellation execution, billing or customer notification.",
       "surfaces": [
         "site",
         "readme"
@@ -618,7 +625,7 @@
     {
       "id": "L-04",
       "headline": "Timers exist; a service that runs them for you does not.",
-      "text": "A person can schedule an ask; a worker the application starts explicitly presents it at that instant. Nothing autostarts, so an application that starts none behaves as before. A timer opens an ask and decides nothing; no recurrence.",
+      "text": "Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included.",
       "evidence": {
         "jtbd": "JTBD-07, JTBD-10",
         "docs": [
@@ -626,7 +633,9 @@
         ],
         "facts": [
           "spine.timer_consumers.implemented=implemented",
-          "spine.managed_jobs_service.implemented=absent"
+          "spine.managed_jobs_service.implemented=absent",
+          "spine.durable_job_store.implemented=implemented",
+          "spine.transactional_outbox.implemented=implemented"
         ]
       },
       "surfaces": [
@@ -654,11 +663,18 @@
     },
     {
       "id": "L-06",
-      "headline": "No import, export, dedupe, merge, bulk edit, saved views or global search.",
-      "text": "Table stakes in every commercial CRM, and none of them has a milestone yet. This is recorded deliberately rather than left for you to discover.",
+      "headline": "Bounded customer imports and logical identity; incomplete data operations.",
+      "text": "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search.",
       "evidence": {
         "docs": [
           "docs/benchmarks/CRM_JTBD_MATRIX.md"
+        ],
+        "tests": [
+          "tests/customer-data-foundation.test.js"
+        ],
+        "facts": [
+          "domain.customer_data.package_native=package_native",
+          "cdf.full_cdp.implemented=absent"
         ]
       },
       "surfaces": [
@@ -669,7 +685,7 @@
     {
       "id": "L-08",
       "headline": "Ownership means vendored source: there is no framework dependency to bump.",
-      "text": "The `npm create` route works — the published create package, 0.1.0, scaffolds a project that boots, reports `valid` from `app inspect` and exits 0 from `project doctor` — but what it installs is a scaffolder, not the framework. The framework source is copied into the new project, so you own the result outright, a versioned framework dependency does not exist, and upgrading means merging changes into your copy, not bumping a number. The framework's own npm name remains an empty 0.0.1 reservation, deliberately: nothing installs the framework as a library, and the scope is unclaimed.",
+      "text": "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08). The framework is copied into the project, not installed as a framework library dependency. The accordo npm name is an empty reservation; the @accordo scope is claimed and deliberately empty.",
       "evidence": {
         "tests": [
           "tests/project-bootstrap.test.js"
@@ -693,20 +709,21 @@
     },
     {
       "id": "L-09",
-      "headline": "You cannot put real customer data in this yet.",
-      "text": "A CRM is a personal-data system by definition, and this one ships no authentication and has no export and no erasure path — so there is no way to service a data-subject access or deletion request with it. Data governance is designed and unimplemented. The one thing that does hold today: lead scoring is deterministic, versioned and explainable, not a model's judgement about a person.",
+      "headline": "Personal-data readiness requires deployment work beyond the foundation.",
+      "text": "Customer Data Foundation supplies bounded import and identity governance, not complete personal-data operations. Authentication must be supplied by the deployment, and complete subject export and erasure remain absent; the framework alone does not establish compliance or suitability for real customer data. Lead scoring remains deterministic, versioned and explainable.",
       "evidence": {
         "jtbd": "JTBD-15",
         "tests": [
-          "tests/lead-intelligence-e2e.test.js"
+          "tests/lead-intelligence-e2e.test.js",
+          "tests/customer-data-foundation.test.js"
         ],
         "docs": [
           "docs/strategy/DATA_GOVERNANCE.md",
           "docs/benchmarks/CRM_JTBD_MATRIX.md"
         ],
         "repoFacts": [
-          "DATA_GOVERNANCE.md records the whole track as design only",
-          "no import or export exists (L-06)",
+          "Customer Data Foundation records bounded imports and human-governed logical canonical identity without deleting or rewriting source records",
+          "Complete subject export and erasure are not supplied by Customer Data Foundation",
           "scoring is a deterministic weighted model with a persisted version fingerprint (C-07)"
         ],
         "facts": [

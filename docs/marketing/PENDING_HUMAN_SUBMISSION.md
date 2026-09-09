@@ -1,56 +1,58 @@
 # Pending human submission
 
-Everything an agent has prepared and **must not** send, create or register, and the person-only
-decision that clears each one. `docs/strategy/MASTER_PLAN.md` §10.4 reserves every external
-submission and account creation to a human; this file is the checklist that turns that rule
-into something you can work through in an afternoon.
+Decision queue reconciled 2026-09-07. This file tracks decisions and external
+actions only; engineering work and release prerequisites live in
+`../strategy/GO_TO_MARKET.md`. Session-specific owner authorization takes
+precedence over this default queue. Preparing a packet does not authorize sending
+messages, registering accounts, spending or making a public commitment.
 
-Nothing here is blocked on more engineering. It is blocked on you.
+## Completed foundations
 
-## The five decisions — three down, two to go
+Accordo is the chosen name, MIT is confirmed, the repository and accordo.dev are
+public, and npm distribution is live. The original `create-accordo@0.1.0`
+publication used staging run 32224731197 on 2026-08-19 with maintainer approval;
+it is a historical distribution receipt, not proof that later main capabilities
+are in the installed package. The npm organization reservation is recorded as
+completed on 2026-08-19 in `../strategy/DISTRIBUTION_SUBMISSIONS.md`.
 
-| # | Decision | What it unblocks | Notes before you decide |
-|---|---|---|---|
-| 1 | ~~Public name~~ — **DECIDED 2026-08-07: Accordo** | — | Applied to the whole tree by `scripts/brand-set.js --apply`: 389 occurrences across 139 files, the suite still passing. **`accordo.dev` is registered.** Two follow-ups remain and are yours: the trademark screen (EUIPO + USPTO, classes 9 and 42) has not been run and is the only thing that can still force a second rename; and while `accordo` and `create-accordo` are now held (the latter published at 0.1.0), the `@accordo` scope is still unclaimed — namespaces are first-come and unrenameable |
-| 2 | ~~Final licence confirmation~~ — **DECIDED 2026-08-07: MIT, ADR-023** | — | `license.status` is `confirmed`, so a distribution manifest may now state it. The ADR records why the licence is load-bearing rather than incidental: a copyleft core would weaken the ownership claim the whole positioning rests on, and a source-available one would make it false |
-| 3 | ~~Repository visibility~~ — **DONE 2026-08-08: public** | Every `{{brand.repository}}` link, the "read the test" call to action, both self-hosted marketplaces, `npx skills add`, and the whole slow-burn retrieval channel — all live | Confirmed against the GitHub API. `site/brand.json` records `repository.status: public`, which is the single field that turns indexing on; `scripts/site-check.js` refuses to let `vercel.json` and the ledger disagree about it. The repository is still named `agent-crm`; renaming it to `accordo` is optional and would break every existing link unless GitHub's redirect is relied on |
-| 4 | **Telemetry policy** | The generated-projects and successful-deployments metrics | No collection code should ship before the policy exists; shipping it presumes the decision |
-| 5 | **Every public claim and the launch timing** | `docs/marketing/LAUNCH_PACKET.md` | Includes the pre-commitment to publish the benchmark result whatever it says. An agent must not make that commitment on your behalf |
+MCP Registry is active and Glama has a public listing. Four awesome-list entries
+were sent; do not submit them again merely because an old checklist says ready.
+Current dated channel receipts belong in `../strategy/DISTRIBUTION_SUBMISSIONS.md`.
 
-## Prepared and waiting
+## Decisions still requiring an owner
 
-| Artifact | Where | Action when unblocked | Blocked by |
-|---|---|---|---|
-| Claude Code plugin + self-hosted marketplace | `.claude-plugin/` | **Live once this branch merges.** `/plugin marketplace add khaoss85/agent-crm` needs no third-party approval | — |
-| DEV Community syndication | Canonical Accordo article + DEV article `4354255` | **Live.** DEV's public API returned the exact Accordo production URL as `canonical_url` on 2026-08-09 | — |
-| Hashnode syndication | Canonical Accordo article | **Live:** `https://accordo.hashnode.dev/if-a-coding-agent-builds-your-crm-what-should-it-refuse-to-do`. Browser verification found the exact Accordo canonical, article links, OG image and a `text/markdown` `.md` variant. Plain HTTP clients from the verification environment received a Cloudflare 403, so crawler accessibility remains unverified rather than assumed | — |
-| Anthropic community marketplace listing | same manifests | Submit via the Console form | 1, 3 |
-| Codex plugin + marketplace | `.codex-plugin/`, `.agents/plugins/marketplace.json` | Same, self-hosted — skill parity is 12/12 mirrored, 11 published, held by `tests/skill-parity.test.js` | — |
-| MCP registry entry | `server.json` | Dispatch `.github/workflows/publish-mcp-registry.yml` from `main` with confirmation `publish-mcp-registry`; OIDC proves the `io.github.khaoss85` namespace, so no token or interactive login is involved | **Unblocked and automated.** The entry registers the live remote documentation server at `https://accordo.dev/api/mcp` and needs no npm artifact; the package it used to name was unpublishable by construction (ADR-034). The workflow validates against the registry and probes the endpoint before publishing. Directed by the maintainer on 2026-08-19 — §10.4 is unchanged for submissions nobody asked for |
-| Smithery | production Docs MCP | **Live:** `https://smithery.ai/servers/khaoss85/accordo` returns 200. Release `492a5b41-2548-4184-843a-c4bd67d8c54c` scanned `accordo-docs@0.1.0`, three tools and 99 resources; the missing trigger method is an explicit non-capability, not a failed tool scan | — |
-| Glama | Docs MCP repository | Connect the GitHub repository, then inspect the generated listing before making it public | Glama account. The npm ingestion path is closed on purpose — no publishable server package exists (ADR-034) — so the repository path is the one to use; no listing receipt exists yet |
-| npm `create-accordo@0.1.0` | `.github/workflows/stage-create-accordo.yml` assembles the only publishable directory | **Live, 2026-08-19.** The verified candidate was staged from `main` through OIDC trusted publishing (run 32224731197, provenance in the Sigstore transparency log) and approved by the maintainer with 2FA; the registry receipt was then verified from an agent environment — `npm view create-accordo@0.1.0` returns the CI shasum `69c2bc86…` and `latest` resolves to `0.1.0`, and a clean-directory `npm create accordo` scaffolded a project whose `app inspect` answered. `site/brand.json` flipped to `published` in the same change, per the rule that only the live receipt authorizes it | — (the `@accordo` organization remains a separate web-only step for later scoped packages) |
-| GitHub repository metadata | `docs/marketing/GITHUB_LISTING.md` | **Done.** Description and 20 topics applied, release `v0.1.0` exists, the Gemini CLI gallery feed lists `@khaoss85/accordo`, and the refreshed 2560×1280 social preview was uploaded by the maintainer on 2026-08-11 — generated by `npm run site:shots` from the measured ledger, so its count is resolved rather than typed. The upload itself is unverifiable from an agent environment: GitHub exposes no API for the setting, and the network policy denies `repository-images.githubusercontent.com`, so the artwork is recorded as maintainer-reported rather than independently inspected | — |
-| Landing page, intent pages and Docs MCP | `site/dist/`, `api/mcp.js` | **Live.** Vercel deployment `dpl_CBayrtYNTRmyZzDPgWoZ3LUGoeDK` is `READY` and aliased to `accordo.dev`; anonymous checks returned 200 for the landing, privacy, Customer Hub, Smart CRM, CDP + CRM, sitemap and `llms.txt`, while `tools/list` returned exactly three read-only, non-destructive tools | — |
-| Awesome lists — **all four sent 2026-08-26** | `docs/marketing/AWESOME_LIST_SUBMISSIONS.md` | The three PR-route lists went out from the maintainer's machine via `scripts/submit-awesome-lists.sh --apply`, `gh` authenticated as the maintainer: awesome-mcp-servers#12938, awesome-claude-skills#1173, awesome-open-source-crm#4 — all open. The fourth, `hesreallyhim/awesome-claude-code`, was submitted by the maintainer through the web issue form (its CONTRIBUTING requires the recommendation to come from a human); the form was prefilled from `AWESOME_LIST_SUBMISSIONS.md`. What remains is monitoring the four for maintainer feedback | — |
-| Roundup outreach — 2 ready to send | `docs/marketing/ROUNDUP_OUTREACH.md` | techsy.io (contact form) and founding.dev (LinkedIn/X DM), texts written and paste-ready. marmelab email prepared but gated on the benchmark or real adoption; crm.org is paid placement; webkul and daily.dev assessed and skipped with reasons. awesome-nodejs unlocks at 100 stars | — |
-| Bing Webmaster Tools | `site/dist/sitemap.xml` | **Sitemap submitted by the maintainer on 2026-08-19.** Indexing and IndexNow key setup remain; this row records what was reported, since the console exposes nothing an agent environment can read back | — |
-| Show HN packet | `docs/marketing/LAUNCH_PACKET.md` §2 | Post it | 1, 3, 5 |
-| Product Hunt packet | `docs/marketing/LAUNCH_PACKET.md` §3 | Post it, once, on the benchmark edition | 1, 3, 5, and a benchmark result |
-| skills.sh | nothing to build — that tool already walks `.claude/skills` and `.agents/skills` | **Live.** The public repository page returns 200 and `npx skills add khaoss85/agent-crm --agent codex --skill '*'` copied all 12 skills in a publisher-verification run on 2026-08-09. Generic search indexing remains pending | — |
-
-## Not blocked on you — blocked on us
-
-Recorded here so the queue above is honestly *only* five decisions.
-
-| Gap | Why it blocks a listing | Where it is tracked |
+| Decision or action | Reviewable input | What closes it |
 |---|---|---|
-| **Docs MCP directory review** | Production promotion and Smithery publication are complete. Anthropic and OpenAI still require authenticated account/form submissions; the server serves public docs, imports no CRM runtime and uses no auth only while that boundary holds | `docs/plans/hosted-docs-mcp.md`, `docs/strategy/AGENT_DISCOVERY.md`, Phase 8 |
-| **No production spine** | Rules out Vercel templates, deploy buttons and any hosted demo — all of them assert deployability | `docs/PROJECT_STATUS.md` production blockers |
-| **Benchmark unexecuted** | Rules out the strongest version of the launch story | `docs/strategy/CRM_BUILD_BENCHMARK.md` |
+| CRM runtime telemetry policy | Proposed runtime events, purpose, retention and opt-out, before any runtime collection code | Remains separate from the owner-authorized site-only measurement below; downloads are not active users |
+| Trademark clearance | Name and intended software/services scope | Owner-provided clearance decision; no claim here that a legal review happened |
+| Benchmark publication commitment and launch timing | Frozen edition/protocol, honest results including failures, `BENCHMARK_PUBLICATION.md`, refreshed `LAUNCH_PACKET.md` | Explicit owner approval of the commitment and publication |
+| Staged npm release approval where required by publisher | Verified candidate, source/provenance identity and clean-install receipt | Maintainer staged approval followed by live registry verification |
+| Pilot-user recruitment or direct outreach | Named recipients, message and selected B2B brief | Explicit instruction to contact; no outreach was sent in this reconciliation |
+| Directory and launch submissions | Updated copy, links and channel prerequisites | Explicit instruction or destination-required human submission; then a public receipt |
 
-## The rule that does not bend
+## September traction wave authorization
 
-An agent may prepare a submission. An agent may not submit a prepared submission, create an
-account, register a namespace, or make a public commitment. If a future session finds this file
-and is tempted to be helpful, the answer is no.
+The owner authorized autonomous execution of the reviewed traction plan on
+2026-09-07: the quote approval tutorial and demo, site-only Web Analytics,
+existing directory corrections, DEV/Hashnode syndication and a public opt-in
+call for three pilot sessions. Publication and source merge do not require a
+second routine confirmation for this wave. Authentication, npm 2FA, platform
+acceptance and actual participant responses still require their own evidence.
+The public privacy page describes the bounded website measurement; the
+framework and Docs MCP receive no new instrumentation.
+
+## Remaining external channels
+
+Anthropic marketplace/Connectors and OpenAI directory reviews need their
+respective account/form process. Vercel templates need a demonstrated deployable
+starter and demo. Product Hunt needs the selected build benchmark result and
+launch approval. Roundup drafts remain in `ROUNDUP_OUTREACH.md`; they are not
+sent receipts. The awesome Claude Code destination requires human recommendations.
+For the already submitted entries, inspect feedback and verified acceptance before
+proposing a retry. Social-preview and webmaster-dashboard changes can be recorded
+as maintainer-reported when they cannot be independently read back.
+
+Engineering can reconcile docs, run checks, prepare packages and collect
+read-only public evidence now. Repository capability, staged artifact, approved
+publication, live installation and customer adoption are separate completion
+states; use the matching receipt for each.

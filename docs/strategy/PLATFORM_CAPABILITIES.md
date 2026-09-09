@@ -81,7 +81,7 @@ today.
 
 - **Service boundary:** a versioned, fingerprinted provider definition in a Map-backed per-app registry, validated fail-closed at startup, with its declared config inside the fingerprint and persisted in `definition_versions`.
 - **Kinds today:** enrichment provider, catalog provider, discount policy, scoring model, routing policy, signature provider.
-- **Limitation:** every shipped provider is a deterministic **offline fixture**. The shared runtime real providers need — scheduling, retries, backoff, dead-letter, secret management, health — does not exist (`INTEGRATION_RUNTIME.md`).
+- **Limitation:** every shipped provider is a deterministic **offline fixture**. Bounded jobs, outbox, timers and self-host operation contracts now cover part of the shared runtime, but do not turn those fixtures into real providers (`GTM_TECHNICAL_EVIDENCE_HANDOFF.md`).
 
 ### 11. External operation — *implemented (M11, ADR-017)*
 

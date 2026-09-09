@@ -1,474 +1,243 @@
 # Go to market
 
-How this framework reaches the people who should use it, what is built, what is prepared but
-unfired, and what is waiting on a human. Positioning and category are in `CATEGORY.md`;
-channel mechanics are in `AGENT_DISCOVERY.md`; the content engine and its quality gates are in
-`ORGANIC_GROWTH.md`. This document is the operating plan that sits on top of them.
+Operating plan reconciled 2026-09-07; positioning and copy extended 2026-09-09.
+Durable positioning belongs to [MASTER_PLAN.md](MASTER_PLAN.md) and
+[CATEGORY.md](CATEGORY.md); implementation and measurement authority is
+`../PROJECT_STATUS.md`, `../repository-truth.json` and `../../site/claims.json`.
+Distribution receipts live in `DISTRIBUTION_SUBMISSIONS.md`. Earlier launch waves
+are history, not a queue to repeat. The
+[September competitive research](AGENTIC_CRM_RESEARCH_2026_09.md) informs the
+message, not the implementation status.
 
-This is the current operating GTM strategy. Durable positioning comes from `MASTER_PLAN.md` and `CATEGORY.md`; volatile milestone, distribution, measurement and deployment state comes only from `../PROJECT_STATUS.md`, `../repository-truth.json`, `../../site/brand.json` and `../../site/claims.json`. Dated launch preparation is a historical input, not current state.
+## The objective
 
----
+Help technical teams and agencies build a bespoke B2B CRM with governed quotes
+and human approvals, then demonstrate that they can finish the task. Lead with
+**Build the customer and revenue system your business actually runs.** Keep the
+framework promise: **Describe your sales process to your coding agent; own the
+CRM it builds.** Ownership means vendored source and reviewable changes; upgrades
+require a merge, not a framework dependency version bump.
 
-## 1. The bet
+Lead the first demonstration with one customer process: brief → project → quote
+above threshold → human approval → inspectable audit. Explain the wider product
+vision through customer context, prepared work and commercial continuity, but do
+not turn that vision into a claim that all those capabilities ship together.
+Do not promise an autonomous salesperson, a generally available hosted CRM
+account, SSO, billing or a universal agent build success rate.
 
-This project does not have a credibility problem or a quality problem. It has a **reachability
-problem** and a **mechanism problem**.
+## Message architecture
 
-- **Reachability**: the name, repository, site and agent manifests are public, and since
-  2026-08-19 the main conversion path is live — `npm create accordo` installs the published
-  `create-accordo@0.1.0` and scaffolds a verifying project. Generic search still does not
-  surface Accordo; the compounding channels have started and now have a real command to land on.
-- **Mechanism**: the public promise is *"own the CRM it builds"*, and the mechanism now matches
-  it end to end: the published create package scaffolds by copying the framework source into the
-  project. Ownership means vendored source rather than a versioned dependency — that is `L-08`
-  on every surface, stated as the design rather than a gap in it.
+The order is **outcome → mechanism → proof → boundary → next action**. The proof
+should be a business journey the audience can inspect, not a wall of internal
+module names. Safety supports the value; it is not the whole value proposition.
 
-So the strategy is:
-
-1. **Scope the promise to the mechanism that exists** — done, and enforced.
-2. **Make honesty mechanical on every surface**, because verifiable restraint is the one asset
-   a better-funded competitor cannot copy by writing a better headline.
-3. **Build everything from canonical entity and truth sources**, so a product or implementation fact moves once.
-4. **Find the truth about agent build success privately and first**, before spending a launch
-   on a number nobody has measured.
-
-The objective for the next ten weeks is not traffic. It is: **make the product understandable to a human, retrievable by search and agents, and independently checkable without duplicating volatile state.**
-
----
-
-## 2. The UVP, in publishable form
-
-### 2.0 The category, widened — "CRM" is the narrowest true label
-
-The kernel knows nothing about a deal, a quote or a commessa. Those live in
-optional packages, which means the same framework is the honest answer to a wider
-set of *build-it* requests than "CRM" suggests: **quote-to-cash / CPQ**, **contract
-and subscription lifecycle**, **delivery and professional services**, and the whole
-chain as **revenue operations** — lead → sale → contract → delivery.
-
-The internal framing is a **Customer & Revenue Operating System that a coding agent
-builds on**, and the public sentence stays narrower than that on purpose: a
-category claim is not evidence, and every one of those readings inherits the same
-absences (no auth, no scheduler, no integrations, SQLite only).
-
-Three constraints on widening, all binding:
-
-1. **Every widened trigger must be a build request inside a coding agent.** "I need
-   a CPQ" in general chat means buy one. The trigger is the phrase plus the surface,
-   and that rule does not relax as the category widens.
-2. **Service desk, ticketing and SLA stay narrowly framed.** M15 is merged as a
-   partial local Service Operations slice: coverage, entitlements, support cases,
-   elapsed-time SLA evidence and manual escalation. It is not an authenticated
-   helpdesk or contact centre: there are no channel integrations, routing or
-   automatic escalation, and the positioning may not run ahead of those boundaries.
-3. **The existing category refusals stand, with one narrower intent now claimed.**
-   Generic "AI CRM" still means a runtime assistant or model-governed seller and remains
-   the opposite of this model. "Smart CRM" is claimable only in the agent-built,
-   policy-governed reading published at `concepts/smart-crm.html`: the receipt is a
-   tested 403 on one approval boundary, not a universal claim that no model runs at
-   runtime. "Customer data platform" is still a different category. The compound
-   `CDP + CRM` intent is claimable only as a two-layer architecture: the CDP owns
-   profile and audience work, Accordo owns the agent-built process, and no bridge
-   ships between them (`concepts/cdp-plus-crm.html`). "Customer hub" is still only
-   ours in the build-one reading (§9, `ORGANIC_GROWTH.md`).
-
-The line that carries all of it: **it gives a coding agent a way to see, plan,
-build, check and prove — instead of just generating code.** Each internal tool has
-a plain-English name to match — see what exists, decide what to build, find what is
-broken, create the right starting point, check it follows the rules, prove it works
-— and a person building with this reads none of them.
-
-
-
-### 2.1 The promise (unchanged, canonical)
-
-> **Describe your sales process to your coding agent; own the CRM it builds.**
-
-### 2.2 The sharper hero, for audiences who have seen agent-builder marketing before
-
-> **Your agent can write the CRM. It can't approve the discount.**
-
-Both are true and they do different jobs. The first states the category; the second states the
-differentiator, and it is the one that survives a sceptical senior developer's first two
-seconds. Use the promise where the reader arrived deliberately (README, docs, listings); use
-the refusal where you are interrupting someone (Show HN, Product Hunt, comparison pages).
-
-### 2.3 Subhead
-
-> An open-source framework Claude Code and Codex use to build a CRM as code you own —
-> deterministic workflows, versioned policies, audit and trace as primitives rather than
-> features you bolt on. The agent writes the rules; a merged test refuses to let it make the
-> human's approval decision.
-
-### 2.4 The four proof points
-
-Each resolves to a ledger id, and each ships with its limitation in the same block, at the same
-type size. That rule is the credibility architecture — see §7.
-
-1. **The refusal is a test, not a convention.** [C-04, C-03, C-21] · *Limit:* the actor is
-   asserted, not authenticated, and the renewal policy is proven on one built-in object and one
-   threshold.
-   **Cite it correctly.** The named test — *"approval workflow rejects an agent pretending to
-   make the human decision"* — is the **renewal** boundary (`tests/workflow.test.js`). The
-   **discount** refusal is equally real but is asserted inside a composite test
-   (`tests/commercial-e2e.test.js`: `quote.approve` with an agent actor rejects `403
-   HUMAN_APPROVAL_REQUIRED`). A headline that says *discount* must cite that line, not the
-   renewal test. **Move: extract it into a named test** so the strongest sentence we own cites a
-   test name rather than a line number.
-2. **The tool reports its own blind spots.** `crm app inspect --json` returns a machine-readable
-   list of what it cannot see. [C-14] · *Limit:* source-only and read-only — **and today, run on
-   the default composition, it returns six empty arrays.** Do not use this proof point in public
-   until move 0.1 lands.
-3. **The commercial spine runs end to end, and stops where the ledger says it stops** — lead
-   capture through to a reproducible delivery contribution estimate. [C-06, C-08…C-12] ·
-   *Limit:* every provider underneath is an offline fixture, and nothing bills, renews or fires
-   on a schedule because there is no scheduler. Avoid the word *complete*: it is unfalsifiable
-   and four ledger limitations contradict it.
-4. **Nothing underneath you.** SQLite is Node built-in; PostgreSQL is one pinned
-   `pg@8.23.0` driver; no ORM. [C-17] · *Limit:* applications that select PostgreSQL
-   carry this driver; the SQLite path does not.
-
-### 2.5 The disqualifier, placed before any capability claim
-
-> Want an AI assistant inside your CRM? That is a different product category — go there.
-> Want a working CRM your team logs into on Monday? Twenty or Frappe are more finished than
-> this and have the release trains to prove it. Want no-code? This is a framework you and your
-> coding agent write code with.
-> Still here? Then you build the system, the commercial process is genuinely yours, and the code
-> has to be in your repository when it is done.
-
-### 2.6 Against configuring a platform
-
-> **Use the platform instead if** you want a CRM your team can use next week, you need SSO or
-> role-based access now, or you want a hosted option. All three are true of them and none is
-> true of us today.
->
-> **The difference that survives:** their agent writes extensions that run *inside their
-> runtime*. Ours writes an application that runs *without us*.
->
-> **The test:** *"if this project disappears tomorrow, what am I left with?"* Here: a Node
-> application in your repository, SQLite as a Node built-in, one pinned `pg@8.23.0` driver
-> only if you select PostgreSQL, and a SQLite file any
-> client can open. With a platform, the answer is a runtime you must keep operating.
->
-> Say it that way and not *"the framework is a dependency you could remove"* — today you get the
-> code by copying it, not installing it, so upgrading means merging rather than bumping a
-> version (`L-08`). That sentence was removed from the site for exactly this reason; it must not
-> come back through a comparison page.
-
-Sourcing, caveats and the places the alternative genuinely wins are maintained in
-`COMPETITOR_MAP.md` and must be cited from it, never re-asserted from memory.
-
-### 2.7 Against building from scratch
-
-> **Use a starter instead if** your process is close to standard and you need auth and
-> multi-user on day one. Those starters are more deployable than this is today.
->
-> **What you pay for it:** you re-derive validation, stage semantics, approval policy, actor
-> identity, immutability, audit and step-level trace yourself, on the deadline, in the part of
-> the system that touches money.
-
-### 2.8 The line promoted to public copy
-
-> Configured CRMs are where customization goes to be tolerated; generated CRMs are where it
-> goes to be owned.
-
----
-
-## 3. What is built
-
-| Asset | Where | State |
+| Layer | Canonical message | Usage |
 |---|---|---|
-| Claims ledger — 22 capabilities, 9 limitations, each bound to tests and paired with its boundary | `site/claims.json` | ✅ |
-| Brand tokens — name, domain, npm scope, licence, palette | `site/brand.json` | ✅ |
-| Landing page and evidence page, built from the ledger, `noindex` | `site/templates/`, `npm run site:build` | ✅ |
-| Claims gate — evidence exists, limitation present, three surfaces enforced, brand leaks, eleven overclaim patterns, ledger freshness | `scripts/site-check.js` | ✅ |
-| Distribution manifests for Claude, Codex, Gemini CLI, npm and the MCP registry, validated; the create package is published; other distribution entries retain their independently recorded state | `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/`, `gemini-extension.json`, `package.json`, `packages/create-accordo/package.json`, `server.json` | ✅ |
-| Manifest gate — paths resolve, reserved names are refused, names agree, skill portability is reported, and every first-contact surface carries Custom CRM, Customer Hub, Smart CRM and bounded CDP + CRM intent | `scripts/distribution-check.js`, `tests/distribution-intent.test.js` | ✅ |
-| README rewritten against what the tests prove, with limits before capabilities | `README.md` | ✅ |
-| Security posture stated rather than implied | `SECURITY.md` | ✅ |
-| Social preview and page captures generated from the same ledger | `npm run site:shots` | ✅ |
-| Launch packet — Show HN, Product Hunt, reply bank, gate | `docs/marketing/LAUNCH_PACKET.md` | ✅ prepared, unfired |
-| The human decision queue | `docs/marketing/PENDING_HUMAN_SUBMISSION.md` | ✅ |
-| GitHub listing pack | `docs/marketing/GITHUB_LISTING.md` | ✅ prepared |
-| Objection bank | `docs/marketing/OBJECTIONS.md` | ✅ |
-| Corrections log, seeded before the first public correction | `docs/marketing/CORRECTIONS.md` | ✅ |
-| Content pillars and editorial calendar | `docs/marketing/CONTENT_PILLARS.md` | ✅ |
-| Per-channel production plan — unit of work, cadence, effort, who, and the blocker where there is one | `docs/marketing/CONTENT_PRODUCTION.md` | ✅ |
-| CI job holding public claims to the same standard as the code | `.github/workflows/ci.yml` → `public-claims` | ✅ |
-| The tour — one command composing 76 modules, 9 packages, 71 resources, 64 actions, 7 policies and 1 providers, then printing every limitation code | `scripts/tour.js`, `npm run tour` | ✅ (0.1) |
-| Skill portability contract — a `requires` block per skill (`tier`, surfaces, `degradesTo`) and a published subset that holds no repository-only skill, both gated | `docs/SKILL_PACKAGING.md`, `skills/`, `scripts/distribution-check.js` | ✅ (1.3) |
-| `llms.txt` and `llms-full.txt` generated from the ledger, the docs and the job index, with a drift check | `scripts/generate-llms.js` | ✅ (1.10) |
-| Rename inventory and executor — five casings, four blast-radius groups, held-back set, dry-run by default | `scripts/brand-set.js`, `docs/RENAME_SURFACE.md` | ✅ |
-| Benchmark protocol amendment — Edition L (G1–G4) and Edition D (G5–G6, blocked), points out of 75, SABR and TTFW ruled out | `CRM_BUILD_BENCHMARK.md`, ADR-024 | ✅ (0.3) |
-| Edition L harness — prepare, record, score, all three refusing rather than guessing | `benchmarks/harness/`, `npm run bench:*` | ✅ (0.4, harness only) |
-| Pilot runbook and publication gate — how a run is driven, and which sentences a result licenses | `docs/benchmarks/PILOT_PROTOCOL.md`, `docs/marketing/BENCHMARK_PUBLICATION.md` | ✅ |
-| Falsification kit — six mutations, three outcomes, refuses to run over uncommitted files, prints what it skipped | `scripts/falsify.js`, `docs/FALSIFY.md`, `npm run falsify` | ✅ (0.2) |
-| **A pilot run** | `docs/benchmarks/PILOT_RESULTS.md` | ❌ needs a human operator and a clean agent session — see §8 |
+| Main outcome | **Build the customer and revenue system your business actually runs.** | Primary headline; preserve across the framework narrative |
+| Category | **The open-source custom CRM framework for coding agents.** | Explain what the visitor can actually evaluate |
+| Product principle | **Built by agents. Run by your rules.** | Supporting line with the framework descriptor, not a standalone claim of unattended agents |
+| Ownership | **Your process becomes software you can review and own.** | Source-vendoring route, with maintenance and upgrade boundary nearby |
+| Proof-led differentiator | **Your agent can write the CRM. It can't approve the discount.** | The bounded approval demonstration; retain its identity/authority limitations |
+| Managed-product vision | **Customer context. Prepared work. Decisions that stay yours.** | Only inside a clearly labeled vision section until that complete journey is proven |
 
----
+### Ready-to-use framework copy — English
 
-## 4. What to build next, in order
+**Headline**
 
-Ordered by how much each one removes a reason not to launch. Every item names its artifact.
+> Build the customer and revenue system your business actually runs.
 
-### Wave 0 — truth before persuasion
+**Subheading**
 
-| # | Move | Artifact | Why it is first |
+> Accordo is the open-source custom CRM framework for coding agents. Turn your
+> commercial process into reviewable application code, with explicit workflows,
+> commercial rules and human approval boundaries.
+
+**Supporting line**
+
+> Built by agents. Run by your rules.
+
+**Primary CTA:** Explore the framework.
+**Proof CTA:** See the quote approval flow.
+**Ownership explanation:** Your application source is yours to review and
+maintain. Upstream improvements require reviewed source merges, not automatic
+upgrades.
+
+Use a source-linked walkthrough beside this copy. The current installation and
+production limits must stay visible; a docs merge does not update an npm artifact
+or certify a deployed service. The approval example demonstrates its selected
+workflow, not immunity from an adversary with code or administrator access.
+
+### Ready-to-use framework copy — Italian
+
+**Headline**
+
+> Il tuo processo commerciale, trasformato in software.
+
+**Subheading**
+
+> Accordo è il framework CRM open source per i coding agent. Parti da come
+> lavora la tua azienda e costruisci un'applicazione con codice verificabile,
+> workflow espliciti e regole commerciali sotto il tuo controllo.
+
+**Supporting line**
+
+> Costruito dagli agenti. Guidato dalle tue regole.
+
+**Primary CTA:** Esplora il framework.
+**Proof CTA:** Guarda il flusso di approvazione di un'offerta.
+**Ownership explanation:** Il codice dell'applicazione resta tuo da verificare
+ed evolvere. Gli aggiornamenti richiedono integrazioni del sorgente da rivedere,
+non avvengono automaticamente.
+
+The Italian copy has exactly the same release and identity boundaries as the
+English copy; translating a sentence must not strengthen its promise.
+
+### Managed-product vision — usable only with the vision label
+
+**English**
+
+> **Your next decision, with the work already prepared.**
+>
+> We're building a CRM workbench that brings customer context, prepared actions
+> and explicit commercial rules into one place. Agents handle preparation and
+> permitted execution; your team stays in control of consequential decisions.
+> Every completed case should show what happened and the evidence behind it.
+
+**Italian**
+
+> **La prossima decisione, con il lavoro già preparato.**
+>
+> Stiamo costruendo un CRM che riunisce contesto cliente, azioni preparate e
+> regole commerciali esplicite. Gli agenti preparano il lavoro ed eseguono ciò
+> che è autorizzato. Il tuo team mantiene il controllo delle decisioni importanti,
+> con un risultato e le sue prove da verificare.
+
+This is product direction, not signup copy or a feature announcement. Do not
+remove “we're building” / “stiamo costruendo” or advertise immediate availability
+until the relevant managed release earns the complete claim. A polished design
+reference, source module or controlled simulation is not that evidence.
+
+## Original campaign lines and their proof gates
+
+The lines below are Accordo's own wording, informed by customer benefits in the
+research. They are not attributed competitor quotations. “Release-gated” means
+**not licensed for present-tense product advertising yet by this document**.
+No editorial label below changes a JTBD coverage status.
+
+| Original line | Customer benefit | Publication scope and necessary proof |
+|---|---|---|
+| **Your process. Your software. Your rules.** | Business fit and control | Framework positioning with a real source/approval walkthrough and ownership limits. Not a guarantee of arbitrary managed customization. |
+| **Keep the context. Skip the reconstruction.** | Understand the customer without piecing everything together | Release-gated: real authorized sources, freshness, conflict handling and a useful customer view; not merely a bounded import or a table. |
+| **Describe the job. Review the work.** | Delegate an outcome instead of configuring every step | Release-gated for runtime work: actual trigger, substantive model-produced artifact, clear provenance, scoped execution and stop behavior. Templates cannot be presented as AI output. |
+| **Make the decision, not another to-do list.** | A prepared next action instead of extra admin | Release-gated: an ordinary user completes a prioritized case with artifact, policy and consequence visible; no reconstruction of operator states. |
+| **The rule is explicit. The outcome is inspectable.** | Understand why an action was allowed and what happened | Use only with the demonstrated workflow and applicable authenticated authority; identify whether evidence establishes an internal write or an external effect. |
+| **From customer signal to a result you can verify.** | A commercial process that reaches a real outcome | Release-gated: source → preparation → policy → decision if required → execution → reconciliation. Provider acknowledgement and the relevant business receipt, not a simulated send or booking. |
+| **Start with a process. Keep the freedom to change it.** | Useful adoption without losing control | Framework narrative needs an explicit customization/maintenance boundary. Managed migration and exit claims need reconciled import, restore/rollback and destination behavior proofs. |
+
+Do not package every line into one hero. Choose the audience's job, one benefit
+and one proof. Keep the main headline stable; vary the supporting angle rather
+than inventing a new category for every channel.
+
+### One narrative for a product conversation
+
+**Problem:** customer work becomes fragmented when the process, context and
+execution live in different places.
+
+**Proposition:** build the system around the commercial process, then progressively
+bring context and governed agent work into that same system.
+
+**Mechanism:** reviewable application code, explicit commercial rules and optional
+managed operation; agents prepare, permitted actions execute, required human
+decisions remain human, outcomes are reconciled.
+
+**Proof today:** use the source-linked bounded quote/approval journey and state
+its release and provider limitations. Do not substitute private pilot receipts
+for public availability.
+
+**Vision:** a workbench of prepared customer decisions across the commercial
+lifecycle, earned one complete job at a time.
+
+**Next action:** inspect or reproduce the documented framework journey. A
+managed-pilot conversation, external campaign or general signup launch requires
+its own approved, available path.
+
+## What is already done
+
+| Work | Evidence and remaining boundary |
+|---|---|
+| Brand, MIT licence, public repository, domain and GitHub metadata | `../../site/brand.json`, ADR-023; no naming or visibility blocker remains |
+| Public site, intent pages, comparisons, articles, demo and retrieval documents | `../../site/`, README demo, generated `llms` assets; publication is not qualified traffic or adoption |
+| npm scaffolder | `create-accordo@0.1.0` published 2026-08-19; see distribution receipt. This dated release does not establish that later main capabilities are distributed |
+| Agent distribution and Docs MCP | Plugin manifests, published skills, live read-only endpoint, active MCP Registry and Glama listing; fresh host installation remains a separate verification |
+| Claims ledger, tour, falsification kit and CI checks | `../../site/claims.json`, `npm run tour`, `npm run falsify`, `npm run gtm:check`, `npm run repo:truth -- --check`; green checks need semantic review of claims and limitations |
+| Awesome-list submissions | Four sent on 2026-08-26; two open and two closed at the 2026-09-07 audit. None has verified acceptance in that audit |
+| Build benchmark preparation | `CRM_BUILD_BENCHMARK.md`, `../benchmarks/PILOT_PROTOCOL.md`, `../../benchmarks/harness/`; harness availability is not a completed build benchmark |
+
+## Release alignment before promotion
+
+Treat four surfaces independently: framework source, installed npm package,
+published site and private managed pilot. A successful repository check proves
+none of the other three. The 2026-09-07 audit found current main documentation
+beside an older npm payload; keep the version boundary visible until a newly
+published package has an installation receipt.
+
+| Priority | Owner | Concrete output | Completion evidence |
 |---|---|---|---|
-| 0.1 | **The tour.** Promote `tests/helpers/contracts-project.js` into a narrated one-command run over a composed example application, and freeze its `app inspect` output as a golden snapshot | `examples/apps/full-vertical/`, `scripts/tour.js`, `npm run tour` | `crm app inspect` on the default composition returns six empty arrays. The flagship command, run in the flagship repository, shows nothing — the entire product is invisible in the first sixty seconds, and the composed application already exists as a test fixture |
-| 0.2 | **Falsification kit.** `npm run falsify` applies named mutations to a scratch copy — remove the agent-actor guard, cross the discount threshold, strip webhook signature verification, let generic CRUD write a managed field, mutate an issued Order line — and asserts the suite goes red for each, naming the test that caught it | `scripts/falsify.js`, `docs/FALSIFY.md` | Converts "trust our tests" into "disprove us in sixty seconds", and replaces the test count as the thing we point at |
-| 0.3 | **Benchmark protocol amendment.** Define Edition L (gates G1–G4, scoreable today) and Edition D (G5–G6, behind the production spine), with the gate set named in every citation | `CRM_BUILD_BENCHMARK.md` | As specified, the benchmark cannot produce a number: G5 and G6 require a deployment the production spine gates. "Launch when the benchmark runs" is therefore an unbounded wait. **This is a positioning decision, not a build decision — see §8** |
-| 0.4 | **Benchmark harness and a pilot**, results committed whatever they say, unpublished | `benchmarks/harness/`, `docs/benchmarks/PILOT_RESULTS.md` | Find out privately whether agents can actually build with this, before a launch depends on the answer |
-| 0.5 | **Ejection proof, or accept `L-08` permanently.** An application in its own package that depends on the framework, verifies green, and documents what survives deleting the dependency | `examples/ejected/`, `tests/ejected-app-e2e.test.js` | The promise says "own"; today ownership means copying source. `L-08` is the honest interim, not the destination |
+| P0 | Engineering + editorial integrator | Reconcile ledger, README, FAQ, comparisons, technical handoff and generated MCP/llms content with executable authorities | Independent semantic review plus claims/truth checks on the final commit |
+| P0 | Release owner | Stage the current scaffolder and document its included source identity and limitations | Packed package installed in an empty directory, generated project checks, provenance; live registry receipt after staged publication approval |
+| P0 | Release owner | Align site, package and release notes | Production `version.json`, installed version/source identity and advertised flows agree; old measurements stay dated until remeasured |
+| P1 | Engineering | Refresh public measurement on an environment where the suite completes | `node scripts/measure-suite.js --apply`; commit generated record, never hand-edit a SHA or count |
+| P1 | Editorial owner | One release narrative explaining customer-visible outcomes and operational boundaries | Every sentence tied to a claim and test; no private pilot result promoted to public Cloud availability |
 
-### Wave 1 — remove the remaining self-inflicted blockers
+Technical scope and the limitation beside each capability are maintained in
+`GTM_TECHNICAL_EVIDENCE_HANDOFF.md`. Inspect the published payload rather than
+assuming it matches main. Install receipts are engineering evidence, not external
+adoption evidence.
 
-| # | Move | Artifact |
-|---|---|---|
-| 1.1 | Fold the claims gate into the local loop: `verify` = `check && test && gtm:check` | `package.json` |
+## Prove the first use case
 
-| 1.3 | **Skill portability contract** — `requires` frontmatter per skill declaring the repository surface it needs, and a packaging document stating that today's honest target is this repository and projects built from it | `docs/SKILL_PACKAGING.md` |
-| 1.4 | **Split the plugin** into skills-only (no MCP server) and full, so the safe half can list without carrying a server that resolves to nothing outside a checkout | `.claude-plugin/`, `.codex-plugin/` |
-| 1.5 | **Regenerate `PROJECT_STATUS.md`** and automate it — **partly done.** The file no longer owns a SHA or a count of its own: it cites `site/claims.json` `measuredAgainst`, and `npm run gtm:check` fails when the two disagree or when any document under `docs/` types a count. Full regeneration from `git rev-parse` and the GitHub API is still deferred (`docs/PROJECT_STATUS.md` → "Future automation") | `scripts/measurement.js`, `scripts/site-check.js` |
-| 1.6 | **Loopback lock** — refuse a non-loopback bind without an explicit acknowledgement flag, and print the production posture on every `serve` | `packages/cli/`, a refusal test, a new ledger claim |
-| 1.7 | **Production readiness ledger as a page** — per blocker: what breaks today, what you would have to build yourself, where it is tracked, and what you *can* legitimately do with this now | `site/readiness.json`, `site/templates/readiness.html` |
-| 1.8 | **Threat model** — what the system defends against and what it explicitly does not | `docs/THREAT_MODEL.md` |
-| 1.9 | **Content gate** — mechanise the six `ORGANIC_GROWTH` §11 gates: front-matter declaring claim ids, transcript path and named human editor; fail on a missing transcript, a missing editor, an unledgered number or any overclaim | `scripts/content-check.js` |
-| 1.10 | **Generate `llms.txt` from the ledger and `app inspect`**, with a drift gate, so every capability entry emits its limitation as one unit | `scripts/generate-llms.js` |
-| 1.11 | **Launch-readiness exit code** — §6 | `scripts/launch-ready.js` |
-| 1.12 | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and release notes drafted from `DECISIONS.md` so fourteen milestones of history are visible the day the repository goes public | repository root, `docs/marketing/releases/` |
-| 1.13 | **npm shape without publishing** — workspaces and per-package manifests with rich descriptions and keywords, scope read from `brand.json`, `private: true` retained | `packages/*/package.json` |
+Prepare three clean sessions against the same released artifact and frozen brief.
+Use the existing build benchmark protocol and its edition gates; first confirm
+that its preconditions are met. Have pilot users perform the selected B2B journey
+and retain failures, interventions and transcripts as well as successes. Recruiting
+or contacting participants requires an explicit owner instruction.
 
-### Wave 2 — human-gated unblocking
+Record per session: framework/package identity, agent and model, brief, completed
+acceptance checks, elapsed time, manual interventions, blockers, and evidence of
+the quote approval refusal and successful human decision. Commit a result artifact
+under `../benchmarks/` only after the sessions exist. Publish only the metrics the
+chosen edition licenses: a local Edition L result does not license a deployed
+Successful Agent Build Rate or Time to First Working CRM claim.
 
-Name → registrar and trademark screen → one edit to `site/brand.json` → defensive namespace
-registration → licence confirmation → repository public → npm publish → the submissions that do
-not require a deployment. **Nothing in Wave 0 or Wave 1 depends on this.**
+The observation-only tool-selection panels answer whether an agent selects a
+framework command. They are not CRM build benchmarks, comparisons or adoption
+results. The build rate remains unmeasured until its own protocol is executed.
+<!-- truth: benchmark.build_rate.measured=not_measured -->
+<!-- truth: benchmark.tool_selection.comparative=false -->
 
-### Wave 3 — the first public story
+## Turn evidence into distribution
 
-Full Edition L run against the published protocol → human-approved publication with every
-failure and transcript → Show HN on the benchmark rather than on the product → dev newsletters
-pitched the data → Product Hunt, once.
+After the released path works, prepare one demo and one transcript-grounded
+article for the same use case. Refresh directory copy and review feedback on the
+two open submissions. Closed submissions need a reason/acceptance check before
+any proposed retry; do not create duplicates. Product Hunt stays gated on the
+chosen build benchmark result and owner launch approval. Show HN, syndication,
+community posts and direct outreach require an explicit publishing instruction.
 
-The launch is a scoreboard with failures in it, not a product announcement.
+Review weekly: qualified visits → documented successful project creation → first
+completed business journey → repeat use. Downloads, clones and crawler hits are
+reach indicators, not users or customers. Record denominators, time window and
+collection method. Until a telemetry policy is approved, use consented pilot
+records and existing aggregate sources rather than adding collection code.
 
-**Standing rule for every move above.** A move that changes runtime behaviour — the loopback
-lock, the ejection proof, the plugin split, the npm shape — opens with an ExecPlan under
-`docs/plans/` and closes with a `DECISIONS.md` entry and `npm run verify`. Go-to-market work is
-held to the milestone discipline in `AGENTS.md` and `docs/QUALITY_GATES.md`, not exempted from
-it because the motivation is distribution.
+## Close old backlog items explicitly
 
-### Wave 4 — post-spine only
-
-Vercel templates, deploy buttons, Edition D of the benchmark, any hosted demo, the Connectors
-Directory and the OpenAI plugin directory. All of them assert deployability.
-
----
-
-## 5. Channel matrix
-
-Layers per `AGENT_DISCOVERY.md`: **(a)** slow-burn model priors, **(b)** install-time
-marketplaces and registries, **(c)** the in-session agent surface.
-
-| Channel | Layer | Artifact required | State | Gate |
-|---|---|---|---|---|
-| GitHub repository | a/b | README, SECURITY, issue and PR templates, description, topics, social preview, release notes | Live. Intent-aligned README and next About/topics copy are checked in the intent PR; apply the public metadata only after its page stack deploys | Merge/deploy, then human metadata update |
-| Self-hosted Claude marketplace | b | `.claude-plugin/marketplace.json` + plugin | **Live on merge.** Portability contract shipped: 11 of 12 skills published, `adversarial-review` held back as `tier: repository` | — |
-| Self-hosted Codex marketplace | b | `.codex-plugin/`, `.agents/plugins/marketplace.json` | **Live on merge.** Mirror parity 12/12, held by `tests/skill-parity.test.js` | — |
-| Gemini CLI extension + gallery | b | `gemini-extension.json` + `GEMINI.md` at the repository root, topic `gemini-cli-extension`, and one git tag | **Live.** The official gallery feed listed `@khaoss85/accordo` at version `0.1.0` on 2026-08-09 and detected its context, skills and MCP surfaces | — |
-| Anthropic community marketplace | b | The same manifests, via the Console form | Ready | **Human submission**, and it should point at something installable first — the create-CLI |
-| MCP registry | b | `server.json` — a remote entry needs no npm package | **Ready.** The entry registers the live `streamable-http` endpoint at `accordo.dev/api/mcp`; the project server is not publishable (ADR-034) | `mcp-publisher` with GitHub auth → human |
-| npm | a/b | Per-package manifests, rich keywords, provenance-signed publish | **`create-accordo@0.1.0` live since 2026-08-19** — staged via OIDC trusted publishing, approved with 2FA, receipt verified; `accordo` stays an empty 0.0.1 reservation by design (no framework library) and the `@accordo` scope is claimed but deliberately empty | Nothing pending: the scope waits for a package that is correct standalone |
-| `npm create <name>` | b/c | A real create package | **Live.** `npm create accordo` scaffolds a verifying project from the registry | — |
-| skills.sh | b/c | Nothing — it already walks `.claude/skills` and `.agents/skills` | **Live.** Public repository page and 12-skill Codex install verified 2026-08-09 | Generic search indexing: pending |
-| llms.txt / retrieval | a | Generated from the ledger, with a drift gate | **Built** — `llms.txt`, `llms-full.txt`, `jobs.json`, `answers.json`, sitemap, robots and JSON-LD, all generated and drift-checked | Deploy |
-| **In-session agent surface** | **c** | AGENTS.md, CLAUDE.md, skills ×2 harnesses, MCP config ×2, `app inspect`, harness compatibility | **Strongest layer** | **None — fully ours** |
-| Show HN | launch | `LAUNCH_PACKET.md` §2 | Written | Human posts |
-| Product Hunt | launch | `LAUNCH_PACKET.md` §3 | Written | Human posts, once, on the benchmark |
-| Anthropic Connectors Directory, OpenAI plugin directory | b | A **hosted Docs MCP** — not the project runtime — plus an endpoint, an auth mode and a privacy policy | Transport and privacy page implemented; production endpoint and submissions unverified | **Human promotion + live protocol receipt + submission review.** *Not* the production spine: this read-only documentation MCP serves public docs, not customer records, and imports no CRM runtime. Its no-auth mode is safe only while that boundary holds |
-| Vercel template gallery, deploy buttons, hosted demo | b | A template with a working deploy and a live demo URL | Cannot be met honestly | **Production spine** — these assert deployability |
-| Discord / Slack | — | — | Deliberately not done | Reconsider at two consecutive months of 20+ substantive Discussions threads **and** a named human on call |
-
-Dominate (c), be present in every (b), and let (a) follow from published proof plus time —
-measured monthly, never promised.
-
----
-
-## 6. "Launch-ready but unlaunched", defined as an exit code
-
-Not a feeling. `node scripts/launch-ready.js` exits 0 when all of the following hold, and the
-only remaining blockers are the five human decisions:
-
-1. `npm run verify` exits 0 (including `gtm:check`).
-2. `npm run smoke` exits 0.
-3. `npm run tour` exits 0 from a fresh clone, in under five minutes.
-4. `npm run falsify` exits 0 — every claimed refusal has a proven load-bearing mutation.
-5. `claims.json` `measuredAgainst.sha` equals HEAD and its test count equals the last run.
-6. Every claim declaring the `readme` surface appears in `README.md`; every `launch` claim
-   appears in the launch packet. **Enforced today.**
-7. Zero brand leaks across `site/**`, `docs/marketing/**` and built output. **Enforced today.**
-   Deliberately *not* the whole repository: the working title is also the package name, the CLI
-   binary and the database filename, so a repository-wide assertion could only ever be satisfied
-   by renaming the codebase — and an assertion that cannot pass gets quietly weakened, which is
-   the failure mode §10.4 warns about.
-8. `npm run distribution:check` exits 0, including the intent and CDP-boundary
-   contract on every first-contact manifest. **Enforced today.**
-9. Skill parity is 11/11, asserted by `tests/skill-parity.test.js`. **Enforced today.**
-10. The composed example's `app inspect` golden snapshot matches current output **and its
-    `packages`, `capabilities`, `resources`, `actions`, `policies` and `providers` are all
-    non-empty.** Equality alone is satisfied forever by a file of six empty arrays, which is
-    exactly the state this assertion exists to end.
-11. Either `examples/ejected/` verifies green, or `L-08` is in the ledger **and** the scope
-    qualifier appears on every surface asserting the promise. **Currently satisfied by L-08.**
-12. Edition L pilot results are present, or explicitly recorded as not-run with a reason.
-13. `PENDING_HUMAN_SUBMISSION.md` enumerates exactly the five decisions and nothing else.
-
-**Rename cost is measured, and it is not one file.** Assertion 7 above is scoped to
-`site/**`, `docs/marketing/**` and built output — where the target genuinely is *one edit to
-`site/brand.json`, zero hits for the old slug*. The working title is also the npm package name,
-the `bin` key, the CLI binary filename, the `.mcp.json` server key (which every installed user
-would have in their own config), the plugin name that namespaces every skill, the MCP registry
-namespace, the SQLite filename and `.env.example`. Publishing "one file" and then shipping a
-thirty-file rename commit is a self-inflicted credibility wound in the one repository that
-cannot afford one. Write the inventory down (`docs/RENAME_SURFACE.md`) before the name is chosen,
-and report two numbers: **public surface — 1 file; code surface — measured, and stated.**
-
----
-
-## 7. Metrics
-
-Guardrails carried forward from `EXECUTION_ROADMAP.md`: no metric is reported publicly without
-its measurement protocol; URR is observed, never promised; telemetry ships only opt-in with a
-human-approved policy.
-
-### Pre-launch, measurable today
-
-| Metric | Definition | Target |
-|---|---|---|
-| Launch-readiness exit code | `scripts/launch-ready.js` | 0 |
-| Blocked-decision count | Human gates that are the sole remaining obstacle | 5 of 5 |
-| Rename cost | Files changed to adopt the public name | 1 file, 0 hits |
-| Cold time-to-wow | `git clone` → green tour receipt | under 5 minutes |
-| Falsification coverage | Refusal properties with a proven load-bearing mutation ÷ refusal properties claimed | 100% |
-| Ledger coverage | Assertive sentences resolving to a ledger id across README, built site and `docs/marketing` | 100% |
-| Ledger freshness lag | Commits between HEAD and `measuredAgainst.sha` | 0 at publication |
-| Agent-surface parity | `.agents/skills` ÷ `.claude/skills` | 11/11 — **reached, and held by a test** |
-| Overclaim hits | Occurrences in built output | 0, permanently |
-| SABR-local (Edition L) | Fully-passing prompts ÷ attempted on G1–G4, per framework SHA × agent × model, ≥2-of-3 runs | Internal; publication is a human decision |
-| Manual interventions per run | Per the benchmark definition — an edit or unrequested fix counts; a clarifying answer does not | The number that actually predicts whether the promise is true |
-
-### Post-launch
-
-Roadmap metrics (SABR, TTFW, URR, plugin adoption, community integrations) apply as defined,
-with three additions worth the effort:
-
-- **Message-reproduction rate** — of clean sessions that describe the framework at all, the
-  share reproducing the refusal boundary or the ownership frame rather than "an open-source
-  CRM". Separates *the name travelled* from *the positioning travelled*.
-- **Correction latency** — hours from a public claim being disproven to its removal or a test
-  being added, with a public correction log. Under 24 hours.
-- **Reveal-shock rate** — the share of first-time issues that are surprised discoveries of a
-  documented limitation. Rising means the limits are buried, however honest the document is.
-
-Measure forks, clones and unique cloners — **never stars**. `COMPETITOR_MAP.md` documents this
-category's star counts as marketing-inflected.
-
----
-
-## 8. The founder's decision queue
-
-Ordered by how much each unblocks. The first should start **this week**: every week it slips is
-a week the compounding channels do not start compounding.
-
-| # | Decision | Blocks |
-|---|---|---|
-| 1 | **Public name**, after registrar re-verification and a real EUIPO + USPTO class 9/42 screen | The entire install-time layer. Run Accordo and Pactio in parallel; Pactio has a live legal-tech namesake, Relato's domains are taken |
-| 2 | **Accept or reject the Edition L / Edition D benchmark split** | The whole launch timeline. Amending a published protocol is a positioning act, which is why it is yours |
-| 3 | **Final licence confirmation** | The permissive-core claim, which is load-bearing in every comparison |
-| 4 | **Repository visibility** | Every repository link and both self-hosted marketplaces |
-| 5 | **Telemetry policy** | Two metrics. Can wait — but no collection code ships first |
-| 6 | **Pre-commitment to publish the benchmark result whatever it says**, made publicly before the run | The credibility of the whole strategy on the day a number exists. An agent must not make this commitment on your behalf |
-| 7 | **Named human editor of record** for every published piece | All content |
-| 8 | **Security disclosure contact** | The repository going public |
-
----
-
-## 9. Do not do
-
-1. **Do not publish, cite, estimate or illustrate any SABR, TTFW, TTFD or success rate** —
-   including as a mockup placeholder. `scripts/site-check.js` fails on the pattern. **Do not
-   weaken the pattern to let copy through.** Treat that file as policy: changes to the overclaim
-   list deserve the same discipline as a change to the approval boundary itself.
-2. **Do not use** production-ready, enterprise-grade, secure by default, multi-tenant, SOC 2,
-   zero-config, guaranteed, fully autonomous, trusted by, or anything implying deployability.
-3. **Do not put the test count in a headline.** It is the most attackable sentence we own.
-4. **Do not add a deploy button, a live demo or a Vercel template.** A one-click deploy of an
-   unauthenticated CRM is a security incident wearing a marketing asset's clothes.
-5. **Do not claim any namespace** — npm, GitHub org, MCP registry, domain, social handle — under
-   the working title or an unchosen shortlist name. Namespaces are unrenameable.
-6. **Do not let an agent submit anything, create an account or register anything.** "Preparing a
-   submission" must never drift into "submitting a prepared submission".
-7. **Do not deploy the landing page while the repository is private.** The hero call to action
-   would 404. `README.md` is the pre-launch landing page.
-8. **Do not put a limitation in a footnote, tooltip, accordion or "learn more" link.** Same
-   block, same breath, same type size.
-9. **Do not ship a comparison that hides where the alternative wins.** It takes the honest 95%
-   of the page down with it.
-10. **Do not name provider vendors as integrations.** Every provider is an offline fixture.
-11. **Do not open a Discord.** A dead chat server is negative signal and unkillable once created.
-12. **Do not write content about anything design-only** — Cloud, Analytics Studio, Marketing
-    MK0–MK7, Data Governance, Integration Runtime, Jobs and Outbox, renewals firing, scheduling,
-    the create-CLI — except as clearly labelled architecture or roadmap posts.
-13. **Do not chase stars or announce dates** for the production spine, the create-CLI or the
-    benchmark. **Generated pages** were banned outright here and are now allowed under the
-    four-part mechanical test in `ORGANIC_GROWTH.md` §12 — which `/jobs/*` passes in full and
-    `/answers/*` passes on three parts, meeting the fourth only in a weaker, stated form. Read the
-    test there rather than the summary here; it was already corrected once after a review found it
-    overclaiming.
-14. **Do not attack a competitor's licensing rhetorically.** Structural differentiation survives
-    scrutiny; disparagement invites it.
-15. **Do not publish anything without a named human editor of record.**
-
----
-
-## 10. The risks that actually matter
-
-### 10.1 The promise's mechanism
-
-Ownership today means copying source. Stated as `L-08`, on every surface, and it is the honest
-interim rather than the destination. The permanent fix is the ejection proof (0.5) or the
-create-project CLI. Until one exists, a hostile reader who finds `install.mjs` finds nothing we
-have not already said — which is the entire point of saying it first.
-
-### 10.2 The wedge is narrower than the headline
-
-The refusal is genuinely differentiating, and its own limitation says the actor is asserted
-rather than authenticated, on one built-in object with one threshold. On a public thread that
-becomes: *"so your guardrail is an unauthenticated header check on one hardcoded threshold."* If
-that lands before we have said it ourselves, the claims-discipline positioning inverts into the
-overclaiming it was built to oppose. Mitigation: the limitation ships in the hero proof block at
-the same type size, the Show HN first comment raises it pre-emptively, the objection bank answers
-it in our own words, and the linter makes it structurally impossible to publish the capability
-without the caveat.
-
-### 10.3 Naming is a single point of failure with compounding cost
-
-Prevalence accrues on package downloads, repository retrieval and eventual training corpora.
-None of those clocks start until a name exists, while the strongest competitor ships weekly and
-converges on our language. The structural danger is arriving at launch technically ahead and
-commercially invisible. Every move in Waves 0–1 is name-blind and the rename is engineered to
-one edit — but no plan removes the risk that the decision simply is not made.
-
-### 10.4 The honesty gate is only as good as its willingness to fail a build
-
-The first time someone edits the overclaim list to let a sentence through, the whole apparatus
-becomes theatre. Recorded here before it is tempting.
-
-### 10.5 A marketplace listing shipped before the skills are portable
-
-Ten of eleven skills read repository-internal paths; installed elsewhere a plugin loads,
-announces itself and does nothing useful. Marketplace reputation is close to unrecoverable, and
-failed-install commentary is exactly what ends up in retrieval — poisoning the slow-burn layer
-too. `npm run distribution:check` reports this today and fails outright once a name is chosen.
+Tour, falsification kit, bootstrap, `llms` generation, MIT and repository opening
+are complete foundations and should not return as new work. The old proposed
+`launch-ready.js`, `content-check.js` and `site/readiness.json` filenames were not
+delivered as named; use the existing claims/truth/verification gates and the
+release receipt checklist above, and add automation only for a demonstrated gap.
+`SECURITY.md` is the current security posture; a formal threat-model artifact and
+a community code of conduct remain separate optional governance work, not claims
+that the launch already has them. Trademark clearance, telemetry policy and
+external commitments are tracked in `../marketing/PENDING_HUMAN_SUBMISSION.md`.

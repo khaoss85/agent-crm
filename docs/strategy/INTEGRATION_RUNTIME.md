@@ -1,6 +1,15 @@
 # Integration runtime
 
-**Status: design only. Nothing in the "missing" half of this document exists.**
+> **Historical design baseline, scoped on 2026-09-07.** The specification and
+> snapshot below preserve the original planning context. Past-tense implementation
+> gaps in that baseline are not current capability claims. Current coverage and
+> limitations are resolved through `../PROJECT_STATUS.md`, `../repository-truth.json`
+> and `GTM_TECHNICAL_EVIDENCE_HANDOFF.md`; use those before publishing or planning a fix.
+
+
+**Original integration specification.** Bounded jobs, outbox and self-host operational contracts now cover part of the platform requirements. They do not make the fixture domain providers live integrations. See the technical handoff for executable evidence.
+<!-- truth: spine.transactional_outbox.implemented=implemented -->
+<!-- truth: spine.production_operations.implemented=implemented -->
 
 Six provider kinds already ship (enrichment, catalog, discount policy, scoring
 model, routing policy, signature) and every one of them is a deterministic

@@ -51,8 +51,22 @@ jobs:
           pg_restore --version | grep -E '^pg_restore \(PostgreSQL\) 16\.'
           psql --version | grep -E '^psql \(PostgreSQL\) 16\.'
       - run: npm ci
-      - run: npm run verify
+      # The measurement script executes npm run verify itself on this clean
+      # checkout. Reuse that run instead of maintaining an unmeasured suite and
+      # asking a maintainer to run it again on a different machine.
+      - name: Verify and emit the measured claim record
+        run: node scripts/measure-suite.js > "$RUNNER_TEMP/measurement.json"
       - run: npm run smoke
+      - name: Replay the published quote approval recipe
+        run: |
+          node --no-warnings examples/recipes/quote-approval/run.mjs "$RUNNER_TEMP/quote-approval-crm"
+          npm --prefix "$RUNNER_TEMP/quote-approval-crm" run verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claims-measurement-${{ github.sha }}
+          path: ${{ runner.temp }}/measurement.json
+          if-no-files-found: error
+          retention-days: 30
 
   # Public claims are held to the same standard as the code that backs them:
   # a marketing sentence whose evidence has moved fails the build, exactly like a

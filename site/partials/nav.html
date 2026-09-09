@@ -1,13 +1,7 @@
   <a class="skip" href="#main">Skip to content</a>
 
-  <!--
-    The boundary this project refuses to bury — "not deployable to production" — used to sit in a
-    banner above the wordmark on every page. It has moved to the colophon in footer.html and to
-    the boundary line under the receipt on Product Proof. It is still on every page and still
-    unhedged; what changed is that a visitor now meets the durable product truth before the
-    current state of the implementation, which is the order those two things actually rank in.
-    Nothing about the sentence was softened in the move — {{status.text}} renders it verbatim.
-  -->
+  <!-- Current deployment prerequisites and the limit of test evidence live in
+       the footer. They apply to framework source, separately from package versions. -->
 
   <div class="shell">
     <nav class="nav" aria-label="Primary">
@@ -17,10 +11,9 @@
       </a>
 
       <!--
-        The same eight destinations twice, and deliberately so. This site runs no executable
-        script — its Content-Security-Policy in vercel.json is `default-src 'none'` with no
-        `script-src` at all — so a menu cannot be toggled by script, and a details/summary
-        disclosure is the only mechanism a browser gives us without one. A single
+        The same eight destinations twice, and deliberately so. Navigation works without
+        JavaScript; optional site analytics never controls the menu. A details/summary
+        disclosure provides the mobile interaction. A single
         list that is a bar on desktop and a disclosure on a phone would require author CSS to
         override the closed state of `details`, which newer engines hide with `content-visibility`
         rather than `display`. Two lists, one hidden per breakpoint, work in every engine and
