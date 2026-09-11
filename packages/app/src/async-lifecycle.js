@@ -1,9 +1,11 @@
 // @ts-check
 
 import { createDatabase } from '../../core/src/database.js';
+import { postgresRecordModuleMigrations, recordModuleMigrations } from '../../core/src/record-module-runtime.js';
 import { runWithAffineStorage } from '../../core/src/storage-runtime.js';
 import { validateActionDefinition } from '../../core/src/action-registry.js';
 import { AppError, ValidationError } from '../../core/src/errors.js';
+import { validateModuleManifest } from '../../core/src/module-manifest.js';
 import { resolvePackageComposition } from '../../core/src/package-composition.js';
 
 /**
@@ -123,12 +125,49 @@ function readSelectedContract(selected) {
  *
  * @param {any} selected
  */
+/**
+ * A `{name, manifest}` selected entry registers a record module built at
+ * runtime from the manifest. Refused loudly on any mismatch: a module object
+ * silently dropped is the defect this seam closes.
+ * @param {unknown} entry
+ */
+function normalizeRecordModuleEntry(entry) {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new ValidationError('Selected graph modules must be name strings or {name, manifest} objects');
+  }
+  const { name, manifest } = /** @type {{name: unknown, manifest: unknown}} */ (entry);
+  if (typeof name !== 'string' || name === '') {
+    throw new ValidationError('Selected record module entries need a string name');
+  }
+  const normalized = validateModuleManifest(manifest);
+  if (normalized.name !== name) {
+    throw new ValidationError(
+      `Selected record module "${name}" carries a manifest for "${normalized.name}"; name and manifest must agree`,
+      { field: name },
+    );
+  }
+  return { name, manifest: normalized };
+}
+
 export function preflightSelectedGraph(selected) {
   const packageContract = readSelectedContract(selected);
   const packages = requireArray(selected.packages, 'packages');
   const actions = requireArray(selected.actions, 'actions');
   const modules = requireArray(selected.modules, 'modules');
-  const moduleNames = modules.filter((name) => typeof name === 'string');
+  const moduleNames = [];
+  const recordModules = [];
+  for (const entry of modules) {
+    if (typeof entry === 'string') {
+      moduleNames.push(entry);
+      continue;
+    }
+    const record = normalizeRecordModuleEntry(entry);
+    if (moduleNames.includes(record.name)) {
+      throw new ValidationError(`Selected record module "${record.name}" is selected twice`);
+    }
+    moduleNames.push(record.name);
+    recordModules.push(record);
+  }
   const resolved = resolvePackageComposition(packages);
   if (resolved.problems.length > 0) {
     throw resolved.problems[0].error ?? asyncContractError(resolved.problems[0].message, {
@@ -164,12 +203,19 @@ export function preflightSelectedGraph(selected) {
     acceptedActions.push(declared);
   }
 
+  const frozenRecords = Object.freeze(recordModules.map((record) => Object.freeze({ ...record })));
   return Object.freeze({
     packageContract,
     packages: Object.freeze([...resolved.packages.values()]),
     packageFacts,
     actions: Object.freeze(acceptedActions),
     modules: Object.freeze([...moduleNames]),
+    // Record modules selected by manifest, with their DDL per dialect. Each
+    // rendering is computed from the manifest, never translated between
+    // dialects; lifecycles merge the one their storage executes.
+    recordModules: frozenRecords,
+    recordMigrations: Object.freeze(recordModuleMigrations(frozenRecords)),
+    postgresRecordMigrations: Object.freeze(postgresRecordModuleMigrations(frozenRecords)),
   });
 }
 
@@ -200,8 +246,9 @@ export async function startSqliteLifecycle(options = {}) {
     busyTimeoutMs: options.busyTimeoutMs,
     // `createDatabase` has always accepted these; only this hop dropped them,
     // so on SQLite no supported composition could apply a contract's own
-    // migration — the scheduled-ask table among them.
-    moduleMigrations: options.moduleMigrations,
+    // migration — the scheduled-ask table among them. Record modules selected
+    // by manifest contribute their DDL here, after the caller's own.
+    moduleMigrations: [...(options.moduleMigrations ?? []), ...accepted.recordMigrations],
   });
 
   let closed = false;
@@ -275,7 +322,9 @@ export async function startPostgresqlLifecycle(options) {
     data: options.data,
     tenantId: options.tenantId,
     identityVerifier: options.identityVerifier,
-    moduleMigrations: options.moduleMigrations,
+    // Record modules selected by manifest contribute the PostgreSQL
+    // rendering of their DDL here, after the caller's own.
+    moduleMigrations: [...(options.moduleMigrations ?? []), ...accepted.postgresRecordMigrations],
     clock: options.clock,
     faultInject: options.faultInject,
     now: options.now,
@@ -360,7 +409,9 @@ export async function startPostgresqlReaderLifecycle(options) {
     data: options.data,
     tenantId: options.tenantId,
     pinnedBindingUuid: options.pinnedBindingUuid,
-    moduleMigrations: options.moduleMigrations,
+    // The reader verifies the writer's module ledger: it needs the same
+    // record DDL names to recognize the composition rather than skew.
+    moduleMigrations: [...(options.moduleMigrations ?? []), ...accepted.postgresRecordMigrations],
     queryDeadlineMs: options.queryDeadlineMs,
     acquisitionDeadlineMs: options.acquisitionDeadlineMs,
   });

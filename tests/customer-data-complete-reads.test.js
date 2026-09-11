@@ -167,11 +167,11 @@ test('the published capability answers completely past the display page bound', 
   });
 
   const capability = createCustomerIdentityCapability().create({ modules: app.modules });
-  const identities = capability.externalIdentities({ resource: kept.subject_resource, id: kept.subject_id });
+  const identities = await capability.externalIdentities({ resource: kept.subject_resource, id: kept.subject_id });
   assert.deepEqual(identities.map((entry) => entry.externalId), ['KEEP-1'],
     'the identifier the outside world uses must not disappear behind newer rows');
 
-  const open = capability.openDuplicateCandidates({ resource: 'company', id: first.id });
+  const open = await capability.openDuplicateCandidates({ resource: 'company', id: first.id });
   assert.equal(open.length, 1,
     'an outstanding duplicate candidate must not disappear behind newer ones');
   assert.equal(open[0].left.resource, 'company');

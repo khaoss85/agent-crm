@@ -22,6 +22,7 @@ import {
   renderModuleState,
 } from '../../core/src/module-evolution.js';
 import {
+  CORE_RESERVED_TABLES,
   validateModuleManifest,
   generateModuleMigration,
   validateModuleManifest as revalidateManifest,
@@ -38,21 +39,9 @@ import {
 
 const REGISTRY_RELATIVE_PATH = join('packages', 'modules', 'generated', 'index.js');
 
-// Tables owned by the core schema (packages/core/src/database.js) plus the
-// framework's own bookkeeping tables. Generated modules must not claim them:
-// their CREATE TABLE IF NOT EXISTS would silently no-op against the existing
-// table and the module would run on the wrong schema.
-const CORE_TABLES = new Set([
-  'companies',
-  'contacts',
-  'opportunities',
-  'approvals',
-  'workflow_runs',
-  'trace_spans',
-  'audit_events',
-  'schema_migrations',
-  'module_migrations',
-]);
+// Core-schema table guard: single source in `core/src/module-manifest.js`
+// (`CORE_RESERVED_TABLES`), shared with the runtime record-module constructor.
+const CORE_TABLES = CORE_RESERVED_TABLES;
 
 /**
  * @param {{manifest: unknown, rootDir?: string}} input

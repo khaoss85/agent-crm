@@ -21,6 +21,8 @@ import {
   reconcileWriteOutcome,
 } from '../../core/src/write-outcome-runtime.js';
 import { ModuleRegistry } from '../../core/src/module-registry.js';
+import { createRecordModuleFromManifest } from '../../core/src/record-module-runtime.js';
+import { createReferenceResolver } from '../../core/src/reference-resolver.js';
 import { CRM_SCHEMA } from '../../core/src/schema.js';
 import { createCompanyModule } from '../../modules/company/src/index.js';
 import { createContactModule } from '../../modules/contact/src/index.js';
@@ -286,6 +288,17 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
     opportunities: opportunityModule.service,
   });
   modules.register(approvalModule);
+
+  // Record modules selected by manifest resolve here, after the kernel and
+  // before anything reads through them — the same order the synchronous
+  // factory uses. A duplicate or kernel-colliding name fails closed in the
+  // registry; a malformed manifest fails closed in the constructor.
+  const references = createReferenceResolver(modules);
+  for (const { manifest } of accepted.recordModules ?? []) {
+    modules.register(createRecordModuleFromManifest(manifest, {
+      database: handle, audit, events, references,
+    }));
+  }
 
   const selectedModules = new Set(accepted.modules);
   const actionModuleExists = (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name) || selectedModules.has(name);

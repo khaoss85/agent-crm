@@ -1950,6 +1950,37 @@ Item 1 is small and independently useful; it is the honest next thing anyone
 who wants the pilot should do. Items 2 and 3 are contract decisions and belong
 to a human. Nothing in this section authorizes starting any of them.
 
+### Selected record modules in async composition assessment (record-module port)
+
+This seam is horizontal runtime capability, not a domain: `selected.modules`
+accepts `{name, manifest}` pairs, the async factory builds the record module
+from the manifest at composition time, applies its DDL per dialect, and the
+package's reads and trusted writes execute on sync SQLite and async
+PostgreSQL. Name strings keep their old meaning (action eligibility only).
+It deliberately registers no package by itself: every row below is a
+selection the composing project makes, proven per domain, not a migration.
+An `aligned` row below means the domain's records were composed and executed
+on both storages in this milestone's proof; a `deferred` row means its
+shipped manifests select through the same seam and its per-domain proof is
+later work, not a code gap.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | kernel records compose directly; they are not manifest-generated records |
+| Pipeline | `not_applicable` | a kernel workflow capability, not a selected package graph |
+| Lead Intelligence | `aligned` | its 7 manifests compose, migrate and execute on SQLite and PostgreSQL (this milestone's proof) |
+| Commercial Operations | `deferred` | its 16 manifests select through the same seam; per-domain composition proof is later work |
+| Signature & Order | `deferred` | its 10 manifests select through the same seam; per-domain composition proof is later work |
+| Contract Activation | `deferred` | its 9 manifests select through the same seam; per-domain composition proof is later work |
+| Delivery | `deferred` | its 16 manifests select through the same seam; per-domain composition proof is later work |
+| Service | `deferred` | its 7 manifests select through the same seam; per-domain composition proof is later work |
+| Work | `aligned` | its 2 manifests compose, migrate and execute on SQLite and PostgreSQL (this milestone's proof) |
+| Lifecycle | `deferred` | its 3 manifests select through the same seam; per-domain composition proof is later work |
+| Customer Data | `aligned` | its 6 manifests compose, migrate and execute on SQLite and PostgreSQL, including import apply and the consolidated profile read (this milestone's proof) |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; selecting its manifests is the composing project's choice |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; selecting its manifests is the composing project's choice |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
+
 ## What this document is not
 
 - Not a schedule. No date, no milestone number for the alignment pass.

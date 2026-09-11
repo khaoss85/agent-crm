@@ -23,7 +23,7 @@ export const DETECTOR = 'customer-data-quality-v1';
  *
  * @param {{resolution: any, modules: any, names: any}} input
  */
-export function detectIssues({ resolution, modules, names }) {
+export async function detectIssues({ resolution, modules, names }) {
   const issues = [];
 
   for (const receipt of resolution.receipts) {
@@ -69,7 +69,7 @@ export function detectIssues({ resolution, modules, names }) {
   // can, so it is detected rather than assumed impossible.
   // A complete read: a detector that only inspects the newest page of the table
   // reports "no conflict" for a conflict that is merely older than the page.
-  const identities = deciding(trusted(modules, names.identity), { status: 'active' });
+  const identities = await deciding(trusted(modules, names.identity), { status: 'active' });
   const bySourceKey = new Map();
   for (const row of identities) {
     const key = row.sourceKey;
@@ -97,16 +97,16 @@ export function detectIssues({ resolution, modules, names }) {
  *
  * @param {{modules: any, core: any, names: any}} input
  */
-export function detectOrphans({ modules, core, names }) {
+export async function detectOrphans({ modules, core, names }) {
   const found = [];
   if (!core || typeof core.findContactByEmail !== 'function') return found;
-  const identities = deciding(trusted(modules, names.identity), { status: 'active' });
+  const identities = await deciding(trusted(modules, names.identity), { status: 'active' });
   for (const row of identities) {
     if (row.subjectResource !== 'company' && row.subjectResource !== 'contact') continue;
     const service = modules.get(row.subjectResource === 'company' ? 'company' : 'contact')?.service;
     if (!service || typeof service.get !== 'function') continue;
     let exists = true;
-    try { service.get(row.subjectId); } catch { exists = false; }
+    try { await service.get(row.subjectId); } catch { exists = false; }
     if (!exists) {
       found.push({
         kind: 'orphaned_reference',

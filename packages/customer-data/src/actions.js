@@ -79,9 +79,9 @@ export function buildCustomerDataActions(config) {
         // The read is a COMPLETE one, not a page: a guard that stops firing
         // once the table outgrows a display bound is not a guard.
         for (const member of [canonical, alias]) {
-          const existing = deciding(links, {
+          const existing = (await deciding(links, {
             subjectResource: member.resource, subjectId: member.id, status: 'active',
-          })[0];
+          }))[0];
           if (existing) {
             throw new AppError(
               'one of these records already belongs to a canonical identity cluster, so this decision would silently rewrite an earlier one',

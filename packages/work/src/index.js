@@ -286,14 +286,14 @@ export function createFollowUpCapability(moduleNames) {
          * asks this rather than listing.
          * @param {string} sourceKey
          */
-        findBySourceKey(sourceKey) {
+        async findBySourceKey(sourceKey) {
           const service = resolveModule(context.modules, names.task)?.service;
           if (!service?.listWhere) {
             throw new AppError(`The work package is installed without its "${names.task}" records`, {
               code: 'WORK_STORAGE_INVALID', status: 500,
             });
           }
-          return service.listWhere({ sourceKey: String(sourceKey) })[0] ?? null;
+          return (await service.listWhere({ sourceKey: String(sourceKey) }))[0] ?? null;
         },
       });
     },

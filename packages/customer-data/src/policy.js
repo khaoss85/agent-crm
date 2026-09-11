@@ -75,17 +75,17 @@ export function defineCustomerMatchPolicy(config = {}) {
      * @param {{
      *   row: {system: string, externalId: string|null, email: string|null, companyName: string|null, domain: string|null},
      *   reader: {
-     *     externalIdentity: (system: string, externalId: string) => any,
-     *     contactByEmail: (email: string) => any,
-     *     companiesByName: (name: string) => Array<{id: string, name: string, domain: string|null}>,
+     *     externalIdentity: (system: string, externalId: string) => Promise<any>,
+     *     contactByEmail: (email: string) => Promise<any>,
+     *     companiesByName: (name: string) => Promise<Array<{id: string, name: string, domain: string|null}>>,
      *   },
      * }} input
      * @returns {{outcome: string, rule: string, subject: any, candidates: any[], evidence: string}}
      */
-    resolve({ row, reader }) {
+    async resolve({ row, reader }) {
       // ── 1 · external identity ───────────────────────────────────────────
       if (row.externalId) {
-        const existing = reader.externalIdentity(row.system, row.externalId);
+        const existing = await reader.externalIdentity(row.system, row.externalId);
         if (existing) {
           return {
             outcome: 'matched',
@@ -105,7 +105,7 @@ export function defineCustomerMatchPolicy(config = {}) {
 
       // ── 2 · exact normalized email ──────────────────────────────────────
       if (row.email) {
-        const contact = reader.contactByEmail(row.email);
+        const contact = await reader.contactByEmail(row.email);
         if (contact) {
           return {
             outcome: 'matched',
@@ -119,7 +119,7 @@ export function defineCustomerMatchPolicy(config = {}) {
 
       // ── 3 · exact company name AND exact domain ─────────────────────────
       if (row.companyName) {
-        const companies = reader.companiesByName(row.companyName);
+        const companies = await reader.companiesByName(row.companyName);
         if (companies.length === 1 && !declared.requireDomainForCompanyMatch) {
           return {
             outcome: 'matched',

@@ -23,6 +23,25 @@ export const MANIFEST_FIELD_TYPES = Object.freeze([
 
 export const REFERENCE_ON_DELETE = Object.freeze(['restrict', 'cascade', 'set_null']);
 
+/**
+ * Tables owned by the core schema (`packages/core/src/database.js`) plus the
+ * framework's own bookkeeping tables. Generated modules must not claim them:
+ * their CREATE TABLE IF NOT EXISTS would silently no-op against the existing
+ * table and the module would run on the wrong schema. Shared with the module
+ * factory and the runtime record-module constructor so the guard cannot drift.
+ */
+export const CORE_RESERVED_TABLES = Object.freeze(new Set([
+  'companies',
+  'contacts',
+  'opportunities',
+  'approvals',
+  'workflow_runs',
+  'trace_spans',
+  'audit_events',
+  'schema_migrations',
+  'module_migrations',
+]));
+
 export const SUPPORTED_MANIFEST_VERSION = 1;
 /**
  * An enum value ends up inside a SQL `CHECK` constraint and inside every

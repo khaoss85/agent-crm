@@ -520,19 +520,19 @@ export async function createFollowUp(context, request) {
   };
 
   /** @param {any} task */
-  const replay = (task) => ({
+  const replay = async (task) => ({
     task: replayOrConflict(task, submitted),
     // The creation activity is exact-read by its own deterministic key, so a
     // replay answers with the same pair the first call returned.
-    activity: activities.listWhere({ sourceKey: creationKey(task.id) })[0] ?? null,
+    activity: (await activities.listWhere({ sourceKey: creationKey(task.id) }))[0] ?? null,
     replayed: true,
   });
 
   // Exact read on the unique business identity — never a paged list. This is
   // the read that decides whether work already exists, so it must be complete
   // rather than "the first page of it".
-  const existing = tasks.listWhere({ sourceKey: input.sourceKey })[0];
-  if (existing) return replay(existing);
+  const existing = (await tasks.listWhere({ sourceKey: input.sourceKey }))[0];
+  if (existing) return await replay(existing);
 
   const openedAt = now();
   let task;
@@ -558,9 +558,9 @@ export async function createFollowUp(context, request) {
     // picked the winner. The loser answers from the winner's row rather than
     // from a driver error — and a payload that genuinely differs is still a 409.
     if (!isUniqueConflict(error)) throw error;
-    const raced = tasks.listWhere({ sourceKey: input.sourceKey })[0];
+    const raced = (await tasks.listWhere({ sourceKey: input.sourceKey }))[0];
     if (!raced) throw error;
-    return replay(raced);
+    return await replay(raced);
   }
 
   const activity = await recordActivity({ activities, actor }, {
