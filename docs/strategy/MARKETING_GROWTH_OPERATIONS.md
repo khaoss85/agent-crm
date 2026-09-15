@@ -34,6 +34,29 @@ Three parties, and the split between them is the whole design:
 
 The framework never ships a campaign. The agent never sends one. The user never has to read a config file to know what was proposed.
 
+### Factory boundary
+
+This Marketing roadmap does not define the first Factory integration and does not
+create a Marketing-specific agent runtime. The future integration order is
+canonical in `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md`:
+
+1. Factory closes Phase 6 and declares **Factory Core v1 — Integration Freeze**;
+2. **FA1 / Accordo Builder Pack** proves the narrow builder seam;
+3. only after FA1 is stable may Marketing or another business workstream use
+   Factory as the governed coding-agent execution loop.
+
+The MK0–MK7 roadmap remains Accordo-owned. Factory may later select and execute
+bounded implementation work with installed coding-agent CLIs, but Accordo keeps
+campaign state, customer/revenue data, policies, approvals, provider credentials,
+managed actions and measured business outcomes. Sending, publishing, spending,
+audience mutation and every other external business side effect still execute
+through Accordo managed actions/operations.
+
+Do not introduce a generic `Initiative` model, second orchestrator, scheduler,
+agent SDK or duplicate execution ledger to generalize Marketing before the FA1
+seam is proven. Factory remains local-first and provider-neutral; Marketing must
+not add a mandatory model API dependency.
+
 ## 2. Why this is package-native
 
 Marketing is the strongest test the package contract will get. It is large, it is optional, most CRM installations will want a different shape of it, and a great many customers already own a marketing stack they will not replace. A pillar that can only be adopted whole is a pillar most people decline.
@@ -75,6 +98,10 @@ No package — official or custom — may bypass:
 
 Trusted checked-in source is not a sandbox (ADR-018 addendum 4). These are contract obligations enforced by review and by the runtime's own primitives, not by isolation.
 
+Factory or a native coding-agent CLI is not an exception to these boundaries.
+Factory may prepare checked source and assets; provider-facing side effects remain
+Accordo-managed operations.
+
 ## 4. The agentic optimization loop
 
 ```text
@@ -88,6 +115,10 @@ EXECUTE    Installed providers send, publish or launch
 MEASURE    Events, results and attribution flow back
 LEARN      The agent proposes the next version, a winner, or a budget change
 ```
+
+This is the Marketing business loop, not a generic execution engine. After the
+Factory freeze, the **BUILD** step may be driven through Factory; **EXECUTE**
+remains an Accordo managed business action/provider operation.
 
 Every proposal, run and version must preserve, or it is not evidence:
 
@@ -117,6 +148,10 @@ Stated plainly, because it decides the roadmap order:
 - **one-shot can precede the durable scheduler** — that is why MK2 is reachable early;
 - **rolling, triggered and journey cannot be production-complete on the current in-process event buffer** (ADR-012, post-commit dispatch, best-effort trace). They need `JOBS_AND_OUTBOX.md` first;
 - **none of this exists in the current package or runtime code.**
+
+The durable scheduler here is an Accordo business-runtime responsibility. It may
+wake work or execute campaign/journey timing; it does not replace Factory's
+selector/checkpoint loop for coding-agent work.
 
 ## 6. Human approval boundaries
 
@@ -165,9 +200,13 @@ MK7  Attribution and Closed-loop Optimization             requires ANALYTICS_STU
 
 **No Marketing package is implemented by this PR**, and no milestone above is started.
 
+The MK track is not a Factory integration dependency. Factory implementation is
+separately gated by its Phase-6 Integration Freeze, and the first Factory
+integration remains FA1 rather than MK1/MK3/MK4.
+
 ## 8. Related
 
-`CAMPAIGNS_JOURNEYS.md` (the objects and the modes) · `EXPERIMENTATION_ATTRIBUTION.md` (experiments, funnels, attribution, paid media) · `DATA_GOVERNANCE.md` (consent) · `JOBS_AND_OUTBOX.md` (durable automation) · `ANALYTICS_STUDIO.md` (semantic metrics) · `DESIGN_TO_CRM.md` (creative and design ownership) · `INTEGRATION_RUNTIME.md` (provider contracts) · `docs/PACKAGE_AUTHORING.md` (how any of this attaches) · `docs/benchmarks/CRM_JTBD_MATRIX.md` (what is actually supported).
+`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` · `CAMPAIGNS_JOURNEYS.md` (the objects and the modes) · `EXPERIMENTATION_ATTRIBUTION.md` (experiments, funnels, attribution, paid media) · `DATA_GOVERNANCE.md` (consent) · `JOBS_AND_OUTBOX.md` (durable automation) · `ANALYTICS_STUDIO.md` (semantic metrics) · `DESIGN_TO_CRM.md` (creative and design ownership) · `INTEGRATION_RUNTIME.md` (provider contracts) · `docs/PACKAGE_AUTHORING.md` (how any of this attaches) · `docs/benchmarks/CRM_JTBD_MATRIX.md` (what is actually supported).
 
 ## Where this meets the objective-driven experience
 
