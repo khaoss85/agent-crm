@@ -88,6 +88,18 @@ The builder changes source through the existing goal-first loop:
 GOAL → SEE → PLAN → BUILD → CHECK → PROVE
 ```
 
+Today that builder execution is harness-driven: the coding agent uses its own
+tools around Accordo's deterministic CLI/JSON contracts. This roadmap does not
+create an Accordo plan executor or generic agent orchestrator.
+
+After Factory closes Phase 6 and declares **Factory Core v1 — Integration
+Freeze**, the intended durable builder execution path is the one defined in
+`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md`: Accordo supplies bounded business
+intent, checked plans, policies, approvals and verification commands; Factory
+owns governed work selection, checkpointing, coding-agent CLI execution,
+execution evidence and independent technical verification. The first integration
+is **FA1 / Accordo Builder Pack**.
+
 ### Runtime role agent
 
 The deployed operational agent performs the configured business work. It may research, recommend, prepare, or execute only through bounded Accordo capabilities and approved external tools. It does not receive arbitrary database or host authority.
@@ -105,6 +117,32 @@ The runtime role agent must expose:
 
 A coding-agent session is not automatically a supported unattended production runtime. Provider terms, authentication, durability, and deployment authority must be proven for the selected runtime rather than inferred from a desktop or subscription session.
 
+## Factory integration boundary
+
+Role-agent packs remain **Accordo domain compositions**. Factory does not become
+the role-pack model, CRM database, campaign system, secret store or provider
+integration layer. Conversely, Accordo does not reproduce Factory's selector,
+checkpoint, coding-agent executor lifecycle, Factory ledger or independent
+technical verifier.
+
+The AW slices below are Accordo product-roadmap slices, not the Factory
+integration sequence. They do **not** authorize Factory work before the freeze,
+and they do not outrank the FA sequence. In particular:
+
+1. no Factory integration implementation starts before **Factory Core v1 —
+   Integration Freeze**;
+2. **FA1 / Accordo Builder Pack** is the first integration;
+3. Marketing, SEO, prospecting and other operational loops may use Factory only
+   after FA1 proves the seam;
+4. no universal `Initiative` model, generic orchestrator, scheduler, agent SDK or
+   duplicate execution ledger is introduced to make those future loops generic;
+5. every external business side effect still crosses an Accordo managed action
+   or operation boundary.
+
+Factory remains local-first and provider-neutral: installed coding-agent CLIs
+and their native authenticated sessions sit behind Factory adapters. Accordo
+must not add a mandatory model API dependency merely to integrate with Factory.
+
 ## Native-first, provider-neutral execution
 
 Accordo should not invent another universal agent SDK when existing coding agents and tool protocols can perform the work.
@@ -119,6 +157,10 @@ The default strategy is:
 6. **External systems remain explicit dependencies.** Contact discovery, email delivery, calendars, telephony, enrichment, and social channels require legitimate providers, credentials, permissions, and jurisdiction-appropriate use. Accordo governs and records their use; it does not fabricate access to them.
 
 This creates a “bring the permitted runtime and tools” model instead of a mandatory Accordo model bill.
+
+For future builder execution after the integration freeze, Factory is the
+canonical governed coding-agent loop. That does not change the Accordo runtime
+rule above: provider-facing business mutations remain Accordo operations.
 
 ## Role-agent pack
 
@@ -221,9 +263,14 @@ Role-agent packs become useful only when the following reusable layers exist.
 | Package ecosystem | Install, configure, update, evaluate, and remove optional role-agent packs. |
 | Managed Cloud C0–C3 | Project/environment/deployment records, managed runtime, PostgreSQL/secrets/backups, health/logs/trace. |
 
+These are Accordo business-runtime dependencies. Their scheduler/jobs/outbox wake
+and execute Accordo business work; they do not replace Factory's selector or
+coding-agent execution lifecycle.
+
 ## Proposed roadmap slices
 
-The slices below are planning groups, not coverage claims.
+The slices below are planning groups, not coverage claims and not the Factory FA
+integration sequence.
 
 ### AW0 — Role-pack composition contract
 
@@ -296,11 +343,16 @@ PT/Gym lead or trial
 
 This tests Accordo’s agent composition, PostgreSQL/Cloud posture, jobs, interactions, Admin, and a selected JTBD acceptance pack against a real product.
 
+This Arvo business pilot is not the first Factory integration. Factory integration
+still begins with FA1 only after the Integration Freeze; a later operational
+pilot may then reuse the proven seam.
+
 ## Roadmap continuity for future campaigns
 
 Every future implementation prompt that advances Cloud, guided onboarding, role-agent packs, Arvo, the winery blueprint, Interactions, Customer Data Operations, Marketing, or the package ecosystem must re-read and reconcile the live versions of:
 
 - this roadmap;
+- `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` whenever Factory execution is relevant;
 - `GUIDED_ONBOARDING_AND_VERTICAL_BLUEPRINTS.md`;
 - `../jtbd/roadmap/OWNERSHIP.md` and the independent coverage overlay;
 - `../PROJECT_STATUS.md` and Repository Truth.
@@ -321,3 +373,7 @@ Each campaign handoff must state which relevant roadmap items are `IN_SCOPE`, `D
 Accordo’s differentiator should not be “we ship a generic autonomous agent.” It should be:
 
 > A coding agent can assemble a business-specific operational agent from deterministic customer/revenue primitives, bounded tools, explicit policy, and executable evidence — while the project retains its source, provider choice, and operational limits.
+
+For durable builder execution after the Factory freeze, Accordo consumes Factory
+rather than growing a duplicate agent executor. For business execution, Accordo
+remains the policy and managed-action authority.
