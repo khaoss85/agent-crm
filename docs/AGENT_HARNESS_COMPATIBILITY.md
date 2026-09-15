@@ -106,12 +106,30 @@ AX2 imports nothing: a plan is data, and the validator never evaluates it.
 
 ## What is deliberately not offered
 
-No agent runtime, no orchestrator, no plan executor, no code generation from a
-plan, no remote install, no deploy, and no harness-specific integration. An
-agent that wants to act on a plan does so with its own tools, under its own
-approvals — and the plan says which of its steps need a human.
+Accordo itself offers no agent runtime, no generic orchestrator, no plan
+executor, no code generation from a plan, no remote install, no deploy, and no
+harness-specific execution layer. **Today**, an agent that wants to act on a
+plan does so with its own tools, under its own approvals — and the plan says
+which of its steps need a human.
+
+That current behavior is not a roadmap instruction to add those mechanisms to
+Accordo. The future governed execution boundary is
+`docs/strategy/FACTORY_ACCORDO_INTEGRATION_ROADMAP.md`: only after Factory closes
+Phase 6 and declares **Factory Core v1 — Integration Freeze** may Accordo hand a
+bounded, versioned plan/context seam to Factory. Factory then owns selection,
+checkpointing, coding-agent CLI execution, execution evidence and independent
+verification; Accordo keeps business state, policy, approvals, provider
+credentials, managed actions and business outcomes. The first integration is
+**FA1 / Accordo Builder Pack**, not a generic Initiative runtime, Marketing or
+SEO.
+
+This future seam does not add a mandatory model API. Factory remains local-first
+and provider-neutral, using installed coding-agent CLIs behind its adapter
+contract. Any external business side effect still crosses an Accordo managed
+action; native CLI or MCP access is never a shortcut around Accordo policy.
 
 ## Evidence
 
 `docs/APPLICATION_INSPECTION.md`, `docs/SOLUTION_PLAN.md`,
+`docs/strategy/FACTORY_ACCORDO_INTEGRATION_ROADMAP.md`,
 `tests/app-inspect.test.js`, `tests/solution-plan.test.js`, `scripts/check.js`.
