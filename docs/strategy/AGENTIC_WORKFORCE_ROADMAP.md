@@ -40,7 +40,7 @@ The desired catalogue already contains the underlying user jobs. A new catalogue
 - `ACC-JTBD-SALES-MGR-020` — experiment with new agentic team workflows.
 - `ACC-JTBD-AE-019` — build new personal plays through agents.
 - `ACC-JTBD-CRM-PO-020` — evolve the platform through agents and capability packs.
-- `ACC-JTBD-AGENT-ENG-005` through `015` — retrieval and memory, planning, managed actions, approvals, policy, specialized-agent orchestration, monitoring, retries, evaluation, model routing and context optimization, and hallucination/authorization controls.
+- `ACC-JTBD-AGENT-ENG-005` through `015` — retrieval and memory, planning, managed actions, approvals, policy, specialized-agent orchestration, monitoring, retries, evaluation, model routing and context optimization, and hallucination/authorization controls. These JTBDs are composed only through Accordo managed capabilities; pack work uses Factory's selector/checkpoint/executor lifecycle (`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §§2.3, 6), and no model-router, checkpoint, retry engine, or ledger is defined inside a pack.
 
 ### Marketing and ABM cluster
 
@@ -100,6 +100,8 @@ owns governed work selection, checkpointing, coding-agent CLI execution,
 execution evidence and independent technical verification. The first integration
 is **FA1 / Accordo Builder Pack**.
 
+Pre-freeze harness wording only above: PLAN here is the Accordo checked SolutionPlan, and post-freeze execution maps to `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §6 (Accordo through APPROVE, Factory SELECT → EXECUTE, no second planner).
+
 ### Runtime role agent
 
 The deployed operational agent performs the configured business work. It may research, recommend, prepare, or execute only through bounded Accordo capabilities and approved external tools. It does not receive arbitrary database or host authority.
@@ -113,7 +115,7 @@ The runtime role agent must expose:
 - tool calls and external-operation outcomes;
 - cost and latency observations where available;
 - immutable audit/trace evidence;
-- retry, stop, compensation, and escalation state.
+- retry, stop, compensation, and escalation state. Business retry/stop/compensation here is Accordo jobs/outbox/managed-action state, not a pack-level retry or checkpoint engine; coding-agent retry/checkpoint remains Factory-owned (`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §3, Finding B).
 
 A coding-agent session is not automatically a supported unattended production runtime. Provider terms, authentication, durability, and deployment authority must be proven for the selected runtime rather than inferred from a desktop or subscription session.
 

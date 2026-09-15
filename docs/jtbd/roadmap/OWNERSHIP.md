@@ -101,6 +101,37 @@ That roadmap deliberately reuses the existing SDR, ABM, customer-success, and ag
 jobs rather than adding duplicate catalogue records. A pack, prompt, connector, or model output
 cannot promote any grouped job: each coverage row still requires its own executable evidence.
 
+## Factory implementation dependencies
+
+A desired business job stays in this catalogue even when its generic execution
+mechanism is supplied by Factory: the JTBD is the desired outcome, the Accordo
+pillar is the business/domain owner, and Factory is an implementation
+dependency for the generic execution loop — never duplicate Accordo runtime
+work. Business retry is not coding-agent retry; the business scheduler is not
+the Factory selector; the CRM audit is not the Factory lifecycle ledger.
+Canonical boundary: `../../strategy/FACTORY_ACCORDO_INTEGRATION_ROADMAP.md`.
+
+Simplification audit (planning only, catalogue unchanged): 50 jobs inspected —
+8 clearly take a Factory implementation dependency, 36 stay fully
+Accordo-owned, 6 are ambiguous and therefore unchanged. The 8 keep their
+assignment, disposition, pillar, slice, and coverage exactly as-is:
+
+- `ACC-JTBD-AGENT-ENG-004` (eval dataset/sandbox), `-005` (retrieval/memory),
+  `-006` (planning/decomposition), `-010` (specialized-agent orchestration),
+  `-013` (eval/feedback quality), `-014` (model routing/context),
+  `ACC-JTBD-DATA-SCI-019` (agent/model eval harness),
+  `ACC-JTBD-ABM-020` (multi-agent account orchestration).
+
+Ambiguous and unchanged: `ACC-JTBD-AGENT-ENG-003`, `-012`, `-015`, `-017`,
+`-018`, `-019` (each splits execution mechanism from business ownership
+inside one job).
+
+`assignments.jsonl` is deliberately untouched: its `dependencies` field
+accepts only registered Accordo pillar ids (gate-enforced), there is no
+external-dependency field, and no schema is invented here. Recording Factory
+as an implementation dependency needs a separately-decided schema addition;
+until then this section is the rule.
+
 ## Guided onboarding and vertical blueprints
 
 Guided first configuration is another non-authoritative composition layer. It lets a coding agent

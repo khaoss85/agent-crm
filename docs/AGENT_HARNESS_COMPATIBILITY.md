@@ -119,7 +119,9 @@ Phase 6 and declares **Factory Core v1 — Integration Freeze** may Accordo hand
 bounded, versioned plan/context seam to Factory. Factory then owns selection,
 checkpointing, coding-agent CLI execution, execution evidence and independent
 verification; Accordo keeps business state, policy, approvals, provider
-credentials, managed actions and business outcomes. The first integration is
+credentials, managed actions and business outcomes. AX1/AX2/DX5/DX6/DX10
+remain Accordo-owned authorities: Factory may invoke and sequence them
+through the bounded seam but must not duplicate their domain logic. The first integration is
 **FA1 / Accordo Builder Pack**, not a generic Initiative runtime, Marketing or
 SEO.
 

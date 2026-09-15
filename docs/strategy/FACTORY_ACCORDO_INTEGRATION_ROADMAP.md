@@ -653,3 +653,82 @@ This gives each product one clear job:
 > Operate that business system as a managed product.
 
 The architecture remains open, local-first, provider-agnostic and scalable without turning either repository into a universal agent platform.
+
+---
+
+## 12. Roadmap simplification consequences
+
+Now that the seam above is defined, Accordo roadmaps simplify by rule, not by
+taste. The question for any planned Accordo work is: *does Factory already own
+the generic mechanism?* If yes, Accordo keeps the business outcome and takes a
+dependency — it does not build the mechanism twice.
+
+Business retry is not coding-agent retry. The business scheduler is not the
+Factory selector. The CRM audit is not the Factory lifecycle ledger. The pairs
+share nouns, not ownership.
+
+### KEEP IN ACCORDO
+
+Business goals and metrics; CRM/customer/revenue data; SolutionPlan and domain
+contracts; business policies; approvals; tenant/auth/business identity;
+provider credentials; managed business actions; jobs/outbox/business
+scheduler; business-side retries/idempotency/reconciliation; CRM/business audit
+and trace; domain-specific verification commands (AX1/AX2, DX5 Project
+Verify, DX6 Scenario Runner, DX10 Implementation Evidence — Factory may invoke
+and sequence them, never duplicate their domain logic); business outcomes and
+measurement.
+
+### OWNED BY FACTORY
+
+Generic work selection; selector/checkpoint/stop semantics; coding-agent
+execution lifecycle; coding-agent resume/retry; coding-agent provider
+adapters; Claude Code / Codex / Muse / future CLI differences; engineering
+execution context; Factory lifecycle ledger; evidence orchestration;
+independent technical verification; recurrence of the governed implementation
+loop.
+
+### CONSUMED THROUGH THE SEAM
+
+Accordo authorities that Factory invokes (inspection, checked plans,
+verification commands, JTBD evidence); bounded Project Pack inputs (DX9-style
+context, when built); projections of Factory status in Cloud; role-agent
+packs as business capability compositions executed through the loop.
+
+### NOT REQUIRED FOR FA1
+
+Project MCP parity (DX13 — CLI/JSON suffices); skill portability beyond
+Accordo's own source hygiene (DX2 — Factory adapters own execution
+differences); hosted model or mandatory model API; duplicate Factory queue or
+ledger; Cloud-side selector or supervisor; universal `Initiative` runtime.
+
+The following must NOT become new Accordo primitives for the Factory
+integration: generic agent orchestrator, generic plan executor, coding-agent
+supervisor, coding-agent checkpoint/resume engine, generic coding-model
+router, generic engineering-memory runtime, universal Initiative
+runtime/model, duplicate scheduler, duplicate execution ledger, universal
+agent SDK, universal MCP gateway, mandatory hosted model/API,
+provider-specific execution branches.
+
+---
+
+## 13. Roadmap impact summary
+
+| AREA | CURRENT ACCORDO ROADMAP | AFTER FACTORY | ACTION |
+|---|---|---|---|
+| JTBD | 600 assigned jobs incl. 8 with generic execution mechanisms | 8 keep outcome, take Factory implementation dependency; catalogue unchanged | DEPENDENCY |
+| Objective-driven AX | GOAL → … → APPROVE, execution unspecified | APPROVE → Factory SELECT → EXECUTE; VERIFY/OBSERVE shared | NARROW |
+| Coder DX | Authorities + context/MCP/skill portability | Authorities stay; DX9 reusable seam input; DX13/DX2 not FA1 gates | KEEP |
+| Role-agent packs | Domain compositions incl. orchestration vocabulary | Same slices AW0–AW4; packs compose, Factory loops | KEEP |
+| Marketing | MK0–MK7 with own scheduler/runtime | Unchanged; Factory available as execution mechanism | KEEP |
+| Cloud | Managed control plane + Agent Operations surface | Explicit infra-operation surface; no model/queue/ledger/selector | NARROW |
+| MCP/tool surface | CLI-first, MCP mirrors | Unchanged; mirrors follow CLI, never lead | KEEP |
+| Context/memory | DX9 context pack; memory in agent-eng JTBDs | DX9 bounded seam input; generic memory is Factory-owned | DEPENDENCY |
+| Model/provider routing | AGENT-ENG-014, provider rows in DX | Outcome stays; routing owned by Factory adapters | DEPENDENCY |
+| Retries/checkpoints | Business retries + agent retry JTBDs | Business side Accordo; coding-agent side Factory | NARROW |
+| Schedulers | Spine jobs/outbox + journey scheduler | Unchanged; never the Factory selector | KEEP |
+| Ledgers/evidence | CRM audit + Factory lifecycle receipts | Separate by rule; Cloud shows projections only | KEEP |
+| Generic orchestrator/supervisor/SDK | Refused in three docs | Refused a fourth time here; REMOVE DUPLICATION if proposed | REMOVE DUPLICATION |
+
+No Accordo roadmap is renumbered by this table. DEFER applies to FA2+ packs
+(marketing/content/SEO/prospecting/success/service), which expand only after
+FA1 proves the seam.

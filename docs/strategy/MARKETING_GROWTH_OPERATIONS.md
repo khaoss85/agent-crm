@@ -75,6 +75,8 @@ These are **future package identities**, not approved npm names and not a publis
 | `packages/content` | ContentAsset, ContentVersion, EmailTemplate, MessageTemplate, CreativeAsset, LandingPage, Form, CTA, ThankYouPage, PublishingPlan |
 | `packages/attribution` | FunnelDefinition, FunnelRun, FunnelDropInsight, AttributionModel, AttributionRun, RevenueCredit, cohort and conversion result definitions |
 
+These plans and records (`PublishingPlan`, `TrackingPlan`, and the rows above) are domain artifacts under the Accordo PLAN → APPROVE step (`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §6), not a second planner; no `Initiative` runtime record is introduced (§9 there).
+
 ### What a customer may do instead
 
 - use the official packages as they are;
@@ -118,7 +120,10 @@ LEARN      The agent proposes the next version, a winner, or a budget change
 
 This is the Marketing business loop, not a generic execution engine. After the
 Factory freeze, the **BUILD** step may be driven through Factory; **EXECUTE**
-remains an Accordo managed business action/provider operation.
+remains an Accordo managed business action/provider operation. Factory
+evidence (built assets, verification outcomes) feeds MEASURE, but attribution
+and measured business outcomes stay Accordo-owned: Factory proves what it
+built, Accordo measures whether it mattered.
 
 Every proposal, run and version must preserve, or it is not evidence:
 
@@ -151,7 +156,9 @@ Stated plainly, because it decides the roadmap order:
 
 The durable scheduler here is an Accordo business-runtime responsibility. It may
 wake work or execute campaign/journey timing; it does not replace Factory's
-selector/checkpoint loop for coding-agent work.
+selector/checkpoint loop for coding-agent work. Event inbox/outbox, durable
+waits, and business retry/backoff are Accordo-owned via `JOBS_AND_OUTBOX.md`;
+Factory owns only coding-agent work retry/checkpoint (`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §3, Finding B).
 
 ## 6. Human approval boundaries
 
