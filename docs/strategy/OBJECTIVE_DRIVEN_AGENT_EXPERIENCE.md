@@ -48,6 +48,36 @@ The objective-driven experience is what happens when an agent is pointed at thos
 GOAL → DISCOVER → ASSESS → DESIGN → PLAN → APPROVE → BUILD → VERIFY → PRESENT → OBSERVE → RECOMMEND → ITERATE
 ```
 
+### Future execution ownership
+
+The lifecycle above is a product experience, not a mandate for Accordo to grow a
+generic orchestrator or plan executor. The future execution ownership boundary is
+canonical in `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md`.
+
+Until Factory reaches **Factory Core v1 — Integration Freeze**, today’s supported
+builder flow remains harness-driven: a coding agent may read the deterministic
+Accordo contracts and use its own tools to edit and test the repository. After
+that gate, the intended durable split is:
+
+```text
+Accordo   GOAL → DISCOVER → ASSESS → DESIGN → PLAN → APPROVE
+Factory                                           SELECT → EXECUTE
+Accordo + Factory                                         VERIFY → OBSERVE
+Accordo                                                   RECOMMEND
+Factory                                                      ITERATE
+```
+
+Factory owns governed work selection, checkpoint/stop semantics, coding-agent
+CLI execution, Factory lifecycle evidence and independent technical
+verification. Accordo continues to own business state and metrics, customer and
+revenue data, policies, approvals, provider credentials, managed actions and
+business outcomes. No second planner, generic orchestrator, scheduler, agent SDK
+or duplicate ledger is introduced in Accordo.
+
+The first integration after the freeze is **FA1 / Accordo Builder Pack**. A
+Marketing, SEO or generic Initiative runtime is explicitly not the first Factory
+integration.
+
 ### GOAL
 
 Capture, in the user's words, then restate: the desired business outcome, the **primary metric**, the scope, the constraints, and the sensitive-action boundaries. A goal without a primary metric cannot be verified later, so the agent asks for one rather than inventing it.
@@ -94,11 +124,23 @@ The human approves **only** the sensitive boundaries: provider access, external 
 
 ### BUILD
 
-Claude or Codex writes **checked-in source the customer owns** — manifests, package definitions, policies, actions, Admin views, tests. Not rows in a vendor database, not an opaque runtime.
+Today, Claude Code, Codex or another compatible coding-agent harness can write
+**checked-in source the customer owns** — manifests, package definitions,
+policies, actions, Admin views, tests — using its own tools. This is not an
+Accordo execution runtime. After the Factory integration freeze, the intended
+path is for Factory to drive the same provider-neutral coding-agent CLI work
+through FA1 while Accordo remains the source of checked plans, policies,
+approval boundaries and validation contracts.
+
+Not rows in a vendor database, not an opaque runtime.
 
 ### VERIFY
 
 Quality Gates · `crm package validate` · unit, integration and E2E tests · a clean-clone run · the browser smoke where available · JTBD acceptance for every row the solution claims to move.
+
+Factory may coordinate independent technical verification after the integration
+freeze, but Accordo's deterministic checks remain authoritative for Accordo
+validity and Factory cannot self-certify its own execution.
 
 ### PRESENT
 
@@ -118,6 +160,9 @@ propose    the next version, as a reviewable change
 
 **No silent operational change.** A recommendation is a proposal; applying it is
 a new plan, a new approval where the boundary requires one, and a new version.
+Any external business side effect still executes through an Accordo managed
+action/operation boundary; Factory or a native coding-agent tool never bypasses
+Accordo identity, policy, approval, idempotency or audit.
 
 ### Evidence-first output
 
@@ -177,6 +222,11 @@ Rules a future implementation must honour:
 5. a **plan fingerprint**, so a plan can be quoted in an approval;
 6. a **human-readable companion** — the reviewable artifact is prose, not JSON;
 7. **no stale-plan authorization**: an approval covers the plan that was read, and a plan is recomputed when the source changes.
+
+The plan remains Accordo-owned business/solution intent. It is not a durable
+execution ledger. After the Factory freeze, FA1 may consume a bounded,
+versioned plan/context seam; Factory remains authoritative for its own selection,
+checkpoint and execution lifecycle.
 
 ---
 
@@ -263,8 +313,12 @@ AX5  Closed-loop optimization with Marketing + Analytics
 
 **AX1 is implemented; AX2–AX5 are not.** AX0 ships a strategy and a Skill, AX1 ships the discovery surface that Skill now starts from. Both are useful today precisely because they report missing capabilities honestly rather than pretend.
 
+The AX track does not authorize Factory integration early. Factory execution is
+a separate future dependency: Phase 6 must close and **Factory Core v1 —
+Integration Freeze** must be declared before FA1 begins.
+
 ---
 
 ## 8. Related
 
-`NORTH_STAR_EXPERIENCE.md` · `AGENT_DISCOVERY.md` · `MASTER_PLAN.md` · `EXECUTION_ROADMAP.md` · `MARKETING_GROWTH_OPERATIONS.md` · `ANALYTICS_STUDIO.md` · `AGENT_CRM_CLOUD.md` · `../PACKAGE_AUTHORING.md` · `../benchmarks/CRM_JTBD_MATRIX.md` · the Skill at `.claude/skills/solve-business-goal/SKILL.md` (mirrored in `.agents/skills/`) · the worked example in `OBJECTIVE_DRIVEN_FUNNEL_EXAMPLE.md`.
+`NORTH_STAR_EXPERIENCE.md` · `AGENT_DISCOVERY.md` · `MASTER_PLAN.md` · `EXECUTION_ROADMAP.md` · `CUSTOMER_REVENUE_OS_ROADMAP.md` · `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` · `MARKETING_GROWTH_OPERATIONS.md` · `ANALYTICS_STUDIO.md` · `AGENT_CRM_CLOUD.md` · `../PACKAGE_AUTHORING.md` · `../AGENT_HARNESS_COMPATIBILITY.md` · `../benchmarks/CRM_JTBD_MATRIX.md` · the Skill at `.claude/skills/solve-business-goal/SKILL.md` (mirrored in `.agents/skills/`) · the worked example in `OBJECTIVE_DRIVEN_FUNNEL_EXAMPLE.md`.
