@@ -39,7 +39,10 @@ const cli = join(repoRoot, 'packages/cli/bin/accordo.js');
 function project(t, { name = 'accordo-doctor-' } = {}) {
   const root = mkdtempSync(join(tmpdir(), name));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'apps', 'package.json', 'docs', 'examples']) {
+  // `site` carries the claims ledger that docs link to (docs/strategy/CATEGORY.md ->
+  // ../../site/claims.json). Leaving it out made the copy a project the doctor rightly
+  // called broken, over a link that resolves in the repository it was copied from.
+  for (const entry of ['packages', 'apps', 'package.json', 'docs', 'examples', 'site']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
   return root;

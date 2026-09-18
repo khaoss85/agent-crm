@@ -552,6 +552,11 @@ export const RETIRED_CLAIMS = Object.freeze([
   'Nothing bills, renews, amends or cancels',
   'No import, export, dedupe, merge, bulk edit, saved views or global search',
   'no auth, no scheduler, no integrations, SQLite only',
+  // September backlog fix (4594624ec26c). README's hand-transcribed
+  // «production posture» block said durable jobs, secrets and backups were
+  // absent after the bounded self-host contracts for all three had shipped.
+  // Only the *managed* variants are absent; the unqualified absence is retired.
+  'durable jobs, secrets and backups are absent',
 ]);
 
 /**

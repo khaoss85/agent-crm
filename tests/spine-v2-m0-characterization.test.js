@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -124,7 +124,9 @@ test('M0 pins the complete physical SQLite schema after every released migration
 });
 
 test('M0 records PostgreSQL-shaped --db input as legacy SQLite path semantics, not adapter selection', () => {
-  const workspace = mkdtempSync(join(tmpdir(), 'accordo-m0-db-semantics-'));
+  // realpathSync: on macOS tmpdir() is /var/folders, a symlink to /private/var/folders.
+  // The CLI reports the resolved path, so the baseline must compare against the same form.
+  const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'accordo-m0-db-semantics-')));
   try {
     const shapedInput = 'postgresql://sentinel.invalid/accordo';
     const result = spawnSync(process.execPath, [cli, 'db:migrate', '--db', shapedInput], {

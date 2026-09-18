@@ -732,6 +732,40 @@ function runThroughBash(snippets, root) {
   writeFileSync(join(bin, 'sudo'), '#!/bin/sh\nwhile [ $# -gt 0 ]; do case "$1" in -u|-g|-p|-C) shift 2;; -*) shift;; *) break;; esac; done\nexec "$@"\n');
   chmodSync(join(bin, 'sudo'), 0o755);
 
+  // The driver runs each snippet inside `env -i PATH="$bin:/usr/bin:/bin"`, so the oracle sees
+  // whatever userland the host ships. CI is GNU; macOS is not, and the difference does not make
+  // the oracle fail — it makes it answer a different question while still looking like data:
+  //   - macOS has no timeout(1), so every snippet failed to start, the sandbox stayed empty,
+  //     and the oracle reported that nothing in the corpus writes anything;
+  //   - BSD xargs does not run its command on empty input while GNU xargs does, so every
+  //     xargs-wrapped invocation looked like it was never in command position.
+  // Each tool is chosen by the behaviour the oracle depends on, never by its name, and a host
+  // that cannot supply it is refused by name instead of silently answering the wrong question.
+  const shimGnuTool = (name, candidates, behaves, requirement) => {
+    for (const candidate of candidates) {
+      const path = spawnSync('command', ['-v', candidate], { encoding: 'utf8', shell: true }).stdout?.trim();
+      if (path && behaves(path)) {
+        writeFileSync(join(bin, name), `#!/bin/sh\nexec ${path} "$@"\n`);
+        chmodSync(join(bin, name), 0o755);
+        return;
+      }
+    }
+    assert.fail(requirement);
+  };
+  shimGnuTool(
+    'timeout', ['timeout', 'gtimeout'],
+    (path) => spawnSync(path, ['1', 'true']).status === 0,
+    'the oracle bounds each snippet with timeout(1) and no working timeout is on PATH; without one '
+    + 'every snippet fails to start and the oracle reports zero writes. On macOS: brew install coreutils',
+  );
+  shimGnuTool(
+    'xargs', ['gxargs', 'xargs'],
+    (path) => spawnSync(path, ['echo', 'ok'], { input: '', encoding: 'utf8' }).stdout?.trim() === 'ok',
+    'the corpus wraps invocations in xargs and expects GNU semantics: the command runs once even on '
+    + 'empty input. BSD xargs skips it, which reads as "not in command position" for every wrapped '
+    + 'case. On macOS: brew install findutils',
+  );
+
   const width = Math.max(1, String(snippets.length).length);
   const shards = Math.max(1, Math.min(availableParallelism(), Math.ceil(snippets.length / 25)));
   const per = Math.ceil(snippets.length / shards);
@@ -750,9 +784,21 @@ function runThroughBash(snippets, root) {
   const result = spawnSync(
     'bash',
     [driver, cases, join(root, 'sandbox'), bin, logs, outs, String(width), String(shards)],
-    { encoding: 'utf8', timeout: 20 * 60_000, stdio: ['ignore', 'pipe', 'pipe'] },
+    // 40 minutes, not 20: the driver takes about 13 on an idle machine and exceeded 20 inside a
+    // full `npm run verify`, where it competes with the rest of the suite. A budget tight enough
+    // to depend on what else is running turns a load spike into a repository defect.
+    { encoding: 'utf8', timeout: 40 * 60_000, stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  assert.equal(result.status, 0, `the oracle driver failed: ${result.stderr}`);
+  // `status` is null when the driver was killed rather than exited — on timeout, spawnSync leaves
+  // stderr empty, so `the oracle driver failed:` with nothing after it read as a driver defect
+  // when the driver had simply been stopped. Say which of the two happened.
+  assert.ok(
+    result.status === 0,
+    result.status === null
+      ? 'the oracle driver was killed before it finished, most likely by its own 40-minute budget '
+        + `under a loaded machine (signal ${String(result.signal)}); the corpus was not compared`
+      : `the oracle driver failed with status ${String(result.status)}: ${result.stderr}`,
+  );
 
   /** @type {Map<string, { wrote: boolean, parses: boolean }>} */
   const observed = new Map();
