@@ -129,12 +129,23 @@ same one CI runs on every push) into a directory it keeps, then inspects the res
   modules       76        resources     71        policies       7
   packages       9        actions       64        providers      1
 
-  production posture — not a readiness claim: the framework authenticates nobody
-                       (a deployment adapter supplies verified identity), while
-                       tenancy — one tenant per application instance — and
-                       authorization are owned and enforced by the framework.
-                       SQLite or dedicated-database PostgreSQL; shared-database
-                       tenancy, durable jobs, secrets and backups are absent
+  production posture — not a readiness claim: the framework authenticates
+                       nobody (a deployment adapter supplies verified
+                       identity), while tenancy — one tenant per application
+                       instance — and authorization are owned and enforced by
+                       the framework. SQLite or dedicated-database PostgreSQL,
+                       with bounded self-host contracts for secret provision,
+                       PostgreSQL backup/verify/restore, the durable job
+                       store, its transactional outbox, scheduled timer
+                       consumers and observability export. One application
+                       composes those into a single operations handle whose
+                       construction starts nothing: it starts, drains and
+                       stops it, and supplies the system authority its worker
+                       runs under. Nothing autostarts. Absent: shared-database
+                       tenancy, an autostarted or operator-managed worker
+                       service, any managed jobs service, managed secret
+                       custody, managed backup custody/scheduling/retention
+                       and an observability backend
 ```
 
 It ends on the eleven things the inspector says it cannot see, because a tour that shows only
