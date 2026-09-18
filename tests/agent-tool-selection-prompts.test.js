@@ -784,9 +784,21 @@ function runThroughBash(snippets, root) {
   const result = spawnSync(
     'bash',
     [driver, cases, join(root, 'sandbox'), bin, logs, outs, String(width), String(shards)],
-    { encoding: 'utf8', timeout: 20 * 60_000, stdio: ['ignore', 'pipe', 'pipe'] },
+    // 40 minutes, not 20: the driver takes about 13 on an idle machine and exceeded 20 inside a
+    // full `npm run verify`, where it competes with the rest of the suite. A budget tight enough
+    // to depend on what else is running turns a load spike into a repository defect.
+    { encoding: 'utf8', timeout: 40 * 60_000, stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  assert.equal(result.status, 0, `the oracle driver failed: ${result.stderr}`);
+  // `status` is null when the driver was killed rather than exited — on timeout, spawnSync leaves
+  // stderr empty, so `the oracle driver failed:` with nothing after it read as a driver defect
+  // when the driver had simply been stopped. Say which of the two happened.
+  assert.ok(
+    result.status === 0,
+    result.status === null
+      ? 'the oracle driver was killed before it finished, most likely by its own 40-minute budget '
+        + `under a loaded machine (signal ${String(result.signal)}); the corpus was not compared`
+      : `the oracle driver failed with status ${String(result.status)}: ${result.stderr}`,
+  );
 
   /** @type {Map<string, { wrote: boolean, parses: boolean }>} */
   const observed = new Map();
