@@ -257,6 +257,16 @@ it. It is exactly the `TENANT_ISOLATION_NOT_ENFORCED` regression, written as a r
 — and it binds `docs/PROJECT_STATUS.md`, `TASKS.md` and every scenario document with
 **no marker at all**, which is why none of them was edited.
 
+**4 — fact freshness (opt-in).** The three checks above compare documents to
+documents, and a measurement the documents agree on can still describe an older
+tree — which is how three `stale` measurement facts once left `--check` green.
+`--check --require-current` adds the gate the first three cannot be: every fact
+whose status is not `current` fails as `TRUTH_FACT_NOT_CURRENT`, naming the fact,
+its status and the freshness ratio (`current` facts over all facts), so a ratio
+below 1 breaks the run. The `public-claims` CI job passes the flag; a local
+`--check` without it is unchanged. The header prints the ratio in both modes, so
+the number CI enforces is the number a developer already sees.
+
 ## One bound surface is source, and why
 
 <!-- truth: retired-claim no authentication, tenancy or RBAC exists — this section quotes the retired posture as the recorded failure the rule exists to catch. Named as history, never asserted about this repository. -->

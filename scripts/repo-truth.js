@@ -3199,11 +3199,45 @@ export function diffDocuments(committed, fresh) {
 }
 
 /**
+ * Facts whose status is not `current`, as check problems.
+ *
+ * Pure over the built document. `--check --require-current` fails when the
+ * freshness ratio (`current` facts over all facts) drops below 1, naming each
+ * fact that is not current. The default `--check` stays silent about
+ * freshness: it guards agreement between documents, not whether the
+ * measurement they agree on still describes this tree.
+ *
+ * @param {any} document the freshly built truth document
+ */
+export function checkFactFreshness(document) {
+  const facts = document?.facts ?? [];
+  const total = facts.length;
+  const current = facts.filter((fact) => fact?.status === 'current').length;
+  const ratio = total === 0 ? 1 : current / total;
+  // Human text carries three decimals (`0.946`); the machine-readable
+  // `counts.factsCurrentRatio` keeps the exact fraction.
+  const display = ratio.toFixed(3);
+  return facts
+    .filter((fact) => fact?.status !== 'current')
+    .map((fact) => ({
+      code: 'TRUTH_FACT_NOT_CURRENT',
+      message: `fact ${fact?.id ?? '(missing id)'} is ${fact?.status ?? '(missing status)'} `
+        + `(authority ${fact?.authority ?? 'unknown'}): ${current}/${total} facts current `
+        + `(ratio ${display}). Run \`npm run repo:truth\` and commit the result; measurement facts go `
+        + 'current only through `node scripts/measure-suite.js --apply` on a clean tree.',
+    }));
+}
+
+/**
  * The whole check: regeneration, citations, code vocabulary, measurement.
  *
- * @param {{rootDir: string}} options
+ * `requireCurrent` opts into the fourth gate: every fact must have status
+ * `current`, so a freshness ratio below 1 fails the run. The public-claims CI
+ * job passes it; a local `--check` without it is unchanged.
+ *
+ * @param {{rootDir: string, requireCurrent?: boolean}} options
  */
-export async function checkRepository({ rootDir }) {
+export async function checkRepository({ rootDir, requireCurrent = false }) {
   /** @type {Array<{code: string, message: string}>} */
   const problems = [];
   const { document, problems: buildProblems } = await buildTruthDocument({ rootDir });
@@ -3282,6 +3316,15 @@ export async function checkRepository({ rootDir }) {
     }
   }
 
+  // ── 4. fact freshness, opt-in via --require-current ──────────────────────
+  // The three gates above compare documents to documents; a measurement the
+  // documents agree on can still describe an older tree. With the flag, every
+  // fact whose status is not `current` is a problem, so a freshness ratio
+  // below 1 fails the run. Without it this section reports nothing.
+  const currentFacts = document.facts.filter((fact) => fact?.status === 'current').length;
+  const factsCurrentRatio = document.facts.length === 0 ? 1 : currentFacts / document.facts.length;
+  if (requireCurrent) problems.push(...checkFactFreshness(document));
+
   return {
     document,
     problems,
@@ -3294,6 +3337,8 @@ export async function checkRepository({ rootDir }) {
         .filter((surface) => existsSync(join(rootDir, surface)))
         .reduce((total, surface) => total
           + parseCitations(readFileSync(join(rootDir, surface), 'utf8'), { javascript: surface.endsWith('.js') }).length, 0),
+      currentFacts,
+      factsCurrentRatio,
     },
   };
 }
@@ -3309,13 +3354,19 @@ async function main() {
   const argv = process.argv.slice(2);
   const wantsCheck = argv.includes('--check');
   const wantsJson = argv.includes('--json');
+  const wantsRequireCurrent = argv.includes('--require-current');
   const rootDir = process.cwd();
 
   for (const flag of argv) {
-    if (flag !== '--check' && flag !== '--json') {
-      process.stderr.write(`repo:truth: unknown flag ${flag}. Usage: node scripts/repo-truth.js [--check] [--json]\n`);
+    if (flag !== '--check' && flag !== '--json' && flag !== '--require-current') {
+      process.stderr.write(`repo:truth: unknown flag ${flag}. Usage: node scripts/repo-truth.js [--check [--require-current]] [--json]\n`);
       process.exit(2);
     }
+  }
+  if (wantsRequireCurrent && !wantsCheck) {
+    process.stderr.write('repo:truth: --require-current applies to --check: it fails the check when the freshness ratio drops below 1. '
+      + 'Usage: node scripts/repo-truth.js --check --require-current\n');
+    process.exit(2);
   }
 
   if (!wantsCheck) {
@@ -3334,7 +3385,7 @@ async function main() {
     return;
   }
 
-  const report = await checkRepository({ rootDir });
+  const report = await checkRepository({ rootDir, requireCurrent: wantsRequireCurrent });
   // Informational only, and deliberately not a problem: a truthful record of
   // an older tree is a stale status, not a failure (backlog:79405f9df589).
   // Naming the commits here — and not in the document — keeps `--check` green
@@ -3352,7 +3403,8 @@ async function main() {
       fingerprint: report.document.fingerprint,
     }, null, 2)}\n`);
   } else {
-    process.stderr.write(`\n  repo:truth --check — ${report.counts.facts} facts, ${report.counts.citations} citations `
+    process.stderr.write(`\n  repo:truth --check${wantsRequireCurrent ? ' --require-current' : ''} — ${report.counts.facts} facts `
+      + `(${report.counts.currentFacts} current, ratio ${report.counts.factsCurrentRatio.toFixed(3)}), ${report.counts.citations} citations `
       + `across ${report.counts.surfaces} bound surfaces\n\n`);
     for (const problem of report.problems) process.stderr.write(`  ✗ ${problem.code}\n    ${problem.message}\n\n`);
     for (const note of stalenessNotes) process.stderr.write(`  · ${note}\n`);

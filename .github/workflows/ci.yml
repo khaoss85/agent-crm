@@ -111,4 +111,9 @@ jobs:
       # member of `gtm:check`, so the composition of `gtm:check` — which a
       # developer runs locally in a possibly shallow clone — is unchanged. It
       # takes about half a second.
-      - run: npm run repo:truth -- --check
+      #
+      # `--require-current` holds the freshness ratio at 1: any fact whose
+      # status is not `current` (a measurement that no longer describes this
+      # tree) fails this job, exactly like a test would. A local `--check`
+      # without the flag still guards agreement only.
+      - run: npm run repo:truth -- --check --require-current
