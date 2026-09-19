@@ -2,7 +2,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import pg from 'pg';
+import { createRequire } from 'node:module';
 import { AppError, ConflictError } from './errors.js';
 import {
   quoteStorageIdentifier,
@@ -20,7 +20,28 @@ import {
   registerPostgresqlDurableJobStorage,
 } from './durable-job-storage.js';
 
-const { Pool, Client } = pg;
+const requirePackage = createRequire(import.meta.url);
+
+/**
+ * The `pg` driver loads when a real pool is opened, not when this module is
+ * imported. The repository-truth probe and fixture checkouts exercise this
+ * seam with an injected pool and no `node_modules`: a top-level driver import
+ * made merely *loading* the module depend on the environment, so the same
+ * probe on the same code recorded different facts with and without
+ * dependencies installed. Opening a real pool without the driver is still
+ * refused, with a typed error at the seam instead of a loader failure.
+ */
+function loadPgDriver() {
+  try {
+    return requirePackage('pg');
+  } catch (error) {
+    throw new AppError("PostgreSQL driver 'pg' is not installed", {
+      code: 'STORAGE_UNAVAILABLE',
+      status: 503,
+      cause: error,
+    });
+  }
+}
 
 const DEFAULT_ACQUISITION_MS = 2_000;
 const DEFAULT_QUERY_MS = 5_000;
@@ -699,6 +720,7 @@ export async function createPostgresqlDatabase(options = {}) {
     });
   }
   const quoted = quoteStorageIdentifier(schema, 'schema');
+  const { Pool } = loadPgDriver();
   const pool = new Pool({
     connectionString: connection,
     max: options.max ?? 4,
@@ -747,6 +769,7 @@ export async function createPostgresqlDatabase(options = {}) {
       closed = true;
       const probe = PROBES.get(storage);
       try { probe?.abandonCheckedOut?.(); } catch { /* already gone */ }
+      const { Client } = loadPgDriver();
       const admin = new Client({ connectionString: connection, connectionTimeoutMillis: 2000 });
       try {
         await withDeadline(admin.connect(), 2000, 'acquisition');
@@ -860,6 +883,7 @@ export function createPostgresqlPool(endpoint) {
   // search_path / options / connectionString are never isolation inputs. The
   // adapter always qualifies objects under the fixed schema and SET search_path
   // on checkout; hostile caller path settings are ignored here.
+  const { Pool } = loadPgDriver();
   const pool = new Pool({
     host: endpoint.host,
     port: endpoint.port ?? 5432,

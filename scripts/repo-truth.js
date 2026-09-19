@@ -612,6 +612,25 @@ export function readTruthDirective(line, { javascript = false } = {}) {
 }
 
 /**
+ * A probe that cannot *load* its modules has established nothing — a different
+ * outcome from a probe that ran and found the behavior wanting. Only a missing
+ * environment package (a bare specifier Node cannot resolve) is an environment
+ * gap: the fact is undetermined, with the reason, rather than absent. Any
+ * other load failure keeps the strict reading — the probe reports the
+ * negative, and `--check` holds the bound surfaces to the committed value.
+ *
+ * @param {unknown} error
+ * @returns {{ undetermined: boolean, reason: string | null }}
+ */
+export function classifyEnvironmentGap(error) {
+  const message = String((/** @type {any} */ (error))?.message ?? error);
+  const missing = /Cannot find package '([^']+)'/.exec(message);
+  if (!missing) return { undetermined: false, reason: null };
+  const name = missing[1].replace(/[^a-zA-Z0-9_@/-]/g, '');
+  return { undetermined: true, reason: `environment lacks package '${name}'` };
+}
+
+/**
  * Every `truth:` directive in a surface that is not one of the three legal forms.
  *
  * The legal forms are a citation (`id=value`), a retired-code declaration and a
@@ -1003,16 +1022,28 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     // throws when it is touched separates "refused" from "refused before any
     // SQL", which a real database cannot do — a write that opens, is rejected
     // and rolls back leaves exactly the rows a write that never happened does.
+    // The probe loads its modules before it believes anything they say. The
+    // adapter opens its driver (`pg`) lazily at pool creation, so this
+    // generator also runs inside fixture checkouts that carry `packages/` and
+    // no `node_modules`. A module that still cannot load for lack of an
+    // environment package is not evidence the capability is absent: the fact
+    // is undetermined, with the reason, rather than absent. Only a probe that
+    // ran and found the behavior wanting reports `absent`.
+    let storageModule;
+    let appFactory;
     try {
-      // The adapter module imports `pg`, and this generator also runs inside
-      // fixture repositories that carry `packages/` and no `node_modules`. A
-      // probe that throws there does not report a weaker fact — it takes the
-      // whole `spine.contract` authority down with it, and every fact that
-      // authority carries disappears. So an unrunnable probe reports `absent`,
-      // which is the conservative direction: a probe that cannot run does not
-      // get to claim the capability.
-      const storageModule = await import(url('packages/core/src/postgresql-storage.js'));
-      const appFactory = await import(url('packages/app/src/index.js'));
+      storageModule = await import(url('packages/core/src/postgresql-storage.js'));
+      appFactory = await import(url('packages/app/src/index.js'));
+    } catch (error) {
+      const gap = classifyEnvironmentGap(error);
+      if (gap.undetermined) {
+        bundle.readOnlyCompositionProbe = 'unknown';
+        bundle.readOnlyCompositionUnknownReason = gap.reason;
+      } else {
+        bundle.readOnlyCompositionProbe = false;
+      }
+    }
+    if (storageModule && appFactory) try {
       const touched = [];
       const screamingPool = {
         connect() { touched.push('connect'); throw new Error('read-only storage took a connection'); },
@@ -2369,12 +2400,15 @@ export function buildFacts(bundle) {
   // the inputs that would make it a writer are refused rather than ignored.
   add({
     id: 'spine.read_only_composition.implemented',
-    value: bundle.readOnlyCompositionProbe === true ? 'implemented' : 'absent',
+    value: bundle.readOnlyCompositionProbe === true ? 'implemented'
+      : bundle.readOnlyCompositionProbe === 'unknown' ? 'unknown' : 'absent',
     authority: 'spine.contract',
     evidence: [
       'packages/core/src/postgresql-bootstrap.js#bootstrapPostgresqlReader',
       'packages/app/src/portable-app.js#startPortablePostgresqlReaderApp',
       'executable-probe:read-only-refuses-before-any-sql',
+      ...(bundle.readOnlyCompositionProbe === 'unknown' && bundle.readOnlyCompositionUnknownReason
+        ? [`unestablished:${bundle.readOnlyCompositionUnknownReason}`] : []),
     ],
     scope: 'framework',
     limitations: [
