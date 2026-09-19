@@ -716,8 +716,8 @@ export async function bootstrapPostgresqlApplication(options) {
   const leaseTtlMs = Number.isInteger(options.leaseTtlMs) && options.leaseTtlMs > 0
     ? options.leaseTtlMs
     : WRITER_LEASE_TTL_MS;
-  const controlPool = createPostgresqlPool({ ...options.control, acquisitionDeadlineMs });
-  const dataPool = createPostgresqlPool({ ...options.data, acquisitionDeadlineMs });
+  const controlPool = await createPostgresqlPool({ ...options.control, acquisitionDeadlineMs });
+  const dataPool = await createPostgresqlPool({ ...options.data, acquisitionDeadlineMs });
   let controlStorage;
   let dataStorage;
   /** @type {any} */
@@ -1138,7 +1138,7 @@ export async function bootstrapPostgresqlReader(options) {
     ?? options.data?.acquisitionDeadlineMs
     ?? DEFAULT_ACQUISITION_MS;
   const queryDeadlineMs = options.queryDeadlineMs ?? options.data?.queryDeadlineMs ?? DEFAULT_QUERY_MS;
-  const dataPool = createPostgresqlPool({ ...options.data, acquisitionDeadlineMs });
+  const dataPool = await createPostgresqlPool({ ...options.data, acquisitionDeadlineMs });
   /** @type {any} */
   let dataStorage;
   try {
