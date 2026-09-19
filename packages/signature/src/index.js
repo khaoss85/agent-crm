@@ -25,7 +25,7 @@ import { createSignatureOrdersCapability } from './capability.js';
  * What did change is that the domain is now *optional and declared*: composed
  * by a static import in `packages/domains/generated/index.js`, never imported
  * by the kernel, reaching Commercial only through the declared capabilities
- * `commercial-quotes@1` and `commercial-quote-binding@1`, and attaching its
+ * `commercial-quotes@2` and `commercial-quote-binding@1`, and attaching its
  * two application-scoped operations (`ingestSignatureEvent`,
  * `reconcileSignature`) through the ADR-032 operations contract instead of
  * named kernel wiring. The raw-body webhook route stays a hand-written,

@@ -206,7 +206,7 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 - [ ] Customer Data Operations v2; Interactions; Billing; Marketing; Analytics.
 - [ ] Vercel Accordo project/account scope and `public-surface-check` after private-repository creation.
 - [ ] Repository Truth Contract v2 generated `productionPosture`.
-- [ ] Deprecate `commercial-quotes@1` after every consumer moves to the integrity-verifying contract.
+- [x] Deprecate `commercial-quotes@1` after every consumer moves to the integrity-verifying contract.
 - [ ] Browser automation in CI.
 - [ ] DX6/ADR-032 application-operation observations; DX9 Context Pack; DX13 Project MCP parity.
 - [ ] Shared-database row tenancy only if economics justify it.

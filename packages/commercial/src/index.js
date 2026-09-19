@@ -5,7 +5,7 @@ import { CommercialRegistries } from './registry.js';
 import { buildCommercialActions } from './actions.js';
 import { createCatalogSync } from './catalog-sync.js';
 import {
-  createCommercialQuotesCapability, createCommercialQuotesVerifiedCapability, createCommercialQuoteBindingCapability,
+  createCommercialQuotesVerifiedCapability, createCommercialQuoteBindingCapability,
 } from './capability.js';
 
 /**
@@ -25,8 +25,9 @@ import {
  *
  * What did change is that the domain is now *optional and declared*: composed
  * by a static import in `packages/domains/generated/index.js`, never imported
- * by the kernel, reached by other packages only through `commercial-quotes@1`
- * and `commercial-quote-binding@1`.
+ * by the kernel, reached by other packages only through `commercial-quotes@2`
+ * and `commercial-quote-binding@1` (`commercial-quotes@1` retired: every
+ * consumer moved to the integrity-verifying contract).
  *
  * The one deliberate residue: catalog sync's HTTP route and app method stay
  * kernel-attached, because no package can contribute a route or an application
@@ -93,15 +94,18 @@ export function createCommercialDomain(options = {}) {
     // byte-identical (held by the LA0-Commercial baseline).
     // 3: offers commercial-quotes@2 alongside @1 — the authoritative signed-term
     // verifier is a new required method with a stronger guarantee (ADR-036).
-    version: 3,
+    // 4: retires commercial-quotes@1 — every in-repo consumer reads through
+    // @2, and the registry refuses a @1 requirement naming the consumer, so
+    // the composition contract shrank by one offered capability.
+    version: 4,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',
     resources: [...COMMERCIAL_RESOURCES],
     capabilities: [
-      createCommercialQuotesCapability(registries, config),
-      // @2 adds the authoritative signed-term verifier; @1 stays offered
-      // byte-identical for any consumer that has not migrated (ADR-036).
+      // @2 carries the authoritative signed-term verifier every consumer of
+      // signed terms must call (ADR-036); @1 is retired, its reads embedded
+      // byte-identically in @2's base.
       createCommercialQuotesVerifiedCapability(registries, config),
       createCommercialQuoteBindingCapability(),
     ],
