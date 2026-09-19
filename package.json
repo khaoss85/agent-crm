@@ -43,6 +43,7 @@
     "characterize:intelligence": "node scripts/characterize-intelligence.mjs",
     "characterize:commercial": "node scripts/characterize-commercial.mjs",
     "repo:truth": "node scripts/repo-truth.js",
+    "measure:refresh": "node scripts/measure-suite.js --refresh",
     "jtbd:check": "node scripts/jtbd-gate.js"
   },
   "keywords": [

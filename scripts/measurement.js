@@ -79,6 +79,35 @@ export function gitIn(cwd) {
 }
 
 /**
+ * The work that moved tests/ between two commits, newest first, bounded.
+ *
+ * Read-speed git only: no checkout, no run. Shared by the site-check
+ * provenance note and the repository-truth freshness read, so both name the
+ * same superseding work (backlog:79405f9df589). A superseded measurement must
+ * say WHAT superseded it — which commits touched tests/ — not only that two
+ * trees differ.
+ *
+ * @param {(args: string[]) => GitResult} git
+ * @param {string} sha the measured commit
+ * @param {string} headSha the commit to compare against
+ * @param {number} [limit] how many commits to name; the total is still counted
+ * @returns {{ commits: Array<{ sha: string, subject: string }>, total: number }}
+ */
+export function listSupersedingCommits(git, sha, headSha, limit = 10) {
+  const empty = { commits: [], total: 0 };
+  if (!sha || !headSha) return empty;
+  const log = git(['log', '--format=%H %s', `${sha}..${headSha}`, '--', 'tests/']);
+  if (log.status !== 0 || !log.stdout) return empty;
+  const lines = log.stdout.split('\n').filter((line) => /^[0-9a-f]{40} /.test(line));
+  const count = git(['rev-list', '--count', `${sha}..${headSha}`, '--', 'tests/']);
+  const total = /^\d+$/.test(count.stdout) ? Number(count.stdout) : lines.length;
+  return {
+    commits: lines.slice(0, limit).map((line) => ({ sha: line.slice(0, 40), subject: line.slice(41, 121) })),
+    total,
+  };
+}
+
+/**
  * Decides whether this checkout can prove the measurement record, and whether the
  * record's own facts survive being checked against the commit it names.
  *
@@ -174,9 +203,19 @@ export function inspectProvenance(measuredAgainst, options = {}) {
   const measuredTree = git(['rev-parse', `${sha}:tests`]).stdout;
   const headTree = git(['rev-parse', `${headSha}:tests`]).stdout;
   if (measuredTree && headTree && measuredTree !== headTree) {
+    // A superseded measurement says WHAT superseded it: the commits that
+    // touched tests/ since, not only that two trees differ
+    // (backlog:79405f9df589). Advisory prose, never committed, so naming them
+    // cannot restate any document.
+    const superseded = listSupersedingCommits(git, sha, headSha);
+    const named = superseded.commits.map(({ sha: hash, subject }) => `${hash.slice(0, 7)} ${subject}`).join('; ');
+    const remainder = superseded.total > superseded.commits.length ? `; and ${superseded.total - superseded.commits.length} more` : '';
     notes.push(
       'The test corpus has changed since that measurement, so the recorded count describes '
-      + `${sha}, not HEAD. Re-run \`npm run verify\` and update measuredAgainst before publishing anything.`,
+      + `${sha}, not HEAD.`
+      + (named ? ` Work that touched tests/ since: ${named}${remainder}.` : '')
+      + ' Re-anchor with `node scripts/measure-suite.js --refresh` when only test files changed, '
+      + 'or re-run `npm run verify` and update measuredAgainst before publishing anything.',
     );
   }
 
@@ -257,12 +296,70 @@ function checkFacts(git, sha, record, failures) {
 
   const listed = git(['ls-tree', '-r', '--name-only', sha, 'tests/']);
   if (listed.status === 0) {
-    const actualFiles = listed.stdout.split('\n').filter((path) => path.endsWith('.test.js')).length;
+    const actualPaths = listed.stdout.split('\n').filter((path) => path.endsWith('.test.js'));
+    const actualFiles = actualPaths.length;
     if (actualFiles !== recordedFiles) {
       failures.push(`${where} measuredAgainst.testFiles is ${recordedFiles}, but that commit holds ${actualFiles} \`*.test.js\` files.`);
     } else if (Number.isInteger(record.tests) && record.tests < actualFiles) {
       failures.push(`${where} measuredAgainst.tests is ${record.tests} across ${actualFiles} test files, which is fewer tests than files.`);
     }
+    checkFileMap(record, actualPaths, failures, where);
+  } else if (record.files !== undefined) {
+    failures.push(
+      `${where} measuredAgainst carries a per-file map, but tests/ at that commit cannot be listed, `
+      + 'so the map cannot be checked. A map nobody can verify is not evidence.',
+    );
+  }
+}
+
+/**
+ * The per-file test-count map `measure-suite --apply` records beside the
+ * totals: which `*.test.js` file contributed how many passing tests to the
+ * run. `measure-suite --refresh` carries those contributions forward, so the
+ * map is load-bearing — and a hand-edited map that sums correctly while
+ * naming the wrong files would carry the wrong numbers forward. Checked
+ * exactly, against the commit the record names: same file set, same total.
+ * A record without a map (every record written before the map existed) skips
+ * this whole check and keeps the guarantees it always had.
+ *
+ * @param {Record<string, any>} record
+ * @param {string[]} actualPaths the `*.test.js` files that commit holds
+ * @param {string[]} failures
+ * @param {string} where
+ */
+function checkFileMap(record, actualPaths, failures, where) {
+  const fileMap = record.files;
+  if (fileMap === undefined) return;
+  const entries = fileMap && typeof fileMap === 'object' && !Array.isArray(fileMap) ? Object.entries(fileMap) : null;
+  const shapeOk = entries !== null
+    && entries.length > 0
+    && entries.every(([path, value]) => typeof path === 'string'
+      && /^tests\/.+\.test\.js$/.test(path)
+      && !path.includes('..')
+      && value !== null && typeof value === 'object' && !Array.isArray(value)
+      && Number.isInteger(value.tests) && value.tests >= 0);
+  if (!shapeOk) {
+    failures.push(
+      `${where} measuredAgainst.files is not a map of \`tests/**.test.js\` paths to \`{tests}\` counts. `
+      + 'A hand-edited map fails the build; regenerate it with `node scripts/measure-suite.js`.',
+    );
+    return;
+  }
+  const mapped = entries.map(([path]) => path).sort();
+  const actual = [...actualPaths].sort();
+  if (JSON.stringify(mapped) !== JSON.stringify(actual)) {
+    failures.push(
+      `${where} measuredAgainst.files names ${mapped.length} test files, but that commit holds ${actual.length}. `
+      + 'The map does not describe the corpus the run was taken over.',
+    );
+    return;
+  }
+  const sum = entries.reduce((total, [, value]) => total + value.tests, 0);
+  if (sum !== record.tests) {
+    failures.push(
+      `${where} measuredAgainst.files sums to ${sum} tests, but the record claims ${record.tests}. `
+      + 'The parts do not add up to the whole.',
+    );
   }
 }
 
