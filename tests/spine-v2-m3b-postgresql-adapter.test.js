@@ -58,11 +58,22 @@ test('M3B pins pg@8.23.0 as the only production runtime dependency', () => {
   assert.equal(lock.packages?.['node_modules/pg-native'], undefined);
 });
 
-test('M3B PostgreSQL adapter never wraps import pg in try/catch', () => {
+test('M3B PostgreSQL adapter loads pg only where it opens a real pool', () => {
+  // The static `import pg from 'pg'` used to be pinned here, so a missing
+  // driver crashed at module load. That pin is exactly what made the
+  // repository-truth probe environment-dependent: without `node_modules` the
+  // probe could not even load the module it inspects, and the fact was
+  // published as `absent` on the same code that reads `implemented` with
+  // dependencies installed (backlog:4b50a89f7171). The pin's purpose —
+  // `pg` stays the only driver and its absence fails loudly, never falls
+  // back — survives the move and is re-asserted below; only the location of
+  // the load changed. Loading the module must not need the driver; opening a
+  // real pool still does.
   const source = readFileSync(new URL('../packages/core/src/postgresql-storage.js', import.meta.url), 'utf8');
-  assert.match(source, /^import pg from 'pg';$/m);
-  assert.doesNotMatch(source, /try\s*\{[^}]*import\s+['"]pg['"]/s);
-  assert.doesNotMatch(source, /try\s*\{[\s\S]*from 'pg'/);
+  assert.doesNotMatch(source, /^import pg from 'pg';$/m);
+  assert.doesNotMatch(source, /from 'pg'/);
+  assert.match(source, /await import\('pg'\)/);
+  assert.match(source, /STORAGE_DRIVER_UNAVAILABLE/);
 });
 
 test('M3B live PostgreSQL adapter', { timeout: 30_000 }, async (t) => {

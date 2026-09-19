@@ -939,7 +939,7 @@ async function withNativeClient(environment, consumer, createPool) {
   }
   let pool;
   try {
-    pool = createPool({ ...clientOptions(environment), max: 1 });
+    pool = await createPool({ ...clientOptions(environment), max: 1 });
   } catch {
     refuse('BACKUP_DATABASE_CLIENT_UNAVAILABLE', 'PostgreSQL backup database client is unavailable');
   }
