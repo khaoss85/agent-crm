@@ -420,20 +420,50 @@ measurement.source_is_ancestor   true      (provenance intact)
 measurement.test_tree_current    false     (the corpus moved)
 measurement.source_sha           status: stale
 measurement.test_count           status: stale
-measurement.test_file_count      status: stale
+measurement.test_file_count      status: current or stale (see below)
 ```
 
 Nothing here fails because of that, and nothing papers over it. ADR-027 already
 settled that a record naming its own ancestor commit is truthful even when the suite
 has since moved; what must not exist is a *sentence* quoting a stale number as
-current, and the citation check is what makes writing one fail. Re-measure with
-`node scripts/measure-suite.js --apply` on a clean tree and the three `stale`
-statuses become `current` in the same regeneration.
+current, and the citation check is what makes writing one fail.
+
+The three statuses do not move together. A full re-measure
+(`node scripts/measure-suite.js --apply` on a clean tree) makes all three
+`current` in the same regeneration, but a 25-minute run cannot win a race
+against a repository where anyone works: a tests/ merge landing inside the
+window makes the fresh measurement stale on arrival (ADR-044). So freshness is
+per fact, and each rule proves what it claims with read-speed git alone:
+
+- `test_file_count` stays `current` across a moved tree when HEAD holds
+  exactly the recorded number of `*.test.js` files — an exact recount, not a
+  guess. A reword that adds no file keeps the fact it describes.
+- `source_sha` and `test_count` stay strict: only a byte-identical tests/
+  tree proves them, because no read-speed operation can recount executed
+  tests across a content change. Anything unprovable reads `stale`, never
+  `current`.
+- `test_tree_current` keeps reporting the corpus move itself, `false` and all.
+
+When only test files changed, `npm run measure:refresh` re-anchors the record
+at HEAD in about a minute: it runs the added and changed test files, requires
+them green, and carries every untouched file's contribution forward from the
+per-file map `--apply` records beside the totals. Anything else — a helper or
+fixture edit under `tests/`, a broken lineage, a red targeted run, a record
+that predates the map — fails closed with the reason, and only a full run may
+speak for the new tree.
+
+A superseded measurement says *what* superseded it: the site-check provenance
+note and `repo:truth -- --check` name the commits that touched `tests/` since
+the measured one. The names live in console output, never in the committed
+document — a per-merge list in evidence would restate the document on every
+green PR, which is the failure the unpublished `HEAD:tests` half of
+`test_tree_current` already exists to prevent.
 
 ## Related
 
 `DECISIONS.md` ADR-039 (the four options and why C) · ADR-027 (the measurement
-record and its provenance) · ADR-038 (what the spine owns and what it does not) ·
+record and its provenance) · ADR-044 (freshness that survives concurrent work) ·
+ADR-038 (what the spine owns and what it does not) ·
 `docs/QUALITY_GATES.md` §6 · `docs/plans/repository-truth-contract-v1.md` ·
 `scripts/repo-truth.js` · `tests/repository-truth-contract.test.js`.
 

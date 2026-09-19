@@ -30,7 +30,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { inspectProvenance, findLooseTestCounts, PROVENANCE, gitIn } from '../scripts/measurement.js';
+import { inspectProvenance, findLooseTestCounts, PROVENANCE, gitIn, listSupersedingCommits } from '../scripts/measurement.js';
 
 const repo = process.cwd();
 
@@ -234,6 +234,112 @@ test('a measurement whose corpus has since moved is accepted, and flagged as des
     report.notes.some((note) => note.includes('test corpus has changed since that measurement')),
     'the record stays truthful about its own commit, and says the suite has moved since',
   );
+});
+
+// ---------------------------------------------------------------- provenance: superseded records name their superseders
+
+test('a superseded measurement says which work touched tests/, not only that trees differ', (t) => {
+  const root = scratch('prov-names');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = buildFixtureRepo({ cwd: root });
+
+  const git = gitIn(root);
+  writeFileSync(join(root, 'tests/later.test.js'), '// later\n');
+  assert.equal(git(['add', '-A']).status, 0);
+  assert.equal(git(['commit', '--quiet', '-m', 'a fourth commit that changes tests/']).status, 0);
+
+  const report = inspectProvenance(fixture.record, { cwd: root });
+  assert.equal(report.outcome, PROVENANCE.ANCESTOR, report.failures.join('\n'));
+  const drift = report.notes.find((note) => note.includes('test corpus has changed since that measurement'));
+  assert.ok(drift, 'the drift note is present');
+  assert.match(drift, /Work that touched tests\/ since:/);
+  assert.match(drift, /a fourth commit that changes tests\//, 'the note names the superseding commit subject');
+});
+
+test('listSupersedingCommits is bounded, newest first, and empty when nothing moved', (t) => {
+  const root = scratch('prov-list');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = buildFixtureRepo({ cwd: root });
+  const git = gitIn(root);
+
+  const empty = listSupersedingCommits(git, fixture.measured, fixture.head);
+  assert.deepEqual(empty, { commits: [], total: 0 });
+
+  writeFileSync(join(root, 'tests/one.test.js'), '// one\n');
+  git(['add', '-A']);
+  git(['commit', '--quiet', '-m', 'first tests touch']);
+  writeFileSync(join(root, 'tests/two.test.js'), '// two\n');
+  git(['add', '-A']);
+  git(['commit', '--quiet', '-m', 'second tests touch']);
+
+  const head = git(['rev-parse', 'HEAD']).stdout;
+  const listed = listSupersedingCommits(git, fixture.measured, head);
+  assert.equal(listed.total, 2);
+  assert.equal(listed.commits.length, 2);
+  assert.equal(listed.commits[0].subject, 'second tests touch');
+  assert.equal(listed.commits[1].subject, 'first tests touch');
+
+  const bounded = listSupersedingCommits(git, fixture.measured, head, 1);
+  assert.equal(bounded.total, 2, 'the total is counted even when the listing is bounded');
+  assert.equal(bounded.commits.length, 1);
+});
+
+// ---------------------------------------------------------------- provenance: the per-file map is checked exactly
+
+test('a per-file map that describes the corpus exactly is accepted', (t) => {
+  const root = scratch('prov-map-ok');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = buildFixtureRepo({ cwd: root });
+
+  const record = {
+    ...fixture.record,
+    files: { 'tests/first.test.js': { tests: 7 }, 'tests/second.test.js': { tests: 5 } },
+  };
+  const report = inspectProvenance(record, { cwd: root });
+  assert.equal(report.outcome, PROVENANCE.ANCESTOR, report.failures.join('\n'));
+  assert.deepEqual(report.failures, []);
+});
+
+test('a per-file map whose parts do not add up to the whole is refused', (t) => {
+  const root = scratch('prov-map-sum');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = buildFixtureRepo({ cwd: root });
+
+  const report = inspectProvenance({
+    ...fixture.record,
+    files: { 'tests/first.test.js': { tests: 7 }, 'tests/second.test.js': { tests: 6 } },
+  }, { cwd: root });
+  assert.equal(report.outcome, PROVENANCE.FACTS_MISMATCH, report.failures.join('\n'));
+  assert.ok(report.failures.some((failure) => /sums to 13 tests, but the record claims 12/.test(failure)));
+});
+
+test('a per-file map naming files the commit does not hold is refused', (t) => {
+  const root = scratch('prov-map-files');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = buildFixtureRepo({ cwd: root });
+
+  const report = inspectProvenance({
+    ...fixture.record,
+    files: { 'tests/first.test.js': { tests: 12 }, 'tests/ghost.test.js': { tests: 0 } },
+  }, { cwd: root });
+  assert.equal(report.outcome, PROVENANCE.FACTS_MISMATCH, report.failures.join('\n'));
+  assert.ok(report.failures.some((failure) => /does not describe the corpus/.test(failure)));
+});
+
+test('a malformed per-file map fails the build instead of being carried', (t) => {
+  const root = scratch('prov-map-shape');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fixture = buildFixtureRepo({ cwd: root });
+
+  for (const files of [
+    { 'tests/first.test.js': { tests: -1 } },
+    { 'tests/first.test.js': { tests: 'many' } },
+    ['tests/first.test.js'],
+  ]) {
+    const report = inspectProvenance({ ...fixture.record, files }, { cwd: root });
+    assert.equal(report.outcome, PROVENANCE.FACTS_MISMATCH, report.failures.join('\n'));
+    assert.ok(report.failures.some((failure) => /not a map of/.test(failure)));
+  }
 });
 
 // ---------------------------------------------------------------- provenance: shallow and absent

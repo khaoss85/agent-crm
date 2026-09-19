@@ -136,9 +136,12 @@ rules:
   no ledger.
 - **A moved corpus is still advisory.** When `tests/` changes after a
   measurement, the gate *notes* that the recorded count describes an older commit
-  and does not fail. Failing there would block every PR that adds a test until it
-  re-ran the suite, which is a worse outcome than a note. Re-measure before
-  publishing: `node scripts/measure-suite.js --apply` on a clean tree.
+  and names the commits that touched `tests/` since — and does not fail. Failing
+  there would block every PR that adds a test until it re-ran the suite, which is
+  a worse outcome than a note. Re-measure before publishing:
+  `node scripts/measure-suite.js --apply` on a clean tree, or
+  `npm run measure:refresh` when only test files changed (it runs the changed
+  files and carries the rest, in about a minute).
 - **Residual, stated rather than hidden:** a robust check that the *rest* of
   `PROJECT_STATUS.md` is current — the milestone row, the open-PR row, the CI row
   — needs a source of truth this repository does not have offline. It stays the

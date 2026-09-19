@@ -4466,3 +4466,48 @@ CI emits the existing measure-suite record from the verification it already
 runs. No count is transcribed; publication reconciles the artifact's commit and
 ancestry, the npm artifact and the deployed site separately. This changes
 repository maintenance and distribution evidence, not domain/runtime contracts.
+
+## ADR-044 — Measurement freshness that survives concurrent work
+
+**Status:** accepted
+
+A full measurement takes the whole `npm run verify` plus its verification, and the
+ledger called a record current only while HEAD's tests/ tree was byte-identical to
+the measured one. On a repository where anyone works, a tests/ merge landing inside
+that window makes the fresh measurement stale on arrival — observed when a
+re-measure taken at `bffb1c2` landed as `2b66877` already stale behind `312227b`,
+a one-file test reword that changed no count. Re-measuring harder cannot win that
+race; measuring smaller can.
+
+So freshness is per fact, and each rule proves what it claims with read-speed git
+alone. `measurement.test_file_count` stays current across a moved tree when HEAD
+holds exactly the recorded number of test files — an exact recount, not a guess.
+`measurement.source_sha` and `measurement.test_count` stay strict: only a
+byte-identical tests/ tree proves them, because no read-speed operation can recount
+executed tests across a content change. Anything unprovable reads stale, never
+current. `measurement.test_tree_current` keeps reporting the corpus move itself.
+
+`measure-suite --apply` records a per-file map beside the totals — which test file
+contributed how many passing tests, reconciled against the full run's count or
+nothing is recorded — and `site-check.js` verifies the map against the named
+commit exactly (same file set, same total), so a hand-edited map fails the build
+like any re-pointed number. `npm run measure:refresh` re-anchors the record at
+HEAD by running only the added and changed test files, requiring them green, and
+carrying the rest; a helper or fixture edit under tests/, a broken lineage, a red
+targeted run, or a record that predates the map fails closed, and the refresh
+chases a moving tip for three rounds before refusing rather than recording a guess.
+
+A superseded measurement names the commits that touched tests/ since — in the
+site-check provenance note and in `repo:truth -- --check` output, never in the
+committed document, where a per-merge list would restate the document on every
+green PR.
+
+Rejected: inferring count-neutrality from the diff (a reworded string can hide a
+data-driven count change — a parser's guess where a contract must prove);
+excluding the measurement facts from the current-facts ratio (loosening the
+validation to hide the failure); fully automatic ledger commits from CI (a second
+change boundary: new automation with push permissions this change cannot verify).
+
+Boundary stated plainly: after a tests/ content change, `test_count` still reads
+stale until the minutes-long refresh confirms the count. The gate cannot prove
+what only execution knows, and it does not pretend otherwise.

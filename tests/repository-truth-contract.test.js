@@ -36,6 +36,7 @@ import {
   readAuthorities,
   readBenchmarkReceipt,
   readMeasurement,
+  measurementStatus,
   repositoryBasenames,
   resolveSurfacePath,
   serialize,
@@ -1093,6 +1094,97 @@ test('a shallow clone refuses the measurement facts rather than flaking on them'
   assert.equal(measurement.ancestor, 'unknown');
   assert.equal(measurement.treeCurrent, 'unknown');
   problemNaming(problems, 'fetch-depth: 0');
+});
+
+// ── measurement freshness survives harmless moves (backlog:79405f9df589)
+//
+// A measurement taken just before a behavior-preserving tests/ touch must not
+// be declared old merely because the tip moved. The file count is exactly
+// recountable without running anything, so it tolerates the move; the sha
+// and the executed-test count stay strict, because nothing read-speed can
+// recount them across a content change.
+
+test('measurementStatus is strict for the sha and the executed count, exact for the file count', () => {
+  assert.deepEqual(
+    measurementStatus({ treeCurrent: 'true', testFilesMatch: 'true' }),
+    { source_sha: 'current', test_count: 'current', test_file_count: 'current' },
+  );
+  assert.deepEqual(
+    measurementStatus({ treeCurrent: 'false', testFilesMatch: 'true' }),
+    { source_sha: 'stale', test_count: 'stale', test_file_count: 'current' },
+  );
+  assert.deepEqual(
+    measurementStatus({ treeCurrent: 'false', testFilesMatch: 'false' }),
+    { source_sha: 'stale', test_count: 'stale', test_file_count: 'stale' },
+  );
+  assert.deepEqual(
+    measurementStatus({ treeCurrent: 'unknown', testFilesMatch: 'unknown' }),
+    { source_sha: 'unknown', test_count: 'unknown', test_file_count: 'unknown' },
+  );
+  assert.deepEqual(
+    measurementStatus(null),
+    { source_sha: 'unknown', test_count: 'unknown', test_file_count: 'unknown' },
+  );
+});
+
+test('a tests/ touch that keeps the file count leaves the file-count fact current', (t) => {
+  // The 312227b shape: one test file reworded, no file added or removed, so
+  // the recorded file count still describes HEAD exactly.
+  const { root, base } = measurementRepo(t, {
+    files: { 'site/claims.json': ledger({ sha: 'placeholder', tests: 7, testFiles: 1 }) },
+    commits: [(dir) => writeFileSync(join(dir, 'tests', 'first.test.js'), '// reworded, same corpus\n')],
+  });
+  writeFileSync(join(root, 'site/claims.json'), ledger({ sha: base, tests: 7, testFiles: 1 }));
+  const problems = [];
+  const measurement = readMeasurement(root, problems);
+  assert.deepEqual(problems, [], 'a truthful record of a reworded corpus is not a failure');
+  assert.equal(measurement.treeCurrent, 'false');
+  assert.equal(measurement.testFilesMatch, 'true');
+
+  const built = buildFacts({ ...structuredClone(BLANK_BUNDLE), measurement });
+  const facts = new Map(built.facts.map((fact) => [fact.id, fact]));
+  assert.equal(facts.get('measurement.test_file_count').status, 'current');
+  assert.equal(facts.get('measurement.test_count').status, 'stale');
+  assert.equal(facts.get('measurement.source_sha').status, 'stale');
+  assert.equal(facts.get('measurement.test_tree_current').value, 'false');
+});
+
+test('a superseded measurement names the tests/-touching commits, newest first', (t) => {
+  const { root, base } = measurementRepo(t, {
+    files: { 'site/claims.json': ledger({ sha: 'placeholder', tests: 7, testFiles: 1 }) },
+    commits: [
+      (dir) => writeFileSync(join(dir, 'tests', 'second.test.js'), '// the corpus moved\n'),
+      (dir) => writeFileSync(join(dir, 'README.md'), 'unrelated\n'),
+    ],
+  });
+  writeFileSync(join(root, 'site/claims.json'), ledger({ sha: base, tests: 7, testFiles: 1 }));
+  const measurement = readMeasurement(root, []);
+  assert.equal(measurement.treeCurrent, 'false');
+  // Only the tests/ commit is named; the README commit is not superseding work.
+  assert.equal(measurement.supersededBy.length, 1);
+  assert.match(measurement.supersededBy[0].sha, /^[0-9a-f]{40}$/);
+  assert.equal(measurement.supersededBy[0].subject, 'next');
+});
+
+test('superseding commits stay out of the committed document', (t) => {
+  // Naming per-merge commits in evidence would restate the document on every
+  // green PR — the anti-cry-wolf rule behind the unpublished headTree. The
+  // names live in console channels; the document carries no HEAD-side value.
+  const { root, base } = measurementRepo(t, {
+    files: { 'site/claims.json': ledger({ sha: 'placeholder', tests: 7, testFiles: 1 }) },
+    commits: [(dir) => writeFileSync(join(dir, 'tests', 'second.test.js'), '// the corpus moved\n')],
+  });
+  writeFileSync(join(root, 'site/claims.json'), ledger({ sha: base, tests: 7, testFiles: 1 }));
+  const measurement = readMeasurement(root, []);
+  assert.ok(measurement.supersededBy.length >= 1, 'the fixture really superseded the record');
+  const { facts } = buildFacts({ ...structuredClone(BLANK_BUNDLE), measurement });
+  const head = git(root, ['rev-parse', 'HEAD']).stdout.trim();
+  for (const fact of facts.filter((entry) => entry.id.startsWith('measurement.'))) {
+    for (const stripe of fact.evidence) {
+      assert.ok(!stripe.includes(head), `${fact.id} evidence leaks the HEAD hash: ${stripe}`);
+      assert.ok(!stripe.includes(head.slice(0, 12)), `${fact.id} evidence leaks the HEAD prefix: ${stripe}`);
+    }
+  }
 });
 
 // ─────────────── the whole pipeline: source moves, the documents do not follow
