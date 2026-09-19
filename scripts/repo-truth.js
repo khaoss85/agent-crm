@@ -552,6 +552,10 @@ export const RETIRED_CLAIMS = Object.freeze([
   'Nothing bills, renews, amends or cancels',
   'No import, export, dedupe, merge, bulk edit, saved views or global search',
   'no auth, no scheduler, no integrations, SQLite only',
+  // Accordo audit backlog:0e41ab833c06: the same absence without the SQLite
+  // tail survived in generate-llms.js after PR #173 fixed answers, compare and
+  // C-10, and the lexical filter could not see the variant.
+  'no auth, no scheduler, no integrations',
   // September backlog fix (4594624ec26c). README's hand-transcribed
   // «production posture» block said durable jobs, secrets and backups were
   // absent after the bounded self-host contracts for all three had shipped.
