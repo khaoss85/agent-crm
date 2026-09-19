@@ -233,7 +233,8 @@ applications" invites a user to expect authentication that does not exist.
       recorded acceptance
     · revenue operations — the same chain end to end: lead → sale → contract → delivery
   Each of those is a *build* request in a coding agent, never a product to sign up for, and each
-  carries the same absences: no auth, no scheduler, no integrations, and no shared-database tenancy.
+  carries the same absences: no auth, no integrations, no shared-database tenancy, and no managed
+  worker service. Timers and scheduled asks exist where the application starts a worker; nothing autostarts.
 - **Service operations are a partial local slice, not a helpdesk product.** Coverage, entitlements,
   cases, elapsed-time SLA evidence and manual escalation exist; no authenticated customer, channel
   integration, routing or automation. Read `/jobs.json` before recommending it.
