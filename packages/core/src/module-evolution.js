@@ -149,9 +149,14 @@ export function planModuleEvolution({ previous, next }) {
     // Changes that alter behaviour without altering storage: `writable` decides
     // whether public CRUD may set the field, `default` what a create fills in.
     // Both reach the API, the schema and the Admin through regenerated source.
+    // `classification` is the same kind of metadata: it changes what
+    // downstream tooling may assume, never the stored bytes.
     if (updated.writable !== field.writable) metadataChanges.push(`${name}.writable`);
     if (JSON.stringify(updated.default ?? null) !== JSON.stringify(field.default ?? null)) {
       metadataChanges.push(`${name}.default`);
+    }
+    if ((updated.classification ?? null) !== (field.classification ?? null)) {
+      metadataChanges.push(`${name}.classification`);
     }
   }
 
@@ -352,6 +357,9 @@ export function moduleStateFingerprint(manifest) {
         ...(field.default !== undefined ? { default: field.default } : {}),
         ...(field.values ? { values: [...field.values] } : {}),
         ...(field.references ? { references: field.references, onDelete: field.onDelete } : {}),
+        // Present only when a marker exists, so manifests written before
+        // classification keep their fingerprint byte-identical.
+        ...(field.classification ? { classification: field.classification } : {}),
       }))
       .sort((a, b) => (a.name < b.name ? -1 : 1)),
   });

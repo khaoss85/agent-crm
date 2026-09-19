@@ -965,6 +965,10 @@ function indexTemplate(manifest, names, referenceTargets = {}) {
         targetKey: 'id',
         targetDisplayField: target.targetDisplayField,
         targetKind: 'generated',
+        // Carried so downstream tooling (export, redaction, logging,
+        // analytics) can act on it mechanically; absent means unclassified,
+        // never safe.
+        ...(field.classification ? { classification: field.classification } : {}),
       };
     }
     return {
@@ -977,6 +981,10 @@ function indexTemplate(manifest, names, referenceTargets = {}) {
       // renders them read-only rather than as editable inputs.
       writable: field.writable ?? 'public',
       ...(field.values ? { values: field.values } : {}),
+      // Carried so downstream tooling (export, redaction, logging,
+      // analytics) can act on it mechanically; absent means unclassified,
+      // never safe.
+      ...(field.classification ? { classification: field.classification } : {}),
     };
   });
   const fieldMetadataLines = fieldMetadata

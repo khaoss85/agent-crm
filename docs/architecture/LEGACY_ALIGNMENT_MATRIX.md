@@ -1981,6 +1981,36 @@ later work, not a code gap.
 | Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; selecting its manifests is the composing project's choice |
 | Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
 
+### Personal-data field classification (Data Governance criterion 1)
+
+This seam is horizontal manifest metadata, not a domain: a manifest field may
+carry `classification` (`identification`, `special-category`, `non-personal`;
+owner taxonomy 2026-09-19, `backlog:0c1af0e22dc6`), preserved through
+validation, normalization, evolution (as a `metadata` change, never storage)
+and the generated module's field metadata. A field with no marker is reported
+as `unclassified` by `fieldDataClassifications` — never as `non-personal`.
+No shipped manifest carries a marker yet, so every row below is a declared
+gap, not a closed one; closing a row means classifying that domain's
+personal-data fields in its own manifests, which this PR deliberately does
+not do.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | kernel records (`companies`, `contacts`), not manifest-generated; classifying kernel tables is later work |
+| Pipeline | `not_applicable` | a kernel workflow capability, holds no personal-data fields |
+| Lead Intelligence | `deferred` | its 7 manifests carry no `classification` marker yet |
+| Commercial Operations | `deferred` | its 16 manifests carry no `classification` marker yet |
+| Signature & Order | `deferred` | its 10 manifests carry no `classification` marker yet |
+| Contract Activation | `deferred` | its 9 manifests carry no `classification` marker yet |
+| Delivery | `deferred` | its 16 manifests carry no `classification` marker yet |
+| Service | `deferred` | its 7 manifests carry no `classification` marker yet |
+| Work | `deferred` | its 2 manifests carry no `classification` marker yet |
+| Lifecycle | `deferred` | its 3 manifests carry no `classification` marker yet |
+| Customer Data | `deferred` | its 6 manifests carry no `classification` marker yet |
+| Custom-package fixture | `deferred` | customer-authored; classifying it is the composing project's choice |
+| Custom-package score-disclosure fixture | `deferred` | customer-authored; classifying it is the composing project's choice |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no manifests |
+
 ## What this document is not
 
 - Not a schedule. No date, no milestone number for the alignment pass.

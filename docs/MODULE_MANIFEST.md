@@ -46,6 +46,7 @@ Unknown properties are rejected so typos fail loudly.
 | `onDelete` | reference only | `restrict` (default), `cascade` or `set_null`. `set_null` conflicts with `required: true`. |
 | `writable` | no | `public` (default) or `managed`. A `managed` field is owned by a workflow action: public create/update reject it and it is written only through the service's `applyManaged`. Not allowed on `reference` fields. See `docs/ACTIONS.md`. |
 | `default` | no | Value a `managed` field takes on create. Allowed on `string`/`enum` only; for an `enum` it must be one of `values`; requires `writable: "managed"` (public-field defaults are not implemented, so one would silently never apply). |
+| `classification` | no | Personal-data class: `identification`, `special-category` or `non-personal` (Data Governance criterion 1, `docs/strategy/DATA_GOVERNANCE.md` §Classification; owner taxonomy 2026-09-19). Optional metadata: it never changes the generated SQL. A field with none is reported as `unclassified` by `fieldDataClassifications` — never as `non-personal`. |
 
 Structurally unusable managed combinations are rejected at validation instead of generating a module that cannot work: `managed` + `required` needs a `default` (public create cannot supply the value, so every create would violate `NOT NULL`), and `managed` + `unique` cannot carry a `default` (every create would insert the same value; the second would always fail). `module plan` lists each managed field under `managedFields`, so the write policy is visible before applying.
 
