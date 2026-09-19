@@ -1,6 +1,10 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "4a4a73ed6375d4e37098a8c2ed8d4b52b930223438f1511fd4ec1ba6d463c328",
+  "sourceSha": "8924d7889eb9fbd7625e1bd61c1d5d91534a97ca2cfbdd57d78c702942d2d2c1",
+  "environment": {
+    "node": "v24.10.0",
+    "pg": "resolvable"
+  },
   "authorities": [
     {
       "id": "benchmark.tool_selection",

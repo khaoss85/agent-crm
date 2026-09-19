@@ -26,6 +26,7 @@ import {
   canonical,
   checkCitations,
   checkRepository,
+  describeProbeEnvironment,
   diffDocuments,
   findMalformedDirectives,
   findRetiredClaims,
@@ -341,6 +342,53 @@ test('the fingerprint covers the semantic body and moves when a value moves', as
     after.facts.find((fact) => fact.id === 'spine.tenant.isolation.mode').value,
     'unknown',
     'an unrecognised strategy must read `unknown`, never the token the old code produced',
+  );
+});
+
+test('a read-only probe that could not run reads unknown, never absent', async () => {
+  // The bare executor tree: the probe cannot load what it inspects, so it
+  // answers nothing. Absence is the promise that the capability is missing;
+  // an unrunnable probe is a limit of the measurement, and publishing one as
+  // the other made the same probe report two facts on the same code.
+  const unrunnable = await bundle();
+  unrunnable.readOnlyCompositionProbe = 'unrunnable';
+  unrunnable.readOnlyCompositionProbeReason = 'ERR_MODULE_NOT_FOUND';
+  const built = buildFacts(unrunnable);
+  const fact = built.facts.find((entry) => entry.id === 'spine.read_only_composition.implemented');
+  assert.equal(fact.value, 'unknown');
+  assert.ok(
+    fact.evidence.includes('probe-unrunnable:ERR_MODULE_NOT_FOUND'),
+    `the reason travels in the evidence, got: ${fact.evidence.join(' | ')}`,
+  );
+});
+
+test('a read-only probe that ran and failed still reads absent', async () => {
+  const refused = await bundle();
+  refused.readOnlyCompositionProbe = false;
+  delete refused.readOnlyCompositionProbeReason;
+  const built = buildFacts(refused);
+  assert.equal(
+    built.facts.find((entry) => entry.id === 'spine.read_only_composition.implemented').value,
+    'absent',
+    'a refusal that did not hold is a negative finding, not a missing measurement',
+  );
+});
+
+test('the document names its environment, and an environment-only drift is not stale', async () => {
+  const { document } = await buildTruthDocument({ rootDir: repoRoot });
+  assert.deepEqual(describeProbeEnvironment(), document.environment, 'the committed shape is what the builder writes');
+  assert.deepEqual(Object.keys(document.environment).sort(), ['node', 'pg']);
+  assert.match(document.environment.node, /^v\d+\.\d+\.\d+/);
+  assert.ok(['resolvable', 'unresolvable'].includes(document.environment.pg));
+  const elsewhere = structuredClone(document);
+  elsewhere.environment = {
+    node: 'v0.0.0-elsewhere',
+    pg: document.environment.pg === 'resolvable' ? 'unresolvable' : 'resolvable',
+  };
+  assert.deepEqual(
+    diffDocuments(document, elsewhere),
+    [],
+    'the same facts measured in another environment are the same document, not a stale one',
   );
 });
 

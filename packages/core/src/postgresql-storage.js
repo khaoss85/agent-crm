@@ -2,7 +2,6 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import pg from 'pg';
 import { AppError, ConflictError } from './errors.js';
 import {
   quoteStorageIdentifier,
@@ -20,8 +19,6 @@ import {
   registerPostgresqlDurableJobStorage,
 } from './durable-job-storage.js';
 
-const { Pool, Client } = pg;
-
 const DEFAULT_ACQUISITION_MS = 2_000;
 const DEFAULT_QUERY_MS = 5_000;
 const DEFAULT_LOCK_TIMEOUT_MS = 1_000;
@@ -34,6 +31,29 @@ const TIMESTAMP_OIDS = new Set([1082, 1114, 1184]);
 const PROBES = new WeakMap();
 const TX_BIND = new AsyncLocalStorage();
 const DESTROYED = new WeakSet();
+
+/**
+ * The PostgreSQL wire driver, loaded only where a real pool or client is
+ * constructed. Importing this module must not require it: callers that inject
+ * their own pool — and the repository-truth probe, which proves read-only
+ * refusal against a pool that throws when touched — never open a wire
+ * connection, so a missing driver must not stop them from loading. A caller
+ * that does need a real connection gets a named refusal instead of an import
+ * crash.
+ *
+ * @returns {Promise<{ Pool: any, Client: any }>}
+ */
+async function loadPgDriver() {
+  try {
+    return await import('pg');
+  } catch (error) {
+    throw new AppError('PostgreSQL driver unavailable: opening a real pool needs the "pg" package', {
+      code: 'STORAGE_DRIVER_UNAVAILABLE',
+      status: 500,
+      details: { package: 'pg', reason: /** @type {any} */ (error)?.code ?? 'UNKNOWN' },
+    });
+  }
+}
 
 /**
  * @typedef {{
@@ -699,6 +719,7 @@ export async function createPostgresqlDatabase(options = {}) {
     });
   }
   const quoted = quoteStorageIdentifier(schema, 'schema');
+  const { Pool } = await loadPgDriver();
   const pool = new Pool({
     connectionString: connection,
     max: options.max ?? 4,
@@ -747,6 +768,7 @@ export async function createPostgresqlDatabase(options = {}) {
       closed = true;
       const probe = PROBES.get(storage);
       try { probe?.abandonCheckedOut?.(); } catch { /* already gone */ }
+      const { Client } = await loadPgDriver();
       const admin = new Client({ connectionString: connection, connectionTimeoutMillis: 2000 });
       try {
         await withDeadline(admin.connect(), 2000, 'acquisition');

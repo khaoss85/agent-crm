@@ -50,6 +50,7 @@ green while the code moved out from under the prose.
 {
   "repositoryTruthContract": 1,
   "sourceSha": "…",
+  "environment": { "node": "v24.10.0", "pg": "resolvable" },
   "authorities": [ { "id": "tenant.storage", "kind": "source", "reads": [ … ] } ],
   "facts": [ {
     "id": "spine.tenant.crm_data_plane_enforced",
@@ -79,6 +80,17 @@ green while the code moved out from under the prose.
 - **No timestamp anywhere**, not merely outside the fingerprint, and no secret, no
   absolute path and no function. Two runs over an unchanged checkout produce
   byte-identical bytes from different working directories.
+- **`environment` says where the document was generated, and never makes it stale.**
+  It names the runtime and whether the probes' third-party driver resolved, so two
+  documents that disagree can be compared instead of merely contradicting each
+  other. It stands beside the fingerprint rather than inside it: the same facts
+  measured in two environments are the same conclusions.
+- **An executable probe has three answers, not two.** It ran and proved the
+  capability (`implemented`), it ran and the behaviour did not hold (`absent`), or
+  it could not run at all (`unknown`, with a `probe-unrunnable:<reason>` entry in
+  the fact's evidence). The third is a limit of the measurement, never the promise
+  that the capability is missing: a probe that cannot load what it inspects must
+  not move a fact, in either direction.
 
 ## The three kinds of authority, kept apart and labelled
 

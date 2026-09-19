@@ -1004,13 +1004,14 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     // SQL", which a real database cannot do — a write that opens, is rejected
     // and rolls back leaves exactly the rows a write that never happened does.
     try {
-      // The adapter module imports `pg`, and this generator also runs inside
-      // fixture repositories that carry `packages/` and no `node_modules`. A
-      // probe that throws there does not report a weaker fact — it takes the
-      // whole `spine.contract` authority down with it, and every fact that
-      // authority carries disappears. So an unrunnable probe reports `absent`,
-      // which is the conservative direction: a probe that cannot run does not
-      // get to claim the capability.
+      // This generator also runs inside fixture repositories that carry
+      // `packages/` and no `node_modules`. A probe that cannot run must not
+      // report `absent`: absence is the promise that the capability is not
+      // implemented, while an unrunnable probe is a limit of the measurement —
+      // and publishing one as the other is how the same probe on the same code
+      // produced two different facts in two environments. So an unrunnable
+      // probe records `unknown` and names its reason in the evidence, where a
+      // reader comparing two documents can see it.
       const storageModule = await import(url('packages/core/src/postgresql-storage.js'));
       const appFactory = await import(url('packages/app/src/index.js'));
       const touched = [];
@@ -1091,8 +1092,9 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
 
       bundle.readOnlyCompositionProbe = refusedBeforeSql && readsReachThePool
         && refusesControlPlane && documentDescribesIt;
-    } catch {
-      bundle.readOnlyCompositionProbe = false;
+    } catch (error) {
+      bundle.readOnlyCompositionProbe = 'unrunnable';
+      bundle.readOnlyCompositionProbeReason = /** @type {any} */ (error)?.code ?? 'UNKNOWN';
     }
     // A limitation string is `CODE — prose`; the code is the structural half.
     bundle.tenantLimitationCodes = [...tenantStorage.TENANT_LIMITATIONS]
@@ -2369,12 +2371,20 @@ export function buildFacts(bundle) {
   // the inputs that would make it a writer are refused rather than ignored.
   add({
     id: 'spine.read_only_composition.implemented',
-    value: bundle.readOnlyCompositionProbe === true ? 'implemented' : 'absent',
+    // Three answers, not two: the probe ran and proved it (`implemented`),
+    // the probe ran and the refusal did not hold (`absent`), or the probe
+    // could not run at all (`unknown`, with the reason beside it). The third
+    // is a limit of the measurement, never the promise that the capability is
+    // missing.
+    value: bundle.readOnlyCompositionProbe === true ? 'implemented'
+      : bundle.readOnlyCompositionProbe === false ? 'absent' : 'unknown',
     authority: 'spine.contract',
     evidence: [
       'packages/core/src/postgresql-bootstrap.js#bootstrapPostgresqlReader',
       'packages/app/src/portable-app.js#startPortablePostgresqlReaderApp',
       'executable-probe:read-only-refuses-before-any-sql',
+      ...(bundle.readOnlyCompositionProbeReason !== undefined
+        ? [`probe-unrunnable:${bundle.readOnlyCompositionProbeReason}`] : []),
     ],
     scope: 'framework',
     limitations: [
@@ -2730,6 +2740,27 @@ export function buildFacts(bundle) {
  *
  * @param {{rootDir: string}} options
  */
+/**
+ * Where this document was generated, so two documents that disagree can be
+ * compared instead of merely contradicting each other. Only what the probes
+ * consume is named: the runtime, and whether the probe's third-party driver
+ * resolved. No timestamp, no path, no secret — two runs over an unchanged
+ * checkout in the same environment stay byte-identical.
+ *
+ * `environment` is provenance, not a conclusion: it stands beside the
+ * fingerprint rather than inside it, and `diffDocuments` compares documents
+ * with it set aside, so the same facts measured in two environments are the
+ * same document, not a stale one.
+ */
+export function describeProbeEnvironment() {
+  let pg = 'unresolvable';
+  try {
+    import.meta.resolve('pg');
+    pg = 'resolvable';
+  } catch { /* the probe records, never throws */ }
+  return { node: process.version, pg };
+}
+
 export async function buildTruthDocument({ rootDir }) {
   const bundle = await readAuthorities({ rootDir });
   const { facts, authorities, problems } = bundle.problems?.length
@@ -2749,6 +2780,11 @@ export async function buildTruthDocument({ rootDir }) {
     // means a comment-only edit to an authority moves `sourceSha` and leaves
     // the fingerprint — and every fact — exactly where it was.
     sourceSha: bundle.sourceSha,
+    // Where it was concluded. Provenance beside the conclusion, outside the
+    // fingerprint: the same facts measured in two environments are the same
+    // conclusions, and the field is what lets a reader see that the
+    // environments were what differed.
+    environment: describeProbeEnvironment(),
     authorities: body.authorities,
     facts: body.facts,
     limitations: body.limitations,
@@ -3044,7 +3080,16 @@ export function findRetiredClaims(source, { javascript = false } = {}) {
  * @param {any} fresh
  */
 export function diffDocuments(committed, fresh) {
-  if (canonical(committed) === canonical(fresh)) return [];
+  // `environment` is provenance, not a conclusion: two documents with the
+  // same facts from two environments are the same document, not a stale one.
+  // The field stays in the file so a reader comparing them can see what
+  // differed, but it never makes a document stale on its own.
+  const withoutEnvironment = (document) => {
+    if (!document || typeof document !== 'object' || Array.isArray(document)) return document;
+    const { environment: _environment, ...rest } = document;
+    return rest;
+  };
+  if (canonical(withoutEnvironment(committed)) === canonical(withoutEnvironment(fresh))) return [];
   const before = new Map((committed?.facts ?? []).map((fact) => [fact.id, fact]));
   const moved = (fresh?.facts ?? [])
     .filter((fact) => String(before.get(fact.id)?.value) !== String(fact.value))
@@ -3059,7 +3104,8 @@ export function diffDocuments(committed, fresh) {
   // it, which is the habit this contract exists to break.
   const sourceMoved = String(committed?.sourceSha ?? '') !== String(fresh?.sourceSha ?? '');
   const bodyMoved = !moved.length && !dropped.length
-    && canonical({ ...committed, sourceSha: null }) !== canonical({ ...fresh, sourceSha: null });
+    && canonical({ ...withoutEnvironment(committed), sourceSha: null })
+    !== canonical({ ...withoutEnvironment(fresh), sourceSha: null });
   return [{
     code: 'TRUTH_DOCUMENT_STALE',
     message: `${TRUTH_DOCUMENT} no longer matches its authorities. `
