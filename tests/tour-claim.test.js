@@ -125,6 +125,30 @@ test('no document quotes a count the tour did not produce', () => {
   }
 });
 
+test('the README production posture is the posture the tour printed', () => {
+  assert.ok(tour, 'the tour test must run first');
+  assert.ok(tour.productionPosture, 'the tour printed no production posture to hold the README to');
+
+  // The README transcript block used to declare durable jobs, secrets and
+  // backups unqualifiedly absent after the bounded self-host contracts for
+  // all three had shipped — a hand transcription no count-sweep could catch,
+  // because the words never moved, only the product did. So the posture is
+  // held the same way the counts are: against the live tour output,
+  // whitespace aside.
+  const collapsed = (/** @type {string} */ text) => text.toLowerCase().replace(/\s+/g, ' ').trim();
+  const readme = readFileSync(join(process.cwd(), 'README.md'), 'utf8');
+  assert.ok(
+    collapsed(readme).includes(collapsed(tour.productionPosture)),
+    'README.md no longer quotes the production posture the tour printed. '
+    + 'Re-run npm run tour -- --json and update the transcript block instead of transcribing it by hand.',
+  );
+  assert.ok(
+    !collapsed(readme).includes('durable jobs, secrets and backups are absent'),
+    'README.md states a retired absence claim (see RETIRED_CLAIMS in scripts/repo-truth.js): '
+    + 'only the managed variants are absent.',
+  );
+});
+
 test('the packaging document describes the starter it would actually find', () => {
   assert.ok(tour, 'the tour test must run first');
 

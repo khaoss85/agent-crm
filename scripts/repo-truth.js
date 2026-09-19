@@ -556,6 +556,11 @@ export const RETIRED_CLAIMS = Object.freeze([
   // tail survived in generate-llms.js after PR #173 fixed answers, compare and
   // C-10, and the lexical filter could not see the variant.
   'no auth, no scheduler, no integrations',
+  // September backlog fix (4594624ec26c). README's hand-transcribed
+  // «production posture» block said durable jobs, secrets and backups were
+  // absent after the bounded self-host contracts for all three had shipped.
+  // Only the *managed* variants are absent; the unqualified absence is retired.
+  'durable jobs, secrets and backups are absent',
 ]);
 
 /**

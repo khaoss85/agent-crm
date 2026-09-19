@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "6571774912ab2dc99f1a0baaca5cae2577d817b9af1dd1d377e72b159ddec9b7",
+  "sourceSha": "4a4a73ed6375d4e37098a8c2ed8d4b52b930223438f1511fd4ec1ba6d463c328",
   "authorities": [
     {
       "id": "benchmark.tool_selection",
@@ -463,7 +463,7 @@
       "authority": "measurement.git",
       "evidence": [
         "git merge-base --is-ancestor <sha> HEAD",
-        "sha:0f5bc0f"
+        "sha:bffb1c2"
       ],
       "scope": "measurement",
       "status": "current",
@@ -471,7 +471,7 @@
     },
     {
       "id": "measurement.source_sha",
-      "value": "0f5bc0f",
+      "value": "bffb1c2",
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.sha"
@@ -484,7 +484,7 @@
     },
     {
       "id": "measurement.test_count",
-      "value": 2279,
+      "value": 2196,
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.tests"
@@ -497,7 +497,7 @@
     },
     {
       "id": "measurement.test_file_count",
-      "value": 186,
+      "value": 189,
       "authority": "measurement.ledger",
       "evidence": [
         "site/claims.json#measuredAgainst.testFiles"
@@ -514,7 +514,7 @@
       "authority": "measurement.git",
       "evidence": [
         "git rev-parse <sha>:tests versus HEAD:tests",
-        "measuredTree:66f7a6132da4"
+        "measuredTree:2895aa773317"
       ],
       "scope": "measurement",
       "status": "current",
@@ -1019,5 +1019,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "0f70007017db453079c92317e0a5dd7f946e822a38c1b2d082781dfb8ac3aaa4"
+  "fingerprint": "b834c52c3427d87386760fde16329be6c7d5a0cf31aef509847d2bb07c858c01"
 }

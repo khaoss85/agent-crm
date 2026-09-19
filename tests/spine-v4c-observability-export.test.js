@@ -49,13 +49,14 @@ import {
 const SENTINELS = Object.freeze({
   password: 'v4c-PGPASSWORD-SENTINEL-never-export',
   // **Minimal on purpose, and do not "improve" it.** A secret scanner judges
-  // the shape of a string, not whether the value is real: the full form
-  // `scheme://realistic-user:pw@fqdn:port/database` was flagged by GitGuardian
-  // and broke CI, while `postgres://u:hunter2@h/db` has sat in
-  // `tests/project-verify.test.js` for ages without tripping anything. The
-  // single-character user and host are what keep it below the bar. Nothing in
-  // this file depends on the sentinel being plausible — only on it being
-  // unique, and on it failing the NAME and CODE charsets, which it still does.
+  // the shape of a string, not whether the value is real: an earlier revision
+  // spelled out the full locator shape with a realistic-length login, secret,
+  // and host, and GitGuardian flagged it and broke CI, while
+  // `postgres://u:hunter2@h/db` has sat in `tests/project-verify.test.js` for
+  // ages without tripping anything. The single-character user and host are
+  // what keep it below the bar. Nothing in this file depends on the sentinel
+  // being plausible — only on it being unique, and on it failing the NAME and
+  // CODE charsets, which it still does.
   databaseUrl: 'postgres://u:v4c-locator-sentinel@h/db',
   host: 'db.internal.invalid',
   secretReference: 'vault://accordo/prod/postgres#current',
