@@ -42,6 +42,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { listSupersedingCommits } from './measurement.js';
 
 export const REPOSITORY_TRUTH_CONTRACT = 1;
 
@@ -2044,7 +2045,16 @@ export function readMeasurement(rootDir, problems) {
         : 'this tree is not a git checkout, so nothing here can confirm the measured commit. A measurement fact '
           + 'that cannot be traced is not a fact',
     });
-    return { sha, tests: record.tests ?? null, testFiles: record.testFiles ?? null, ancestor: 'unknown', treeCurrent: 'unknown' };
+    return {
+      sha,
+      tests: record.tests ?? null,
+      testFiles: record.testFiles ?? null,
+      ancestor: 'unknown',
+      treeCurrent: 'unknown',
+      headTestFiles: null,
+      testFilesMatch: 'unknown',
+      supersededBy: [],
+    };
   }
 
   const present = git(['cat-file', '-e', `${sha}^{commit}`]).status === 0;
@@ -2060,15 +2070,73 @@ export function readMeasurement(rootDir, problems) {
 
   const measuredTree = ancestor ? git(['rev-parse', `${sha}:tests`]).stdout : '';
   const headTree = git(['rev-parse', 'HEAD:tests']).stdout;
+  const treeCurrent = !measuredTree || !headTree ? 'unknown' : measuredTree === headTree ? 'true' : 'false';
+
+  // How many `*.test.js` files HEAD holds — countable without running anything,
+  // so a move that keeps the file set's cardinality provably preserves the
+  // file-count fact even though the tree moved (backlog:79405f9df589).
+  const listed = git(['ls-tree', '-r', '--name-only', 'HEAD', 'tests/']);
+  const headTestFiles = listed.status === 0
+    ? listed.stdout.split('\n').filter((path) => path.endsWith('.test.js')).length
+    : null;
+  const recordedTestFiles = Number.isInteger(record.testFiles) ? record.testFiles : null;
+  const testFilesMatch = headTestFiles === null || recordedTestFiles === null
+    ? 'unknown'
+    : headTestFiles === recordedTestFiles ? 'true' : 'false';
 
   return {
     sha,
     tests: Number.isInteger(record.tests) ? record.tests : null,
-    testFiles: Number.isInteger(record.testFiles) ? record.testFiles : null,
+    testFiles: recordedTestFiles,
     ancestor: ancestor ? 'true' : 'false',
-    treeCurrent: !measuredTree || !headTree ? 'unknown' : measuredTree === headTree ? 'true' : 'false',
+    treeCurrent,
     measuredTree,
     headTree,
+    headTestFiles,
+    testFilesMatch,
+    // Which work superseded the measurement: the commits between the measured
+    // commit and HEAD that touched tests/. Read-speed git only, and published
+    // NOWHERE in the committed document — a per-merge list in evidence would
+    // restate the document on every green PR (see test_tree_current below).
+    // Console channels (`--check`, site-check notes) say the names instead.
+    supersededBy: supersedingCommits(git, { sha, ancestor, treeCurrent, headSha: head.stdout }),
+  };
+}
+
+/**
+ * The commits that moved tests/ since the measured commit, newest first,
+ * bounded so a long drift does not become a long list. Empty unless the
+ * corpus provably moved behind an intact lineage. One shared rule with the
+ * site-check provenance note ({@link listSupersedingCommits}).
+ *
+ * @param {(args: string[]) => { status: number, stdout: string }} git
+ */
+export function supersedingCommits(git, { sha, ancestor, treeCurrent, headSha }) {
+  if (!ancestor || treeCurrent !== 'false' || !sha || !headSha) return [];
+  return listSupersedingCommits(git, sha, headSha).commits;
+}
+
+/**
+ * Per-fact freshness of the three measurement facts over one authority
+ * reading. Pure: no filesystem, no git. `buildFacts` and external probers
+ * share it, so the gate and its reproducer cannot disagree.
+ *
+ * `source_sha` and `test_count` stay strict: only a byte-identical tests/
+ * tree proves them, because no read-speed operation can recount executed
+ * tests across a content change. `test_file_count` tolerates a moved tree
+ * when HEAD holds exactly the recorded number of test files — an exact
+ * recount, not a guess. Anything unprovable stays stale, never current.
+ */
+export function measurementStatus(measurement) {
+  const tree = measurement?.treeCurrent;
+  const files = measurement?.testFilesMatch;
+  const strict = tree === 'true' ? 'current' : tree === 'false' ? 'stale' : 'unknown';
+  return {
+    source_sha: strict,
+    test_count: strict,
+    test_file_count: tree === 'true' || files === 'true'
+      ? 'current'
+      : tree === 'false' || files === 'false' ? 'stale' : 'unknown',
   };
 }
 
@@ -2642,6 +2710,12 @@ export function buildFacts(bundle) {
   // ── measurement ──────────────────────────────────────────────────────────
   const measurement = bundle.measurement;
   if (measurement) {
+    // One rule, three inheritances: `measurementStatus` is the whole
+    // freshness contract for these facts (backlog:79405f9df589). The file
+    // count tolerates a moved tree its recount still describes; the sha and
+    // the executed-test count do not, because nothing read-speed can recount
+    // them across a content change.
+    const freshness = measurementStatus(measurement);
     add({
       id: 'measurement.source_sha',
       value: measurement.sha || 'unknown',
@@ -2649,7 +2723,7 @@ export function buildFacts(bundle) {
       authority: 'measurement.ledger',
       evidence: ['site/claims.json#measuredAgainst.sha'],
       scope: 'measurement',
-      status: measurement.treeCurrent === 'true' ? 'current' : measurement.treeCurrent === 'false' ? 'stale' : 'unknown',
+      status: freshness.source_sha,
       limitations: ['MEASUREMENT_DESCRIBES_COMMITTED_TREE'],
     });
     add({
@@ -2659,7 +2733,7 @@ export function buildFacts(bundle) {
       authority: 'measurement.ledger',
       evidence: ['site/claims.json#measuredAgainst.tests'],
       scope: 'measurement',
-      status: measurement.treeCurrent === 'true' ? 'current' : measurement.treeCurrent === 'false' ? 'stale' : 'unknown',
+      status: freshness.test_count,
       limitations: ['MEASUREMENT_DESCRIBES_COMMITTED_TREE'],
     });
     add({
@@ -2669,7 +2743,7 @@ export function buildFacts(bundle) {
       authority: 'measurement.ledger',
       evidence: ['site/claims.json#measuredAgainst.testFiles'],
       scope: 'measurement',
-      status: measurement.treeCurrent === 'true' ? 'current' : measurement.treeCurrent === 'false' ? 'stale' : 'unknown',
+      status: freshness.test_file_count,
       limitations: ['MEASUREMENT_DESCRIBES_COMMITTED_TREE'],
     });
     add({
@@ -3211,18 +3285,28 @@ async function main() {
   }
 
   const report = await checkRepository({ rootDir });
+  // Informational only, and deliberately not a problem: a truthful record of
+  // an older tree is a stale status, not a failure (backlog:79405f9df589).
+  // Naming the commits here — and not in the document — keeps `--check` green
+  // across moves the record still describes, with no per-merge restatement.
+  const treeFact = report.document.facts.find((fact) => fact.id === 'measurement.test_tree_current');
+  const supersededBy = treeFact?.value === 'false' ? readMeasurement(rootDir, []).supersededBy : [];
+  const stalenessNotes = supersededBy.map(({ sha, subject }) => `tests/ moved since the measured commit in ${sha.slice(0, 7)} — ${subject}`);
   if (wantsJson) {
     process.stdout.write(`${JSON.stringify({
       repositoryTruthContract: REPOSITORY_TRUTH_CONTRACT,
       ok: report.ok,
       counts: report.counts,
       problems: report.problems,
+      notes: stalenessNotes,
       fingerprint: report.document.fingerprint,
     }, null, 2)}\n`);
   } else {
     process.stderr.write(`\n  repo:truth --check — ${report.counts.facts} facts, ${report.counts.citations} citations `
       + `across ${report.counts.surfaces} bound surfaces\n\n`);
     for (const problem of report.problems) process.stderr.write(`  ✗ ${problem.code}\n    ${problem.message}\n\n`);
+    for (const note of stalenessNotes) process.stderr.write(`  · ${note}\n`);
+    if (stalenessNotes.length) process.stderr.write('\n');
     process.stderr.write(report.ok
       ? '  Every bound claim still agrees with the code.\n\n'
       : `  repo:truth --check failed: ${report.problems.length} problem(s).\n\n`);

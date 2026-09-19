@@ -246,5 +246,6 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 - [x] Correct existing Smithery metadata and verify fresh host installs. Gemini gallery refresh remains an upstream crawler wait.
 - [ ] Publish the canonical tutorial and adapted syndication with public readback.
 - [ ] Record actual external trial responses and sessions separately from invitations.
+- [x] **Measurement freshness that survives concurrent work (ADR-044).** The ledger no longer declares a measurement old merely because the tip moved: `measurement.test_file_count` stays current across a moved tree its exact recount still describes, while the sha and the executed-test count stay strict. `measure-suite --apply` records a reconciled per-file map beside the totals, `site-check.js` verifies it exactly, and `npm run measure:refresh` re-anchors the record at HEAD by running only the changed test files (refusing helpers, broken lineage, red runs and map-less records, chasing a moving tip). A superseded measurement names the tests/-touching commits in console output, never in the committed document.
 
 Execution: `docs/plans/traction-first-working-example.md`. Live publication receipts, external responses and dated follow-up are tracked in [issue #176](https://github.com/khaoss85/agent-crm/issues/176).
