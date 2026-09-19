@@ -331,6 +331,7 @@ import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
 import { createWorkView } from './admin-work.js';
+import { createMarketingView } from './admin-marketing.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createSpineView } from './admin-spine.js';
 import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
@@ -370,6 +371,17 @@ const quoteView = createQuoteView({
 // Work (ADR-030): the package-scoped task queue and its activity timeline. The
 // section renders only while the server publishes the work package.
 const workView = createWorkView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  submissions,
+  navigate: (hash) => { window.location.hash = hash; },
+});
+
+// Marketing proposals (MK1): the review screen for a complete-or-refused
+// campaign proposal. Renders only while the server publishes the marketing
+// package.
+const marketingView = createMarketingView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
@@ -425,6 +437,14 @@ async function populateNav() {
       link.setAttribute('href', '#/quotes');
       link.setAttribute('data-nav', 'quotes');
       link.textContent = 'Quotes';
+      generatedNav.appendChild(link);
+    }
+    // Marketing (MK1): one nav link when the project composes the marketing package.
+    if (schema?.domains?.marketing?.marketingContract === 1) {
+      const link = document.createElement('a');
+      link.setAttribute('href', '#/marketing');
+      link.setAttribute('data-nav', 'marketing');
+      link.textContent = 'Proposals';
       generatedNav.appendChild(link);
     }
     // Work (ADR-030): one nav link when the project composes the work package.
@@ -483,6 +503,7 @@ async function route() {
       (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`) ||
       ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
+      ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
       ((target.view === 'customer-data' || target.view === 'customer-profile') && link.getAttribute('href') === '#/customer-data')
       || (target.view === 'spine' && link.getAttribute('href') === '#/spine')
     );
@@ -512,6 +533,8 @@ async function route() {
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();
     else if (target.view === 'work-task') await workView.renderTask(target.taskId);
+    else if (target.view === 'marketing') await marketingView.renderProposalList();
+    else if (target.view === 'marketing-proposal') await marketingView.renderProposalDetail(target.proposalId);
   } catch (error) {
     toast(error.message, true);
   }

@@ -1,0 +1,28 @@
+{
+  "manifestVersion": 1,
+  "name": "funnel-run",
+  "description": "One observation of a funnel definition: the per-step counts as measured at a moment (MK1). The drop insight is derived from this run, never stored alongside it.",
+  "fields": [
+    {
+      "name": "funnelDefinitionId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "ranAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "countsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "source",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "manifestVersion": 1,
+  "name": "funnel-definition",
+  "description": "A named, versioned funnel: the ordered steps an agent observes (MK1). Step semantics are declared here; counts live on funnel-run.",
+  "fields": [
+    {
+      "name": "name",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "label",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "stepsJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "version",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "draft",
+        "active",
+        "retired"
+      ],
+      "default": "draft",
+      "writable": "managed"
+    }
+  ]
+}

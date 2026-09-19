@@ -1,0 +1,48 @@
+{
+  "manifestVersion": 1,
+  "name": "campaign-version",
+  "description": "The immutable snapshot a human approved: what the approver saw is what is stored (MK1). A change to a live proposal publishes a new version; the old one still explains itself.",
+  "fields": [
+    {
+      "name": "proposalId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "versionNumber",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "snapshotJson",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "approvedBy",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "approvedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "policyName",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}
