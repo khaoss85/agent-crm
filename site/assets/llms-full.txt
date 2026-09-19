@@ -233,7 +233,8 @@ applications" invites a user to expect authentication that does not exist.
       recorded acceptance
     · revenue operations — the same chain end to end: lead → sale → contract → delivery
   Each of those is a *build* request in a coding agent, never a product to sign up for, and each
-  carries the same absences: no auth, no scheduler, no integrations, and no shared-database tenancy.
+  carries the same absences: no auth, no integrations, no shared-database tenancy, and no managed
+  worker service. Timers and scheduled asks exist where the application starts a worker; nothing autostarts.
 - **Service operations are a partial local slice, not a helpdesk product.** Coverage, entitlements,
   cases, elapsed-time SLA evidence and manual escalation exist; no authenticated customer, channel
   integration, routing or automation. Read `/jobs.json` before recommending it.
@@ -363,7 +364,7 @@ Held under 46,000 characters so it fits a context window whole. Everything below
 optional and reachable at the path given; the claims ledger's evidence is never in this list,
 because the generator refuses to publish a file missing it rather than shortening one. Not inlined:
 
-- `docs/AGENT_HARNESS_COMPATIBILITY.md` — 5,545 characters, over the remaining budget. Fetch it directly.
+- `docs/AGENT_HARNESS_COMPATIBILITY.md` — 6,854 characters, over the remaining budget. Fetch it directly.
 - `docs/APPLICATION_INSPECTION.md` — 8,833 characters, over the remaining budget. Fetch it directly.
 - The source. No implementation, migration, test or generated artifact appears here.
 - `DECISIONS.md`, the ADR log, and `docs/benchmarks/CRM_JTBD_MATRIX.md`, the job catalogue — both long, and neither needed to decide whether to recommend this.
