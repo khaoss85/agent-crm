@@ -2935,6 +2935,22 @@ contract genuinely moved (a new offered capability; a new required capability).
 Lifecycle does not: it consumes succession, and nothing in its own composition
 contract changed.
 
+### Addendum — retire the migrated v1 offer
+
+After Signature and Contracts migrated to `commercial-quotes@2`, the remaining
+test consumer was migrated too. Commercial package version 4 now offers only
+`commercial-quotes@2` and `commercial-quote-binding@1`. A v1 requirement is
+refused at composition with the consumer and available v2 named; the shared
+read implementation remains unchanged inside v2. This deliberately ends
+compatibility for external consumers that have not migrated, whose inventory
+is outside this repository.
+
+`tests/commercial-quotes-deprecation.test.js` checks the bundled source
+consumers and the registry refusal. The service journey's verifier fixture is
+rebound from a fresh scenario run because its composition includes Commercial;
+the stale-plan guard remains intact. Recovery and validation are recorded in
+`docs/plans/retire-commercial-quotes-v1.md`.
+
 ### Recorded invariants (M16b, restated so they are citable)
 
 - **Linear successor, v1.** One executed successor per source cycle; no

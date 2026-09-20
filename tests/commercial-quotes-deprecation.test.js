@@ -14,17 +14,18 @@ const SELF = 'tests/commercial-quotes-deprecation.test.js';
  * moved to the integrity-verifying contract (`commercial-quotes@2`), so the
  * version-1 edge is unoffered. Two properties hold the retirement in place:
  *
- * 1. no in-repo consumer still declares or opens `commercial-quotes@1` — the
- *    set is enumerated from the repository, not assumed empty;
+ * 1. no scanned source contains the conventional literal v1 consumer pair;
+ *    the dual-bundled-graphs suite separately inspects actual declarations;
  * 2. a consumer still on v1 is refused at composition, with the consumer
  *    named — the registry's own `DEPENDENCY_UNSATISFIED` refusal, proved
  *    rather than remembered.
  */
 
 /**
- * A version-1 consumer declares `capability: 'commercial-quotes', version: 1`
+ * The conventional version-1 literal is `capability: 'commercial-quotes', version: 1`
  * in its `requires`, or opens it through `domains.capability` with the same
- * pair. One marker covers both: the pair never appears for any other reason.
+ * pair. This is a lexical tripwire, not a JavaScript parser: different quote
+ * styles, property order or computed values are outside its guarantee.
  * (`name: 'commercial-quotes'` with a separate `version: 1` is the capability
  * FACTORY `@2` still builds on — an implementation, not an offered contract,
  * so it is not a consumer and the marker does not match it.)
@@ -48,8 +49,8 @@ function sourceFiles(dir, { includeTests }) {
 }
 
 /**
- * Every place a version-1 consumer could hide, discovered rather than listed:
- * each package's `src`, each app's runtime source, and the suite itself (the
+ * The bounded source inventory for this tripwire: each package's `src`, each
+ * app's runtime source, and the suite itself (the
  * last `@1` consumer was a test probe). Only this file is excluded — it names
  * the retired version in its own refusal proof below, and the exclusion is
  * this one path, not a widening allow-list.
@@ -70,7 +71,7 @@ function consumerRoots() {
   return roots;
 }
 
-test('no in-repo consumer still declares or opens commercial-quotes@1', () => {
+test('the scanned source has no conventional literal commercial-quotes@1 consumer', () => {
   const holders = [];
   for (const { dir, includeTests } of consumerRoots()) {
     for (const path of sourceFiles(dir, { includeTests })) {

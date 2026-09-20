@@ -77,6 +77,25 @@ function bundledV2Graph() {
   ];
 }
 
+test('both bundled graphs declare only migrated Commercial quote consumers', () => {
+  for (const contract of [1, 2]) {
+    const packages = BUNDLED.map((entry) => entry[contract]());
+    // These are actual definitions, so quotes, property order and computed
+    // source expressions cannot hide a requirement from the inventory.
+    const consumers = packages.flatMap((pkg) => (pkg.requires ?? [])
+      .filter((edge) => edge.capability === 'commercial-quotes')
+      .map((edge) => ({ consumer: pkg.name, provider: edge.package, version: edge.version })));
+    assert.deepEqual(consumers.sort((a, b) => a.consumer.localeCompare(b.consumer)), [
+      { consumer: 'contracts', provider: 'commercial', version: 2 },
+      { consumer: 'signature', provider: 'commercial', version: 2 },
+    ]);
+    const commercial = packages.find((pkg) => pkg.name === 'commercial');
+    assert.deepEqual(commercial.capabilities.filter((cap) => cap.name === 'commercial-quotes')
+      .map((cap) => cap.version), [2]);
+    assert.doesNotThrow(() => new PackageRegistry({ packages }));
+  }
+});
+
 function selectedModulesFor(packages) {
   return [...new Set(packages.flatMap((pkg) => [
     ...(pkg.resources ?? []),
