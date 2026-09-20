@@ -361,7 +361,10 @@ export function summarize(output, rootDir) {
  * matched a prose rule and became the reason a suite failed — so they are used
  * only when nothing stronger is present.
  */
-const STRONG_VERDICT = /✖|\bnot ok\b|AssertionError|\w+Error:|"status":\s*"failed"|\brefused\b|\bfail\s+[1-9]/;
+const STRONG_VERDICT = /✖|\bnot ok\b|AssertionError|\w{0,100}Error:|"status":\s*"failed"|\brefused\b|\bfail\s+[1-9]/; // NOTE: \w+Error: was catastrophic backtracking (O(n^2)) on long word runs —
+// a 500KB flood line hung the suite. The 100-char bound keeps every real error
+// name (AssertionError, TypeError, …) matching while each start position costs
+// at most ~100 steps. See tests/project-verify.test.js "a failing suite fails".
 const WEAK_VERDICT = /\b(?:fail(?:ed|ure|s|ing)?|refus(?:ed|es|al)|error|violat)/i;
 
 /**
