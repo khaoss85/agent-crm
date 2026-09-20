@@ -111,7 +111,7 @@ be a visual element — chips, a grid, a marquee of honesty:
 
 **Nobody else publishes their own blind spots.** That is the brand.
 
-## 5. Page inventory — 164 pages, seven clusters
+## 5. Page inventory — 165 pages, seven clusters
 
 Hub-and-spoke: each pillar page links down to its spokes, each spoke links back up.
 
@@ -121,7 +121,7 @@ Hub-and-spoke: each pillar page links down to its spokes, each spoke links back 
 | **Capabilities** | `capabilities.html` | 6 | one business domain: what it models, what the framework refuses, what proves it |
 | **Concepts** | `concepts.html` | 8 | why it is built this way — the vision layer |
 | **Compare** | `compare.html` | 9 | opens by naming where the *alternative* wins |
-| **Jobs** | `jobs.html` | 77 | one CRM job, its support status, its evidence |
+| **Jobs** | `jobs.html` | 80 | one CRM job, its support status, its evidence |
 | **Answers** | `answers.html` | 15 | one blunt question, answered, plus 15 published refusals |
 
 Plus: `index.html`, `evidence.html` (the full claims ledger as a table), `blog.html`
