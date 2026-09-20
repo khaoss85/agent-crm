@@ -1,7 +1,12 @@
 // @ts-check
 
 import { REASON } from './import.js';
-import { deciding, subjectKey, trusted } from './store.js';
+import {
+  IDENTITY_CONFLICT_DETECTOR,
+  IDENTITY_CONFLICT_SCOPE_KIND,
+  detectIdentityConflicts,
+} from './conflicts.js';
+import { deciding, trusted } from './store.js';
 
 /**
  * **Data-quality detectors: explainable findings, not a rules engine.**
@@ -67,23 +72,37 @@ export async function detectIssues({ resolution, modules, names }) {
   // the same `system:externalId` cannot both be right, and the import path
   // cannot create that state — but a restore, a migration or a second writer
   // can, so it is detected rather than assumed impossible.
-  // A complete read: a detector that only inspects the newest page of the table
-  // reports "no conflict" for a conflict that is merely older than the page.
-  const identities = await deciding(trusted(modules, names.identity), { status: 'active' });
-  const bySourceKey = new Map();
-  for (const row of identities) {
-    const key = row.sourceKey;
-    const seen = bySourceKey.get(key);
-    if (seen && subjectKey({ resource: seen.subjectResource, id: seen.subjectId }) !== subjectKey({ resource: row.subjectResource, id: row.subjectId })) {
+  //
+  // Operations v2 (backlog:48de928b2dfa): the v1 whole-table read that lived
+  // here grouped every active identity in memory. The windowed detector below
+  // finds the same conflicts — proven by
+  // tests/customer-data-identity-conflicts.test.js — with one windowed page
+  // plus one complete exact-match read per windowed key. A conflict no
+  // windowed key reaches is out of scope, never absent: windowed coverage
+  // records its own scope finding beside the conflicts.
+  const conflictReport = await detectIdentityConflicts({
+    identityService: trusted(modules, names.identity),
+  });
+  for (const conflict of conflictReport.conflicts) {
+    for (const other of conflict.others) {
       issues.push({
         kind: 'conflicting_external_identity',
-        subject: { resource: row.subjectResource, id: row.subjectId, owner: row.subjectOwner, ownerPackage: row.subjectOwnerPackage, labelSnapshot: row.subjectLabel, labelIsAuthoritative: false },
-        detector: DETECTOR,
-        evidence: `external identity ${key} is active against more than one record`,
+        subject: { ...other },
+        detector: IDENTITY_CONFLICT_DETECTOR,
+        evidence: `external identity ${conflict.sourceKey} is active against more than one record`,
       });
-      continue;
     }
-    bySourceKey.set(key, row);
+  }
+  if (conflictReport.coverage.mode === 'windowed') {
+    issues.push({
+      kind: IDENTITY_CONFLICT_SCOPE_KIND,
+      subject: null,
+      detector: IDENTITY_CONFLICT_DETECTOR,
+      evidence: `identity-conflict detection examined the newest ${conflictReport.coverage.examinedActive}`
+        + ` of ${conflictReport.coverage.totalActive} active external identities`
+        + ` (window ${conflictReport.coverage.windowSize}): a conflict older than the window`
+        + ' is out of scope here, not absent',
+    });
   }
 
   return issues;
