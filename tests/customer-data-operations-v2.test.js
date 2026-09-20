@@ -350,6 +350,20 @@ test('an export writes nothing and filters select exactly', async (t) => {
   assert.equal(fingerprintDatabase(app), before, 'an export writes nothing at all');
 });
 
+test('a run whose receipts do not reconcile is refused, never reported short', async (t) => {
+  const { app } = await scene(t, 'bulk-reconcile');
+  const issues = await openIssues(app);
+  const items = issues.map((issue) => ({ recordId: issue.id, input: { decision: 'dismissed', reason: 'reviewed' } }));
+  const first = await app.applyBulkCustomerAction({ action: 'govern-data-quality-issue', items, actor: ACTOR });
+  assert.equal(first.status, 'completed');
+
+  // Out-of-band corruption: a receipt row disappears behind the run's back.
+  app.database.raw.prepare('DELETE FROM customer_bulk_items WHERE run_id = ? AND item_index = 0').run(first.runId);
+  const refused = await refusal(app.applyBulkCustomerAction({ action: 'govern-data-quality-issue', items, actor: ACTOR }));
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'BULK_RECEIPTS_UNRECONCILED');
+});
+
 /* ------------------------------------------------- contract-2 graph (M3P) */
 
 test('bulk and export ride the distinct contract-2 graph unchanged', async (t) => {

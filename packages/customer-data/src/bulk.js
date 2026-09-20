@@ -203,6 +203,17 @@ export function createBulkRunner({ database, modules, events, config, core, poli
 
   const summarize = ({ run, stored, idempotencyKey, replayed, action }) => {
     const byIndex = new Map(stored.map((row) => [row.itemIndex, row]));
+    // The import's reconciliation discipline, applied to the bulk: every
+    // item has exactly one receipt, or the summary is refused rather than
+    // reported short.
+    for (const index of run.itemOrder) {
+      if (!byIndex.has(index)) {
+        throw new AppError(`bulk run ${run.id} has no receipt for item ${index}, so its summary is refused`, {
+          code: 'BULK_RECEIPTS_UNRECONCILED', status: 500,
+          details: Object.freeze({ runId: run.id, itemIndex: index }),
+        });
+      }
+    }
     return Object.freeze({
       mode: 'apply',
       runId: run.id,
