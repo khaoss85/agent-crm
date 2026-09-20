@@ -25,6 +25,7 @@ import {
   buildTruthDocument,
   canonical,
   checkCitations,
+  checkFactFreshness,
   checkRepository,
   describeProbeEnvironment,
   diffDocuments,
@@ -259,6 +260,81 @@ test('the committed truth document is a fresh generation of its own authorities'
   // gate like this rots. The count is asserted so the gate cannot go quiet.
   assert.ok(report.counts.citations >= 40, `expected the bound surfaces to carry citations, got ${report.counts.citations}`);
   assert.ok(report.counts.surfaces >= 10);
+});
+
+// ─────────────────────────────────────────── the freshness gate is opt-in
+
+test('a stale fact fails the freshness gate, naming the fact, its status and the ratio', async () => {
+  const mutated = await bundle();
+  mutated.measurement.treeCurrent = 'false';
+  const { facts } = buildFacts(mutated);
+  const stale = facts.filter((fact) => fact.status !== 'current');
+  assert.ok(stale.length > 0, 'the fixture must contain non-current facts');
+  const problems = checkFactFreshness({ facts });
+  assert.deepEqual(codes(problems), ['TRUTH_FACT_NOT_CURRENT']);
+  const total = facts.length;
+  const current = total - stale.length;
+  for (const fact of stale) {
+    const problem = problems.find((entry) => entry.message.includes(fact.id));
+    assert.ok(problem, `no freshness problem names ${fact.id}`);
+    assert.ok(problem.message.includes(fact.status), `${fact.id}: message hides status ${fact.status}`);
+    assert.ok(problem.message.includes(`${current}/${total}`), `${fact.id}: message hides the ratio`);
+    assert.ok(problem.message.includes((current / total).toFixed(3)), `${fact.id}: message hides the ratio digits`);
+  }
+});
+
+test('an unprovable fact fails the freshness gate too — unknown is not current', async () => {
+  const mutated = await bundle();
+  mutated.measurement.treeCurrent = 'unknown';
+  const { facts } = buildFacts(mutated);
+  const problems = checkFactFreshness({ facts });
+  assert.deepEqual(codes(problems), ['TRUTH_FACT_NOT_CURRENT']);
+  assert.ok(problems.some((problem) => problem.message.includes('unknown')),
+    `expected an unknown-status problem, got ${JSON.stringify(problems.map((p) => p.message))}`);
+});
+
+test('a tree whose facts are all current passes the freshness gate, including the empty document', async () => {
+  const mutated = await bundle();
+  mutated.measurement.treeCurrent = 'true';
+  const { facts } = buildFacts(mutated);
+  assert.ok(facts.length > 0, 'the fixture must contain facts');
+  assert.deepEqual(checkFactFreshness({ facts }), []);
+  assert.deepEqual(checkFactFreshness({ facts: [] }), []);
+});
+
+// The gate is proven on a document we build, never on the live tree
+// (backlog:cb81da4c64f0 names the shape). An earlier draft of this test ran
+// `--require-current` against `repoRoot` and demanded ratio 1, and that made
+// the repository unmodifiable: touching `tests/` makes the measurement facts
+// stale, a stale fact fails the suite, and `measure-suite.js --apply` refuses
+// to re-measure without a green suite. The deadlock was real — this cure hit
+// it on 2026-09-20 and could not be measured at all. What the gate must
+// guarantee is a property of the gate, and a built document proves it exactly.
+test('the freshness gate is opt-in: armed it refuses a stale fact, unarmed it stays silent', async () => {
+  const stale = await bundle();
+  stale.measurement.treeCurrent = 'false';
+  const { facts } = buildFacts(stale);
+  assert.ok(facts.some((fact) => fact.status !== 'current'), 'the fixture must carry a fact that is not current');
+
+  const armed = checkFactFreshness({ facts });
+  assert.deepEqual(codes(armed), ['TRUTH_FACT_NOT_CURRENT']);
+  assert.ok(armed[0].message.includes('ratio'), armed[0].message);
+
+  const healed = await bundle();
+  healed.measurement.treeCurrent = 'true';
+  assert.deepEqual(checkFactFreshness({ facts: buildFacts(healed).facts }), []);
+});
+
+test('the default check stays silent about freshness, and reports the ratio either way', async () => {
+  // Read on the live tree ON PURPOSE, and asserting only what does not depend
+  // on how fresh that tree happens to be: the number exists, and a plain
+  // `--check` never turns freshness into a problem.
+  const plain = await checkRepository({ rootDir: repoRoot });
+  assert.equal(typeof plain.counts.factsCurrentRatio, 'number');
+  assert.equal(typeof plain.counts.currentFacts, 'number');
+  const plainDetail = plain.problems.map((p) => `${p.code}: ${p.message}`).join('\n');
+  assert.ok(!codes(plain.problems).includes('TRUTH_FACT_NOT_CURRENT'),
+    `the default check must stay silent about freshness:\n${plainDetail}`);
 });
 
 test('every fact obeys the closed vocabularies, and every authority is declared', async () => {
