@@ -176,7 +176,15 @@ test('retrying a finished bulk replays the stored run and runs nothing twice', a
   assert.equal(replay.replayed, true);
   assert.equal(replay.runId, first.runId, 'a retry returns the same run, not a second one');
   assert.equal(replay.status, first.status);
-  assert.deepEqual(replay.receipts, first.receipts);
+  assert.deepEqual(replay.counts, first.counts);
+  // Receipts follow the retried order, not the original one: index 0 must
+  // describe the caller's item 0. The per-record outcomes are the stored ones.
+  const retried = [...items].reverse();
+  assert.deepEqual(replay.receipts.map((receipt) => receipt.index), [0, 1]);
+  assert.deepEqual(replay.receipts.map((receipt) => receipt.recordId), retried.map((item) => item.recordId));
+  const firstByRecord = new Map(first.receipts.map((receipt) => [receipt.recordId, receipt.outcome]));
+  assert.ok(replay.receipts.every((receipt) => firstByRecord.get(receipt.recordId) === receipt.outcome),
+    'a replay reports the stored per-record outcomes');
   assert.equal(fingerprintDatabase(app), before, 'a replay writes nothing at all');
   assert.equal(app.modules.get('customer-bulk-run').service.listWhere({}).length, 1);
 });
@@ -228,6 +236,68 @@ test('an interrupted run resumes: applied items report already-applied, the rest
   assert.equal(resumed.status, 'completed');
   assert.deepEqual(resumed.counts, { items: 2, applied: 2, failed: 0 });
   assert.deepEqual(resumed.receipts.map((receipt) => receipt.outcome), ['already-applied', 'applied']);
+  assert.equal(
+    app.modules.get('customer-bulk-item').service.listWhere({ runId: run.id }).length, 2,
+    'the resumed item wrote its receipt; the applied one kept its single receipt',
+  );
+  assert.equal(app.modules.get('data-quality-issue').service.listWhere({ status: 'dismissed' }).length, 2);
+});
+
+test('a resume with reordered items resumes the same records, never by position', async (t) => {
+  const { app } = await scene(t, 'bulk-resume-reordered');
+  const issues = await openIssues(app);
+  const action = 'govern-data-quality-issue';
+  const items = issues.map((issue) => ({ recordId: issue.id, input: { decision: 'dismissed', reason: 'reviewed' } }));
+  const idempotencyKey = bulkIdempotencyKeyFor({ action, items });
+
+  // The same crash as above: the run is stuck in_progress with the first
+  // item's applied receipt already stored.
+  const runs = app.modules.get('customer-bulk-run').service;
+  const receipts = app.modules.get('customer-bulk-item').service;
+  const run = await runs.createManaged({
+    sourceKey: `customer-bulk-run:${idempotencyKey}`,
+    idempotencyKey,
+    actionName: action,
+    status: 'in_progress',
+    itemCount: items.length,
+    appliedCount: 0,
+    failedCount: 0,
+    actorType: 'user',
+    actorId: 'ops2',
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+  }, { actor: ACTOR });
+  await app.runAction({
+    module: 'data-quality-issue', action: 'govern-data-quality-issue', recordId: issues[0].id,
+    input: { decision: 'dismissed', reason: 'reviewed' }, actor: ACTOR,
+  });
+  await receipts.createManaged({
+    sourceKey: `customer-bulk-item:${run.id}:0`,
+    runId: run.id,
+    itemIndex: 0,
+    recordModule: 'data-quality-issue',
+    recordId: issues[0].id,
+    outcome: 'applied',
+    code: 'APPLIED',
+    reason: `${action} applied`,
+    decidedAt: new Date().toISOString(),
+  }, { actor: ACTOR });
+
+  // The retry lists the same set of records in the opposite order. The key
+  // is order-independent, so this is the same bulk — and the already-decided
+  // record must be recognized by record, not re-applied by position.
+  const reordered = [...items].reverse();
+  const resumed = await app.applyBulkCustomerAction({ action, items: reordered, actor: ACTOR });
+
+  assert.equal(resumed.replayed, false, 'a resumed run is continued work, not a replay');
+  assert.equal(resumed.runId, run.id, 'the same run finishes');
+  assert.equal(resumed.status, 'completed');
+  assert.deepEqual(resumed.counts, { items: 2, applied: 2, failed: 0 });
+  assert.deepEqual(
+    resumed.receipts.map((receipt) => [receipt.index, receipt.recordId, receipt.outcome]),
+    [[0, issues[1].id, 'applied'], [1, issues[0].id, 'already-applied']],
+    'receipts follow the retried order; the decided record is reported, not executed again',
+  );
   assert.equal(
     app.modules.get('customer-bulk-item').service.listWhere({ runId: run.id }).length, 2,
     'the resumed item wrote its receipt; the applied one kept its single receipt',
