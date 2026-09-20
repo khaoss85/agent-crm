@@ -253,7 +253,8 @@ export function createCustomerDataPackage(options = {}) {
           writes: 'an export writes nothing at all — not a run, not a receipt',
         },
         dataQuality: {
-          kinds: ['missing_required_identity', 'conflicting_external_identity', 'invalid_email', 'invalid_domain',
+          kinds: ['missing_required_identity', 'conflicting_external_identity', 'identity_conflict_windowed_scope',
+            'invalid_email', 'invalid_domain',
             'duplicate_candidate_open', 'orphaned_reference', 'unresolved_import_row'],
           governance: 'resolving or dismissing an issue records a human decision and erases nothing',
         },
