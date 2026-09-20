@@ -1250,7 +1250,7 @@
   {
    "matrixId": "JTBD-DO-04",
    "title": "Export records",
-   "matrixStatus": "not supported",
+   "matrixStatus": "partially supported",
    "milestone": null,
    "disposition": "consolidated",
    "canonicalJtbdIds": [
@@ -1260,7 +1260,7 @@
   {
    "matrixId": "JTBD-DO-05",
    "title": "Bulk update a set of records",
-   "matrixStatus": "not supported",
+   "matrixStatus": "partially supported",
    "milestone": null,
    "disposition": "consolidated",
    "canonicalJtbdIds": [

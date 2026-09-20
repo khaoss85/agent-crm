@@ -1,0 +1,80 @@
+{
+  "manifestVersion": 1,
+  "name": "customer-bulk-run",
+  "description": "One bulk application of a customer-data record action across many records. The idempotency key is business-derived from the action name and the canonical digest of the items - never from a clock or a random value - so retrying the same bulk returns this same run, and an interrupted run stays in_progress with its per-item receipts until it is resumed. A run whose items did not all apply reads partial, never completed.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "idempotencyKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "actionName",
+      "type": "enum",
+      "values": [
+        "link-canonical-identity",
+        "dismiss-duplicate-candidate",
+        "govern-data-quality-issue"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "in_progress",
+        "completed",
+        "partial"
+      ],
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "itemCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "appliedCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "failedCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "actorType",
+      "type": "enum",
+      "values": [
+        "user",
+        "agent",
+        "system"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "actorId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "startedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "finishedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

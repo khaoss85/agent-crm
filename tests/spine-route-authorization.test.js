@@ -108,6 +108,7 @@ const GUARDED = [
   ['POST', '/api/catalog/sync', { provider: 'x' }],
   ['POST', '/api/demo/seed'],
   ['GET', '/api/modules/company/records'],
+  ['POST', '/api/customer-data/bulk/apply', { action: 'govern-data-quality-issue', items: [] }],
 ];
 
 test('no unauthenticated caller reaches any domain route in production mode', async (t) => {
@@ -140,6 +141,34 @@ test('a verified viewer may read, and may not write', async (t) => {
     assert.equal(response.status, 403,
       `${method} ${path} must refuse a viewer with 403, got ${response.status}`);
   }
+});
+
+/**
+ * Customer Data Operations v2 (TASKS.md:45). The bulk route mutates, so it
+ * gates `records.write` like the import apply; the export route reads
+ * managed evidence, so it gates `records.read` like the preview and the
+ * profile. The package is not composed in this scene, so an authorized
+ * caller meets the honest 404 past the gate — the gate is a boundary, not
+ * a wall, and the 404 proves which side of it the caller stands on.
+ */
+test('the customer-data bulk and export routes honour the role boundary', async (t) => {
+  const { call, as } = await scene(t);
+
+  // No unverified caller reaches either route.
+  for (const path of ['/api/customer-data/bulk/apply', '/api/customer-data/export']) {
+    const anonymous = await call('POST', path, {});
+    assert.equal(anonymous.status, 401, `${path} must refuse an unverified caller`);
+    assert.match(anonymous.body, /UNAUTHENTICATED/);
+  }
+
+  // A viewer holds records.read but not records.write.
+  const viewerBulk = await call('POST', '/api/customer-data/bulk/apply',
+    { action: 'govern-data-quality-issue', items: [] }, as('vic'));
+  assert.equal(viewerBulk.status, 403, 'a viewer may not bulk-apply decisions');
+  const viewerExport = await call('POST', '/api/customer-data/export',
+    { resource: 'data-quality-issue' }, as('vic'));
+  assert.equal(viewerExport.status, 404, 'a viewer passes the export gate and meets the honest absent-package 404');
+  assert.match(viewerExport.body, /NOT_FOUND/);
 });
 
 test('the human approval boundary is authorization, not just a shaped actor', async (t) => {

@@ -1,7 +1,7 @@
 {
   "counts": {
-    "not supported": 89,
-    "partially supported": 37,
+    "not supported": 87,
+    "partially supported": 39,
     "technically supported": 0,
     "total": 149,
     "validated end to end": 23
@@ -770,18 +770,22 @@
       "docs": [],
       "id": "JTBD-DO-04",
       "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
-      "status": "not supported",
-      "summary": "no export endpoint; list is page-bounded by design",
-      "tests": [],
+      "status": "partially supported",
+      "summary": "on a deliberately narrow reading: Customer Data Operations v2 adds export-customer-records over the package's eight managed record sets — the import log and its receipts, the identities, the candidates, the links, the findings, the bulk runs and their receipts. The set is counted first with a complete read, the answer states the row count and the bound, a set larger than the bound refuses with EXPORT_WOULD_TRUNCATE instead of returning a short file, at most 10,000 rows, and an export writes nothing. tests/customer-data-operations-v2.test.js. Still partial, and the row's own word is the gap: business records (companies, contacts, opportunities) export through no endpoint, filters are exact-match only, and there is no CSV, no streaming and no scheduled export",
+      "tests": [
+        "tests/customer-data-operations-v2.test.js"
+      ],
       "title": "Export records"
     },
     {
       "docs": [],
       "id": "JTBD-DO-05",
       "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
-      "status": "not supported",
-      "summary": "every mutation is single-record",
-      "tests": [],
+      "status": "partially supported",
+      "summary": "on a deliberately narrow reading: Customer Data Operations v2 adds apply-bulk-customer-action, which applies one of the package's three human decisions — link, dismiss or govern — across up to 500 records in one call, with one transaction and one receipt per record, a run that reads partial rather than completed, and payload-derived idempotency with resume and replay. tests/customer-data-operations-v2.test.js. Still partial, and the row's own word is again the gap: business records have no bulk path — no bulk field update, no bulk stage move, no bulk delete — and every bulked decision keeps its human-only check",
+      "tests": [
+        "tests/customer-data-operations-v2.test.js"
+      ],
       "title": "Bulk update a set of records"
     },
     {

@@ -424,6 +424,29 @@ function buildRouter(app) {
     return await app.readCustomerProfile({ resource: params.resource, id: params.id });
   });
 
+  // Customer Data Operations v2: bulk decisions and scale-safe export. The
+  // same enumerated-adapter shape as the import routes above: the kernel
+  // owns the path, gates the role boundary, and delegates to the composed
+  // application operation — without the package composed each answers an
+  // honest 404. Bulk applies human decisions, so it gates `records.write`
+  // like the import apply; export reads managed evidence, so it gates
+  // `records.read` like the preview and the profile.
+  router.add('POST', '/api/customer-data/bulk/apply', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.applyBulkCustomerAction !== 'function') {
+      throw new NotFoundError('Operation', 'customer data bulk apply');
+    }
+    return await app.applyBulkCustomerAction({ ...stripServerControlledKeys(body), actor });
+  });
+
+  router.add('POST', '/api/customer-data/export', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.exportCustomerRecords !== 'function') {
+      throw new NotFoundError('Operation', 'customer data export');
+    }
+    return await app.exportCustomerRecords({ ...stripServerControlledKeys(body), actor });
+  });
+
   // Uniform resource surface for generated modules (ADR-008). Only modules
   // that fully satisfy the generated-module contract are served; anything
   // else — unknown names, handwritten core modules, malformed or hand-edited

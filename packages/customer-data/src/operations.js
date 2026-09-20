@@ -1,21 +1,24 @@
 // @ts-check
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import { createBulkRunner } from './bulk.js';
+import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
 import { detectIssues } from './quality.js';
 import { canonicalClusterFor, profileFor } from './profile.js';
 import { optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted } from './store.js';
 
 /**
- * **The application operations (ADR-032): import preview, import apply, and the
- * consolidated profile read.**
+ * **The application operations (ADR-032): import preview, import apply, bulk
+ * apply, export, and the consolidated profile read.**
  *
  * These are application-scoped rather than record actions because none of them
  * belongs to a single record: an import is about a batch that may create the
- * very records it targets, and a profile spans every optional package that
- * happens to be composed. That is exactly the shape ADR-032 exists for, and the
- * bounded context it hands over — database, modules, events, config — is all
- * they take.
+ * very records it targets, a bulk spans many records, an export spans a whole
+ * record set, and a profile spans every optional package that happens to be
+ * composed. That is exactly the shape ADR-032 exists for, and the bounded
+ * context it hands over — database, modules, events, config — is all they
+ * take.
  *
  * The three properties worth stating once:
  *
@@ -208,6 +211,28 @@ export function createCustomerDataOperations({ database, modules, events, config
     },
 
     /**
+     * Bulk-apply one of this package's human decisions across many records.
+     * One transaction per item, one receipt per item, and a run that reads
+     * `partial` when not every item applied. See `./bulk.js` for the
+     * resume and replay discipline.
+     * @param {any} request
+     */
+    async applyBulkCustomerAction(request) {
+      return createBulkRunner({ database, modules, events, config, core, policy, names })
+        .applyBulkAction(request);
+    },
+
+    /**
+     * Export one of this package's managed record sets: counted first,
+     * refused rather than truncated, complete or not at all. Writes nothing.
+     * @param {any} request
+     */
+    async exportCustomerRecords(request) {
+      return createCustomerDataExport({ database, modules, events, config })
+        .exportCustomerRecords(request);
+    },
+
+    /**
      * The consolidated, read-only profile. Creates nothing.
      * @param {{resource?: string, id?: string}} request
      */
@@ -345,6 +370,8 @@ export const LIMITATIONS = Object.freeze([
   'NO_RBAC — a human actor is an audit identity, not role enforcement; the Production Spine does not exist',
   'NO_LEGAL_ASSURANCE — nothing here is a GDPR, consent, retention or erasure claim',
   'NOT_A_COMPLETE_TIMELINE — the profile spans Accordo-managed records only, and says so per package',
+  'PARTIAL_IS_PARTIAL — a bulk run that did not apply every item reads partial, never completed',
+  'NO_SILENT_TRUNCATION — an export that would exceed its bound refuses instead of returning a short file',
 ]);
 
 export { canonicalClusterFor };
