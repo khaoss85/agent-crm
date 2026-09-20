@@ -17,6 +17,8 @@ export const CUSTOMER_DATA_MANIFESTS = [
   'duplicate-candidate.module.json',
   'canonical-link.module.json',
   'data-quality-issue.module.json',
+  'customer-bulk-run.module.json',
+  'customer-bulk-item.module.json',
 ];
 
 /** Commercial + signature + contracts, for the "profile spans packages" proof. */

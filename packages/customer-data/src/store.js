@@ -20,6 +20,8 @@ export function resolvedNames(config = {}) {
     candidate: config.duplicateCandidateModule ?? 'duplicate-candidate',
     link: config.canonicalLinkModule ?? 'canonical-link',
     issue: config.dataQualityIssueModule ?? 'data-quality-issue',
+    bulkRun: config.bulkRunModule ?? 'customer-bulk-run',
+    bulkItem: config.bulkItemModule ?? 'customer-bulk-item',
   };
 }
 
