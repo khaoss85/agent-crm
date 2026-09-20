@@ -491,8 +491,8 @@ same way it attacks first-party ones.
 
 ## 14. Official packages are reference implementations, not a framework tax
 
-The first-party packages (`contracts`, `delivery`, and the planned Marketing
-packages in `docs/strategy/MARKETING_GROWTH_OPERATIONS.md`) attach through the
+The first-party packages (`contracts`, `delivery`, and the bounded MK1
+`marketing` package) attach through the
 contract on this page and no other. That has a consequence worth stating:
 
 - an official package is **optional** — take it, or don't;
@@ -514,9 +514,9 @@ source is not sandboxed** (ADR-018 addendum 4). A package that sends, publishes
 or spends without a recorded human approval is a defect regardless of who wrote
 it.
 
-*(No Marketing package exists today. The packages named above are planned
-identities, not shipped code, and a future Marketing authoring Skill is planned
-rather than implemented.)*
+*(`packages/marketing` implements supplied-count observations and local proposal
+approval only. Journeys, campaign execution and the other Marketing packages
+remain planned; no dedicated Marketing authoring Skill is claimed.)*
 
 ## 15. When an agent is working from a business goal
 

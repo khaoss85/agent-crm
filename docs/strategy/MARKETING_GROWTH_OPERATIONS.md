@@ -213,7 +213,9 @@ MK7  Attribution and Closed-loop Optimization             requires ANALYTICS_STU
 | MK6 | MK2, MK3; provider contracts in `INTEGRATION_RUNTIME.md` |
 | MK7 | Analytics Studio (`ANALYTICS_STUDIO.md`) and an identity/touchpoint model — hard |
 
-**No Marketing package is implemented by this PR**, and no milestone above is started.
+This strategy does not establish milestone completion. The bounded MK1 source
+slice is described above; review, merge and the remaining track retain their
+separate status in `../PROJECT_STATUS.md`.
 
 The MK track is not a Factory integration dependency. Factory implementation is
 separately gated by its Phase-6 Integration Freeze, and the first Factory
