@@ -320,10 +320,11 @@ test('a standing limitation resolves as a limitation, not a capability', async (
 test('check_job answers "not supported" when that is the truth', async () => {
   const server = createDocsMcpServer();
   // Export, not import: the CSV-import row this test used to name became
-  // *partially supported* with the Customer Data Foundation, and a test that
-  // pins a status has to move when the status honestly moves. Exporting records
-  // is the neighbouring row that genuinely does not exist.
-  const result = await callTool(server, 'check_job', { query: 'export records' });
+  // *partially supported* with the Customer Data Foundation, and the export
+  // row followed it with Customer Data Operations v2 — a test that pins a
+  // status has to move when the status honestly moves. Saved views are the
+  // neighbouring row that genuinely does not exist.
+  const result = await callTool(server, 'check_job', { query: 'save and share a filtered view' });
   assert.equal(result.isError, false);
 
   const answer = result.structuredContent;
@@ -331,8 +332,20 @@ test('check_job answers "not supported" when that is the truth', async () => {
   assert.equal(answer.answer, 'not supported');
   assert.match(answer.answerText, /Not supported/);
   assert.match(answer.answerText, /docs\/benchmarks\/CRM_JTBD_MATRIX\.md/);
-  assert.equal(answer.matches[0].id, 'JTBD-DO-04');
+  assert.equal(answer.matches[0].id, 'JTBD-DO-06');
   assert.equal(answer.matches[0].status, 'not supported');
+});
+
+test('check_job answers "partially supported" for the bulk and export rows', async () => {
+  const server = createDocsMcpServer();
+  for (const [query, id] of [['export records', 'JTBD-DO-04'], ['bulk update', 'JTBD-DO-05']]) {
+    const result = await callTool(server, 'check_job', { query });
+    assert.equal(result.isError, false);
+    const answer = result.structuredContent;
+    assert.equal(answer.answer, 'partially supported', `${id} must read partial, never success`);
+    assert.equal(answer.matches[0].id, id);
+    assert.equal(answer.matches[0].status, 'partially supported');
+  }
 });
 
 test('check_job resolves a validated job with the ledger limitation that bounds it', async () => {
@@ -621,6 +634,7 @@ test('an ambiguous job question abstains instead of answering from the top match
   // The anti-overclaim property must survive the fix: a specific question still
   // gets its answer, and a genuinely unsupported job is still reported as one.
   assert.equal(index.check('approve a discount', 5).answer, 'validated end to end');
-  assert.equal(index.check('export records', 5).answer, 'not supported');
+  assert.equal(index.check('export records', 5).answer, 'partially supported');
+  assert.equal(index.check('save and share a filtered view', 5).answer, 'not supported');
   assert.equal(index.check('teleport the customer to mars', 5).answer, 'unknown');
 });
