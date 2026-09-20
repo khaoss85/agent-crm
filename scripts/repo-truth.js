@@ -166,7 +166,7 @@ export const TRUTH_LIMITATIONS = Object.freeze([
     + 'or observability backend is implemented by this fact; bounded self-host contracts are separate positive facts'],
   ['REFERENCE_COMPOSITION_NOT_THE_PROJECT',
     'packages/domains/generated/index.js is empty in this repository, so package facts are read from a named '
-    + 'REFERENCE composition of the nine checked-in domain packages. That is what the framework can compose, '
+    + 'REFERENCE composition of the checked-in domain packages. That is what the framework can compose, '
     + 'not what this checkout composes'],
   ['JTBD_ROWS_NOT_ENCODED',
     'no JTBD row is a fact here. Job status is maintained by people and promoted only by a person '
@@ -283,13 +283,14 @@ export const AUTHORITY_SOURCES = Object.freeze([
   'packages/delivery/src/index.js',
   'packages/intelligence/src/index.js',
   'packages/lifecycle/src/index.js',
+  'packages/marketing/src/index.js',
   'packages/service/src/index.js',
   'packages/signature/src/index.js',
   'packages/work/src/index.js',
   ...JTBD_PORTFOLIO_SOURCES,
 ]);
 
-/** The nine checked-in domain packages, and the factory each one exports. */
+/** The checked-in domain packages, and the factory each one exports. */
 export const REFERENCE_PACKAGES = Object.freeze([
   ['commercial', 'packages/commercial/src/index.js', 'createCommercialDomain'],
   ['contracts', 'packages/contracts/src/index.js', 'createContractsDomain'],
@@ -297,6 +298,7 @@ export const REFERENCE_PACKAGES = Object.freeze([
   ['delivery', 'packages/delivery/src/index.js', 'createDeliveryPackage'],
   ['intelligence', 'packages/intelligence/src/index.js', 'createIntelligenceDomain'],
   ['lifecycle', 'packages/lifecycle/src/index.js', 'createLifecyclePackage'],
+  ['marketing', 'packages/marketing/src/index.js', 'createMarketingDomain'],
   ['service', 'packages/service/src/index.js', 'createServicePackage'],
   ['signature', 'packages/signature/src/index.js', 'createSignatureDomain'],
   ['work', 'packages/work/src/index.js', 'createWorkPackage'],

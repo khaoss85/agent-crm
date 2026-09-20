@@ -120,6 +120,7 @@ export class MarketingRegistries {
   metadata() {
     return {
       marketingContract: 1,
+      notModeled: ['sending', 'publishing', 'spending', 'audience execution', 'consent validation', 'provider installation', 'scheduling', 'attribution'],
       proposalPolicyContract: 1,
       channels: [...PROPOSAL_CHANNELS],
       modes: [...PROPOSAL_MODES],

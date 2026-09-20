@@ -15,8 +15,8 @@ import { bindAdminMutations } from './admin-submission.js';
  * One object, one screen: the proposal as the agent wrote it and the policy
  * version reviewed it — audience, exclusions, channel, provider rationale,
  * content plan, tracking plan, risks and required approvals — or the refusal
- * with its missing sections. A control appears only where the server would
- * accept it: the Approve button renders solely for a `proposed` proposal, and
+ * with its missing sections. The Approve button renders solely for a
+ * `proposed` proposal; the server also verifies the actor, and
  * the server re-checks the human actor, the state and the policy identity
  * inside its own transaction regardless.
  *
@@ -213,7 +213,7 @@ export function createMarketingView(deps) {
       }
 
       // The Approve control renders ONLY for a proposed proposal: a control
-      // appears only where the server would accept it. Drafts await review,
+      // appears only in a reviewable state; actor authorization stays server-owned. Drafts await review,
       // refused proposals must be re-proposed, approved ones are evidence.
       if (proposal.status === 'proposed') {
         const approveButton = el('button', 'marketing-approve', 'Approve campaign');

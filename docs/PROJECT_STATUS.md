@@ -38,6 +38,17 @@ Reconciled: **2026-09-07**. The measurement below retains its own date.
 | npm | **`create-accordo@0.1.0` is live since 2026-08-19** — staged from CI through OIDC trusted publishing (run 32224731197, Sigstore provenance), approved by the maintainer with 2FA, and confirmed against the registry: the published shasum matches the CI assembly, `latest` resolves to `0.1.0`, and a clean-directory `npm create accordo` scaffolds a verifying project. `accordo@0.0.1` remains an **empty name reservation by design** (no framework library). The `@accordo` organization exists since 2026-08-19 and its scope is **deliberately empty**: `@accordo/mcp` was investigated and refused, because the project MCP server composes from the generated indexes of the tree it runs in and a published copy would answer about the wrong application (ADR-034). The MCP-registry submission is no longer blocked by it — `server.json` registers the remote documentation endpoint instead. `site/brand.json` records `npm.status: published`. |
 | Project bootstrap | **`create-accordo` is real source and its publication is live**: `projectBootstrapContract: 1` creates the project; `packageAssemblyContract: 1` creates the bounded publishable directory while the source manifest stays `private: true` — publication never lowered that wall, because what npm published is the assembly, which strips `private`. The staged path proved itself the hard way: one dispatch died `E401` (a `registry-url` placeholder token preempting OIDC), the next `ENEEDAUTH` (no matching trusted-publisher config), and run `32224731197` staged clean once the publisher allowed `npm stage publish`. Plans: `docs/plans/project-bootstrap-installability.md`, `docs/plans/npm-create-accordo-publication.md`. |
 
+## MK1 candidate under recovery review
+
+The opt-in Marketing package candidate adds supplied-count funnel observations,
+complete-or-refused proposals and local human approval evidence. Its temporary
+project journey and fault boundaries are exercised in
+`tests/marketing-e2e.test.js`; composition and limits are documented in
+`packages/marketing/README.md`. It is not composed by default and implements no
+sending, publishing, spending, audience execution or attribution. Final
+clean-clone verification, browser smoke, CI and merge status remain separate;
+this candidate note does not promote a JTBD row or claim a deployment.
+
 ## Completed functional path
 
 ```text

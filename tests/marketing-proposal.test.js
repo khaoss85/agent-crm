@@ -210,3 +210,23 @@ test('approveProposal answers the version row data without writing', () => {
   assert.equal(proposalPatch.status, 'approved');
   assert.ok(Object.isFrozen(version));
 });
+
+
+test('malformed or scalar JSON sections are incomplete', () => {
+  for (const audienceJson of ['not-json', '"text"', 'null', '1', '[null]', '{"rule":""}']) {
+    assert.ok(reviewProposal({ ...COMPLETE, audienceJson }).missing.includes('audience'), audienceJson);
+  }
+});
+
+test('an approved proposal cannot be re-proposed', async () => {
+  const { ctx, patches } = actionContext({ ...COMPLETE, status: 'approved' });
+  await assert.rejects(() => buildProposeAction(registries()).execute(ctx), error => error.code === 'PROPOSAL_STATE_INVALID');
+  assert.equal(patches.length, 0);
+});
+
+test('approval rechecks the exact policy vocabulary after stored content changes', async () => {
+  const { ctx, created } = actionContext({ ...COMPLETE, policyName: POLICY.name, policyVersion: 1, policyFingerprint: FINGERPRINT });
+  ctx.domains.getPolicy = () => ({ definition: { ...POLICY, config: { allowedChannels: ['sms'] } }, fingerprint: FINGERPRINT });
+  await assert.rejects(() => buildApproveAction(registries()).execute(ctx), error => error.code === 'PROPOSAL_INCOMPLETE');
+  assert.equal(created.length, 0);
+});

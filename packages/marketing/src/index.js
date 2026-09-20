@@ -10,7 +10,7 @@ import { createMarketingProposalsCapability } from './capability.js';
  *
  * It owns the funnel observation primitives (definition, run, drop insight),
  * the campaign proposal with its immutable versions, the versioned proposal
- * policy and the two plan-then-approve record actions. An agent observes a
+ * policy and the observation and plan-then-approve record actions. An agent observes a
  * bounded funnel insight and prepares a complete CampaignProposal in Admin.
  *
  * **Nothing is sent, published or spent.** That is not a slogan, it is the

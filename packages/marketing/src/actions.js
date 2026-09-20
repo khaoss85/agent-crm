@@ -2,6 +2,7 @@
 
 import { AppError } from '../../core/index.js';
 import { reviewProposal, approveProposal } from './proposal.js';
+import { buildObservationActions } from './observations.js';
 
 /**
  * The `campaign-proposal` record actions (MK1): plan-then-approve as a
@@ -64,6 +65,9 @@ export function buildProposeAction(registries, config) {
     ],
     /** @param {any} ctx */
     async execute({ record: proposal, input, modules, domains, managed, now, step }) {
+      if (proposal.status === 'approved') {
+        throw new AppError('An approved proposal is terminal; prepare a new proposal for a change', { code: 'PROPOSAL_STATE_INVALID', status: 409 });
+      }
       const { definition: policy, fingerprint } = domains.getPolicy('marketing', 'proposal-policy', input.policy, input.policyVersion);
       const review = reviewProposal(proposal, {
         allowedChannels: policy.config?.allowedChannels,
@@ -146,8 +150,9 @@ export function buildApproveAction(registries, config) {
         });
       }
       const versions = trusted(modules, names.version);
-      const existing = versions.listWhere({ proposalId: proposal.id });
-      const versionNumber = existing.length + 1;
+      // Approval is terminal: later campaigns use a new proposal, never an
+      // increment computed from a potentially bounded collection read.
+      const versionNumber = 1;
       const at = now();
       const { version, proposalPatch } = approveProposal({
         proposal,
@@ -155,6 +160,7 @@ export function buildApproveAction(registries, config) {
         approvedAt: at,
         policy: { name: policy.name, version: policy.version, fingerprint },
         versionNumber,
+        constraints: policy.config,
       });
       const created = await versions.createManaged({ ...version }, { actor });
       await managed(proposal.id, {
@@ -173,5 +179,5 @@ export function buildApproveAction(registries, config) {
 
 /** @param {any} registries @param {Record<string, string>} [config] */
 export function buildMarketingActions(registries, config) {
-  return [buildProposeAction(registries, config), buildApproveAction(registries, config)];
+  return [...buildObservationActions(config), buildProposeAction(registries, config), buildApproveAction(registries, config)];
 }

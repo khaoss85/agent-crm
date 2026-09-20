@@ -23,6 +23,11 @@
       "name": "source",
       "type": "string",
       "writable": "managed"
+    },
+    {
+      "name": "stepsJson",
+      "type": "string",
+      "writable": "managed"
     }
   ]
 }

@@ -30,7 +30,7 @@ test('the marketing package conforms to the domain package contract', () => {
       name: 'marketing',
       version: 1,
       resources: [...MARKETING_RESOURCES],
-      actions: ['campaign-proposal.approve', 'campaign-proposal.propose'],
+      actions: ['campaign-proposal.approve', 'campaign-proposal.propose', 'campaign-proposal.revise', 'funnel-definition.observe', 'funnel-drop-insight.prepare-proposal'],
       provides: ['marketing-proposals@1'],
     },
     // Belt and braces on top of the package's own no-external-effect suite:
@@ -96,4 +96,24 @@ test('the package reaches no other package and offers no operation', () => {
   const definition = createMarketingDomain({ proposalPolicies: [STANDARD_POLICY] });
   assert.deepEqual(definition.requires ?? [], []);
   assert.deepEqual(definition.operations ?? [], []);
+});
+
+
+test('proposal evidence waits for async storage and never converts infrastructure errors into absence', async () => {
+  const pkg = createMarketingDomain();
+  const create = pkg.capabilities[0].create;
+  const capability = create({ modules: { get: () => ({ service: {
+    get: async id => ({ id, title: 'Evidence' }),
+    listWhere: async () => [{ id: 'v2', versionNumber: 2 }, { id: 'v1', versionNumber: 1 }],
+  } }) } });
+  assert.equal((await capability.proposal('p')).id, 'p');
+  assert.equal((await capability.insight('i')).id, 'i');
+  assert.deepEqual((await capability.proposalVersions('p')).map(row => row.id), ['v1', 'v2']);
+  for (const async of [false, true]) {
+    const unavailable = create({ modules: { get: () => ({ service: {
+      get: async ? () => Promise.reject(new Error('storage unavailable')) : () => { throw new Error('storage unavailable'); },
+    } }) } });
+    if (async) await assert.rejects(() => unavailable.proposal('p'), /storage unavailable/);
+    else assert.throws(() => unavailable.proposal('p'), /storage unavailable/);
+  }
 });

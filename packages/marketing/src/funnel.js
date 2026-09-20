@@ -61,7 +61,7 @@ export function deriveDropInsight(run) {
     const previous = counts[index - 1];
     const current = counts[index];
     if (previous <= 0 || current >= previous) continue;
-    const dropRateBps = Math.floor(((previous - current) * 10000) / previous);
+    const dropRateBps = Number((BigInt(previous - current) * 10000n) / BigInt(previous));
     if (dropRateBps <= 0) continue;
     if (!best || dropRateBps > best.dropRateBps) {
       best = {

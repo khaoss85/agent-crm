@@ -56,3 +56,9 @@ test('the insight is frozen: a consumer copies it, never edits it', () => {
   const insight = deriveDropInsight({ steps: ['a', 'b'], counts: [100, 40] });
   assert.ok(Object.isFrozen(insight));
 });
+
+
+test('safe-integer counts retain exact basis-point truncation near the numeric limit', () => {
+  const insight = deriveDropInsight({ steps: ['first', 'second'], counts: [9007199254740991, 4503599627370496] });
+  assert.equal(insight.dropRateBps, 4999);
+});

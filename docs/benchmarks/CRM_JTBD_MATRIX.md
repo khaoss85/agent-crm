@@ -34,7 +34,7 @@ have been caught surviving its own fix.
 <!-- truth: spine.authorization.enforced=enforced -->
 <!-- truth: spine.tenant.crm_data_plane_enforced=enforced_by_binding -->
 <!-- truth: billing.implemented=absent -->
-<!-- truth: marketing_runtime.implemented=absent -->
+<!-- truth: marketing_runtime.implemented=implemented -->
 <!-- truth: cloud_control_plane.implemented=absent -->
 <!-- truth: spine.managed_jobs_service.implemented=absent -->
 
@@ -232,19 +232,19 @@ checked-in Accordo repository. Evidence for every row below is
 | JTBD-PK-06 | Install a package from a registry or marketplace | **not supported** | no registry, publication, remote install, auto-update, signing or hot loading. Packages are checked-in source, by design |
 | JTBD-PK-07 | Run an untrusted package safely | **not supported** | and not planned at this layer. Repository source is trusted: a package's module body, actions and policies run in-process with full authority, and the consumer name passed when opening a capability is asserted by the caller (ADR-018 addendum 4) |
 
-## Marketing & Growth Operations (MK0–MK7, design only)
+## Marketing & Growth Operations (MK0–MK7, bounded MK1 candidate)
 
 Who: a marketing or growth operator, and the coding agent working for them.
 Strategy: `../strategy/MARKETING_GROWTH_OPERATIONS.md`,
 `../strategy/CAMPAIGNS_JOURNEYS.md`,
 `../strategy/EXPERIMENTATION_ATTRIBUTION.md`.
 
-**Every row below is `not supported`.** No campaign, audience, consent check,
-journey, experiment, content asset, landing page, tracking plan, channel
-provider, media plan, funnel definition or attribution model exists in the
-repository. Lead Intelligence (M9) scores and routes leads that already exist;
-that is emphatically **not** a marketing campaign system, and no MK row inherits
-status from it. A row moves only with linked evidence in this repository.
+**The coverage rows below remain unpromoted pending milestone review.** The
+MK1 package candidate provides supplied-count funnel observations and local
+proposal/human-approval evidence (`tests/marketing-e2e.test.js`). This does not
+provide audiences, consent enforcement, sending, publishing, spending, journeys,
+experiments, provider adapters or attribution. Lead Intelligence does not confer
+marketing coverage; each row still requires its own reviewed evidence.
 
 ### Audience and governance
 
@@ -341,7 +341,7 @@ change, and the coding agent working for them. Design:
 | JTBD-AX-05 | Verify the solution against defined acceptance | **partially supported** | Quality Gates, `crm package validate`, the test suites and the clean-clone run are real and enforced, and DX10 now closes the last hop from a plan to its proof: `accordo solution verify <plan.json> --evidence <evidence.json> --json` reports, per requirement, whether it is proven, partial, blocked, unevidenced, stale or unverified, from authorities that ran in the same invocation. A requirement id is **derived** from the plan, the evidence document has **no status field**, and `file exists` can never satisfy a behavioural requirement — `tests/implementation-evidence.test.js`, `tests/solution-verify.test.js`. **Still partial, and deliberately so**: it grades the acceptance a plan *wrote down* and cannot catch one it omitted, manual requirements stay `unverified`, no checked-in plan verifies today, and there is still no automated goal-to-acceptance runner (AX3) |
 | JTBD-AX-06 | Report unavailable capabilities honestly | **partially supported** | the JTBD matrix and package metadata make the honest answer *available*, and two commands now make part of it machine-checked rather than optional: the service scenario publishes each unavailable capability as a stated `false` it earned by attempting the operation, and `accordo solution verify` refuses to let an agent declare a requirement met — the evidence document has no status field, a downgrade needs a reason, and a manual requirement can never read as proof. **Still partial**: nothing enforces that an agent writes an evidence document at all, which is why the Skill states it as a rule |
 | JTBD-AX-07 | Analyse a funnel and identify a drop from a goal | **not supported** | needs Analytics Studio and a funnel primitive |
-| JTBD-AX-08 | Propose an optimization campaign from an insight | **not supported** | MK1; no Campaign Proposal object exists |
+| JTBD-AX-08 | Propose an optimization campaign from an insight | **not supported** | MK1 proposal candidate has executable evidence in `tests/marketing-e2e.test.js`; row promotion awaits milestone review |
 | JTBD-AX-09 | Deploy, observe and fix a solution in production | **not supported** | AX4; hard-gated by the Production Spine and Cloud |
 | JTBD-AX-10 | Close the loop: measure, learn, propose the next version | **not supported** | AX5; needs Marketing, Analytics, Data Governance and Durable Automation |
 
@@ -392,7 +392,7 @@ The everyday jobs that decide whether a CRM is usable at all. **Five of the nine
 | JTBD-DO-05 | Bulk update a set of records | **partially supported** | on a deliberately narrow reading: Customer Data Operations v2 adds `apply-bulk-customer-action`, which applies one of the package's three human decisions — link, dismiss or govern — across up to 500 records in one call, with one transaction and one receipt per record, a run that reads `partial` rather than completed, and payload-derived idempotency with resume and replay. `tests/customer-data-operations-v2.test.js`. **Still partial, and the row's own word is again the gap**: business records have no bulk path — no bulk field update, no bulk stage move, no bulk delete — and every bulked decision keeps its human-only check |
 | JTBD-DO-06 | Save and share a filtered view | **not supported** | no saved-view primitive |
 | JTBD-DO-07 | Search across modules | **not supported** | no global search; exact indexed lookups are per-module. Customer Data Foundation v1 builds **no search index of any kind** and explicitly defers global search to Customer Data Operations v2; its matching is exact lookups on normalized values, which is not search |
-| JTBD-DO-08 | See a unified activity timeline for a record | **partially supported** | Work v1 (ADR-030) adds an append-only Activity timeline per **subject**, with a closed four-entry vocabulary, rendered oldest-first in the Admin — `tests/work-operations-e2e.test.js`, `tests/admin-work.test.js`. It is **not a unified customer timeline**: it covers only what Work itself recorded, Service's `support-case-activity` stays domain-specific, Delivery history is not aggregated, marketing and communications do not exist at all, and no email, call, meeting or audit row appears on it. Customer Data Foundation v1 adds a second, independent projection over the same problem — one read-only consolidated profile per customer, spanning whatever packages the application composes, in which a package that is **not** composed reads *not available* with a reason rather than as an empty result or a zero. That does not change the row: the profile is a projection over Accordo-managed records, it says so in its own payload, and no email, call, meeting, marketing or communications event appears on it because none exist. Confirmed *partially supported* by human decision on that wording; no other row is promoted by inheritance from it or from the foundation |
+| JTBD-DO-08 | See a unified activity timeline for a record | **partially supported** | Work v1 (ADR-030) adds an append-only Activity timeline per **subject**, with a closed four-entry vocabulary, rendered oldest-first in the Admin — `tests/work-operations-e2e.test.js`, `tests/admin-work.test.js`. It is **not a unified customer timeline**: it covers only what Work itself recorded, Service's `support-case-activity` stays domain-specific, Delivery history is not aggregated, MK1 proposal evidence is not aggregated and communications events are absent, and no email, call, meeting or audit row appears on it. Customer Data Foundation v1 adds a second, independent projection over the same problem — one read-only consolidated profile per customer, spanning whatever packages the application composes, in which a package that is **not** composed reads *not available* with a reason rather than as an empty result or a zero. That does not change the row: the profile is a projection over Accordo-managed records, it says so in its own payload, and no email, call, meeting, marketing campaign execution or communications event appears on it. Confirmed *partially supported* by human decision on that wording; no other row is promoted by inheritance from it or from the foundation |
 | JTBD-DO-09 | Attach notes or files to a record | **not supported** | no note or attachment primitive |
 
 ### Communications (no milestone assigned)
@@ -445,7 +445,7 @@ All fifteen operator jobs (CL-01…CL-15) are **not supported**: no control plan
 
 This matrix guides roadmap prioritization: the largest gaps blocking common CRM adoption are **complete scheduling and communications** (self-host timers, jobs and outbox exist, but recurrence, delivered notifications and managed workers do not — JTBD-07), generated workflows/approvals for custom objects (JTBD-06), and the authentication prerequisite that tenancy and authorization now sit on top of (JTBD-15).
 
-The detailed rows above are the current coverage authority. Activation, signed-term provenance, delivery acceptance, service operations, Customer Data Foundation and governed successor execution have shipped within their stated bounds. Their availability does not promote adjacent jobs: in-place subscription edits, full renewal automation, price uplift, billing, complete subject export/erasure and the marketing runtime remain unproven or absent as each row states. Source inspection and solution verification report composition and evidence; they do not execute a plan or establish a generally production-ready deployment.
+The detailed rows above are the current coverage authority. Activation, signed-term provenance, delivery acceptance, service operations, Customer Data Foundation and governed successor execution have shipped within their stated bounds. Their availability does not promote adjacent jobs: in-place subscription edits, full renewal automation, price uplift, billing, complete subject export/erasure and marketing campaign execution remain unproven or absent as each row states. Source inspection and solution verification report composition and evidence; they do not execute a plan or establish a generally production-ready deployment.
 
 Production Spine v1 closed the authorization half of that gate; the authentication half (JTBD-15) remains the hard gate for every job involving real external or role-scoped users — including manual manager reassignment — because a membership is only as trustworthy as the verifier a deployment supplies, and none ships.
 

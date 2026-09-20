@@ -11,7 +11,8 @@
     {
       "name": "title",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "mode",
@@ -28,42 +29,50 @@
     {
       "name": "audienceJson",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "exclusionsJson",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "channel",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "providerRationale",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "contentPlanJson",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "trackingPlanJson",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "risksJson",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "requiredApprovalsJson",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "status",
@@ -80,42 +89,50 @@
     {
       "name": "refusalReasonsJson",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "proposedAt",
       "type": "timestamp",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "decidedBy",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "decidedAt",
       "type": "timestamp",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "currentVersionId",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "policyName",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "policyVersion",
       "type": "integer",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     },
     {
       "name": "policyFingerprint",
       "type": "string",
-      "writable": "managed"
+      "writable": "managed",
+      "required": false
     }
   ]
 }

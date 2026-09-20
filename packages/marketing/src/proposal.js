@@ -43,20 +43,20 @@ const MAX_TEXT = 10000;
 
 /** @param {unknown} value */
 function statedJson(value) {
-  if (value === null || value === undefined) return false;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (trimmed === '') return false;
-    try {
-      const parsed = JSON.parse(trimmed);
-      return statedJson(parsed);
-    } catch {
-      return trimmed.length <= MAX_TEXT;
-    }
-  }
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === 'object') return Object.keys(value).length > 0;
-  return false;
+  if (typeof value !== 'string' || value.length > MAX_TEXT) return false;
+  let parsed;
+  try { parsed = JSON.parse(value); } catch { return false; }
+  if (!parsed || typeof parsed !== 'object') return false;
+  const meaningful = (part, depth = 0) => {
+    if (depth > 16) return false;
+    if (typeof part === 'string') return part.trim().length > 0;
+    if (typeof part === 'number') return Number.isFinite(part);
+    if (typeof part === 'boolean') return true;
+    if (!part || typeof part !== 'object') return false;
+    const values = Object.values(part);
+    return values.length > 0 && values.every(item => meaningful(item, depth + 1));
+  };
+  return meaningful(parsed);
 }
 
 /** @param {unknown} value */
@@ -109,7 +109,7 @@ export function reviewProposal(draft, policy = {}) {
  * the refusal, and a retry as a human gets the same stable answer. Then the
  * state is checked, then completeness is recomputed from the stored record.
  *
- * @param {{proposal: Record<string, any>, actor: any, approvedAt: string, policy: {name: string, version: number, fingerprint: string}, versionNumber: number}} request
+ * @param {{proposal: Record<string, any>, actor: any, approvedAt: string, policy: {name: string, version: number, fingerprint: string}, versionNumber: number, constraints?: {allowedChannels?: readonly string[], allowedModes?: readonly string[]}}} request
  * @returns {{version: Record<string, any>, proposalPatch: Record<string, any>}} frozen version row data (no id) plus the proposal patch
  */
 export function approveProposal(request) {
@@ -129,7 +129,7 @@ export function approveProposal(request) {
       code: 'PROPOSAL_STATE_INVALID', status: 409,
     });
   }
-  const review = reviewProposal(proposal);
+  const review = reviewProposal(proposal, request.constraints);
   if (!review.complete) {
     throw new AppError('This proposal no longer states every required section, so it cannot be approved', {
       code: 'PROPOSAL_INCOMPLETE', status: 409,

@@ -25,12 +25,22 @@ function service(modules, name) {
   return module.service;
 }
 
-/** Exact primary-key read that answers null instead of throwing. */
+function mapValue(value, map) {
+  return value && typeof value.then === 'function' ? value.then(map) : map(value);
+}
+
+function missingOnly(error) {
+  if (error?.code !== 'NOT_FOUND') throw error;
+  return null;
+}
+
+/** Exact primary-key read; infrastructure failures remain failures. */
 function safeGet(recordService, id) {
   try {
-    return recordService.get(id);
-  } catch {
-    return null;
+    const value = recordService.get(id);
+    return value && typeof value.then === 'function' ? value.catch(missingOnly) : value;
+  } catch (error) {
+    return missingOnly(error);
   }
 }
 
@@ -70,21 +80,21 @@ export function createMarketingProposalsCapability(config) {
         /** One proposal row, or null. @param {string} proposalId */
         proposal(proposalId) {
           const record = typeof proposalId === 'string' && proposalId !== '' ? safeGet(service(modules, names.proposal), proposalId) : null;
-          return record ? Object.freeze({ ...record }) : null;
+          return mapValue(record, row => row ? Object.freeze({ ...row }) : null);
         },
 
         /** Every version of one proposal, version-ordered. @param {string} proposalId */
         proposalVersions(proposalId) {
           if (typeof proposalId !== 'string' || proposalId === '') return Object.freeze([]);
-          return Object.freeze(service(modules, names.version).listWhere({ proposalId })
+          return mapValue(service(modules, names.version).listWhere({ proposalId }), rows => Object.freeze(rows
             .sort((a, b) => (a.versionNumber === b.versionNumber ? (a.id < b.id ? -1 : 1) : a.versionNumber - b.versionNumber))
-            .map((row) => Object.freeze({ ...row })));
+            .map((row) => Object.freeze({ ...row }))));
         },
 
         /** One funnel-drop insight row, or null. @param {string} insightId */
         insight(insightId) {
           const record = typeof insightId === 'string' && insightId !== '' ? safeGet(service(modules, names.insight), insightId) : null;
-          return record ? Object.freeze({ ...record }) : null;
+          return mapValue(record, row => row ? Object.freeze({ ...row }) : null);
         },
       };
     },

@@ -646,14 +646,18 @@
     {
       "id": "L-05",
       "headline": "No email, calendar or marketing integrations.",
-      "text": "An in-memory notification provider contract exists. No adapter sends anything to anyone.",
+      "text": "An in-memory notification provider contract exists. MK1 marketing records supplied funnel observations and human-reviewed proposals only; it has no sending, publishing or spending path.",
       "evidence": {
         "jtbd": "JTBD-14",
         "docs": [
           "docs/strategy/INTEGRATION_RUNTIME.md"
         ],
         "facts": [
-          "marketing_runtime.implemented=absent"
+          "marketing_runtime.implemented=implemented"
+        ],
+        "tests": [
+          "tests/marketing-no-external-effect.test.js",
+          "tests/marketing-e2e.test.js"
         ]
       },
       "surfaces": [
@@ -779,8 +783,8 @@
     },
     {
       "id": "L-11",
-      "headline": "Marketing is a design document, not a package.",
-      "text": "All 43 marketing jobs read 'not supported', no marketing package exists, and the strategy document says nothing in it is implemented.",
+      "headline": "Marketing proposals are local evidence; campaign execution is absent.",
+      "text": "The optional MK1 package records supplied funnel counts, derives a drop insight and prepares a complete-or-refused proposal for human approval. It performs no audience execution, consent enforcement, sending, publishing, spending, scheduling or attribution. JTBD row promotion remains a separate review.",
       "evidence": {
         "jtbd": "JTBD-MK-01",
         "docs": [
@@ -788,12 +792,15 @@
           "docs/benchmarks/CRM_JTBD_MATRIX.md"
         ],
         "repoFacts": [
-          "MARKETING_GROWTH_OPERATIONS.md opens with 'Status: product strategy and roadmap only. Nothing in this document is implemented.'",
-          "all 43 JTBD-MK rows in docs/benchmarks/jobs.json read 'not supported'",
-          "the work is sequenced as EXECUTION_ROADMAP track MK0-MK7 and none of it is merged"
+          "packages/marketing is optional and the default generated domain registry is empty",
+          "MK1 approval creates local immutable evidence and declares no provider or external operation"
         ],
         "facts": [
-          "marketing_runtime.implemented=absent"
+          "marketing_runtime.implemented=implemented"
+        ],
+        "tests": [
+          "tests/marketing-e2e.test.js",
+          "tests/marketing-no-external-effect.test.js"
         ]
       },
       "surfaces": [
