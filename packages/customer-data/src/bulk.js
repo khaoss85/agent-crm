@@ -201,19 +201,36 @@ export function createBulkRunner({ database, modules, events, config, core, poli
   const runs = () => trusted(modules, names.bulkRun);
   const receipts = () => trusted(modules, names.bulkItem);
 
-  const summarize = ({ run, stored, idempotencyKey, replayed, action }) => {
-    const byIndex = new Map(stored.map((row) => [row.itemIndex, row]));
+  const summarize = ({ run, stored, idempotencyKey, replayed, action, items }) => {
     // The import's reconciliation discipline, applied to the bulk: every
-    // item has exactly one receipt, or the summary is refused rather than
-    // reported short.
-    for (const index of run.itemOrder) {
-      if (!byIndex.has(index)) {
-        throw new AppError(`bulk run ${run.id} has no receipt for item ${index}, so its summary is refused`, {
+    // requested record has exactly one receipt, or the summary is refused
+    // rather than reported short. The match is by record, never by position:
+    // the idempotency key is order-independent, so a retry may list the same
+    // records in a different order, and receipts written under the earlier
+    // order still belong to the same records.
+    const outstanding = new Map();
+    for (const row of stored) {
+      const queue = outstanding.get(row.recordId) ?? [];
+      queue.push(row);
+      outstanding.set(row.recordId, queue);
+    }
+    const receipts = items.map((item) => {
+      const queue = outstanding.get(item.recordId) ?? [];
+      const [row] = queue.splice(0, 1);
+      if (!row) {
+        throw new AppError(`bulk run ${run.id} has no receipt for record ${item.recordId}, so its summary is refused`, {
           code: 'BULK_RECEIPTS_UNRECONCILED', status: 500,
-          details: Object.freeze({ runId: run.id, itemIndex: index }),
+          details: Object.freeze({ runId: run.id, recordId: item.recordId }),
         });
       }
-    }
+      return Object.freeze({
+        index: item.index,
+        recordId: row.recordId,
+        outcome: row.outcome === 'applied' && row.reportedFrom === 'resume' ? 'already-applied' : row.outcome,
+        code: row.code,
+        reason: row.reason,
+      });
+    });
     return Object.freeze({
       mode: 'apply',
       runId: run.id,
@@ -226,16 +243,7 @@ export function createBulkRunner({ database, modules, events, config, core, poli
         applied: run.appliedCount,
         failed: run.failedCount,
       }),
-      receipts: Object.freeze(run.itemOrder.map((index) => {
-        const row = byIndex.get(index);
-        return Object.freeze({
-          index,
-          recordId: row.recordId,
-          outcome: row.outcome === 'applied' && row.reportedFrom === 'resume' ? 'already-applied' : row.outcome,
-          code: row.code,
-          reason: row.reason,
-        });
-      })),
+      receipts: Object.freeze(receipts),
       limitations: LIMITATIONS,
     });
   };
@@ -257,9 +265,9 @@ export function createBulkRunner({ database, modules, events, config, core, poli
         // twice, and the caller is told it is looking at a replay.
         const stored = await deciding(receipts(), { runId: existing.id });
         return summarize({
-          run: { ...existing, itemOrder: items.map((item) => item.index) },
+          run: existing,
           stored: stored.map((row) => ({ ...row, reportedFrom: 'replay' })),
-          idempotencyKey, replayed: true, action,
+          idempotencyKey, replayed: true, action, items,
         });
       }
 
@@ -280,17 +288,29 @@ export function createBulkRunner({ database, modules, events, config, core, poli
 
       // Items applied by an earlier call of this same run are evidence, not
       // work: they are reported from the stored receipt and never executed
-      // again. Failed items get their second chance below.
-      const storedByIndex = new Map(
-        (await deciding(receipts(), { runId: run.id }))
-          .map((row) => [row.itemIndex, row]),
-      );
+      // again. Failed items get their second chance below. The match is by
+      // record, never by position: the idempotency key is order-independent,
+      // so a retry with reordered items must resume the same records rather
+      // than re-apply the decided one and skip the undecided one.
+      const storedByRecord = new Map();
+      for (const row of await deciding(receipts(), { runId: run.id })) {
+        const queue = storedByRecord.get(row.recordId) ?? [];
+        queue.push(row);
+        storedByRecord.set(row.recordId, queue);
+      }
+      const takePrevious = (recordId) => {
+        const queue = storedByRecord.get(recordId);
+        if (!queue || queue.length === 0) return undefined;
+        const appliedAt = queue.findIndex((row) => row.outcome === 'applied');
+        const [previous] = queue.splice(appliedAt >= 0 ? appliedAt : 0, 1);
+        return previous;
+      };
 
       let applied = 0;
       let failed = 0;
       const reported = [];
       for (const item of items) {
-        const previous = storedByIndex.get(item.index);
+        const previous = takePrevious(item.recordId);
         if (previous && previous.outcome === 'applied') {
           applied += 1;
           reported.push({ ...previous, reportedFrom: 'resume' });
@@ -358,7 +378,10 @@ export function createBulkRunner({ database, modules, events, config, core, poli
               outcome: 'applied', code: 'APPLIED', reason: `${action} applied`, decidedAt: now,
             }, { actor })
             : await receipts().createManaged({
-              sourceKey: `customer-bulk-item:${run.id}:${item.index}`,
+              // Content-addressed as well as positional: a resumed retry
+              // with reordered items creates receipts at positions whose
+              // plain positional key is already taken.
+              sourceKey: `customer-bulk-item:${run.id}:${item.index}:${itemDigest(item).slice(0, 16)}`,
               runId: run.id,
               itemIndex: item.index,
               recordModule: declaration.module,
@@ -381,7 +404,7 @@ export function createBulkRunner({ database, modules, events, config, core, poli
           const row = previous
             ? await receipts().applyManaged(previous.id, { outcome: 'failed', code, reason, decidedAt: now }, { actor })
             : await receipts().createManaged({
-              sourceKey: `customer-bulk-item:${run.id}:${item.index}`,
+              sourceKey: `customer-bulk-item:${run.id}:${item.index}:${itemDigest(item).slice(0, 16)}`,
               runId: run.id,
               itemIndex: item.index,
               recordModule: declaration.module,
@@ -410,9 +433,9 @@ export function createBulkRunner({ database, modules, events, config, core, poli
       });
 
       return summarize({
-        run: { ...finished, itemOrder: items.map((item) => item.index) },
+        run: finished,
         stored: reported,
-        idempotencyKey, replayed: false, action,
+        idempotencyKey, replayed: false, action, items,
       });
     },
   };
