@@ -141,7 +141,10 @@ rules:
   a worse outcome than a note. Re-measure before publishing:
   `node scripts/measure-suite.js --apply` on a clean tree, or
   `npm run measure:refresh` when only test files changed (it runs the changed
-  files and carries the rest, in about a minute).
+  files and carries the rest). Inputs outside `tests/` also refuse refresh;
+  only a ledger update restricted to `measuredAgainst` is exempt. Full measurement
+  obtains its per-file counts from the same verify run and refuses if the
+  checkout becomes dirty or HEAD moves before recording.
 - **Residual, stated rather than hidden:** a robust check that the *rest* of
   `PROJECT_STATUS.md` is current — the milestone row, the open-PR row, the CI row
   — needs a source of truth this repository does not have offline. It stays the

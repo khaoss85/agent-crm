@@ -883,6 +883,11 @@ runtime integrations.
 
 ### Repository Truth Contract assessment (ADR-039)
 
+The ADR-044 single-run measurement reporter and conservative refresh checks are
+also repository evidence maintenance: `not_applicable` for every domain below
+and outside the table. They add no domain runtime capability or backfill.
+
+
 `scripts/repo-truth.js` and `docs/repository-truth.json` are a horizontal
 **repository evidence discipline**, not a CRM runtime capability. Its status is
 `not_applicable` for all six columns and for every domain outside the table: it

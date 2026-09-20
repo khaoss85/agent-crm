@@ -28,7 +28,7 @@
  * stale on arrival — the re-measure race of backlog:79405f9df589, lost fifteen
  * times in a row. The way out is not a faster full run but a smaller one.
  *
- * `--apply` records, beside the totals, a per-file map: which `*.test.js`
+ * `--apply` records the same run's machine summaries beside its total: which `*.test.js`
  * file contributed how many passing tests. `--refresh` diffs the recorded
  * tests/ tree against HEAD's, runs ONLY the added and changed test files,
  * requires them green, and carries every untouched file's contribution
@@ -45,16 +45,20 @@
  *   `*.test.js` file (helpers, fixtures, snapshots): the blast radius of a
  *   helper edit is unknowable without running its importers, so only a full
  *   run may speak for the new tree;
+ * - inputs outside tests/, except a ledger-only measuredAgainst update: even
+ *   unchanged tests can change outcome when the source or their inputs change;
  * - a recorded commit that is not an ancestor of HEAD: the lineage is broken
  *   and no diff can bridge it;
  * - a red targeted run, or a per-file count that does not reconcile: carried
  *   arithmetic rests on green runs, same as the full record.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { MeasurementError, assertMeasurementUnchanged, parseMeasurementReport } from './measurement-report.js';
 
 const root = process.cwd();
 const claimsPath = join(root, 'site', 'claims.json');
@@ -107,38 +111,31 @@ async function main() {
   const command = 'npm run verify';
   process.stderr.write(`measure-suite: running \`${command}\` at ${sha.slice(0, 7)} over ${testFiles.length} test files…\n`);
 
-  const run = spawnSync('npm', ['run', 'verify'], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  const output = `${run.stdout ?? ''}\n${run.stderr ?? ''}`;
-
-  const pass = lastNumber(output, /^[^\n]*\bpass\s+(\d+)\s*$/gm);
-  const fail = lastNumber(output, /^[^\n]*\bfail\s+(\d+)\s*$/gm);
-
-  if (pass === null || fail === null) {
-    process.stderr.write(`measure-suite: child exit=${run.status}, signal=${run.signal}, error=${run.error?.message ?? 'none'}.\n`);
-    await new Promise((resolve) => process.stderr.write(output, () => resolve(undefined)));
-    process.stderr.write('measure-suite: could not read pass/fail counts out of the run. The reporter changed; fix this parser rather than typing a number.\n');
-    process.exit(1);
+  // npm forwards the first `--` to verify; the next makes its final npm test
+  // forward reporter arguments to node. The checked-in verify still runs check
+  // AND the suite, once. A script that stops forwarding refuses (no receipt).
+  const scratch = mkdtempSync(join(tmpdir(), 'accordo-measure-'));
+  let measured;
+  try {
+    const reportPath = join(scratch, 'summary.jsonl');
+    const reporter = fileURLToPath(new URL('./measurement-reporter.js', import.meta.url));
+    const run = spawnSync('npm', ['run', 'verify', '--', '--',
+      `--test-reporter=${reporter}`, '--test-reporter-destination=stdout',
+      `--test-reporter-destination=${reportPath}`], {
+      cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: standaloneEnv(),
+    });
+    if (run.status !== 0 || run.error || run.signal) {
+      process.stderr.write(`${run.stdout ?? ''}\n${run.stderr ?? ''}`);
+      throw new MeasurementError(`verify failed: exit=${run.status}, signal=${run.signal}, error=${run.error?.message ?? 'none'}; nothing recorded`);
+    }
+    measured = parseMeasurementReport(readFileSync(reportPath, 'utf8'), root, testFiles);
+    assertMeasurementUnchanged(git, sha);
+  } catch (error) {
+    throw new MeasurementError(error.message);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
-  if (run.status !== 0 || fail !== 0) {
-    process.stderr.write(`measure-suite: suite failed: exit=${run.status}, failures=${fail}, signal=${run.signal}, error=${run.error?.message ?? 'none'}.\n`);
-    await new Promise((resolve) => process.stderr.write(output, () => resolve(undefined)));
-    process.stderr.write(`measure-suite: \`${command}\` exited ${run.status} with ${fail} failing. A claims ledger rests on a green run; nothing recorded.\n`);
-    process.exit(1);
-  }
-
-  // The per-file map the totals reconcile against: every test file run alone,
-  // TAP-parsed, summed. The sum must BE the full run's count, or the map is not
-  // a decomposition of this run and nothing is recorded.
-  const files = enumerateTestFiles(root, testFiles);
-  const mapped = Object.values(files).reduce((total, entry) => total + entry.tests, 0);
-  if (mapped !== pass) {
-    process.stderr.write(
-      `measure-suite: per-file counts sum to ${mapped}, but the full run passed ${pass}. `
-      + 'The map is not a decomposition of this run — same machine, same tree, same minute, and they disagree, '
-      + 'so the run is not describable and nothing is recorded.\n',
-    );
-    process.exit(1);
-  }
+  const { pass, fail, files } = measured;
 
   const record = {
     date: new Date().toISOString().slice(0, 10),
@@ -160,6 +157,7 @@ async function main() {
     return;
   }
 
+  assertMeasurementUnchanged(git, sha);
   const source = readFileSync(claimsPath, 'utf8');
   const ledger = JSON.parse(source);
   ledger.measuredAgainst = record;
@@ -170,7 +168,7 @@ async function main() {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   main().catch((error) => {
     process.stderr.write(`measure-suite: ${error?.stack ?? error}\n`);
-    process.exit(2);
+    process.exit(error.exitCode ?? 2);
   });
 }
 
@@ -356,6 +354,10 @@ function refreshRecord() {
     files[relpath] = { tests: count };
   }
 
+  const reconciled = Object.values(files).reduce((sum, entry) => sum + entry.tests, 0);
+  if (reconciled !== tests) throw new MeasurementError('refresh map does not reconcile with its total; nothing recorded');
+  assertMeasurementUnchanged(git, head);
+
   const next = {
     date: new Date().toISOString().slice(0, 10),
     sha: head.slice(0, 7),
@@ -370,6 +372,7 @@ function refreshRecord() {
       + 'rests on, and the file total was recounted exactly. Never edit these numbers by hand: '
       + 'scripts/site-check.js verifies sha, testsTree, testFiles and the per-file map against the commit.',
   };
+  assertMeasurementUnchanged(git, head);
   ledger.measuredAgainst = next;
   writeFileSync(claimsPath, `${JSON.stringify(ledger, null, 2)}\n`);
   process.stdout.write(
@@ -392,8 +395,8 @@ function refreshRecord() {
  * @param {Record<string, { tests: number }>} fileMap
  */
 export function planRefresh(git, recordedSha, headSha, fileMap) {
-  const diff = git(['diff', '--name-status', recordedSha, headSha, '--', 'tests/']);
-  if (diff.status !== 0) return { refuse: 'the tests/ diff would not read.' };
+  const diff = git(['diff', '--name-status', recordedSha, headSha]);
+  if (diff.status !== 0) return { refuse: 'the input diff would not read.' };
   /** @type {string[]} */
   const run = [];
   /** @type {string[]} */
@@ -402,6 +405,25 @@ export function planRefresh(git, recordedSha, headSha, fileMap) {
     if (!line) continue;
     const [status, first, second] = line.split('\t');
     const kind = (status ?? '')[0];
+    // Only the prior measurement's own ledger commit may be carried outside
+    // tests/. Even a documentation file can be an input to a test: no guessed
+    // source/dependency graph, and no green counts carried over unseen edits.
+    if (first === 'site/claims.json' && kind === 'M') {
+      try {
+        const before = git(['show', `${recordedSha}:site/claims.json`]);
+        const after = git(['show', `${headSha}:site/claims.json`]);
+        if (before.status !== 0 || after.status !== 0) throw new Error('unreadable ledger');
+        const { measuredAgainst: _old, ...oldClaims } = JSON.parse(before.stdout);
+        const { measuredAgainst: _new, ...newClaims } = JSON.parse(after.stdout);
+        if (JSON.stringify(oldClaims) !== JSON.stringify(newClaims)) throw new Error('claims changed');
+      } catch {
+        return { refuse: 'claims outside measuredAgainst changed or could not be read.' };
+      }
+      continue;
+    }
+    if (!first?.startsWith('tests/') || (second && !second.startsWith('tests/'))) {
+      return { refuse: `input outside tests/ changed: ${first ?? '(missing path)'}.` };
+    }
     if (kind === 'R') {
       // A rename carries nothing: the old path drops out, the new path runs.
       if (!first || !second) return { refuse: `unparsable rename entry ${JSON.stringify(line)}.` };

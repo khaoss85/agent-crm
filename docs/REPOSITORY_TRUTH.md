@@ -457,7 +457,11 @@ per fact, and each rule proves what it claims with read-speed git alone:
 When only test files changed, `npm run measure:refresh` re-anchors the record
 at HEAD in about a minute: it runs the added and changed test files, requires
 them green, and carries every untouched file's contribution forward from the
-per-file map `--apply` records beside the totals. Anything else — a helper or
+per-file map `--apply` records beside the totals from that same full run's machine
+summaries, without rerunning the files. Refresh also refuses every change outside
+`tests/`, except an update solely to `site/claims.json`'s `measuredAgainst` field.
+That includes source, dependency and prose changes: no input is presumed harmless.
+Anything else — a helper or
 fixture edit under `tests/`, a broken lineage, a red targeted run, a record
 that predates the map — fails closed with the reason, and only a full run may
 speak for the new tree.

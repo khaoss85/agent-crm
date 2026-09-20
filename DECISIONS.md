@@ -4527,3 +4527,24 @@ change boundary: new automation with push permissions this change cannot verify)
 Boundary stated plainly: after a tests/ content change, `test_count` still reads
 stale until the minutes-long refresh confirms the count. The gate cannot prove
 what only execution knows, and it does not pretend otherwise.
+
+### ADR-044 addendum — one run supplies its own decomposition
+
+The original full measurement ran verify and then every test file again,
+sequentially. Those executions were expensive and were not the run the map
+claimed to decompose. `measure-suite` now attaches a machine reporter alongside
+the human reporter to the same `npm run verify`: Node's per-file and root
+summary counters must cover the exact committed file set and reconcile, or no
+record is written. Passing counts exclude skipped and todo cases according to
+the runner, not a reconstruction from printed test names. A missing channel,
+failed command, dirty tree or changed HEAD refuses publication.
+
+Refresh now reads the whole commit diff. An input outside `tests/` refuses,
+except an update solely to `site/claims.json`'s `measuredAgainst` field. Test
+helpers and fixtures still require a full run. Previously a source-only
+regression was invisible to the refresh plan, so unchanged test files could
+carry stale green results. There is no inferred dependency graph and even
+prose changes conservatively require full measurement. Constructed and actual
+runner proofs live in `tests/measurement-report.test.js` and
+`tests/measure-refresh.test.js`; the recovery boundary is recorded in
+`docs/plans/single-run-measurement.md`.
