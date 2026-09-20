@@ -206,7 +206,7 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 - [ ] Customer Data Operations v2; Interactions; Billing; Marketing; Analytics.
 - [ ] Vercel Accordo project/account scope and `public-surface-check` after private-repository creation.
 - [ ] Repository Truth Contract v2 generated `productionPosture`.
-- [ ] Deprecate `commercial-quotes@1` after every consumer moves to the integrity-verifying contract.
+- [x] Deprecate `commercial-quotes@1` after every consumer moves to the integrity-verifying contract.
 - [ ] Browser automation in CI.
 - [ ] DX6/ADR-032 application-operation observations; DX9 Context Pack; DX13 Project MCP parity.
 - [ ] Shared-database row tenancy only if economics justify it.
@@ -246,6 +246,6 @@ The v1.1 ownership overlay sequences work but starts none of it. Product priorit
 - [x] Correct existing Smithery metadata and verify fresh host installs. Gemini gallery refresh remains an upstream crawler wait.
 - [ ] Publish the canonical tutorial and adapted syndication with public readback.
 - [ ] Record actual external trial responses and sessions separately from invitations.
-- [x] **Measurement freshness that survives concurrent work (ADR-044).** The ledger no longer declares a measurement old merely because the tip moved: `measurement.test_file_count` stays current across a moved tree its exact recount still describes, while the sha and the executed-test count stay strict. `measure-suite --apply` records a reconciled per-file map beside the totals, `site-check.js` verifies it exactly, and `npm run measure:refresh` re-anchors the record at HEAD by running only the changed test files (refusing helpers, broken lineage, red runs and map-less records, chasing a moving tip). A superseded measurement names the tests/-touching commits in console output, never in the committed document.
+- [x] **Measurement freshness that survives concurrent work (ADR-044).** The ledger no longer declares a measurement old merely because the tip moved: `measurement.test_file_count` stays current across a moved tree its exact recount still describes, while the sha and the executed-test count stay strict. `measure-suite --apply` records a reconciled per-file map from the same full verify run beside its totals (with no per-file rerun), `site-check.js` verifies it exactly, and `npm run measure:refresh` re-anchors the record at HEAD by running only the changed test files (refusing helpers, changes outside tests other than the measurement ledger field, broken lineage, red runs and map-less records, chasing a moving tip). A superseded measurement names the tests/-touching commits in console output, never in the committed document.
 
 Execution: `docs/plans/traction-first-working-example.md`. Live publication receipts, external responses and dated follow-up are tracked in [issue #176](https://github.com/khaoss85/agent-crm/issues/176).

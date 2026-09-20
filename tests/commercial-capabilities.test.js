@@ -9,11 +9,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
 /**
- * The two capabilities Commercial Operations OFFERS — `commercial-quotes@1` and
+ * The two capabilities Commercial Operations OFFERS — `commercial-quotes@2` and
  * `commercial-quote-binding@1` — are the whole reason another package can read a
  * quote's immutable evidence or declare the one bounded write onto it. The
- * Signature extraction is built to consume `commercial-quotes@1`, so the shape
+ * Signature extraction consumes `commercial-quotes@2`, so the shape
  * that capability returns IS a contract another milestone depends on.
+ * (`commercial-quotes@1` is retired: its reads live on byte-identically inside
+ * `@2`, and no consumer declares it anymore.)
  *
  * `crm package test` exercises the capabilities a package *requires* (Commercial
  * requires none); it never opens the capabilities a package *offers*. So without
@@ -57,7 +59,7 @@ function compose(root) {
     "  description: 'A do-nothing consumer that declares the Commercial capabilities so a test can open them through the registry.',",
     '  resources: [], actions: [], policies: [], capabilities: [],',
     '  requires: [',
-    "    { package: 'commercial', capability: 'commercial-quotes', version: 1 },",
+    "    { package: 'commercial', capability: 'commercial-quotes', version: 2 },",
     "    { package: 'commercial', capability: 'commercial-quote-binding', version: 1 },",
     '  ],',
     '});',
@@ -108,7 +110,7 @@ function project(t) {
   return root;
 }
 
-test('commercial-quotes@1 returns the immutable evidence shape a consumer copies without interpreting', async (t) => {
+test('commercial-quotes@2 returns the immutable evidence shape a consumer copies without interpreting', async (t) => {
   const root = project(t);
   const dbPath = join(root, 'data', 'cap.sqlite');
 
@@ -134,7 +136,7 @@ test('commercial-quotes@1 returns the immutable evidence shape a consumer copies
 
     // Open the capability the way a consumer does: through the registry, with a
     // consumer that declared the requirement.
-    const cap = app.domains.capability({ consumer: 'capability-probe', capability: 'commercial-quotes', version: 1, context: { modules: app.modules } });
+    const cap = app.domains.capability({ consumer: 'capability-probe', capability: 'commercial-quotes', version: 2, context: { modules: app.modules } });
     out.interface = Object.keys(cap).sort();
 
     const q = cap.quote(out.quoteId);
@@ -180,7 +182,7 @@ test('commercial-quotes@1 returns the immutable evidence shape a consumer copies
   `);
 
   assert.equal(built.__error, undefined, `phase errored: ${JSON.stringify(built.__error)}`);
-  assert.deepEqual(built.interface, ['capabilityContract', 'policies', 'quote', 'version', 'versionComponents', 'versionLines', 'versionTerm', 'versionTotals']);
+  assert.deepEqual(built.interface, ['capabilityContract', 'policies', 'quote', 'verifySignedTerms', 'version', 'versionComponents', 'versionLines', 'versionTerm', 'versionTotals']);
   assert.equal(built.lifecycle.status, 'approved');
   assert.equal(built.lifecycle.currentVersionIsSignable, true, 'the capability names the one signable version');
   assert.equal(built.policyEvidence.policy, 'standard-sales-discount');
@@ -208,7 +210,7 @@ test('the capability registry refuses an undeclared consumer and proves the cons
     // A consumer that did NOT declare the requirement is refused, even though
     // the capability exists — the dependency graph is the truth, not a comment.
     out.undeclared = (() => {
-      try { app.domains.capability({ consumer: 'commercial', capability: 'commercial-quotes', version: 1, context: { modules: app.modules } }); return 'opened'; }
+      try { app.domains.capability({ consumer: 'commercial', capability: 'commercial-quotes', version: 2, context: { modules: app.modules } }); return 'opened'; }
       catch (error) { return error.code; }
     })();
 

@@ -2935,6 +2935,22 @@ contract genuinely moved (a new offered capability; a new required capability).
 Lifecycle does not: it consumes succession, and nothing in its own composition
 contract changed.
 
+### Addendum — retire the migrated v1 offer
+
+After Signature and Contracts migrated to `commercial-quotes@2`, the remaining
+test consumer was migrated too. Commercial package version 4 now offers only
+`commercial-quotes@2` and `commercial-quote-binding@1`. A v1 requirement is
+refused at composition with the consumer and available v2 named; the shared
+read implementation remains unchanged inside v2. This deliberately ends
+compatibility for external consumers that have not migrated, whose inventory
+is outside this repository.
+
+`tests/commercial-quotes-deprecation.test.js` checks the bundled source
+consumers and the registry refusal. The service journey's verifier fixture is
+rebound from a fresh scenario run because its composition includes Commercial;
+the stale-plan guard remains intact. Recovery and validation are recorded in
+`docs/plans/retire-commercial-quotes-v1.md`.
+
 ### Recorded invariants (M16b, restated so they are citable)
 
 - **Linear successor, v1.** One executed successor per source cycle; no
@@ -4511,3 +4527,24 @@ change boundary: new automation with push permissions this change cannot verify)
 Boundary stated plainly: after a tests/ content change, `test_count` still reads
 stale until the minutes-long refresh confirms the count. The gate cannot prove
 what only execution knows, and it does not pretend otherwise.
+
+### ADR-044 addendum — one run supplies its own decomposition
+
+The original full measurement ran verify and then every test file again,
+sequentially. Those executions were expensive and were not the run the map
+claimed to decompose. `measure-suite` now attaches a machine reporter alongside
+the human reporter to the same `npm run verify`: Node's per-file and root
+summary counters must cover the exact committed file set and reconcile, or no
+record is written. Passing counts exclude skipped and todo cases according to
+the runner, not a reconstruction from printed test names. A missing channel,
+failed command, dirty tree or changed HEAD refuses publication.
+
+Refresh now reads the whole commit diff. An input outside `tests/` refuses,
+except an update solely to `site/claims.json`'s `measuredAgainst` field. Test
+helpers and fixtures still require a full run. Previously a source-only
+regression was invisible to the refresh plan, so unchanged test files could
+carry stale green results. There is no inferred dependency graph and even
+prose changes conservatively require full measurement. Constructed and actual
+runner proofs live in `tests/measurement-report.test.js` and
+`tests/measure-refresh.test.js`; the recovery boundary is recorded in
+`docs/plans/single-run-measurement.md`.

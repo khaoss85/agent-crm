@@ -126,7 +126,7 @@ test('planRefresh refuses unknown statuses rather than guessing them', () => {
  * A repository with a recorded measurement: two test files, three passing
  * tests, and the per-file map a full `--apply` would have written.
  */
-function refreshFixture(t, prefix) {
+function refreshFixture(t, prefix, dependent = false) {
   const root = scratch(prefix);
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const run = setupGit(root);
@@ -143,6 +143,11 @@ function refreshFixture(t, prefix) {
   }));
   writeFileSync(join(root, 'tests', 'a.test.js'), TEST_FILE('a', 2));
   writeFileSync(join(root, 'tests', 'b.test.js'), TEST_FILE('b', 1));
+  writeFileSync(join(root, 'site', 'claims.json'), JSON.stringify({ claimsContract: 2 }));
+  if (dependent) {
+    writeFileSync(join(root, 'value.js'), 'export const value = 1;\n');
+    writeFileSync(join(root, 'tests', 'b.test.js'), "import test from 'node:test'; import assert from 'node:assert/strict'; import { value } from '../value.js'; test('source dependency', () => assert.equal(value, 1));\n");
+  }
   const base = commitAll(run, 'base corpus');
   const record = {
     date: '2026-09-19',
@@ -255,15 +260,52 @@ test('refresh refuses a red changed file and records nothing', (t) => {
   assert.deepEqual(ledgerOf(root).sha, record.sha, 'a refused refresh writes nothing');
 });
 
-test('refresh reports already-current when tests/ did not move', (t) => {
+test('refresh refuses changed inputs outside tests even when the corpus did not move', (t) => {
   const { root, run, record } = refreshFixture(t, 'refresh-settled-');
   writeFileSync(join(root, 'README.md'), 'unrelated\n');
   commitAll(run, 'change prose');
 
   const before = readFileSync(join(root, 'site', 'claims.json'), 'utf8');
   const result = refresh(root);
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stderr, /Nothing to do/);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /input outside tests/);
   assert.equal(readFileSync(join(root, 'site', 'claims.json'), 'utf8'), before, 'a settled refresh writes nothing');
   assert.deepEqual(ledgerOf(root).sha, record.sha);
+});
+
+// A source-only regression cannot inherit yesterday's green counts.
+test('planRefresh refuses source, dependency and runner inputs outside tests', () => {
+  for (const path of ['packages/core/index.js', 'scripts/run.js', 'package.json', 'package-lock.json', 'examples/fixture.json']) {
+    const plan = planRefresh(stubGit(`M\t${path}\nM\ttests/a.test.js\n`), 's', 'h', MAP);
+    assert.match(plan.refuse, /input outside tests/);
+  }
+});
+
+
+test('refresh cannot carry a failing unchanged test across a source change', (t) => {
+  const { root, run, record } = refreshFixture(t, 'refresh-source-', true);
+  writeFileSync(join(root, 'value.js'), 'export const value = 2;\n');
+  writeFileSync(join(root, 'tests', 'a.test.js'), TEST_FILE('renamed', 2));
+  commitAll(run, 'break source and change an unrelated test');
+  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+  const counterexample = spawnSync(process.execPath, ['--test', 'tests/b.test.js'], { cwd: root, encoding: 'utf8', env });
+  assert.notEqual(counterexample.status, 0, 'the unchanged dependent test really fails');
+  const result = refresh(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /input outside tests/);
+  assert.deepEqual(ledgerOf(root), record, 'the stale green record is never re-anchored');
+});
+
+test('refresh refuses a changed public claim outside the measurement block', (t) => {
+  const { root, run } = refreshFixture(t, 'refresh-claim-');
+  const path = join(root, 'site', 'claims.json');
+  const ledger = JSON.parse(readFileSync(path, 'utf8'));
+  ledger.claim = 'new input';
+  writeFileSync(path, JSON.stringify(ledger));
+  commitAll(run, 'change public claim');
+  const before = readFileSync(path, 'utf8');
+  const result = refresh(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /claims outside measuredAgainst/);
+  assert.equal(readFileSync(path, 'utf8'), before);
 });
