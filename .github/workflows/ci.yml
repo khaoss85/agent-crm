@@ -19,21 +19,10 @@ jobs:
   # and `diff HEAD`, all of which work in a one-commit checkout, and the provenance
   # tests build their own fixture repositories rather than reading this one.
   verify:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_HOST_AUTH_METHOD: trust
-          POSTGRES_USER: postgres
-          POSTGRES_DB: accordo_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    # Self-hosted while the account billing lock rejects every GitHub-hosted
+    # job at start (0 steps, "account is locked due to a billing issue").
+    # Switch back to ubuntu-latest once billing is unlocked.
+    runs-on: [self-hosted, accordo-ci]
     env:
       ACCORDO_TEST_POSTGRES: '1'
       ACCORDO_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/accordo_test
@@ -43,10 +32,30 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - name: Install and verify PostgreSQL 16 backup client
+      - name: Start PostgreSQL 16 (self-hosted macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew services start postgresql@16
+          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 && break; sleep 2; done
+          pg_isready -h 127.0.0.1 -p 5432
+          psql -h /tmp -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'postgres') THEN CREATE ROLE postgres SUPERUSER LOGIN; END IF; END \$\$;"
+          psql -h /tmp -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'accordo_test'" | grep -q 1 || psql -h /tmp -d postgres -c "CREATE DATABASE accordo_test OWNER postgres;"
+      - name: Start PostgreSQL 16 (GitHub-hosted Linux)
+        if: runner.os == 'Linux'
+        run: |
+          docker run -d --name accordo-pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16
+          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 -U postgres && break; sleep 2; done
+      - name: Install and verify PostgreSQL 16 backup client (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --yes postgresql-client-16
+          pg_dump --version | grep -E '^pg_dump \(PostgreSQL\) 16\.'
+          pg_restore --version | grep -E '^pg_restore \(PostgreSQL\) 16\.'
+          psql --version | grep -E '^psql \(PostgreSQL\) 16\.'
+      - name: Verify PostgreSQL 16 backup client (macOS)
+        if: runner.os == 'macOS'
+        run: |
           pg_dump --version | grep -E '^pg_dump \(PostgreSQL\) 16\.'
           pg_restore --version | grep -E '^pg_restore \(PostgreSQL\) 16\.'
           psql --version | grep -E '^psql \(PostgreSQL\) 16\.'
@@ -72,7 +81,8 @@ jobs:
   # a marketing sentence whose evidence has moved fails the build, exactly like a
   # test would. See scripts/site-check.js and scripts/distribution-check.js.
   public-claims:
-    runs-on: ubuntu-latest
+    # Same billing-lock routing as `verify` above.
+    runs-on: [self-hosted, accordo-ci]
     steps:
       - uses: actions/checkout@v4
         with:
