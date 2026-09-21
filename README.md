@@ -245,6 +245,7 @@ something nobody checked. No number in any of these sentences is checked either
 - **Marketing proposals have no execution path.** The optional MK1 package records
   supplied funnel observations and human-reviewed proposals. It sends, publishes
   and spends nothing; email/calendar integrations and audience execution remain absent.
+  No email, calendar or marketing integrations.
   <!-- truth: marketing_runtime.implemented=implemented -->
 - **Nothing bills.** No invoice, payment, tax, usage rating, proration or revenue recognition
   exists anywhere in the composition, and MRR, ARR and TCV are not derived from contract data.
