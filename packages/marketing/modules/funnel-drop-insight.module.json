@@ -1,0 +1,53 @@
+{
+  "manifestVersion": 1,
+  "name": "funnel-drop-insight",
+  "description": "The single largest relative step-to-step drop derived from one funnel run (MK1). A run with no measurable drop produces no insight row.",
+  "fields": [
+    {
+      "name": "funnelRunId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "step",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "previousStep",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "previousCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "stepCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "dropRateBps",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "observedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "observed",
+        "proposed"
+      ],
+      "default": "observed",
+      "writable": "managed"
+    }
+  ]
+}

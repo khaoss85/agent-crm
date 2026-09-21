@@ -1,6 +1,6 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "34bfd3c4cb0585e9ca997d99637d22b29e80a3547057b77e01bc2e1329725e8d",
+  "sourceSha": "eff8740c9125ac6327d4e99498a54d894eee754ef3393133b668938b8e90b0be",
   "environment": {
     "node": "v24.10.0",
     "pg": "resolvable"
@@ -71,6 +71,7 @@
         "packages/delivery/src/index.js",
         "packages/intelligence/src/index.js",
         "packages/lifecycle/src/index.js",
+        "packages/marketing/src/index.js",
         "packages/service/src/index.js",
         "packages/signature/src/index.js",
         "packages/work/src/index.js"
@@ -321,6 +322,22 @@
       ]
     },
     {
+      "id": "domain.marketing.package_native",
+      "value": "package_native",
+      "authority": "reference.composition",
+      "evidence": [
+        "package:marketing@1",
+        "packageContract:1",
+        "provides:marketing-proposals@1",
+        "resources:5"
+      ],
+      "scope": "package",
+      "status": "current",
+      "limitations": [
+        "REFERENCE_COMPOSITION_NOT_THE_PROJECT"
+      ]
+    },
+    {
       "id": "domain.service.package_native",
       "value": "package_native",
       "authority": "reference.composition",
@@ -449,10 +466,10 @@
     },
     {
       "id": "marketing_runtime.implemented",
-      "value": "absent",
+      "value": "implemented",
       "authority": "reference.composition",
       "evidence": [
-        "match:none",
+        "match:campaign-proposal",
         "namespace-probe:campaign|marketing|audience|nurture|newsletter|broadcast"
       ],
       "scope": "repository",
@@ -972,7 +989,7 @@
     },
     {
       "code": "REFERENCE_COMPOSITION_NOT_THE_PROJECT",
-      "message": "packages/domains/generated/index.js is empty in this repository, so package facts are read from a named REFERENCE composition of the nine checked-in domain packages. That is what the framework can compose, not what this checkout composes"
+      "message": "packages/domains/generated/index.js is empty in this repository, so package facts are read from a named REFERENCE composition of the checked-in domain packages. That is what the framework can compose, not what this checkout composes"
     },
     {
       "code": "JTBD_ROWS_NOT_ENCODED",
@@ -1023,5 +1040,5 @@
       "message": "the machine-code vocabulary is harvested lexically, so a code named only in a source comment counts as declared. Narrowing it to executable identifiers would need a parser per file type and would refuse codes that legitimately live in JSON receipts. RETIRED_CODES closes the case that matters — a code this repository deliberately removed is subtracted wherever it is mentioned"
     }
   ],
-  "fingerprint": "d8063e536abe937a55b12a5a190c1005a246dfe4864c96798b0c402f28394fd9"
+  "fingerprint": "4488bfa16297165866b0e1d321d35e43819301c483eff98acfa65017cf354c34"
 }

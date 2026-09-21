@@ -1,0 +1,35 @@
+{
+  "manifestVersion": 1,
+  "name": "funnel-definition",
+  "description": "An authored funnel definition. Observations snapshot its steps; subsequent definition edits affect future observations only.",
+  "fields": [
+    {
+      "name": "name",
+      "type": "string",
+      "unique": true
+    },
+    {
+      "name": "label",
+      "type": "string"
+    },
+    {
+      "name": "stepsJson",
+      "type": "string"
+    },
+    {
+      "name": "version",
+      "type": "integer"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "draft",
+        "active",
+        "retired"
+      ],
+      "default": "draft",
+      "writable": "managed"
+    }
+  ]
+}

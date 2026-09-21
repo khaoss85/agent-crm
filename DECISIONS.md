@@ -4548,3 +4548,30 @@ prose changes conservatively require full measurement. Constructed and actual
 runner proofs live in `tests/measurement-report.test.js` and
 `tests/measure-refresh.test.js`; the recovery boundary is recorded in
 `docs/plans/single-run-measurement.md`.
+
+## ADR-045 — MK1 is observation and proposal evidence, with no campaign execution
+
+**Status:** proposed for MK1 recovery review.
+
+MK1 uses the existing package seam, module factory and action runtime. An
+optional marketing package owns authored funnel definitions and managed run,
+insight, proposal and approval-version records. A supplied count observation
+snapshots its definition and derives the largest relative loss; it never queries
+a provider or establishes causality. Draft completeness is a policy-bound review,
+not audience, consent, provider-installation or strategy validation.
+
+Public CRUD authors funnel definitions only. Observation, proposal preparation,
+revision, review and human approval are package actions; multi-record writes use
+the existing runtime transaction. Draft/refused proposals may be revised;
+approved proposals are terminal and their evidence cannot be rewritten. Approval
+rechecks the exact reviewed policy vocabulary and fingerprint. One user actor
+approves; names in required approvals are review content, not new role controls.
+Production identity depends on the existing Spine configuration.
+
+The default package registry stays empty. The opt-in composition and public
+journey are documented in `packages/marketing/README.md`; a real temporary
+project proves them in `tests/marketing-e2e.test.js`. The Admin review screen is
+app-owned because no package Admin extension seam exists. No new runtime
+capability, provider, CLI namespace or MCP tool is added. Audiences, sending,
+scheduling, publishing and spending remain outside MK1.
+ (fix(marketing): prove the public proposal journey and preserve approval evidence)

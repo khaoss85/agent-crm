@@ -80,13 +80,14 @@ and acceptance receipts. Their work does not justify either "nothing has been
 built anywhere" or "Cloud is publicly available".
 <!-- truth: cloud_control_plane.implemented=absent -->
 
-Marketing runtime remains absent; no marketing automation, billing, autonomous
+The optional marketing package provides MK1 observations and proposal approval
+only; no sending, publishing, spending, marketing automation, billing, autonomous
 selling, full CDP, universal model compatibility, comparative superiority or
 production readiness follows from the framework test suite. Deployment security
 and operation depend on the selected composition and external verifier. Public
 directory availability for Docs MCP must not be confused with an application
 package marketplace.
-<!-- truth: marketing_runtime.implemented=absent -->
+<!-- truth: marketing_runtime.implemented=implemented -->
 
 No prose test counts belong here. Cite `site/claims.json` `measuredAgainst` and
 its exact source identity; an older measurement remains historical until the

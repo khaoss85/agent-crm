@@ -22,7 +22,9 @@ The framework **authenticates nobody** — a deployment adapter verifies the req
 **owns tenancy and authorization completely**, with one tenant per application instance enforced
 by the storage binding rather than by a filter (ADR-038). Persistence for the composed
 application is SQLite or dedicated-database PostgreSQL. Shared-database row-level
-tenancy, billing and a marketing runtime are not implemented. Durable jobs,
+tenancy and billing are not implemented. The optional MK1 marketing package
+records supplied funnel observations and human-reviewed proposals only; it has
+no sending, publishing, spending, audience execution or attribution. Durable jobs,
 the transactional outbox and bounded timer consumers are implemented; the
 composing application starts their workers explicitly. No managed worker
 service ships with the framework.
@@ -38,7 +40,7 @@ Each of those sentences is bound to a generated fact (ADR-039) and re-checked by
 <!-- truth: spine.timer_consumers.implemented=implemented -->
 <!-- truth: spine.managed_jobs_service.implemented=absent -->
 <!-- truth: billing.implemented=absent -->
-<!-- truth: marketing_runtime.implemented=absent -->
+<!-- truth: marketing_runtime.implemented=implemented -->
 
 It provides:
 

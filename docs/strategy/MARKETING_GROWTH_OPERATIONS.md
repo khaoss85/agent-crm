@@ -1,6 +1,14 @@
 # Marketing & Growth Operations
 
-**Status: product strategy and roadmap only. Nothing in this document is implemented.** No campaign, audience, journey, experiment, content asset, landing page, tracking plan, provider adapter, attribution model or funnel primitive exists in the repository today. No package under `packages/marketing`, `packages/journeys`, `packages/experimentation`, `packages/content` or `packages/attribution` exists. This document defines the workstream so the roadmap can sequence it (`EXECUTION_ROADMAP.md`, track MK0–MK7) and so coding agents build it by composing declared primitives rather than inventing them.
+**Status: product strategy and roadmap, with the bounded MK1 proposal slice in source.**
+`packages/marketing` provides supplied-count funnel observations, campaign
+proposal review and local human approval evidence. It sends, publishes and
+spends nothing; audiences, consent enforcement, journeys, experiments, content
+execution, provider adapters and attribution remain outside this slice. The
+remaining document is the target workstream, not a claim that its complete
+journey runs. Coverage and review status are tracked in `../PROJECT_STATUS.md`
+and `../benchmarks/CRM_JTBD_MATRIX.md`; the package boundary is documented in
+`../../packages/marketing/README.md`.
 
 **Framing:** the sales-side workstreams take a lead that already exists and move it to revenue. This one asks where the lead came from, whether more can be found, and whether the money spent finding it was worth spending. A CRM framework that only records demand is a ledger; one that can *create* demand — under human approval, with the evidence to prove what worked — is the other half of the category claim in `CATEGORY.md`.
 
@@ -205,7 +213,9 @@ MK7  Attribution and Closed-loop Optimization             requires ANALYTICS_STU
 | MK6 | MK2, MK3; provider contracts in `INTEGRATION_RUNTIME.md` |
 | MK7 | Analytics Studio (`ANALYTICS_STUDIO.md`) and an identity/touchpoint model — hard |
 
-**No Marketing package is implemented by this PR**, and no milestone above is started.
+This strategy does not establish milestone completion. The bounded MK1 source
+slice is described above; review, merge and the remaining track retain their
+separate status in `../PROJECT_STATUS.md`.
 
 The MK track is not a Factory integration dependency. Factory implementation is
 separately gated by its Phase-6 Integration Freeze, and the first Factory

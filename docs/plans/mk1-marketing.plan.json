@@ -1,0 +1,116 @@
+{
+  "solutionPlanContract": 1,
+  "revision": 1,
+  "goal": {
+    "id": "mk1-marketing-proposals",
+    "statement": "Review a campaign proposal derived from supplied funnel counts without executing a campaign.",
+    "outcome": "An agent prepares, a human approves, and local immutable evidence explains the decision."
+  },
+  "metric": {
+    "name": "proposal_reviewability",
+    "definition": "A proposal contains all required sections or receives a recorded refusal.",
+    "baseline": "Recovered primitives had no public creation journey.",
+    "target": "Every proposed draft meets the configured completeness policy."
+  },
+  "application": {
+    "inspectionContract": 1,
+    "inspectionFingerprint": "a0818b576ece478b089387a2f23f4acddab777a6929f47f95229122475027d79",
+    "packages": [],
+    "capabilities": [],
+    "modules": []
+  },
+  "evidence": {
+    "observedFacts": [
+      {
+        "id": "fact.default-empty",
+        "statement": "The default source composition has no optional marketing package.",
+        "source": "app inspect source report recorded during MK1 recovery",
+        "citations": []
+      }
+    ],
+    "derivedMetrics": [],
+    "assumptions": [],
+    "inferences": [],
+    "recommendations": [],
+    "unavailableEvidence": [
+      {
+        "id": "unavailable.provider",
+        "statement": "No provider operations are established.",
+        "reason": "MK1 has no provider path and consumes supplied counts and content.",
+        "citations": []
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "id": "decision.package",
+      "type": "create-package",
+      "target": "marketing",
+      "rationale": "Related immutable observations and proposal approvals need an optional multi-resource package; CRUD alone cannot enforce the approval lifecycle.",
+      "rungsTried": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "gap": "No composed package owns funnel observations, campaign proposals or their approval evidence.",
+      "rejectedRungs": [
+        {
+          "rung": 1,
+          "reason": "The empty optional composition has no marketing policy to configure."
+        },
+        {
+          "rung": 2,
+          "reason": "Existing record actions supply the runtime but no package owns the related records or lifecycle."
+        },
+        {
+          "rung": 3,
+          "reason": "No external integration is needed; proposing and approval evidence are local domain behavior."
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "id": "step.journey",
+      "decisionId": "decision.package",
+      "description": "Compose the package in a temporary project and prove the public record/action journey including refusal and human approval.",
+      "requiresCapabilities": [],
+      "approvals": [],
+      "verifies": [
+        "fact.default-empty"
+      ]
+    }
+  ],
+  "approvals": [],
+  "acceptance": {
+    "checks": [
+      "Only complete policy-bound proposals can be approved.",
+      "A non-user actor cannot approve.",
+      "No provider or external operation is declared.",
+      "Failed actions roll back records and business audits/events."
+    ],
+    "jtbdRows": [
+      "JTBD-MK-07",
+      "JTBD-MK-08",
+      "JTBD-MK-13"
+    ],
+    "artifacts": [
+      {
+        "kind": "test",
+        "path": "tests/marketing-e2e.test.js",
+        "description": "Real HTTP/SDK journey, immutable evidence and adversarial boundaries."
+      }
+    ]
+  },
+  "limitations": [
+    {
+      "code": "NO_EXTERNAL_EXECUTION",
+      "message": "No audience execution, consent validation, provider resolution, sending, publishing, spending, scheduling or attribution."
+    },
+    {
+      "code": "SOURCE_BASELINE_ONLY",
+      "message": "The plan is bound to the empty default composition; the real marketing composition is built by the E2E fixture."
+    }
+  ]
+}

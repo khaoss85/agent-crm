@@ -104,7 +104,7 @@ is not a state they can be in; disagreement is a failure instead.
 | `runtime.mode` | `MODE_ENV`, and production's refusal to start without a verifier |
 | `tenant.storage` | `TENANT_STRATEGY`, `TENANT_LIMITATIONS`, and a **structural probe of `bindTenantStorage()`'s own returned shape** |
 | `storage.contract` | the M1 contract constant; Company `create/get/list` executed through the real SQLite adapter; generated public and managed services executed against their generated schemas; and the Work legacy migration's structured-read probe |
-| `reference.composition` | the nine checked-in domain packages composed through `resolvePackageComposition` — the same function `PackageRegistry` throws from at startup |
+| `reference.composition` | the checked-in domain packages composed through `resolvePackageComposition` — the same function `PackageRegistry` throws from at startup |
 | `cli.rails` | the CLI dispatch table **and** each handler module's export, which must agree |
 
 | `jtbd.portfolio` | the desired-state catalogue and the two overlays beside it, **counted** |
@@ -342,7 +342,7 @@ Published in the document's own `limitations[]`, by code:
 | `SELF_HOST_POSTGRESQL_BACKUP_CONTRACT_ONLY` | the positive backup/restore fact covers the bounded create/verify/restore contract and its native PostgreSQL 16 provider, which needs `pg_dump`, `pg_restore` and `psql`. PostgreSQL-only — SQLite is refused, not degraded — and not managed artifact custody, scheduling, retention, PITR, clone promotion, an operator surface or a recoverability SLA |
 | `SELF_HOST_TELEMETRY_EXPORT_CONTRACT_ONLY` | the positive observability-export fact covers the bounded export contract itself — a closed signal vocabulary, an injected exporter, the built-in no-op/JSON-stderr/capture exporters and an application-owned lifecycle. Not an observability backend, log store, APM, second audit system, dashboards, alerting, retention or a managed telemetry service; no OpenTelemetry or OTLP support is implemented, and v1 exports no tenant, record or run identifier |
 | `MANAGED_SECRETS_BACKUPS_OBSERVABILITY_ABSENT` | the managed Spine v4 remainder stays absent: no managed secret custody/service, backup custody/scheduling/retention or observability backend is implemented by that fact; the bounded self-host contracts are separate positive facts |
-| `REFERENCE_COMPOSITION_NOT_THE_PROJECT` | `packages/domains/generated/index.js` is empty here, so package facts describe a **reference** composition of the nine checked-in packages, not this checkout's |
+| `REFERENCE_COMPOSITION_NOT_THE_PROJECT` | `packages/domains/generated/index.js` is empty here, so package facts describe a **reference** composition of the checked-in packages, not this checkout's |
 | `JTBD_ROWS_NOT_ENCODED` | no job status is a fact; only a person moves one |
 | `NO_SCENARIO_RECEIPT_AVAILABLE` | `scenario run` writes nothing into the project, so this repository checks in no scenario receipt and scenario evidence is not an authority in v1 |
 | `IMPLEMENTATION_EVIDENCE_NOT_AN_AUTHORITY` | the checked-in evidence documents describe other applications' compositions, so their fingerprints cannot be checked here |
@@ -494,3 +494,9 @@ citations and requires refusal. New false wording can still escape: this is
 regression prevention for observed failures, not natural-language verification.
 The scoped limitations for shared tenancy, managed workers, physical merge,
 billing and automatic renewals remain explicit and are tested as allowed.
+
+The `marketing_runtime.implemented` namespace fact includes the MK1 proposal
+package. Its value establishes package resources, not campaign execution:
+MK1 records supplied counts and human-reviewed proposal evidence; no sending,
+publishing, spending, audience execution, provider resolution or attribution
+is inferred from that fact. See `packages/marketing/README.md`.

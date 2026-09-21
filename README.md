@@ -242,9 +242,10 @@ something nobody checked. No number in any of these sentences is checked either
   cancelling or annotating work stays refused to it, and no recurrence syntax exists.
   <!-- truth: spine.timer_consumers.implemented=implemented -->
   <!-- truth: spine.managed_jobs_service.implemented=absent -->
-- **No email, calendar or marketing integrations.** A notification provider contract exists;
-  no adapter sends anything to anyone.
-  <!-- truth: marketing_runtime.implemented=absent -->
+- **Marketing proposals have no execution path.** The optional MK1 package records
+  supplied funnel observations and human-reviewed proposals. It sends, publishes
+  and spends nothing; email/calendar integrations and audience execution remain absent.
+  <!-- truth: marketing_runtime.implemented=implemented -->
 - **Nothing bills.** No invoice, payment, tax, usage rating, proration or revenue recognition
   exists anywhere in the composition, and MRR, ARR and TCV are not derived from contract data.
   <!-- truth: billing.implemented=absent -->
