@@ -1,7 +1,8 @@
 [mcp_servers.accordo]
 command = "node"
 args = ["--no-warnings", "packages/mcp/bin/server.js"]
-cwd = ".."
+# Process cwd, not this file: ".." is the parent of the repository.
+cwd = "."
 startup_timeout_sec = 10
 tool_timeout_sec = 60
 default_tools_approval_mode = "writes"
