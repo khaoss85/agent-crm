@@ -48,7 +48,8 @@ test('the domain-package contract is generic and validated fail-closed', () => {
   assert.equal(validatePackageDefinition(domain()).name, 'contracts');
   refuses(() => validatePackageDefinition({ ...domain(), name: 'Contracts' }), /name must match/);
   refuses(() => validatePackageDefinition({ ...domain(), name: '__proto__' }), /name must match/);
-  refuses(() => validatePackageDefinition({ ...domain(), packageContract: 2 }), /packageContract must be 1/);
+  assert.doesNotThrow(() => validatePackageDefinition({ ...domain(), packageContract: 2 }));
+  refuses(() => validatePackageDefinition({ ...domain(), packageContract: 3 }), /packageContract must be one of 1, 2/);
   refuses(() => validatePackageDefinition({ ...domain(), actions: 'nope' }), /actions must be an array/);
   refuses(() => validatePackageDefinition({ ...domain(), metadata: 'nope' }), /metadata must be a function/);
   refuses(() => validatePackageDefinition({ ...domain(), policies: [{ kind: 'Bad Kind', definition: policy() }] }), /policy kind must match/);

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { spawnSync, } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { activatedContract, boot, project } from './helpers/contracts-project.js';
-import { createFollowUp } from '../packages/work/src/index.js';
 
 /**
  * Work v1 — the evidence a milestone is finished by, not the happy path
@@ -29,6 +29,19 @@ import { createFollowUp } from '../packages/work/src/index.js';
  */
 
 const ACTOR = { type: 'user', id: 'evidence' };
+/**
+ * Work loaded from the throwaway project, never from this checkout.
+ *
+ * The witness that proves the caller's transaction is minted by the database
+ * that application composed and is recognized only inside the core instance
+ * that minted it (Spine v2 M2D). Driving a composed app with a second copy of
+ * Work is a mixed composition no deployment can produce, and it fails closed.
+ * The two sources are byte-identical — `project()` copies this very checkout.
+ *
+ * @param {string} root
+ */
+const workFrom = (root) => import(pathToFileURL(join(root, 'packages/work/src/index.js')).href);
+
 const run = (app, module, action, recordId, input, actor = ACTOR) =>
   app.runAction({ module, action, recordId, input, actor });
 
@@ -193,6 +206,7 @@ test('a package consumer that fails after the follow-up takes the whole transact
 
 test('two connections racing one source key: one winner, the loser replays, no raw SQLite text', async (t) => {
   const { root } = await leadProject(t, 'race-setup.sqlite');
+  const { createFollowUp } = await workFrom(root);
   const dbPath = join(root, 'data', 'race.sqlite');
   const { createAccordoApp } = await import(`${join(root, 'packages/app/src/index.js')}`.replace(/^/, 'file://'));
   const appA = createAccordoApp({ dbPath, busyTimeoutMs: 400 });
@@ -237,7 +251,8 @@ test('two connections racing one source key: one winner, the loser replays, no r
 // ---------------------------------------------------------------------------
 
 test('the correctness reads are exact past 500 rows: source key, subject timeline, consumer uniqueness', async (t) => {
-  const { context } = await leadProject(t, 'exact.sqlite');
+  const { root, context } = await leadProject(t, 'exact.sqlite');
+  const { createFollowUp } = await workFrom(root);
   const { app } = context;
   const tasks = app.modules.get('work-task').service;
   const activities = app.modules.get('work-activity').service;
@@ -311,7 +326,8 @@ const HOSTILE = [
 ];
 
 test('hostile input stays inert data or is refused, across every field', async (t) => {
-  const { context } = await leadProject(t, 'hostile.sqlite');
+  const { root, context } = await leadProject(t, 'hostile.sqlite');
+  const { createFollowUp } = await workFrom(root);
   const { app } = context;
   const ctx = { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z' };
   // REVIEW-70: every follow-up must be created inside the caller's transaction,

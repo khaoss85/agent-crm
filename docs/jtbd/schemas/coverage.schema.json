@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://accordo.dev/schemas/coverage.schema.json",
+  "title": "Accordo Coverage Assessment",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "target_repository",
+    "target_sha",
+    "status",
+    "confidence_0_1",
+    "dimensions",
+    "evidence",
+    "gaps"
+  ],
+  "properties": {
+    "jtbd_id": {
+      "type": "string"
+    },
+    "capability_id": {
+      "type": "string"
+    },
+    "target_repository": {
+      "type": "string",
+      "minLength": 3
+    },
+    "target_sha": {
+      "type": "string",
+      "minLength": 7
+    },
+    "status": {
+      "enum": [
+        "NOT_ASSESSED",
+        "ABSENT",
+        "CONCEPT_ONLY",
+        "PARTIAL",
+        "FUNCTIONAL",
+        "PRODUCTION_READY",
+        "DEPRECATED"
+      ]
+    },
+    "confidence_0_1": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dimensions": {
+      "type": "object"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "path",
+          "symbol_or_line",
+          "claim"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "DATA_MODEL",
+              "CODE",
+              "API",
+              "WORKFLOW",
+              "AGENT",
+              "UI",
+              "TEST",
+              "DOC",
+              "OBSERVABILITY",
+              "SECURITY"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "symbol_or_line": {
+            "type": "string"
+          },
+          "claim": {
+            "type": "string"
+          },
+          "test_result": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "jtbd_id"
+      ]
+    },
+    {
+      "required": [
+        "capability_id"
+      ]
+    }
+  ]
+}

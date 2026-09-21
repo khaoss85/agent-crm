@@ -3,8 +3,21 @@
 import { scaffoldModule } from '../../cli/src/scaffold-module.js';
 import { requiredString } from '../../core/src/validation.js';
 
-/** @param {{app: any, rootDir: string}} dependencies */
-export function createToolRegistry({ app, rootDir }) {
+/**
+ * Document-selected MCP doctor projects `{adapter, available}` and drops the
+ * v1 filesystem path. Local `--db` keeps the characterized `database` field.
+ *
+ * @param {Record<string, unknown>} report
+ * @param {{ adapter: string, available: boolean } | null | undefined} publicStorage
+ */
+function projectDoctor(report, publicStorage) {
+  if (!publicStorage) return report;
+  const { database: _database, ...rest } = report;
+  return { ...rest, storage: { adapter: publicStorage.adapter, available: publicStorage.available } };
+}
+
+/** @param {{app: any, rootDir: string, publicStorage?: { adapter: string, available: boolean } | null}} dependencies */
+export function createToolRegistry({ app, rootDir, publicStorage = null }) {
   const definitions = [
     {
       name: 'crm_project_context',
@@ -171,7 +184,7 @@ export function createToolRegistry({ app, rootDir }) {
       description: 'Inspect database, modules, workflows, providers and entity counts.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: readOnlyAnnotations(),
-      handler: async () => app.doctor(),
+      handler: async () => projectDoctor(app.doctor(), publicStorage),
     },
   ];
 

@@ -1,7 +1,7 @@
 {
   "implementationEvidenceContract": 1,
   "plan": "examples/solution-plans/govern-customer-identity.plan.json",
-  "planFingerprint": "e50cba3bb11ff1c6a3a91a6cb662ac33bfda4af7cb57d8ef1ba2459069be51b1",
+  "planFingerprint": "298fa20ae1653f8a97d95526cb71be7d5dc882cc0440f46733f4d593122ea38e",
   "applicationInspectionFingerprint": "6b29d66d065311ac75c26f3d9436e31625523e61aefdcdf1337a864f66d58697",
   "requirements": [
     {

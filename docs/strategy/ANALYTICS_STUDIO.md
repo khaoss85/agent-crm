@@ -29,7 +29,7 @@ The safety core of the workstream:
 4. Every metric result is **explainable**: the compiled query, the definition version and the input parameters are inspectable, so "why does this number say 42?" always has a mechanical answer.
 5. Agent diagnosis of a broken metric happens through this same surface — read definitions, run bounded compiled queries, compare fixtures — never through raw database access.
 
-**Honest limits:** role-aware results cannot be validated before authentication, tenancy and RBAC exist (Production Spine, Phase 6); until then compilation safety and metric correctness are testable, permission enforcement is design only. Analytics reads production-shaped data; at local-development scale SQLite is fine, and large-scale analytical performance is explicitly not a claim of v1.
+**Honest limits:** the Analytics Studio permission integration still needs its own implementation and evidence; framework tenancy and RBAC already exist, while authentication is supplied by a deployment verifier (Production Spine, Phase 6). Analytics reads production-shaped data; at local-development scale SQLite is fine, and large-scale analytical performance is explicitly not a claim of v1.
 
 ## 3. Versioning, rollback and correctness
 

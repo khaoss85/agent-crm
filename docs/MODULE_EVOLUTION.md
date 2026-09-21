@@ -107,7 +107,7 @@ Each generated module carries the last definition that was generated from it:
 
 ```json
 {
-  "stateVersion": 1,
+  "stateVersion": 2,
   "module": "widget",
   "revision": 2,
   "fingerprint": "…",
@@ -115,9 +115,25 @@ Each generated module carries the last definition that was generated from it:
   "migrations": [
     { "name": "create_widgets",    "checksum": "…", "sql": "…" },
     { "name": "evolve_widgets_r2", "checksum": "…", "sql": "…" }
-  ]
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_widgets",
+      "checksum": "…",
+      "sql": "…",
+      "provenance": { "kind": "v1-state-fingerprint", "fingerprint": "…" }
+    },
+    "evolutions": []
+  }
 }
 ```
+
+`stateVersion` 1 remains readable: its `{name, checksum, sql}` SQLite history
+is byte-for-byte authority. Writes emit version 2 with a PostgreSQL bootstrap
+from the current normalized manifest, used only on an empty PostgreSQL data
+plane. Runtime PostgreSQL composition refuses `LEGACY_MODULE_STATE_REQUIRED`
+until that file is checked in; it never synthesizes one at deployment time.
+<!-- truth: spine.postgresql.implemented=absent -->
 
 It is the **source of truth** for the next evolution, and it is checked in
 deliberately: it travels with the source, is reviewable in a diff, exists before

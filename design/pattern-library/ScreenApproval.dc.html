@@ -1,0 +1,169 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Spline+Sans+Mono:wght@300..700&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Bricolage Grotesque', 'Avenir Next', Avenir, ui-sans-serif, system-ui, sans-serif; background: #f7f3e9; color: #171912; }
+    a { color: #176b2a; } a:hover { color: #0f4a1c; }
+    .mono { font-family: 'Spline Sans Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .cap { font-family: 'Spline Sans Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #6f6a5a; font-weight: 600; }
+    .b { font-family: 'Spline Sans Mono', ui-monospace, monospace; font-size: 11px; font-weight: 700; padding: 6px 10px; border-radius: 6px; display: inline-block; }
+    .k { color: #8f9d94; }
+    .s { color: #8cf39a; }
+    .n { color: #f2cd5d; }
+  </style>
+</helmet>
+
+<div style="min-height: 900px; display: flex; flex-direction: column; background: #f7f3e9;">
+
+  <div style="border-bottom: 1px solid #d9d5c8; padding: 18px 44px; display: flex; align-items: center; gap: 12px;">
+    <svg width="22" height="22" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+      <circle cx="20" cy="20" r="5.5" fill="#27b64a"></circle>
+      <path d="M20 4 A16 16 0 0 1 33.86 12" stroke="#7457ff" stroke-width="3.4" stroke-linecap="round"></path>
+      <path d="M33.86 28 A16 16 0 0 1 20 36" stroke="#f2c84b" stroke-width="3.4" stroke-linecap="round"></path>
+      <path d="M20 36 A16 16 0 0 1 6.14 28" stroke="#ff6b69" stroke-width="3.4" stroke-linecap="round"></path>
+      <path d="M6.14 12 A16 16 0 0 1 20 4" stroke="#20b8d8" stroke-width="3.4" stroke-linecap="round"></path>
+    </svg>
+    <span style="font-size: 15px; font-weight: 700; letter-spacing: -.01em;">Acme Revenue</span>
+    <span class="mono" style="font-size: 12px; color: #6f6a5a;">/ opportunity / opp_01JQ8F3K2M</span>
+  </div>
+
+  <div style="padding: 26px 44px 0; display: flex; flex-direction: column; gap: 9px;">
+    <span class="b" style="background: #fff3bd; color: #665000; align-self: flex-start;">approval_required</span>
+    <h1 style="margin: 0; font-size: 44px; line-height: .98; letter-spacing: -.024em; font-weight: 700;">Platform renewal 2027</h1>
+    <span style="font-size: 15px; color: #62655b;">Acme S.p.A. · <span class="mono" style="font-size: 14px;">18000000</span> cents EUR · closes <span class="mono" style="font-size: 14px;">2026-11-30</span></span>
+  </div>
+
+  <div style="padding: 30px 44px 0; display: grid; grid-template-columns: 1.4fr 1fr; gap: 44px; flex-grow: 1;">
+
+    <div style="display: flex; flex-direction: column; gap: 26px; min-width: 0;">
+
+      <div style="display: flex; flex-direction: column; gap: 11px;">
+        <div style="border-top: 3px solid #f2c84b; padding-top: 12px;">
+          <span class="cap" style="color: #665000;">Policy · what stopped this</span>
+        </div>
+        <p style="margin: 0; font-size: 15px; line-height: 1.5; max-width: 64ch;">The agent proposed a <span class="mono" style="font-size: 14px;">2400 bps</span> line discount. The rule auto-approves up to <span class="mono" style="font-size: 14px;">1000</span> and hard-rejects above <span class="mono" style="font-size: 14px;">5000</span>; between them it hands the decision to a named approver.</p>
+        <div style="background: #171912; border-radius: 12px; padding: 16px 18px; overflow-x: auto;">
+          <pre class="mono" style="margin: 0; font-size: 11.5px; line-height: 1.8; color: #d8dcd0;"><span class="k">export const</span> standardSalesDiscountV1 = {
+  name: <span class="s">'standard-sales-discount'</span>,
+  version: <span class="n">1</span>,
+  config: { autoApproveMaxBps: <span class="n">1000</span>, rejectAboveBps: <span class="n">5000</span>, approvalKey: <span class="s">'sales-manager'</span> },
+  <span class="k">evaluate</span>({ maxLineDiscountBps, config }) {
+    <span class="k">if</span> (maxLineDiscountBps &lt;= config.autoApproveMaxBps) {
+      <span class="k">return</span> { decision: <span class="s">'auto_approve'</span>, … };
+    }
+    <span class="k">if</span> (maxLineDiscountBps &lt;= config.rejectAboveBps) {
+      <span class="k">return</span> {
+        decision: <span class="s">'approval_required'</span>,
+        requiredApprovalKey: config.approvalKey,
+        matchedRule: <span class="s">'manager-approval-band'</span>, …
+      };
+    }
+    <span class="k">return</span> { decision: <span class="s">'reject'</span>, matchedRule: <span class="s">'hard-reject-threshold'</span>, … };
+  },
+};</pre>
+        </div>
+        <span class="mono" style="font-size: 11px; color: #6f6a5a;">examples/starters/b2b-lead-qualification/commercial.js · reason strings elided at …</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div style="border-top: 3px solid #ff6b69; padding-top: 12px;">
+          <span class="cap" style="color: #9b292d;">Human · only a sales-manager can do this</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 7px;">
+          <label style="font-size: 13px; font-weight: 700;">Reason <span style="color: #9b292d;">*</span></label>
+          <input type="text" value="Three-year commitment, board approved 2026-08-20" style="padding: 12px; border: 1px solid #d9d5c8; background: #fffdf7; border-radius: 9px; font: inherit; font-size: 14px; color: #171912; width: 100%; box-sizing: border-box;">
+          <span style="font-size: 12px; color: #6f6a5a; line-height: 1.4;">Written into the audit record and not editable afterwards.</span>
+        </div>
+        <div style="display: flex; gap: 9px; padding-top: 2px;">
+          <button style="border-radius: 12px; padding: 13px 22px; font-weight: 750; font-size: 15px; font-family: inherit; background: #176b2a; color: #f7f3e9; border: 1px solid transparent; cursor: pointer;">Approve</button>
+          <button style="border-radius: 12px; padding: 13px 22px; font-weight: 750; font-size: 15px; font-family: inherit; background: transparent; color: #9b292d; border: 1px solid #9b292d; cursor: pointer;">Reject</button>
+        </div>
+        <span style="font-size: 13px; color: #62655b; line-height: 1.45; max-width: 60ch;">Acting as <strong style="color: #171912;">Sarah Rossi</strong>. Identity comes from the process that started the server — this build ships no authentication.</span>
+      </div>
+
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 26px; min-width: 0;">
+
+      <div style="display: flex; flex-direction: column; gap: 11px;">
+        <div style="border-top: 3px solid #20b8d8; padding-top: 12px;">
+          <span class="cap" style="color: #00677a;">Evidence · immutable</span>
+        </div>
+        <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 18px;">
+          <span class="cap" style="padding-top: 2px;">record</span>
+          <span class="mono" style="font-size: 12.5px; color: #00677a; overflow-wrap: anywhere;">opp_01JQ8F3K2M</span>
+          <span class="cap" style="padding-top: 2px;">run</span>
+          <span class="mono" style="font-size: 12.5px; color: #00677a; overflow-wrap: anywhere;">run_01JQ8F2X7B</span>
+          <span class="cap" style="padding-top: 2px;">policy</span>
+          <span class="mono" style="font-size: 12.5px; color: #00677a; overflow-wrap: anywhere;">standard-sales-discount v1</span>
+          <span class="cap" style="padding-top: 2px;">rule</span>
+          <span class="mono" style="font-size: 12.5px; color: #00677a; overflow-wrap: anywhere;">manager-approval-band</span>
+          <span class="cap" style="padding-top: 2px;">created</span>
+          <span class="mono" style="font-size: 12.5px; color: #00677a; overflow-wrap: anywhere;">2026-08-26T09:14:22Z</span>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 13px;">
+        <span class="cap">Trace</span>
+        <div style="display: flex; flex-direction: column;">
+
+          <div style="display: grid; grid-template-columns: 16px 1fr auto; gap: 14px; padding-bottom: 20px; position: relative;">
+            <div style="position: absolute; left: 7px; top: 16px; bottom: -2px; width: 2px; background: #d9d5c8;"></div>
+            <div style="width: 14px; height: 14px; border-radius: 50%; background: #7457ff; border: 4px solid #ebe6ff; margin-top: 2px; z-index: 1;"></div>
+            <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0;">
+              <strong style="font-size: 13.5px;">Agent composed the quote line</strong>
+              <span class="mono" style="font-size: 11.5px; color: #6f6a5a; overflow-wrap: anywhere;">2400 bps proposed</span>
+            </div>
+            <span class="mono" style="font-size: 11px; color: #6f6a5a; white-space: nowrap;">09:14:19</span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 16px 1fr auto; gap: 14px; padding-bottom: 20px; position: relative;">
+            <div style="position: absolute; left: 7px; top: 16px; bottom: -2px; width: 2px; background: #d9d5c8;"></div>
+            <div style="width: 14px; height: 14px; border-radius: 50%; background: #f2c84b; border: 4px solid #fff3bd; margin-top: 2px; z-index: 1;"></div>
+            <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0;">
+              <strong style="font-size: 13.5px;">Policy returned approval_required</strong>
+              <span class="mono" style="font-size: 11.5px; color: #6f6a5a; overflow-wrap: anywhere;">manager-approval-band</span>
+            </div>
+            <span class="mono" style="font-size: 11px; color: #6f6a5a; white-space: nowrap;">09:14:22</span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 16px 1fr auto; gap: 14px; padding-bottom: 20px; position: relative;">
+            <div style="position: absolute; left: 7px; top: 16px; bottom: -2px; width: 2px; background: #d9d5c8;"></div>
+            <div style="width: 14px; height: 14px; border-radius: 50%; background: #fffdf7; border: 3px solid #ff6b69; margin-top: 2px; z-index: 1;"></div>
+            <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0;">
+              <strong style="font-size: 13.5px; color: #9b292d;">Waiting for a sales-manager</strong>
+              <span style="font-size: 12.5px; color: #62655b;">Nothing proceeds until someone decides.</span>
+            </div>
+            <span class="mono" style="font-size: 11px; color: #6f6a5a; white-space: nowrap;">—</span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 16px 1fr auto; gap: 14px; position: relative;">
+            <div style="width: 14px; height: 14px; border-radius: 50%; background: #fffdf7; border: 2px dashed #d9d5c8; margin-top: 2px; z-index: 1;"></div>
+            <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0;">
+              <strong style="font-size: 13.5px; color: #6f6a5a;">Audit recorded</strong>
+              <span style="font-size: 12.5px; color: #6f6a5a;">Written the moment the decision lands.</span>
+            </div>
+            <span class="mono" style="font-size: 11px; color: #6f6a5a; white-space: nowrap;">—</span>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="margin: 30px 44px 32px; border-top: 1px solid #d9d5c8; padding-top: 15px;">
+    <span style="font-size: 13px; color: #62655b; line-height: 1.5;">One screen, four authorities, each in its own colour and in causal order: the machine proposed, the rule bounded it, a named person decides, the record is kept. A visitor who has seen accordo.dev has already been taught to read this.</span>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

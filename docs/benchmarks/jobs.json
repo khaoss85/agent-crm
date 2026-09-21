@@ -1,7 +1,7 @@
 {
   "counts": {
-    "not supported": 90,
-    "partially supported": 36,
+    "not supported": 87,
+    "partially supported": 39,
     "technically supported": 0,
     "total": 149,
     "validated end to end": 23
@@ -129,7 +129,7 @@
       "id": "JTBD-07",
       "section": "CRM JTBD validation matrix",
       "status": "partially supported",
-      "summary": "the *tracking* half is now reusable and the *scheduling* half still does not exist. Work v1 (ADR-030) replaced the bespoke Lead slice with one package-native Task and Activity model that three business events consume, over an explicit transition table with a human-actor boundary. Nothing is scheduled: there is no scheduler, no delayed-workflow primitive, no reminder, no queue, no recurring work, and dueAt is evidence that changes no state — the word *schedule* in this row's title is still unsupported.",
+      "summary": "Work supplies reusable Tasks and Activity. Explicitly composed self-host timer consumers can open a Work ask through an application-started worker; dueAt alone starts nothing. No recurrence, notification delivery, assignment automation or managed worker service is included.",
       "tests": [
         "tests/lead-qualification-e2e.test.js",
         "tests/work-operations-e2e.test.js",
@@ -164,14 +164,16 @@
     },
     {
       "docs": [
-        "docs/CONTRACT_ACTIVATION.md"
+        "docs/CONTRACT_ACTIVATION.md",
+        "docs/RENEWAL_AMENDMENT.md"
       ],
       "id": "JTBD-10",
       "section": "CRM JTBD validation matrix",
       "status": "partially supported",
-      "summary": "a contract can now be *activated* from a signed Order with an explicit term (M12), and the renewal-approval workflow slice is validated. Renewal itself is not supported: auto-renew and the notice period are recorded only, nothing fires on them (no scheduler), and amendments, cancellation and non-renewal do not exist.",
+      "summary": "contract activation, human renewal intent and governed successor execution exist, retaining signed-term provenance and immutable lineage. Timer consumers can open lifecycle-review asks when an application explicitly starts its worker. They do not automatically renew, cancel, bill or notify; historical contracts are not edited.",
       "tests": [
         "tests/contracts-activation-e2e.test.js",
+        "tests/lifecycle-amendment-execution-e2e.test.js",
         "tests/workflow.test.js"
       ],
       "title": "Manage contracts and renewals"
@@ -216,9 +218,14 @@
       "docs": [],
       "id": "JTBD-15",
       "section": "CRM JTBD validation matrix",
-      "status": "not supported",
-      "summary": "no authentication, tenancy or RBAC. The server is local-development-only. This is a hard prerequisite before any remote exposure.",
-      "tests": [],
+      "status": "partially supported",
+      "summary": "Production Spine v1 (ADR-038) enforces the permission half: organizations, memberships, eleven bounded permissions in five role bundles, server-authoritative authorization on every route, one tenant per application instance, and a fail-closed actor boundary. The identity underneath it is not validated: the framework authenticates nobody and ships no verifier, so *which* person holds a membership is only as trustworthy as the deployment adapter, and in local-development mode it is an assertion. This is not shared-database multi-tenancy, and remote exposure still requires a verifier the framework does not provide.",
+      "tests": [
+        "tests/actor-fails-closed.test.js",
+        "tests/production-spine.test.js",
+        "tests/spine-route-authorization.test.js",
+        "tests/spine-tenancy-truth.test.js"
+      ],
       "title": "Enforce team / tenant permissions"
     },
     {
@@ -341,8 +348,10 @@
       "id": "JTBD-AX-08",
       "section": "Agent experience (AX0–AX5, cross-cutting)",
       "status": "not supported",
-      "summary": "MK1; no Campaign Proposal object exists",
-      "tests": [],
+      "summary": "MK1 proposal candidate has executable evidence in tests/marketing-e2e.test.js; row promotion awaits milestone review",
+      "tests": [
+        "tests/marketing-e2e.test.js"
+      ],
       "title": "Propose an optimization campaign from an insight"
     },
     {
@@ -395,8 +404,9 @@
       "id": "JTBD-CM-04",
       "section": "Communications (no milestone assigned)",
       "status": "partially supported",
-      "summary": "tracked, never scheduled. Work v1 (ADR-030): one reusable Task and Activity model with an explicit transition table, consumed by Lead qualification, Lifecycle's commercial follow-up and Service escalation, each opening exactly one task under a deterministic business key inside its own transaction, and refusing to write at all when that transaction is not there — tests/work-operations-e2e.test.js, tests/work-operations-evidence.test.js, tests/work-provenance-and-actor.test.js, tests/work-source-key-stability.test.js. Scheduling is still absent: no scheduler, no reminder, no notification and no assignment, and dueAt changes no state — the same limit JTBD-07 states",
+      "summary": "Work provides one reusable Task and Activity model. Self-host timer consumers can open scheduled Work asks through an explicitly started worker; dueAt alone starts nothing. Still partial: no recurrence, notification delivery, automatic assignment or managed worker service. See tests/work-operations-e2e.test.js, tests/work-operations-evidence.test.js, tests/work-provenance-and-actor.test.js, tests/work-source-key-stability.test.js and tests/spine-v3c-timer-consumers-postgresql.test.js.",
       "tests": [
+        "tests/spine-v3c-timer-consumers-postgresql.test.js",
         "tests/work-operations-e2e.test.js",
         "tests/work-operations-evidence.test.js",
         "tests/work-provenance-and-actor.test.js",
@@ -447,7 +457,7 @@
       "id": "JTBD-CO-04",
       "section": "Commercial Operations / CPQ (Milestones 10-11 implemented for the local slice, ADR-016 and ADR-017)",
       "status": "partially supported",
-      "summary": "the human-actor boundary is validated (agent actors refused 403; one atomic decision per version; concurrent decisions resolve to one winner) — but requiredApprovalKey is a label: secure Sales-Manager/Finance role enforcement is not validated before RBAC (JTBD-15)",
+      "summary": "the human-actor boundary is validated (agent actors refused 403; one atomic decision per version; concurrent decisions resolve to one winner) — but requiredApprovalKey is still a label: secure Sales-Manager/Finance role enforcement is not validated, because ADR-038 deliberately left approval keys descriptive rather than promote them into enforced permissions, which would change the meaning of records already written (JTBD-15)",
       "tests": [],
       "title": "Obtain required commercial approval on a discount"
     },
@@ -483,10 +493,12 @@
       "id": "JTBD-CS-01",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
       "status": "partially supported",
-      "summary": "order.activate-contract (human actor only) creates one contract, its immutable version and one line per order component, atomically and idempotently, with every amount copied from the signed Order — but the term is not signed: the document package carries no dates, so effective/start/end, auto-renew and notice are operational metadata recorded after signature (termsSource, with a required reason). A signed commercial agreement end to end needs a pre-signature term snapshot, which does not exist. Evidence: tests/contracts-activation-e2e.test.js, tests/contracts-review.test.js, starter install.mjs",
+      "summary": "order.activate-contract (human actor only) creates one contract, its immutable version and one line per order component, atomically and idempotently, with every amount copied from the signed Order. If the quote carries a term, submission freezes it before signature; the canonical document hash covers its dates, auto-renew and notice fields, verified completion copies it to the Order, and activation preserves it as signed-order-terms, refusing manual overrides. Still partial: termless Orders use explicitly reasoned post-signature-operational-activation metadata, not signed terms, and no signed term is backfilled. Signature providers remain offline fixtures, so this does not validate a real external signing deployment. Evidence: tests/signed-terms-e2e.test.js, tests/signed-terms-integrity.test.js, tests/contracts-activation-e2e.test.js, tests/contracts-review.test.js, starter install.mjs",
       "tests": [
         "tests/contracts-activation-e2e.test.js",
-        "tests/contracts-review.test.js"
+        "tests/contracts-review.test.js",
+        "tests/signed-terms-e2e.test.js",
+        "tests/signed-terms-integrity.test.js"
       ],
       "title": "Activate a commercial contract from a signed Order"
     },
@@ -495,8 +507,12 @@
       "id": "JTBD-CS-02",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
       "status": "partially supported",
-      "summary": "one subscription per contract, with a line for every component whose commercial axis is subscription — including recurring components that also carry a service or delivery obligation, so no recurring commitment is lost. It is a commercial activation record only: nothing bills, prorates, renews or cancels it; a future-dated subscription is scheduled and nothing transitions it (no scheduler); and the term itself is post-signature operational metadata",
-      "tests": [],
+      "summary": "one subscription per contract, with a line for every component whose commercial axis is subscription — including recurring components that also carry a service or delivery obligation, so no recurring commitment is lost. Its term inherits the signed Order snapshot when present, or explicitly reasoned operational metadata for a termless Order; the provenance remains visible. Still partial: activation creates commercial records, not billing, proration or cancellation. A future-dated subscription is scheduled; self-host timers can request lifecycle review but do not automatically activate or renew it. Governed amendment execution creates a separate successor agreement without modifying the existing subscription. Evidence: tests/signed-terms-e2e.test.js, tests/contracts-activation-e2e.test.js, tests/lifecycle-amendment-execution-e2e.test.js",
+      "tests": [
+        "tests/contracts-activation-e2e.test.js",
+        "tests/lifecycle-amendment-execution-e2e.test.js",
+        "tests/signed-terms-e2e.test.js"
+      ],
       "title": "Activate a subscription with lines and an initial term"
     },
     {
@@ -539,7 +555,7 @@
       "id": "JTBD-CS-06",
       "section": "Contract & Subscription (Milestone 12 implemented for the local slice — ADR-018 addendum, docs/CONTRACT_ACTIVATION.md)",
       "status": "not supported",
-      "summary": "needs both this layer and a scheduler (JOBS_AND_OUTBOX.md)",
+      "summary": "self-host timer consumers can open a lifecycle review ask when an application explicitly starts its worker, but full renewal scheduling and execution are not established by that primitive; automatic renewal and delivered notices remain absent (JOBS_AND_OUTBOX.md)",
       "tests": [],
       "title": "Schedule a renewal ahead of term end"
     },
@@ -692,7 +708,7 @@
       "id": "JTBD-DG-05",
       "section": "Data governance (no milestone assigned — DATA_GOVERNANCE.md)",
       "status": "not supported",
-      "summary": "needs the scheduler",
+      "summary": "retention policy and evidence-producing retention execution are not implemented; generic durable jobs and scheduled asks do not supply them",
       "tests": [],
       "title": "Apply a retention policy and evidence that it ran"
     },
@@ -756,18 +772,22 @@
       "docs": [],
       "id": "JTBD-DO-04",
       "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
-      "status": "not supported",
-      "summary": "no export endpoint; list is page-bounded by design",
-      "tests": [],
+      "status": "partially supported",
+      "summary": "on a deliberately narrow reading: Customer Data Operations v2 adds export-customer-records over the package's eight managed record sets — the import log and its receipts, the identities, the candidates, the links, the findings, the bulk runs and their receipts. The set is counted first with a complete read, the answer states the row count and the bound, a set larger than the bound refuses with EXPORT_WOULD_TRUNCATE instead of returning a short file, at most 10,000 rows, and an export writes nothing. tests/customer-data-operations-v2.test.js. Still partial, and the row's own word is the gap: business records (companies, contacts, opportunities) export through no endpoint, filters are exact-match only, and there is no CSV, no streaming and no scheduled export",
+      "tests": [
+        "tests/customer-data-operations-v2.test.js"
+      ],
       "title": "Export records"
     },
     {
       "docs": [],
       "id": "JTBD-DO-05",
       "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
-      "status": "not supported",
-      "summary": "every mutation is single-record",
-      "tests": [],
+      "status": "partially supported",
+      "summary": "on a deliberately narrow reading: Customer Data Operations v2 adds apply-bulk-customer-action, which applies one of the package's three human decisions — link, dismiss or govern — across up to 500 records in one call, with one transaction and one receipt per record, a run that reads partial rather than completed, and payload-derived idempotency with resume and replay. tests/customer-data-operations-v2.test.js. Still partial, and the row's own word is again the gap: business records have no bulk path — no bulk field update, no bulk stage move, no bulk delete — and every bulked decision keeps its human-only check",
+      "tests": [
+        "tests/customer-data-operations-v2.test.js"
+      ],
       "title": "Bulk update a set of records"
     },
     {
@@ -793,7 +813,7 @@
       "id": "JTBD-DO-08",
       "section": "Data operations (Customer Data Foundation v1 — ADR-037, packages/customer-data/README.md)",
       "status": "partially supported",
-      "summary": "Work v1 (ADR-030) adds an append-only Activity timeline per subject, with a closed four-entry vocabulary, rendered oldest-first in the Admin — tests/work-operations-e2e.test.js, tests/admin-work.test.js. It is not a unified customer timeline: it covers only what Work itself recorded, Service's support-case-activity stays domain-specific, Delivery history is not aggregated, marketing and communications do not exist at all, and no email, call, meeting or audit row appears on it. Customer Data Foundation v1 adds a second, independent projection over the same problem — one read-only consolidated profile per customer, spanning whatever packages the application composes, in which a package that is not composed reads *not available* with a reason rather than as an empty result or a zero. That does not change the row: the profile is a projection over Accordo-managed records, it says so in its own payload, and no email, call, meeting, marketing or communications event appears on it because none exist. Confirmed *partially supported* by human decision on that wording; no other row is promoted by inheritance from it or from the foundation",
+      "summary": "Work v1 (ADR-030) adds an append-only Activity timeline per subject, with a closed four-entry vocabulary, rendered oldest-first in the Admin — tests/work-operations-e2e.test.js, tests/admin-work.test.js. It is not a unified customer timeline: it covers only what Work itself recorded, Service's support-case-activity stays domain-specific, Delivery history is not aggregated, MK1 proposal evidence is not aggregated and communications events are absent, and no email, call, meeting or audit row appears on it. Customer Data Foundation v1 adds a second, independent projection over the same problem — one read-only consolidated profile per customer, spanning whatever packages the application composes, in which a package that is not composed reads *not available* with a reason rather than as an empty result or a zero. That does not change the row: the profile is a projection over Accordo-managed records, it says so in its own payload, and no email, call, meeting, marketing campaign execution or communications event appears on it. Confirmed *partially supported* by human decision on that wording; no other row is promoted by inheritance from it or from the foundation",
       "tests": [
         "tests/admin-work.test.js",
         "tests/work-operations-e2e.test.js"
@@ -845,7 +865,7 @@
       "id": "JTBD-DS-04",
       "section": "Delivery & Service (handover at M13, execution at M14a, economics at M14b1, and change, deliverables and acceptance at M14b2 — all merged; docs/DELIVERY_HANDOVER.md, docs/DELIVERY_ECONOMICS.md, docs/DELIVERY_CHANGE_ACCEPTANCE.md)",
       "status": "not supported",
-      "summary": "requires RBAC/tenancy — hard-gated by the Production Spine (JTBD-15). M13 records a partner engagement; it grants no access to restrict",
+      "summary": "authorization and tenancy now exist, but no partner access surface does: M13 records a partner engagement and grants no access to restrict, and no verifier ships to authenticate a partner (JTBD-15)",
       "tests": [],
       "title": "Restrict partner access to assigned work only"
     },
@@ -983,7 +1003,7 @@
       "id": "JTBD-LI-06",
       "section": "Lead Intelligence & Routing (Milestone 9 — implemented for the local slice, ADR-015)",
       "status": "not supported",
-      "summary": "the assignment record carries source/previousAssignmentId/reason as future data, but no override action exists and none may claim manager permissions before the Production Spine (JTBD-15)",
+      "summary": "the assignment record carries source/previousAssignmentId/reason as future data, but no override action exists, and none may claim a manager made the call until a verifier makes that manager a verified person rather than an asserted one (JTBD-15)",
       "tests": [],
       "title": "Manually reassign with permission and reason"
     },

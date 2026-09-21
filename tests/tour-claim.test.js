@@ -2,8 +2,8 @@
 
 /**
  * `npm run tour` composes the starter application and prints what it contains. Those counts are
- * quoted on the landing page, in the launch packet, in the go-to-market plan and in the skill
- * packaging document — five places, one measurement.
+ * quoted in evidence-bearing launch, strategy, README, answer and concept surfaces. The human
+ * landing page deliberately carries no composition counts.
  *
  * They drifted. Merging M14b2 added records and actions, and every one of those documents went on
  * saying 55 modules and 35 actions, which would have shipped a false number onto a public page
@@ -33,8 +33,6 @@ const LABELS = ['modules', 'packages', 'resources', 'actions', 'policies', 'prov
  */
 const QUOTING_SURFACES = [
   { path: 'docs/marketing/LAUNCH_PACKET.md', order: 'count-first' },
-  { path: 'docs/strategy/GO_TO_MARKET.md', order: 'count-first' },
-  { path: 'site/templates/index.html', order: 'label-first' },
   { path: 'README.md', order: 'label-first' },
   // The answer pages quote the composition in prose, and they are the pages an answer engine
   // is most likely to lift a number out of.
@@ -125,6 +123,30 @@ test('no document quotes a count the tour did not produce', () => {
       );
     }
   }
+});
+
+test('the README production posture is the posture the tour printed', () => {
+  assert.ok(tour, 'the tour test must run first');
+  assert.ok(tour.productionPosture, 'the tour printed no production posture to hold the README to');
+
+  // The README transcript block used to declare durable jobs, secrets and
+  // backups unqualifiedly absent after the bounded self-host contracts for
+  // all three had shipped — a hand transcription no count-sweep could catch,
+  // because the words never moved, only the product did. So the posture is
+  // held the same way the counts are: against the live tour output,
+  // whitespace aside.
+  const collapsed = (/** @type {string} */ text) => text.toLowerCase().replace(/\s+/g, ' ').trim();
+  const readme = readFileSync(join(process.cwd(), 'README.md'), 'utf8');
+  assert.ok(
+    collapsed(readme).includes(collapsed(tour.productionPosture)),
+    'README.md no longer quotes the production posture the tour printed. '
+    + 'Re-run npm run tour -- --json and update the transcript block instead of transcribing it by hand.',
+  );
+  assert.ok(
+    !collapsed(readme).includes('durable jobs, secrets and backups are absent'),
+    'README.md states a retired absence claim (see RETIRED_CLAIMS in scripts/repo-truth.js): '
+    + 'only the managed variants are absent.',
+  );
 });
 
 test('the packaging document describes the starter it would actually find', () => {

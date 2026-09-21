@@ -1,0 +1,158 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Spline+Sans+Mono:wght@300..700&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Bricolage Grotesque', 'Avenir Next', Avenir, ui-sans-serif, system-ui, sans-serif; background: #f7f3e9; color: #171912; }
+    a { color: #176b2a; } a:hover { color: #0f4a1c; }
+    .mono { font-family: 'Spline Sans Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .cap { font-family: 'Spline Sans Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #6f6a5a; font-weight: 600; }
+    .btn { border-radius: 12px; padding: 13px 20px; font-weight: 750; font-size: 15px; font-family: inherit; border: 1px solid transparent; cursor: pointer; }
+    .b { font-family: 'Spline Sans Mono', ui-monospace, monospace; font-size: 11px; font-weight: 700; padding: 6px 10px; border-radius: 6px; display: inline-block; }
+  </style>
+</helmet>
+
+<div style="padding: 56px 60px 64px; display: flex; flex-direction: column; gap: 44px;">
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div class="mono" style="font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #176b2a; font-weight: 600;">Accordo · pattern library · 03</div>
+    <h1 style="margin: 0; font-size: 58px; line-height: .96; letter-spacing: -.024em; font-weight: 700;">Controls</h1>
+    <p style="margin: 0; max-width: 70ch; font-size: 17px; line-height: 1.5; color: #62655b;">Every geometry below is the site's, not a new one: <span class="mono" style="font-size: 14px;">12px</span> radius and <span class="mono" style="font-size: 14px;">13px 20px</span> on buttons, <span class="mono" style="font-size: 14px;">6px</span> on state chips, <span class="mono" style="font-size: 14px;">3px</span> on callout borders. Containers lose their radii (sheet 01); controls keep theirs.</p>
+  </div>
+
+  <div style="height: 1px; background: #d9d5c8;"></div>
+
+  <!-- buttons -->
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+    <h2 style="margin: 0; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #6f6a5a; font-weight: 700;">Buttons</h2>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 30px;">
+
+      <div style="display: flex; flex-direction: column; gap: 11px;">
+        <div class="cap">Primary — <span style="color: #176b2a;">the accord action</span></div>
+        <button class="btn" style="background: #176b2a; color: #f7f3e9; align-self: flex-start;">Approve</button>
+        <p style="margin: 0; font-size: 12.5px; line-height: 1.45; color: #62655b;">Green because on this product green means <em>in accord</em>, and approving is what produces the accord. Exactly <span class="mono" style="font-size: 11.5px;">.button.primary</span> from the site — accent ground, paper text, 5.97:1.</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 11px;">
+        <div class="cap">Secondary — everything else</div>
+        <div style="display: flex; gap: 9px; flex-wrap: wrap;">
+          <button class="btn" style="background: #fffdf7; color: #171912; border-color: #d9d5c8;">New record</button>
+          <button class="btn" style="background: #fffdf7; color: #171912; border-color: #d9d5c8;">Cancel</button>
+        </div>
+        <p style="margin: 0; font-size: 12.5px; line-height: 1.45; color: #62655b;">Save, create, navigate. Ordinary work is never green — if every button is the accord, none of them is.</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 11px;">
+        <div class="cap" style="color: #9b292d;">Refusal — an extension</div>
+        <button class="btn" style="background: transparent; color: #9b292d; border-color: #9b292d; align-self: flex-start;">Reject</button>
+        <p style="margin: 0; font-size: 12.5px; line-height: 1.45; color: #62655b;">The one control here the site has no equivalent for, because a marketing page never asks anyone to refuse. It ships only beside an Approve, never alone.</p>
+      </div>
+
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 30px; border-top: 1px solid #d9d5c8; padding-top: 22px;">
+
+      <div style="display: flex; flex-direction: column; gap: 11px;">
+        <div class="cap">Disabled</div>
+        <button class="btn" disabled="disabled" style="background: #f0ece0; color: #6f6a5a; border-color: #d9d5c8; cursor: not-allowed; align-self: flex-start;">Approve</button>
+        <p style="margin: 0; font-size: 12.5px; line-height: 1.45; color: #62655b;">Always beside a stated reason, never on hover only. A disabled Approve with no explanation is the product failing at its one job.</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 11px;">
+        <div class="cap">Busy</div>
+        <button class="btn" style="background: #176b2a; color: #f7f3e9; opacity: .55; cursor: wait; align-self: flex-start;">Approving…</button>
+        <p style="margin: 0; font-size: 12.5px; line-height: 1.45; color: #62655b;">The Admin's own <span class="mono" style="font-size: 11.5px;">button[aria-busy="true"]</span>, kept.</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 11px;">
+        <div class="cap">Focus</div>
+        <button class="btn" style="background: #fffdf7; color: #171912; border-color: #d9d5c8; outline: 2px solid #176b2a; outline-offset: 3px; align-self: flex-start;">Focused</button>
+        <p style="margin: 0; font-size: 12.5px; line-height: 1.45; color: #62655b;"><span class="mono" style="font-size: 11.5px;">outline: 2px solid var(--accent); outline-offset: 3px</span> — the site's exact rule. The Admin uses a 2px offset today; align it.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- fields -->
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+    <h2 style="margin: 0; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #6f6a5a; font-weight: 700;">Fields</h2>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 26px;">
+
+      <div style="display: flex; flex-direction: column; gap: 7px;">
+        <label style="font-size: 13px; font-weight: 700;">Name</label>
+        <input type="text" value="Platform renewal 2027" style="padding: 12px; border: 1px solid #d9d5c8; background: #fffdf7; border-radius: 9px; font: inherit; font-size: 14px; color: #171912; width: 100%; box-sizing: border-box;">
+        <span style="font-size: 12px; color: #6f6a5a; line-height: 1.4;">Hint sits under, always visible.</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 7px;">
+        <label style="font-size: 13px; font-weight: 700;">Max line discount <span style="color: #9b292d;">*</span></label>
+        <input type="text" value="2400" style="padding: 12px; border: 1px solid #9b292d; background: #fffdf7; border-radius: 9px; font-family: 'Spline Sans Mono', ui-monospace, monospace; font-size: 14px; color: #171912; width: 100%; box-sizing: border-box;">
+        <span class="mono" style="font-size: 12px; color: #9b292d; line-height: 1.4; font-weight: 600;">2400 bps exceeds autoApproveMaxBps 1000</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 7px;">
+        <label style="font-size: 13px; font-weight: 700;">Stage</label>
+        <div style="padding: 12px; border: 1px solid #d9d5c8; background: #fffdf7; border-radius: 9px; font-size: 14px; display: flex; align-items: center; justify-content: space-between; color: #171912;">
+          <span>negotiation</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6f6a5a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+        <span style="font-size: 12px; color: #6f6a5a; line-height: 1.4;">Options come from <span class="mono" style="font-size: 11px;">/api/schema</span>, unaltered.</span>
+      </div>
+
+    </div>
+
+    <div style="border-left: 3px solid #f2c84b; background: #fff3bd; padding: 15px 20px; display: flex; flex-direction: column; gap: 6px;">
+      <strong style="font-size: 13.5px; color: #665000;">The policy refused, and said which one</strong>
+      <span class="mono" style="font-size: 12px; color: #171912;">standard-sales-discount v1 · manager-approval-band · requiredApprovalKey: sales-manager</span>
+      <span style="font-size: 13px; color: #171912; line-height: 1.45;">Errors name the rule, its version and the matched branch — all three are in the policy's own return value. A user who cannot see which rule stopped them cannot argue with it, and cannot find who can approve it.</span>
+    </div>
+  </div>
+
+  <!-- badges + empty + toast -->
+  <div style="display: grid; grid-template-columns: 1.25fr 1fr; gap: 40px;">
+
+    <div style="display: flex; flex-direction: column; gap: 18px;">
+      <h2 style="margin: 0; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #6f6a5a; font-weight: 700;">State chips</h2>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        <span class="b" style="background: #ebe6ff; color: #4c2fc5;">proposal</span>
+        <span class="b" style="background: #fff3bd; color: #665000;">approval_required</span>
+        <span class="b" style="background: #fff3bd; color: #665000;">reject</span>
+        <span class="b" style="background: #ffe6e1; color: #9b292d;">rejected</span>
+        <span class="b" style="background: #dff8fd; color: #00677a;">recorded</span>
+        <span class="b" style="background: #dcfbdc; color: #176b2a;">auto_approve</span>
+        <span class="b" style="background: #dcfbdc; color: #176b2a;">approved</span>
+        <span class="b" style="background: #fbe7e7; color: #a23636;">failed</span>
+        <span class="b" style="background: #ece8dc; color: #62655b;">draft</span>
+      </div>
+      <p style="margin: 0; font-size: 13px; line-height: 1.55; color: #62655b; max-width: 62ch;">Mono, lowercase, <strong style="color: #171912;">unmodified</strong>: a chip shows the machine's own state string. The Admin currently applies <span class="mono" style="font-size: 12px;">text-transform: capitalize</span>, which invents a label appearing nowhere in the API, the audit log or the trace — so a user cannot search for what they just read. This is the site's <span class="mono" style="font-size: 12px;">.practice-chip</span> geometry exactly: 11px mono, weight 700, 6px 10px, 6px radius.</p>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 18px;">
+      <h2 style="margin: 0; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: #6f6a5a; font-weight: 700;">Empty · toast</h2>
+
+      <div style="border: 1px dashed #d9d5c8; padding: 24px 20px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; border-radius: 9px;">
+        <strong style="font-size: 14px;">No approval is waiting.</strong>
+        <span style="font-size: 13px; color: #62655b; line-height: 1.45;">Empty is a fact, stated plainly. No illustration, no “Get started!”.</span>
+      </div>
+
+      <div style="background: #171912; color: #f7f3e9; padding: 13px 16px; border-radius: 12px; display: flex; flex-direction: column; gap: 3px;">
+        <span style="font-size: 13px;">Quote version 3 approved.</span>
+        <span class="mono" style="font-size: 11px; color: #a8a89c;">audit evt_01JQ8F3K2M recorded</span>
+      </div>
+
+      <div style="background: #a23636; color: #fffdf7; padding: 13px 16px; border-radius: 12px; font-size: 13px;">Storage refused the write. Nothing changed.</div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

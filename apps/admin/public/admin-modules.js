@@ -16,6 +16,17 @@ import {
   humanizeLabel,
   hasCapability,
 } from './admin-core.js';
+import { createSubmissionController } from './admin-submission.js';
+
+function memoryStorage() {
+  /** @type {Map<string, string>} */
+  const map = new Map();
+  return {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)); },
+    removeItem: (key) => { map.delete(key); },
+  };
+}
 
 const LIST_LIMIT = 100;
 const REFERENCE_OPTION_LIMIT = 100;
@@ -46,6 +57,15 @@ function el(doc, tag, options = {}) {
 export function createModuleAdmin(deps) {
   const { doc, mount, client, navigate } = deps;
   const toast = deps.toast ?? (() => {});
+  const submissions = deps.submissions ?? createSubmissionController({
+    storage: deps.storage ?? (typeof globalThis.localStorage === 'undefined' ? memoryStorage() : globalThis.localStorage),
+    transport: (path, options) => client.request(path, {
+      method: options.method,
+      body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body ?? {}),
+      idempotencyKey: options.idempotencyKey,
+      headers: { ...(options.headers ?? {}), 'Idempotency-Key': options.idempotencyKey },
+    }),
+  });
 
   /** Guard against stale async responses overwriting a newer view. */
   let renderToken = 0;
@@ -185,10 +205,13 @@ export function createModuleAdmin(deps) {
       if (Object.keys(errors).length) return showErrors(errors);
       setBusy(true);
       try {
-        const created = await client.request(`/api/modules/${encodeURIComponent(moduleName)}/records`, {
+        const created = await submissions.submit({
+          path: `/api/modules/${encodeURIComponent(moduleName)}/records`,
           method: 'POST',
-          body: JSON.stringify(payload),
+          body: payload,
+          key: form.__submissionKey ?? (form.__submissionKey = submissions.issueKey()),
         });
+        form.__submissionKey = undefined;
         toast(`${humanizeLabel(meta.name)} created.`);
         navigate(`#/modules/${meta.name}/${encodeURIComponent(created.id)}`);
       } catch (error) {
@@ -233,10 +256,13 @@ export function createModuleAdmin(deps) {
       }
       setBusy(true);
       try {
-        record = await client.request(`/api/modules/${encodeURIComponent(moduleName)}/records/${encodeURIComponent(id)}`, {
+        record = await submissions.submit({
+          path: `/api/modules/${encodeURIComponent(moduleName)}/records/${encodeURIComponent(id)}`,
           method: 'PATCH',
-          body: JSON.stringify(payload),
+          body: payload,
+          key: form.__submissionKey ?? (form.__submissionKey = submissions.issueKey()),
         });
+        form.__submissionKey = undefined;
         setBusy(false);
         toast(`${humanizeLabel(meta.name)} saved.`);
       } catch (error) {
@@ -475,10 +501,11 @@ export function createModuleAdmin(deps) {
     panelError.textContent = '';
     panelError.setAttribute('class', 'form-error hidden');
     try {
-      await client.request(
-        `/api/modules/${encodeURIComponent(meta.name)}/records/${encodeURIComponent(id)}/actions/${encodeURIComponent(action.name)}`,
-        { method: 'POST', body: JSON.stringify(values) },
-      );
+      await submissions.submit({
+        path: `/api/modules/${encodeURIComponent(meta.name)}/records/${encodeURIComponent(id)}/actions/${encodeURIComponent(action.name)}`,
+        method: 'POST',
+        body: values,
+      });
       toast(`${action.label ?? action.name} done.`);
       await renderDetail(meta.name, id);
     } catch (error) {
@@ -625,9 +652,15 @@ export function createModuleAdmin(deps) {
 
     async function handleSubmit(event) {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      if (inFlight || options.readOnly) return; // double-submit guard
+      if (options.readOnly) return;
+      if (inFlight && form.__pending) return form.__pending;
       clearErrors();
-      await onSubmit(readRaw(), setBusy, showErrors);
+      form.__pending = onSubmit(readRaw(), setBusy, showErrors);
+      try {
+        await form.__pending;
+      } finally {
+        form.__pending = null;
+      }
     }
     form.addEventListener('submit', handleSubmit);
     // Expose for tests / programmatic submit without a real submit event.

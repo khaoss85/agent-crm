@@ -26,9 +26,9 @@ import { TASK_MODULE, normalizeWorkActor, resolveModule } from './follow-up.js';
  *     every historical row readable.
  *   - Rows are **read** with a bounded `SELECT` and **written** through the
  *     `work-task` module's managed service, so the new rows carry the same
- *     validation, actor, audit and trace as any other managed write. The read is
- *     raw because the legacy module may no longer be composed at all — reading
- *     is not a mutation, and there is no service left to read through.
+ *     validation, actor, audit and trace as any other managed write. The legacy
+ *     module may no longer be composed, so table discovery and bounded row reads
+ *     use the closed Storage Contract v1 `select` vocabulary directly.
  *   - It is **dry-run by default**. `{ apply: true }` writes; anything else
  *     returns the plan and touches nothing.
  *   - It is **atomic**: the whole adoption runs in one transaction, so a run
@@ -69,14 +69,17 @@ export async function migrateLegacyTasks(context, options = {}) {
     });
   }
   const database = context.database;
-  if (!database?.raw?.prepare) {
+  const storage = database?.storage?.sync;
+  if (!storage?.maybeOne || !storage?.many) {
     throw new AppError('migrateLegacyTasks needs the application database handle', {
       code: 'WORK_MIGRATION_INVALID', status: 500,
     });
   }
-  const exists = database.raw
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(table);
+  const exists = storage.maybeOne({
+    kind: 'select', table: 'sqlite_master', columns: ['name'], where: [
+      { column: 'type', op: 'eq', value: 'table' }, { column: 'name', op: 'eq', value: table },
+    ],
+  });
   if (!exists) {
     return Object.freeze({
       workLegacyMigrationContract: 1, mode: apply ? 'apply' : 'dry-run', table,
@@ -85,11 +88,11 @@ export async function migrateLegacyTasks(context, options = {}) {
     });
   }
 
-  // The column list is fixed and the table name is regex-bounded: nothing a
-  // caller supplies is interpolated into the statement beyond that.
-  const rows = database.raw
-    .prepare(`SELECT id, title, status, due_at, lead_id, source_key, created_at FROM ${table} ORDER BY created_at, id`)
-    .all();
+  const rows = storage.many({
+    kind: 'select', table,
+    columns: ['id', 'title', 'status', 'due_at', 'lead_id', 'source_key', 'created_at'],
+    where: [], orderBy: [{ column: 'created_at' }, { column: 'id' }],
+  });
 
   const refused = [];
   const plan = [];
@@ -107,7 +110,10 @@ export async function migrateLegacyTasks(context, options = {}) {
     plan.push({ row, status, sourceKey: legacyKey(String(row.id)) });
   }
 
-  const already = plan.filter((entry) => service.listWhere({ sourceKey: entry.sourceKey }).length > 0);
+  const already = [];
+  for (const entry of plan) {
+    if ((await service.listWhere({ sourceKey: entry.sourceKey })).length > 0) already.push(entry);
+  }
   const pending = plan.filter((entry) => !already.includes(entry));
 
   const report = {

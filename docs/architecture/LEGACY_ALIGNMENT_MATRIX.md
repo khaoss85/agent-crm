@@ -71,6 +71,7 @@ Verified against the working tree, 2026-08-19.
 | Lifecycle | `packages/lifecycle/` — `src/`, `modules/`, `README.md` | **yes** — package-native (M16a, M16b) |
 | Customer Data | `packages/customer-data/` — `src/`, `modules/`, `README.md` | **yes** — package-native (ADR-037). It **requires nothing**, adds no master customer table, and links and projects rather than duplicating |
 | Custom-package fixture | `examples/custom-packages/partner-scorecard/` | **yes** — the customer-authoring proof |
+| Custom-package capability-consumer fixture | `examples/custom-packages/score-disclosure/` | **yes** — the customer-authored proof that a package can consume `intelligence@1` |
 | Marketing & Growth | documentation only (`docs/strategy/`) | — |
 
 Each of the four has a `packages/<name>/generated/` directory and nothing else:
@@ -81,6 +82,792 @@ providers, not where the domain lives.
 
 Columns are the six built domains. Read a row as: *does this domain use this
 horizontal capability the way the contract intends?*
+
+### Durable jobs and scheduler contract v1 (Production Spine v3A)
+
+Horizontal runtime capability: a tenant-bound application can atomically enqueue
+named work, claim due work with a fenced lease, recover after restart, and run an
+explicitly started worker. PostgreSQL uses transactional
+`FOR UPDATE SKIP LOCKED`; SQLite uses its one-connection single-writer boundary
+and does not claim multi-node worker support. Omitted versus explicit schedule
+intent is durable, and each actor-required mutation records payload-free audit
+evidence on the same storage transaction. A worker persists a generation-fenced
+execution start before handler invocation: under the default recovery policy,
+only unstarted expiry is recoverable and started expiry becomes terminal
+reconciliation evidence without a second invocation. V3B later adds one
+persisted opt-in for its locally reconcilable effect identities; provider jobs
+retain this default. Execution lifecycle transitions require an explicit system actor;
+operator/agent actors remain limited to scheduling mutations. This slice adds no domain timer
+consumer, cron language, outbox, operator surface, worker autostart or public
+production-readiness claim.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | the portable data plane owns the durable primitive, but no kernel Company/Contact/Opportunity/Approval behavior schedules itself in V3A |
+| Pipeline | `not_applicable` | pipeline composition defines lifecycle state and owns no timer operation |
+| Lead Intelligence | `deferred` | no scoring or routing timer is adopted; a later domain slice must name a real operation and idempotent outcome |
+| Commercial Operations | `deferred` | no quote/catalog timer is adopted; provider work must remain behind external-operation v2 and reconciliation |
+| Signature & Order | `deferred` | no signature provider effect is replayed from a job; a later outbox/effect slice must preserve external-operation v2 identity |
+| Contract Activation | `deferred` | V3C will adopt the primitive for renewal/notice evaluation without authorizing an automatic commercial decision |
+| Delivery | `deferred` | no delivery obligation timer is adopted in this infrastructure slice |
+| Service | `deferred` | no SLA or escalation timer is adopted in this infrastructure slice |
+| Work | `deferred` | V3C will adopt the primitive for named follow-up work while preserving its caller-owned transaction proof |
+| Lifecycle | `deferred` | no lifecycle proposal timer is adopted in this infrastructure slice |
+| Customer Data | `not_applicable` | linking/projection owns no current scheduled operation and V3A does not invent one |
+| Custom-package fixture | `not_applicable` | the fixture proves package authoring and declares no scheduled operation |
+| Custom-package score-disclosure fixture | `not_applicable` | the capability-consumer fixture reads scoring disclosure and declares no scheduled operation |
+
+Closing milestone for the named Contract Activation and Work rows: Spine v3C
+timer consumers. Every other `deferred` row requires its own later causal domain
+adoption with executable idempotency and approval evidence; V3A does not mass-fit
+jobs into existing packages.
+
+### Transactional outbox and effect dispatch v1 (Production Spine v3B)
+
+Horizontal PostgreSQL runtime capability: the existing write-outcome event
+intents and an applicable V3A effect identity commit together. Workers dispatch
+only committed source outcomes and mark internal events promoted only after
+subscriber success. V3B identities persist a reconcilable recovery policy, so
+expired begun work advances its bounded attempt/generation and may dispatch
+again; generic and provider-effect jobs keep terminal unknown-outcome behavior.
+A failed subscriber does not starve later stored intents; the pass then retries
+as one bounded failure, so duplicates remain possible. Delivery is
+at least once plus an idempotent/reconcilable identity, never exactly once.
+External receipt continuation exists only when the committed receipt says a
+finalize phase was declared, can call only registered local finalize work, and
+never receives a provider call/reconcile handle. Provider-only operations do
+not create continuation jobs. A legacy receipt whose declaration predates this
+evidence remains operator-visible unknown and is never silently treated as
+provider-only or authorized for finalize.
+SQLite retains immediate in-process event behavior; this is not a durable
+SQLite-outbox claim. Security audit is unchanged.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | PostgreSQL kernel write outcomes now retain and promote their committed internal event intents through exact durable jobs; standalone writes outside that envelope do not gain an outbox by implication |
+| Pipeline | `not_applicable` | pipeline composition owns no separate persisted effect intent |
+| Lead Intelligence | `deferred` | the bundled provider graph is not adopted onto external-operation v2 and no real provider adapter exists |
+| Commercial Operations | `deferred` | catalog/provider effects remain outside the M4 write-outcome envelope |
+| Signature & Order | `deferred` | the neutral receipt-to-local-finalize consumer exists, but the shipped package provider graph still requires its own external-operation-v2 adoption; V3B does not replay signature providers |
+| Contract Activation | `deferred` | activation scheduling is V3C; no renewal effect is inferred from infrastructure |
+| Delivery | `deferred` | no delivery effect consumer is adopted in this slice |
+| Service | `deferred` | no service/SLA effect consumer is adopted in this slice |
+| Work | `deferred` | due follow-up scheduling is V3C; no task state is changed by the outbox |
+| Lifecycle | `deferred` | no decision or commercial follow-up is created automatically |
+| Customer Data | `not_applicable` | linking/projection owns no current post-commit effect intent |
+| Custom-package fixture | `not_applicable` | the fixture declares no write-outcome effect consumer |
+| Custom-package score-disclosure fixture | `not_applicable` | the read-only capability fixture declares no effect consumer |
+
+Closing milestones are causal domain adoptions onto the PostgreSQL write-outcome
+and external-operation-v2 contracts. A durable identity alone promotes no domain
+coverage and authorizes no provider retry.
+
+### Deployment-storage loader contract v1 assessment (Production Spine v2 M2F)
+
+The shared deployment-storage loader is a horizontal *runtime* capability: every
+executable will eventually select adapter and spine binding through one closed
+document. Domains do not select storage and must not import the loader. CLI,
+serve and MCP now call `prepareDeploymentPreconnect`. Public HTTP `/health` and
+`/api/schema` project `{adapter, available}` only. CLI `app.doctor().database`
+on `--db` remains the characterized v1 path disclosure.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project records do not select the deployment adapter |
+| Pipeline | `not_applicable` | pipeline composition does not load deployment storage |
+| Lead Intelligence | `not_applicable` | package behaviour does not select the storage adapter |
+| Commercial Operations | `not_applicable` | package behaviour does not select the storage adapter |
+| Signature & Order | `not_applicable` | package behaviour does not select the storage adapter |
+| Contract Activation | `not_applicable` | package behaviour does not select the storage adapter |
+| Delivery | `not_applicable` | package behaviour does not select the storage adapter |
+| Service | `not_applicable` | package behaviour does not select the storage adapter |
+| Work | `not_applicable` | package behaviour does not select the storage adapter |
+| Lifecycle | `not_applicable` | package behaviour does not select the storage adapter |
+| Customer Data | `not_applicable` | package behaviour does not select the storage adapter |
+| Custom-package fixture | `not_applicable` | customer packages receive no deployment-storage document |
+
+Public HTTP locators on `/health` and `/api/schema` are closed by the final M2
+posture slice. The factory does not import the loader; entries call
+`prepareDeploymentPreconnect`. v1 `--db` `doctor.database` is retained. Dual
+bundled v1/v2 package graphs remain later compatibility work.
+
+### Dialect migration intent and module-state v2 assessment (Production Spine v2 M3A)
+
+Horizontal runtime capability: every generated module and every domain that
+owns module manifests will eventually need a checked-in PostgreSQL bootstrap
+beside its SQLite history. Core CRM handwritten tables are described by core
+schema intent, not by `module.state.json`. Bundled package modules remain
+pre-state; adopting them is sequenced authoring, not this PR. No domain
+selects PostgreSQL and none imports the intent renderer.
+<!-- truth: spine.postgresql.implemented=absent -->
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | handwritten Company/Contact/Opportunity/Approval schema is in core intent; project-generated modules gain v2 state only after `module create --apply` |
+| Pipeline | `not_applicable` | pipeline composition does not own persisted tables |
+| Lead Intelligence | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Commercial Operations | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Signature & Order | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Contract Activation | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Delivery | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Service | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Work | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Lifecycle | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Customer Data | `deferred` | package modules are pre-state; explicit adoption is later authoring, not this PR |
+| Custom-package fixture | `deferred` | customer packages remain pre-state until their authors apply adoption |
+
+Closing milestone for every `deferred` row: package-module state adoption before a composition is selected for PostgreSQL (M3B/dual-graph follow-up), not a silent rewrite in this PR.
+
+### PostgreSQL write-outcome idempotency and external-operation v2 (Production Spine v2 M4A)
+
+Horizontal runtime capability: every PostgreSQL write is keyed, stored as a bounded outcome in the same SERIALIZABLE transaction, and recovered after `COMMIT_OUTCOME_UNKNOWN` by tenant+raw-key lookup. External-operation v2 adds durable intent/finalize phase keys, a stable provider idempotency key and read-only reconcile; PostgreSQL composition refuses `externalOperation: 1`. SQLite legacy calls remain compatible when the key is omitted. HTTP/SDK/Admin/CLI now transport the key (M4C). Leases and tenant binding are M4B. Not shared-database tenancy and not production ready.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel `company.create` and record actions on PostgreSQL use the outcome envelope; Contact/Opportunity/Approval standalone creates are not yet independently keyed |
+| Pipeline | `not_applicable` | pipeline composition does not own write outcomes |
+| Lead Intelligence | `deferred` | package still `externalOperation: 1` / SQLite graph; PostgreSQL composition refuses until a v2 graph exists |
+| Commercial Operations | `deferred` | catalog sync is not on the M4A envelope; dual-graph PostgreSQL selection is later |
+| Signature & Order | `deferred` | shipped `externalOperation: 1`; PostgreSQL composition refuses it until the v2 provider+reconcile graph |
+| Contract Activation | `deferred` | package persistence is outside the M4A kernel envelope |
+| Delivery | `deferred` | package persistence is outside the M4A kernel envelope |
+| Service | `deferred` | package persistence is outside the M4A kernel envelope |
+| Work | `deferred` | package persistence is outside the M4A kernel envelope |
+| Lifecycle | `deferred` | package persistence is outside the M4A kernel envelope |
+| Customer Data | `deferred` | package persistence is outside the M4A kernel envelope |
+| Custom-package fixture | `deferred` | customer packages remain SQLite/v1 until their authors declare external-operation v2 |
+
+Closing milestone for every `deferred` row: dual-graph PostgreSQL selection with external-operation v2 (domain adoption), not a silent rewrite of bundled v1 graphs in this PR.
+
+### Tenant binding v2, leases and HTTP/SDK/Admin/CLI (Production Spine v2 M4B–M4C)
+
+Horizontal runtime capability: one tenant per dedicated PostgreSQL data plane; writer leases with generation fencing; `Idempotency-Key` on HTTP/SDK; Admin form/action controller owns the root key. Clone/expiry does not auto-promote a writer. Not shared-database row tenancy and not production ready.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel HTTP/SDK company writes and workflow stage/approval carry keys on PostgreSQL; Contact/Opportunity standalone creates are not independently keyed |
+| Pipeline | `not_applicable` | pipeline composition does not own write outcomes |
+| Lead Intelligence | `deferred` | no opportunistic domain refactor to green this cell |
+| Commercial Operations | `deferred` | no opportunistic domain refactor to green this cell |
+| Signature & Order | `deferred` | no opportunistic domain refactor to green this cell |
+| Contract Activation | `deferred` | no opportunistic domain refactor to green this cell |
+| Delivery | `deferred` | no opportunistic domain refactor to green this cell |
+| Service | `deferred` | no opportunistic domain refactor to green this cell |
+| Work | `deferred` | no opportunistic domain refactor to green this cell |
+| Lifecycle | `deferred` | no opportunistic domain refactor to green this cell |
+| Customer Data | `deferred` | no opportunistic domain refactor to green this cell |
+| Custom-package fixture | `deferred` | customer packages remain SQLite/v1 until their authors declare portable v2 |
+
+### Identity-verifier pre-connect contract v2 assessment (Production Spine v2 M2F)
+
+The verifier resolver is a horizontal *runtime* capability: every executable
+will eventually import one repository-relative ESM provider before it connects.
+Domains do not resolve verifiers and must not import the resolver. CLI/serve/MCP
+now resolve the verifier through `prepareDeploymentPreconnect` before a
+database or listener exists. Live discover/attest remains M3.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project records do not resolve the identity verifier |
+| Pipeline | `not_applicable` | pipeline composition does not import verifier modules |
+| Lead Intelligence | `not_applicable` | package behaviour does not select the verifier provider |
+| Commercial Operations | `not_applicable` | package behaviour does not select the verifier provider |
+| Signature & Order | `not_applicable` | package behaviour does not select the verifier provider |
+| Contract Activation | `not_applicable` | package behaviour does not select the verifier provider |
+| Delivery | `not_applicable` | package behaviour does not select the verifier provider |
+| Service | `not_applicable` | package behaviour does not select the verifier provider |
+| Work | `not_applicable` | package behaviour does not select the verifier provider |
+| Lifecycle | `not_applicable` | package behaviour does not select the verifier provider |
+| Customer Data | `not_applicable` | package behaviour does not select the verifier provider |
+| Custom-package fixture | `not_applicable` | customer packages receive no identityVerifier document |
+
+### Runtime secret-provider contract v1 assessment (Production Spine v4A)
+
+The secret resolver is a horizontal runtime capability consumed at the
+deployment boundary by PostgreSQL control/data authentication and identity
+verifier initialization. Domain packages do not receive the resolver, secret
+references or leases. Existing fixture provider definitions remain
+credential-free; real external-provider credentials are later adapter work, not
+an excuse to push this boundary into every domain.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project records never resolve credentials; the PostgreSQL adapter consumes them below the service boundary |
+| Pipeline | `not_applicable` | pipeline composition has no provider credential |
+| Lead Intelligence | `deferred` | only a deterministic fixture provider ships; a future real enrichment adapter must consume the resolver without putting references in its definition fingerprint |
+| Commercial Operations | `deferred` | only deterministic fixture catalog providers ship; real catalog adapter credential binding is later provider work |
+| Signature & Order | `deferred` | the fixture verification key remains explicitly test-only; a real signature adapter must resolve its credential at the deployment boundary |
+| Contract Activation | `not_applicable` | activation calls no external provider |
+| Delivery | `not_applicable` | delivery calls no external provider |
+| Service | `not_applicable` | service calls no external provider |
+| Work | `not_applicable` | work calls no external provider |
+| Lifecycle | `not_applicable` | lifecycle calls no external provider |
+| Customer Data | `not_applicable` | the bounded source envelope carries provenance, not a provider credential |
+| Custom-package fixture | `not_applicable` | customer packages do not receive internal deployment secrets machinery |
+
+Closing milestone for a `deferred` row is the corresponding real provider
+adapter with executable zero-leak evidence. This PR does not refactor a domain,
+ship a third-party credential or make provider work retryable.
+
+### Scheduled timer consumers assessment (Production Spine v3C)
+
+This horizontal capability lets a person schedule an ask — open this follow-up
+on that date, review this renewal when notice opens — as a visible instruction
+record whose durable job carries only its identity and fingerprint. An
+explicitly started worker presents it at that instant through the capability
+seam the domain already offers, using the consumer identity the record carries.
+It is infrastructure beside domain packages, not inside them: `work` still
+schedules nothing and `lifecycle` still schedules nothing, both literally, and
+no package version moves. A timer opens an ask and decides nothing; every
+closing action stays refused to its authority. Nothing autostarts, and an
+application that starts no worker behaves exactly as it did before.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | its records can be the subject of a scheduled ask, but no operator surface schedules one and the composition must start the worker itself |
+| Pipeline | `not_applicable` | lifecycle definitions own no instant and no ask of their own |
+| Lead Intelligence | `not_applicable` | scoring produces no ask a person schedules for later |
+| Commercial Operations | `partial` | a commercial follow-up is the first ask a timer opens, through `work/follow-up@1` with lifecycle's declared identity |
+| Signature & Order | `not_applicable` | signature timing belongs to the provider and its receipts, never to a local timer |
+| Contract Activation | `partial` | a renewal review becomes due on notice, and the renewal decision stays the human action lifecycle already owns |
+| Delivery | `not_applicable` | delivery obligations carry their own evidence and open no scheduled ask |
+| Service | `not_applicable` | escalation is immediate by contract; nothing about it waits for an instant |
+| Work | `aligned` | it receives asks through its existing capability and gains no scheduling behaviour of its own — its published claim that it schedules nothing stays true |
+| Lifecycle | `aligned` | it is named as the consumer identity on renewal and commercial asks and gains no scheduling behaviour — its published claim stays true |
+| Customer Data | `not_applicable` | projections are read models; a timer opens no projection |
+| Custom-package fixture | `not_applicable` | custom packages receive no timer seam |
+| Custom-package score-disclosure fixture | `not_applicable` | the capability fixture receives no timer seam |
+
+Closing a `partial` cell requires the operator composition the integration slice
+adds. V3C retrofits no domain, adds no recurrence syntax, sends nothing, and
+grants a timer no authority to decide anything a person decides today.
+
+### Backup, verify and restore contract v1 assessment (Production Spine v4B)
+
+This horizontal runtime capability creates and verifies a closed PostgreSQL 16
+backup bundle and restores it only behind an explicit target lock, broad
+empty-target inspection across enumerated database-local catalog families
+(including large-object/default-ACL/cast metadata),
+independent artifact and canonical-manifest identity, verified-actor control-plane receipt boundary and
+normal startup attestation. It is infrastructure below domain packages: no
+domain receives connection material, backup paths, native-tool arguments or
+restore authority. SQLite and managed backup custody, scheduling, retention and
+promotion remain absent.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | its dedicated PostgreSQL data plane is covered by the self-host contract, but no application/operator composition or managed policy ships in V4B |
+| Pipeline | `not_applicable` | lifecycle definitions own no physical data-plane backup behavior |
+| Lead Intelligence | `not_applicable` | package records are included only as ordinary data-plane bytes; the package owns no backup adapter |
+| Commercial Operations | `not_applicable` | package records are included only as ordinary data-plane bytes; provider state is not backed up by this contract |
+| Signature & Order | `not_applicable` | package records are included as data-plane bytes; external provider custody remains outside this contract |
+| Contract Activation | `not_applicable` | package records are included as ordinary data-plane bytes and receive no restore authority |
+| Delivery | `not_applicable` | package records are included as ordinary data-plane bytes and receive no restore authority |
+| Service | `not_applicable` | package records are included as ordinary data-plane bytes and receive no restore authority |
+| Work | `not_applicable` | package records are included as ordinary data-plane bytes and receive no restore authority |
+| Lifecycle | `not_applicable` | package records are included as ordinary data-plane bytes and receive no restore authority |
+| Customer Data | `not_applicable` | projected records are ordinary data-plane bytes; source-system deletion and ejection remain separate policy |
+| Custom-package fixture | `not_applicable` | custom packages receive no backup provider, connection or restore-control seam |
+| Custom-package score-disclosure fixture | `not_applicable` | the capability fixture receives no backup provider, connection or restore-control seam |
+
+Closing a `partial` cell requires the later authenticated operator composition
+and executable deployment policy. V4B does not retrofit domains, claim managed
+backups or grant a restored clone writer authority.
+
+### Bounded observability export contract v1 assessment (Production Spine v4C)
+
+This horizontal runtime capability hands bounded operational evidence to an
+observability system the deployment already runs, through a closed signal
+vocabulary rather than a filtered payload. It sits below domain packages and
+above nothing: no domain receives a sink, an exporter, a signal name or the
+ability to add one, and no domain can widen the allowlist. It is not an
+observability backend, a log store, an APM or a second audit system, it
+implements no OpenTelemetry or OTLP support, and it exports no tenant id,
+fingerprint, record identifier, payload, connection locator, secret or
+filesystem path — so v1 telemetry is aggregate-shaped, not per-record
+traceable.
+
+Every `not_applicable` below says the same structural thing and it is worth
+stating once: the three instrumented producers — durable jobs and the
+transactional outbox, PostgreSQL writer-lease readiness, and backup/verify/
+restore — are all infrastructure the kernel owns. A domain package cannot emit
+a signal, and that is the contract, not a gap awaiting a backfill.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | its writes flow through the instrumented job/outbox and PostgreSQL readiness paths, but no project record, action or module emits or names a signal, and no application/operator composition ships in V4C |
+| Pipeline | `not_applicable` | lifecycle definitions run no instrumented unit of work and own no exporter seam |
+| Lead Intelligence | `not_applicable` | package operations are reported only as the generic durable-job runs they already are; the package owns no signal |
+| Commercial Operations | `not_applicable` | provider sync is reported only as a generic durable-job run; catalog and pricing state is never an attribute |
+| Signature & Order | `not_applicable` | external-operation identity stays outside telemetry by design — an `externalOperationId` is a record identifier and v1 exports none |
+| Contract Activation | `not_applicable` | activation emits no signal and receives no sink |
+| Delivery | `not_applicable` | delivery emits no signal and receives no sink |
+| Service | `not_applicable` | service emits no signal and receives no sink |
+| Work | `not_applicable` | task and follow-up state is domain data; a job that moves it is reported only by kind |
+| Customer Data | `not_applicable` | projected records and source provenance are domain payload, which no attribute kind can represent |
+| Lifecycle | `not_applicable` | lifecycle emits no signal and receives no sink |
+| Custom-package fixture | `not_applicable` | custom packages receive no sink, exporter or signal-registration seam |
+| Custom-package score-disclosure fixture | `not_applicable` | the read-only capability fixture runs no instrumented unit of work |
+
+
+### Application-composed production operations v1 assessment (Production Spine integration)
+
+This horizontal capability is the one that holds the other six together: one
+application composes the durable job store, the transactional outbox, scheduled
+timer consumers, the secret provider, backup/verify/restore and the telemetry
+sink into a single handle, and **constructing it starts nothing**. The
+application starts, drains and stops it, and supplies the system authority its
+worker runs under.
+
+It sits beside domain packages rather than beneath them, and that placement is
+what most rows below record. A domain does not receive the handle, does not
+start a worker, and cannot cause one to start; nothing about composing
+operations changes what a domain may do. The two rows that are not
+`not_applicable` are the two domains a composed timer can actually reach — and
+it reaches them only through the capability seam they already declared, which
+is the pre-existing contract, not something this slice grants.
+
+One row is worth reading as a finding rather than a status. Until this slice,
+`domains.capability()` was read synchronously by the timer while returning a
+promise under `packageContract: 2`, so **no v2 domain could be reached by a
+scheduled ask at all**. Every row here that says a domain is reachable became
+true in this PR; before it, the honest value would have been `deferred`.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | its writes already flow through the composed job and outbox handlers, but no project record, action or module composes, starts or observes the handle |
+| Pipeline | `not_applicable` | lifecycle definitions declare no capability a timer can open and start no unit of work |
+| Lead Intelligence | `not_applicable` | package operations are enqueued as durable jobs by the composition; the package neither composes nor starts one |
+| Commercial Operations | `not_applicable` | provider sync runs as a generic durable job; the package owns no operations handle |
+| Signature & Order | `not_applicable` | external-operation identity is settled before any worker claims the job, and the package composes nothing |
+| Contract Activation | `not_applicable` | activation neither composes operations nor declares a capability a scheduled ask opens |
+| Delivery | `not_applicable` | delivery composes no operations and declares no timer-reachable capability |
+| Service | `partial` | it declares `work/follow-up@1` when composed with `followUp`, so a scheduled ask can reach it — through the requirement it already declared, and never to decide anything |
+| Work | `aligned` | it provides `follow-up@1`, which is the only capability a timer may open; the ask is opened as work, and every closing action still refuses a non-human actor |
+| Customer Data | `not_applicable` | projection runs as durable jobs the composition already carries; the package composes nothing and declares no timer-reachable capability |
+| Lifecycle | `partial` | it declares `work/follow-up@1` when composed with `followUp`, so a renewal review can present an ask to it; the renewal decision stays the human action it owns |
+| Custom-package fixture | `not_applicable` | custom packages receive no operations handle and no worker-start seam |
+| Custom-package score-disclosure fixture | `not_applicable` | the read-only capability fixture runs no unit of work and opens no ask |
+
+Closing the one `partial` cell requires the later application/operator
+composition that constructs a sink and owns its shutdown order, plus whatever
+correlation contract a Cloud control plane turns out to need — which is a
+deliberate widening of the allowlist, reviewed as such, not a refactor. V4C
+retrofits no domain, promotes no JTBD row, and claims no managed observability.
+
+### Public site provenance contract v2 assessment
+
+`/version.json` v2 is a horizontal discovery contract for the generated public
+site, not a CRM runtime capability. It extends the one existing provenance
+artifact so a reader can compare checkout SHA and claims-measurement SHA without
+adding a command or rail. No domain reads it and no application behavior moves.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project records do not consume public-site build metadata |
+| Pipeline | `not_applicable` | runtime pipeline composition is independent of the marketing deployment |
+| Lead Intelligence | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Commercial Operations | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Signature & Order | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Contract Activation | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Delivery | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Service | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Work | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Lifecycle | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Customer Data | `not_applicable` | package behavior and evidence do not read `/version.json` |
+| Custom-package fixture | `not_applicable` | customer packages receive no public-site deployment metadata |
+
+### Storage contract v1 assessment (Production Spine v2 M1 + M2A + M2B + M2C + M2D + M2F)
+
+The internal dialect-neutral storage seam is horizontal kernel machinery. M1
+initially proved only Company and generated Work resources. M2A added the bounded
+Approval, Contact, Opportunity, and Work legacy-migration compatibility family.
+M2B adds one bounded slice across four packages: the startup persist-or-verify of
+immutable definition/version fingerprints, which Commercial, Signature, Lead
+Intelligence and the package registry each carried a raw copy of and now share
+through one internal core store. It is a *startup identity* slice, not domain
+persistence: each of those packages still writes its own records directly, which
+is why none of their rows becomes `aligned`. Declaring every other domain aligned
+would still be the silent backfill this matrix prevents.
+
+M2C extracts the kernel's remaining raw consumers for run and span lifecycle
+evidence. The workflow engine and the action runtime's `writeTrace` each
+prepared their own statements against `workflow_runs` and `trace_spans`, and
+now share one internal core store on the same seam. Like M2B this is *kernel*
+persistence rather than a domain's own records, so it promotes no domain row —
+but unlike M2B it is true of every domain's evidence at once, which is recorded
+below the table rather than repeated fourteen times.
+
+M2F closes the remaining Spine store itself. Organization and Membership
+persistence now uses the same closed statement vocabulary, including its
+control mutation plus immutable audit-intent transaction. This is control-plane
+identity machinery, not a migration of any domain's own rows, so it changes no
+domain status below. The released direct-SQLite `createSpineStore` input is
+preserved by a deep-internal adapter; the store file itself no longer reaches
+the driver.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `aligned` | Company, Contact, Opportunity and Approval now use the structured seam; conversion, pipeline and approval suites preserve their characterized behavior, and a structural guard prevents raw-driver reachability from returning |
+| Work | `aligned` | its generated resources and `migrateLegacyTasks(...)` use the structured storage seam, with executable migration evidence; M2D moved the last reach — `follow-up.js#requireCallerTransaction` proved the caller transaction by reading the driver's transaction flag, and now proves it through the storage seam's opaque witness. No file in `packages/work/src` reaches the driver by any spelling the M2D guard covers |
+| Pipeline | `deferred` | runtime pipeline persistence remains direct SQLite and is sequenced for M2; its workflow-run and trace evidence moved onto the seam with M2C, which is kernel machinery rather than this domain's own records |
+| Lead Intelligence | `partial` | M2B moved its definition-version registration (enrichment providers, scoring models, routing policies) onto the shared store behind the seam; its own domain persistence remains outside the migrated slice |
+| Commercial Operations | `partial` | M2B moved its definition-version registration (catalog providers, discount policies) onto the shared store behind the seam; its own domain persistence remains outside the migrated slice |
+| Signature & Order | `partial` | M2B moved its definition-version registration (signature providers) onto the shared store behind the seam; its own domain persistence remains outside the migrated slice |
+| Contract Activation | `deferred` | package persistence is outside the two-consumer M1 slice; M2 owns migration |
+| Delivery | `deferred` | package persistence is outside the two-consumer M1 slice; M2 owns migration |
+| Service | `deferred` | package persistence is outside the two-consumer M1 slice; M2 owns migration |
+| Lifecycle | `deferred` | package persistence is outside the two-consumer M1 slice; M2 owns migration |
+| Customer Data | `deferred` | package persistence is outside the two-consumer M1 slice; M2 owns migration |
+| Custom-package fixture | `partial` | newly generated services use the seam, while existing checked source is not mass-regenerated by M1 |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime persistence consumer |
+
+M2D is the same shape of slice and is assessed in its own section below: it
+moved one *transaction-context* consumer off the driver, not any domain's
+persistence, so no other row above moves because of it.
+
+One consequence of M2B is not a per-domain row, because it is true of every
+package at once: a package's declared `domain-policy:<domain>:<kind>` versions
+are now registered through the same store on the seam, whatever that package's
+own persistence does. A `deferred` row above therefore means *this domain's own
+records*, not its policy identity.
+
+The same is true of M2C, for the same reason. Every domain's **run and trace
+evidence** — every `workflow_runs` row and every `trace_spans` row, whether a
+named workflow, a record action, an external operation or a package-owned
+operation produced it — is now written through one internal store on the seam.
+A `deferred` row therefore means this domain's own records, not its policy
+identity and not the evidence recorded about its runs. What still keeps a
+domain off `aligned` is exactly what it always was: its own persistence.
+
+**The kernel's remaining raw residue, after M2C, M2D, the M2F Spine-store
+closure and the M2 final raw-driver exit.** M2C moved the workflow engine's
+run and span lifecycle onto the store; M2D moved
+`packages/work/src/follow-up.js#requireCallerTransaction` off the driver's
+transaction flag; M2F then moved the Organization/Membership store itself onto
+the same seam. The M2 final posture slice then moved
+`packages/core/src/core-adapters.js` Company/Contact lookups onto
+`database.storage.sync`. **No application-runtime business or Spine-store
+consumer is left in `packages/`.**
+
+Scanned after that slice, no application-runtime business consumer in
+`packages/` or `apps/` reaches the driver. Known driver spellings remain in
+`packages/core/src/database.js`, which owns `DatabaseSync` and the raw
+closure, and in adapter-internal `createSqliteStorage` (a parameter named
+`raw`, outside the token set). `spine-store-storage-adapter.js` resolves the
+closed storage seam and does not spell `database.raw`. A prose mention in
+`packages/core/index.js` describes what M2D replaced.
+**A PostgreSQL adapter now exists behind Storage Contract v1 (M3B).** The
+application factories still refuse PostgreSQL composition; shared-database
+tenancy is not implemented. Domain rows against that adapter are assessed in
+the M3B section below.
+
+This paragraph was true when M2C wrote it and false the moment M2D merged into
+it, with no conflict marker to say so: git merged the two edits cleanly because
+neither touched the other's lines. It is corrected here rather than in a later
+reconciliation, because a sentence naming a consumer that no longer exists is
+the kind of stale claim this matrix exists to catch.
+
+### PostgreSQL Storage Contract v1 adapter (Production Spine v2 M3B)
+
+M3B is a horizontal kernel seam: Storage Contract v1 gains `renderPostgresqlStatement`
+and a connection-affine `pg@8.23.0` adapter. The same contract tests run against
+SQLite and PostgreSQL. It does **not** compose the application on PostgreSQL,
+does not migrate domain schemas, and does not claim shared-database tenancy.
+A `deferred` row below means the domain's own records have not been exercised
+on this adapter; declaring them aligned here would be the silent backfill this
+matrix exists to prevent. Closing the gap is M3C.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `deferred` | Company/Contact/Opportunity/Approval speak Storage Contract v1 on SQLite; application composition on PostgreSQL is M3C |
+| Work | `deferred` | Work uses the storage seam on SQLite; PostgreSQL application composition is M3C |
+| Pipeline | `deferred` | pipeline persistence is not on this adapter; M3C |
+| Lead Intelligence | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Commercial Operations | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Signature & Order | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Contract Activation | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Delivery | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Service | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Lifecycle | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Customer Data | `deferred` | domain persistence has not been exercised on PostgreSQL; M3C |
+| Custom-package fixture | `deferred` | the v1 fixture remains SQLite; PostgreSQL composition is M3C |
+| Custom-package score-disclosure fixture | `deferred` | the v1 fixture remains SQLite; PostgreSQL composition is M3C |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime persistence consumer |
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | None at runtime. The adapter is kernel-only; no domain service is composed on PostgreSQL |
+| Which are already aligned? | None — alignment here would mean the domain's own records proven on PostgreSQL |
+| Which need metadata only? | Every domain row above: declared `deferred` until M3C |
+| Which need a code backfill? | Closing the rows is M3C application composition, not a domain rewrite in this PR |
+| Was the matrix updated? | Yes — this section |
+
+### PostgreSQL application composition (Production Spine v2 M3C)
+
+M3C is a horizontal kernel seam: the portable async factory boots a dedicated-
+database PostgreSQL application after startup attestation. Shared-database
+row-level tenancy is still absent. A `partial` row means the domain graph can
+be selected on PostgreSQL; a `deferred` row means its own records have not
+been proven through a representative write on that adapter.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `aligned` | Company/Contact/Opportunity/Approval create, list, audit and workflow run on PostgreSQL |
+| Work | `partial` | contract-2 graph composes on PostgreSQL; follow-up writes still need generated work-task modules |
+| Pipeline | `partial` | opportunity pipeline columns exist on the PostgreSQL data plane; dedicated pipeline tests remain SQLite |
+| Lead Intelligence | `deferred` | domain records have not been exercised on PostgreSQL |
+| Commercial Operations | `deferred` | domain records have not been exercised on PostgreSQL |
+| Signature & Order | `deferred` | domain records have not been exercised on PostgreSQL |
+| Contract Activation | `deferred` | domain records have not been exercised on PostgreSQL |
+| Delivery | `deferred` | domain records have not been exercised on PostgreSQL |
+| Service | `deferred` | domain records have not been exercised on PostgreSQL |
+| Lifecycle | `deferred` | domain records have not been exercised on PostgreSQL |
+| Customer Data | `deferred` | domain records have not been exercised on PostgreSQL |
+| Custom-package fixture | `deferred` | the v1 fixture remains SQLite |
+| Custom-package score-disclosure fixture | `deferred` | the v1 fixture remains SQLite |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime persistence consumer |
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | Core CRM services gained an async Storage Contract path so PostgreSQL composition can run without changing `createAccordoApp()` |
+| Which are already aligned? | Core CRM (Sales) on the representative write/audit/workflow path |
+| Which need metadata only? | The deferred package rows: composition is possible, domain writes are unproven |
+| Which need a code backfill? | Generated-module services still use `storage.sync`; package record modules need the same dual path before those rows close |
+| Was the matrix updated? | Yes — this section |
+
+### Async package-contract v2 assessment (Production Spine v2 M2E-1)
+
+M2E-1 is horizontal kernel capability: it makes uniform contract-1 and
+contract-2 package graphs expressible, normalizes an absent capability contract
+to 1, publishes the resolved versions, and refuses a mixed graph before any
+service is called. It deliberately migrates no package. A `deferred` row below
+therefore means the domain still ships only its synchronous v1 definition; it
+does not mean its current v1 graph is invalid. Dual bundled v1/v2 graphs remain later compatibility work, not M2E-3.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project-owned records are not package definitions; their async service composition belongs to M2E-2 |
+| Pipeline | `not_applicable` | a kernel workflow capability, not a domain package |
+| Lead Intelligence | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Work | `deferred` | its capability declaration still omits the field by compatibility and resolves to contract 1; an explicit dual graph remains later compatibility work |
+| Lifecycle | `deferred` | it consumes domain capability version 2 on synchronous execution contract 1; an async graph remains later compatibility work |
+| Customer Data | `deferred` | its contract-1 graph remains selected; dual v1/v2 definitions remain later compatibility work |
+| Custom-package fixture | `deferred` | it remains the unchanged customer-authored contract-1 compatibility proof; a separate v2 fixture is later compatibility work and must not silently rewrite this v1 fixture |
+| Custom-package score-disclosure fixture | `deferred` | its contract-1 graph and `intelligence@1` dependency remain the customer-authored capability-consumer proof; a v2 companion is later compatibility work rather than a silent rewrite of this v1 fixture |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
+
+### Private async SQLite lifecycle assessment (Production Spine v2 M2E-2A)
+
+M2E-2A is horizontal kernel machinery, not a domain capability and not M2E-2
+complete. It proves a selected graph is uniformly async-v2 before any SQLite
+path, opener, provider or listener can move, then owns one adapter through
+post-open assembly and one shared close promise. It is **not** M2E-1's
+graph-validation vocabulary (already merged), **not** a portable application
+facade (M2E-2B), **not** awaited HTTP/security (M2E-2C), and **not** a public
+async factory (M2E-3). `createAccordoApp()` remains the only public factory and
+remains synchronous. A `deferred` row means the domain is not composed through
+this private lifecycle; it does not mean its released v1 graph is invalid.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | project-owned records are not selected through this private lifecycle; 2B owns any portable service graph over it |
+| Pipeline | `not_applicable` | a kernel workflow capability, not a selected package graph |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains the released selection; 2B/2C do not compose it here and dual v1/v2 definitions remain later compatibility work |
+| Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto the private lifecycle |
+| Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
+| Customer Data | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; this slice adds no v2 fixture |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime lifecycle |
+
+### Portable internal application facade assessment (Production Spine v2 M2E-2B)
+
+M2E-2B is horizontal kernel machinery, not a domain capability and not M2E-2
+complete. It composes kernel modules, selected packages, actions, operations,
+audit, workflow and provider state over 2A's owned storage handle and returns
+one frozen lexical-allowlist facade plus `{adapter, available}`. It is **not**
+awaited HTTP/security (M2E-2C) and **not** a public async factory (M2E-3).
+`createAccordoApp()` remains the only public factory and remains synchronous.
+A `deferred` row means the domain's released contract-1 graph is not selected
+through this private facade; it does not mean that v1 graph is invalid.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval compose over 2A storage and are reachable through the leak-free facade; generated project modules and Spine are not |
+| Pipeline | `not_applicable` | a kernel workflow capability; this slice registers an empty pipeline registry and does not migrate pipeline contract 1 |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto the portable facade |
+| Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
+| Customer Data | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; this slice adds no v2 fixture |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime facade |
+
+### Awaited portable HTTP/security assessment (Production Spine v2 M2E-2C)
+
+M2E-2C is horizontal kernel machinery, not a domain capability and not M2E-2
+complete. It awaits portable composition, security/identity/authorization
+assembly, package startup hooks and capability-contract echoes before binding
+an HTTP listener, and it refuses a thenable standing in for a domain value at
+the first observable HTTP/capability seam. It is **not** a public async
+factory (M2E-3) and it does **not** change default `accordo serve`.
+`createAccordoApp()` remains the only public factory and remains synchronous.
+A `deferred` row means the domain's released contract-1 graph is not selected
+through this private HTTP entry; it does not mean that v1 graph is invalid.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval writes and reads are awaited over portable HTTP; generated project modules and dual-plane Spine are not composed here |
+| Pipeline | `not_applicable` | a kernel workflow capability; this slice does not migrate pipeline contract 1 |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Delivery | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Service | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto portable HTTP |
+| Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
+| Customer Data | `deferred` | its contract-1 graph remains the released selection; dual v1/v2 definitions remain later compatibility work |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; this slice adds no v2 fixture |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime HTTP graph |
+
+### Public portable async factory assessment (Production Spine v2 M2E-3)
+
+M2E-3 is horizontal kernel machinery: it publishes `createAccordoAppAsync()`
+over 2A/2B so a portable SQLite caller has one unconditional `await` path.
+The default selected graph is an explicit `packageContract: 2` with empty
+package/action/module lists, so kernel Company/Contact/Opportunity/Approval
+compose without silently treating bundled v1 packages as v2. It is **not**
+dual bundled package graphs, **not** default `accordo serve`, and **not** a
+PostgreSQL adapter. `createAccordoApp()` remains the synchronous v1 factory.
+A `deferred` row means the domain still ships only its contract-1 definition
+and is not selected by this factory's default graph; it does not mean that v1
+graph is invalid.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval compose through the public async factory over explicit empty contract-2; generated project modules and dual-plane Spine are not |
+| Pipeline | `not_applicable` | a kernel workflow capability; this slice does not migrate pipeline contract 1 |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Delivery | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Service | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Work | `deferred` | its capability still resolves to synchronous contract 1; this factory does not compose Work |
+| Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this factory does not change that |
+| Customer Data | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; the public async path refuses it with `PACKAGE_ASYNC_CONTRACT_REQUIRED` rather than rewriting it |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime factory graph |
+
+### Cross-plane Spine audit recovery assessment (Production Spine v2 M2F)
+
+The immutable audit-intent and explicit-reconciliation contract applies only to
+Spine Organizations and Memberships: control-plane authorization state whose
+audit belongs in a separate tenant data plane. It is horizontal security
+machinery, but not a domain capability and not an invitation to route domain
+events through a generic outbox.
+
+The startup corrections stay at the same boundary: known global migration
+identity and the selected data/control family are checked before composition;
+fresh-process ledger races receive bounded startup-only retry; every post-open
+refusal closes both handles; and the public recovery options are a closed
+`limit: 1..100` shape. A released v1-v5 combined file may still be adopted as
+control with dormant CRM tables intact. The isolation claim is separate runtime
+handles and service reachability, not physical deletion and not M4 resource
+attestation. None of these rules adds a domain persistence consumer, so the
+per-domain dispositions below remain unchanged.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | its data and audit already share the tenant data-plane transaction; no cross-plane Organization/Membership write occurs |
+| Pipeline | `not_applicable` | pipeline rows are tenant data and this slice exposes no general event/outbox contract |
+| Lead Intelligence | `not_applicable` | package records are tenant data; the contract is closed over Spine authorization mutations |
+| Commercial Operations | `not_applicable` | package records are tenant data; the contract is closed over Spine authorization mutations |
+| Signature & Order | `not_applicable` | external-operation recovery is its own contract; M2F audit intent accepts no arbitrary package work |
+| Contract Activation | `not_applicable` | package multi-write atomicity remains on the caller transaction proof, not this cross-plane intent |
+| Delivery | `not_applicable` | delivery writes no Organization or Membership row |
+| Service | `not_applicable` | service writes no Organization or Membership row |
+| Work | `not_applicable` | Work's transaction boundary is M2D; M2F adds no Work persistence surface |
+| Lifecycle | `not_applicable` | lifecycle writes no Organization or Membership row |
+| Customer Data | `not_applicable` | customer identity rows are tenant data, not control-plane membership |
+| Custom-package fixture | `not_applicable` | customer packages receive neither audit-intent construction nor reconciliation authority |
+| Custom-package score-disclosure fixture | `not_applicable` | it consumes `intelligence@1` as a customer-authored capability proof and never writes Organization or Membership rows |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime mutation |
+
+### Dual bundled v1/v2 package graphs (Production Spine v2 M3P)
+
+Horizontal kernel capability: `selectPackageGraph` stamps package, action,
+operation and capability contracts onto a cloned declaration and wraps only
+the v2 execute/create seams. Each bundled package keeps its v1 factory as the
+`createAccordoApp()` selection and exports an explicit v2 companion for
+`createAccordoAppAsync({ selected })`. The async factory default graph stays
+empty; v1 custom packages remain fail-closed on that path. Default
+`accordo serve` and PostgreSQL are not this slice.
+<!-- truth: spine.postgresql.implemented=absent -->
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | kernel Company/Contact/Opportunity/Approval are not domain packages; they already compose on both factories |
+| Pipeline | `not_applicable` | a kernel workflow capability, not a domain package |
+| Lead Intelligence | `aligned` | `createIntelligenceDomain()` stays v1; `createIntelligenceDomainV2()` is the awaited graph |
+| Commercial Operations | `aligned` | `createCommercialDomain()` stays v1; `createCommercialDomainV2()` is the awaited graph |
+| Signature & Order | `aligned` | `createSignatureDomain()` stays v1; `createSignatureDomainV2()` is the awaited graph |
+| Contract Activation | `aligned` | `createContractsDomain()` stays v1; `createContractsDomainV2()` is the awaited graph |
+| Delivery | `aligned` | `createDeliveryPackage()` stays v1; `createDeliveryPackageV2()` is the awaited graph |
+| Service | `aligned` | `createServicePackage()` stays v1; `createServicePackageV2()` is the awaited graph |
+| Work | `aligned` | `createWorkPackage()` stays v1; `createWorkPackageV2()` is the awaited graph |
+| Lifecycle | `aligned` | `createLifecyclePackage()` stays v1; `createLifecyclePackageV2()` is the awaited graph |
+| Customer Data | `aligned` | `createCustomerDataPackage()` stays v1; `createCustomerDataPackageV2()` is the awaited graph |
+| Custom-package fixture | `deferred` | partner-scorecard remains the customer-authored contract-1 compatibility proof; the portable path still refuses it with `PACKAGE_ASYNC_CONTRACT_REQUIRED` rather than rewriting it |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof on contract 1; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
+
+### Public storage posture, health boundary and raw-driver exit (Production Spine v2 M2 final)
+
+This slice is horizontal kernel machinery, not a domain capability. Portable
+and document-selected public surfaces project `{adapter, available}` only;
+`GET /health` is process liveness and does not run request identity, doctor,
+tenant services or business tables; Admin counts live on authenticated
+`GET /api/admin/metrics`; `createCoreAdapters` reads through Storage Contract
+v1. Dual bundled v1/v2 package graphs remain later compatibility work, not
+completed. A `deferred` row means the domain still ships only its contract-1
+definition and is not selected by the portable factory's default graph.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `partial` | kernel Company/Contact/Opportunity/Approval compose through v1 HTTP health/metrics and the portable factory; generated project modules and dual-plane Spine are not the default portable graph |
+| Pipeline | `not_applicable` | a kernel workflow capability; this slice does not migrate pipeline contract 1 |
+| Lead Intelligence | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Commercial Operations | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Signature & Order | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Contract Activation | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Delivery | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Service | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Work | `deferred` | its capability still resolves to synchronous contract 1; this slice does not compose Work onto the portable factory |
+| Lifecycle | `deferred` | it still consumes domain capability version 2 on synchronous execution contract 1; this slice does not change that |
+| Customer Data | `deferred` | its contract-1 graph remains the released v1 selection; dual v1/v2 definitions remain later work |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; the public async path refuses it with `PACKAGE_ASYNC_CONTRACT_REQUIRED` rather than rewriting it |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; this slice does not rewrite it |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime health or storage-posture graph |
 
 ### Hosted Docs MCP transport assessment
 
@@ -94,10 +881,37 @@ domain can align to it or be backfilled into it. This explicit assessment closes
 the Compatibility Backfill Rule for the transport without inventing six empty
 runtime integrations.
 
+### Repository Truth Contract assessment (ADR-039)
+
+The ADR-044 single-run measurement reporter and conservative refresh checks are
+also repository evidence maintenance: `not_applicable` for every domain below
+and outside the table. They add no domain runtime capability or backfill.
+
+
+`scripts/repo-truth.js` and `docs/repository-truth.json` are a horizontal
+**repository evidence discipline**, not a CRM runtime capability. Its status is
+`not_applicable` for all six columns and for every domain outside the table: it
+opens no application or durable domain database, exposes no domain mutation,
+and adds nothing a domain could align to or be backfilled into. Its storage
+authority imports selected Company and Work source and opens isolated in-memory
+SQLite databases only to execute bounded, disposable contract probes; no probe
+observes or changes application state. It otherwise reads the checked-in source
+of the framework, a frozen benchmark receipt and the measured claims ledger,
+and it never leaves this repository — a generated project has no claims ledger,
+no JTBD matrix and no status file.
+
+One fact *is* nearly domain-shaped and is deliberately not a row:
+`domain.<name>.package_native` is generated for all nine checked-in packages
+from a named **reference composition**. That is a fact *about* the packages, read
+from `resolvePackageComposition`, not a capability any package implements —
+adding or removing a package moves the fact with no edit to the package. This
+explicit assessment closes the Compatibility Backfill Rule for the contract
+without inventing six empty runtime integrations.
+
 | Horizontal capability | Pipeline | Lead Intelligence | Commercial Ops | Signature & Order | Contract Activation | Delivery |
 |---|---|---|---|---|---|---|
 | **Domain package seam** (ADR-018) — `definePackage`, declared resources, one static import | `not_applicable` ¹ | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
-| **Declared cross-package capability** — reaching another domain only through a named, versioned capability | `not_applicable` ¹ | `aligned` | `aligned` — provides `commercial-quotes@1` and `commercial-quote-binding@1` | `aligned` — requires both of those | `aligned` — provides `delivery-obligations@1` | `aligned` — requires that one; provides three |
+| **Declared cross-package capability** — reaching another domain only through a named, versioned capability | `not_applicable` ¹ | `aligned` | `aligned` — provides `commercial-quotes@2` and `commercial-quote-binding@1` | `aligned` — requires both of those | `aligned` — provides `delivery-obligations@1` | `aligned` — requires that one; provides three |
 | **`packageContract: 1` conformance** — validated at startup, detach/reattach proven | `not_applicable` ¹ | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Package version discipline** — additive bumps, never a silent break | `not_applicable` ¹ | `aligned` — `intelligence@1` | `aligned` — `commercial@1` | `not_applicable` | `aligned` | `aligned` |
 | **Module Evolution v1** (ADR-019) — a shipped record grows through a declared revision | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
@@ -113,7 +927,7 @@ runtime integrations.
 | **Audit and trace on every write** | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **Exact reads past the display bound** — `listWhere`/`countWhere` on every correctness path | `not_applicable` — `move-stage` reads one record by id and makes no collection read | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
 | **AX1 visibility** — appears in `app inspect` as a package with resources, actions and capabilities | `partial` ¹ — its actions are reported; there is no package to report | `aligned` — discovered as a package, with no fixed slot | `aligned` — discovered as a package, with no fixed slot | `aligned` — discovered as a package, with no fixed slot | `aligned` | `aligned` |
-| **AX2 citability** — a Solution Plan can cite the domain's capabilities and record revisions | `partial` ¹ | `aligned` — `intelligence@1` is citable | `aligned` — `commercial-quotes@1` is citable | `aligned` — its declared requires and operations are citable | `aligned` | `aligned` |
+| **AX2 citability** — a Solution Plan can cite the domain's capabilities and record revisions | `partial` ¹ | `aligned` — `intelligence@1` is citable | `aligned` — `commercial-quotes@2` is citable | `aligned` — its declared requires and operations are citable | `aligned` | `aligned` |
 | **Package-scoped Admin section** — renders only while the package's schema metadata is published | `not_applicable` — the board is a core Admin feature | `not_applicable` | `partial` — the quote screens are core Admin, gated at render time on the package's published block; a package-contributed screen is still not expressible | `partial` — same shape: the quote signature section is core Admin, render-gated on the package's published block | `aligned` | `aligned` |
 | **Detach/reattach proof** — removing the domain removes its whole surface and nothing else | `not_applicable` ¹ | `aligned` | `aligned` — `tests/commercial-package-absence.test.js` | `aligned` — `tests/signature-package-absence.test.js` | `aligned` | `aligned` |
 | **Fault-injection and two-connection evidence** | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` | `aligned` |
@@ -362,6 +1176,72 @@ Three practical consequences:
    it is the honest name for a structural blocker.
 3. A reviewer may reject a PR for a missing row the same way they reject a
    missing test — and `docs/QUALITY_GATES.md` §1 now says so.
+
+## The M2D transaction-proof backfill answer, as the rule requires
+
+Production Spine v2 M2D exports a **horizontal** kernel capability from
+`packages/core/index.js`: `proveCallerTransaction` and `TRANSACTION_PROOF` — a
+way to prove that a set of writes will land on **one** storage handle inside an
+outer transaction the caller owns, without the domain holding the SQLite driver.
+
+The rule says every existing domain gets a row. The honest answer for most of
+them is `not_applicable`, and the reason is worth stating precisely rather than
+waving at: a domain needs this primitive only where it writes a set of rows that
+must commit together **through an entry point whose runtime context the caller
+supplies** — a declared capability, or a function a host action imports. A domain
+that writes such a set only inside its own action's `execute` cannot reach the
+failure, because `runRecordAction` opens the transaction for it
+(`packages/core/src/action-runtime.js`).
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | Potentially all of them; in practice only the four capability entry points that write. There are exactly four write-capable capabilities in the repository, and before M2D one of them checked its transactional context while three made the same promise in their doc comments with nothing checking it |
+| Which are already aligned? | **Work** and **Contract Activation** — both migrated in this PR, which is the whole of the milestone |
+| Which need metadata only? | **None** |
+| Which need a code backfill? | **None, and that is the finding.** Every remaining domain either offers no writing capability at all, or writes its sets only inside its own action envelope. Giving those a check that can never fire would add a refusal path nobody can reach and a claim nobody can test |
+| Which were measured rather than reasoned about? | The three unchecked ones. Each was run outside a transaction and each committed a partial write; the probes are in `docs/plans/spine-v2-m2d-transaction-context.md` §2 and are checked-in regressions |
+| Was the matrix updated? | Yes — this section, and the Work row of the storage-contract assessment above |
+
+| Domain | Status | Reason |
+|---|---|---|
+| Work | `aligned` | `createFollowUp` proves before the first write, and `complete`/`cancel` prove the same task+activity pair even though the action envelope makes it unreachable for them |
+| Contract Activation | `aligned` | all three of its writing capabilities prove before their first write — `delivery-obligations@1`, `service-obligations@1` and `contracts-successor-activation@1`. Each was measured committing a partial write outside a transaction before this change |
+| Core CRM (Sales) | `not_applicable` | its multi-row writes (conversion, approval, stage change) run inside `runRecordAction` or open their own transaction; it offers no capability and exports no writer a caller can invoke with its own context |
+| Pipeline | `not_applicable` | a stage move is one managed write inside an action; there is no set to hold together |
+| Lead Intelligence | `not_applicable` | `intelligence@1` is read-only over declared definitions and reaches no record; enrich, score and route write inside the action envelope |
+| Commercial Operations | `not_applicable` | `commercial-quotes@2` is read-only, and `commercial-quote-binding@1` deliberately returns frozen *data* describing a write path rather than performing one. Catalog sync opens its own transaction, so it is not a consumer |
+| Signature & Order | `not_applicable` | `signature-orders@1` is read-only; its application operations run through the injected `runExternal` sequencer, which opens a transaction per phase |
+| Delivery | `not_applicable` | it writes large sets — project, work packages, milestones, partner engagement — but only inside its own action's `execute`, and all three capabilities it offers are read-only. It is a *consumer* of `contracts/delivery-obligations@1`, not a provider of a writing one |
+| Service | `not_applicable` | same shape: coverage and entitlements are written inside its own action, and all three capabilities it offers are read-only |
+| Lifecycle | `not_applicable` | it declares `capabilities: []` and offers none. It consumes `work/follow-up@1` and `contracts-successor-activation@1`, both of which now prove on its behalf |
+| Customer Data | `not_applicable` | `customer-identity@1` is read-only; its import operation opens its own transaction |
+| Custom-package fixture | `not_applicable` | one action, one managed write, and no capability of its own — it exercises the package seam, not a write set |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime persistence consumer |
+
+**What would move a `not_applicable` row.** Not a refactor, and not effort: a
+domain changes status the moment it offers a **capability that writes more than
+one row**, or exports a writer a host action imports directly. That is the test,
+and it is the same test the consumer search used — `PackageRegistry.capability()`
+hands the *caller's* context to `create()`, so a writing capability cannot assume
+its caller opened anything.
+
+### What M2D deliberately did not close
+
+- **Nothing about transaction ownership.** An earlier cut of this milestone
+  proved only that a transaction was open on the connection, and recorded the
+  gap as a limitation. It is now closed: the witness is published into the async
+  context that opened the transaction, a flow that did not open one is refused
+  `NOT_TRANSACTION_OWNER`, and the mint that could forge ownership is taken once
+  by the kernel at module load rather than guarded by import analysis. What
+  remains open belongs to pooled connections and is an obligation on that
+  milestone (`DECISIONS.md`, ADR-018 addendum 8).
+- **No domain's persistence is migrated.** M2D is a transaction-context slice.
+  Every `deferred` row in the storage-contract assessment above stays exactly
+  where it was.
+- **No domain is given a check it cannot fail.** The eleven `not_applicable`
+  rows are not a backlog. Adding the proof to a write set that only ever runs
+  inside an action envelope would be a refusal path with no reachable caller —
+  the silent backfill this matrix exists to prevent, wearing a safety label.
 
 ## The Work v1 backfill answer, as the rule requires
 
@@ -798,7 +1678,7 @@ what makes it a fact rather than a rendering detail.
 
 ### And the Production Spine's absence stays visible
 
-Nothing here changes it. There is no auth, tenancy or RBAC in this framework, so
+Nothing here changes it. This framework ships no authentication, so
 "a human decided" means an actor object said `type: "user"` — an audit boundary,
 not role enforcement. Nothing is scheduled, notified, exported or activated;
 nothing is deployed; and none of this is a GDPR, consent, retention or erasure
@@ -1074,6 +1954,67 @@ insufficient.
 Item 1 is small and independently useful; it is the honest next thing anyone
 who wants the pilot should do. Items 2 and 3 are contract decisions and belong
 to a human. Nothing in this section authorizes starting any of them.
+
+### Selected record modules in async composition assessment (record-module port)
+
+This seam is horizontal runtime capability, not a domain: `selected.modules`
+accepts `{name, manifest}` pairs, the async factory builds the record module
+from the manifest at composition time, applies its DDL per dialect, and the
+package's reads and trusted writes execute on sync SQLite and async
+PostgreSQL. Name strings keep their old meaning (action eligibility only).
+It deliberately registers no package by itself: every row below is a
+selection the composing project makes, proven per domain, not a migration.
+An `aligned` row below means the domain's records were composed and executed
+on both storages in this milestone's proof; a `deferred` row means its
+shipped manifests select through the same seam and its per-domain proof is
+later work, not a code gap.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | kernel records compose directly; they are not manifest-generated records |
+| Pipeline | `not_applicable` | a kernel workflow capability, not a selected package graph |
+| Lead Intelligence | `aligned` | its 7 manifests compose, migrate and execute on SQLite and PostgreSQL (this milestone's proof) |
+| Commercial Operations | `deferred` | its 16 manifests select through the same seam; per-domain composition proof is later work |
+| Signature & Order | `deferred` | its 10 manifests select through the same seam; per-domain composition proof is later work |
+| Contract Activation | `deferred` | its 9 manifests select through the same seam; per-domain composition proof is later work |
+| Delivery | `deferred` | its 16 manifests select through the same seam; per-domain composition proof is later work |
+| Service | `deferred` | its 7 manifests select through the same seam; per-domain composition proof is later work |
+| Work | `aligned` | its 2 manifests compose, migrate and execute on SQLite and PostgreSQL (this milestone's proof) |
+| Lifecycle | `deferred` | its 3 manifests select through the same seam; per-domain composition proof is later work |
+| Customer Data | `aligned` | its 6 manifests compose, migrate and execute on SQLite and PostgreSQL, including import apply and the consolidated profile read (this milestone's proof) |
+| Custom-package fixture | `deferred` | it remains the customer-authored contract-1 compatibility proof; selecting its manifests is the composing project's choice |
+| Custom-package score-disclosure fixture | `deferred` | it remains the customer-authored capability-consumer proof; selecting its manifests is the composing project's choice |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no runtime package graph |
+
+### Personal-data field classification (Data Governance criterion 1)
+
+This seam is horizontal manifest metadata, not a domain: a manifest field may
+carry `classification` (`identification`, `special-category`, `non-personal`;
+owner taxonomy 2026-09-19, `backlog:0c1af0e22dc6`), preserved through
+validation, normalization, evolution (as a `metadata` change, never storage)
+and the generated module's field metadata. A field with no marker is reported
+as `unclassified` by `fieldDataClassifications` — never as `non-personal`.
+No shipped manifest carries a marker yet, so every row below is a declared
+gap, not a closed one; closing a row means classifying that domain's
+personal-data fields in its own manifests, which this PR deliberately does
+not do.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | kernel records (`companies`, `contacts`), not manifest-generated; classifying kernel tables is later work |
+| Pipeline | `not_applicable` | a kernel workflow capability, holds no personal-data fields |
+| Lead Intelligence | `deferred` | its 7 manifests carry no `classification` marker yet |
+| Commercial Operations | `deferred` | its 16 manifests carry no `classification` marker yet |
+| Signature & Order | `deferred` | its 10 manifests carry no `classification` marker yet |
+| Contract Activation | `deferred` | its 9 manifests carry no `classification` marker yet |
+| Delivery | `deferred` | its 16 manifests carry no `classification` marker yet |
+| Service | `deferred` | its 7 manifests carry no `classification` marker yet |
+| Work | `deferred` | its 2 manifests carry no `classification` marker yet |
+| Lifecycle | `deferred` | its 3 manifests carry no `classification` marker yet |
+| Customer Data | `deferred` | its 6 manifests carry no `classification` marker yet |
+| Custom-package fixture | `deferred` | customer-authored; classifying it is the composing project's choice |
+| Custom-package score-disclosure fixture | `deferred` | customer-authored; classifying it is the composing project's choice |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no manifests |
 
 ## What this document is not
 

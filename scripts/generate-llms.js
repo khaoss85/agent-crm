@@ -34,6 +34,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { readBlogPosts } from './site-clusters.js';
+import { STRATEGIC_PAGES, markdownPath } from './site-strategic-pages.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -64,7 +65,12 @@ const assetsDir = join(siteDir, 'assets');
  * citation. Resolvable links cost ~1.6k characters across ~44 links; that is content doing
  * its job, not drift, and trimming evidence to pay for it would invert the file's priorities.
  */
-const FULL_BUDGET = 44000;
+// 44,300: C-17 now names the pg@8.23.0 pin and its limitation in the same
+// breath, which lengthens the mandatory inlined claims ledger.
+// 46,000: September reconciliation adds bounded customer import, signed-term
+// provenance, successor execution and current-source/registry distinctions.
+// Their mandatory evidence must remain inline; no claim is dropped to fit.
+const FULL_BUDGET = 46000;
 
 /**
  * Characters held back for the closing "what this file omits" section, which is written
@@ -249,6 +255,7 @@ function compose({ full }) {
     header(full),
     statusSection(),
     whatItIsSection(),
+    productJourneySection(),
     doesNotExistSection(),
     provenSection(full),
     jobCoverageSection(),
@@ -267,6 +274,25 @@ function compose({ full }) {
   }
 
   return `${blocks.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()}\n`;
+}
+
+function productJourneySection() {
+  const labels = {
+    'index.html': 'Home', 'product.html': 'Product', 'solutions.html': 'Solutions',
+    'solution-custom-crm.html': 'Custom CRM solution',
+    'solution-revenue-operations.html': 'Revenue operations solution',
+    'solution-commercial-operations.html': 'Commercial operations solution',
+    'solution-service-operations.html': 'Delivery and service solution',
+    'how-it-works.html': 'How it works', 'developers.html': 'Developers',
+    'for-ai-agents.html': 'For AI agents', 'proof.html': 'Product proof', 'resources.html': 'Resources',
+  };
+  return [
+    '## Canonical product journeys', '',
+    ...STRATEGIC_PAGES.map((path) => `- [${labels[path]}](${path}) — [generated Markdown](${markdownPath(path)}).`),
+    '- [Deployment provenance](version.json) — checked-out commit, branch metadata and claims measurement SHA.',
+    '',
+    'HTML is canonical; each Markdown peer is generated from that rendered HTML. Product Truth describes the durable product. Repository Truth in `claims.json`, `jobs.json`, evidence pages and repository facts says what this exact tree proves. A desired JTBD is not an implementation claim.',
+  ].join('\n');
 }
 
 function writingSection() {
@@ -334,7 +360,7 @@ function statusSection() {
       ? `- **The public name is chosen** (brand status: {{brand.nameStatus}})${npmCaveat(brand.npm.status)}`
       : '- **The public name is undecided** (brand status: {{brand.nameStatus}}). "{{brand.name}}" is a placeholder. Do not treat it as a package name, a brand or a namespace.',
     npmPublicationLine(),
-    '- **There is no production spine**: no authentication, no tenancy, no RBAC. The HTTP server is local-development-only, and an actor header is an assertion rather than an identity.',
+    '- **Self-host runtime, not a managed service**: dedicated PostgreSQL, authorization, tenant binding, durable jobs, outbox, timers, secrets, backup/restore and observability contracts exist. Applications supply authentication and start their workers; this does not establish deployment readiness.',
     '- **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any percentage attributed to this project is fabricated.',
     '- Measured at commit {{measured.sha}} on {{measured.date}}: **{{measured.tests}} tests passing, 0 failing.**',
   ].join('\n');
@@ -350,7 +376,7 @@ function statusSection() {
  */
 function npmPublicationLine() {
   if (brand.npm.status === 'published') {
-    return '- **`{{brand.createCommand}}` works: `create-{{brand.slug}}@0.1.0` is published** and scaffolds a working project, vendoring the framework source into it. There is still no hosted service, no installable framework library (`{{brand.slug}}` on npm is an empty 0.0.1 name reservation) and the `{{brand.scope}}` scope is unclaimed. License: {{brand.license}}.';
+    return '- **`{{brand.createCommand}}` works: `create-{{brand.slug}}@{{brand.publishedVersion}}` is published** as a local starter snapshot. It predates the current PostgreSQL and production-operations source; use the developer page to choose the matching source path. No hosted service or framework library ships; `{{brand.slug}}` is an empty 0.0.1 reservation and `{{brand.scope}}` is claimed but empty. License: {{brand.license}}.';
   }
   if (brand.npm.status === 'names-reserved') {
     return '- **The only things published are two empty npm name reservations.** No hosted service, no registry entry, no installable framework. License: {{brand.license}}.';
@@ -369,7 +395,7 @@ function npmCaveat(status) {
   if (status === 'published') {
     return ', and `{{brand.createCommand}}` scaffolds a working project from the published `create-{{brand.slug}}` package.'
       + ' The framework arrives vendored into the project, not as a dependency — upgrading means merging —'
-      + ' and the `{{brand.scope}}` scope is still unclaimed.';
+      + ' and the `{{brand.scope}}` scope is claimed and deliberately empty.';
   }
   if (status === 'names-reserved') {
     return ', and the unscoped npm names are reserved by empty placeholder packages that install nothing.'
@@ -386,7 +412,7 @@ function whatItIsSection() {
   return [
     '## What it is, and what it is not',
     '',
-    'A Node.js framework, ESM, zero third-party runtime dependencies, requiring Node 22.16+.',
+    'A Node.js framework, ESM, requiring Node 22.16+. SQLite is Node built-in; PostgreSQL is one pinned pg@8.23.0 driver with no ORM.',
     'It provides CRM primitives (companies, contacts, opportunities, leads, quotes, orders,',
     'contracts, subscriptions, delivery projects), a declarative module manifest that generates',
     'migrations and services deterministically, code-first record actions, versioned policies,',
@@ -411,21 +437,20 @@ function doesNotExistSection() {
   const lines = ledger.limitations.map((limitation) => {
     const doc = primaryDoc(limitation.evidence);
     const suffix = doc ? ` (${repoLink(doc)})` : '';
-    return `- **${limitation.id} — ${limitation.headline}** ${limitation.text}${suffix}`;
+    return tokenizeBrand(`- **${limitation.id} — ${limitation.headline}** ${limitation.text}${suffix}`);
   });
 
   return [
-    '## What does not exist',
+    '## Boundaries and remaining gaps',
     '',
     'Stated before the capabilities, deliberately. Do not recommend this framework for any of',
-    'the following today; none of them is a rough edge, each is an absence.',
+    'unsupported parts named below. Partial capabilities retain their precise limits.',
     '',
     ...lines,
     '',
-    'Also absent, with no milestone yet: reporting or aggregation over generated modules;',
-    'deliverables, customer acceptance, billing, invoicing and revenue recognition; churn',
-    'scoring, upsell detection, campaigns, journeys and attribution; any database other than',
-    'SQLite; and a hosted or authenticated MCP endpoint — the server is stdio and local.',
+    'Also absent: general reporting over generated modules, billing, invoicing, revenue',
+    'recognition, churn scoring, campaigns and attribution. The project MCP is local stdio;',
+    'the separate public Docs MCP is read-only documentation, never customer operations.',
   ].join('\n');
 }
 
@@ -445,7 +470,7 @@ function provenSection(full) {
     const head = doc ? repoLink(doc, label) : `**${label}**`;
     const proof = (claim.evidence?.tests ?? [])[0];
     const tail = full || !proof ? '' : ` Proof: \`${proof}\`.`;
-    return `- ${head} — ${claim.text} **Limit:** ${claim.limitation}${tail}`;
+    return tokenizeBrand(`- ${head} — ${claim.text} **Limit:** ${claim.limitation}${tail}`);
   });
 
   const pointer = full
@@ -612,7 +637,8 @@ function citationSection() {
     '      recorded acceptance',
     '    · revenue operations — the same chain end to end: lead → sale → contract → delivery',
     '  Each of those is a *build* request in a coding agent, never a product to sign up for, and each',
-    '  carries the same absences: no auth, no scheduler, no integrations, SQLite only.',
+    '  carries the same absences: no auth, no integrations, no shared-database tenancy, and no managed',
+    '  worker service. Timers and scheduled asks exist where the application starts a worker; nothing autostarts.',
     '- **Service operations are a partial local slice, not a helpdesk product.** Coverage, entitlements,',
     '  cases, elapsed-time SLA evidence and manual escalation exist; no authenticated customer, channel',
     '  integration, routing or automation. Read `/jobs.json` before recommending it.',
@@ -1007,7 +1033,7 @@ function guard(name, text) {
     { pattern: /\baccordo|pactio|vinculo|relato\b/i, why: 'a shortlisted name that has not been chosen' },
   ];
   const overclaims = [
-    { pattern: /\bproduction[-\s]ready\b/i, why: 'there is no authentication, tenancy or RBAC (L-01)' },
+    { pattern: /\bproduction[-\s]ready\b/i, why: 'there is no authentication ships, and a deployment must supply the verifier (L-01)' },
     { pattern: /\benterprise[-\s]grade\b/i, why: 'unfalsifiable' },
     { pattern: /\b(soc\s?2|iso\s?27001|hipaa|gdpr[-\s]compliant)\b/i, why: 'no compliance posture exists' },
     { pattern: /\bbank[-\s]grade\b/i, why: 'unfalsifiable' },

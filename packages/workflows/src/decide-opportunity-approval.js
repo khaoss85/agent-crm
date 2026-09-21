@@ -9,11 +9,11 @@ export const decideOpportunityApprovalWorkflow = Object.freeze({
   steps: [
     {
       name: 'load-approval',
-      execute({ input, services }) {
+      async execute({ input, services }) {
         const approvalId = requiredString(input.approvalId, 'approvalId');
         const decision = enumValue(input.decision, ['approved', 'rejected'], 'decision');
-        const approval = services.approvals.get(approvalId);
-        const opportunity = services.opportunities.get(approval.opportunityId);
+        const approval = await Promise.resolve(services.approvals.get(approvalId));
+        const opportunity = await Promise.resolve(services.opportunities.get(approval.opportunityId));
         if (opportunity.stage !== 'approval_pending') {
           throw new ConflictError('The opportunity is no longer awaiting approval.', {
             opportunityId: opportunity.id,

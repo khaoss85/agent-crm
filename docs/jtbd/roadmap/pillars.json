@@ -1,0 +1,319 @@
+{
+ "$comment": "The Accordo pillar registry used by the roadmap-ownership overlay. `pillarStatus` describes the PILLAR, never a job: it is where the workstream stands in docs/strategy/EXECUTION_ROADMAP.md and docs/editions/REPOSITORY_BOUNDARY.md §6. A job's own ownerStatus is derived in scripts/jtbd-gate.js from the crosswalk, not copied from here. No priority, business value or competitive rationale appears in this file (Decision 6 keeps those private).",
+ "precedence": [
+  "production-spine",
+  "core-crm-revenue",
+  "lead-intelligence",
+  "commercial",
+  "signature-order",
+  "contracts-lifecycle",
+  "delivery",
+  "service",
+  "work",
+  "customer-data",
+  "customer-data-operations",
+  "interactions",
+  "marketing",
+  "analytics",
+  "billing",
+  "package-dx",
+  "agent-experience",
+  "data-governance",
+  "design-to-crm",
+  "managed-cloud"
+ ],
+ "pillars": {
+  "core-crm-revenue": {
+   "name": "Core CRM / Revenue",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — product",
+   "milestones": [
+    "M0",
+    "M4",
+    "M5",
+    "M7",
+    "M8"
+   ],
+   "pillarStatus": "implemented",
+   "dependencies": [],
+   "package": null
+  },
+  "lead-intelligence": {
+   "name": "Lead Intelligence",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — product",
+   "milestones": [
+    "M9"
+   ],
+   "pillarStatus": "implemented",
+   "dependencies": [
+    "core-crm-revenue"
+   ],
+   "package": "intelligence"
+  },
+  "commercial": {
+   "name": "Commercial Operations / CPQ",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — product",
+   "milestones": [
+    "M10"
+   ],
+   "pillarStatus": "implemented",
+   "dependencies": [
+    "core-crm-revenue"
+   ],
+   "package": "commercial"
+  },
+  "signature-order": {
+   "name": "Signature and Order",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — product",
+   "milestones": [
+    "M11"
+   ],
+   "pillarStatus": "implemented",
+   "dependencies": [
+    "commercial"
+   ],
+   "package": "signature"
+  },
+  "contracts-lifecycle": {
+   "name": "Contracts and Lifecycle",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — product",
+   "milestones": [
+    "M12",
+    "M16a",
+    "M16b"
+   ],
+   "pillarStatus": "implemented",
+   "dependencies": [
+    "signature-order"
+   ],
+   "package": "contracts"
+  },
+  "delivery": {
+   "name": "Delivery",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — product",
+   "milestones": [
+    "M13",
+    "M14a",
+    "M14b1",
+    "M14b2"
+   ],
+   "pillarStatus": "implemented",
+   "dependencies": [
+    "contracts-lifecycle"
+   ],
+   "package": "delivery"
+  },
+  "service": {
+   "name": "Service Operations",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — product",
+   "milestones": [
+    "M15"
+   ],
+   "pillarStatus": "implemented",
+   "dependencies": [
+    "contracts-lifecycle"
+   ],
+   "package": "service"
+  },
+  "work": {
+   "name": "Work",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — product",
+   "milestones": [
+    "ADR-030 Work v1"
+   ],
+   "pillarStatus": "implemented",
+   "dependencies": [
+    "core-crm-revenue"
+   ],
+   "package": "work"
+  },
+  "customer-data": {
+   "name": "Customer Data",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — Customer & Revenue OS",
+   "milestones": [
+    "ADR-037 Customer Data Foundation v1"
+   ],
+   "pillarStatus": "implemented",
+   "dependencies": [
+    "core-crm-revenue"
+   ],
+   "package": "customer-data"
+  },
+  "customer-data-operations": {
+   "name": "Customer Data Operations",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — Customer & Revenue OS",
+   "milestones": [
+    "Customer Data Operations v2"
+   ],
+   "pillarStatus": "planned",
+   "dependencies": [
+    "customer-data"
+   ],
+   "package": null
+  },
+  "interactions": {
+   "name": "Interactions",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — Customer & Revenue OS",
+   "milestones": [
+    "Interactions package"
+   ],
+   "pillarStatus": "planned",
+   "dependencies": [
+    "production-spine"
+   ],
+   "package": null
+  },
+  "marketing": {
+   "name": "Marketing",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — Marketing & Growth",
+   "milestones": [
+    "MK0",
+    "MK1",
+    "MK2",
+    "MK3",
+    "MK4",
+    "MK5",
+    "MK6",
+    "MK7"
+   ],
+   "pillarStatus": "planned",
+   "dependencies": [
+    "data-governance",
+    "production-spine",
+    "analytics"
+   ],
+   "package": null
+  },
+  "analytics": {
+   "name": "Analytics",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — Customer & Revenue OS",
+   "milestones": [
+    "M16"
+   ],
+   "pillarStatus": "planned",
+   "dependencies": [
+    "customer-data"
+   ],
+   "package": null
+  },
+  "billing": {
+   "name": "Billing",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — Customer & Revenue OS",
+   "milestones": [
+    "Billing domain"
+   ],
+   "pillarStatus": "planned",
+   "dependencies": [
+    "contracts-lifecycle"
+   ],
+   "package": null
+  },
+  "production-spine": {
+   "name": "Production Spine",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — platform",
+   "milestones": [
+    "Spine v1",
+    "Spine v2",
+    "Spine v3",
+    "Spine v4"
+   ],
+   "pillarStatus": "in progress",
+   "dependencies": [],
+   "package": null
+  },
+  "managed-cloud": {
+   "name": "Managed Cloud",
+   "edition": "private-managed-cloud",
+   "roadmapTrack": "Private Cloud",
+   "milestones": [
+    "C0",
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6"
+   ],
+   "pillarStatus": "planned",
+   "dependencies": [
+    "production-spine"
+   ],
+   "package": null
+  },
+  "package-dx": {
+   "name": "Package DX",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — agent-native moat",
+   "milestones": [
+    "DX2",
+    "DX3",
+    "DX5",
+    "DX6",
+    "DX9",
+    "DX10",
+    "M13 Custom Package Authoring v1"
+   ],
+   "pillarStatus": "in progress",
+   "dependencies": [],
+   "package": null
+  },
+  "agent-experience": {
+   "name": "Agent Experience",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — agent-native moat",
+   "milestones": [
+    "AX0",
+    "AX1",
+    "AX2",
+    "AX3",
+    "AX4",
+    "AX5"
+   ],
+   "pillarStatus": "in progress",
+   "dependencies": [
+    "package-dx"
+   ],
+   "package": null
+  },
+  "data-governance": {
+   "name": "Data Governance",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — platform",
+   "milestones": [
+    "DATA_GOVERNANCE.md"
+   ],
+   "pillarStatus": "planned",
+   "dependencies": [
+    "production-spine"
+   ],
+   "package": null
+  },
+  "design-to-crm": {
+   "name": "Design-to-CRM",
+   "edition": "public-oss",
+   "roadmapTrack": "Public OSS — platform",
+   "milestones": [
+    "DESIGN_TO_CRM.md"
+   ],
+   "pillarStatus": "planned",
+   "dependencies": [
+    "core-crm-revenue"
+   ],
+   "package": null
+  }
+ }
+}

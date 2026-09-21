@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, definePackage } from '../../core/index.js';
+import { AppError, definePackage, selectPackageGraph } from '../../core/index.js';
 import {
   ACTIVITY_KINDS,
   ACTIVITY_MODULE,
@@ -14,6 +14,7 @@ import {
   createFollowUp,
   optionalSafeText,
   recordActivity,
+  requireCallerTransaction,
   requireHumanActor,
   resolveModule,
   safeText,
@@ -79,6 +80,26 @@ function activityService(modules, name) {
   return service;
 }
 
+/**
+ * The activity service of a closing action, with the pair proven first.
+ *
+ * `complete` and `cancel` write the task transition and its closing activity —
+ * the same atomic pair `createFollowUp` writes, so the same proof applies. In
+ * production both run inside `runRecordAction`'s envelope and this can never
+ * fire; that is exactly why it is here rather than assumed. An `execute`
+ * invoked with a hand-built context — a script, a future runner, a test double
+ * — would otherwise commit the transition and lose the timeline entry, and no
+ * reader of either row could tell that had happened.
+ *
+ * @param {any} modules @param {{task: string, activity: string}} names
+ */
+function closingServices(modules, names) {
+  const tasks = resolveModule(modules, names.task)?.service;
+  const activities = activityService(modules, names.activity);
+  requireCallerTransaction(tasks, activities);
+  return activities;
+}
+
 /** The subject envelope as it was recorded on the task; never re-resolved. */
 function subjectOf(record) {
   return { resource: record.subjectResource, id: record.subjectId };
@@ -109,7 +130,7 @@ export function buildCompleteTaskAction(moduleNames) {
     async execute({ record, input, actor, modules, managed, now }) {
       const completedBy = requireHumanActor(actor, 'Completing a task');
       const note = optionalSafeText(input.note, 'note', bounds.reason);
-      const activities = activityService(modules, names.activity);
+      const activities = closingServices(modules, names);
       const completedAt = now();
       const task = await managed(record.id, {
         status: 'completed',
@@ -158,7 +179,7 @@ export function buildCancelTaskAction(moduleNames) {
     async execute({ record, input, actor, modules, managed, now }) {
       const cancelledBy = requireHumanActor(actor, 'Cancelling a task');
       const reason = safeText(input.reason, 'reason', bounds.reason);
-      const activities = activityService(modules, names.activity);
+      const activities = closingServices(modules, names);
       const cancelledAt = now();
       const task = await managed(record.id, {
         status: 'cancelled',
@@ -265,14 +286,14 @@ export function createFollowUpCapability(moduleNames) {
          * asks this rather than listing.
          * @param {string} sourceKey
          */
-        findBySourceKey(sourceKey) {
+        async findBySourceKey(sourceKey) {
           const service = resolveModule(context.modules, names.task)?.service;
           if (!service?.listWhere) {
             throw new AppError(`The work package is installed without its "${names.task}" records`, {
               code: 'WORK_STORAGE_INVALID', status: 500,
             });
           }
-          return service.listWhere({ sourceKey: String(sourceKey) })[0] ?? null;
+          return (await service.listWhere({ sourceKey: String(sourceKey) }))[0] ?? null;
         },
       });
     },
@@ -281,7 +302,7 @@ export function createFollowUpCapability(moduleNames) {
 
 /** @param {{modules?: Record<string, string>}} [options] */
 export function createWorkPackage(options = {}) {
-  return definePackage({
+  return selectPackageGraph(definePackage({
     packageContract: 1,
     name: WORK_PACKAGE,
     version: 1,
@@ -378,7 +399,12 @@ export function createWorkPackage(options = {}) {
           'Work v1 records human follow-up work and what happened to it. Nothing in it runs on a timer, sends anything, or tells anybody. A task is only ever moved by a person.',
       };
     },
-  });
+  }), options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createWorkPackage()` callers keep v1. */
+export function createWorkPackageV2(options = {}) {
+  return createWorkPackage({ ...options, packageContract: 2 });
 }
 
 export default createWorkPackage;

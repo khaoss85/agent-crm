@@ -1,6 +1,10 @@
 // @ts-check
 
 import { createDatabase } from '../../core/src/database.js';
+import { prepareSpineAuditBinding } from '../../core/src/spine-store.js';
+import { resolveTenantBinding } from '../../core/src/tenant-binding.js';
+import { resolveRuntimeMode } from '../../core/src/runtime-mode.js';
+import { createSpine } from './spine.js';
 import { AuditLog } from '../../core/src/audit.js';
 import { EventBus } from '../../core/src/event-bus.js';
 import { ModuleRegistry } from '../../core/src/module-registry.js';
@@ -15,6 +19,7 @@ import { generatedPipelines } from '../../pipelines/generated/index.js';
 import { generatedDomains } from '../../domains/generated/index.js';
 import { PipelineRegistry } from '../../core/src/pipeline-registry.js';
 import { PackageRegistry } from '../../core/src/package-registry.js';
+import { refuseAsyncPackagesOnSynchronousFactory } from '../../core/src/package-graph.js';
 import { createOperationRuntime, composePackageOperations } from '../../core/src/operation-runtime.js';
 import { ValidationError } from '../../core/src/errors.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
@@ -34,6 +39,28 @@ import {
 } from '../../providers/src/index.js';
 
 /**
+ * Authenticated Admin counts. Uses Storage Contract `kind: 'count'` only.
+ *
+ * @param {{ sync: { maybeOne: (statement: object) => { n?: unknown } | null } }} storage
+ */
+function countAdminMetrics(storage) {
+  const count = (table, where) => {
+    const statement = where === undefined
+      ? { kind: 'count', table }
+      : { kind: 'count', table, where };
+    return Number(storage.sync.maybeOne(statement)?.n ?? 0);
+  };
+  return Object.freeze({
+    companies: count('companies'),
+    contacts: count('contacts'),
+    opportunities: count('opportunities'),
+    pendingApprovals: count('approvals', [{ column: 'status', op: 'eq', value: 'pending' }]),
+    workflowRuns: count('workflow_runs'),
+    auditEvents: count('audit_events'),
+  });
+}
+
+/**
  * @param {{dbPath?: string, approvalThresholdCents?: number, busyTimeoutMs?: number}} [options]
  */
 export function createAccordoApp(options = {}) {
@@ -41,20 +68,106 @@ export function createAccordoApp(options = {}) {
   // anything from the current instant read it here, so a test can pin "today"
   // and a run is reproducible. Defaults to the wall clock.
   const now = resolveClock(options.clock);
+
+  // A generated module carries an append-only, ordered `migrations` list: its
+  // create migration plus one per revision it has evolved through (ADR-019).
+  // `migration` is the pre-evolution single-migration shape, still honoured so
+  // a project generated before this contract keeps booting unchanged.
+  const moduleMigrations = generatedModules.flatMap((generated) => (
+    Array.isArray(generated.migrations) ? generated.migrations
+      : generated.migration ? [generated.migration] : []
+  ));
+
+  /**
+   * **Where a tenant's CRM data lives (ADR-038, amended).**
+   *
+   * Two shapes, and no third:
+   *
+   * - **No spine** — the historical composition, byte-for-byte unchanged. One
+   *   combined database at `dbPath`, no identity verification, no tenancy, no
+   *   authorization. `app inspect` and `/api/schema` publish that in as many
+   *   words, because a security boundary that is off *quietly* is worse than
+   *   one that does not exist.
+   * - **Spine composed** — the data plane comes from the tenant binding and
+   *   from nowhere else, and the control plane is a **different database**.
+   *   `dbPath` is refused rather than merged, because two answers to "where
+   *   does this tenant's data live" is precisely the shape of the defect this
+   *   amendment closes: the previous version checked a tenant strategy for
+   *   presence, then opened the shared database anyway.
+   *
+   * There is no branch in which a spine-composed application can reach the
+   * unscoped shared database. That is not a rule applied at each call site; the
+   * only handle to a data plane this function ever constructs is the bound one.
+   */
+  const spineMode = options.spine
+    ? resolveRuntimeMode({
+        mode: /** @type {any} */ (options.spine).mode,
+        env: /** @type {any} */ (options.spine).env,
+        identityVerifier: /** @type {any} */ (options.spine).identityVerifier,
+        tenantStrategy: /** @type {any} */ (options.spine).tenant,
+      })
+    : null;
+  const binding = options.spine
+    ? resolveTenantBinding({
+      mode: spineMode.mode,
+      tenant: /** @type {any} */ (options.spine).tenant,
+      dataPlanePathConfigured: options.dbPath !== undefined,
+    })
+    : null;
+
   const database = createDatabase({
-    path: options.dbPath,
+    path: binding ? binding.storage.dataPlanePath : options.dbPath,
     busyTimeoutMs: options.busyTimeoutMs,
-    // A generated module carries an append-only, ordered `migrations` list: its
-    // create migration plus one per revision it has evolved through (ADR-019).
-    // `migration` is the pre-evolution single-migration shape, still honoured so
-    // a project generated before this contract keeps booting unchanged.
-    moduleMigrations: generatedModules.flatMap((generated) => (
-      Array.isArray(generated.migrations) ? generated.migrations
-        : generated.migration ? [generated.migration] : []
-    )),
+    // A newly created bound tenant database receives the CRM plane only. It has no
+    // `spine_memberships` table at all, so a coding error that tried to read
+    // one from tenant-reachable storage fails loudly instead of finding rows.
+    plane: binding ? 'data' : 'combined',
+    moduleMigrations,
   });
+
+  /** @type {ReturnType<typeof createDatabase>|null} */
+  let controlPlaneDatabase = null;
+  try {
+    // The runtime control handle is always a different file and is never used
+    // for tenant CRM reads or writes. A newly created control file contains
+    // only control tables. A released v1-v5 combined file may be adopted as
+    // control without deleting its dormant CRM tables; handle separation, not
+    // physical deletion of legacy data, is the enforced boundary.
+    controlPlaneDatabase = binding
+      ? createDatabase({
+        path: binding.storage.controlPlanePath,
+        busyTimeoutMs: options.busyTimeoutMs,
+        plane: 'control',
+      })
+      : null;
+
+  // Create/verify the opaque data marker first, then CAS its control binding
+  // before `createSpine` can resolve — or provision — an Organization.
+    const spineAuditBinding = binding
+      ? prepareSpineAuditBinding({
+        database: controlPlaneDatabase,
+        dataPlane: database,
+        tenantSlug: binding.boundTenantId,
+        mayProvision: spineMode.mode === 'local-development' || binding.provision !== null,
+        now,
+      })
+      : null;
+
   const events = new EventBus();
   const audit = new AuditLog(database);
+
+  // Production Spine v1 (ADR-038), opt-in and LOUD about being off.
+  const spine = options.spine
+    ? createSpine({
+      database: controlPlaneDatabase,
+      dataPlane: database,
+      audit,
+      now,
+      binding,
+      dataPlaneBinding: spineAuditBinding,
+      config: options.spine,
+    })
+    : null;
   const modules = new ModuleRegistry();
   const providers = new ProviderRegistry();
 
@@ -123,7 +236,11 @@ export function createAccordoApp(options = {}) {
   // Optional domain packages (ADR-018 addendum). The kernel knows only the
   // generic contract: a package contributes actions and versioned policies,
   // and the application composes it here. With none registered, everything
-  // below behaves exactly as it did before this seam existed.
+  // below behaves exactly as it did before this seam existed. Bundled v2
+  // graphs are not imported here: `generatedDomains` is the checked-in v1
+  // selection. A contract-2 package in that list is refused before the
+  // registry runs, so promise-returning v2 seams never enter the sync factory.
+  refuseAsyncPackagesOnSynchronousFactory(generatedDomains);
   const domains = new PackageRegistry({ packages: generatedDomains });
   domains.persistFingerprints(database);
   // A package extracted from the kernel may already have `definition_versions`
@@ -197,10 +314,14 @@ export function createAccordoApp(options = {}) {
     });
   });
 
+  const publicStorage = Object.freeze({ adapter: 'sqlite', available: true });
+
   const app = {
     database,
+    storage: publicStorage,
     events,
     audit,
+    spine,
     modules,
     providers,
     workflows,
@@ -217,7 +338,8 @@ export function createAccordoApp(options = {}) {
      *
      * @param {{module: string, action: string, recordId: string, input?: unknown, actor?: unknown}} params
      */
-    runAction({ module, action, recordId, input, actor }) {
+    runAction(params) {
+      const { module, action, recordId, input, actor } = params;
       return runRecordAction({
         database,
         events,
@@ -234,6 +356,12 @@ export function createAccordoApp(options = {}) {
         recordId,
         input,
         actor,
+        // When the spine is composed every action is authorized before it runs.
+        // Passing the whole spine rather than a boolean keeps the decision in
+        // one place: the runtime asks, it never decides.
+        spine,
+        identity: params.identity,
+        organizationId: params.organizationId,
       });
     },
     now,
@@ -246,8 +374,19 @@ export function createAccordoApp(options = {}) {
       externalTimeoutMs: /** @type {any} */ (options).signatureTimeoutMs,
     },
     notifications: notificationProvider,
+    /**
+     * The control-plane database, or null when no spine is composed.
+     *
+     * Exposed beside `database` so the separation is *inspectable* rather than
+     * asserted: two files, two schemas, and a test can prove a CRM row lives in
+     * one and cannot exist in the other.
+     */
+    controlPlaneDatabase,
+    /** The resolved tenant binding, or null. Frozen at startup. */
+    tenantBinding: binding,
     close() {
       database.close();
+      controlPlaneDatabase?.close();
     },
     doctor() {
       return {
@@ -269,6 +408,16 @@ export function createAccordoApp(options = {}) {
           auditEvents: audit.list({ limit: 500 }).length,
         },
       };
+    },
+    health() {
+      return Object.freeze({
+        ok: true,
+        ready: publicStorage.available === true,
+        storage: publicStorage,
+      });
+    },
+    metrics() {
+      return countAdminMetrics(database.storage);
     },
     async seedDemo() {
       const actor = { type: 'system', id: 'demo-seed' };
@@ -367,5 +516,13 @@ export function createAccordoApp(options = {}) {
     /** @type {any} */ (app)[alias.appMethod] = alias.fn;
   }
 
-  return app;
+    return app;
+  } catch (error) {
+    // Until the app is returned, this factory owns both handles. Close every
+    // successfully opened resource on any later composition refusal and never
+    // let a cleanup error replace the original startup cause.
+    try { controlPlaneDatabase?.close(); } catch {}
+    try { database.close(); } catch {}
+    throw error;
+  }
 }

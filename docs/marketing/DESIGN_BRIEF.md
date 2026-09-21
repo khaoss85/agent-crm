@@ -13,7 +13,7 @@ commercial process; the agent generates domain modules, deterministic workflows,
 human approval boundaries, and audit and trace, **as reviewable code in the
 developer's own repository** rather than configuration inside someone else's SaaS.
 
-It is pre-release: local SQLite, no authentication, no tenancy, no hosted service.
+Use the current claims ledger for release scope: SQLite and dedicated PostgreSQL are framework paths, authentication is deployment-supplied, and no public managed offer is implied.
 Nothing is installable from npm yet. **The site says all of this out loud.** That
 is not a caveat to be designed around — it is the product's argument.
 
@@ -111,7 +111,7 @@ be a visual element — chips, a grid, a marquee of honesty:
 
 **Nobody else publishes their own blind spots.** That is the brand.
 
-## 5. Page inventory — 147 pages, seven clusters
+## 5. Page inventory — 165 pages, seven clusters
 
 Hub-and-spoke: each pillar page links down to its spokes, each spoke links back up.
 
@@ -120,12 +120,12 @@ Hub-and-spoke: each pillar page links down to its spokes, each spoke links back 
 | **Agent tools** | `tools.html` | 8 | one command: what it answers, what it refuses to claim, what it costs to run |
 | **Capabilities** | `capabilities.html` | 6 | one business domain: what it models, what the framework refuses, what proves it |
 | **Concepts** | `concepts.html` | 8 | why it is built this way — the vision layer |
-| **Compare** | `compare.html` | 4 | opens by naming where the *alternative* wins |
-| **Jobs** | `jobs.html` | 63 | one CRM job, its support status, its evidence |
+| **Compare** | `compare.html` | 9 | opens by naming where the *alternative* wins |
+| **Jobs** | `jobs.html` | 80 | one CRM job, its support status, its evidence |
 | **Answers** | `answers.html` | 15 | one blunt question, answered, plus 15 published refusals |
 
 Plus: `index.html`, `evidence.html` (the full claims ledger as a table), `blog.html`
-(the first evidence-backed post now ships; the honest zero-post state remains a renderer requirement),
+(six evidence-backed posts, including the quote approval recipe; the honest zero-post state remains a renderer requirement),
 `privacy.html` (the hosted Docs MCP data boundary), and `404.html`.
 
 **Only five content templates are needed:** homepage · pillar · spoke ·
@@ -159,7 +159,7 @@ Sample, from the CPQ page:
 
 > - Nothing bills. There is no invoice, no payment and no dunning.
 > - Every signature provider is an offline fixture; no envelope has ever been sent.
-> - There is no scheduler, so a renewal date passes without anything firing.
+> - Timers require an explicitly started self-host worker; they open requests, not automatic commercial decisions.
 
 A competitor puts this in 11px grey at the bottom. **We put it in the light.**
 If the design makes this feel like a disclaimer, the design has failed.
@@ -199,9 +199,20 @@ If the design makes this feel like a disclaimer, the design has failed.
 `ink #e8ede9` · `muted #97a49b` · `line #2a332d` · `surface #161b18` ·
 `paper #0f1311` · `accent #6cc79b` · `accentSoft #1a2f26` · `warning #e0a856`
 
-Type: `Inter` / system sans, and `ui-monospace, SFMono-Regular, Menlo, Consolas`
-for every command, code, status and limitation code. **Monospace carries a lot of
-the identity here** — it is the voice of the machine reporting on itself.
+Type: **Bricolage Grotesque** for display and body, **Spline Sans Mono** for every
+command, code, status and limitation code — both vendored under `site/assets/fonts`
+and declared in `site/assets/styles.css`, never fetched from a font CDN (the site
+ships `font-src 'self'`). Every family ends in a system stack, so a blocked or slow
+font degrades to a rendered page rather than invisible text. The families live in
+`site/brand.json` `typography`; nothing hardcodes them.
+**Monospace carries a lot of the identity here** — it is the voice of the machine
+reporting on itself.
+
+The palette above is the product's, inherited verbatim from the Admin. The public
+site additionally carries the semantic actor colours in `brand.json` `flowColors` —
+violet agent, yellow policy, coral human, cyan evidence, green accord — which are
+product language rather than decoration: a colour appears when its actor enters the
+story. `docs/plans/public-site-flow-v3.md` is the current art direction.
 
 ## 9. Existing class names — keep these working
 
@@ -216,11 +227,26 @@ The generator emits these; renaming one breaks 113 pages.
 
 New classes are welcome. Renamed ones are not.
 
+`status-banner` is still styled and still safe to use, but nothing emits it any
+more: the implementation boundary it carried above the wordmark now renders in the
+colophon and in the proof section, so it reaches every page without sitting above
+the brand. See `docs/plans/public-site-flow-v3.md`.
+
 ## 10. Tone, and the words that are forbidden
 
 Quiet, dense, documentation-shaped. Closer to a well-made technical reference than
-to a SaaS landing page. No gradients as decoration, no drop shadows for depth, no
-animation beyond a focus ring, no stock illustration, no 3D shapes, no hero video.
+to a SaaS landing page. No gradients as decoration, no depth borrowed from a soft
+shadow, no stock illustration, no 3D shapes, no hero video.
+
+**On motion.** This section used to end "no animation beyond a focus ring", and the
+site outgrew that sentence in two passes without anyone editing it — first the
+approval demonstration and the marquee, then the signature scene. The rule it was
+reaching for is better stated as a test than as a prohibition, so here it is:
+**motion may only reveal a relationship the HTML already states.** The scene
+animates an ordered list that reads correctly with the stylesheet off; it adds no
+fact, and `prefers-reduced-motion` renders the story's ending rather than an empty
+stage. Decorative motion — something moving because movement is nice — is still
+out. `tests/site-art-direction.test.js` holds the reduced-motion half of this.
 
 A build gate **fails the deploy** if any of these words appear anywhere on the site:
 
@@ -249,7 +275,7 @@ In priority order:
 1. **Homepage** — hero, the five-step loop, the 403, falsify output, the blind-spot
    chips, the six-cluster grid, the limits section.
 2. **Spoke template** — breadcrumbs, h1 + plain name, boundary block, body
-   sections, evidence rail, related rail. This is 102 of the 113 pages.
+   sections, evidence rail, related rail. This is the large majority of the pages.
 3. **Pillar template** — hero plus a card grid.
 4. **Table template** — evidence ledger and jobs catalogue, dense and scannable.
 5. **Blog index and article page**, retaining the tested empty state for a build with no posts.

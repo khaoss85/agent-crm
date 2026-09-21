@@ -1,6 +1,6 @@
 // @ts-check
 
-/** @typedef {{method: string, pattern: RegExp, keys: string[], handler: Function, options: {rawBody?: boolean, maxBodyBytes?: number}}} Route */
+/** @typedef {{method: string, pattern: RegExp, keys: string[], handler: Function, options: {rawBody?: boolean, maxBodyBytes?: number, skipIdentity?: boolean}}} Route */
 
 export class Router {
   constructor() {
@@ -10,11 +10,13 @@ export class Router {
 
   /**
    * @param {string} method @param {string} path @param {Function} handler
-   * @param {{rawBody?: boolean, maxBodyBytes?: number}} [options] Per-route
+   * @param {{rawBody?: boolean, maxBodyBytes?: number, skipIdentity?: boolean}} [options] Per-route
    *   body policy. `rawBody` hands the handler the exact bytes instead of
    *   parsed JSON — required wherever a payload must be signature-verified
    *   before it is trusted (ADR-017), because re-serializing JSON would not
-   *   reproduce what the provider signed.
+   *   reproduce what the provider signed. `skipIdentity` is for process
+   *   liveness: the matcher already accepted the request, so identity must
+   *   follow that match rather than a second pathname string compare.
    */
   add(method, path, handler, options = {}) {
     const keys = [];

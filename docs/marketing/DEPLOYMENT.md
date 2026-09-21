@@ -1,85 +1,72 @@
-# Deployment
+# Public-site deployment
 
-How `accordo.dev` gets served, what is already configured, and the two things a person has to
-click. Nothing here has been executed — the site is built and configured, not deployed.
+`vercel.json` builds the dependency-free static site with `npm run site:check` and serves `site/dist`. The same build regenerates HTML, strategic Markdown, retrieval JSON, llms assets, sitemap, robots and `/version.json`; generated output is never edited or deployed separately.
 
-## What is configured
+## Freshness contract
 
-`vercel.json` is a closed-schema deployment document, not a place for JSON
-pseudo-comments: Vercel rejects unknown top-level keys before the build starts.
+`/version.json` uses `provenanceContract: 2` and publishes:
 
-`vercel.json` at the repository root is the whole deployment. Vercel reads it, runs
-`npm run site:build`, and serves `site/dist`. There is no framework to detect, no bundler and no
-install step of consequence — the build is one dependency-free Node script.
+- `commit`: derived from `git rev-parse HEAD` in the checkout, never trusted from an inherited deployment variable;
+- `branch`: Vercel branch metadata when present, otherwise `local`;
+- `measuredAgainst`: the commit whose suite measurement is recorded in `site/claims.json`;
+- `generatedAt` and `generation`: deterministic generation metadata, explicitly not benchmark evidence;
+- repository and product identity.
 
-The important property: **the site rebuilds from the claims ledger on every push.** A claim that
-loses its evidence, or its limitation, fails `npm run gtm:check` in CI before it can reach a
-visitor. The deploy is not a separate copy of the truth.
+A copied test fixture has no Git metadata. Only `NODE_ENV=test` may inject a full SHA through `ACCORDO_SITE_TEST_CHECKOUT_SHA`; production and local builds refuse that escape hatch. `site:check` validates the contract, SHA shape and claims-measurement relationship.
 
-| Path | What it serves | Why it matters |
-|---|---|---|
-| `/` | the landing page | |
-| `/evidence` | the full claims ledger, rewritten from `evidence.html` | the page that makes the rest believable |
-| `/llms.txt` | the machine-readable summary, `text/plain`, CORS-open | **what an agent fetches mid-task to decide whether to recommend this** |
-| `/llms-full.txt` | the expanded variant with the key documents inlined | |
-| `/jobs.json` | 149 CRM jobs with status and evidence, `application/json`, CORS-open | a definitive machine answer to *"can this do X?"*, including 102 explicit no's |
-| `/robots.txt` | generated from the repository's visibility | |
+## Machine content and caching
 
-`Content-Type` and `Access-Control-Allow-Origin` on the three machine-readable files are not
-incidental. A retrieval client that gets `application/octet-stream`, or a CORS refusal, silently
-treats the fetch as a failure — which would quietly defeat the entire retrieval strategy while
-the page looked fine to a human.
+`llms.txt`, `llms-full.txt`, JSON contracts, Markdown peers and `/version.json` are CORS-readable with explicit content types. Strategic HTML is canonical and advertises its generated Markdown peer. The Content Security Policy permits static styles/images and same-origin scripts and connections for public-site Web Analytics. Inline executable scripts remain blocked; navigation and content work without JavaScript. The referrer policy is `no-referrer` so outgoing requests do not carry the current page query.
 
-The Content-Security-Policy is `default-src 'none'` with styles and images only. The site ships
-zero JavaScript, so the policy states that rather than leaving room for some.
+## Production verification
 
-## The two things a person must do
+Vercel project settings, production branch and the `accordo.dev` alias are account state. After the canonical PR merges, the release owner or an explicitly authorized agent must:
 
-An agent cannot do either. The GoDaddy connector exposes domain *search* and nothing else — no
-DNS record management — and the Vercel connector can deploy a project but cannot attach a custom
-domain to one.
+1. confirm the production branch is `main` and the alias targets its latest successful deployment;
+2. fetch `https://accordo.dev/version.json`;
+3. compare `commit` with merged `main` and `measuredAgainst` with the served `claims.json` record;
+4. inspect the homepage and representative product journeys on the production alias.
 
-**1. Connect the repository to Vercel.** New Project → import `accordo` → it reads `vercel.json`
-and needs no further configuration. From then on every push to the default branch redeploys.
+No secret is required to perform the public comparison. A mismatch is deployment drift even if the repository build is green.
 
-**2. Add `accordo.dev` to the project.** Project → Settings → Domains → add `accordo.dev` and
-`www.accordo.dev`. Vercel will show the records to create; at GoDaddy that is an `A` record on
-the apex pointing at Vercel's address, and a `CNAME` on `www`. Alternatively move the
-nameservers to Vercel and it manages both.
+## Match the installation to the site
 
-## Do not deploy to the domain before the repository is public
+`site/brand.json` records the registry-verified `npm.publishedVersion` separately
+from the source publication candidate. The developer page names the published
+local snapshot and offers a current-source path; a candidate is never presented
+as an installed release. After staged approval, read the registry version and
+artifact integrity, install that exact tarball into an empty directory, and only
+then update the published-version record and the corresponding page copy.
 
-Not a preference — the page currently tells the truth about being in a holding state, and it does
-so automatically:
+CI uploads `claims-measurement-<sha>` from its actual verification run. Confirm
+that the named commit is the reviewed source and an ancestor of the publication
+commit before copying the generated `measuredAgainst` record. A green site build
+with an old measurement is not evidence that the current suite was measured.
 
-- `site/brand.json` has `repository.status: "private"`, so the build emits
-  `<meta name="robots" content="noindex, nofollow">`, a `Disallow: /` robots.txt, and a banner
-  saying the source is not public yet.
-- The primary call to action points at `/evidence` rather than at the repository, because a
-  "read the source" button over a private repository is a 404 with a confident label on it.
+## Public-site analytics
 
-All three flip together the moment `repository.status` becomes `"public"` and the site is
-rebuilt. That is one edit, and it is the *only* edit — nothing about indexing or the call to
-action is hand-maintained, which is the point.
+`site/assets/analytics.js` uses Vercel's hosted static Web Analytics script, with no
+framework or scaffolder dependency. The shared page emitter supplies the canonical
+public URL; previews and localhost do not load the collector. DNT or Global Privacy
+Control suppresses collection. An external referrer containing a path, query or
+fragment also suppresses collection because the hosted collector cannot redact it.
 
-Attaching the domain now is fine and useful: it reserves the address and proves the pipeline
-while the site is explicitly noindexed. Announcing it is what waits.
+Only `tutorial_open`, `example_open` and `quickstart_open` CTA names are accepted
+through `data-accordo-event`. Optional attribution is exactly `source` (one of
+`dev`, `hashnode`, `skills`, `gemini`, `smithery`) and `campaign_id: quote-approval`,
+read only when `utm_campaign=quote-approval`; all other query data is ignored.
+Attribution lasts for that document only: no cookie or local storage carries it
+to another page. Page views carry the canonical URL without query or fragment;
+our CTA payloads are reconstructed from the allowlist. No text, form values, CRM
+records, MCP queries or runtime activity is instrumented. This is minimization at
+our checked-in call sites, not a sandbox around Vercel's global API: its other
+commands and options can send routes, flags or additional metadata outside this
+hook. This integration never calls those APIs. Adding another analytics caller or
+script requires a new payload and privacy review; the current tests do not certify
+arbitrary third-party JavaScript.
 
-## The launch sequence, in order
-
-1. Rename the GitHub repository to `accordo`, then update `repository.value` in
-   `site/brand.json` and the URLs in the plugin manifests.
-2. Make the repository public.
-3. Set `repository.status` to `"public"`, run `npm run gtm:check`, push. Indexing, the robots
-   file, the banner and the call to action all change in that one commit.
-4. Register the npm namespaces — `accordo`, `create-accordo`, `@accordo`. First-come and
-   unrenameable.
-5. Then, and only then, the listings in `PENDING_HUMAN_SUBMISSION.md`.
-
-## Rebuilding locally
-
-```bash
-npm run site:build     # renders site/dist
-npm run gtm:check      # every claim still has its evidence and its limitation
-npm run site:shots     # social preview and page captures
-```
+The project owner must enable Web Analytics in Vercel before deployment. Custom
+events require the account's supported plan. Verify collector and event responses
+on the production origin after deployment; passing local tests does not establish
+dashboard ingestion. Page views and CTA clicks are interest signals, not successful
+installs or benchmark outcomes. See `privacy.html` for platform metadata and controls.

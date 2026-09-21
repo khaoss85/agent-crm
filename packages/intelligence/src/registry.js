@@ -1,8 +1,8 @@
 // @ts-check
 
-import { randomUUID } from 'node:crypto';
 import {
-  ValidationError, NotFoundError, computeDefinitionFingerprint, validateDeclaredConfig, nowIso,
+  ValidationError, NotFoundError, createDefinitionVersionStore, computeDefinitionFingerprint,
+  validateDeclaredConfig,
 } from '../../core/index.js';
 
 /**
@@ -324,39 +324,18 @@ export class IntelligenceRegistries {
    *
    * Runs inside ONE `BEGIN IMMEDIATE` transaction, so registration is
    * all-or-nothing and two app instances booting concurrently serialize: the
-   * loser re-reads committed rows and verifies instead of racing to a raw
+   * loser re-reads committed rows and verifies instead of racing to a driver
    * UNIQUE violation. A busy database surfaces as the framework's stable
-   * retryable CONFLICT, never a raw SQLITE error.
+   * retryable CONFLICT, never a SQLITE error. The kernel's definition-version
+   * store owns that loop; this registry only names the identities it publishes.
    * @param {any} database
    */
   persistFingerprints(database) {
-    const entries = [
-      ...[...this.providers.values()].map((entry) => ({ type: 'enrichment-provider', entry })),
-      ...[...this.scoringModels.values()].map((entry) => ({ type: 'scoring-model', entry })),
-      ...[...this.routingPolicies.values()].map((entry) => ({ type: 'routing-policy', entry })),
-    ];
-    database.transaction(() => {
-      const select = database.raw.prepare(
-        'SELECT fingerprint FROM definition_versions WHERE type = ? AND name = ? AND version = ?',
-      );
-      const insert = database.raw.prepare(
-        'INSERT INTO definition_versions(id, type, name, version, fingerprint, registered_at) VALUES (?, ?, ?, ?, ?, ?)',
-      );
-      for (const { type, entry } of entries) {
-        const { name, version } = entry.definition;
-        const existing = select.get(type, name, version);
-        if (existing === undefined) {
-          insert.run(randomUUID(), type, name, version, entry.fingerprint, nowIso());
-          continue;
-        }
-        if (String(existing.fingerprint) !== entry.fingerprint) {
-          throw new ValidationError(
-            `${type} "${name}@${version}" source changed after registration (persisted fingerprint ${String(existing.fingerprint).slice(0, 12)}…, current ${entry.fingerprint.slice(0, 12)}…). ` +
-              'Registered definition versions are immutable: publish a new version instead of editing this one.',
-          );
-        }
-      }
-    });
+    createDefinitionVersionStore(database).persist([
+      ...[...this.providers.values()].map((entry) => identity('enrichment-provider', entry)),
+      ...[...this.scoringModels.values()].map((entry) => identity('scoring-model', entry)),
+      ...[...this.routingPolicies.values()].map((entry) => identity('routing-policy', entry)),
+    ]);
   }
 
   /**
@@ -431,6 +410,21 @@ export class IntelligenceRegistries {
       routingTargetsFingerprint: this.targetsFingerprint(),
     };
   }
+}
+
+/**
+ * The closed identity the definition-version store persists: four fields, and
+ * never the definition or its config.
+ * @param {string} type
+ * @param {{definition: {name: string, version: number}, fingerprint: string}} entry
+ */
+function identity(type, entry) {
+  return {
+    type,
+    name: entry.definition.name,
+    version: entry.definition.version,
+    fingerprint: entry.fingerprint,
+  };
 }
 
 /** @param {any} a @param {any} b */

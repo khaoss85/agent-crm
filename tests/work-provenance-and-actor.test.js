@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { boot, project } from './helpers/contracts-project.js';
 import { PackageRegistry, definePackage } from '../packages/core/index.js';
-import { createFollowUp, createWorkPackage } from '../packages/work/src/index.js';
+import { createWorkPackage } from '../packages/work/src/index.js';
 
 /**
  * **REVIEW-70 — provenance and actor identity.**
@@ -50,7 +51,9 @@ async function leadProject(t, file) {
   assert.equal(applied.status, 0, applied.stderr);
   const context = await boot(root, join(root, 'data', file));
   t.after(() => context.close());
-  return context;
+  // `root` travels with the context so a test can load the package source the
+  // application actually composed (see the note at the call site).
+  return Object.assign(context, { root });
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +120,13 @@ test('a declared consumer cannot record another package as the source of work it
     title: 'Follow up', dueAt: null,
     subject: { resource: 'lead', id: 'l1', owner: 'host' },
   };
+  // Loaded from the throwaway project, not from this checkout: the witness that
+  // proves the caller's transaction is minted by the database that application
+  // composed and is recognized only inside the core instance that minted it
+  // (Spine v2 M2D). Driving a composed app with a second copy of Work is a
+  // mixed composition no deployment can produce, and it now fails closed. The
+  // two sources are byte-identical — `project()` copies this very checkout.
+  const { createFollowUp } = await import(pathToFileURL(join(context.root, 'packages/work/src/index.js')).href);
   const tx = (consumer, request) => app.database.transactionAsync(() => createFollowUp(
     { modules: app.modules, actor: ACTOR, now: () => '2026-08-01T00:00:00.000Z', consumer },
     request,

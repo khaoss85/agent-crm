@@ -17,6 +17,36 @@
  */
 
 // ---- the package contract ----
+// V3C publishes the timer consumers, and a timer nobody can run is not a
+// contract. These are the smallest surface a self-host composition needs to
+// execute one: the store its instructions live in, the registry its handlers
+// join, and the worker it starts explicitly. Ergonomic composition
+// (`startWorkers()` and friends) belongs to the integration slice; nothing here
+// starts anything on its own.
+export {
+  createDurableJobHandlerRegistry,
+  createDurableJobStore,
+  createDurableJobWorker,
+} from './src/durable-jobs.js';
+
+export {
+  createTransactionalOutboxWorker,
+  registerTransactionalOutboxHandlers,
+} from './src/transactional-outbox.js';
+
+export {
+  DOMAIN_TIMER_CONTRACT,
+  SCHEDULED_ASK_KINDS,
+  SCHEDULED_ASK_STATES,
+  cancelScheduledAsk,
+  registerScheduledAskHandlers,
+  rescheduleAsk,
+  scheduleAsk,
+  scheduledAskMigration,
+  scheduledAskStorageReady,
+  scheduledAskVocabulary,
+} from './src/domain-timers.js';
+
 export {
   definePackage,
   validatePackageDefinition,
@@ -26,6 +56,18 @@ export {
   DomainRegistries,
   validateDomainDefinition,
 } from './src/package-registry.js';
+
+// ---- dual bundled graphs (Spine v2 M3P) ----
+// One kernel helper stamps package/action/operation/capability contracts
+// together. Bundled packages export both graphs; v1 callers keep the current
+// synchronous object. Promise-returning wrappers never enter the v1 registry.
+export {
+  selectPackageGraph,
+  selectedPackageContract,
+  describePackageGraphContracts,
+  describeBundledPackageGraphs,
+  refuseAsyncPackagesOnSynchronousFactory,
+} from './src/package-graph.js';
 
 // ---- errors a package raises through the runtime ----
 // Status and code travel to HTTP, SDK, MCP and Admin unchanged, so a package
@@ -40,6 +82,42 @@ export { AppError, ValidationError, NotFoundError, ConflictError, ForbiddenError
 // kernel produces. Public because `packages/core/src/*` is private and a
 // package cannot reach into it.
 export { withTimeout } from './src/timeout.js';
+
+// ---- bounded self-host backup / verify / restore (Spine v4B) ----
+// One intentional operator/runtime seam. Publishing the closed contract here
+// prevents every self-host or future Cloud composition from deep-importing a
+// private implementation or rebuilding manifest, authority and restore fences.
+// It exposes no connection locator, tool runner, storage handle or managed
+// custody API; callers still supply verified authority and durable receipts.
+export {
+  BACKUP_CONTRACT,
+  defineBackupProvider,
+  createBackupOperations,
+  createPostgresqlNativeBackupProvider,
+  backupVocabulary,
+} from './src/backup-restore.js';
+
+// ---- bounded observability export (Spine v4C) ----
+// One closed, versioned way to hand bounded operational evidence to an
+// observability system the deployment already runs. Published here for the
+// same reason the backup contract is: a self-host or future Cloud composition
+// must not deep-import a private implementation or rebuild the allowlist.
+//
+// It is NOT an observability backend, a log store, an APM or a second audit
+// system, and it implements NO OpenTelemetry or OTLP support. It exposes no
+// tenant id, fingerprint, record identifier, payload, connection locator,
+// secret or filesystem path — v1 telemetry is aggregate-shaped, not
+// per-record traceable, and constructing a sink starts no background process.
+export {
+  TELEMETRY_EXPORT_CONTRACT,
+  TELEMETRY_SIGNALS,
+  defineTelemetryExporter,
+  createTelemetrySink,
+  createNoopTelemetryExporter,
+  createJsonStderrTelemetryExporter,
+  createCaptureTelemetryExporter,
+  telemetryVocabulary,
+} from './src/observability-export.js';
 
 // ---- the framework clock ----
 // One ISO-8601 clock, so a package never stamps a record from its own.
@@ -59,7 +137,15 @@ export { writeTrace } from './src/action-runtime.js';
 // rolls its own drifts from the evidence beside it, and a package that bounds
 // an id the kernel does not bound can merge two people into one row. Generic:
 // nothing here knows about any package.
-export { normalizeActor, SYSTEM_ACTOR } from './src/actor.js';
+export {
+  normalizeActor,
+  requireActor,
+  trustedSystemActor,
+  stripServerControlledKeys,
+  SERVER_CONTROLLED_KEYS,
+  SYSTEM_ACTOR,
+  ANONYMOUS_ACTOR,
+} from './src/actor.js';
 
 // ---- identity normalization (ADR-013's own rules, published) ----
 // These two already lived in core, because the core adapters match records
@@ -76,6 +162,40 @@ export { normalizeEmail, normalizeCompanyName } from './src/core-adapters.js';
 // A package that publishes versioned policies uses the same mechanism every
 // first-party definition uses: declared JSON-safe config, canonical source.
 export { computeDefinitionFingerprint, validateDeclaredConfig } from './src/definition-fingerprint.js';
+
+// ---- persisting those fingerprints (ADR-015's own rule, published) ----
+// The other half of the mechanism above. Computing a fingerprint is only half
+// of "a registered definition version is immutable": something has to record
+// each `{type, name, version, fingerprint}` at startup and refuse the boot when
+// a registered version's source has moved underneath it. That loop is a runtime
+// capability, not a domain concept — the store knows only the four identity
+// fields and the one core table they live in, and `type` is an opaque string
+// its caller chooses. It is published for the same reason
+// `computeDefinitionFingerprint` is: a package that re-implements it
+// re-implements the rule that decides whether the application starts, and the
+// one sentence a person reads at boot becomes several that disagree.
+export { createDefinitionVersionStore } from './src/definition-version-store.js';
+
+// ---- caller-owned transaction proof (Spine v2 M2D) ----
+// A package whose writes are only correct as a SET must be able to prove it is
+// inside the caller's transaction before it writes the first row. Reading the
+// SQLite driver's `isTransaction` flag off `database.raw` did that, at the
+// price of a business package holding the raw driver — every table in the
+// application, `exec` and `prepare` — for one boolean.
+//
+// `proveCallerTransaction` is that boolean without the driver: it compares the
+// storage handles of the services that must commit together, then asks that one
+// handle for the opaque witness the database wrapper mints per outer
+// transaction. It is published because FOUR capabilities proved they need it —
+// `work/follow-up@1`, `contracts/delivery-obligations@1`,
+// `contracts/service-obligations@1` and
+// `contracts/contracts-successor-activation@1` — three of which were measured
+// committing a partial write outside a transaction
+// (`docs/plans/spine-v2-m2d-transaction-context.md` §2).
+//
+// `mintTransactionWitness` is deliberately NOT here. A package that could mint
+// could manufacture the very proof it is subject to.
+export { TRANSACTION_PROOF, proveCallerTransaction } from './src/transaction-witness.js';
 
 // ---- money (ADR-014/016) ----
 // Integer minor units, never floats, with the framework's shared bounds. A
@@ -166,3 +286,55 @@ export {
   validateImplementationEvidence,
   implementationEvidenceVocabulary,
 } from './src/implementation-evidence.js';
+
+// ---- Production Spine v1 (ADR-038): identity, mode, authorization, tenancy ----
+// The framework does not authenticate anybody — a deployment adapter does, and
+// hands back a bounded, verified identity context. What the framework owns is
+// everything after that: the contract, the tenant, the membership, the
+// decision, the evidence, and a boundary that fails closed.
+export {
+  IDENTITY_CONTRACT,
+  IDENTITY_KINDS,
+  IDENTITY_METHODS,
+  MAX_IDENTITY_FIELD,
+  ANONYMOUS_IDENTITY,
+  defineIdentity,
+  identityString,
+  identityEvidence,
+  actorFromIdentity,
+  claimsFingerprint,
+} from './src/identity.js';
+
+export { RUNTIME_MODES, MODE_ENV, resolveRuntimeMode } from './src/runtime-mode.js';
+
+export {
+  PERMISSIONS,
+  ROLES,
+  ROLE_BUNDLES,
+  SYSTEM_PERMISSIONS,
+  ROLE_BEARING_KINDS,
+  authorizationFingerprint,
+  assertPermissionKey,
+  decideAuthorization,
+  requireAuthorization,
+} from './src/authorization.js';
+
+export { createSpineStore, LOCAL_ORGANIZATION_SLUG } from './src/spine-store.js';
+
+export {
+  TENANT_STORAGE_CONTRACT,
+  TENANT_STRATEGY,
+  TENANT_LIMITATIONS,
+  assertTenantId,
+  createTenantStorage,
+  bindTenantStorage,
+} from './src/tenant-storage.js';
+
+export {
+  TENANT_BINDING_CONTRACT,
+  TENANT_BINDING_CONTRACT_V2,
+  describePortableTenantBinding,
+  resolveTenantBinding,
+  assertBindAddress,
+  assertBoundOrganization,
+} from './src/tenant-binding.js';

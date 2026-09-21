@@ -1,0 +1,138 @@
+{
+  "manifestVersion": 1,
+  "name": "campaign-proposal",
+  "description": "What the agent proposes and what a human reads: one complete, coherent, reviewable campaign before anything exists in a provider (MK1). A proposal that cannot state every required section is refused, never half-approved.",
+  "fields": [
+    {
+      "name": "insightId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "title",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "mode",
+      "type": "enum",
+      "values": [
+        "one-shot",
+        "rolling",
+        "triggered",
+        "journey"
+      ],
+      "default": "one-shot",
+      "writable": "managed"
+    },
+    {
+      "name": "audienceJson",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "exclusionsJson",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "channel",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "providerRationale",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "contentPlanJson",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "trackingPlanJson",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "risksJson",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "requiredApprovalsJson",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "draft",
+        "proposed",
+        "approved",
+        "refused"
+      ],
+      "default": "draft",
+      "writable": "managed"
+    },
+    {
+      "name": "refusalReasonsJson",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "proposedAt",
+      "type": "timestamp",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "decidedBy",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "decidedAt",
+      "type": "timestamp",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "currentVersionId",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "policyName",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    }
+  ]
+}

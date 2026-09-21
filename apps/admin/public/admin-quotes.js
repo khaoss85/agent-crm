@@ -2,6 +2,7 @@
 
 import { formatMinorUnits } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
+import { bindAdminMutations } from './admin-submission.js';
 
 /**
  * Quote builder Admin (ADR-016), built on the ADR-009 override seam: a small
@@ -59,7 +60,9 @@ const parseBreakdown = (text) => {
 };
 
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
-export function createQuoteView({ doc, mount, client, navigate = () => {} }) {
+export function createQuoteView(deps) {
+  const { doc, mount, navigate = () => {} } = deps;
+  const { client } = bindAdminMutations(deps.client, deps);
   let renderToken = 0;
 
   const el = (tag, className, text) => {

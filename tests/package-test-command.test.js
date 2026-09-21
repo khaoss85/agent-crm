@@ -6,7 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { packageTestCommand } from '../packages/cli/src/package-test-command.js';
-import { AUTHORITIES } from '../packages/cli/src/package-test-checks.js';
+import {
+  AUTHORITIES, runCompositionChecks, runDeclarationChecks,
+} from '../packages/cli/src/package-test-checks.js';
 import { importSpecifiers, importsPrivateKernelPath, stripComments } from '../packages/cli/src/package-sources.js';
 import {
   HANGS, HOSTILE_PACKAGES, SCRATCH_PROBES, SPAWNS_LONG_LIVED_CHILD, WELL_FORMED, consumer,
@@ -39,6 +41,471 @@ const OFFICIAL = [
   ['packages/delivery', 'delivery'],
   ['packages/service', 'service'],
 ];
+
+test('composition conformance preserves class package capability declarations in every probe', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-class-package-checks-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'index.js'), 'export {};\n');
+
+  let contractReads = 0;
+  class ClassCapability {
+    get name() { return 'class-facts'; }
+
+    get version() { return 1; }
+
+    get capabilityContract() { contractReads += 1; return contractReads === 1 ? 2 : 1; }
+
+    async create() { return { declaration: this }; }
+  }
+  class ClassPackage {
+    #capability = new ClassCapability();
+
+    constructor() {
+      this.packageContract = 2;
+      this.name = 'class-conformance';
+      this.label = 'Class conformance';
+      this.version = 1;
+    }
+
+    get resources() { return []; }
+
+    get actions() { return []; }
+
+    get capabilities() { return [this.#capability]; }
+  }
+
+  const definition = new ClassPackage();
+  const declaration = runDeclarationChecks({ definition, dir });
+  assert.deepEqual(declaration.published.provides, ['class-facts@1'],
+    'the declaration check observes inherited and non-enumerable package/capability fields');
+
+  contractReads = 0;
+  const composition = runCompositionChecks({ definition, providers: [] });
+  assert.equal(
+    composition.checks.find((entry) => entry.id === 'compose.capability-collision-refused').status,
+    'passed',
+  );
+  assert.equal(
+    composition.checks.find((entry) => entry.id === 'compose.undeclared-reach-refused').status,
+    'passed',
+  );
+  assert.equal(
+    composition.checks.some((entry) => entry.reason === 'NO_CAPABILITIES_OFFERED'),
+    false,
+    'a class-backed capability never disappears into a not-applicable result',
+  );
+  assert.equal(contractReads, 1,
+    'all conformance checks use the contract snapshot accepted by compose.clean');
+});
+
+test('composition conformance reads each accepted graph fact once', async (t) => {
+  const cases = [
+    {
+      field: 'name',
+      configure(definition, count) {
+        Object.defineProperty(definition, 'name', {
+          enumerable: true,
+          get() { count(); return count.reads === 1 ? 'stateful-name' : 'drifted-name'; },
+        });
+      },
+    },
+    {
+      field: 'version',
+      configure(definition, count) {
+        Object.defineProperty(definition, 'version', {
+          enumerable: true,
+          get() { count(); return count.reads === 1 ? 1 : 2; },
+        });
+      },
+    },
+    {
+      field: 'packageContract',
+      configure(definition, count) {
+        Object.defineProperty(definition, 'packageContract', {
+          enumerable: true,
+          get() { count(); return count.reads === 1 ? 2 : 1; },
+        });
+      },
+    },
+    {
+      field: 'requires',
+      configure(definition, count) {
+        definition.capabilities = [];
+        Object.defineProperty(definition, 'requires', {
+          enumerable: true,
+          get() {
+            count();
+            return count.reads === 1
+              ? [{ package: 'stateful-dependency', capability: 'stateful-facts', version: 1 }]
+              : [];
+          },
+        });
+      },
+      providers: [{
+        packageContract: 2,
+        name: 'stateful-dependency',
+        version: 1,
+        capabilities: [{
+          name: 'stateful-facts', version: 1, capabilityContract: 2, create() { return {}; },
+        }],
+      }],
+    },
+    {
+      field: 'capabilityContract',
+      configure(definition, count) {
+        Object.defineProperty(definition.capabilities[0], 'capabilityContract', {
+          enumerable: true,
+          get() { count(); return count.reads === 1 ? 2 : 1; },
+        });
+      },
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.field, () => {
+      const count = () => { count.reads += 1; };
+      count.reads = 0;
+      const definition = {
+        packageContract: 2,
+        name: 'stateful-package',
+        version: 1,
+        label: 'Stateful package',
+        resources: [],
+        actions: [],
+        policies: [],
+        operations: [],
+        requires: [],
+        capabilities: [{
+          name: 'stateful-facts', version: 1, capabilityContract: 2, create() { return {}; },
+        }],
+      };
+      scenario.configure(definition, count);
+
+      const composition = runCompositionChecks({
+        definition,
+        providers: scenario.providers ?? [],
+      });
+      assert.equal(
+        composition.checks.find((entry) => entry.id === 'compose.clean').status,
+        'passed',
+      );
+      assert.deepEqual(
+        composition.checks.filter((entry) => entry.status === 'failed'),
+        [],
+        JSON.stringify(composition.checks),
+      );
+      assert.equal(count.reads, 1,
+        `${scenario.field} is read by the first composition and never by its probes`);
+    });
+  }
+});
+
+test('declaration conformance publishes one accepted graph snapshot without rereading getters', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-stateful-declaration-checks-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'index.js'), 'export {};\n');
+
+  const reads = { name: 0, version: 0, packageContract: 0, requires: 0, capabilities: 0 };
+  let metadataCalls = 0;
+  class StatefulDefinition {
+    #marker = 'original-receiver';
+
+    label = 'Stateful declaration';
+
+    resources = [];
+
+    actions = [];
+
+    operations = [];
+
+    policies = [{
+      kind: 'stateful-policy',
+      definition: { name: 'stateful-rule', version: 1, decide() { return true; } },
+    }];
+
+    get name() {
+      reads.name += 1;
+      return reads.name === 1 ? 'stateful-declaration' : 'drifted-declaration';
+    }
+
+    get version() {
+      reads.version += 1;
+      return reads.version === 1 ? 7 : 8;
+    }
+
+    get packageContract() {
+      reads.packageContract += 1;
+      return reads.packageContract === 1 ? 2 : 1;
+    }
+
+    get requires() {
+      reads.requires += 1;
+      return reads.requires === 1
+        ? []
+        : [{ package: 'ghost-provider', capability: 'ghost-capability', version: 1 }];
+    }
+
+    get capabilities() {
+      reads.capabilities += 1;
+      return reads.capabilities === 1
+        ? [{
+          name: 'accepted-capability', version: 1, capabilityContract: 2, create() { return {}; },
+        }]
+        : [{ name: 'ghost-capability', version: 1, create() { return {}; } }];
+    }
+
+    metadata() {
+      metadataCalls += 1;
+      return { marker: this.#marker };
+    }
+  }
+
+  const report = runDeclarationChecks({ definition: new StatefulDefinition(), dir });
+  assert.deepEqual(report.problems, []);
+  assert.deepEqual(report.published, {
+    resources: [],
+    actions: [],
+    requires: [],
+    provides: ['accepted-capability@1'],
+  });
+  assert.equal(report.checks.find((entry) => entry.id === 'declaration.contract').status, 'passed');
+  assert.match(
+    report.checks.find((entry) => entry.id === 'declaration.contract').evidence,
+    /declares packageContract 2/,
+  );
+  assert.equal(report.checks.find((entry) => entry.id === 'declaration.policy-fingerprints').status, 'passed');
+  assert.equal(report.metadata.packageContract, 2);
+  assert.equal(report.metadata.version, 7);
+  assert.deepEqual(report.metadata.requires, []);
+  assert.deepEqual(report.metadata.provides, [{
+    name: 'accepted-capability', version: 1, capabilityContract: 2,
+  }]);
+  assert.equal(report.metadata.marker, 'original-receiver');
+  assert.equal(metadataCalls, 2, 'the determinism check calls metadata twice with the original receiver');
+  assert.deepEqual(reads, {
+    name: 1,
+    version: 1,
+    packageContract: 1,
+    requires: 1,
+    capabilities: 1,
+  }, 'every declaration observer uses the first accepted graph facts');
+});
+
+test('package test returns the invalid-name report before reading description', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-invalid-description-precedence-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let reads = 0;
+  const definition = {
+    packageContract: 1,
+    name: 'INVALID NAME',
+    label: 'Invalid',
+    resources: [],
+    actions: [],
+    requires: [],
+    capabilities: [],
+    policies: [],
+    operations: [],
+    get description() { reads += 1; throw new Error('LATER_DESCRIPTION'); },
+  };
+
+  const report = runDeclarationChecks({ definition, dir });
+  assert.equal(reads, 0);
+  assert.deepEqual(report.problems.map((problem) => problem.code), ['PACKAGE_INVALID']);
+  assert.match(report.problems[0].message, /name must match/);
+});
+
+test('package test returns the invalid-name report before reading policies', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-invalid-policies-precedence-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let reads = 0;
+  const definition = {
+    packageContract: 1,
+    name: 'INVALID NAME',
+    label: 'Invalid',
+    resources: [],
+    actions: [],
+    requires: [],
+    capabilities: [],
+    operations: [],
+    description: 'invalid',
+    get policies() { reads += 1; throw new Error('LATER_POLICIES'); },
+  };
+
+  const report = runDeclarationChecks({ definition, dir });
+  assert.equal(reads, 0);
+  assert.deepEqual(report.problems.map((problem) => problem.code), ['PACKAGE_INVALID']);
+  assert.match(report.problems[0].message, /name must match/);
+});
+
+test('package test returns the invalid-name report before reading operations', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-invalid-operations-precedence-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let reads = 0;
+  const definition = {
+    packageContract: 1,
+    name: 'INVALID NAME',
+    label: 'Invalid',
+    resources: [],
+    actions: [],
+    requires: [],
+    capabilities: [],
+    policies: [],
+    description: 'invalid',
+    get operations() { reads += 1; throw new Error('LATER_OPERATIONS'); },
+  };
+
+  const report = runDeclarationChecks({ definition, dir });
+  assert.equal(reads, 0);
+  assert.deepEqual(report.problems.map((problem) => problem.code), ['PACKAGE_INVALID']);
+  assert.match(report.problems[0].message, /name must match/);
+});
+
+test('package test refuses a malformed action through the package contract, without crashing', async (t) => {
+  const root = fixtureProject(t);
+  const packagePath = writeFixturePackage(root, 'fixture-bad-action', `// @ts-check
+export const fixturePackage = {
+  packageContract: 1,
+  name: 'fixture-bad-action',
+  label: 'Fixture bad action',
+  version: 1,
+  resources: [],
+  actions: [null],
+};
+`);
+
+  const { exitCode, report } = await packageTestCommand({
+    packagePath,
+    rootDir: root,
+    capture: true,
+  });
+  assert.equal(exitCode, 1);
+  assert.equal(report.checks.find((entry) => entry.id === 'declaration.valid').status, 'failed');
+  const problem = report.problems.find((entry) => entry.code === 'PACKAGE_INVALID');
+  assert.ok(problem, JSON.stringify(report.problems));
+  assert.match(problem.message, /Action definition must be an object/);
+  assert.equal(/TypeError|Cannot read properties/.test(JSON.stringify(report)), false,
+    'the invalid declaration remains a bounded contract failure');
+});
+
+test('package test awaits a v2 capability before calling its resolved interface valid', async (t) => {
+  const root = fixtureProject(t);
+  writeFixturePackage(root, 'fixture-v2-null-provider', `// @ts-check
+let contractReads = 0;
+export const fixturePackage = {
+  packageContract: 2,
+  name: 'fixture-v2-null-provider',
+  label: 'Fixture v2 null provider',
+  version: 1,
+  resources: [],
+  capabilities: [{
+    name: 'null-interface',
+    version: 1,
+    get capabilityContract() { contractReads += 1; return contractReads <= 4 ? 2 : 1; },
+    create: async () => null,
+  }],
+};
+`);
+  const packagePath = writeFixturePackage(root, 'fixture-v2-consumer', `// @ts-check
+export const fixturePackage = {
+  packageContract: 2,
+  name: 'fixture-v2-consumer',
+  label: 'Fixture v2 consumer',
+  version: 1,
+  resources: [],
+  requires: [{
+    package: 'fixture-v2-null-provider',
+    capability: 'null-interface',
+    version: 1,
+  }],
+};
+`);
+
+  const { exitCode, report } = await packageTestCommand({
+    packagePath,
+    rootDir: root,
+    capture: true,
+  });
+  assert.equal(report.checks.find((entry) => entry.id === 'lifecycle.attach').status, 'passed');
+  const capability = report.checks.find((entry) => entry.id === 'lifecycle.capabilities-resolve');
+  assert.equal(capability.status, 'failed', capability.evidence);
+  assert.match(capability.evidence, /did not return an object/);
+  assert.equal(exitCode, 1, 'a Promise object is not evidence that its resolved value is an interface');
+
+  writeFixturePackage(root, 'fixture-v2-valid-provider', `// @ts-check
+export const fixturePackage = {
+  packageContract: 2,
+  name: 'fixture-v2-valid-provider',
+  label: 'Fixture v2 valid provider',
+  version: 1,
+  resources: [],
+  capabilities: [{
+    name: 'valid-interface',
+    version: 1,
+    capabilityContract: 2,
+    create: async () => ({ load: async () => 'ok' }),
+  }],
+};
+`);
+  const validPath = writeFixturePackage(root, 'fixture-v2-valid-consumer', `// @ts-check
+export const fixturePackage = {
+  packageContract: 2,
+  name: 'fixture-v2-valid-consumer',
+  label: 'Fixture v2 valid consumer',
+  version: 1,
+  resources: [],
+  requires: [{
+    package: 'fixture-v2-valid-provider',
+    capability: 'valid-interface',
+    version: 1,
+  }],
+};
+`);
+  const valid = await packageTestCommand({ packagePath: validPath, rootDir: root, capture: true });
+  assert.equal(valid.exitCode, 0);
+  assert.equal(
+    valid.report.checks.find((entry) => entry.id === 'lifecycle.capabilities-resolve').status,
+    'passed',
+  );
+
+  writeFixturePackage(root, 'fixture-v1-thenable-provider', `// @ts-check
+export const fixturePackage = {
+  packageContract: 1,
+  name: 'fixture-v1-thenable-provider',
+  label: 'Fixture v1 thenable provider',
+  version: 1,
+  resources: [],
+  capabilities: [{
+    name: 'thenable-interface',
+    version: 1,
+    capabilityContract: 1,
+    create: () => ({
+      then() { throw new Error('a v1 interface was incorrectly awaited'); },
+      load() { return 'ok'; },
+    }),
+  }],
+};
+`);
+  const syncPath = writeFixturePackage(root, 'fixture-v1-thenable-consumer', `// @ts-check
+export const fixturePackage = {
+  packageContract: 1,
+  name: 'fixture-v1-thenable-consumer',
+  label: 'Fixture v1 thenable consumer',
+  version: 1,
+  resources: [],
+  requires: [{
+    package: 'fixture-v1-thenable-provider',
+    capability: 'thenable-interface',
+    version: 1,
+  }],
+};
+`);
+  const sync = await packageTestCommand({ packagePath: syncPath, rootDir: root, capture: true });
+  assert.equal(sync.exitCode, 0, 'the v1 capability path remains exactly synchronous');
+  assert.equal(
+    sync.report.checks.find((entry) => entry.id === 'lifecycle.capabilities-resolve').status,
+    'passed',
+  );
+});
 
 test('every first-party package conforms, and the report says how', async (t) => {
   for (const [path, name] of OFFICIAL) {

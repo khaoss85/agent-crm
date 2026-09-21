@@ -48,13 +48,13 @@ const NOT_AVAILABLE = (label, owner) => Object.freeze({
  *
  * @param {{modules: any, names: any, subject: {resource: string, id: string}}} input
  */
-export function canonicalClusterFor({ modules, names, subject }) {
+export async function canonicalClusterFor({ modules, names, subject }) {
   // Complete reads, not display pages: a cluster that loses members once the
   // link table outgrows a page would deny a human decision that was recorded.
   const links = trusted(modules, names.link);
-  const mine = deciding(links, {
+  const mine = (await deciding(links, {
     subjectResource: subject.resource, subjectId: subject.id, status: 'active',
-  })[0];
+  }))[0];
   if (!mine) {
     return Object.freeze({
       clusterKey: null,
@@ -64,7 +64,7 @@ export function canonicalClusterFor({ modules, names, subject }) {
       note: 'no canonical identity decision has been recorded for this record; it stands for itself',
     });
   }
-  const members = deciding(links, { clusterKey: mine.clusterKey, status: 'active' })
+  const members = (await deciding(links, { clusterKey: mine.clusterKey, status: 'active' }))
     .map((row) => Object.freeze({ ...subjectOf(row), role: row.role, decisionId: row.decisionId, decidedAt: row.decidedAt }))
     .sort((a, b) => (a.role === b.role ? subjectKey(a).localeCompare(subjectKey(b)) : a.role === 'canonical' ? -1 : 1));
   return Object.freeze({
@@ -81,18 +81,22 @@ export function canonicalClusterFor({ modules, names, subject }) {
  *
  * @param {{modules: any, core: any, names: any, subject: {resource: string, id: string}}} input
  */
-export function profileFor({ modules, core, names, subject }) {
-  const cluster = canonicalClusterFor({ modules, names, subject });
+export async function profileFor({ modules, core, names, subject }) {
+  const cluster = await canonicalClusterFor({ modules, names, subject });
 
   // Identity: the host records themselves, read through their own services.
-  const identity = readIdentity({ modules, subject, cluster });
+  const identity = await readIdentity({ modules, subject, cluster });
 
   // External identities for every member of the cluster. Asked per member as a
   // complete query rather than filtered out of one page of the whole table.
   const identityService = trusted(modules, names.identity);
-  const identities = newestFirst(cluster.members.flatMap((member) => deciding(identityService, {
-    subjectResource: member.resource, subjectId: member.id, status: 'active',
-  })))
+  const identityRows = [];
+  for (const member of cluster.members) {
+    identityRows.push(...await deciding(identityService, {
+      subjectResource: member.resource, subjectId: member.id, status: 'active',
+    }));
+  }
+  const identities = newestFirst(identityRows)
     .map((row) => Object.freeze({
       system: row.system, externalId: row.externalId, subject: subjectOf(row),
       firstObservedAt: row.firstObservedAt, lastObservedAt: row.lastObservedAt,
@@ -112,7 +116,7 @@ export function profileFor({ modules, core, names, subject }) {
   let opportunityRead = null;
   if (opportunityService && typeof opportunityService.list === 'function') {
     try {
-      opportunityRead = readSectionRows(opportunityService, { companyIds, contactIds, opportunityIds: new Set() });
+      opportunityRead = await readSectionRows(opportunityService, { companyIds, contactIds, opportunityIds: new Set() });
     } catch { opportunityRead = null; }
   }
   const opportunityIds = new Set((opportunityRead?.rows ?? []).map((row) => row.id));
@@ -129,7 +133,7 @@ export function profileFor({ modules, core, names, subject }) {
     try {
       read = section.key === 'opportunities' && opportunityRead
         ? opportunityRead
-        : readSectionRows(service, references);
+        : await readSectionRows(service, references);
     } catch {
       sections[section.key] = Object.freeze({
         available: false, reason: `${section.label} could not be read from this application`, items: null, count: null,
@@ -169,9 +173,13 @@ export function profileFor({ modules, core, names, subject }) {
   }
 
   const issueService = trusted(modules, names.issue);
-  const issues = newestFirst(cluster.members.flatMap((member) => deciding(issueService, {
-    subjectResource: member.resource, subjectId: member.id, status: 'open',
-  })))
+  const issueRows = [];
+  for (const member of cluster.members) {
+    issueRows.push(...await deciding(issueService, {
+      subjectResource: member.resource, subjectId: member.id, status: 'open',
+    }));
+  }
+  const issues = newestFirst(issueRows)
     .map((row) => Object.freeze({ kind: row.kind, evidence: row.evidence, detectedAt: row.detectedAt, subject: subjectOf(row) }));
 
   // A candidate names two records, so each member is asked for on both sides
@@ -180,7 +188,7 @@ export function profileFor({ modules, core, names, subject }) {
   const candidateRows = new Map();
   for (const member of cluster.members) {
     for (const side of [{ leftResource: member.resource, leftId: member.id }, { rightResource: member.resource, rightId: member.id }]) {
-      for (const row of deciding(candidateService, { ...side, status: 'unresolved' })) candidateRows.set(row.id, row);
+      for (const row of await deciding(candidateService, { ...side, status: 'unresolved' })) candidateRows.set(row.id, row);
     }
   }
   const candidates = newestFirst([...candidateRows.values()])
@@ -210,20 +218,20 @@ export function profileFor({ modules, core, names, subject }) {
 }
 
 /** Read the host identity records this subject and its cluster name. */
-function readIdentity({ modules, subject, cluster }) {
+async function readIdentity({ modules, subject, cluster }) {
   const companies = optional(modules, 'company');
   const contacts = optional(modules, 'contact');
-  const read = (service, id) => {
+  const read = async (service, id) => {
     if (!service || typeof service.get !== 'function') return null;
-    try { return service.get(id); } catch { return null; }
+    try { return await service.get(id); } catch { return null; }
   };
   const canonical = cluster.canonical ?? subject;
   let company = null;
   let contact = null;
-  if (canonical.resource === 'company') company = read(companies, canonical.id);
+  if (canonical.resource === 'company') company = await read(companies, canonical.id);
   if (canonical.resource === 'contact') {
-    contact = read(contacts, canonical.id);
-    if (contact?.companyId) company = read(companies, contact.companyId);
+    contact = await read(contacts, canonical.id);
+    if (contact?.companyId) company = await read(companies, contact.companyId);
   }
   return Object.freeze({
     company: company ? Object.freeze({ id: company.id, name: company.name, domain: company.domain ?? null }) : null,
@@ -245,7 +253,7 @@ function readIdentity({ modules, subject, cluster }) {
  * @param {any} service
  * @param {{companyIds: Set<string>, contactIds: Set<string>, opportunityIds: Set<string>}} references
  */
-function readSectionRows(service, references) {
+async function readSectionRows(service, references) {
   const shapes = [
     { companyId: [...references.companyIds] },
     { contactId: [...references.contactIds] },
@@ -259,7 +267,7 @@ function readSectionRows(service, references) {
     for (const filters of shapes) {
       if (!Object.values(filters).some((value) => Array.isArray(value) && value.length > 0)) continue;
       try {
-        for (const row of service.listWhere(filters)) byId.set(row.id, row);
+        for (const row of await service.listWhere(filters)) byId.set(row.id, row);
         queryable = true;
       } catch {
         // The module does not declare this reference shape. Try the next one.
@@ -271,7 +279,7 @@ function readSectionRows(service, references) {
   }
   return {
     readable: true,
-    rows: service.list({ limit: 500 }).filter((row) => belongsToCustomer(row, references)),
+    rows: (await service.list({ limit: 500 })).filter((row) => belongsToCustomer(row, references)),
     complete: false,
   };
 }

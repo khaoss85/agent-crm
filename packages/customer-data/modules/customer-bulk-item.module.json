@@ -1,0 +1,60 @@
+{
+  "manifestVersion": 1,
+  "name": "customer-bulk-item",
+  "description": "The receipt for one record inside a bulk run: which record, what was attempted, and whether it applied. Applied plus failed always equals the run's item count exactly - a failed item never disappears quietly, and its code names the refusal that stopped it. An item applied by an earlier call of the same run keeps its single applied receipt; the resume reports it as already applied rather than writing a second one.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "runId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "itemIndex",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "recordModule",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "recordId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "outcome",
+      "type": "enum",
+      "values": [
+        "applied",
+        "failed"
+      ],
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "code",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    }
+  ]
+}

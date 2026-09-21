@@ -184,19 +184,19 @@ export function normalizeRow(raw, index, system) {
  *
  * @param {{request: any, policy: any, reader: any}} input
  */
-export function resolveBatch({ request, policy, reader }) {
+export async function resolveBatch({ request, policy, reader }) {
   const { system, acceptance, rows } = normalizeRequest(request);
   const receipts = [];
   const seenInBatch = new Map();
 
-  rows.forEach((raw, index) => {
+  for (const [index, raw] of rows.entries()) {
     const normalized = normalizeRow(raw, index, system);
     if (!normalized.ok) {
       receipts.push({
         index, outcome: 'rejected', reasonCode: normalized.reasonCode, reason: normalized.reason,
         rule: 'none', subject: null, candidates: [], inputDigest: rowDigest(rawShape(raw)),
       });
-      return;
+      continue;
     }
     const row = normalized.row;
     const digest = rowDigest(row);
@@ -223,10 +223,10 @@ export function resolveBatch({ request, policy, reader }) {
         reason: `the same identity appears earlier in this batch at row ${clash}`,
         rule: 'none', subject: null, candidates: [], inputDigest: digest,
       });
-      return;
+      continue;
     }
 
-    const result = assertMatchResult(policy.resolve({ row, reader }), `Customer match policy "${policy.name}@${policy.version}"`);
+    const result = assertMatchResult(await policy.resolve({ row, reader }), `Customer match policy "${policy.name}@${policy.version}"`);
 
     // …and two rows that RESOLVE to the same existing record are the same
     // identity too, however differently they were written.
@@ -239,7 +239,7 @@ export function resolveBatch({ request, policy, reader }) {
         reason: `this row resolves to the same record as row ${seenInBatch.get(subjectKey)} earlier in this batch`,
         rule: result.rule, subject: null, candidates: [], inputDigest: digest,
       });
-      return;
+      continue;
     }
     for (const key of batchKeys) seenInBatch.set(key, index);
     if (subjectKey) seenInBatch.set(subjectKey, index);
@@ -248,20 +248,20 @@ export function resolveBatch({ request, policy, reader }) {
         index, outcome: 'accepted', reasonCode: REASON.MATCHED, reason: result.evidence,
         rule: result.rule, subject: result.subject, candidates: [], inputDigest: digest, row, created: false,
       });
-      return;
+      continue;
     }
     if (result.outcome === 'unresolved') {
       receipts.push({
         index, outcome: 'skipped', reasonCode: REASON.AMBIGUOUS, reason: result.evidence,
         rule: result.rule, subject: null, candidates: result.candidates, inputDigest: digest, row,
       });
-      return;
+      continue;
     }
     receipts.push({
       index, outcome: 'accepted', reasonCode: REASON.CREATED, reason: 'no existing record matched, so this row creates one',
       rule: result.rule, subject: null, candidates: [], inputDigest: digest, row, created: true,
     });
-  });
+  }
 
   const counts = {
     rows: rows.length,

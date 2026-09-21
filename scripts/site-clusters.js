@@ -62,7 +62,7 @@ const CLUSTERS = [
     lede:
       `<p>Each page below states the boundary before the capability, cites the entry in
       <a href="{{page.root}}evidence.html">the claims ledger</a> that carries it, and names the test file that
-      proves it. <strong>None of it is deployable.</strong> There is no authentication, tenancy or RBAC, every
+      proves it. <strong>None of it is deployable.</strong> No authentication ships, every
       provider is an offline fixture, persistence is local SQLite and there is no scheduler — so a domain that
       works here works on one developer's machine.</p>`,
     description:
@@ -172,7 +172,7 @@ export const REQUIRED_FRONT_MATTER = ['title', 'date', 'claims', 'transcript', '
  * reported against its source file rather than against built HTML. See the module header.
  */
 const FORBIDDEN = [
-  { pattern: /\bproduction[-\s]ready\b/i, why: 'there is no authentication, tenancy or RBAC (L-01)' },
+  { pattern: /\bproduction[-\s]ready\b/i, why: 'there is no authentication ships, and a deployment must supply the verifier (L-01)' },
   { pattern: /\benterprise[-\s]grade\b/i, why: 'unfalsifiable, and the production spine does not exist' },
   { pattern: /\b(soc\s?2|iso\s?27001|hipaa|gdpr[-\s]compliant)\b/i, why: 'no compliance posture exists or has been assessed' },
   { pattern: /\bbank[-\s]grade\b/i, why: 'unfalsifiable' },
@@ -1019,7 +1019,6 @@ function blogPages({ posts, claims, standing, brand, origin }) {
           datePublished: post.date,
           dateModified: post.date,
           author: { '@type': 'Organization', name: post.editor },
-          editor: { '@type': 'Person', name: post.editor },
           mainEntityOfPage: { '@type': 'WebPage', '@id': `${origin}/blog/${post.slug}.html` },
           url: `${origin}/blog/${post.slug}.html`,
           isPartOf: { '@type': 'Blog', name: `Writing — ${brand.name.value}`, url: `${origin}/blog.html` },
@@ -1040,10 +1039,10 @@ function blogPages({ posts, claims, standing, brand, origin }) {
         '  </div>',
         '  <div class="shell">',
         '    <section>',
-        standingLimits(standing, 'What this post does not mean'),
         '      <div class="section-block">',
         renderMarkdown(post.body),
         '      </div>',
+        standingLimits(standing, 'What this post does not mean'),
         '      <div class="evidence-rail">',
         '        <h2>The evidence this post rests on</h2>',
         claimGroup(post.claims, claims),

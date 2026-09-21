@@ -94,6 +94,24 @@ The name is a Map key in the registry and a key in `/api/schema`. It is also
 what a collision is reported against, so choose something a stranger reading a
 stack trace would recognise.
 
+The scaffold still emits contract 1 because the released SQLite factory and
+default `accordo serve` are synchronous. `createAccordoAppAsync()` is the
+portable SQLite factory: its default graph is an explicit `packageContract: 2`
+with no packages, so kernel CRM starts without selecting a customer v1
+package as v2. Core can validate a uniform contract-2 fixture, and a v1
+package passed onto the portable path refuses with
+`PACKAGE_ASYNC_CONTRACT_REQUIRED` before SQLite opens. Do not change this
+number in isolation: package, every action, every declared operation and
+every offered capability must select the same version, and a mixed graph
+refuses startup with the same code. Bundled first-party packages export both
+graphs: `createX()` stays contract 1 for `createAccordoApp()`, and
+`createXV2()` / `createX({ packageContract: 2 })` is the contract-2 object a
+portable caller passes in `selected.packages`. Do not silently treat a v1
+factory as v2. M2E-2C verifies an offered capability's optional interface
+`capabilityContract` against the declaration before a portable HTTP listener
+binds, and refuses a thenable standing in for that interface. Default
+`accordo serve` remains the synchronous v1 path.
+
 ## 3. Declare what you need from other packages
 
 A package may reach another package **only** through a declared capability:
@@ -134,6 +152,7 @@ Offering one is the mirror image:
 capabilities: [{
   name: 'delivery-obligations',
   version: 1,
+  capabilityContract: 1,
   description: 'Read pending delivery obligations and mark them handed over.',
   create({ modules, actor, now }) { return { /* the bounded interface */ }; },
 }],
@@ -141,6 +160,10 @@ capabilities: [{
 
 Expose the smallest interface that does the job. `packages/contracts` offers
 three methods and no service, table or query handle — that is the standard.
+For compatibility, an omitted `capabilityContract` means 1; registry summaries,
+schema metadata and inspection publish the normalized value explicitly. The
+capability's `version` describes its domain interface, while
+`capabilityContract` describes synchronous-v1 versus awaitable-v2 execution.
 
 ## 4. Create package-owned resources
 
@@ -196,6 +219,15 @@ proved in `tests/intelligence-package-absence.test.js`.
 An action is an ordinary action definition (`docs/ACTIONS.md`): the same
 runtime, transaction, audit, events and trace. Nothing about it is special
 because it came from a package.
+
+Execution contract 2 is an all-or-nothing graph choice, not a way to make one
+action async inside a v1 package. A v2 package declares `actionContract: 2` on
+every action, `operationContract: 2` on every operation and
+`capabilityContract: 2` on every offered capability. Its dependency edges must
+also resolve to v2 capabilities. Inspection publishes the selected, normalized
+version on every package, action, operation and capability, so an agent never
+has to infer the running graph from the scaffold default. The kernel-private
+accepted-version sets are validation vocabulary, not inspection output.
 
 A versioned decision belongs in a policy with declared JSON-safe `config`, so
 its fingerprint (ADR-015) covers the thresholds as well as the code:
@@ -313,10 +345,39 @@ A package imports from **`packages/core/index.js`** and nothing else under
 import { definePackage, AppError, ValidationError, requiredString } from '../../core/index.js';
 ```
 
-What is public today: the package contract (`definePackage`,
-`validatePackageDefinition`, `PackageRegistry`), the error types, the
-declared-definition fingerprint helpers, the money helpers and bounds, and the
-shared value validators.
+**`packages/core/index.js` is the authoritative list** — read the file, not this
+paragraph. What follows orients you; an enumeration copied into prose drifts
+from the file the moment an export lands, and this one had already drifted
+before it admitted it.
+
+Broadly, what is public: the package contract (`definePackage`,
+`validatePackageDefinition`, `PackageRegistry`), the error types, the framework
+clock and bounded outbound calls, run traces, the canonical actor authority and
+identity normalization, the declared-definition fingerprint helpers **and the
+definition-version store that persists them** (`createDefinitionVersionStore`),
+the money helpers and bounds, the shared value validators, the Solution Plan and
+implementation-evidence contracts, and the Production Spine v1 identity, runtime
+mode, authorization and tenancy exports.
+
+The definition-version store is the newest of these and the least self-evident,
+so it earns a line of its own: it is how a package records each `{type, name,
+version, fingerprint}` at startup and refuses the boot when a registered
+version's source has moved underneath it (ADR-015). It is the other half of
+`computeDefinitionFingerprint` — a package that hand-rolls the persist-or-verify
+loop re-implements the rule that decides whether the application starts, and the
+one sentence a person reads at boot becomes several that disagree.
+
+**And its limitation, in the same breath.** The store writes to
+`definition_versions` with **no actor context and no audit event**. Almost every
+other write in this framework carries both; this one does not. It is startup
+identity, recorded before any actor exists, and the gap predates the store — the
+four registries it replaced each wrote the same rows the same way. So it is
+**not a general persistence path**, and it is not the precedent to copy when your
+package needs to write something a person did: use a module service or a named
+workflow for that, so validation, actor identity, audit and trace travel with the
+write. Giving definition-version registration an actor and an audit row is
+sequenced work, not a gap to route around
+(`docs/plans/spine-v2-m2b-definition-version-store.md`).
 
 Everything in `packages/core/src/*` is **private**. It changes without notice,
 and `package validate` fails a package that reaches into it. If you need
@@ -430,8 +491,8 @@ same way it attacks first-party ones.
 
 ## 14. Official packages are reference implementations, not a framework tax
 
-The first-party packages (`contracts`, `delivery`, and the planned Marketing
-packages in `docs/strategy/MARKETING_GROWTH_OPERATIONS.md`) attach through the
+The first-party packages (`contracts`, `delivery`, and the bounded MK1
+`marketing` package) attach through the
 contract on this page and no other. That has a consequence worth stating:
 
 - an official package is **optional** — take it, or don't;
@@ -453,9 +514,9 @@ source is not sandboxed** (ADR-018 addendum 4). A package that sends, publishes
 or spends without a recorded human approval is a defect regardless of who wrote
 it.
 
-*(No Marketing package exists today. The packages named above are planned
-identities, not shipped code, and a future Marketing authoring Skill is planned
-rather than implemented.)*
+*(`packages/marketing` implements supplied-count observations and local proposal
+approval only. Journeys, campaign execution and the other Marketing packages
+remain planned; no dedicated Marketing authoring Skill is claimed.)*
 
 ## 15. When an agent is working from a business goal
 

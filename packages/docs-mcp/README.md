@@ -75,7 +75,7 @@ alone.
 - **Report anything about a running system.** No runtime state, no authorization
   state, no deployment. It reads checked-in source and says so.
 
-Standing limitations of the framework itself (no authentication, no tenancy, no
+Standing limitations of the framework itself (no authentication ships, no
 RBAC; SQLite only; the build benchmark has not been run) ride along on every
 capability and job response as `frameworkLimitations`.
 

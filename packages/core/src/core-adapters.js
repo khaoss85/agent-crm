@@ -1,6 +1,7 @@
 // @ts-check
 
 import { ValidationError } from './errors.js';
+import { isSyncStorage, storageMany, storageMaybeOne } from './storage-runtime.js';
 
 /**
  * Core-module adapters for record actions (ADR-013).
@@ -63,11 +64,24 @@ export function createCoreAdapters({ database, services, pipelines }) {
         throw new ValidationError('companyName is required to match a company', { field: 'companyName' });
       }
       const wanted = normalizeCompanyName(name);
-      return database.raw
-        .prepare('SELECT id, name, domain FROM companies ORDER BY created_at, id')
-        .all()
+      const mapRows = (rows) => rows
         .filter((row) => normalizeCompanyName(String(row.name)) === wanted)
-        .map((row) => ({ id: String(row.id), name: String(row.name), domain: row.domain === null ? null : String(row.domain) }));
+        .map((row) => ({
+          id: String(row.id),
+          name: String(row.name),
+          domain: row.domain === null || row.domain === undefined ? null : String(row.domain),
+        }));
+      const rows = storageMany(database, {
+        kind: 'select',
+        table: 'companies',
+        columns: ['id', 'name', 'domain', 'created_at'],
+        orderBy: [
+          { column: 'created_at', direction: 'asc' },
+          { column: 'id', direction: 'asc' },
+        ],
+      });
+      if (isSyncStorage(database)) return mapRows(rows);
+      return Promise.resolve(rows).then(mapRows);
     },
 
     /**
@@ -81,10 +95,14 @@ export function createCoreAdapters({ database, services, pipelines }) {
       if (typeof email !== 'string' || email.trim() === '') {
         throw new ValidationError('email is required to match a contact', { field: 'email' });
       }
-      const row = database.raw
-        .prepare('SELECT id, company_id, email FROM contacts WHERE email = ?')
-        .get(normalizeEmail(email));
-      return row ? { id: String(row.id), companyId: String(row.company_id), email: String(row.email) } : null;
+      return storageMaybeOne(database, {
+        kind: 'select',
+        table: 'contacts',
+        columns: ['id', 'company_id', 'email'],
+        where: [{ column: 'email', op: 'eq', value: normalizeEmail(email) }],
+      }, (row) => (row
+        ? { id: String(row.id), companyId: String(row.company_id), email: String(row.email) }
+        : null));
     },
 
     /** @param {{name: string, domain?: string | null}} input @param {{actor?: unknown}} [context] */

@@ -18,6 +18,30 @@ Accordo is a framework that lets a user describe a commercial process to Codex o
 
 Accordo is not an autonomous salesperson and is not a full Salesforce replacement in milestone 0.
 
+The framework **authenticates nobody** — a deployment adapter verifies the request — and it
+**owns tenancy and authorization completely**, with one tenant per application instance enforced
+by the storage binding rather than by a filter (ADR-038). Persistence for the composed
+application is SQLite or dedicated-database PostgreSQL. Shared-database row-level
+tenancy and billing are not implemented. The optional MK1 marketing package
+records supplied funnel observations and human-reviewed proposals only; it has
+no sending, publishing, spending, audience execution or attribution. Durable jobs,
+the transactional outbox and bounded timer consumers are implemented; the
+composing application starts their workers explicitly. No managed worker
+service ships with the framework.
+Each of those sentences is bound to a generated fact (ADR-039) and re-checked by
+`npm run repo:truth -- --check`.
+
+<!-- truth: spine.authentication.framework_verifier=absent -->
+<!-- truth: spine.authorization.enforced=enforced -->
+<!-- truth: spine.tenant.isolation.mode=one_tenant_per_instance -->
+<!-- truth: spine.postgresql.implemented=implemented -->
+<!-- truth: spine.durable_job_store.implemented=implemented -->
+<!-- truth: spine.transactional_outbox.implemented=implemented -->
+<!-- truth: spine.timer_consumers.implemented=implemented -->
+<!-- truth: spine.managed_jobs_service.implemented=absent -->
+<!-- truth: billing.implemented=absent -->
+<!-- truth: marketing_runtime.implemented=implemented -->
+
 It provides:
 
 - reusable CRM primitives;

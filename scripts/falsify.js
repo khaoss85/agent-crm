@@ -80,9 +80,14 @@ export const MUTATIONS = [
   },
   {
     id: 'definition-version-immutability',
-    file: 'packages/intelligence/src/registry.js',
-    find: 'if (String(existing.fingerprint) !== entry.fingerprint) {',
-    replace: 'if (false) {',
+    // Spine v2 M2B moved this check out of the four registries that each had a
+    // copy of it and into the one core store they now share, so the mutation
+    // follows it there. Neutralising it here removes the rule for every
+    // registry at once, which makes this the strongest single target it has
+    // ever had — and `tests/intelligence-contract.test.js` still kills it.
+    file: 'packages/core/src/definition-version-store.js',
+    find: 'if (String(persisted.fingerprint) !== entry.fingerprint) throw driftError(entry, persisted.fingerprint);',
+    replace: 'if (false) throw driftError(entry, persisted.fingerprint);',
     rule: 'a registered policy version cannot be edited in place',
     breaks: 'a scoring model or discount policy changes behaviour while keeping its version, so '
       + 'every historical decision that cites that version now cites something else',

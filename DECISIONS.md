@@ -6,6 +6,24 @@
 
 The first vertical slice uses Node.js built-ins, including `node:http`, `node:test` and `node:sqlite`. This keeps setup immediate for Codex/Claude and makes the framework mechanics visible. A production adapter may later replace SQLite without changing module service contracts.
 
+### ADR-001 addendum — Production Spine v2 M3B pins `pg@8.23.0`
+
+**Status:** accepted (implementation pin). The protocol-versus-driver rationale
+for adopting a production PostgreSQL client is M3A's DECISIONS.md prose.
+
+This is the first third-party runtime dependency. The pin is exact `8.23.0`,
+with no `pg-native` and no floating range. The import is a static
+`import pg from 'pg'` inside `packages/core/src/postgresql-storage.js` and is
+never wrapped in `try/catch`. SQLite remains Node `node:sqlite` and does not
+load `pg`. There is no ORM, no query builder and no SQLite-to-PostgreSQL
+translator.
+
+Limitation: applications that select PostgreSQL carry this driver.
+`createAccordoAppAsync()` composes a dedicated-database PostgreSQL application;
+`createAccordoApp()` stays SQLite-only. This is not shared-database tenancy and
+not a production-readiness claim.
+<!-- truth: spine.postgresql.implemented=implemented -->
+
 ## ADR-002 — Services and workflows own mutations
 
 **Status:** accepted
@@ -515,6 +533,214 @@ double quotes passed both the CLI and the conformance helper. It now matches any
 quote style and `import()`/`require()` as well.
 
 
+### ADR-018 addendum 7 — the storage seam earns core ownership from two unlike consumers
+
+Production Spine v2 M1 adds `storageContract: 1` to core as reusable runtime
+machinery, not Sales or Work behavior. The proof is deliberately two-sided: the
+handwritten Company service needs asynchronous mutation with synchronous exact
+and paged compatibility reads, while the package-owned generated Work resources
+need generated migrations, structural filters/counts, savepoint-scoped audit
+mutations and managed actions. The same closed statement vocabulary serves both.
+
+The vocabulary is insert, select/count and predicate-bound update, with equality,
+null and non-empty membership predicates plus deterministic ordering and a
+positive limit. Identifiers are allowlisted. Arbitrary SQL, placeholder strings,
+PRAGMA, delete and unsupported predicates fail with
+`STORAGE_STATEMENT_UNSUPPORTED`; the adapter never translates SQLite SQL.
+SQLite alone implements the contract in M1. Its synchronous facade preserves the
+released v1 exact-read surface, while mutation callers may use the asynchronous
+methods. Savepoints and outer transactions remain explicit. No public command,
+factory or package contract is added, so the DX surface does not grow.
+
+Contact and Opportunity retain their existing persistence temporarily, but their
+Company dependency crosses the migrated synchronous exact-read facade. A missing
+Company therefore still refuses before either dependent write. M2 owns the rest
+of the SQLite extraction; this addendum must not be read as repository-wide raw
+driver removal or as PostgreSQL support.
+
+
+### ADR-018 addendum 8 — proving the caller's transaction is core machinery, from four consumers
+
+Production Spine v2 M2D removes the last business-consumer raw-driver reach.
+`packages/work/src/follow-up.js` read the SQLite driver's `isTransaction` flag
+off the module service's database handle: one boolean, bought by a business
+package holding the driver, and with it every table in the application. It
+survived three milestones because it was spelled with optional chaining, which a
+plain token scan for the property does not see.
+
+**Four consumers, not one.** Applying the two-consumer rule found three more
+capabilities promising the same atomicity in their own doc comments with nothing
+checking it, and each was measured — not reasoned about — committing a partial
+write outside a transaction: `delivery-obligations@1.markHandedOver` left an
+obligation marked handed over to a delivery project that would never exist and
+permanently un-handoverable; `service-obligations@1.markActivated` did the same
+through a different status column; and
+`contracts-successor-activation@1.executeSuccession` committed a successor
+commercial agreement with no lineage row, so nothing on disk said which
+agreement it replaced. The primitive is core machinery because four unlike
+consumers need it, and all four are migrated onto it here.
+
+**The mechanism.** The database wrapper mints one opaque witness — a frozen
+empty object — per outer transaction, beside the flag that already tracked one,
+and drops it in the same `finally`. Membership lives in a module-private
+`WeakSet` with no exported mutator, bound to the storage handle it was minted
+for, so a boolean, a bare object, a frozen empty object of exactly the right
+shape, or a genuine witness from another handle are all refused.
+`proveCallerTransaction` **pulls** it from the handle the write will land on
+rather than accepting one from a caller, and first compares the handles of the
+services that must commit together: two services on two connections break
+atomicity even inside a transaction, because they are inside two different ones.
+The mint function is deliberately not public — a package that could mint could
+manufacture the proof it is subject to.
+
+**Ownership, and the two ways the mint is kept out of reach.** The witness is
+published into the async context that opened the transaction, so the proof
+answers "did *this* flow open it" rather than only "is one open". An earlier cut
+proved only the latter, and the gap was real: flow A opens `transactionAsync`
+and awaits, flow B writes inside A's transaction and loses those writes to A's
+rollback. Measured both before and after; B is now refused
+`NOT_TRANSACTION_OWNER`, with the cause and the fix in the message.
+
+That makes the mint load-bearing in a way it was not before — a package that can
+mint can manufacture ownership — so it is closed by **exhaustion rather than by
+analysis**. `claimTransactionMinter()` yields the capability once; the database
+wrapper takes it at module load, and every later caller is refused whatever
+import spelling it used. Static analysis of import specifiers could never have
+done this: a computed specifier walks past it, which is why the previous cut
+could only document the hole. Minting, publishing into the async context and
+clearing are also one indivisible operation, so no caller ever holds a witness
+it could use elsewhere.
+
+**The false refusal this buys.** Async context is lost by a callback that leaves
+the transaction and is invoked later. Such a caller is refused with the boundary
+named and `AsyncResource.bind` offered, rather than being told there is no
+transaction while one is plainly open. The boundaries that carry context and the
+one that does not are measured, not assumed.
+
+**The assumptions that remain, and the obligation they place on M3.** The
+same-handle half still assumes one connection per application instance, and the
+registries are module-private, so one loaded core module instance per process.
+`NESTED_TRANSACTION` is no longer load-bearing for ownership — it was what made
+the gap unreachable, and the gap is closed. The
+ratified PostgreSQL plan introduces connection pooling and transaction
+connection affinity. **A pooled adapter must open the ownership scope around the
+pooled client's work, on a connection-affine handle** — the object compared by
+identity must be the pooled client bound to the active transaction, never a
+pool-level facade shared across clients. This is an obligation on that milestone, not a property it inherits: an
+implementation that mints at pool level would leave all four consumers silently
+proving nothing, with no test failing. Recorded here rather than only in
+`docs/plans/spine-v2-m2d-transaction-context.md` because that is where the
+implementer will look.
+
+### ADR-018 addendum 9 — contract v2 is a uniform package graph
+
+Production Spine v2 M2E-1 makes the package execution contracts explicit before
+an async factory can expose Promise-shaped services. Package, action, operation
+and capability declarations accept the enumerated versions 1 and 2. Version 1
+retains the synchronous SQLite meaning; version 2 means the consumer awaits the
+corresponding execution seam. A composition may use either graph, never both:
+an internal mismatch, a mixed dependency edge, or disconnected v1/v2 packages
+refuse startup with `PACKAGE_ASYNC_CONTRACT_REQUIRED`.
+
+Capability declarations gain `capabilityContract`; absence means 1 and is
+normalized before any registry, schema or inspection consumer sees it. This is
+the authoritative composition value. Returned capability interfaces may echo
+it, but M2E-2 owns verification because composition deliberately does not invoke
+factories. The old `contract-lifecycle-source@2` returned
+`capabilityContract: 2` synchronously. That number was read nowhere, asserted by
+no test, and the commit that introduced it explained the *domain capability*
+version rather than execution semantics. It is corrected atomically to
+capability contract 1; the capability's domain version remains 2.
+
+Existing singular constants remain the v1 values emitted by scaffolding. The
+accepted sets and capability default stay private to core: package authors
+declare one version and do not negotiate one through a public constant. The
+bundled packages remain v1 in this addendum; dual v1/v2 graphs remain a later
+compatibility slice, and retiring v1 remains a separate compatibility decision.
+
+### ADR-018 addendum 10 — public portable factory defaults to explicit empty contract-2
+
+Production Spine v2 M2E-3 publishes `createAccordoAppAsync()` as the portable
+SQLite composition contract. `createAccordoApp()` remains the characterized
+synchronous factory and never returns a Promise. The two factories share no
+object graph: the async path composes over 2A/2B and does not wrap, redact or
+`Promise.resolve` the v1 application.
+
+The default selected graph is an explicit `{ packageContract: 2, packages: [],
+actions: [], modules: [] }`. Empty generated registries still carry no version,
+so they are not read as v2. Kernel Company, Contact, Opportunity and Approval
+compose on that graph. A caller-supplied selected graph still goes through
+preflight: v1 and mixed graphs refuse with `PACKAGE_ASYNC_CONTRACT_REQUIRED`
+before SQLite opens. The customer-authored contract-1 fixture stays
+sync-compatible and fail-closed on the portable path.
+
+PostgreSQL-shaped options refuse with `STORAGE_ADAPTER_UNAVAILABLE` before any
+opener or path is created; diagnostics carry no credential.
+<!-- truth: spine.postgresql.implemented=absent -->
+Dual-plane Spine, identity-verifier, deployment-storage and the private
+lifecycle test seams are `PORTABLE_OPTION_UNSUPPORTED` rather than silently
+dropped. Default `accordo serve` and bundled package dual definitions are not
+this addendum.
+
+### ADR-018 addendum 11 — M2 public storage posture, health boundary and raw-driver exit
+
+Production Spine v2 M2 closes on SQLite through the portable contract.
+
+**Decision: production `GET /health` is not `app.doctor()`.** The unauthenticated
+route returns only `{ ok, ready, storage: { adapter, available } }`. It does not
+run request identity, read tenant services, CRM modules or business tables.
+Local-development spine identity can bootstrap memberships and write audit; a
+liveness probe must not. Lease-driven readiness remains M4.
+
+**Decision: Admin counts are a separate authenticated read.** `GET /api/admin/metrics`
+uses existing `records.read` and Storage Contract `kind: 'count'`. Missing
+permission yields a bounded unavailable metrics state; the rest of the dashboard
+still renders. No new permission and no public metrics platform. In-process
+`app.doctor().counts` and the v1 `--db` `doctor.database` path stay.
+
+**Decision: portable/document-selected public output is `{ adapter, available }`.**
+`describeDeploymentStorage()` remains the named shape. `/api/schema` publishes
+the same descriptor and never a filesystem path. Local `--db` MCP `crm_doctor`
+may keep the v1 path; document-selected MCP projects `storage`.
+
+**Decision: `createCoreAdapters` is application logic, not adapter-internal.**
+Company-name and contact-email lookups use `database.storage.sync`. The raw
+SQLite driver stays private to `packages/core/src/database.js`. A token-scan
+guard over production `packages/` and `apps/` is a spelling guard, not semantic
+unreachability.
+
+**Decision: dual bundled v1/v2 package graphs are later compatibility work.**
+M2-23 is proved by a representative public `createAccordoAppAsync()` child
+process over kernel CRM plus a uniform v2 selected graph. Full dual graphs are
+required before default `accordo serve` migrates to the async factory and before
+bundled packages can compose on PostgreSQL. They are not completed here.
+<!-- truth: spine.postgresql.implemented=absent -->
+
+That later-compatibility slice is ADR-018 addendum 12.
+
+### ADR-018 addendum 12 — dual bundled v1/v2 package graphs
+
+Production Spine v2 M3P keeps two explicit graphs on every bundled domain
+package. `createX()` remains the synchronous contract-1 object selected by
+`createAccordoApp()` / SQLite compatibility. `createXV2()` /
+`createX({ packageContract: 2 })` returns a distinct contract-2 object
+selected by portable async composition. Shared pure policy and metadata are
+reused; promise-returning execute/create wrappers are generated by
+`selectPackageGraph` and never enter the v1 registry.
+
+A mixed graph still refuses `PACKAGE_ASYNC_CONTRACT_REQUIRED` before useful
+work. `createAccordoApp()` refuses every contract-2 package in
+`generatedDomains` before `PackageRegistry`, so a uniform v2 list cannot
+register on the synchronous factory. `crm package test` stays on `createX()`
+/ contract 1. `selectPackageGraph(v2, 1)` is refused rather than cloning
+async seams onto a fake v1 object. The public async factory's default empty
+contract-2 graph stays empty; callers pass a uniform bundled v2 selected
+graph explicitly. Default `accordo serve`, PostgreSQL application composition,
+and retiring v1 remain later work.
+<!-- truth: spine.postgresql.implemented=absent -->
+
+Plan: `docs/plans/spine-v2-m2-final-posture.md`.
+
 ## ADR-019 — Safe generated-module evolution through explicit revisions and append-only named migrations
 
 **Status:** accepted (Module Evolution v1).
@@ -640,6 +866,25 @@ regenerating modules that did not change.
 
 Adoption is generic. It names no domain, and nothing in it knows that Delivery
 was the milestone that needed it first.
+
+### ADR-019 Addendum 2 — Additive stateVersion 2 and PostgreSQL bootstrap
+
+Spine v2 M3A. v1 `{name, checksum, sql}` SQLite history stays the authority for
+every database that already ran it. Writes emit `stateVersion: 2` with a
+`postgres.bootstrap` generated from the **current** normalized manifest, used
+only on an empty PostgreSQL data plane, with its own checksum and provenance
+pointing at the v1-style state fingerprint. Later dialect-specific evolutions
+append under `postgres.evolutions`. Reads still accept v1.
+
+A generated registry entry that predates `module.state.json` remains a
+supported legacy input. Adoption is an explicit source-authoring step through
+the existing module-evolution authority (`module create --apply`, or
+`adoptLegacyModuleState` for fixtures). Runtime PostgreSQL composition refuses
+`LEGACY_MODULE_STATE_REQUIRED` until that state is checked in. It never
+synthesizes or writes source state during deployment. A non-empty data plane
+and a bootstrap the current manifest cannot reproduce also refuse.
+
+No new CLI command. The existing apply is the authoring write.
 
 ## ADR-020 — A Solution Plan is a bounded document contract, never an executable one
 
@@ -2690,6 +2935,22 @@ contract genuinely moved (a new offered capability; a new required capability).
 Lifecycle does not: it consumes succession, and nothing in its own composition
 contract changed.
 
+### Addendum — retire the migrated v1 offer
+
+After Signature and Contracts migrated to `commercial-quotes@2`, the remaining
+test consumer was migrated too. Commercial package version 4 now offers only
+`commercial-quotes@2` and `commercial-quote-binding@1`. A v1 requirement is
+refused at composition with the consumer and available v2 named; the shared
+read implementation remains unchanged inside v2. This deliberately ends
+compatibility for external consumers that have not migrated, whose inventory
+is outside this repository.
+
+`tests/commercial-quotes-deprecation.test.js` checks the bundled source
+consumers and the registry refusal. The service journey's verifier fixture is
+rebound from a fresh scenario run because its composition includes Commercial;
+the stale-plan guard remains intact. Recovery and validation are recorded in
+`docs/plans/retire-commercial-quotes-v1.md`.
+
 ### Recorded invariants (M16b, restated so they are citable)
 
 - **Linear successor, v1.** One executed successor per source cycle; no
@@ -2880,3 +3141,1437 @@ customer, not a guess); a section it genuinely cannot reach reads `available:
 false` with that reason rather than a zero; and every readable section publishes
 `countIsComplete`, so a number taken from a bounded page is reported as a floor
 instead of a total.
+
+
+## ADR-038 — The framework authenticates nobody, and owns every decision that follows
+
+**Status:** accepted. **Milestone:** Production Spine v1.
+**Plan:** `docs/plans/production-spine-v1.md`.
+
+### Context
+
+The repository holds customer identities, external identifiers, canonical
+links, signed commercial terms, contracts, subscriptions, delivery, service and
+work records — real PII-capable data — behind a runtime with no authentication,
+no tenancy and no authorization. Three facts made that concrete rather than
+rhetorical:
+
+1. `normalizeActor()` returned `SYSTEM_ACTOR` — the most privileged identity in
+   the framework — for `null`, a string, or an unknown `type`. **The safest
+   input produced the strongest identity.**
+2. `actorFromRequest()` read `x-actor-type` and `x-actor-id` and, when they were
+   absent, invented `{type: 'user', id: 'api-user'}`. Any caller was any user,
+   and a missing header produced a valid-*looking* one.
+3. No record, table, service or action carried a tenant at all.
+
+Every "a human decided" in this codebase meant *an actor object said so*.
+
+### Decision
+
+**The framework authenticates nobody. It owns everything after that.**
+
+A deployment adapter verifies the request and supplies a bounded, versioned
+identity context. The framework owns the contract, the tenant selection,
+membership, the authorization decision, the audit evidence and a fail-closed
+boundary. Four options were compared:
+
+- **A — trust the headers, add role strings.** Rejected: authorization over an
+  unauthenticated identity is decoration that makes the audit log *more*
+  confident and no more true.
+- **B — passwords, sessions and credentials in core.** Rejected for v1: it makes
+  the framework an identity provider, which is a security scope of its own.
+- **C — verified identity adapter + framework authorization boundary.**
+  **Chosen.** The framework never learns a secret, and the one thing it must own
+  — the decision — it owns completely.
+- **D — a provider-specific auth package.** Rejected as a kernel dependency. No
+  vendor name appears in `packages/core`, and a reference adapter may live
+  outside it later.
+
+### The four identity kinds, which never blur
+
+`verified-user` · `system` (bounded authority: a webhook may reconcile, it may
+never approve a discount) · `asserted-local` (accepted only in explicit
+local-development mode) · `anonymous` (authorizes nothing, and is the one kind
+with no subject, because inventing one would be the same fail-open this ADR
+removes).
+
+**No token, credential or secret enters the contract, the audit log, the trace
+or an error message.** The contract carries a *fingerprint* of the claims the
+adapter accepted, so a decision can be tied to its evidence without the
+evidence being stored.
+
+### An Accordo Organization is not a CRM Company
+
+A **Company** is a customer recorded *inside* one tenant's data. An
+**Organization** is the tenant — a customer of the software. The distinction is
+in the table names (`spine_organizations`), the store, the schema block, the
+Admin and this ADR, because blurring it would make "grant someone access to a
+Company" sound reasonable, and from there one tenant's customer list leaks into
+another tenant's authorization model.
+
+### Permissions, and why not the two obvious shapes
+
+Eleven **bounded semantic permissions** bundled into roles. A fixed role enum is
+immediately inflexible; one permission per method looks rigorous, produces
+hundreds of unreadable keys, and ends with everyone granted all of them. `owner`
+is an explicit list rather than "all permissions", so adding a permission later
+cannot silently widen an existing role.
+
+`requiredApprovalKey` values stay **descriptive labels**. Promoting them into
+enforced permissions would change the meaning of records already written.
+
+Membership administration carries two non-negotiable rules: **nobody grants a
+permission they do not hold** (otherwise `admin.memberships.manage` is silently
+equivalent to all of them), and **the last active administrator cannot demote or
+suspend themselves** (not to protect them, but to stop an organization becoming
+permanently unadministrable).
+
+### The mode is explicit, and production fails startup
+
+Two modes, no default. The mode is **never inferred** from localhost,
+`NODE_ENV`, an interface address or a missing config: a proxy, a container
+network or a misread `X-Forwarded-For` all make a production request look local.
+An unset mode is an error, because "I forgot to configure it" and "I meant the
+permissive one" must not be the same input. Production **fails startup** without
+an identity verifier and a tenant strategy — a refused boot is investigated, a
+refused request at 3am is retried.
+
+Local-development mode keeps today's developer experience through a **real
+membership row** an operator can list and revoke, not an invisible branch inside
+the authorizer. An assertion is never promoted to a verification.
+
+### Tenancy: the honest choice, and what it is not
+
+Row-level tenancy — an `organization_id` on every mutable table — is the right
+long-term answer and was **not** attempted here: **86+ tables** (76 module
+manifests plus 10 core), a backfill of every shipped database, every unique
+constraint reworked and every correctness path rescoped. A half-migrated version
+of that is worse than none, because it *looks* isolated.
+
+v1 *declares* a **versioned TenantStorage boundary: one database per tenant.**
+Two tenants would not cross-read because they would not be in the same database,
+not because a `WHERE` clause was remembered. A tenant id is untrusted input on a
+filesystem path, so traversal, absolute paths, NUL, uppercase and over-length are
+refused and the resolved path is proven to be inside the root anyway.
+
+**This is explicitly not shared-database multi-tenancy, and nothing in this
+repository may describe it as such.** Row-level tenancy in PostgreSQL is Spine
+v2.
+
+#### Amendment 1 — the boundary shipped unwired (review finding F-2)
+
+The paragraph above described a boundary that shipped **declared and not
+delivered**. `createTenantStorage` was defined, validated a tenant id and
+resolved one file per tenant; nothing called it. `tenantStrategy` was checked
+for presence at startup and then never used. The authorizer answered *"may this
+subject do this?"* and never *"does this row belong to this subject's tenant?"*,
+so a single application holding two organizations held both in one database.
+
+Measured, against a production-mode application with a verifier configured and
+two bootstrapped organizations: the owner of A creates a company; the owner of B
+requests `GET /api/companies` and receives **200 with A's record in it**; B's
+write appears in A's list; and B reads `GET /api/audit` and receives rows
+authored by A's owner. The control plane held — B's owner pointed at A was
+`403 MEMBERSHIP_MISSING`.
+
+#### Amendment 2 — closed by binding, not by filtering
+
+A human decided the model, and it is enforced rather than documented:
+
+> **one running Accordo application instance ↔ one authoritative tenant data
+> plane ↔ one tenant storage binding**
+
+**Shared-database row-level tenancy is explicitly rejected as the fix.** It is a
+later slice across 86+ tables, and it is not required by the deployment model
+this product is entering, which provisions one isolated instance and database
+per tenant. **Multiple CRM tenants inside one application are not supported**,
+and that is the enforcement rather than a limitation: a configuration that would
+need it is refused at startup.
+
+**What "wired" means here.** A spine-composed application takes its CRM database
+from the binding and refuses an explicit `dbPath` beside it, because two answers
+to *"where does this tenant's data live"* is the exact shape the defect had.
+`bindTenantStorage()` resolves one tenant and returns an object that carries
+`dataPlanePath` and `controlPlanePath` and **exposes no `databasePathFor` at
+all** — a second tenant is not refused by a check somebody could forget, it is
+unreachable through the handle the application holds. There is no branch in
+which a bound application can reach the unscoped shared database, because no
+such handle is ever constructed.
+
+**Two runtime planes and two files; fresh schemas are disjoint.** Control-plane
+migrations (organizations, memberships) and data-plane migrations (CRM) are
+separate lists. A fresh tenant database has no membership table and a fresh
+control database has no CRM table, so a write that crossed the boundary raises
+`no such table` rather than quietly succeeding. The released v1-v5 combined
+database remains adoptable as the control file and may retain dormant CRM tables:
+the enforced claim there is that CRM services never receive or use the control
+handle, not that adoption deletes historical data. The combined list remains the
+default, so every composition without a spine is unchanged.
+
+**The tenant is never inferred** — not from localhost, `NODE_ENV`, the listening
+interface, the first membership, the first Organization row, a header, a body or
+a claim the framework did not bind itself. The strongest temptation is *"there is
+only one organization, so use it"*, and it is wrong because it makes provisioning
+order a security control: an instance booting before its organization exists, or
+after a control plane creates a second, would silently change whose data it
+serves.
+
+**A verified identity that names no tenant is refused**, not assumed to mean the
+bound one. Assuming would mean a token minted for tenant A is honoured by tenant
+B's instance — the cross-instance replay that one-tenant-per-instance exists to
+prevent. Requiring the identity to state its tenant, and requiring equality with
+the binding, is what makes "each tenant has its own instance" a boundary rather
+than a deployment convention.
+
+**The order of refusal is deliberate.** *401* for a caller who presented nothing
+— a statement about the request, not about what exists here, so it discloses
+nothing and stays useful. Then *404* for any tenant but the bound one, because a
+403 would confirm that the organization exists and that this instance knows
+about it, and across a tenant boundary that confirmation is the disclosure; the
+refusal echoes no id and no slug. Then *403* inside the bound tenant, where the
+distinction is about the caller rather than about the data. **Membership is
+necessary and not sufficient**: a membership in another organization is refused
+before any permission is considered.
+
+**The refusal matrix**, all at startup, all with stable codes and none carrying a
+filesystem path or a configured value: `SPINE_VERIFIER_REQUIRED` ·
+`SPINE_TENANT_STRATEGY_REQUIRED` · `SPINE_LOCAL_TENANT_REQUIRED` ·
+`SPINE_BOUND_TENANT_REQUIRED` · `SPINE_BOUND_TENANT_INVALID` ·
+`SPINE_TENANT_STORAGE_ROOT_REQUIRED` · `SPINE_MULTIPLE_DATA_PLANE_BINDINGS` ·
+`SPINE_DATA_PLANE_PATH_NOT_CONFIGURABLE` · `SPINE_BOUND_TENANT_UNKNOWN` ·
+`SPINE_LOCAL_MODE_REMOTE_BIND` · `TENANT_PLANES_COLLIDE`. Not echoing the value
+matters most on `SPINE_BOUND_TENANT_INVALID`, whose input is attacker-chosen on
+precisely the path where an attacker-chosen string reached a path resolver.
+
+**Local-development mode may only listen on loopback.** That mode accepts
+asserted identities, so anyone who can reach the socket can claim to be anyone;
+an omitted host means every interface, which is the worst case rather than the
+safe one, so it is refused too.
+
+#### Amendment 3 — the actor boundary fails closed
+
+`normalizeActor` returned `SYSTEM_ACTOR` — the strongest identity in the
+framework — for `null`, a string, an unknown `type` and any malformed object.
+A review argued it was unreachable from any public adapter, and that was true
+*because of two properties nothing tested*: `actor` happened to be spread last
+in two request handlers, and `identityToActor` happened to be total. A boundary
+that holds by coincidence holds until somebody writes `{ actor, ...body }`.
+
+So it was measured rather than argued. Instrumented, the fallback fired **three
+times across the whole suite**, every one an e2e fixture passing
+`{type: 'human', id: 'e2e'}` — an unknown type laundered into root. Nothing
+depended on it.
+
+Now: a malformed actor becomes the **least-privileged** identity; prototype
+-inherited `type`/`id` do not count, because an actor found on a prototype is
+one somebody arranged to be found; `SYSTEM_ACTOR` is reachable only through
+`trustedSystemActor(reason)`, so grepping that name is a complete audit of where
+the framework claims its own authority; and request payloads have
+server-controlled keys **stripped** rather than overridden, so the property no
+longer depends on the order of an object spread anywhere.
+
+#### Amendment 4 — a control mutation and its tenant audit cannot share a transaction
+
+Organization and Membership mutations live in the shared control plane; their
+security audit lives in the bound tenant data plane. Production Spine v1 wrote
+the control row first and then called the audit sink. If the second write failed,
+the caller received an error even though the authorization state had committed.
+Measured on `bootstrapOwner`: the membership was active, the data audit count
+was zero and the caller saw the injected failure. That is a false rollback over
+committed security state.
+
+**Decision: bounded immutable audit intent, not a claim of cross-database
+atomicity and not a general outbox.** Each of the four writers — Organization
+create and Membership bootstrap/grant/suspend — performs every state,
+authorization and concurrency read, the mutation and one audit intent inside a
+single `BEGIN IMMEDIATE` control transaction. Intent identity is the canonical
+tenant slug plus entity type/id and positive safe mutation revision. Its payload
+fingerprint is separate, so changed evidence under the same revision refuses
+rather than minting a second plausible audit.
+
+The destination has two persistent parts. The tenant data file mints an opaque
+random marker `{tenant slug, dataPlaneId}` first. The control mapping is keyed by
+slug and may begin with a NULL id when another Organization is provisioned in
+the shared control plane; the first application configured for that tenant CASes
+NULL to its own marker id. A different physical file mints a different id and
+loses stably. This is **first-configured-file-wins**, not resource attestation:
+a copied file carries the marker, and leases, clone promotion and external
+resource identity remain later M4 work.
+
+Delivery order is load-bearing and never holds both SQLite write locks:
+
+```text
+short control eligibility transaction
+→ independently committed exact data-audit transaction
+→ short control pending-to-delivered CAS
+```
+
+A crash after the data commit leaves the intent pending; retry verifies the same
+exact audit and closes it. A caller-owned transaction on either plane refuses
+namedly, because joining it could mark an audit delivered before the caller
+rolls the data write back. A poisoned pending intent is reported independently
+and cannot starve later work; each pass is bounded while its `pending` count is
+exact.
+
+Compatibility is explicit. The public
+`createSpineStore({database,audit?,now?})` still accepts the framework wrapper or
+direct SQLite input, returns only Organizations/Memberships and keeps its v1
+error precedence and successful result shapes. Public `AuditLog.record()` still
+owns id and time. Exact insertion and the recoverable store are deep-internal,
+unexported factories. On delivery failure only, the committed entity gains a
+bounded `committed_with_pending_audit` receipt; ordinary success stays
+byte-shape compatible. The application exposes one tenant-scoped, frozen
+`auditIntents` contract for bounded listing and explicit reconciliation. It is
+not a lease, retry worker, scheduler, arbitrary message queue or deletion API.
+
+Both methods accept only a non-proxy plain options object with the optional
+integer `limit` in `1..100`; invalid shapes and accessor properties refuse with
+stable credential-free codes. The public v1 Organization/Membership list
+behavior is unchanged behind the closed storage seam: a negative numeric limit
+means SQLite's historical unbounded listing, while zero or `NaN` selects the
+released default.
+
+Startup owns every SQLite handle until it returns the application. A failure at
+any later composition step closes both handles without replacing the original
+error. Migration startup rechecks each ledger row only after acquiring its
+bounded write lock, so two cold processes converge; a persistent lock becomes
+`CORE_DATABASE_STARTUP_BUSY`, never a raw SQLite error. Every known core
+migration row is name-validated regardless of the selected plane, and data-only
+or control-marked files used for the opposite plane refuse as
+`CORE_DATABASE_PLANE_MISMATCH`. This identity is a migration-family boundary,
+not M4 resource attestation.
+
+#### Amendment 5 — one closed deployment-storage loader, PostgreSQL refused before connect
+
+Three executables selecting storage independently is how a deployment boots
+PostgreSQL unbound or prints a credential. `--db` cannot carry a spine binding
+or a secret connection, so it stays SQLite compatibility only.
+
+**Decision: one versioned loader over a closed JSON envelope**, with exact keys
+`{contract, adapter, connection, controlPlane, spine, identityVerifier}`. Extra
+keys refuse. The document is opened with no-follow / owner-only / no group-or-
+other bits, and every pre-parse failure shares `DEPLOYMENT_STORAGE_CONFIG_UNTRUSTED`.
+PostgreSQL production TLS is a parser field: plaintext, `sslmode=disable|allow|prefer`,
+verification-disabled settings and a missing production TLS block refuse as
+`DEPLOYMENT_STORAGE_TLS_REFUSED` without opening a socket. A valid PostgreSQL
+document then refuses as `DEPLOYMENT_STORAGE_POSTGRESQL_UNSUPPORTED` before any
+connection; M3 owns the driver. Config and `--db` together refuse as
+`DEPLOYMENT_STORAGE_DB_CONFLICT`. Diagnostics carry no path, file bytes or
+credential.
+
+The loader is an internal runtime capability in `packages/core/src/deployment-storage.js`
+and is not published on the domain-package kernel. Factory, CLI and MCP do not
+call it in the PR that introduces the parser; wiring those surfaces is a later
+M2F slice. `identityVerifier` is parsed as an opaque relative path; ESM
+resolution is Amendment 6 / M2-22. Replacing every public locator with `{adapter, available}`
+is the remainder of M2-08.
+
+Plan: `docs/plans/spine-v2-m2f-deployment-storage.md`.
+
+#### Amendment 6 — FIFO/TOCTOU-safe open and identityVerifier pre-connect
+
+A config path that is a FIFO hangs `openSync` without `O_NONBLOCK`. A
+stat-then-read on the path, rather than on the opened fd, is a TOCTOU: the
+bytes parsed can belong to a different inode than the metadata just checked.
+
+**Decision: one internal trusted-file helper** opens with
+`O_RDONLY|O_NOFOLLOW|O_NONBLOCK` (refusing when a flag is unavailable),
+`fstat`s that fd, requires a regular owner-only file, reads from the same
+descriptor, and refuses if inode/dev/uid/mode/size change. The deployment-storage
+loader and the identity-verifier resolver share it.
+
+**Decision: a sibling pre-connect resolver**, not an async parser.
+`loadDeploymentStorage` stays the synchronous closed-envelope function.
+`packages/core/src/identity-verifier.js` resolves the repository-relative ESM
+reference before any database connection or listener exists. The module
+namespace is closed (`identityVerifierContract`, `identityVerifierTrust`,
+`createIdentityVerifier`); the factory receives only `{ mode, signal }`; the
+returned operations are exactly the v2 five. Discover/attest names are wrapped
+to `IDENTITY_VERIFIER_OPERATION_UNSUPPORTED` and never call through. The whole
+pipeline — realpath, trusted open, `import()`, factory — runs under
+`IDENTITY_VERIFIER_INIT_TIMEOUT_MS`. Hang fixtures (factory and top-level
+`await`) are proved in a child process that exits inside the bound. Diagnostics
+carry no path, file bytes or credential.
+
+Neither module is published on `packages/core/index.js`. Factory, CLI and MCP
+still do not import them. Live discover/attest is M3.
+
+Plan: `docs/plans/spine-v2-m2f-verifier-preconnect.md`.
+
+#### Amendment 7 — CLI/serve/MCP consume the shared pre-connect loader
+
+The loader and verifier resolver were published unwired so a parser defect could
+not become a production boot defect. The consumers now exist.
+
+**Decision: every application executable calls `prepareDeploymentPreconnect`.**
+The ratified flag is `--deployment-storage`; the env is
+`ACCORDO_DEPLOYMENT_STORAGE`; `--db` stays SQLite-only and refuses when combined
+with the document. No executable invents `--adapter`, `--pg-url` or a second
+envelope parser. `createAccordoApp` does not import the loader.
+
+**Decision: PostgreSQL documents refuse at the loader before composition.**
+`APP_COMMANDS` is exported as the canonical authority. Each entry is classified;
+`serve` is `READ_ONLY_SUPPORTED` once an adapter exists, and every other
+application command is `STABLE_REFUSAL_ON_POSTGRESQL`. At M2 the loader code
+`DEPLOYMENT_STORAGE_POSTGRESQL_UNSUPPORTED` fires first because there is no
+driver.
+
+**Decision: document-selected public output is `{ adapter, available }`.**
+SQLite `--db` path disclosure remains where M0 ratified it. Replacing
+`app.doctor().database` is the remainder of M2-08.
+
+**Decision: production MCP (`ACCORDO_MODE=production`) does not load the
+document, compose, connect or migrate.** Allowlisted resources are checked
+source only. Data-bearing tools, traces, doctor, runtime prompts and scaffolding
+refuse `MCP_PRODUCTION_SURFACE_UNAVAILABLE`. Local `--db` MCP is unchanged.
+
+**Decision: a SQLite document selects `connection.path` as the historical
+combined database path after the verifier passes.** The envelope tenant is
+`{ id }` and is not a full ADR-038 binding (`storageRoot` is still required
+there). This PR does not invent a storage root from a locator.
+
+Plan: `docs/plans/spine-v2-m2f-entry-wiring.md`.
+
+#### Amendment 8 — Spine v2 M3A: dialect migration intent, checksum ledger, driver pin
+
+PostgreSQL storage is still unimplemented. This amendment records the
+authoritative migration shape M3B will execute, without adding a driver or
+claiming the application runs on PostgreSQL.
+<!-- truth: spine.postgresql.implemented=absent -->
+
+**Decision: migration intent is an explicit structure, not a SQL translator.**
+Core schema is described under `packages/core/src/core-schema-intent.js` and
+rendered per dialect. SQLite render is byte-identical to the released
+`DATA_PLANE_MIGRATIONS` / `CONTROL_PLANE_MIGRATIONS` strings, which stay the
+SQLite migrator’s input. PostgreSQL SQL is authored from the same structure:
+persisted integers and cents are `BIGINT`, booleans `BOOLEAN`, timestamps
+`TIMESTAMPTZ`, tables in schema `accordo`, identifiers quoted through the
+physical-name map. Arbitrary SQLite SQL is never parsed at runtime.
+
+**Decision: physical names are mapped before DDL.** PostgreSQL identifiers are
+capped at 63 bytes. Safe `[a-z][a-z0-9_]*` names at or under that length stay
+unchanged; otherwise a bounded prefix plus a collision-resistant digest is
+recorded. The complete namespace is validated before DDL. Server truncation is
+not a strategy.
+
+**Decision: `schema_migrations` grows a checksum through version 8.** Every
+plane receives `schema_migrations_checksum` once. Backfill writes the **pinned**
+released checksums (M0 v1–v5 plus the subsequently released v6–v7 identities),
+never `hash(current source)`. An unknown `(version, name)`, a missing object or
+a divergent schema fails closed. New migrations record `hash(sql)` normally.
+Existing SQLite files with exact M0 identity still boot.
+
+**Decision: the production PostgreSQL driver is `pg` exactly 8.23.0,
+PostgreSQL server major 16, no `pg-native`.** Agreed with M3B. A home-grown
+wire protocol would duplicate TLS, auth, prepared statements, COPY, error
+fields and cancellation; `pg` is the audited client. Pin exact, never float
+latest, never `try/catch` the import. This PR does **not** add the npm
+dependency. SQLite remains Node built-in.
+
+Plan: `docs/plans/spine-v2-m3a-postgresql-migration-intent.md`.
+
+
+### The spine is opt-in, and its absence is loud
+
+`createAccordoApp({ spine })` turns it on. An application composed without it
+behaves exactly as before — and `/api/schema` publishes that in the same field,
+rather than omitting it. A reader who has to infer the absence of a security
+boundary from a missing key will eventually infer wrong.
+
+### What versioned, and what deliberately did not (ADR-036 doctrine)
+
+**Two framework contracts bumped; no package did.** Under the doctrine a
+contract version moves when a required shape or a semantic guarantee changes,
+and both moved twice over:
+
+- **`spineContract` 1 → 2.** The published block replaced
+  `tenantStrategyDeclared` and `crmDataPlaneEnforced: false` with a bound tenant
+  and enforced isolation. A consumer reading the v1 shape would draw the
+  *opposite* conclusion about the same deployment, which is exactly what a
+  version exists to signal — a silent change here is a reader believing a stale
+  answer about a security boundary.
+- **`tenantStorageContract` 1 → 2.** v1 offered an unbound resolver and promised
+  isolation it did not deliver; v2 offers a binding with no way to name a second
+  tenant, and enforces it.
+
+**No domain package moved**, and that restraint is deliberate: none of their
+declarations, requires or capability shapes changed. Bumping every package
+because the framework grew a boundary would be version noise that teaches
+readers to ignore versions.
+
+Otherwise: the runtime now authorizes what packages already declared, which is a
+runtime change rather than a contract one
+— and bumping every package because the framework grew a boundary would be
+version noise that teaches readers to ignore versions.
+
+Two additive contract fields were introduced instead, both backward-compatible
+and both framework-enforced:
+
+- **`requiredPermission` on a record action.** An action that declares nothing
+  requires `records.write`, the honest floor for a mutation. When an action's
+  required permission becomes contractual — when a consumer relies on it — that
+  is the point to version the action contract deliberately, not before.
+- **`headers` on the SDK client.** Without it the SDK could not present a
+  verified identity at all and every call against an authorizing server
+  returned 401. The client forwards what a caller hands it and stores no
+  credential of its own.
+
+### What may be claimed, and what may not
+
+**May be claimed.** Spine v1 supports a controlled real pilot: **one
+organization per deployed instance**, verified users, server-authoritative
+permissions, and an isolated tenant database enforced by the storage binding
+rather than by a filter.
+
+**May not be claimed**, and is not claimed anywhere in this repository:
+
+- multiple organizations inside one application,
+- shared-database multi-tenancy or row-level tenancy of any kind,
+- PostgreSQL — it is not implemented,
+- durable jobs, an outbox or a scheduler,
+- secret management, backups, restore or any recovery SLA,
+- general production readiness, or any SOC2 or GDPR posture.
+
+Those remain Spine v2, v3 and v4 in `ROADMAP.md` with explicit ownership rather
+than scattered through limitation strings.
+
+---
+
+## ADR-039 — Product claims are generated from executable authorities and cited by stable fact id
+
+**Status:** accepted. **Milestone:** Repository Truth Contract v1.
+**Plan:** `docs/plans/repository-truth-contract-v1.md`.
+**Reference:** `docs/REPOSITORY_TRUTH.md`, `scripts/repo-truth.js`,
+`docs/repository-truth.json`, `tests/repository-truth-contract.test.js`.
+
+### Context
+
+Production Spine v1 (ADR-038) changed what the runtime does. The documents that
+describe the runtime did not change with it, and **every gate passed anyway**.
+Twice, measurably, in the two days before this ADR was written:
+
+1. `crm app inspect` published `productionPosture: "no authentication, tenancy
+   or RBAC exists"` in the **same report** whose `PRODUCTION_SPINE_ABSENT`
+   message described identity, tenancy and authorization. Fixed in PR #101.
+2. The `tenant-isolation-and-authorization` scenario published
+   `TENANT_ISOLATION_NOT_ENFORCED` and *"the framework does NOT enforce it"*
+   **after** ADR-038 Amendment 2 closed that gap by binding. Fixed in PR #102 —
+   found by a person reading the file, not by a gate.
+
+The shape of the failure, which is the whole design driver:
+
+```text
+code implemented Production Spine v1
+  → schema/runtime truth changed
+  → PROJECT_STATUS / JTBD / claims / scenario limitation metadata stayed
+    MUTUALLY CONSISTENT but stale
+  → every existing gate passed
+```
+
+> **Existing gates check consistency *between* documents. These documents were
+> consistently wrong *together*.**
+
+`scripts/measurement.js` compares `docs/PROJECT_STATUS.md`'s `Measured at` row
+against `site/claims.json` — two documents. `scripts/site-check.js` matches a
+numeric pattern. `scripts/generate-jobs.js` regenerates one index from one
+Markdown source. **None of the three has any tie to what the code does**, so all
+three stayed green while the code moved out from under the prose. ADR-027 solved
+the same problem for *one number* by making it measured rather than typed; this
+ADR generalises that discipline from a count to a claim.
+
+### Decision
+
+**A product claim in a current document is bound to a fact generated from an
+executable authority, and cited by a stable fact id.**
+
+`docs/repository-truth.json` (`repositoryTruthContract: 1`) is generated by
+`scripts/repo-truth.js` from source, receipt and measurement authorities.
+Current documents cite `<factId>=<value>`; `npm run repo:truth -- --check` fails
+when the committed document is not a fresh generation, when a citation resolves
+to nothing, when a cited value is not the one the authority now produces, or
+when a bound document names a machine code no source declares.
+
+Four options were compared:
+
+- **A — more grep rules over prose.** *Rejected as the primary design.* It
+  misses reworded falsehoods: instance 2 above is exactly what a phrase-matching
+  rule misses, and it makes truth depend on phrasing. One bounded lexical rule
+  survives from it deliberately (below), and it is a rule about **identifiers**,
+  never wording.
+- **B — one hand-maintained status JSON.** *Insufficient alone.* A human can
+  update it independently of the code, which is the failure itself: it would
+  have been updated in the same pass that left the scenario metadata stale.
+- **C — generated executable product facts, cited by stable fact id.**
+  **Chosen.** The authorities that produce the facts are the same objects the
+  application runs on, so a fact cannot be updated without changing the code, and
+  a claim cannot survive the code it describes.
+- **D — an LLM semantic reviewer as a deterministic merge gate.** *Rejected.* A
+  merge gate must be reproducible byte-for-byte offline, and a model is neither.
+  It may return later as a **non-blocking** reviewer; never as the gate.
+
+### The rule the whole contract turns on
+
+> **A fact never silently defaults from a missing authority, and `false` is
+> never inferred from absence unless the contract defines that meaning.**
+
+- An unreadable **source** authority is `TRUTH_AUTHORITY_UNAVAILABLE` and refuses
+  the whole document. Nothing is written.
+- An unverifiable **receipt or measurement** authority refuses *its own* facts
+  and fails the run, while the source facts still stand — because collapsing the
+  document over a shallow clone would stop the citation and machine-code rules
+  running in the one job that runs on every push.
+- Two authorities that disagree are `TRUTH_AUTHORITIES_CONTRADICT`, and **neither
+  answer is published**: a fact already built is withdrawn rather than left
+  standing beside a problem nobody reading `facts[]` would see.
+- Where absence *is* the meaning, the contract names the rule — **declared
+  absence** (a list the source declares as not modelled: `SPINE_NOT_MODELED`,
+  `TENANT_LIMITATIONS`, the frozen journey registry's limitation codes) and the
+  **namespace probe** (a product area is `absent` when no resource, action,
+  capability or policy in a reference composition that resolved cleanly carries
+  any declared prefix). `not_measured` is a statement *about measurement*, never
+  a claim that the thing measured is false.
+
+### The three kinds of authority, kept apart and labelled
+
+**Source-derived** — recomputed from checked-in source every run, so *stale* is
+not a state they can be in. **Receipt-derived** — verified, never trusted: the
+frozen benchmark aggregate's own `protocolFingerprint`, `instrumentFingerprint`
+and `baseSha` must equal the protocol's, or nothing is read from it.
+**Measurement-derived** — the measured ledger plus what git can prove about it:
+ancestry of the recorded commit, and `tests/` at that commit versus at `HEAD`.
+Every fact names exactly one authority, and no fact blends kinds.
+
+### The one lexical rule kept from the rejected option A
+
+Every `SCREAMING_SNAKE` identifier in a bound surface must exist in the
+vocabulary **harvested from source**, be a repository file's basename, or be an
+angle-bracketed metavariable. It is kept because it matches identifiers rather
+than wording, and because the vocabulary is harvested rather than hand-listed:
+nothing needs maintaining, and a code deleted from the code fails every document
+still naming it. That is instance 2 written as a rule — and it binds
+`docs/PROJECT_STATUS.md`, `TASKS.md` and every scenario document with **no
+marker at all**, which is why none of them was edited.
+
+`RETIRED_CODES` closes the other half: a code this repository deliberately
+removed goes on being *discussed* — in an ADR, in a review note, in this
+paragraph — and a lexical harvest cannot tell discussion from declaration, so
+retired codes are subtracted from the vocabulary wherever they appear. A bound
+document may still name one by declaring `<!-- truth: retired-code CODE — why -->`
+in that file, which costs a reviewable edit with an argument attached. Shaped
+like `DATED_HISTORY` in `scripts/measurement.js`, for the same reason.
+
+### What is bound, and what is deliberately not
+
+Bound: `README.md`, `PRODUCT.md`, `AGENTS.md`, `CLAUDE.md`, `TASKS.md`,
+`docs/PROJECT_STATUS.md`, `docs/CODER_TOOLING_ROADMAP.md`,
+`docs/QUALITY_GATES.md`, `docs/REPOSITORY_TRUTH.md`,
+`docs/strategy/EXECUTION_ROADMAP.md`, `docs/benchmarks/CRM_JTBD_MATRIX.md`,
+`docs/benchmarks/jobs.json`, `site/claims.json`, `site/assets/llms.txt`,
+`site/assets/llms-full.txt` and every `examples/scenarios/*.scenario.json`.
+
+Excluded **by path rule, never by heuristic**: `DECISIONS.md` — this ADR
+included — `docs/plans/**`, `benchmarks/**`, `docs/transcripts/**`,
+`site/blog/**`, `docs/editions/**`, and everything in `scripts/measurement.js`'s
+`DATED_HISTORY`. A dated ADR, an ExecPlan, a benchmark receipt and a blog post
+preserve what was true when they were written, and rewriting them to satisfy a
+checker would be falsifying history.
+
+### What this is not
+
+`repo:truth` is a **repository-maintenance script**, not an Accordo rail, not a
+product command and not part of the agent surface budget. It appears in no Skill
+and in no generated project: a generated project has no claims ledger, no JTBD
+matrix and no status file. It rewrites no prose, calls no model, publishes
+nothing, deploys nothing and changes no product code.
+
+It is **standalone in v1** — not in `npm run verify`, not in `npm run gtm:check`
+— for one measured reason: its measurement checks need full git history, the
+`public-claims` CI job has `fetch-depth: 0` but the `verify` job deliberately
+does not, and wiring a fail-closed history check into a shallow job would turn a
+truth gate into a flake. The half that needs no history **is** covered by
+`verify`, through `tests/repository-truth-contract.test.js`, which asserts the
+refusal rather than skipping when history is absent — and which passes in both a
+full and a shallow checkout. Promoting `repo:truth` into `gtm:check` is v2 work
+and needs the job given full history first.
+
+### One product-source change, and why it is not a domain concept in core
+
+`packages/app/src/spine.js`'s `notModeled` array is hoisted to an exported
+`SPINE_NOT_MODELED` constant and spread into `describe()` unchanged. Zero
+behaviour change. It was previously readable only by booting a spine — a mode, a
+verifier, a tenant binding and two database files, to learn what the framework
+says it does not do — which made it prose to every reader outside the running
+application. Hoisted, it is a **declaration**, and a declaration is what a
+declared-absence fact is allowed to read.
+
+### What v1 does not cover
+
+No JTBD row is a fact and none will be: 149 rows are moved by a person reading
+merged tests (`docs/QUALITY_GATES.md` §3), and a generator that owned them would
+be promoting rows. `docs/editions/**` is unbound in v1. No scenario receipt is an
+authority — `scenario run` writes nothing into the project, so this repository
+checks none in. No `solution verify` evidence document is an authority: they
+describe *other* applications' compositions, so their
+`applicationInspectionFingerprint` cannot be checked against this repository.
+Package facts describe a named **reference composition** of the nine checked-in
+packages, because `packages/domains/generated/index.js` is empty here and
+`app inspect` on the repository root reports zero packages. Measurement facts are
+generated and provenance-checked but **not cited** by any document, because a
+citation would resolve differently in a shallow clone. Citations are opt-in: a
+sentence that carries none is not checked, and this contract cannot discover
+which sentences ought to have one. Every one of these is published in the
+document's own `limitations[]`, by code, so a reader acts on the boundary rather
+than discovering it.
+
+#### Amendment 1 — the gate shipped unwired, and three rules had holes (review findings)
+
+The paragraph above — "It is **standalone in v1** … Promoting `repo:truth` into
+`gtm:check` is v2 work and needs the job given full history first" — described a
+gate that ran **nowhere**. No CI job invoked `repo:truth -- --check`; the whole
+contract, citations and machine-code vocabulary included, was enforced only by
+whoever remembered to type the command. That reproduces the failure this ADR
+opens with: both recorded instances were found by a person and not by a gate,
+which is only an argument if a gate exists. The stated blocker did not exist
+either — `gtm:check` runs in exactly one job, `public-claims`, and that job is
+already checked out with `fetch-depth: 0`, as the same paragraph says two
+sentences earlier.
+
+`repo:truth -- --check` now runs as its own step in `public-claims`, on every
+push and every pull request. A separate step rather than a member of `gtm:check`,
+because `gtm:check` is also run locally in a clone that may be shallow; folding
+the two together is the v2 question. It costs about half a second, and it was
+confirmed green on a simulated pull-request merge commit as well as on the branch
+tip.
+
+The contract also closed only **one** of the two failures this ADR opens by
+naming. Instance 1 was `app inspect` publishing `productionPosture: "no
+authentication, tenancy or RBAC exists"` — a hand-written English string in
+`packages/cli/src/app-inspect.js`, in none of the twenty bound surfaces and
+covered by no fact. Restoring that exact sentence in a clean clone left
+`repo:truth -- --check` green. The sentence is the one every agent reads to learn
+what this framework is, so it is now a bound surface carrying seven citations,
+and the citation grammar gained a third comment character (`// truth: id=value`,
+applied to a bound `.js` file only, so a fenced example in a document stays an
+example). That is the whole extent of source binding: a product claim written as
+a string, cited deliberately, one file at a time. This contract does not scan
+source for sentences and cannot discover which strings are claims.
+
+Five rules were narrower than they read, and are fixed with the mutation that
+must fail each one:
+
+- **A declared-absence fact could outlive the code.** `SPINE_NOT_MODELED` is a
+  hand-maintained list of English strings, and a regex over it only ever answers
+  "does the list still say this". Deleting the sentence refused the fact; *building*
+  the thing and leaving the sentence standing moved nothing, so
+  `spine.durable_jobs.implemented` and `spine.secrets_backups.implemented` were the
+  two facts in this document that a claim could survive — Option B wearing Option C's
+  clothes. Each now carries a second authority derived from the code, a namespace
+  probe over the reference composition on the same two-authorities-must-agree rule as
+  `billing.implemented`; `spine.postgresql.implemented` already had one in the
+  manifest's production dependencies.
+
+- **Angle brackets hid any machine code.** `findUnknownCodes` stripped
+  `<[A-Z][A-Z0-9_]*>` from every line before looking, so
+  `<TENANT_ISOLATION_NOT_ENFORCED>` passed `--check` in `README.md` and in
+  `site/assets/llms.txt`, where angle brackets render literally to the agent
+  reading it. That disarmed the one lexical rule this ADR keeps — the rule
+  written because that exact code survived its own fix — and broke
+  `RETIRED_CODES`'s stated promise to hold "wherever the mention appears". The
+  exemption bought nothing: `ERROR_CODE`, the only metavariable any bound surface
+  uses, is declared in source and was already in the harvested vocabulary, which
+  is why the test that claimed to prove the exemption passed with the strip
+  removed. The strip is gone; the exemptions are the vocabulary and repository
+  basenames, and nothing else.
+- **The JSON citation grammar was wider than the one published.** Any quoted
+  `word=word` on any line of a bound JSON file was read as a citation, so
+  `"note": "mode=production"` in `site/claims.json` produced `TRUTH_FACT_UNKNOWN`
+  for a string that was never one. The parser now reads `facts` arrays out of the
+  parsed JSON, which is what §6.1 and `docs/REPOSITORY_TRUTH.md` always said.
+- **The stale message blamed the wrong thing.** A comment-only edit to an
+  authority source moves `sourceSha` and nothing else, and the run correctly
+  failed — reporting "the evidence, the authority list or a limitation did",
+  naming three things that had not moved. In a contract about documents that
+  state what is no longer true, its own diagnostic may not.
+
+**The suite itself was flaky, and CI proved it rather than a person guessing.**
+`82976f1` ran `verify` twice, on two runners, at one commit: 1527/1527 pass on
+one, 1526/1527 on the other. The single failure was not an assertion — it was
+the `t.after` of a fixture test, `ENOTEMPTY: rmdir '<fixture>/.git'`, after every
+assertion in that test had already passed. A gate whose own suite is red on one
+runner and green on another is a gate people re-run instead of read, which is
+the habit this ADR exists to break, reproduced inside its own tests. Throwaway
+directories now remove with `maxRetries`/`retryDelay` and, failing that, leave a
+note on stderr rather than failing a run whose assertions all passed; no
+assertion was touched. Every git call in the file also runs with `gc.auto=0` and
+`maintenance.auto=false`, on the hypothesis that a detached auto-gc is the
+writer — a hypothesis, because the race did not reproduce locally in 75 rounds
+under three concurrent workers, and it is named as one rather than asserted.
+
+Two published inventories disagreed with their contents and are corrected:
+`docs/REPOSITORY_TRUTH.md` listed ten of the eleven `limitations[]` codes,
+dropping `CODE_VOCABULARY_INCLUDES_COMMENTS`, and `README.md`'s "Where it stops"
+claimed "Every boundary below carries a machine-checked citation" over twelve
+bullets of which three carry none. A twelfth limitation,
+`NUMERIC_CLAIMS_NOT_BOUND`, is added: no fact in this contract is a count that
+any document cites, so every number in a bound sentence — test counts, module,
+package, resource and action counts — is outside it, and a reader should not
+infer otherwise from a citation standing next to one. A test now asserts that the
+document's codes and the explainer's table are the same set.
+
+#### Amendment 2 — binding the posture sentence did not close instance 1, and the `.js` allowlist was not path-scoped
+
+Amendment 1 says the posture sentence "is now a bound surface carrying seven
+citations", after recording that restoring the false posture in a clean clone had
+left `--check` green. Read together, those two sentences claim the first of the
+two failures this ADR opens by naming is closed. **It was not, and the mutation
+says so:** pasting `"no authentication, tenancy or RBAC exists"` back into
+`productionPosture` and touching nothing else exits **0**. A citation binds a
+**value** — reversing `spine.authorization.enforced=enforced` to `=absent` fails,
+and that is the entire content of what those lines prove. They say nothing about
+the sentence beneath them, which is what `WORDING_IS_NOT_GENERATED` had already
+said and what the amendment then wrote past.
+
+Generating the sentence from its own facts is the real answer and stays **v2**.
+What closes the recorded case now is `RETIRED_CLAIMS`, the exact counterpart of
+`RETIRED_CODES`: a short list holding the one retired claim across every bound
+surface, matched on collapsed whitespace and folded case, each entry a reviewable
+edit with an argument attached, and a `truth: retired-claim <claim> — why`
+declaration for a surface that names it as history. In a `.js` surface that
+declaration reaches **comment lines only** — file-scoped, it excused the
+published string as readily as the paragraph explaining it, and the mutation went
+straight back to passing. A rewording that preserves the bounded meaning still
+passes; the boundary is published as `POSTURE_PROSE_NOT_GENERATED`, because this
+holds the falsehood that *is* in the record and not the set of all falsehoods.
+The sentence also asserted the identity-contract seam and the absence of
+shared-database tenancy while citing nothing for either; it carries nine
+citations now.
+
+**The `.js` grammar was bounded by a literal list and by nothing else.**
+`BOUND_SURFACES` is frozen, so no code path in the script can traverse — but a
+symlink at `packages/cli/src/app-inspect.js` is followed. Pointed outside the
+repository it made *that* file's `// truth:` lines the ones the gate read; pointed
+at a citation-free file it dropped the posture's citations from 95 to 88 and left
+`--check` green with the falsehood standing in the target. An allowlist a symlink
+can redirect is not an allowlist, so every bound surface and every authority
+source is now checked to be repository-relative, free of any `..` segment, and
+reachable without traversing a symlink at any component, a parent directory
+included — `TRUTH_SURFACE_UNSAFE`, refused rather than skipped. Two smaller holes
+in the same grammar: a string literal quoting `// truth: id=value` inside the
+bound surface *became* a citation (own-line comments only now), and
+`// truth: id -> value` matched no pattern and was silently not one
+(`TRUTH_CITATION_MALFORMED`, a code declared since v1 and never emitted until
+now).
+
+**The cleanup compromise was half of one.** Amendment 1 records the retry-and-warn
+half. Warning is the right answer to a transient race and the wrong answer to a
+permanent leak, which it made invisible — the same shape as a stale document
+nothing checks, inside the suite that exists to catch that shape. The run now owns
+one `mkdtemp` scratch root, every fixture is created inside it, a cleanup that
+cannot finish registers what it left, and after every test in the file the gate
+retries once and then fails deterministically on a directory or a program still
+inside that root. It deletes nothing outside the root, kills nothing, and names
+residue by **class** rather than by absolute path, because a CI log is
+machine-facing and public. Two runs in flight cannot reach each other's
+directories, and that is driven by a probe rather than argued: swapping the sweep
+for a `/tmp` glob makes the probe fail, which is what makes its passing evidence.
+
+**The detached auto-gc explanation is unchanged and stays a hypothesis.** It did
+not reproduce locally in 75 rounds under three concurrent workers. The gate
+reports what is left behind, never why.
+
+`NUMERIC_CLAIMS_NOT_BOUND` was itself inaccurate, which in this ADR is not a
+small thing. `spine.identity.contract=1` is a cited integer, so `docs/QUALITY_GATES.md`
+§6.1's "no number is checked" was false; and typed *test* counts are not
+unchecked but held by `findLooseTestCounts` inside `gtm:check`, so naming them
+first among the things "outside this contract" read as the opposite of the case.
+Both are corrected. Binding numbers remains v2: requiring one to carry a fact
+means classifying a load-bearing current count against a date, an ADR number, a
+currency example, a receipt's raw count and a digit inside a code fence, and
+`findLooseTestCounts` needed two hand-tuned negative lookbehinds to survive
+widening from `site/` to `docs/` for a single noun.
+
+## ADR-041 — Durable work is a tenant-bound data-plane contract with fenced claims and explicit workers
+
+**Date:** 2026-08-31
+**Status:** accepted
+
+### Decision
+
+Accordo has one versioned durable-job contract on the tenant data plane. A job
+persists a named handler identity and canonical JSON-safe payload, never source
+code or a command. Every row carries the already-bound application tenant,
+schedule intent plus instant, bounded attempt policy, persisted recovery policy,
+idempotency root, claim generation and
+claim fingerprint, plus nullable execution-start time for the active generation. Omitted schedules persist as `immediate`, so the same
+idempotency root joins across clock drift without collapsing into an explicitly
+scheduled request. Every completion is compare-and-set on tenant, worker,
+generation, fingerprint and unexpired lease.
+
+Every mutation requires an explicit validated actor. The existing
+`AuditLog.record(event, handle)` writes one closed `durable_job.*` event on the
+same callback-scoped SQLite or affine PostgreSQL transaction as the job row.
+Audit data contains transition state, claim generation and a bounded error code
+where applicable; it never copies payload, idempotency root, outcome reference
+or handler input. An explicitly constructed worker additionally requires a
+system actor and has no fallback identity.
+
+Immediately before a registered handler is invoked, the worker compare-and-sets
+`execution_started_at` under tenant, worker, claim fingerprint, generation and
+live lease, then records `durable_job.execution_started` in that same
+transaction. Expiry can therefore recover an unstarted claim without consuming
+another attempt. Under V3A's default `terminal_unknown` recovery policy, expiry
+after execution start becomes
+`JOB_EXECUTION_OUTCOME_RECONCILIATION_REQUIRED`; the claim is cleared, the start
+timestamp remains durable terminal evidence, and no worker invokes it again.
+This is deliberately conservative: a crash after the CAS and before the
+JavaScript call is also reconciliation-required. It is not exactly-once
+execution or delivery.
+
+PostgreSQL claims one due row inside the existing connection-affine transaction
+with `FOR UPDATE SKIP LOCKED`. SQLite claims inside its existing
+`BEGIN IMMEDIATE` single-writer transaction. This is local SQLite compatibility,
+not a claim that SQLite supports multi-node workers.
+
+Construction starts nothing. A worker has explicit `start`, bounded `poll`,
+`drain`, `stop` and `close`; application composition does not gain a hidden
+timer in this slice. If shutdown wins after claim but before handler invocation,
+an owner-fenced release preserves the incremented claim generation while
+returning the execution attempt, so repeated drains cannot exhaust untouched
+work or falsely classify an external operation as already attempted. Timer poll
+failures remain visible as one ratified bounded code in worker status and clear
+only after a successful poll. `close` becomes terminal and clears its wake timer
+even when draining an in-flight persistence failure rejects. The worker retries
+only two closed transient handler codes with bounded injected backoff. Unknown,
+validation, authorization and policy failures collapse to framework-owned
+terminal codes. An expired `external-operation-v2` claim with no durable
+execution-start evidence is reclaimed on the same attempt and may invoke once.
+Once execution start is durable, expiry or an unknown handler outcome is never
+replayed under that default: the stable idempotency root remains its external
+operation identity and the job becomes reconciliation-required. ADR-041's V3B
+addendum later introduces one persisted opt-in for locally reconcilable outbox
+effects; it does not change this provider-safe default.
+
+### Context
+
+Spine v2 can persist business state and recover uncertain write outcomes, but a
+future timestamp or process restart still loses in-memory follow-up work. A
+naive queue beside the application transaction would also recreate the exact
+process-death gap Spine v3 must close. V3A therefore needs a primitive later
+V3B/V3C work can enqueue through the caller's existing transaction.
+
+The data plane is deliberate. Jobs act on tenant CRM state and must share its
+commit boundary. The required `tenant_id` is transition authority and evidence
+inside one tenant-bound instance; it does not introduce shared-database row
+tenancy or a tenant switcher.
+
+### Alternatives rejected
+
+1. **Expand the generic Storage Contract DSL with inequalities, row locks and
+   returning clauses.** Rejected because one consumer would substantially widen
+   the public structured-SQL vocabulary and imply dialect equivalence where none
+   exists.
+2. **Give the queue a second SQLite connection or PostgreSQL pool.** Rejected
+   because it would escape writer-lease authority and could not atomically join
+   the business transaction.
+3. **Use an in-process timer and reconstruct jobs at startup.** Rejected because
+   process death between commit and reconstruction loses work, and two workers
+   have no durable ownership fence.
+
+### Consequences and limits
+
+- A caller can enqueue through an existing transaction; rollback leaves no job.
+- Transactional enqueue accepts only the live callback-scoped handle owned by
+  the current async flow. A root handle or a callback handle retained after
+  commit/rollback is refused before it can write.
+- Active claims cannot be stolen. An expired unstarted claim gains a new
+  generation without consuming another attempt; an expired started claim is
+  terminal reconciliation evidence regardless of remaining attempt budget.
+- A pre-handler release is fenced by tenant, worker, claim fingerprint,
+  generation and live lease, and does not consume the execution-attempt budget.
+- Pre-execution terminal codes require absent execution-start evidence, while
+  execution/retry completion requires present evidence; neither phase can
+  falsely terminate the other through the direct store seam.
+- Worker status exposes only the last bounded poll error code, never raw storage
+  error text or details; a later successful poll clears it.
+- Claim, execution-start, success, failure, and release require a system actor;
+  enqueue, cancel, and reschedule retain explicit operator/agent authority. This
+  prevents an ordinary caller from fabricating worker execution evidence.
+- Cancel and reschedule apply only before a claim. A handler that outlives its
+  lease is terminalized by recovery and its late completion is fenced; internal
+  business handlers therefore still require their own idempotent outcome identity.
+- Explicit reschedule changes the persisted caller-visible schedule intent to
+  `scheduled`; retry backoff changes the next instant without rewriting the
+  original caller intent.
+- A job transition and its audit event commit or roll back together. A fenced
+  transition writes neither; reads require no actor and write no audit event.
+- Canonical payload traversal reads own data descriptors recursively for both
+  objects and arrays. Accessors are refused without invocation; proxy/trap and
+  other hostile inspection failures collapse to `DURABLE_JOB_PAYLOAD_INVALID`
+  with no cause, details or caller-controlled serialization. Array length is
+  conservatively bounded from the payload byte budget before allocation.
+- Job input, handler identity, and mutation actor context are likewise inspected
+  through own data descriptors before any field read. Hostile injected backoff
+  behavior terminalizes as `JOB_BACKOFF_INVALID` without retaining its error.
+- Store failure codes, handler-derived codes, and worker status codes use closed
+  allowlists. Arbitrary uppercase caller text never enters a job, audit event,
+  or worker status as an error code.
+- V3A is infrastructure only. It adds no cron grammar, recurrence policy,
+  outbox, timer consumer, provider adapter, operator command, public app facade,
+  Cloud queue, production-readiness claim or JTBD promotion. Those boundaries
+  remain for V3B, V3C and the integration campaign.
+
+### V3B addendum — committed effect intents are dispatched through exact durable jobs
+
+The existing PostgreSQL `write_outcomes.event_intents_json` remains the sole
+effect-intent authority. The transaction that inserts an outcome also enqueues
+one deterministic V3A job for each applicable closed effect family on the same
+affine storage handle: internal event promotion, and external-operation receipt
+continuation only when that receipt durably records that the operation declared
+a finalize phase. Provider-only operations record the closed false value and
+create no poison continuation. A legacy receipt with no declaration retains
+`unknown`, creates bounded reconciliation evidence, and never infers callback
+authority. Replaying a known receipt under the opposite declaration refuses as
+a divergent contract. The job carries only contract, run, phase and
+source-fingerprint identity. Event/domain/provider payloads, idempotency keys,
+actors, credentials and secret references remain in neither job nor job audit.
+Rollback therefore leaves no dispatchable identity; commit followed by process
+death leaves a pending one. A committed event outcome from before V3B is
+recovered by deterministically backfilling that same identity on explicit
+replay. Historical receipt continuation is backfilled only with committed
+declaration authority; an ambiguous legacy receipt requires explicit operator
+reconciliation.
+
+Internal events are dispatched from the committed outcome. A subscriber failure
+does not starve later stored intents: every valid intent is attempted, failures
+are collapsed to one bounded retryable result, and `events_promoted` is
+compare-and-set only when the complete pass succeeds. The
+old mark-before-dispatch path is gone. Transport is **at least once**: when a
+later subscriber fails, a retry may repeat an earlier subscriber. Concurrent
+workers cannot own the same claim. V3B effect jobs persist the closed
+`reconcilable_at_least_once` recovery policy: expiry after durable execution
+start advances attempt and generation, clears the old execution fence, and may
+invoke the same effect identity again until `maxAttempts`. That closes the
+zero-delivery crash window and honestly permits duplicates after partial
+delivery. Exhaustion is visible terminal evidence and late completion remains
+fenced. Every existing/generic job defaults to `terminal_unknown`; in
+particular external-operation-v2 provider work is never replayed by this
+policy. No intent is silently deleted and no exactly-once delivery claim is
+made.
+
+The external continuation handler accepts only a registered local-finalize
+operation. It reloads the committed intent and receipt, returns successfully if
+finalize already exists, and otherwise requires the callback to prove a
+committed finalize outcome before the job succeeds. Provider `call` and
+`reconcile` handles never enter this runtime, so recovering a receipt cannot
+implicitly replay an external side effect. This is a continuation fence, not a
+managed integration service or a general event platform.
+
+Construction still starts no worker. SQLite keeps its immediate in-process
+event compatibility and gains no durable-outbox or multi-node claim. The
+authoritative security audit path is not migrated into effect dispatch, and
+V3B adds no timer consumer, CLI/MCP/operator surface, Cloud backend,
+production-readiness claim or JTBD promotion.
+
+**One published absence becomes ambiguous here, and the integration campaign
+owns it.** `spine.durable_jobs.implemented` is `absent`, declared by the entry
+`durable jobs, outbox or scheduler (Spine v3)` in `SPINE_NOT_MODELED`
+(`packages/app/src/spine.js`). The intended reading — no Spine surface, no
+autostarted worker, no operator command — stays true after V3B, and this
+addendum states each of those absences directly. The literal reading, that the
+framework has no outbox at all, does not: from this milestone the default
+PostgreSQL write path enqueues an effect row for every committed write that
+carries event intents, which is the first production consumer of the durable
+job store. This delta deliberately leaves the authority string untouched,
+because rewriting it reclassifies the fact and moves every surface bound to it.
+The integration PR must either disambiguate that entry or reclassify the fact,
+together with the dependent surfaces — not as a documentation follow-up.
+
+---
+
+## ADR-040 — Runtime secrets are named references resolved before use, never deployment values
+
+**Status:** accepted. **Milestone:** Production Spine v4A.
+**Plan:** `docs/plans/spine-v4a-secrets-provider.md`.
+
+### Context
+
+Production Spine v2 kept PostgreSQL credentials out of public descriptors and
+diagnostics, but deployment contract 1 still carried each password inline in
+the trusted JSON document. Identity verifier modules had no credential boundary
+at all. Those are two current consumers of one safety capability, so a bounded
+runtime contract is justified without becoming a managed secret service.
+
+### Decision
+
+`secretProviderContract: 1` is an internal provider-neutral contract over one
+closed operation: `resolveSecret(reference, context)`. A reference is a bounded
+identifier, never a value. Context is allowlisted to contract, mode, purpose,
+tenant id and an abort signal; initial purposes are identity-verifier and the
+PostgreSQL control/data passwords. Provider definitions are closed
+`{contract,name,trust,resolveSecret}` objects. Provider configuration and secret
+references are not declared-definition fingerprints.
+
+Providers return mutable bytes (a `Uint8Array`, or the framework convenience
+`SecretMaterial`), not a string or an arbitrary result. The resolver copies and
+zeros that provider-owned buffer, then transfers its bytes into one opaque single-use
+`SecretLease`; disposal, successful use and an unrefed bounded expiry zero
+mutable storage. String,
+primitive and JSON coercion refuse, and Node inspection prints only `redacted`.
+The lease also owns the plaintext callback boundary: any synchronous throw or
+asynchronous rejection from a consumer is replaced with the framework-minted
+`SECRET_CONSUMER_FAILED` error without retaining the consumer's message, code,
+details, cause or stack. Mutable bytes are zeroed before the callback runs.
+This is limited lifetime where JavaScript permits it, not a claim that a
+plaintext string handed to a required third-party API can later be zeroed.
+
+Resolution and production-provider initialization have bounded deadlines and an
+abort signal. Losing promises are observed. Material settling after timeout is
+disposed; late rejection cannot become unhandled. The trusted module descriptor
+has an idempotent outer owner and the deadline closes it even when a top-level
+module import never settles. Provider text, hostile
+results, paths, references and values collapse to stable credential-free
+errors. Runtime semantics never catch a secret failure and continue without it.
+
+Deployment-storage contract 2 replaces PostgreSQL `password` with
+`passwordSecret`. The deployment parser applies the resolver's exact bounded
+reference grammar before provider import, verifier construction or database
+work, and requires an explicit `secretProvider`: `environment` only
+in local-development mode, or a trusted repository-relative `module` in
+production. Contract-1 SQLite and `--db` compatibility remain. PostgreSQL
+contract 1 refuses in every mode with
+`DEPLOYMENT_STORAGE_SECRET_REFERENCE_REQUIRED`; it cannot silently retain the
+inline-password path after this boundary exists.
+
+`prepareDeploymentPreconnect()` resolves the secret provider first, gives the
+same resolver to the identity-verifier factory, and completes both before
+application composition can open a database or listener. PostgreSQL control and
+data pools receive `pg` password callbacks that resolve distinct references and
+consume one lease per connection; the pool endpoint contains no reference
+property. TLS validation, attestation, tenant binding and writer-lease ordering
+are unchanged.
+
+Built-ins stop at an explicit local-development environment provider and a
+deterministic fixture. Production is an interface/plugin boundary only: no
+Vault, AWS, GCP or managed Accordo provider ships, and production never falls
+back to environment lookup. The resolver is not a domain-package API, CLI/MCP
+surface or health/schema field. Repository Truth publishes only the bounded
+self-host contract as implemented and separately keeps managed secret custody,
+backup/restore and observability absent. No audit, trace, job, backup or
+telemetry consumer receives a lease, reference or value.
+
+### Rejected alternatives
+
+- Redacting errors while keeping inline passwords leaves values in a long-lived
+  parsed object.
+- Direct `process.env` reads in each consumer create divergent contracts and a
+  silent production fallback.
+- Raw string returns make accidental serialization indistinguishable from
+  intentional consumption and prevent best-effort late disposal.
+- A vendor SDK or managed store adds a service and lifecycle this milestone
+  neither needs nor owns.
+
+---
+
+## ADR-042 — Restore imports bytes only behind independent identity, authority and receipt fences
+
+**Status:** accepted. **Milestone:** Production Spine v4B.
+**Plan:** `docs/plans/spine-v4b-backup-restore.md`.
+
+The public core provides a provider-neutral PostgreSQL-only backup contract; the
+built-in provider uses PostgreSQL 16 `pg_dump`, `pg_restore` and `psql`, and
+refuses when any of the three is absent or reports another major. Create returns
+independent SHA-256 identities for the artifact and canonical manifest bytes;
+the caller must retain both. Verify and restore compare the bundle against both
+identities, so a coherent replacement or altered manifest authority metadata
+does not become authority.
+
+Restore accepts no ambient target, and it does not import through a connection
+`pg_restore` opens for itself, because holding a lock on one backend never
+proved that a second tool reached the same one — behind a proxy or a failover
+the coordinator could fence A while the archive landed in B. `pg_restore` runs
+with an empty environment and only renders the archive to local SQL. A single
+`psql` session then applies it inside one transaction: it takes a
+transaction-level child lock, refuses unless the coordinator's session-level
+witness lock is still held by someone else, applies the rendered SQL, re-checks
+the restored authority and writes non-secret evidence of it, and only then
+commits. A child that reached elsewhere acquires the witness, and refuses before
+any DDL. That fence proves same cluster and same database rather than literally
+the same backend; every divergence it cannot distinguish — replica, failover,
+pooled connection, a coordinator that died — resolves toward refusal. Normal
+startup takes the same child lock, so a child that outlives its coordinator
+still fences bootstrap. The coordinator holds an exclusive advisory lock across
+the whole operation, enumerates database-local emptiness before admitting the
+child, and re-verifies artifact bytes and restored binding/migration identity on
+the connection that holds the lock.
+The connection carries a non-secret resource fingerprint supplied by deployment
+authority; expected intent and the durable receipt bind it, so replaying a
+successful operation against a second endpoint refuses before target access.
+The target must be empty; normal startup attestation remains the only path to
+writer authority, and a physical clone is never promoted or rebound here.
+
+A restore also carries a stable caller operation id and verified actor through
+a caller-owned control-plane seam. That seam must durably append the attempt
+outside the target before target access and idempotently append exactly one
+closed outcome for the same operation/bundle/target identity. A seam asked for an
+outcome that diverges from one it already closed is a caller defect: the core
+records the first closed outcome and never depends on a second being accepted.
+Success and possible partial mutation are recorded while the target lock remains
+held. A terminal
+replay never touches the target again. This core interface cannot prove an
+arbitrary caller persisted its receipt; public operator composition must supply
+the durable append-only implementation before exposing restore.
+
+Connection transport is explicit. Plaintext is accepted only when declared for
+a loopback development/test endpoint. Remote operation requires `verify-full`,
+a trusted CA and verified logical hostname. Each affine operation pins the
+trusted CA bytes into one private owner-only file consumed by both Node probes
+and native libpq, then removes it before settlement.
+Credentials and database locators live only in a bounded allowlisted child
+environment, never argv, manifests, receipts or errors. Native tools run in a
+separate process group; timeout or output overflow kills and observes the group
+before settlement.
+
+This is a bounded self-host contract, not managed artifact custody, scheduling,
+retention, PITR, clone promotion, an operator UI/CLI, or a recoverability SLA.
+SQLite is explicitly unsupported.
+
+The five closed construction symbols are intentionally exported from
+`packages/core/index.js`. Self-host runtime composition and the future private
+Cloud adapter are two concrete consumers of the same manifest and restore
+fences; forcing either to deep-import private source or recreate those fences
+would fail the DX Simplicity Gate. No storage handle, locator, generic process
+runner, custody service or operator command enters the public surface.
+
+## ADR-043 — Telemetry exports a closed vocabulary, never a filtered payload
+
+**Status:** accepted. **Milestone:** Production Spine v4C.
+**Plan:** `docs/plans/spine-v4c-observability-export.md`.
+
+The public core provides one closed, versioned contract for handing bounded
+operational evidence to an observability system the deployment already runs.
+It is not an observability backend: nothing here stores, aggregates, queries,
+retains or displays anything, and no managed observability service is claimed.
+The security audit remains the database authority — a telemetry failure can
+never rewrite business truth, and no signal replaces an audit write.
+
+The leak fence is the shape of what may be said, not a filter over what a
+caller passed. A signal name must be in a frozen registry; an attribute key
+must be declared for that signal; an attribute value must be a member of a
+kernel-enumerated closed set, a `boundedFailureCode`-charset code, a
+registration identifier, a bounded integer or a boolean. Attributes are flat,
+so no nested structure exists for a payload to travel in, and a record that
+fails any of those checks is refused whole and counted, never silently
+repaired. Rejecting a record rather than stripping the offending key is
+deliberate: stripping hides the producer defect that put it there.
+
+The envelope and its attributes are copied into data-only snapshots before any
+check runs, so a value is read exactly once. Validating one read and exporting
+another is the whole of the bug this closes: an accessor could satisfy the
+allowlist and then return free text, a nested object, or an exception thrown
+out of the public sink from a read that sat outside every `try`.
+
+Each snapshot has a **null prototype**. On an ordinary object
+`snapshot.__proto__ = v` reaches `Object.prototype`'s accessor and replaces the
+prototype instead of creating an own property, so an envelope whose only own
+key was `__proto__` produced a snapshot with no own keys, passed the closed-key
+check with nothing to refuse, and had `signal`, `attributes` and `value` read
+through getters the caller supplied. With no prototype there is no inherited
+accessor for any key to reach, which is why this is stated as a property of the
+object rather than as a list of keys to watch for.
+
+Refusing accessors is a separate guard from reading once, and both are load
+bearing. Reading once prevents the two-read leak. Refusing accessors closes a
+case reading once does not: the three zero-attribute metric signals, where an
+accessor on `attributes` collapses to `undefined`, `?? {}` supplies a valid
+empty set, and nothing is required to be missing — so the record is accepted.
+
+No record identifier is exportable in v1 — not the tenant id or any
+fingerprint, not the job, run or worker id, not the idempotency root or the
+outcome reference. Tenant identity is leak material in this repository by
+precedent (ADR-041's bounded diagnostics exist because a driver message
+carries tenant ids), caller-chosen bounded text stays domain data however
+short, and a job id is a durable key into tenant-scoped rows that the audit
+log already correlates behind authorization while telemetry has none. The
+stated consequence is that v1 telemetry is aggregate-shaped rather than
+per-record traceable; correlation requires a later, deliberately authorized
+contract version rather than a widened attribute list.
+
+Two limits inside that fence are narrower than "no identifier is exportable"
+and are stated rather than left to be discovered. A job `kind` and `handler`
+name are chosen by whoever enqueued the work — `enqueue` bounds them to the
+identifier charset and checks no membership against the handler registry — so a
+caller who names a job after a uuid, a tenant slug or a dotted email localpart
+sees exactly that exported. Every attribute the kernel itself fills stays
+closed. Narrowing this by refusing uuid-shaped or address-shaped values would
+be a denylist, which is the thing this ADR refuses; closing it properly means
+checking registry membership at the seam, and that is a v2 contract change.
+
+Failure is best effort and bounded, stated exactly. An emission returns a
+boolean and never throws; no producer awaits one. Delivery is tracked in a
+bounded in-flight set rather than a growing queue, so backpressure is a counted
+drop with no batch to lose and no timer to schedule. **That drop is not
+necessarily transient**, and "backpressure" invites the wrong reading: nothing
+evicts an in-flight entry, so once `maxInFlight` emissions hang, every later
+signal drops for the life of the process, `inFlight` never returns to zero and
+every `close()` reports a timeout. It stays bounded and never crashes, as
+promised — but a permanently wedged exporter permanently silences telemetry
+instead of degrading it. Evicting would need a timer per emission, which is the
+timer-free property this sink is built on, so v1 declares the behaviour rather
+than buying it back. Flush and close each have
+a deadline built on the same race-and-clear shape as the V3A worker drain, so a
+hung exporter cannot hang application shutdown and no timer is leaked. Close is
+memoized: the exporter is closed at most once, and a later emission is a
+counted drop, not an exception raised into a shutdown path.
+
+`requireTelemetrySink` catches the composition error, not an adversary. A
+shape check is not a security barrier: a hostile composer already controls the
+process, so it is outside the threat model. A legitimate decorator that wraps a
+sink and forwards its six operations passes the check, and it is right that it
+passes — it forwards to a real sink. What makes the residual case non-fatal is
+not the discriminator but the thenable swallow in `report()`; saying where the
+defence is *not* without saying where it *is* would leave a reader who defeats
+the shape check concluding there is none.
+
+Lifecycle is application-owned. Constructing a sink starts no timer, socket or
+process, and the default async application factory gains no telemetry option in
+v4C. **Not because there is nothing there to instrument** — an earlier draft of
+this ADR said that and it was false: `createAccordoAppAsync` reaches
+`startPostgresqlLifecycle`, which calls `bootstrapPostgresqlApplication`, and
+that is the readiness producer. The reason is that giving the factory a
+telemetry option is a lifecycle decision — who constructs the sink, who owns
+its shutdown order relative to the data plane — and v4C deliberately leaves it
+to the composition that will own it rather than inventing an owner here.
+
+The measured consequence, stated because it is a real limit rather than a
+detail: `startPostgresqlLifecycle` forwards a closed option list that does not
+include `telemetry`, so `accordo.postgresql.readiness` and
+`accordo.postgresql.writer_lease_remaining_ms` are **unreachable from every
+supported composition** in v4C. Only a direct call to
+`bootstrapPostgresqlApplication` emits them, which is what the hosted test
+does. They are implemented and proven, and no application can turn them on
+yet.
+
+**OpenTelemetry and OTLP are not implemented and not claimed.** They would add
+a large dependency tree against the rule that a production dependency must
+remove more complexity than it adds, and bring a global provider, context
+propagation and shutdown lifecycle of their own. The exporter shape is kept
+adapter-compatible — five operations, flat string-keyed attributes, bounded
+scalars — so an OTLP adapter can be written outside the kernel later without a
+contract change. `telemetryVocabulary().openTelemetry` is `false` so a reader
+of generated truth cannot infer support that does not exist.
+
+The eight construction symbols are exported from `packages/core/index.js` for
+the reason ADR-042's are: self-host composition and a future Cloud control
+plane are two concrete consumers of the same allowlist, and forcing either to
+deep-import private source or rebuild the redaction fence would fail the DX
+Simplicity Gate. No storage handle, locator, event bus or operator command
+enters the public surface, and this adds no agent-facing command, tool or
+namespace at all.
+
+### ADR-039 amendment — current GTM surfaces and release measurement
+
+The September 2026 audit found updated facts beside obsolete public prose: the
+site served current main, while its FAQ denied PostgreSQL and its own attached
+L-02 evidence affirmed it. The same failure affected lifecycle and customer
+data. The existing surface list now includes current public JSON and operating
+GTM entry points; the existing retired-claim mechanism rejects the observed
+false wording through both Repository Truth and the site check. It remains a
+finite lexical regression, not a semantic verifier or a new agent-facing rail.
+
+CI emits the existing measure-suite record from the verification it already
+runs. No count is transcribed; publication reconciles the artifact's commit and
+ancestry, the npm artifact and the deployed site separately. This changes
+repository maintenance and distribution evidence, not domain/runtime contracts.
+
+## ADR-044 — Measurement freshness that survives concurrent work
+
+**Status:** accepted
+
+A full measurement takes the whole `npm run verify` plus its verification, and the
+ledger called a record current only while HEAD's tests/ tree was byte-identical to
+the measured one. On a repository where anyone works, a tests/ merge landing inside
+that window makes the fresh measurement stale on arrival — observed when a
+re-measure taken at `bffb1c2` landed as `2b66877` already stale behind `312227b`,
+a one-file test reword that changed no count. Re-measuring harder cannot win that
+race; measuring smaller can.
+
+So freshness is per fact, and each rule proves what it claims with read-speed git
+alone. `measurement.test_file_count` stays current across a moved tree when HEAD
+holds exactly the recorded number of test files — an exact recount, not a guess.
+`measurement.source_sha` and `measurement.test_count` stay strict: only a
+byte-identical tests/ tree proves them, because no read-speed operation can recount
+executed tests across a content change. Anything unprovable reads stale, never
+current. `measurement.test_tree_current` keeps reporting the corpus move itself.
+
+`measure-suite --apply` records a per-file map beside the totals — which test file
+contributed how many passing tests, reconciled against the full run's count or
+nothing is recorded — and `site-check.js` verifies the map against the named
+commit exactly (same file set, same total), so a hand-edited map fails the build
+like any re-pointed number. `npm run measure:refresh` re-anchors the record at
+HEAD by running only the added and changed test files, requiring them green, and
+carrying the rest; a helper or fixture edit under tests/, a broken lineage, a red
+targeted run, or a record that predates the map fails closed, and the refresh
+chases a moving tip for three rounds before refusing rather than recording a guess.
+
+A superseded measurement names the commits that touched tests/ since — in the
+site-check provenance note and in `repo:truth -- --check` output, never in the
+committed document, where a per-merge list would restate the document on every
+green PR.
+
+Rejected: inferring count-neutrality from the diff (a reworded string can hide a
+data-driven count change — a parser's guess where a contract must prove);
+excluding the measurement facts from the current-facts ratio (loosening the
+validation to hide the failure); fully automatic ledger commits from CI (a second
+change boundary: new automation with push permissions this change cannot verify).
+
+Boundary stated plainly: after a tests/ content change, `test_count` still reads
+stale until the minutes-long refresh confirms the count. The gate cannot prove
+what only execution knows, and it does not pretend otherwise.
+
+### ADR-044 addendum — one run supplies its own decomposition
+
+The original full measurement ran verify and then every test file again,
+sequentially. Those executions were expensive and were not the run the map
+claimed to decompose. `measure-suite` now attaches a machine reporter alongside
+the human reporter to the same `npm run verify`: Node's per-file and root
+summary counters must cover the exact committed file set and reconcile, or no
+record is written. Passing counts exclude skipped and todo cases according to
+the runner, not a reconstruction from printed test names. A missing channel,
+failed command, dirty tree or changed HEAD refuses publication.
+
+Refresh now reads the whole commit diff. An input outside `tests/` refuses,
+except an update solely to `site/claims.json`'s `measuredAgainst` field. Test
+helpers and fixtures still require a full run. Previously a source-only
+regression was invisible to the refresh plan, so unchanged test files could
+carry stale green results. There is no inferred dependency graph and even
+prose changes conservatively require full measurement. Constructed and actual
+runner proofs live in `tests/measurement-report.test.js` and
+`tests/measure-refresh.test.js`; the recovery boundary is recorded in
+`docs/plans/single-run-measurement.md`.
+
+## ADR-045 — MK1 is observation and proposal evidence, with no campaign execution
+
+**Status:** proposed for MK1 recovery review.
+
+MK1 uses the existing package seam, module factory and action runtime. An
+optional marketing package owns authored funnel definitions and managed run,
+insight, proposal and approval-version records. A supplied count observation
+snapshots its definition and derives the largest relative loss; it never queries
+a provider or establishes causality. Draft completeness is a policy-bound review,
+not audience, consent, provider-installation or strategy validation.
+
+Public CRUD authors funnel definitions only. Observation, proposal preparation,
+revision, review and human approval are package actions; multi-record writes use
+the existing runtime transaction. Draft/refused proposals may be revised;
+approved proposals are terminal and their evidence cannot be rewritten. Approval
+rechecks the exact reviewed policy vocabulary and fingerprint. One user actor
+approves; names in required approvals are review content, not new role controls.
+Production identity depends on the existing Spine configuration.
+
+The default package registry stays empty. The opt-in composition and public
+journey are documented in `packages/marketing/README.md`; a real temporary
+project proves them in `tests/marketing-e2e.test.js`. The Admin review screen is
+app-owned because no package Admin extension seam exists. No new runtime
+capability, provider, CLI namespace or MCP tool is added. Audiences, sending,
+scheduling, publishing and spending remain outside MK1.
+ (fix(marketing): prove the public proposal journey and preserve approval evidence)

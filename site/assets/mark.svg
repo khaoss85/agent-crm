@@ -1,6 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" role="img" aria-label="Project mark">
-  <title>A process that rises to a decision point and continues only past it</title>
-  <rect x="1.5" y="1.5" width="21" height="21" rx="6.5" stroke="{{color.accent}}" stroke-width="1.6" />
-  <path d="M6 15.5 L10.2 15.5 L12 8.5 L13.8 15.5 L18 15.5" stroke="{{color.accent}}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-  <circle cx="12" cy="8.5" r="2.4" fill="{{color.accent}}" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none" role="img" aria-label="Project mark">
+  <title>Four arcs — agent, policy, human and evidence — closing into one accord</title>
+  <desc>Each arc is one authority in a single business decision. None of them is a complete ring; the state in the centre is valid only when all four have closed around it.</desc>
+  <circle cx="60" cy="60" r="44" stroke="{{flow.agent}}" stroke-width="14" stroke-linecap="round" stroke-dasharray="54 222.5" />
+  <circle cx="60" cy="60" r="44" stroke="{{flow.policy}}" stroke-width="14" stroke-linecap="round" stroke-dasharray="54 222.5" transform="rotate(90 60 60)" />
+  <circle cx="60" cy="60" r="44" stroke="{{flow.human}}" stroke-width="14" stroke-linecap="round" stroke-dasharray="54 222.5" transform="rotate(180 60 60)" />
+  <circle cx="60" cy="60" r="44" stroke="{{flow.evidence}}" stroke-width="14" stroke-linecap="round" stroke-dasharray="54 222.5" transform="rotate(270 60 60)" />
+  <circle cx="60" cy="60" r="15" fill="{{flow.accord}}" />
 </svg>

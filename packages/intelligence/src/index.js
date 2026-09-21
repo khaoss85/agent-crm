@@ -1,6 +1,6 @@
 // @ts-check
 
-import { definePackage } from '../../core/index.js';
+import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { IntelligenceRegistries } from './registry.js';
 import { buildEnrichAction, buildRecordSignalAction, buildScoreAction, buildRouteAction } from './actions.js';
 import { createIntelligenceCapability } from './capability.js';
@@ -121,7 +121,12 @@ export function createIntelligenceDomain(options = {}) {
   pkg.persistFingerprints = (database) => registries.persistFingerprints(database);
   /** The registries, for the composition that owns this package instance. */
   pkg.registries = registries;
-  return pkg;
+  return selectPackageGraph(pkg, options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createIntelligenceDomain()` callers keep v1. */
+export function createIntelligenceDomainV2(options = {}) {
+  return createIntelligenceDomain({ ...options, packageContract: 2 });
 }
 
 export { IntelligenceRegistries } from './registry.js';

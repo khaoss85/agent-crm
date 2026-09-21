@@ -1,8 +1,21 @@
 // @ts-check
 
 import { NotFoundError, ValidationError } from './errors.js';
+import { PERMISSIONS } from './authorization.js';
 
+/** The action contract version this framework emits. Still a single number. */
 export const SUPPORTED_ACTION_CONTRACT = 1;
+
+/**
+ * The action contract versions it accepts (Spine v2 M2E-1). Separate from the
+ * constant above **on purpose**: `externalOperation` — a different field, the
+ * ADR-017 phase-shape marker — is validated against `SUPPORTED_ACTION_CONTRACT`
+ * below, and widening that constant in place would have silently accepted
+ * `externalOperation: 2`.
+ */
+export const SUPPORTED_ACTION_CONTRACTS = Object.freeze([1, 2]);
+/** ADR-017 phase-shape marker. 1 is the SQLite/legacy runner; 2 is PostgreSQL recovery. */
+export const SUPPORTED_EXTERNAL_OPERATION_CONTRACTS = Object.freeze([1, 2]);
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
 // `json` is bounded structured input (a signer list, ADR-017): the runtime
 // normalizes it to plain JSON-safe data, drops dangerous keys and bounds its
@@ -15,7 +28,7 @@ const INPUT_TYPES = new Set(['string', 'timestamp', 'enum', 'integer', 'boolean'
  *   name: string,
  *   label?: string,
  *   description?: string,
- *   actionContract: 1,
+ *   actionContract: 1 | 2,
  *   input?: Array<{name: string, type: 'string' | 'timestamp' | 'enum' | 'integer', required?: boolean, values?: string[]}>,
  *   fromStates?: string[],
  *   stateField?: string,
@@ -44,8 +57,32 @@ export function validateActionDefinition(definition, deps) {
   if (typeof definition.name !== 'string' || !NAME_RE.test(definition.name)) {
     throw new ValidationError(`${label}: name must match ${NAME_RE}`);
   }
-  if (definition.actionContract !== SUPPORTED_ACTION_CONTRACT) {
-    throw new ValidationError(`${label}: actionContract must be ${SUPPORTED_ACTION_CONTRACT}`);
+  if (!SUPPORTED_ACTION_CONTRACTS.includes(definition.actionContract)) {
+    throw new ValidationError(`${label}: actionContract must be one of ${SUPPORTED_ACTION_CONTRACTS.join(', ')}`);
+  }
+  // ADR-038. `requiredPermission` is contractual, so it is checked where every
+  // other contractual field is checked: at registration, not at the first
+  // request. An unknown key would otherwise fail closed at request time — which
+  // is fail-closed but not fail-fast, and this repository's own rule is that a
+  // process boots correctly configured or does not boot.
+  //
+  // The floor matters more than the spelling. Every record action mutates a
+  // record, which is exactly why the default is `records.write`; a declaration
+  // is there to ask for something *stronger*, never to drop below it. Without
+  // this check a package could declare `records.read` on a mutating action and
+  // silently hand every viewer a write.
+  if (definition.requiredPermission !== undefined) {
+    if (typeof definition.requiredPermission !== 'string' || !PERMISSIONS.includes(definition.requiredPermission)) {
+      throw new ValidationError(
+        `${label}: requiredPermission must be one of ${PERMISSIONS.join(', ')}`,
+      );
+    }
+    if (definition.requiredPermission === 'records.read') {
+      throw new ValidationError(
+        `${label}: a record action mutates a record, so it may not require only "records.read" — `
+        + 'declare a stronger permission or none at all',
+      );
+    }
   }
   if (!deps.moduleExists(definition.module)) {
     throw new ValidationError(`${label}: target module "${definition.module}" is not a generated module`);
@@ -56,8 +93,14 @@ export function validateActionDefinition(definition, deps) {
   // local write transactions, which a single `execute` cannot express
   // honestly. Exactly one of the two shapes must be present.
   if (definition.externalOperation !== undefined) {
-    if (definition.externalOperation !== SUPPORTED_ACTION_CONTRACT) {
-      throw new ValidationError(`${label}: externalOperation must be ${SUPPORTED_ACTION_CONTRACT}`);
+    // Phase-shape marker, not the action contract. v1 is the original
+    // ADR-017 runner; v2 adds durable intent/finalize keys, a provider
+    // idempotency key and read-only reconcile. PostgreSQL composition
+    // refuses v1 separately — this validator accepts both.
+    if (!SUPPORTED_EXTERNAL_OPERATION_CONTRACTS.includes(definition.externalOperation)) {
+      throw new ValidationError(
+        `${label}: externalOperation must be one of ${SUPPORTED_EXTERNAL_OPERATION_CONTRACTS.join(', ')}`,
+      );
     }
     if (typeof definition.execute === 'function') {
       throw new ValidationError(`${label}: an external-operation action declares intent/external/finalize phases, not execute`);
@@ -153,7 +196,7 @@ export function actionMetadata(action) {
     name: action.name,
     label: action.label ?? action.name,
     description: action.description ?? null,
-    actionContract: SUPPORTED_ACTION_CONTRACT,
+    actionContract: action.actionContract,
     input: (action.input ?? []).map((field) => ({
       name: field.name,
       type: field.type,

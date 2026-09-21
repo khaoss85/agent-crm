@@ -1,0 +1,3152 @@
+[
+  {
+    "capability_id": "PLT-001",
+    "domain": "Platform Foundation",
+    "name": "Tenant, workspace e business unit",
+    "description": "Capacità di tenant, workspace e business unit come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-002",
+    "domain": "Platform Foundation",
+    "name": "Modello entità e campi configurabile via manifest",
+    "description": "Capacità di modello entità e campi configurabile via manifest come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-003",
+    "domain": "Platform Foundation",
+    "name": "Relazioni e gerarchie configurabili",
+    "description": "Capacità di relazioni e gerarchie configurabili come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-004",
+    "domain": "Platform Foundation",
+    "name": "Custom object e custom field",
+    "description": "Capacità di custom object e custom field come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-005",
+    "domain": "Platform Foundation",
+    "name": "Migrazioni e versioning dello schema",
+    "description": "Capacità di migrazioni e versioning dello schema come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-006",
+    "domain": "Platform Foundation",
+    "name": "Ruoli, team e permission model",
+    "description": "Capacità di ruoli, team e permission model come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-007",
+    "domain": "Platform Foundation",
+    "name": "Field-level e record-level security",
+    "description": "Capacità di field-level e record-level security come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-008",
+    "domain": "Platform Foundation",
+    "name": "Audit trail di record e configurazioni",
+    "description": "Capacità di audit trail di record e configurazioni come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-009",
+    "domain": "Platform Foundation",
+    "name": "Ricerca, indicizzazione e viste",
+    "description": "Capacità di ricerca, indicizzazione e viste come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-010",
+    "domain": "Platform Foundation",
+    "name": "Operazioni bulk e mass update",
+    "description": "Capacità di operazioni bulk e mass update come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-011",
+    "domain": "Platform Foundation",
+    "name": "Import, export e mapping",
+    "description": "Capacità di import, export e mapping come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-012",
+    "domain": "Platform Foundation",
+    "name": "Sandbox, ambienti e dati seed",
+    "description": "Capacità di sandbox, ambienti e dati seed come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-013",
+    "domain": "Platform Foundation",
+    "name": "Feature flag e progressive rollout",
+    "description": "Capacità di feature flag e progressive rollout come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-014",
+    "domain": "Platform Foundation",
+    "name": "Localizzazione, valuta e fuso orario",
+    "description": "Capacità di localizzazione, valuta e fuso orario come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-015",
+    "domain": "Platform Foundation",
+    "name": "Esperienza mobile e offline",
+    "description": "Capacità di esperienza mobile e offline come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-016",
+    "domain": "Platform Foundation",
+    "name": "Console amministrativa",
+    "description": "Capacità di console amministrativa come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-017",
+    "domain": "Platform Foundation",
+    "name": "Archiviazione, retention e restore",
+    "description": "Capacità di archiviazione, retention e restore come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "PLT-018",
+    "domain": "Platform Foundation",
+    "name": "Notifiche, subscription e digest",
+    "description": "Capacità di notifiche, subscription e digest come parte della fondazione multi-tenant, configurabile, sicura e amministrabile.",
+    "required_evidence": [
+      "schema/manifest",
+      "service/API",
+      "admin UI",
+      "authorization test",
+      "migration/rollback test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-001",
+    "domain": "Customer Data Platform",
+    "name": "Connettori a fonti dati",
+    "description": "Capacità di connettori a fonti dati come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-002",
+    "domain": "Customer Data Platform",
+    "name": "Ingestion batch",
+    "description": "Capacità di ingestion batch come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-003",
+    "domain": "Customer Data Platform",
+    "name": "Ingestion streaming e real-time",
+    "description": "Capacità di ingestion streaming e real-time come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-004",
+    "domain": "Customer Data Platform",
+    "name": "Reverse ETL e data activation",
+    "description": "Capacità di reverse etl e data activation come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-005",
+    "domain": "Customer Data Platform",
+    "name": "Identity resolution",
+    "description": "Capacità di identity resolution come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-006",
+    "domain": "Customer Data Platform",
+    "name": "Profile stitching e unified profile",
+    "description": "Capacità di profile stitching e unified profile come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-007",
+    "domain": "Customer Data Platform",
+    "name": "Gerarchie account, contact e household",
+    "description": "Capacità di gerarchie account, contact e household come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-008",
+    "domain": "Customer Data Platform",
+    "name": "Golden record e master data management",
+    "description": "Capacità di golden record e master data management come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-009",
+    "domain": "Customer Data Platform",
+    "name": "Data profiling e quality score",
+    "description": "Capacità di data profiling e quality score come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-010",
+    "domain": "Customer Data Platform",
+    "name": "Validazione, standardizzazione e enrichment",
+    "description": "Capacità di validazione, standardizzazione e enrichment come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-011",
+    "domain": "Customer Data Platform",
+    "name": "Deduplica, merge e survivorship",
+    "description": "Capacità di deduplica, merge e survivorship come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-012",
+    "domain": "Customer Data Platform",
+    "name": "Lineage, catalogo e provenienza",
+    "description": "Capacità di lineage, catalogo e provenienza come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-013",
+    "domain": "Customer Data Platform",
+    "name": "Customer timeline unificata",
+    "description": "Capacità di customer timeline unificata come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-014",
+    "domain": "Customer Data Platform",
+    "name": "Product usage e behavioral events",
+    "description": "Capacità di product usage e behavioral events come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-015",
+    "domain": "Customer Data Platform",
+    "name": "Ordini, transazioni, billing e subscription",
+    "description": "Capacità di ordini, transazioni, billing e subscription come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-016",
+    "domain": "Customer Data Platform",
+    "name": "Intent, firmographic e third-party enrichment",
+    "description": "Capacità di intent, firmographic e third-party enrichment come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-017",
+    "domain": "Customer Data Platform",
+    "name": "Data contract e schema registry",
+    "description": "Capacità di data contract e schema registry come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-018",
+    "domain": "Customer Data Platform",
+    "name": "Freshness, SLA e volume monitoring",
+    "description": "Capacità di freshness, sla e volume monitoring come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-019",
+    "domain": "Customer Data Platform",
+    "name": "Consent, preference e lawful basis data",
+    "description": "Capacità di consent, preference e lawful basis data come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-020",
+    "domain": "Customer Data Platform",
+    "name": "Computed trait, feature e score",
+    "description": "Capacità di computed trait, feature e score come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-021",
+    "domain": "Customer Data Platform",
+    "name": "Destination e audience activation",
+    "description": "Capacità di destination e audience activation come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DAT-022",
+    "domain": "Customer Data Platform",
+    "name": "Buying committee e relationship graph",
+    "description": "Capacità di buying committee e relationship graph come parte della raccolta, unificazione, qualità e attivazione dei dati cliente.",
+    "required_evidence": [
+      "connector or ingestion code",
+      "data model",
+      "lineage/freshness",
+      "quality test",
+      "activation test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-001",
+    "domain": "Sales CRM",
+    "name": "Lead capture e conversion",
+    "description": "Capacità di lead capture e conversion come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-002",
+    "domain": "Sales CRM",
+    "name": "Lead e account routing",
+    "description": "Capacità di lead e account routing come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-003",
+    "domain": "Sales CRM",
+    "name": "Qualification framework ed exit criteria",
+    "description": "Capacità di qualification framework ed exit criteria come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-004",
+    "domain": "Sales CRM",
+    "name": "Scoring e prioritizzazione",
+    "description": "Capacità di scoring e prioritizzazione come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-005",
+    "domain": "Sales CRM",
+    "name": "Account e contact management",
+    "description": "Capacità di account e contact management come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-006",
+    "domain": "Sales CRM",
+    "name": "Opportunity, stage e pipeline management",
+    "description": "Capacità di opportunity, stage e pipeline management come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-007",
+    "domain": "Sales CRM",
+    "name": "Sync email, calendario e attività",
+    "description": "Capacità di sync email, calendario e attività come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-008",
+    "domain": "Sales CRM",
+    "name": "Sequence, cadence e task automation",
+    "description": "Capacità di sequence, cadence e task automation come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-009",
+    "domain": "Sales CRM",
+    "name": "Meeting e conversation intelligence",
+    "description": "Capacità di meeting e conversation intelligence come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-010",
+    "domain": "Sales CRM",
+    "name": "Next best action commerciale",
+    "description": "Capacità di next best action commerciale come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-011",
+    "domain": "Sales CRM",
+    "name": "Forecasting e commit",
+    "description": "Capacità di forecasting e commit come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-012",
+    "domain": "Sales CRM",
+    "name": "Territori, quote e capacità",
+    "description": "Capacità di territori, quote e capacità come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-013",
+    "domain": "Sales CRM",
+    "name": "Deal inspection e risk signal",
+    "description": "Capacità di deal inspection e risk signal come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-014",
+    "domain": "Sales CRM",
+    "name": "Mutual action plan e stakeholder plan",
+    "description": "Capacità di mutual action plan e stakeholder plan come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-015",
+    "domain": "Sales CRM",
+    "name": "Quote, product configuration e CPQ",
+    "description": "Capacità di quote, product configuration e cpq come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-016",
+    "domain": "Sales CRM",
+    "name": "Approval e deal desk",
+    "description": "Capacità di approval e deal desk come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-017",
+    "domain": "Sales CRM",
+    "name": "Contratti, redline ed e-sign",
+    "description": "Capacità di contratti, redline ed e-sign come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-018",
+    "domain": "Sales CRM",
+    "name": "Sales playbook e guided selling",
+    "description": "Capacità di sales playbook e guided selling come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-019",
+    "domain": "Sales CRM",
+    "name": "Relationship intelligence",
+    "description": "Capacità di relationship intelligence come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-020",
+    "domain": "Sales CRM",
+    "name": "Competitive intelligence e win-loss",
+    "description": "Capacità di competitive intelligence e win-loss come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-021",
+    "domain": "Sales CRM",
+    "name": "Partner, channel e deal registration",
+    "description": "Capacità di partner, channel e deal registration come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-022",
+    "domain": "Sales CRM",
+    "name": "Handoff a onboarding e Customer",
+    "description": "Capacità di handoff a onboarding e customer come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-023",
+    "domain": "Sales CRM",
+    "name": "Mobile sales workspace",
+    "description": "Capacità di mobile sales workspace come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "SAL-024",
+    "domain": "Sales CRM",
+    "name": "Attainment, commission e incentive visibility",
+    "description": "Capacità di attainment, commission e incentive visibility come parte della processi commerciali dalla prospezione alla chiusura e all'handoff.",
+    "required_evidence": [
+      "domain model",
+      "service/workflow",
+      "role UI",
+      "permission test",
+      "end-to-end scenario"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-001",
+    "domain": "Marketing & Growth",
+    "name": "Audience e segment builder",
+    "description": "Capacità di audience e segment builder come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-002",
+    "domain": "Marketing & Growth",
+    "name": "Segmenti real-time",
+    "description": "Capacità di segmenti real-time come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-003",
+    "domain": "Marketing & Growth",
+    "name": "Journey e lifecycle orchestration",
+    "description": "Capacità di journey e lifecycle orchestration come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-004",
+    "domain": "Marketing & Growth",
+    "name": "Campaign planning e calendario",
+    "description": "Capacità di campaign planning e calendario come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-005",
+    "domain": "Marketing & Growth",
+    "name": "Activation multicanale",
+    "description": "Capacità di activation multicanale come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-006",
+    "domain": "Marketing & Growth",
+    "name": "Email, SMS, push e messaging",
+    "description": "Capacità di email, sms, push e messaging come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-007",
+    "domain": "Marketing & Growth",
+    "name": "Paid media audience sync",
+    "description": "Capacità di paid media audience sync come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-008",
+    "domain": "Marketing & Growth",
+    "name": "Web e in-app personalization",
+    "description": "Capacità di web e in-app personalization come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-009",
+    "domain": "Marketing & Growth",
+    "name": "Content e asset management",
+    "description": "Capacità di content e asset management come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-010",
+    "domain": "Marketing & Growth",
+    "name": "Template e brand governance",
+    "description": "Capacità di template e brand governance come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-011",
+    "domain": "Marketing & Growth",
+    "name": "Dynamic content e personalization",
+    "description": "Capacità di dynamic content e personalization come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-012",
+    "domain": "Marketing & Growth",
+    "name": "Form, landing page e lead capture",
+    "description": "Capacità di form, landing page e lead capture come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-013",
+    "domain": "Marketing & Growth",
+    "name": "A/B test ed experimentation",
+    "description": "Capacità di a/b test ed experimentation come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-014",
+    "domain": "Marketing & Growth",
+    "name": "Deliverability, pressure e frequency cap",
+    "description": "Capacità di deliverability, pressure e frequency cap come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-015",
+    "domain": "Marketing & Growth",
+    "name": "Attribution e revenue influence",
+    "description": "Capacità di attribution e revenue influence come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-016",
+    "domain": "Marketing & Growth",
+    "name": "Budget, pacing e spend control",
+    "description": "Capacità di budget, pacing e spend control come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-017",
+    "domain": "Marketing & Growth",
+    "name": "SEO e content intelligence",
+    "description": "Capacità di seo e content intelligence come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-018",
+    "domain": "Marketing & Growth",
+    "name": "ABM e intent orchestration",
+    "description": "Capacità di abm e intent orchestration come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-019",
+    "domain": "Marketing & Growth",
+    "name": "Lead nurture e lifecycle",
+    "description": "Capacità di lead nurture e lifecycle come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-020",
+    "domain": "Marketing & Growth",
+    "name": "Suppression, exclusion e eligibility",
+    "description": "Capacità di suppression, exclusion e eligibility come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-021",
+    "domain": "Marketing & Growth",
+    "name": "Campaign QA e approval",
+    "description": "Capacità di campaign qa e approval come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-022",
+    "domain": "Marketing & Growth",
+    "name": "Conversion rate optimization",
+    "description": "Capacità di conversion rate optimization come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-023",
+    "domain": "Marketing & Growth",
+    "name": "UTM, taxonomy e tracking governance",
+    "description": "Capacità di utm, taxonomy e tracking governance come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-024",
+    "domain": "Marketing & Growth",
+    "name": "Event, webinar e social activation",
+    "description": "Capacità di event, webinar e social activation come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "MKT-025",
+    "domain": "Marketing & Growth",
+    "name": "Next best content e recommendation",
+    "description": "Capacità di next best content e recommendation come parte della segmentazione, orchestration, contenuti, activation e misurazione.",
+    "required_evidence": [
+      "audience/journey model",
+      "orchestration",
+      "channel integration",
+      "QA/consent test",
+      "measurement"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-001",
+    "domain": "Customer Success & Service",
+    "name": "Onboarding plan e milestone",
+    "description": "Capacità di onboarding plan e milestone come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-002",
+    "domain": "Customer Success & Service",
+    "name": "Customer health score",
+    "description": "Capacità di customer health score come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-003",
+    "domain": "Customer Success & Service",
+    "name": "Adoption e usage monitoring",
+    "description": "Capacità di adoption e usage monitoring come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-004",
+    "domain": "Customer Success & Service",
+    "name": "Success plan e outcome tracking",
+    "description": "Capacità di success plan e outcome tracking come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-005",
+    "domain": "Customer Success & Service",
+    "name": "QBR, EBR e task management",
+    "description": "Capacità di qbr, ebr e task management come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-006",
+    "domain": "Customer Success & Service",
+    "name": "Churn, contraction e risk signal",
+    "description": "Capacità di churn, contraction e risk signal come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-007",
+    "domain": "Customer Success & Service",
+    "name": "Renewal management e forecast",
+    "description": "Capacità di renewal management e forecast come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-008",
+    "domain": "Customer Success & Service",
+    "name": "Expansion e upsell signal",
+    "description": "Capacità di expansion e upsell signal come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-009",
+    "domain": "Customer Success & Service",
+    "name": "Case e ticket management",
+    "description": "Capacità di case e ticket management come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-010",
+    "domain": "Customer Success & Service",
+    "name": "Omnichannel service",
+    "description": "Capacità di omnichannel service come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-011",
+    "domain": "Customer Success & Service",
+    "name": "SLA, queue e skill-based routing",
+    "description": "Capacità di sla, queue e skill-based routing come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-012",
+    "domain": "Customer Success & Service",
+    "name": "Knowledge base e retrieval",
+    "description": "Capacità di knowledge base e retrieval come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-013",
+    "domain": "Customer Success & Service",
+    "name": "Agent assist",
+    "description": "Capacità di agent assist come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-014",
+    "domain": "Customer Success & Service",
+    "name": "Voice of customer",
+    "description": "Capacità di voice of customer come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-015",
+    "domain": "Customer Success & Service",
+    "name": "NPS, CSAT e CES",
+    "description": "Capacità di nps, csat e ces come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-016",
+    "domain": "Customer Success & Service",
+    "name": "Escalation, swarming e incident",
+    "description": "Capacità di escalation, swarming e incident come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-017",
+    "domain": "Customer Success & Service",
+    "name": "Customer portal e self-service",
+    "description": "Capacità di customer portal e self-service come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-018",
+    "domain": "Customer Success & Service",
+    "name": "Entitlement, contract e service eligibility",
+    "description": "Capacità di entitlement, contract e service eligibility come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-019",
+    "domain": "Customer Success & Service",
+    "name": "Customer communication e notification",
+    "description": "Capacità di customer communication e notification come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-020",
+    "domain": "Customer Success & Service",
+    "name": "Service analytics e workforce",
+    "description": "Capacità di service analytics e workforce come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-021",
+    "domain": "Customer Success & Service",
+    "name": "Product feedback loop",
+    "description": "Capacità di product feedback loop come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-022",
+    "domain": "Customer Success & Service",
+    "name": "Value realization e ROI",
+    "description": "Capacità di value realization e roi come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "CSV-023",
+    "domain": "Customer Success & Service",
+    "name": "Advocacy, reference e community",
+    "description": "Capacità di advocacy, reference e community come parte della onboarding, adozione, valore, retention e assistenza.",
+    "required_evidence": [
+      "customer model",
+      "workflow/queue",
+      "role UI",
+      "SLA test",
+      "outcome telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-001",
+    "domain": "Analytics & AI",
+    "name": "Semantic metric layer",
+    "description": "Capacità di semantic metric layer come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-002",
+    "domain": "Analytics & AI",
+    "name": "Dashboard ed exploration",
+    "description": "Capacità di dashboard ed exploration come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-003",
+    "domain": "Analytics & AI",
+    "name": "Funnel, cohort e journey analytics",
+    "description": "Capacità di funnel, cohort e journey analytics come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-004",
+    "domain": "Analytics & AI",
+    "name": "Forecasting e predictive analytics",
+    "description": "Capacità di forecasting e predictive analytics come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-005",
+    "domain": "Analytics & AI",
+    "name": "Causal inference ed experimentation",
+    "description": "Capacità di causal inference ed experimentation come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-006",
+    "domain": "Analytics & AI",
+    "name": "Attribution e marketing mix modeling",
+    "description": "Capacità di attribution e marketing mix modeling come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-007",
+    "domain": "Analytics & AI",
+    "name": "Natural language query",
+    "description": "Capacità di natural language query come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-008",
+    "domain": "Analytics & AI",
+    "name": "Anomaly detection",
+    "description": "Capacità di anomaly detection come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-009",
+    "domain": "Analytics & AI",
+    "name": "Propensity, health e risk scoring",
+    "description": "Capacità di propensity, health e risk scoring come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-010",
+    "domain": "Analytics & AI",
+    "name": "Recommendation e next best action",
+    "description": "Capacità di recommendation e next best action come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-011",
+    "domain": "Analytics & AI",
+    "name": "Generazione di contenuti e artefatti",
+    "description": "Capacità di generazione di contenuti e artefatti come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-012",
+    "domain": "Analytics & AI",
+    "name": "Riassunto di conversazioni e record",
+    "description": "Capacità di riassunto di conversazioni e record come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-013",
+    "domain": "Analytics & AI",
+    "name": "Knowledge retrieval e RAG",
+    "description": "Capacità di knowledge retrieval e rag come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-014",
+    "domain": "Analytics & AI",
+    "name": "Agent runtime e orchestration",
+    "description": "Capacità di agent runtime e orchestration come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-015",
+    "domain": "Analytics & AI",
+    "name": "Tool e action registry",
+    "description": "Capacità di tool e action registry come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-016",
+    "domain": "Analytics & AI",
+    "name": "Memoria, contesto e state agentico",
+    "description": "Capacità di memoria, contesto e state agentico come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-017",
+    "domain": "Analytics & AI",
+    "name": "Planning e task decomposition",
+    "description": "Capacità di planning e task decomposition come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-018",
+    "domain": "Analytics & AI",
+    "name": "Collaborazione multi-agent",
+    "description": "Capacità di collaborazione multi-agent come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-019",
+    "domain": "Analytics & AI",
+    "name": "Human approval e exception inbox",
+    "description": "Capacità di human approval e exception inbox come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-020",
+    "domain": "Analytics & AI",
+    "name": "Policy, guardrail e autonomy boundary",
+    "description": "Capacità di policy, guardrail e autonomy boundary come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-021",
+    "domain": "Analytics & AI",
+    "name": "Evaluation harness e regression test",
+    "description": "Capacità di evaluation harness e regression test come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-022",
+    "domain": "Analytics & AI",
+    "name": "Prompt, model e version management",
+    "description": "Capacità di prompt, model e version management come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-023",
+    "domain": "Analytics & AI",
+    "name": "Cost, latency e token control",
+    "description": "Capacità di cost, latency e token control come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-024",
+    "domain": "Analytics & AI",
+    "name": "Explainability, evidenze e confidence",
+    "description": "Capacità di explainability, evidenze e confidence come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-025",
+    "domain": "Analytics & AI",
+    "name": "Feedback e learning loop",
+    "description": "Capacità di feedback e learning loop come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-026",
+    "domain": "Analytics & AI",
+    "name": "Simulation e digital twin",
+    "description": "Capacità di simulation e digital twin come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-027",
+    "domain": "Analytics & AI",
+    "name": "Autonomous optimization",
+    "description": "Capacità di autonomous optimization come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AIA-028",
+    "domain": "Analytics & AI",
+    "name": "Agent template e capability marketplace",
+    "description": "Capacità di agent template e capability marketplace come parte della decision intelligence, modelli, agenti, evidenze ed evaluation.",
+    "required_evidence": [
+      "metric/model/agent implementation",
+      "evaluation set",
+      "trace/evidence",
+      "guardrail test",
+      "cost/latency telemetry"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-001",
+    "domain": "Workflow & Automation",
+    "name": "Event e trigger rule",
+    "description": "Capacità di event e trigger rule come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-002",
+    "domain": "Workflow & Automation",
+    "name": "Visual workflow builder",
+    "description": "Capacità di visual workflow builder come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-003",
+    "domain": "Workflow & Automation",
+    "name": "Azione multi-step",
+    "description": "Capacità di azione multi-step come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-004",
+    "domain": "Workflow & Automation",
+    "name": "Branch, condition e decision table",
+    "description": "Capacità di branch, condition e decision table come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-005",
+    "domain": "Workflow & Automation",
+    "name": "Job schedulato e ricorrente",
+    "description": "Capacità di job schedulato e ricorrente come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-006",
+    "domain": "Workflow & Automation",
+    "name": "Transazione, idempotenza e exactly-once effect",
+    "description": "Capacità di transazione, idempotenza e exactly-once effect come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-007",
+    "domain": "Workflow & Automation",
+    "name": "Retry, timeout e dead-letter",
+    "description": "Capacità di retry, timeout e dead-letter come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-008",
+    "domain": "Workflow & Automation",
+    "name": "Transactional event outbox",
+    "description": "Capacità di transactional event outbox come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-009",
+    "domain": "Workflow & Automation",
+    "name": "Approval workflow",
+    "description": "Capacità di approval workflow come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-010",
+    "domain": "Workflow & Automation",
+    "name": "Task, SLA e due date",
+    "description": "Capacità di task, sla e due date come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-011",
+    "domain": "Workflow & Automation",
+    "name": "Webhook, API e external action",
+    "description": "Capacità di webhook, api e external action come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-012",
+    "domain": "Workflow & Automation",
+    "name": "Business rule e managed field",
+    "description": "Capacità di business rule e managed field come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-013",
+    "domain": "Workflow & Automation",
+    "name": "Change set, deployment e promotion",
+    "description": "Capacità di change set, deployment e promotion come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-014",
+    "domain": "Workflow & Automation",
+    "name": "Rollback e compensating action",
+    "description": "Capacità di rollback e compensating action come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-015",
+    "domain": "Workflow & Automation",
+    "name": "Run history, replay e debugging",
+    "description": "Capacità di run history, replay e debugging come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-016",
+    "domain": "Workflow & Automation",
+    "name": "Workflow template e blueprint",
+    "description": "Capacità di workflow template e blueprint come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-017",
+    "domain": "Workflow & Automation",
+    "name": "Process mining e bottleneck discovery",
+    "description": "Capacità di process mining e bottleneck discovery come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "AUT-018",
+    "domain": "Workflow & Automation",
+    "name": "Agent-triggered workflow",
+    "description": "Capacità di agent-triggered workflow come parte della workflow affidabili, transazionali, osservabili e governati.",
+    "required_evidence": [
+      "trigger/action code",
+      "transaction/idempotency",
+      "retry/rollback",
+      "run history",
+      "integration test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-001",
+    "domain": "Governance & Security",
+    "name": "SSO e MFA",
+    "description": "Capacità di sso e mfa come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-002",
+    "domain": "Governance & Security",
+    "name": "RBAC e ABAC",
+    "description": "Capacità di rbac e abac come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-003",
+    "domain": "Governance & Security",
+    "name": "Consent e lawful basis",
+    "description": "Capacità di consent e lawful basis come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-004",
+    "domain": "Governance & Security",
+    "name": "DSAR, export e delete",
+    "description": "Capacità di dsar, export e delete come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-005",
+    "domain": "Governance & Security",
+    "name": "Encryption, residency e key management",
+    "description": "Capacità di encryption, residency e key management come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-006",
+    "domain": "Governance & Security",
+    "name": "Audit log e immutable decision trail",
+    "description": "Capacità di audit log e immutable decision trail come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-007",
+    "domain": "Governance & Security",
+    "name": "Segregation of duties",
+    "description": "Capacità di segregation of duties come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-008",
+    "domain": "Governance & Security",
+    "name": "DLP e PII detection",
+    "description": "Capacità di dlp e pii detection come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-009",
+    "domain": "Governance & Security",
+    "name": "Model e AI governance",
+    "description": "Capacità di model e ai governance come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-010",
+    "domain": "Governance & Security",
+    "name": "Policy-as-code",
+    "description": "Capacità di policy-as-code come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-011",
+    "domain": "Governance & Security",
+    "name": "Retention e legal hold",
+    "description": "Capacità di retention e legal hold come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-012",
+    "domain": "Governance & Security",
+    "name": "Vendor e connector governance",
+    "description": "Capacità di vendor e connector governance come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-013",
+    "domain": "Governance & Security",
+    "name": "Risk e compliance reporting",
+    "description": "Capacità di risk e compliance reporting come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-014",
+    "domain": "Governance & Security",
+    "name": "Incident response",
+    "description": "Capacità di incident response come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-015",
+    "domain": "Governance & Security",
+    "name": "Access review e recertification",
+    "description": "Capacità di access review e recertification come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-016",
+    "domain": "Governance & Security",
+    "name": "Data minimization e purpose limitation",
+    "description": "Capacità di data minimization e purpose limitation come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-017",
+    "domain": "Governance & Security",
+    "name": "Bias e fairness",
+    "description": "Capacità di bias e fairness come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "GOV-018",
+    "domain": "Governance & Security",
+    "name": "Explainability e accountability",
+    "description": "Capacità di explainability e accountability come parte della sicurezza, privacy, compliance e accountability.",
+    "required_evidence": [
+      "policy/config",
+      "enforcement point",
+      "audit evidence",
+      "negative authorization test",
+      "incident/runbook"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-001",
+    "domain": "Developer Platform",
+    "name": "Public API",
+    "description": "Capacità di public api come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-002",
+    "domain": "Developer Platform",
+    "name": "Webhook e event subscription",
+    "description": "Capacità di webhook e event subscription come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-003",
+    "domain": "Developer Platform",
+    "name": "SDK e CLI",
+    "description": "Capacità di sdk e cli come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-004",
+    "domain": "Developer Platform",
+    "name": "MCP e tool server",
+    "description": "Capacità di mcp e tool server come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-005",
+    "domain": "Developer Platform",
+    "name": "App e plugin framework",
+    "description": "Capacità di app e plugin framework come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-006",
+    "domain": "Developer Platform",
+    "name": "Custom action e serverless function",
+    "description": "Capacità di custom action e serverless function come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-007",
+    "domain": "Developer Platform",
+    "name": "Connector SDK",
+    "description": "Capacità di connector sdk come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-008",
+    "domain": "Developer Platform",
+    "name": "Fixture, synthetic data e test environment",
+    "description": "Capacità di fixture, synthetic data e test environment come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-009",
+    "domain": "Developer Platform",
+    "name": "CI/CD e quality gate",
+    "description": "Capacità di ci/cd e quality gate come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-010",
+    "domain": "Developer Platform",
+    "name": "Log, metric e distributed trace",
+    "description": "Capacità di log, metric e distributed trace come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-011",
+    "domain": "Developer Platform",
+    "name": "Rate limit, quota e backpressure",
+    "description": "Capacità di rate limit, quota e backpressure come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-012",
+    "domain": "Developer Platform",
+    "name": "Secret e credential management",
+    "description": "Capacità di secret e credential management come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-013",
+    "domain": "Developer Platform",
+    "name": "Environment promotion",
+    "description": "Capacità di environment promotion come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-014",
+    "domain": "Developer Platform",
+    "name": "Backward compatibility e deprecation",
+    "description": "Capacità di backward compatibility e deprecation come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-015",
+    "domain": "Developer Platform",
+    "name": "Documentazione e schema discovery",
+    "description": "Capacità di documentazione e schema discovery come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-016",
+    "domain": "Developer Platform",
+    "name": "Event bus e message contract",
+    "description": "Capacità di event bus e message contract come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-017",
+    "domain": "Developer Platform",
+    "name": "Warehouse, lakehouse e dbt integration",
+    "description": "Capacità di warehouse, lakehouse e dbt integration come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-018",
+    "domain": "Developer Platform",
+    "name": "Versioned migration",
+    "description": "Capacità di versioned migration come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-019",
+    "domain": "Developer Platform",
+    "name": "Performance e scalability",
+    "description": "Capacità di performance e scalability come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-020",
+    "domain": "Developer Platform",
+    "name": "Backup e disaster recovery",
+    "description": "Capacità di backup e disaster recovery come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-021",
+    "domain": "Developer Platform",
+    "name": "Reliability, SLO e capacity",
+    "description": "Capacità di reliability, slo e capacity come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "DEV-022",
+    "domain": "Developer Platform",
+    "name": "Agent development kit",
+    "description": "Capacità di agent development kit come parte della API, estensibilità, integrazioni, delivery e reliability.",
+    "required_evidence": [
+      "public contract",
+      "implementation",
+      "compatibility test",
+      "observability",
+      "documentation"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-001",
+    "domain": "Collaboration & Enablement",
+    "name": "Unified inbox e work queue",
+    "description": "Capacità di unified inbox e work queue come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-002",
+    "domain": "Collaboration & Enablement",
+    "name": "Comment, mention e collaboration",
+    "description": "Capacità di comment, mention e collaboration come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-003",
+    "domain": "Collaboration & Enablement",
+    "name": "Note e conversation summary",
+    "description": "Capacità di note e conversation summary come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-004",
+    "domain": "Collaboration & Enablement",
+    "name": "Playbook e coaching",
+    "description": "Capacità di playbook e coaching come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-005",
+    "domain": "Collaboration & Enablement",
+    "name": "Knowledge e content recommendation",
+    "description": "Capacità di knowledge e content recommendation come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-006",
+    "domain": "Collaboration & Enablement",
+    "name": "Guided onboarding e in-product adoption",
+    "description": "Capacità di guided onboarding e in-product adoption come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-007",
+    "domain": "Collaboration & Enablement",
+    "name": "Workspace e vista per ruolo",
+    "description": "Capacità di workspace e vista per ruolo come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-008",
+    "domain": "Collaboration & Enablement",
+    "name": "Alert, notification e digest",
+    "description": "Capacità di alert, notification e digest come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-009",
+    "domain": "Collaboration & Enablement",
+    "name": "Goal, target e OKR tracking",
+    "description": "Capacità di goal, target e okr tracking come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-010",
+    "domain": "Collaboration & Enablement",
+    "name": "Change communication",
+    "description": "Capacità di change communication come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-011",
+    "domain": "Collaboration & Enablement",
+    "name": "Training e certification",
+    "description": "Capacità di training e certification come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-012",
+    "domain": "Collaboration & Enablement",
+    "name": "Feedback e request intake",
+    "description": "Capacità di feedback e request intake come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-013",
+    "domain": "Collaboration & Enablement",
+    "name": "Meeting, review e business pack",
+    "description": "Capacità di meeting, review e business pack come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-014",
+    "domain": "Collaboration & Enablement",
+    "name": "Cross-functional handoff",
+    "description": "Capacità di cross-functional handoff come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "COL-015",
+    "domain": "Collaboration & Enablement",
+    "name": "Decision log",
+    "description": "Capacità di decision log come parte della lavoro coordinato, conoscenza, coaching e adozione.",
+    "required_evidence": [
+      "role workflow",
+      "UI/inbox",
+      "notification",
+      "adoption telemetry",
+      "user acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-001",
+    "domain": "Finance & Commercial",
+    "name": "ARR, MRR, TCV e bookings",
+    "description": "Capacità di arr, mrr, tcv e bookings come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-002",
+    "domain": "Finance & Commercial",
+    "name": "Pricing, packaging e product catalog",
+    "description": "Capacità di pricing, packaging e product catalog come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-003",
+    "domain": "Finance & Commercial",
+    "name": "Sconto, margine e approval",
+    "description": "Capacità di sconto, margine e approval come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-004",
+    "domain": "Finance & Commercial",
+    "name": "Billing, invoice e payment",
+    "description": "Capacità di billing, invoice e payment come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-005",
+    "domain": "Finance & Commercial",
+    "name": "Revenue forecast e recognition handoff",
+    "description": "Capacità di revenue forecast e recognition handoff come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-006",
+    "domain": "Finance & Commercial",
+    "name": "Renewal, churn e contraction economics",
+    "description": "Capacità di renewal, churn e contraction economics come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-007",
+    "domain": "Finance & Commercial",
+    "name": "Commission e incentive",
+    "description": "Capacità di commission e incentive come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-008",
+    "domain": "Finance & Commercial",
+    "name": "CAC, LTV, payback e unit economics",
+    "description": "Capacità di cac, ltv, payback e unit economics come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-009",
+    "domain": "Finance & Commercial",
+    "name": "Budget, plan e scenario",
+    "description": "Capacità di budget, plan e scenario come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-010",
+    "domain": "Finance & Commercial",
+    "name": "Deal e customer profitability",
+    "description": "Capacità di deal e customer profitability come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-011",
+    "domain": "Finance & Commercial",
+    "name": "Contract obligation e entitlement",
+    "description": "Capacità di contract obligation e entitlement come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  },
+  {
+    "capability_id": "FIN-012",
+    "domain": "Finance & Commercial",
+    "name": "Partner economics e MDF",
+    "description": "Capacità di partner economics e mdf come parte della metriche economiche, pricing, contratti e controllo commerciale.",
+    "required_evidence": [
+      "calculation policy",
+      "source reconciliation",
+      "approval/control",
+      "audit trail",
+      "finance acceptance test"
+    ],
+    "coverage_status": "NOT_ASSESSED"
+  }
+]

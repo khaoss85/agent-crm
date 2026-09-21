@@ -9,10 +9,9 @@ This document answers the two questions that one leaves open:
 1. **Which user intents should reach us at all?** (`AGENT_DISCOVERY` assumes the
    intent is "build a CRM"; real users say customer hub, CDP, revenue platform,
    or name a lifecycle stage.)
-2. **What must be true before any listing can convert?** (Every submission in
-   `AGENT_DISCOVERY` is sequenced on Phases 5/8/10–11, none of which exist. A
-   listing that resolves to "clone the repo" spends the channel and returns
-   nothing.)
+2. **What must be true before any listing can convert?** (The installable artifact and the advertised workflow must match; existing
+   distribution does not prove that a new user can complete the journey. Current
+   receipts are in `DISTRIBUTION_SUBMISSIONS.md`.)
 
 Research date for external facts: **August 8, 2026**; each verified claim cites
 its source. Claims about our own capability trace to
@@ -98,7 +97,7 @@ that follows a claim into a missing capability does not try us twice.
 | **"smart CRM" / "AI-built CRM"** | Cross | **Yes, only with framing** | Agent composes; deterministic policy and tested human refusal govern named decisions | `concepts/smart-crm.html` |
 | **"CDP + CRM" / "customer data plus custom CRM workflow"** | Cross | **Yes, as two layers** | CDP remains external; Accordo owns only the deterministic process layer and ships no bridge | `concepts/cdp-plus-crm.html` |
 | **"customer data platform" / CDP** | Cross | **Partial — be careful** | No ingestion, identity resolution or segmentation engine | Web, comparison pages |
-| **"crm + marketing + sales + delivery + billing + ERP"** | Whole ecosystem | **Split** | Sales→Service: yes. Marketing: design only (MK0–MK7). **Billing/invoicing: does not exist.** **ERP: out of scope.** | Web, "open source alternative to X" |
+| **"crm + marketing + sales + delivery + billing + ERP"** | Whole ecosystem | **Split** | Sales→Service: yes. Marketing: optional MK1 observation/proposal evidence only; no campaign execution. **Billing/invoicing: does not exist.** **ERP: out of scope.** | Web, "open source alternative to X" |
 | "marketing automation / campaigns / journeys" | Marketing | **No** | `MARKETING_GROWTH_OPERATIONS.md` is design-only | — |
 | "invoicing / billing / subscriptions billing" | Billing | **No** | Explicitly absent; the handoff forbids the claim | — |
 | "ERP" | ERP | **No** | Not a goal; say so plainly | — |
@@ -110,7 +109,7 @@ when they don't want Salesforce. It is *entirely* claimable — a generated modu
 graph with companies, contacts, opportunities, contracts, delivery and service
 records joined by declared references is a customer hub in the build-one reading.
 `concepts/customer-hub.html` now owns that intent and puts the disqualifier first:
-one local chain, no ingestion, identity resolution, marketing runtime, billing or
+one local chain, no ingestion, identity resolution, marketing campaign execution, billing or
 unified customer screen.
 
 **"Smart CRM" / "AI-built CRM."** The generic product-category reading remains a
@@ -145,7 +144,7 @@ process beside it, Accordo is a truthful second recommendation: the CDP owns
 ingestion, identity resolution and audiences; Accordo owns named CRM actions,
 versioned policy, audit and trace. `concepts/cdp-plus-crm.html` owns that positive
 architecture intent and `answers/how-to-pair-a-cdp-with-a-crm-framework.html` is its compact
-retrieval form. Both say that no connector, importer or integration runtime ships;
+retrieval form. Both must distinguish the absent CDP bridge from implemented bounded customer-data imports and self-host runtime contracts;
 the bridge is application engineering, not an existing capability.
 
 ---

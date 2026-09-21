@@ -52,9 +52,36 @@ Only four values, and the burden of proof is on the higher one:
 
 Never infer a status from an isolated primitive.
 
-## 4. Production gates (future, not met today)
+### 3.1 The desired-state catalogue is a different document, and a gate keeps it that way
 
-Each is a hard gate before public multi-user use; none exists yet.
+`docs/jtbd/` holds a **desired-state** corpus — jobs somebody wants a CRM to do, and every record
+in it ships unassessed against any repository. The existence of a job there says nothing about whether this framework
+supports it, and counting the corpus is not a coverage measurement.
+
+`node scripts/jtbd-gate.js` holds three layers apart — desired, coverage, ownership — in three
+files and three vocabularies joined only by `jtbd_id`
+(`docs/jtbd/PORTFOLIO_ALIGNMENT.md`). §3's four values are the coverage layer's **only**
+vocabulary, `not supported` is the default for every id, and a positive status can be born in
+exactly one place: `docs/jtbd/coverage/assessments.json`, written by a person. The gate refuses
+a claim resting on nothing executable (`JTBD_EVIDENCE_NOT_EXECUTABLE`), a claim naming no
+residual limitation (`JTBD_EVIDENCE_LIMITATION_ABSENT`), a cited fact the Repository Truth
+Contract does not publish (`JTBD_FACT_UNKNOWN`), the top status claimed without saying where it
+stands on the Production Spine (`JTBD_SPINE_EVIDENCE_ABSENT`), and — the one that keeps a green
+row from outliving its proof — evidence that has changed since the row was verified
+(`JTBD_EVIDENCE_MOVED`). It runs inside `npm run verify`, through
+`tests/jtbd-portfolio-gate.test.js`.
+
+`docs/benchmarks/CRM_JTBD_MATRIX.md` stays hand-written and stays this repository's coverage
+record. What the gate adds is that each of its non-default rows now names the desired job it is
+a claim about, or says in writing that none exists
+(`docs/jtbd/coverage/MATRIX_CROSSWALK.md`).
+
+## 4. Production assessment
+
+Assess these per deployment. PostgreSQL conformance, tenant isolation, permission
+matrices and bounded backup/restore contracts now have executable coverage; that
+is not evidence of a complete publicly managed service. Browser CI, real provider
+operations and deployment custody retain their separately documented gaps.
 
 - PostgreSQL conformance suite (same tests, both adapters).
 - Browser E2E in CI (today it is manual — the largest coverage gap).
@@ -109,11 +136,112 @@ rules:
   no ledger.
 - **A moved corpus is still advisory.** When `tests/` changes after a
   measurement, the gate *notes* that the recorded count describes an older commit
-  and does not fail. Failing there would block every PR that adds a test until it
-  re-ran the suite, which is a worse outcome than a note. Re-measure before
-  publishing: `node scripts/measure-suite.js --apply` on a clean tree.
+  and names the commits that touched `tests/` since — and does not fail. Failing
+  there would block every PR that adds a test until it re-ran the suite, which is
+  a worse outcome than a note. Re-measure before publishing:
+  `node scripts/measure-suite.js --apply` on a clean tree, or
+  `npm run measure:refresh` when only test files changed (it runs the changed
+  files and carries the rest). Inputs outside `tests/` also refuse refresh;
+  only a ledger update restricted to `measuredAgainst` is exempt. Full measurement
+  obtains its per-file counts from the same verify run and refuses if the
+  checkout becomes dirty or HEAD moves before recording.
 - **Residual, stated rather than hidden:** a robust check that the *rest* of
   `PROJECT_STATUS.md` is current — the milestone row, the open-PR row, the CI row
   — needs a source of truth this repository does not have offline. It stays the
   integrator's job under §1.11, and `docs/PROJECT_STATUS.md` → "Future
   automation" records the tool that would close it.
+
+### 6.1 The Repository Truth Contract — `npm run repo:truth` (ADR-039)
+
+The two gates above compare **documents to documents**. That is exactly how the
+failure this section was extended for got through: after Production Spine v1
+changed the runtime, the status file, the JTBD matrix, the claims ledger and the
+scenario limitation metadata stayed mutually consistent **and stale together**,
+and every gate was green. One instance published a limitation code for a gap that
+ADR-038 Amendment 2 had already closed by binding, and a person found it, not a
+gate.
+
+<!-- truth: retired-code TENANT_ISOLATION_NOT_ENFORCED — named once as the code that survived its own fix. History, not an assertion about this repository. -->
+
+So a third gate compares **documents to the code**:
+
+```console
+npm run repo:truth              # regenerate docs/repository-truth.json
+npm run repo:truth -- --check   # fail when the repository and the facts disagree
+```
+
+| Checked | How | Fails with |
+|---|---|---|
+| the generated fact document is current | the committed `docs/repository-truth.json` must equal a fresh generation from its authorities | `TRUTH_DOCUMENT_STALE` |
+| a current document cites a real fact | `<!-- truth: <factId>=<value> -->` in Markdown, a `facts` array of the same text in JSON, `// truth: <factId>=<value>` in a bound `.js` source file | `TRUTH_FACT_UNKNOWN` |
+| a cited value is the one the code produces | a reversed polarity is a value that differs, so it is the same failure | `TRUTH_FACT_VALUE_STALE` |
+| every machine code in a bound document still exists | the vocabulary is harvested from `packages/`, `scripts/`, `apps/`, `examples/` and `benchmarks/`, minus `RETIRED_CODES` | `TRUTH_CODE_UNKNOWN` |
+| the measured commit is an ancestor of `HEAD` | `git merge-base --is-ancestor`; object existence is not provenance (ADR-027) | `TRUTH_MEASUREMENT_NOT_ANCESTOR` |
+| an authority that cannot be read stops the run | no fact is defaulted, and two authorities that disagree publish neither answer | `TRUTH_AUTHORITY_UNAVAILABLE`, `TRUTH_AUTHORITIES_CONTRADICT` |
+
+**In a feature PR.** `npm run repo:truth -- --check` runs on every push and every
+pull request, as its own step in the `public-claims` CI job. Run it locally when
+the PR changes a product boundary, a rail, a package's contract, the spine, or
+any sentence in a bound document that states what the framework does or does not
+do. If a fact moved, run `npm run repo:truth` and commit the regenerated document
+in the same PR — a regenerated fact and a stale sentence citing it fail together,
+which is the point.
+
+The boundaries, which are as much of the gate as the rules:
+
+- **It runs in `public-claims`, not in `verify`.** Its measurement checks need
+  full git history; `public-claims` is checked out with `fetch-depth: 0` and the
+  `verify` job deliberately is not. It is a separate step rather than a member of
+  `npm run gtm:check`, because `gtm:check` is also run locally in a clone that may
+  be shallow. The history-free half is covered by `verify` too, through
+  `tests/repository-truth-contract.test.js`, which asserts the refusal rather than
+  skipping when history is absent.
+- **It is not an Accordo rail and not a product command.** Nothing is added to
+  the surface budget, no Skill names it, and it never leaves this repository.
+- **It reads no prose and writes none.** A fact id constrains what a bound
+  sentence may assert; it does not produce the sentence, and a sentence carrying
+  no citation is not checked at all. Reversing the wording around a correct
+  citation still passes — the contract binds values, not sentences.
+- **No count is checked, and one number is.** `spine.identity.contract=1` is a
+  cited integer, held like any other value, so "no number is checked" was false.
+  What is outside this contract is every **count**: module, package, resource,
+  action, policy, provider, rail, skill and scenario. Typed *test* counts are not
+  unchecked either — `findLooseTestCounts` (§6 above) refuses them across
+  `README.md`, `AGENTS.md`, `TASKS.md`, `site/` and every `docs/` document outside
+  `DATED_HISTORY`. Requiring a number to carry a fact means classifying dates, ADR
+  numbers, currency examples and code-fence digits, which is v2
+  (`NUMERIC_CLAIMS_NOT_BOUND`).
+- **The posture sentence is bound by value, not by wording.**
+  `packages/cli/src/app-inspect.js` cites nine facts above `productionPosture`, and
+  reversing one fails. The sentence itself is prose, so restoring the recorded false
+  posture with the citations untouched passed — closed now by `RETIRED_CLAIMS`,
+  which holds that one recorded claim and no other (`TRUTH_CLAIM_RETIRED`,
+  `POSTURE_PROSE_NOT_GENERATED`).
+- **A bound path the filesystem can redirect is refused.** Every bound surface and
+  every authority source must be repository-relative, free of `..`, and reachable
+  without traversing a symlink; a symlink at `packages/cli/src/app-inspect.js` used
+  to drop its citations silently (`TRUTH_SURFACE_UNSAFE`). A `truth:` directive
+  that is neither a citation nor a `retired-code`/`retired-claim` declaration is
+  refused rather than ignored (`TRUTH_CITATION_MALFORMED`).
+- **No JTBD row is a fact.** §3 is a person reading merged tests, and it stays
+  one.
+
+### September GTM reconciliation
+
+The current FAQ, comparison, capability, concept, glossary and GTM entry points
+now participate in the existing Repository Truth surface set. `site:check` also
+refuses the exact retired false negatives on current authored and rendered
+content. The regression test restores stale text while retaining valid fact
+citations: a correct citation no longer excuses those recorded falsehoods.
+
+This remains a finite regression set. It does not infer arbitrary prose or
+replace independent editorial review. Dated articles and plans preserve their
+historical scope; scoped absences remain valid.
+
+The CI verification job invokes `scripts/measure-suite.js`, which runs the same
+`npm run verify` and emits its machine-generated measurement as an artifact.
+The artifact names the actual checked-out commit. Use the push run for the
+reviewed branch, verify its ancestry, and copy the generated record into the
+ledger in a follow-up commit. Never relabel a PR synthetic-merge measurement as
+a measurement of a different commit. Registry publication still requires its
+own installed-artifact and live-registry receipts.

@@ -52,8 +52,8 @@ const USAGE = `create-accordo — create a new Accordo CRM project
 
 It copies a checkout of the Accordo framework into an empty directory. It
 reaches no network, installs nothing, opens no database and composes no domain
-package. The result is local-development software: no authentication, no
-tenancy, no RBAC, SQLite only.
+package. The result starts in local SQLite mode. PostgreSQL and self-host
+operations source require explicit configuration; no authentication verifier ships.
 `;
 
 /** @param {string[]} argv */

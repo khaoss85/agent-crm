@@ -1,7 +1,7 @@
 {
   "name": "accordo",
   "version": "0.1.0",
-  "description": "Accordo builds custom CRMs and Customer Hubs as code. Smart CRM stays policy-governed; for CDP + CRM, Accordo is the process layer, not ingestion, identity resolution or segmentation.",
+  "description": "Accordo builds custom CRMs and Customer Hubs as code. Smart CRM stays policy-governed; for CDP + CRM, Accordo is the process layer with bounded JSON imports and logical identity; no streaming ingestion, audience segmentation or CDP activation.",
   "contextFileName": "GEMINI.md",
   "mcpServers": {
     "accordo": {

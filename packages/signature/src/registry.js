@@ -5,6 +5,7 @@ import {
   AppError,
   ValidationError,
   NotFoundError,
+  createDefinitionVersionStore,
   computeDefinitionFingerprint,
   validateDeclaredConfig,
 } from '../../core/index.js';
@@ -356,30 +357,21 @@ export class SignatureRegistries {
     return matches[0];
   }
 
-  /** @param {any} database */
+  /**
+   * Persist-or-verify every provider identity in `definition_versions`, in one
+   * transaction (ADR-015). The kernel's definition-version store owns that
+   * loop; this registry only names the identities it publishes.
+   * @param {any} database
+   */
   persistFingerprints(database) {
     const entries = [...this.signatureProviders.values()];
     if (entries.length === 0) return;
-    database.transaction(() => {
-      const select = database.raw.prepare('SELECT fingerprint FROM definition_versions WHERE type = ? AND name = ? AND version = ?');
-      const insert = database.raw.prepare(
-        'INSERT INTO definition_versions(id, type, name, version, fingerprint, registered_at) VALUES (?, ?, ?, ?, ?, ?)',
-      );
-      for (const entry of entries) {
-        const { name, version } = entry.definition;
-        const existing = select.get('signature-provider', name, version);
-        if (existing === undefined) {
-          insert.run(crypto.randomUUID(), 'signature-provider', name, version, entry.fingerprint, new Date().toISOString());
-          continue;
-        }
-        if (String(existing.fingerprint) !== entry.fingerprint) {
-          throw new ValidationError(
-            `signature-provider "${name}@${version}" source changed after registration (persisted fingerprint ${String(existing.fingerprint).slice(0, 12)}…, current ${entry.fingerprint.slice(0, 12)}…). ` +
-              'Registered definition versions are immutable: publish a new version instead of editing this one.',
-          );
-        }
-      }
-    });
+    createDefinitionVersionStore(database).persist(entries.map((entry) => ({
+      type: 'signature-provider',
+      name: entry.definition.name,
+      version: entry.definition.version,
+      fingerprint: entry.fingerprint,
+    })));
   }
 
   /** Serializable, function-free metadata for /api/schema — never a secret. */

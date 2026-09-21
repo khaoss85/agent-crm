@@ -74,7 +74,7 @@ const LIMITATIONS = Object.freeze([
   ['CI_EVIDENCE_NOT_INFERRED', 'no CI, browser-smoke or benchmark result is read or inferred'],
   ['SECRETS_NOT_INSPECTED', 'no secret, credential, token or environment value is read, and no provider is contacted or authenticated'],
   ['PROVIDER_HEALTH_UNKNOWN', 'a registered provider definition says a provider was composed, never that it is reachable, configured or operational'],
-  ['PRODUCTION_SPINE_ABSENT', 'there is no authentication, tenancy or RBAC in this framework, so no runtime authorization can be reported'],
+  ['PRODUCTION_SPINE_ABSENT', 'Production Spine v1 (ADR-038) adds verified identity, organizations, memberships, server-authoritative authorization and one-tenant-per-instance storage isolation — but none of it can be reported from SOURCE: which mode a deployment chose, which tenant it is bound to, whether a verifier is configured and who holds which membership are all runtime facts, published by a running application at /api/schema. One application instance serves exactly one tenant; two tenants means two instances, and a configuration naming two is refused at startup. Dedicated-database PostgreSQL, durable jobs, transactional outbox, bounded timer consumers, secret provision, backup/verify/restore and observability export exist as self-host contracts. A source report cannot attest that a deployment configured or operated them. Shared-database row-level tenancy, managed secret/backup custody and a managed worker service are absent. This is not a production-readiness statement'],
   ['ADMIN_EXTENSIONS_UNSUPPORTED', 'the framework has no seam for a package to contribute an Admin extension, so adminExtensions is empty for every project — not merely empty for this one'],
   ['DATA_QUALITY_UNKNOWN', 'source-only inspection can say which records exist, never whether their data is correct, complete or duplicated'],
   ['RUNTIME_STATE_UNKNOWN', 'nothing here reports what is running, deployed or reachable'],
@@ -236,53 +236,75 @@ export async function inspectApplication({ rootDir: requested }) {
     });
   }
 
-  const packages = [...composition.packages.values()]
-    .map((pkg) => ({
-      name: pkg.name,
-      version: pkg.version,
-      packageContract: pkg.packageContract,
-      label: pkg.label ?? pkg.name,
-      description: pkg.description ?? null,
-      resources: [...(pkg.resources ?? [])].sort(),
-      actions: (pkg.actions ?? []).map((action) => `${action.module}.${action.name}`).sort(),
-      requires: (pkg.requires ?? [])
-        .map((entry) => ({ package: entry.package, capability: entry.capability, version: entry.version }))
-        .sort((a, b) => compare(`${a.package}/${a.capability}@${a.version}`, `${b.package}/${b.capability}@${b.version}`)),
-      provides: (pkg.capabilities ?? [])
-        .map((entry) => ({ name: entry.name, version: entry.version, description: entry.description ?? null }))
-        .sort((a, b) => compare(`${a.name}@${a.version}`, `${b.name}@${b.version}`)),
-      // Declared application-scoped operations (ADR-032): additive, and gone
-      // when the package detaches.
-      operations: (pkg.operations ?? [])
-        .map((entry) => ({ name: entry.name, ...(entry.appMethod ? { appMethod: entry.appMethod } : {}) }))
-        .sort((a, b) => compare(a.name, b.name)),
-      policies: [...composition.policies.values()]
-        .filter((entry) => entry.domain === pkg.name)
-        .map((entry) => `${entry.kind}/${entry.definition.name}@${entry.definition.version}`)
-        .sort(compare),
-      metadata: safeMetadata(pkg, problems, rootDir),
-    }))
+  /** Accepted capability facts, snapshotted by composition before observers run. */
+  const capabilityFactsByPackage = new Map();
+  for (const value of composition.capabilities.values()) {
+    const entries = capabilityFactsByPackage.get(value.package) ?? [];
+    entries.push(value);
+    capabilityFactsByPackage.set(value.package, entries);
+  }
+
+  const packages = [...composition.packageFacts.values()]
+    .map((facts) => {
+      const pkg = facts.definition;
+      return {
+        name: facts.name,
+        version: facts.version,
+        packageContract: facts.packageContract,
+        label: pkg.label ?? facts.name,
+        description: pkg.description ?? null,
+        resources: [...(pkg.resources ?? [])].sort(),
+        actions: (pkg.actions ?? []).map((action) => `${action.module}.${action.name}`).sort(),
+        requires: facts.requires
+          .map((entry) => ({ package: entry.package, capability: entry.capability, version: entry.version }))
+          .sort((a, b) => compare(`${a.package}/${a.capability}@${a.version}`, `${b.package}/${b.capability}@${b.version}`)),
+        provides: (capabilityFactsByPackage.get(facts.name) ?? [])
+          .map((entry) => ({
+            name: entry.name,
+            version: entry.version,
+            capabilityContract: entry.capabilityContract,
+            description: entry.description ?? null,
+          }))
+          .sort((a, b) => compare(`${a.name}@${a.version}`, `${b.name}@${b.version}`)),
+        // Declared application-scoped operations (ADR-032): additive, and gone
+        // when the package detaches.
+        operations: (pkg.operations ?? [])
+          .map((entry) => ({
+            name: entry.name,
+            operationContract: entry.operationContract,
+            ...(entry.appMethod ? { appMethod: entry.appMethod } : {}),
+          }))
+          .sort((a, b) => compare(a.name, b.name)),
+        policies: [...composition.policies.values()]
+          .filter((entry) => entry.domain === facts.name)
+          .map((entry) => `${entry.kind}/${entry.definition.name}@${entry.definition.version}`)
+          .sort(compare),
+        metadata: safeMetadata(pkg, facts.name, problems, rootDir),
+      };
+    })
     .sort((a, b) => compare(a.name, b.name));
+  const packageContracts = [...new Set(packages.map((pkg) => pkg.packageContract))];
 
   // The capability graph, from both ends: who offers it and who consumes it.
   /** @type {Map<string, any>} */
   const capabilityRows = new Map();
   for (const [key, value] of composition.capabilities) {
     capabilityRows.set(key, {
-      name: value.entry.name,
-      version: value.entry.version,
+      name: value.name,
+      version: value.version,
+      capabilityContract: value.capabilityContract,
       provider: value.package,
       consumers: [],
       status: 'resolved',
-      description: value.entry.description ?? null,
+      description: value.description ?? null,
     });
   }
-  for (const pkg of composition.packages.values()) {
-    for (const entry of pkg.requires ?? []) {
+  for (const facts of composition.packageFacts.values()) {
+    for (const entry of facts.requires) {
       const key = `${entry.capability}@${entry.version}`;
       const row = capabilityRows.get(key);
       if (row && row.provider === entry.package) {
-        row.consumers.push(pkg.name);
+        row.consumers.push(facts.name);
         continue;
       }
       // An unresolved requirement is still part of the graph — reporting only
@@ -292,7 +314,7 @@ export async function inspectApplication({ rootDir: requested }) {
         consumers: [], status: 'missing', description: null,
       };
       if (missing.provider !== null && missing.provider !== entry.package) missing.status = 'provider-mismatch';
-      missing.consumers.push(pkg.name);
+      missing.consumers.push(facts.name);
       capabilityRows.set(key, missing);
     }
   }
@@ -326,8 +348,8 @@ export async function inspectApplication({ rootDir: requested }) {
   const actions = [
     ...(Array.isArray(loaded.actions?.generatedActions) ? loaded.actions.generatedActions : [])
       .map((action) => describeAction(action, null)),
-    ...[...composition.packages.values()].flatMap((pkg) =>
-      (pkg.actions ?? []).map((action) => describeAction(action, pkg.name))),
+    ...[...composition.packageFacts.values()].flatMap((facts) =>
+      (facts.definition.actions ?? []).map((action) => describeAction(action, facts.name))),
   ].sort((a, b) => compare(`${a.module}.${a.name}`, `${b.module}.${b.name}`));
 
   // ── policies and providers ───────────────────────────────────────────────
@@ -350,11 +372,40 @@ export async function inspectApplication({ rootDir: requested }) {
     valid: problems.length === 0,
     application: {
       name: readProjectName(rootDir, problems),
-      packageContract: SUPPORTED_PACKAGE_CONTRACT,
+      packageContract: packageContracts.length === 0
+        ? SUPPORTED_PACKAGE_CONTRACT
+        : packageContracts.length === 1 ? packageContracts[0] : null,
       composition: COMPOSITION.map((entry) => entry.path),
       // Declared statically by the framework, not read from a running system.
       databaseBackend: 'sqlite (node:sqlite)',
-      productionPosture: 'local development only: no authentication, tenancy or RBAC exists, and actor headers are not identity',
+      // This sentence is the one every agent reads to learn what the framework
+      // is, and it is the first of the two failures ADR-039 exists to close: it
+      // once said "no authentication, tenancy or RBAC exists" in the same report
+      // whose PRODUCTION_SPINE_ABSENT message described all three (PR #101).
+      // truth: retired-claim no authentication, tenancy or RBAC exists — the line above names the retired posture as the recorded failure; the report below never asserts it
+      //
+      // The citations below bind the *values* each clause rests on. They do not
+      // bind the sentence: restoring the retired posture with these lines left
+      // untouched kept `--check` green, which is why RETIRED_CLAIMS exists and
+      // why generating this sentence from its own facts is v2
+      // (POSTURE_PROSE_NOT_GENERATED).
+      // truth: spine.identity.contract=1
+      // truth: spine.authentication.framework_verifier=absent
+      // truth: spine.authorization.enforced=enforced
+      // truth: spine.tenant.isolation.mode=one_tenant_per_instance
+      // truth: spine.tenant.crm_data_plane_enforced=enforced_by_binding
+      // truth: spine.multi_tenant_single_instance=refused_at_startup
+      // truth: spine.postgresql.implemented=implemented
+      // truth: spine.durable_job_store.implemented=implemented
+      // truth: spine.transactional_outbox.implemented=implemented
+      // truth: spine.timer_consumers.implemented=implemented
+      // truth: spine.managed_jobs_service.implemented=absent
+      // truth: spine.secret_provider.implemented=implemented
+      // truth: spine.backup_restore.implemented=implemented
+      // truth: spine.observability_export.implemented=implemented
+      // truth: spine.production_operations.implemented=implemented
+      // truth: spine.secrets_backups.implemented=absent
+      productionPosture: 'not a readiness claim: the framework authenticates nobody (a deployment adapter supplies verified identity), while tenancy — one tenant per application instance — and authorization are owned and enforced by the framework. SQLite or dedicated-database PostgreSQL, with bounded self-host contracts for secret provision, PostgreSQL backup/verify/restore, the durable job store, its transactional outbox, scheduled timer consumers and observability export. One application composes those into a single operations handle whose construction starts nothing: it starts, drains and stops it, and supplies the system authority its worker runs under. Nothing autostarts. Absent: shared-database tenancy, an autostarted or operator-managed worker service, any managed jobs service, managed secret custody, managed backup custody/scheduling/retention and an observability backend',
     },
     packages,
     capabilities,
@@ -394,15 +445,15 @@ function compare(a, b) {
  * only on the transport: a report is a document an agent reads, and an
  * unbounded block turns one package into a denial of the whole document.
  */
-function safeMetadata(pkg, problems, rootDir) {
+function safeMetadata(pkg, acceptedName, problems, rootDir) {
   if (typeof pkg.metadata !== 'function') return {};
   let declared;
   try {
     declared = pkg.metadata();
   } catch (error) {
     problems.push({
-      code: 'PACKAGE_METADATA_FAILED', package: pkg.name,
-      message: `Package "${pkg.name}" metadata() threw: ${safeMessage(error, rootDir)}`,
+      code: 'PACKAGE_METADATA_FAILED', package: acceptedName,
+      message: `Package "${acceptedName}" metadata() threw: ${safeMessage(error, rootDir)}`,
     });
     return {};
   }
@@ -411,15 +462,15 @@ function safeMetadata(pkg, problems, rootDir) {
     serialized = JSON.stringify(declared ?? {});
   } catch (error) {
     problems.push({
-      code: 'PACKAGE_METADATA_INVALID', package: pkg.name,
-      message: `Package "${pkg.name}" metadata() is not JSON-safe: ${safeMessage(error, rootDir)}`,
+      code: 'PACKAGE_METADATA_INVALID', package: acceptedName,
+      message: `Package "${acceptedName}" metadata() is not JSON-safe: ${safeMessage(error, rootDir)}`,
     });
     return {};
   }
   if (serialized.length > MAX_METADATA_BYTES) {
     problems.push({
-      code: 'PACKAGE_METADATA_TOO_LARGE', package: pkg.name,
-      message: `Package "${pkg.name}" metadata() is ${serialized.length} bytes, over the ${MAX_METADATA_BYTES}-byte `
+      code: 'PACKAGE_METADATA_TOO_LARGE', package: acceptedName,
+      message: `Package "${acceptedName}" metadata() is ${serialized.length} bytes, over the ${MAX_METADATA_BYTES}-byte `
         + 'bound; it is omitted from the report rather than published',
     });
     return {};

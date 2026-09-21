@@ -1,5 +1,7 @@
 // @ts-check
 
+import { bindAdminMutations } from './admin-submission.js';
+
 /**
  * The Work Admin section (Work v1, ADR-030 — the `work` package).
  *
@@ -36,7 +38,9 @@
 const LIST_LIMIT = 100;
 
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
-export function createWorkView({ doc, mount, client, navigate = () => {} }) {
+export function createWorkView(deps) {
+  const { doc, mount, navigate = () => {} } = deps;
+  const { client } = bindAdminMutations(deps.client, deps);
   /** Guard against a stale async response overwriting a newer view. */
   let renderToken = 0;
   /** Every control currently disabled for an in-flight request. */

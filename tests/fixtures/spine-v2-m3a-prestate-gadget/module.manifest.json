@@ -1,0 +1,21 @@
+{
+  "manifestVersion": 1,
+  "name": "gadget",
+  "table": "gadgets",
+  "fields": [
+    {
+      "name": "label",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "valueCents",
+      "type": "integer",
+      "required": true
+    },
+    {
+      "name": "active",
+      "type": "boolean"
+    }
+  ]
+}

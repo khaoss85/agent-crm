@@ -15,6 +15,7 @@
       "values": [
         "missing_required_identity",
         "conflicting_external_identity",
+        "identity_conflict_windowed_scope",
         "invalid_email",
         "invalid_domain",
         "duplicate_candidate_open",

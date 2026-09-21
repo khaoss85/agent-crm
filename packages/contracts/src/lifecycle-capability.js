@@ -174,7 +174,11 @@ export function createContractLifecycleSourceCapability(moduleNames) {
       // holds is evidence too, and a consumer that can redefine `termEvidence`
       // on it can make its own package lie in its own trace.
       return Object.freeze({
-        capabilityContract: 2,
+        // Historical interface-shape marker, not an async contract. M2E-1
+        // resolves that collision: this interface is synchronous and therefore
+        // contract 1. The declaration on the package capability is authoritative
+        // for composition; this returned value remains descriptive only.
+        capabilityContract: 1,
 
         /**
          * One contract's term evidence, or null.

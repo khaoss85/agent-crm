@@ -30,8 +30,8 @@
  */
 const LIMITS_BLOCK = `      <h2 id="limits">What a status here does not mean</h2>
       <p>These statuses describe <em>this repository at this commit</em>. None of them implies the
-      framework is deployable: there is no authentication, tenancy or RBAC, so it is
-      local-development-only whatever any row says. Every claim and every limitation is on
+      framework is deployable: no authentication ships, so a deployment must supply the
+      verifier before anyone but you reaches it, whatever any row says. Every claim and every limitation is on
       <a href="{{page.root}}evidence.html">one page</a>.</p>`;
 
 /** How much the catalogue has to have written about a job before length alone earns it a URL. */
@@ -268,7 +268,7 @@ export function buildJobPages({ jobs, brand, origin }) {
           `      <h2 id="limits">What this status does not mean</h2>
       <p>A status here describes <em>this repository at this commit</em>, nothing more. It is not a
       statement about what a CRM should do, and it is not a roadmap commitment. The whole framework
-      is local-development-only: there is no authentication, tenancy or RBAC, so no status on this
+      ships no authentication, so no status on this
       page implies you can deploy it. The boundaries are listed in full on
       <a href="{{page.root}}evidence.html">the claims ledger</a>.</p>`,
           siblings.length ? [
@@ -545,8 +545,9 @@ export function buildAnswerPages({ answers, ledger, brand, origin }) {
           '      </div>',
         ].filter(Boolean).join('\n')),
         `      <h2 id="limits">Where this stops</h2>
-      <p>Nothing on this page implies the framework is deployable. There is no authentication, tenancy
-      or RBAC, so it is local-development-only whatever any single answer says.
+      <p>Nothing on this page implies deployment readiness. The framework ships no authentication
+      verifier; authorization is framework-enforced; tenant isolation is one tenant per application
+      instance, not shared-database row tenancy. Read the exact repository posture before deployment.
       <a href="{{page.root}}evidence.html">Every claim and every limitation</a> is on one page, and
       <a href="{{page.root}}answers.html#limits">the questions this project refuses to answer</a> are
       published beside them.</p>`,

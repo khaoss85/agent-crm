@@ -1,0 +1,96 @@
+# Spine v3B — transactional outbox and effect dispatch
+
+This ExecPlan is a living document. Progress, decisions, validation receipts, and review corrections are updated while implementation changes.
+
+## Goal and bounded outcome
+
+Close the PostgreSQL process-death gap between a committed `write_outcomes` row and post-commit effect dispatch. The existing `event_intents_json` remains the only effect-intent authority. V3A durable jobs provide effect ownership, retry, execution-start, poison, and restart evidence; V3B adds no second intent table or generic event platform.
+
+Two closed effect families are implemented:
+
+1. Promote the existing internal event intents after commit.
+2. Continue a persisted external-operation receipt into its local finalize phase without calling or reconciling the provider again.
+
+This slice adds no application worker autostart, CLI/MCP surface, security-audit migration, Cloud service, domain timer, JTBD promotion, or production-readiness claim.
+
+## Repository context and authoritative seams
+
+- Started from reviewed V3A head `7cf90f2a9b80b04afdb4ca798c85b363f728b50a`; after V3A merged regularly, `origin/main` merge commit `9a512cf47374c4901a4d058838d731c908513bd0` integrated public ancestry without rebase or squash.
+- `packages/core/src/write-outcome-runtime.js` owns the PostgreSQL transaction that atomically persists domain writes, audit evidence, `write_outcomes.event_intents_json`, and trace intent.
+- `packages/core/src/write-outcome-store.js` owns lookup and the existing `events_promoted` terminal evidence. It remains the authoritative source; no parallel event payload is copied into a job.
+- `packages/core/src/external-operation.js` owns external-operation v2 intent/call/receipt/finalize sequencing and already guarantees that a replayed call outcome never authorizes another provider call.
+- `packages/core/src/durable-jobs.js` and its dialect adapters own V3A claim, execution-start, retry, and lifecycle semantics.
+- `packages/core/src/event-bus.js` is still the internal subscriber transport. Its buffered queue is transient; V3B promotes from the committed write outcome, not from memory after restart.
+
+## Chosen design
+
+Each committed source outcome gets at most one deterministic V3A job per applicable closed effect family. The job payload contains only contract version, source run id, source phase, and a canonical source fingerprint. It contains no raw idempotency key, event name/payload, domain/provider response, actor, credential, locator, or secret reference.
+
+Enqueue happens inside the same PostgreSQL connection-affine transaction and uses the live transaction witness already required by V3A. Rollback therefore leaves neither outcome nor job. The actor is obtained only through one named `trustedSystemActor` reason; there is no fallback.
+
+Internal event promotion runs through the exact durable-job claim. To preserve current synchronous PostgreSQL subscriber behavior, the successful write path explicitly executes that exact committed job once after commit. A concurrent/restart worker can win the claim instead. There is only one active unexpired claim; after expiry, a still-running stale execution may overlap a generation-fenced recovery and duplicate delivery is allowed. `events_promoted` changes only after every stored intent was dispatched and in the same transaction as the claim-fenced successful job transition; an expired stale handler can change neither record. The old mark-before-dispatch loss gap is removed.
+
+Delivery is honestly at least once. Every valid stored intent is attempted even when an earlier intent's subscriber fails; the pass then reports one bounded retryable failure. A retry may therefore repeat any intent already dispatched. V3B jobs persist `reconcilable_at_least_once`: an expired execution-start advances the bounded attempt and claim generation and invokes the same effect identity again, closing the no-callback crash window while permitting duplicates after partial delivery. Exhaustion remains terminal and late completion is fenced. Generic jobs and external-operation-v2 provider work retain the default `terminal_unknown` policy and are never implicitly replayed. Successful dispatch has one terminal job plus `events_promoted` evidence. Poison remains visible as a terminal job with a bounded code; nothing is silently deleted.
+
+External receipt continuation is a separate named handler. Receipt persistence carries one closed tri-state `external_finalize_declared` value into the same transaction: new operations persist true or false; true creates the continuation identity and a valid provider-only false creates none. A schema-upgraded legacy row remains null/unknown, creates terminal reconciliation evidence, and never infers callback authority. Replay compares a known stored declaration with the current operation and refuses the opposite shape as divergent. The handler reads intent/receipt/finalize outcomes by tenant namespace plus run/phase, verifies the source fingerprint, and succeeds immediately when finalize already exists. Otherwise it calls only a registered local finalize continuation. Provider `call` and `reconcile` handles are not accepted by this runtime. After the callback, a committed finalize outcome is required before the job can succeed.
+
+SQLite retains its existing immediate buffered-event compatibility because M4 write outcomes are PostgreSQL-only. V3B does not claim durable SQLite outbox semantics or multi-node SQLite dispatch.
+
+## Milestones
+
+### 1. Exact-source effect identity and atomic enqueue
+
+Add closed effect identity/fingerprint helpers, outcome lookup by run/phase, deterministic job ids/roots, and transaction-affine enqueue from `runIdempotentWrite`. Prove rollback, payload exclusion, idempotent enqueue, and PostgreSQL migration compatibility.
+
+### 2. Internal event promotion
+
+Add the internal-event handler and exact-job one-shot execution. Replace `events_promoted`-before-dispatch with mark-after-success. Prove commit/death/restart, two-worker exclusion, retry/poison visibility, partial at-least-once behavior, and no silent deletion.
+
+### 3. External receipt finalize continuation
+
+Enqueue the receipt continuation atomically, add a closed named local-finalize registry, and prove restart runs finalize only, provider call/reconcile counts remain unchanged, replay is idempotent, missing/poison continuations remain visible, and begun-unknown local continuation work is retried only through its committed effect identity.
+
+### 4. Decisions and validation
+
+Amend ADR-041 with the V3B outbox decision and update the legacy alignment matrix without final public status/JTBD promotion. Run focused SQLite/PG16 suites, affected M4A and V3A suites, check, Repository Truth, smoke, and diff check on Node 22.16.0.
+
+## Validation
+
+    node --test tests/spine-v3b-transactional-outbox-sqlite.test.js
+    ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:5432/accordo_test node --test tests/spine-v3b-transactional-outbox-postgresql.test.js
+    node --test tests/spine-v3a-durable-jobs-sqlite.test.js tests/spine-v3a-durable-jobs-postgresql.test.js tests/spine-v2-m4a-idempotency-recovery.test.js
+    npm run check
+    npm run repo:truth -- --check
+    npm run smoke
+    git diff --check
+
+Hosted exact-head PostgreSQL 16 evidence is mandatory when the local service is unavailable.
+
+## Progress log
+
+- 2026-08-31: Created the branch from exact reviewed V3A head and traced write-outcome insertion/promotion, event buffering, affine storage, and external-operation receipt/finalize paths.
+- 2026-08-31: Chose `write_outcomes` as the sole effect-intent authority and V3A jobs as delivery ownership/evidence. Rejected a second outbox table and rejected marking `events_promoted` before dispatch.
+- 2026-08-31: Implemented atomic affine enqueue, exact-job internal promotion, local-only external finalize continuation, poison/reconciliation evidence and SQLite compatibility in `4e7f889`; integrated merged V3A ancestry in `9a512cf`.
+- 2026-08-31: Coupled internal-event promotion evidence to the claim-fenced success transaction and corrected the PostgreSQL exact-claim race proof to accept the adapter's bounded serializable conflict.
+- 2026-08-31: Added deterministic recovery for committed pre-V3B outcomes and removed dynamic handler-code interpolation from recovery diagnostics in `3e1da1e`. Integrated focused Node 22 evidence is 43 tests, 37 pass, zero fail and six expected local PostgreSQL skips; hosted PostgreSQL 16 remains mandatory.
+- 2026-08-31: Exact-head review closed two material dispatch gaps: a failed early subscriber no longer starves later stored intents, and receipt continuation is authorized only by a committed finalize-declared bit so provider-only operations create no poison job.
+- 2026-08-31: Delta review replaced the unsafe legacy default with tri-state declaration evidence, added replay contract comparison, and made ambiguous upgraded receipts terminal reconciliation evidence rather than silently provider-only.
+- 2026-08-31: Second broad review added schema v10's persisted recovery policy. Only V3B reconcilable effects reclaim expired execution-start evidence; generic and provider-effect jobs retain terminal unknown-outcome semantics.
+- 2026-08-31: Live PostgreSQL 16 validation found and closed two false-green seams: initial jobs now pin the terminal outbox outcome reference so replay identity does not drift, and deterministic tests pass one clock through enqueue, claim, and recovery. The affected live M4A/V3A/V3B run completed 23 tests with zero failures.
+
+## Decision log
+
+- Source fingerprint is evidence for one exact committed outcome identity; it is not a payload digest copied into the job.
+- Event transport is at least once. No exactly-once external or internal delivery claim is made.
+- Claim ownership excludes concurrent active unexpired owners. Expiry recovery may overlap a stale execution; generation fencing prevents the stale completion from committing but cannot prevent duplicate effect invocation.
+- Recovery policy is persisted job identity, never inferred from a mutable handler registry or handler name.
+- The external continuation registry accepts local finalize functions only. Provider handles are structurally absent.
+- Finalize continuation authority is persisted with the receipt; runtime callback presence is never reconstructed or guessed during backfill.
+- Security audit stays on its existing authoritative database path.
+- Explicit replay may backfill a missing deterministic event effect job for a committed pre-V3B outcome. Receipt continuation backfill requires a committed declaration; legacy null remains explicit reconciliation evidence. That recovery is not retroactive atomicity; the outcome is already the durable authority and repeat insertion is idempotent.
+- Final public truth/status, operator surfaces, measurement, and timer consumers remain for their later campaign slices.
+
+## Outcome and follow-up
+
+Implementation and local focused validation are complete. Required worker red-team,
+independent exact-head review and hosted PostgreSQL 16 evidence remain before merge.

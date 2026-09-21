@@ -3,9 +3,13 @@
 import { randomUUID } from 'node:crypto';
 import { AppError, NotFoundError, ValidationError, normalizeError } from './errors.js';
 import { nowIso } from './time.js';
+import { createExecutionRunStore } from './execution-run-store.js';
 // Cycle-safe: both modules export hoisted function declarations only, and
 // neither touches the other at module-evaluation time (ADR-017).
 import { runExternalOperation } from './external-operation.js';
+import { isUnknownCommit, runIdempotentWrite, usesWriteOutcomes } from './write-outcome-runtime.js';
+import { createWriteOutcomeStore } from './write-outcome-store.js';
+import { resolveIdempotencyKey, tenantNamespace } from './idempotency.js';
 
 /**
  * Stable error for an action attempted from an invalid lifecycle state.
@@ -140,6 +144,17 @@ export async function runRecordAction(params) {
   const targetModule = modules.get(module); // throws NotFoundError if unknown
   const service = targetModule.service;
 
+  // Production Spine v1 (ADR-038). Authorization happens HERE — before input
+  // validation, before the prepare phase, before a transaction is opened and
+  // before any provider is contacted. A refusal must cost the caller nothing
+  // and must reveal nothing about the record they were not allowed to touch.
+  //
+  // The runtime asks; it never decides. The permission comes from the action's
+  // own declaration, and the decision comes from the spine.
+  const authorization = params.spine
+    ? authorizeRecordAction(params, definition)
+    : null;
+
   const validatedInput = validateActionInput(definition.input ?? [], input);
 
   // External-operation actions (ADR-017) need TWO local write transactions
@@ -147,7 +162,11 @@ export async function runRecordAction(params) {
   // represent honestly. They are routed to the bounded external-operation
   // runner instead — the action still declares phases, never transactions.
   if (definition.externalOperation) {
-    return runExternalRecordAction(params, definition, validatedInput);
+    return runExternalRecordAction(params, definition, validatedInput, authorization);
+  }
+
+  if (usesWriteOutcomes(database)) {
+    return runPostgresqlRecordAction(params, definition, validatedInput, authorization);
   }
 
   const runId = randomUUID();
@@ -180,7 +199,7 @@ export async function runRecordAction(params) {
     // keys are dropped). A prepare failure fails the action with an honest
     // trace and never opens the transaction.
     if (typeof definition.prepare === 'function') {
-      const previewRecord = service.get(recordId); // NotFoundError → honest 404, no provider call
+      const previewRecord = await Promise.resolve(service.get(recordId)); // NotFoundError → honest 404, no provider call
       prepared = sanitizeJsonSafe(
         await definition.prepare({
           record: previewRecord,
@@ -195,7 +214,7 @@ export async function runRecordAction(params) {
     }
     result = await events.buffered(async (outbox) => {
       const value = await database.transactionAsync(async () => {
-        const record = service.get(recordId); // NotFoundError → rolled back, no writes
+        const record = await Promise.resolve(service.get(recordId)); // NotFoundError → rolled back, no writes
         if (Array.isArray(definition.fromStates) && !definition.fromStates.includes(record[definition.stateField ?? 'status'])) {
           throw new InvalidStateError(
             `${module}.${action} is not allowed from state "${record[definition.stateField ?? 'status']}"`,
@@ -260,16 +279,33 @@ export async function runRecordAction(params) {
   // write failure (e.g. the database is briefly locked by a concurrent writer)
   // must never mask the action's real outcome, so it is logged, not thrown.
   try {
-    writeTrace(database, {
+    await Promise.resolve(writeTrace(database, {
       runId,
       workflowName: `${module}.${action}`,
       status: failure ? 'failed' : 'completed',
-      input: { recordId, input: validatedInput, actor: safeActor(actor) },
+      input: {
+        recordId,
+        input: validatedInput,
+        actor: safeActor(actor),
+        // The decision that let this run, so the trace answers "by what
+        // authority" rather than only "who claimed to be whom".
+        ...(authorization
+          ? {
+            authorization: {
+              permission: authorization.permission,
+              organizationId: authorization.organizationId,
+              subject: authorization.subject,
+              kind: authorization.kind,
+              role: authorization.role,
+            },
+          }
+          : {}),
+      },
       output: failure ? null : result,
       error: failure ? failure.message : null,
       startedAt,
       steps,
-    });
+    }));
   } catch (traceError) {
     console.error(
       `[accordo] ${module}.${action} run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`,
@@ -296,8 +332,148 @@ export async function runRecordAction(params) {
  * provider registries it needs — no database, no modules, no managed writes.
  *
  * @param {any} params @param {any} definition @param {Record<string, unknown>} validatedInput
+ * @param {any} [authorization]
  */
-async function runExternalRecordAction(params, definition, validatedInput) {
+async function runPostgresqlRecordAction(params, definition, validatedInput, authorization) {
+  const { database, events, services, modules, module, action, recordId, actor } = params;
+  const now = params.now ?? nowIso;
+  const service = modules.get(module).service;
+  const writeSpec = {
+    tenantId: params.tenantId ?? database.tenantId,
+    idempotencyKey: usesWriteOutcomes(database)
+      ? resolveIdempotencyKey(params.idempotencyKey, now)
+      : params.idempotencyKey,
+    identity: params.identity,
+    actor,
+    operation: `${module}.${action}`,
+    target: recordId,
+    contractVersion: String(definition.actionContract ?? 1),
+    input: { recordId, input: validatedInput },
+    now,
+  };
+  if (usesWriteOutcomes(database)) {
+    const existing = await createWriteOutcomeStore(database).lookup(
+      tenantNamespace(writeSpec.tenantId),
+      resolveIdempotencyKey(writeSpec.idempotencyKey, now),
+      'root',
+    );
+    if (existing) {
+      const outcome = await runIdempotentWrite(database, events, writeSpec, async () => existing.response);
+      return {
+        ok: true, module, action, recordId, runId: outcome.runId, result: outcome.result,
+        idempotencyKey: outcome.idempotencyKey, replayed: true,
+      };
+    }
+  }
+  /** @type {any} */
+  let prepared;
+  if (typeof definition.prepare === 'function') {
+    const previewRecord = await Promise.resolve(service.get(recordId));
+    prepared = sanitizeJsonSafe(
+      await definition.prepare({
+        record: previewRecord,
+        input: validatedInput,
+        actor,
+        modules: readOnlyModulesView(modules),
+        config: params.config ?? {},
+        now,
+        step: () => {},
+      }),
+    );
+  }
+
+  try {
+    const outcome = await runIdempotentWrite(database, events, writeSpec, async ({ step }) => {
+      const record = await Promise.resolve(service.get(recordId));
+      if (Array.isArray(definition.fromStates) && !definition.fromStates.includes(record[definition.stateField ?? 'status'])) {
+        throw new InvalidStateError(
+          `${module}.${action} is not allowed from state "${record[definition.stateField ?? 'status']}"`,
+          { field: definition.stateField ?? 'status', from: record[definition.stateField ?? 'status'], action },
+        );
+      }
+      const result = await definition.execute({
+        record,
+        input: validatedInput,
+        actor,
+        services,
+        modules,
+        database,
+        core: params.core ?? Object.freeze({}),
+        pipelines: params.pipelines ?? Object.freeze({ forModule: () => null, get: () => null, list: () => [] }),
+        domains: params.domains ?? Object.freeze({
+          getPolicy: () => { throw new NotFoundError('Domain policy', 'none registered'); },
+          has: () => false,
+        }),
+        prepared,
+        config: params.config ?? {},
+        now,
+        managed: (id, patch) => service.applyManaged(id, patch, { actor }),
+        step,
+      });
+      step(`${module}.${action}`, result);
+      return result;
+    });
+    return {
+      ok: true,
+      module,
+      action,
+      recordId,
+      runId: outcome.runId,
+      idempotencyKey: outcome.idempotencyKey,
+      replayed: outcome.replayed,
+      result: outcome.result,
+    };
+  } catch (error) {
+    const failure = normalizeError(error);
+    if (!isUnknownCommit(failure)) {
+      const runId = failure.details && typeof failure.details === 'object'
+        ? /** @type {any} */ (failure.details).runId
+        : undefined;
+      try {
+        await Promise.resolve(writeTrace(database, {
+          runId: typeof runId === 'string' ? runId : randomUUID(),
+          workflowName: `${module}.${action}`,
+          status: 'failed',
+          input: {
+            recordId,
+            input: validatedInput,
+            actor: safeActor(actor),
+            ...(authorization
+              ? {
+                authorization: {
+                  permission: authorization.permission,
+                  organizationId: authorization.organizationId,
+                  subject: authorization.subject,
+                  kind: authorization.kind,
+                  role: authorization.role,
+                },
+              }
+              : {}),
+          },
+          output: null,
+          error: failure.message,
+          startedAt: now(),
+          steps: [{ name: `${module}.${action}`, status: 'failed', error: failure.message }],
+        }));
+      } catch (traceError) {
+        console.error(
+          `[accordo] ${module}.${action}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`,
+        );
+      }
+    }
+    failure.details = {
+      ...(failure.details && typeof failure.details === 'object' ? failure.details : {}),
+      ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
+    };
+    throw failure;
+  }
+}
+
+/**
+ * @param {any} params @param {any} definition @param {Record<string, unknown>} validatedInput
+ * @param {any} [authorization]
+ */
+async function runExternalRecordAction(params, definition, validatedInput, authorization) {
   const { database, events, services, modules, module, action, recordId, actor } = params;
   const now = params.now ?? nowIso;
   const service = modules.get(module).service;
@@ -317,7 +493,7 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     managed: (id, patch) => service.applyManaged(id, patch, { actor }),
   });
 
-  const { result, runId } = await runExternalOperation({
+  const { result, runId, idempotencyKey, replayed } = await runExternalOperation({
     database,
     events,
     name: `${module}.${action}`,
@@ -325,8 +501,13 @@ async function runExternalRecordAction(params, definition, validatedInput) {
     input: { recordId, input: validatedInput },
     actor,
     timeoutMs: definition.timeoutMs ?? params.config?.externalTimeoutMs,
-    intent: (ctx) => {
-      const record = service.get(recordId); // NotFoundError → rolled back
+    externalOperation: definition.externalOperation,
+    idempotencyKey: params.idempotencyKey,
+    tenantId: params.tenantId ?? database.tenantId,
+    identity: params.identity,
+    provider: params.provider ?? definition.provider ?? params.config?.externalProvider,
+    intent: async (ctx) => {
+      const record = await Promise.resolve(service.get(recordId)); // NotFoundError → rolled back
       if (Array.isArray(definition.fromStates) && !definition.fromStates.includes(record[stateField])) {
         throw new InvalidStateError(
           `${module}.${action} is not allowed from state "${record[stateField]}"`,
@@ -345,16 +526,27 @@ async function runExternalRecordAction(params, definition, validatedInput) {
         config: params.config ?? {},
         step: ctx.step,
         now: ctx.now,
+        providerIdempotencyKey: ctx.providerIdempotencyKey,
       })
       : null,
     finalize: typeof definition.finalize === 'function'
-      ? (ctx) => definition.finalize({ ...ctx, ...writeContext(), record: service.get(recordId), input: validatedInput })
+      ? async (ctx) => definition.finalize({
+        ...ctx,
+        ...writeContext(),
+        record: await Promise.resolve(service.get(recordId)),
+        input: validatedInput,
+      })
       : null,
     compensate: typeof definition.compensate === 'function'
-      ? (ctx) => definition.compensate({ ...ctx, ...writeContext(), record: service.get(recordId), input: validatedInput })
+      ? async (ctx) => definition.compensate({
+        ...ctx,
+        ...writeContext(),
+        record: await Promise.resolve(service.get(recordId)),
+        input: validatedInput,
+      })
       : null,
   });
-  return { ok: true, module, action, recordId, runId, result };
+  return { ok: true, module, action, recordId, runId, result, idempotencyKey, replayed };
 }
 
 const READ_ONLY_SERVICE_METHODS = ['get', 'list', 'listWhere', 'countWhere'];
@@ -427,6 +619,28 @@ export function sanitizeJsonSafe(value, path = 'value', seen = new Set()) {
   }
 }
 
+/**
+ * Authorize one record action against the composed spine.
+ *
+ * `requiredPermission` on the action definition is the contractual declaration;
+ * an action that declares nothing requires the spine's default, which is
+ * `records.write` — every record action is a mutation, so a `viewer` runs none
+ * of them.
+ *
+ * @param {any} params @param {any} definition
+ */
+function authorizeRecordAction(params, definition) {
+  const { spine, actor } = params;
+  const identity = params.identity ?? spine.identityFor({ identity: params.identity, actor });
+  const organizationId = params.organizationId
+    ?? identity?.organizationId
+    ?? null;
+  const permission = typeof definition.requiredPermission === 'string'
+    ? definition.requiredPermission
+    : spine.defaultActionPermission;
+  return spine.authorize({ identity, organizationId, permission });
+}
+
 /** @param {unknown} actor */
 function safeActor(actor) {
   if (actor && typeof actor === 'object') {
@@ -439,33 +653,19 @@ function safeActor(actor) {
 /**
  * Best-effort operation trace writer, shared with app-level operations that
  * follow the action envelope (e.g. catalog sync, ADR-016).
+ *
+ * This is the published surface; `createExecutionRunStore` is the internal
+ * primitive underneath it, shared with the workflow engine so one run row and
+ * one span row mean the same thing whichever runtime produced them. **The
+ * best-effort rule lives at the call site, not here** — every caller wraps this
+ * in a `try`/`catch` that logs and swallows, because a trace write failure must
+ * never mask the action's real outcome (ADR-012/016). This function throws, and
+ * always did.
+ *
  * @param {any} database @param {{runId: string, workflowName: string, status: string, input: unknown, output: unknown, error: string | null, startedAt: string, steps: Array<{name: string, status: string, output?: unknown, error?: string}>}} run
  */
 export function writeTrace(database, run) {
-  const finishedAt = nowIso();
-  database.raw
-    .prepare(
-      `INSERT INTO workflow_runs(id, workflow_name, status, input_json, output_json, error, started_at, finished_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(run.runId, run.workflowName, run.status, safeJson(run.input), safeJson(run.output), run.error, run.startedAt, finishedAt);
-  for (const step of run.steps) {
-    database.raw
-      .prepare(
-        `INSERT INTO trace_spans(id, run_id, parent_span_id, name, status, input_json, output_json, error, started_at, finished_at)
-         VALUES (?, ?, NULL, ?, ?, NULL, ?, ?, ?, ?)`,
-      )
-      .run(randomUUID(), run.runId, step.name, step.status, safeJson(step.output ?? null), step.error ?? null, run.startedAt, finishedAt);
-  }
-}
-
-/** @param {unknown} value */
-function safeJson(value) {
-  try {
-    return JSON.stringify(value ?? null);
-  } catch {
-    return JSON.stringify({ unserializable: true });
-  }
+  return createExecutionRunStore(database).recordRun(run);
 }
 
 export { ValidationError, NotFoundError };

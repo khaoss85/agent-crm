@@ -19,20 +19,70 @@ jobs:
   # and `diff HEAD`, all of which work in a one-commit checkout, and the provenance
   # tests build their own fixture repositories rather than reading this one.
   verify:
-    runs-on: ubuntu-latest
+    # Self-hosted while the account billing lock rejects every GitHub-hosted
+    # job at start (0 steps, "account is locked due to a billing issue").
+    # Switch back to ubuntu-latest once billing is unlocked.
+    runs-on: [self-hosted, accordo-ci]
+    env:
+      ACCORDO_TEST_POSTGRES: '1'
+      ACCORDO_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/accordo_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-      - run: npm run verify
+          cache: npm
+      - name: Start PostgreSQL 16 (self-hosted macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew services start postgresql@16
+          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 && break; sleep 2; done
+          pg_isready -h 127.0.0.1 -p 5432
+          psql -h /tmp -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'postgres') THEN CREATE ROLE postgres SUPERUSER LOGIN; END IF; END \$\$;"
+          psql -h /tmp -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'accordo_test'" | grep -q 1 || psql -h /tmp -d postgres -c "CREATE DATABASE accordo_test OWNER postgres;"
+      - name: Start PostgreSQL 16 (GitHub-hosted Linux)
+        if: runner.os == 'Linux'
+        run: |
+          docker run -d --name accordo-pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16
+          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 -U postgres && break; sleep 2; done
+      - name: Install and verify PostgreSQL 16 backup client (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-16
+          pg_dump --version | grep -E '^pg_dump \(PostgreSQL\) 16\.'
+          pg_restore --version | grep -E '^pg_restore \(PostgreSQL\) 16\.'
+          psql --version | grep -E '^psql \(PostgreSQL\) 16\.'
+      - name: Verify PostgreSQL 16 backup client (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          pg_dump --version | grep -E '^pg_dump \(PostgreSQL\) 16\.'
+          pg_restore --version | grep -E '^pg_restore \(PostgreSQL\) 16\.'
+          psql --version | grep -E '^psql \(PostgreSQL\) 16\.'
+      - run: npm ci
+      # The measurement script executes npm run verify itself on this clean
+      # checkout. Reuse that run instead of maintaining an unmeasured suite and
+      # asking a maintainer to run it again on a different machine.
+      - name: Verify and emit the measured claim record
+        run: node scripts/measure-suite.js > "$RUNNER_TEMP/measurement.json"
       - run: npm run smoke
+      - name: Replay the published quote approval recipe
+        run: |
+          node --no-warnings examples/recipes/quote-approval/run.mjs "$RUNNER_TEMP/quote-approval-crm"
+          npm --prefix "$RUNNER_TEMP/quote-approval-crm" run verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claims-measurement-${{ github.sha }}
+          path: ${{ runner.temp }}/measurement.json
+          if-no-files-found: error
+          retention-days: 30
 
   # Public claims are held to the same standard as the code that backs them:
   # a marketing sentence whose evidence has moved fails the build, exactly like a
   # test would. See scripts/site-check.js and scripts/distribution-check.js.
   public-claims:
-    runs-on: ubuntu-latest
+    # Same billing-lock routing as `verify` above.
+    runs-on: [self-hosted, accordo-ci]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,4 +107,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
       - run: npm run gtm:check
+      # The Repository Truth Contract (ADR-039) belongs in this job and in no
+      # other. Its measurement provenance checks need full git history, and this
+      # is the one job that has it — which is also why it cannot go in `verify`,
+      # deliberately left at `fetch-depth: 1`.
+      #
+      # It shipped wired into nothing: a contract written because the failure it
+      # closes was "found by a person, not by a gate" was itself waiting on a
+      # person to remember to type the command. A separate step rather than a
+      # member of `gtm:check`, so the composition of `gtm:check` — which a
+      # developer runs locally in a possibly shallow clone — is unchanged. It
+      # takes about half a second.
+      #
+      # `--require-current` holds the freshness ratio at 1: any fact whose
+      # status is not `current` (a measurement that no longer describes this
+      # tree) fails this job, exactly like a test would. A local `--check`
+      # without the flag still guards agreement only.
+      - run: npm run repo:truth -- --check --require-current

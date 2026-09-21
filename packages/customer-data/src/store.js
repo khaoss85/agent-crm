@@ -20,6 +20,8 @@ export function resolvedNames(config = {}) {
     candidate: config.duplicateCandidateModule ?? 'duplicate-candidate',
     link: config.canonicalLinkModule ?? 'canonical-link',
     issue: config.dataQualityIssueModule ?? 'data-quality-issue',
+    bulkRun: config.bulkRunModule ?? 'customer-bulk-run',
+    bulkItem: config.bulkItemModule ?? 'customer-bulk-item',
   };
 }
 
@@ -55,13 +57,13 @@ export function trusted(modules, name) {
  *
  * @param {any} service @param {Record<string, unknown>} filters
  */
-export function deciding(service, filters) {
+export async function deciding(service, filters) {
   if (!service || typeof service.listWhere !== 'function') {
     throw new AppError('a customer-data correctness read needs the complete listWhere query, not a display page', {
       code: 'CUSTOMER_DATA_STORAGE_INVALID', status: 500,
     });
   }
-  return service.listWhere(filters);
+  return await service.listWhere(filters);
 }
 
 /** Newest-first, id-stable — the order `list()` used to give, kept explicit. */

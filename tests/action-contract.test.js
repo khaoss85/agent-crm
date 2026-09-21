@@ -26,11 +26,30 @@ test('a well-formed action definition validates', () => {
   assert.doesNotThrow(() => validateActionDefinition(validDefinition(), deps));
 });
 
+test('M2E-1: actionContract 2 is accepted, and externalOperation is a separate version set', () => {
+  // The accepted set widened to {1, 2}.
+  assert.doesNotThrow(() => validateActionDefinition(validDefinition({ actionContract: 2 }), deps));
+
+  // Phase-shape marker, not the action contract. v1 remains the SQLite/legacy
+  // runner; v2 is the PostgreSQL recovery contract. Both are valid definitions.
+  assert.doesNotThrow(() => validateActionDefinition(validDefinition({
+    actionContract: 2, externalOperation: 2, execute: undefined,
+    intent() {}, external() {}, finalize() {},
+  }), deps));
+  assert.throws(
+    () => validateActionDefinition(validDefinition({
+      actionContract: 2, externalOperation: 3, execute: undefined,
+      intent() {},
+    }), deps),
+    /externalOperation must be one of 1, 2/,
+  );
+});
+
 test('malformed action definitions fail closed with a precise reason', () => {
   const cases = [
     [validDefinition({ module: 'Lead' }), /module must match/],
     [validDefinition({ name: 'Qualify' }), /name must match/],
-    [validDefinition({ actionContract: 2 }), /actionContract must be 1/],
+    [validDefinition({ actionContract: 3 }), /actionContract must be one of 1, 2/],
     [validDefinition({ module: 'ghost' }), /target module "ghost" is not a generated module/],
     [validDefinition({ execute: 'nope' }), /execute must be a function/],
     [validDefinition({ input: {} }), /input must be an array/],

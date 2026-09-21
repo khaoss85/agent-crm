@@ -1,8 +1,10 @@
 // @ts-check
 
-import { definePackage } from '../../core/index.js';
+import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { buildCustomerDataActions } from './actions.js';
+import { BULK_ACTIONS, MAX_BULK_ITEMS } from './bulk.js';
 import { createCustomerIdentityCapability } from './capability.js';
+import { EXPORT_MAX_ROWS } from './export.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
 import { createCustomerDataOperations, LIMITATIONS } from './operations.js';
 import { MATCH_POLICY_KIND, MATCH_RULES, defineCustomerMatchPolicy } from './policy.js';
@@ -14,8 +16,10 @@ import { resolvedNames } from './store.js';
  *
  * What it does: brings bounded external customer rows in, keeps their source
  * and provenance, finds *deterministic* duplicates or leaves them unresolved,
- * lets a human govern canonical identity, surfaces data-quality findings, and
- * reads one consolidated profile across whatever packages are composed.
+ * lets a human govern canonical identity, surfaces data-quality findings,
+ * applies one human decision across many records with per-record receipts,
+ * exports a managed record set completely or not at all, and reads one
+ * consolidated profile across whatever packages are composed.
  *
  * What it deliberately is **not**: a CDP, a warehouse, real-time activation, a
  * probabilistic identity graph, ML entity resolution, arbitrary ETL, global
@@ -38,7 +42,8 @@ export const CUSTOMER_DATA_DOMAIN = 'customer-data';
 /**
  * The records this package owns. None of them duplicates a business record:
  * they are an import log, its receipts, external identifiers, duplicate
- * evidence, canonical decisions and quality findings.
+ * evidence, canonical decisions, quality findings, and the bulk runs with
+ * their per-item receipts.
  */
 export const CUSTOMER_DATA_RESOURCES = Object.freeze([
   'customer-import-run',
@@ -47,6 +52,8 @@ export const CUSTOMER_DATA_RESOURCES = Object.freeze([
   'duplicate-candidate',
   'canonical-link',
   'data-quality-issue',
+  'customer-bulk-run',
+  'customer-bulk-item',
 ]);
 
 /**
@@ -60,7 +67,7 @@ export function createCustomerDataPackage(options = {}) {
   const names = resolvedNames(config);
   const policy = options.matchPolicy ?? defineCustomerMatchPolicy();
 
-  return definePackage({
+  return selectPackageGraph(definePackage({
     packageContract: 1,
     name: CUSTOMER_DATA_DOMAIN,
     version: 1,
@@ -68,7 +75,8 @@ export function createCustomerDataPackage(options = {}) {
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
       + 'identifiers held beside the records they name, deterministic duplicate candidates, human-decided canonical identity '
-      + 'as a logical link, explainable data-quality findings, and one read-only consolidated profile.',
+      + 'as a logical link, explainable data-quality findings, bulk decisions with per-record receipts, scale-safe '
+      + 'export, and one read-only consolidated profile.',
     resources: [...CUSTOMER_DATA_RESOURCES],
 
     // Nothing is required. The foundation reads the host through the core
@@ -131,6 +139,50 @@ export function createCustomerDataPackage(options = {}) {
       },
       {
         operationContract: 1,
+        name: 'apply-bulk-customer-action',
+        appMethod: 'applyBulkCustomerAction',
+        label: 'Apply one decision across many records',
+        description:
+          'Apply one of this package\'s human decisions across many records with one receipt per record. '
+          + 'Each record runs in its own transaction so one refusal stops nothing else; a run that did not apply '
+          + 'every record reads partial, never completed. The idempotency key is derived from the payload, so '
+          + 'retrying the same bulk resumes or replays the same run and never silently reapplies.',
+        input: [
+          { name: 'action', type: 'enum', values: [...BULK_ACTIONS], hint: 'Which declared decision to apply to every record.' },
+          { name: 'items', type: 'json', hint: `Up to ${MAX_BULK_ITEMS} items, each with a recordId and the action input.` },
+        ],
+        create(runtime) {
+          const operations = createCustomerDataOperations({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+          });
+          return (request) => operations.applyBulkCustomerAction(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'export-customer-records',
+        appMethod: 'exportCustomerRecords',
+        label: 'Export one managed record set',
+        description:
+          'Export one of this package\'s managed record sets, completely or not at all. The set is counted '
+          + 'first with a complete read; the answer states the row count and the bound, and a set larger than '
+          + `the bound refuses with EXPORT_WOULD_TRUNCATE instead of returning a short file. At most ${EXPORT_MAX_ROWS} rows.`,
+        input: [
+          { name: 'resource', type: 'string', hint: 'Which managed record set to export, e.g. "data-quality-issue".' },
+          { name: 'where', type: 'json', hint: 'Exact-match filters. Absent means the whole set.' },
+          { name: 'bound', type: 'integer', hint: `At most ${EXPORT_MAX_ROWS} rows; absent means the maximum. A smaller bound may be asked, never a larger one.` },
+        ],
+        create(runtime) {
+          const operations = createCustomerDataOperations({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+          });
+          return (request) => operations.exportCustomerRecords(request);
+        },
+      },
+      {
+        operationContract: 1,
         name: 'read-customer-profile',
         appMethod: 'readCustomerProfile',
         label: 'Read a consolidated customer profile',
@@ -180,8 +232,29 @@ export function createCustomerDataPackage(options = {}) {
           guarantee: 'every linked record still exists, still resolves, and is never rewritten or cascaded',
           physicalMerge: 'not implemented, and deliberately deferred to Customer Data Operations v2',
         },
+        bulk: {
+          actions: [...BULK_ACTIONS],
+          maxItems: MAX_BULK_ITEMS,
+          perRecord: 'every item gets a receipt naming applied, already-applied or failed with its code',
+          transactions: 'one transaction per item: one refusal stops nothing else and rolls nothing else back',
+          partial: 'a run that did not apply every item reads partial, never completed; a partial run is a result, not an error',
+          idempotency: 'derived from the action and the sorted item digests; never a clock or a random value',
+          resume: 'retrying the same bulk continues the items with no applied receipt; applied items report already-applied from the stored receipt',
+          replay: 'retrying a finished bulk returns the stored run with replayed: true and runs nothing twice',
+          humanOnly: 'every bulked decision keeps its human-only check: a non-user actor gets one HUMAN_APPROVAL_REQUIRED receipt per item',
+        },
+        export: {
+          resources: [...CUSTOMER_DATA_RESOURCES],
+          maxRows: EXPORT_MAX_ROWS,
+          countFirst: 'the set is counted with a complete read before anything is returned',
+          bound: 'stated on every answer; a smaller bound may be asked, never a larger one',
+          truncation: 'a set larger than the bound refuses with EXPORT_WOULD_TRUNCATE instead of returning a short file',
+          reconciliation: 'the rows returned always equal the count stated, or nothing is returned',
+          writes: 'an export writes nothing at all — not a run, not a receipt',
+        },
         dataQuality: {
-          kinds: ['missing_required_identity', 'conflicting_external_identity', 'invalid_email', 'invalid_domain',
+          kinds: ['missing_required_identity', 'conflicting_external_identity', 'identity_conflict_windowed_scope',
+            'invalid_email', 'invalid_domain',
             'duplicate_candidate_open', 'orphaned_reference', 'unresolved_import_row'],
           governance: 'resolving or dismissing an issue records a human decision and erases nothing',
         },
@@ -194,7 +267,7 @@ export function createCustomerDataPackage(options = {}) {
         },
         deferred: {
           track: 'Customer Data Operations v2',
-          items: ['global search', 'saved views', 'bulk actions', 'export at scale', 'physical merge or consolidation',
+          items: ['global search', 'saved views', 'physical merge or consolidation',
             'retention and erasure workflow'],
         },
         limitations: [...LIMITATIONS],
@@ -203,7 +276,12 @@ export function createCustomerDataPackage(options = {}) {
           'GDPR or legal assurance', 'retention and erasure', 'cross-channel timeline'],
       };
     },
-  });
+  }), options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createCustomerDataPackage()` callers keep v1. */
+export function createCustomerDataPackageV2(options = {}) {
+  return createCustomerDataPackage({ ...options, packageContract: 2 });
 }
 
 export { defineCustomerMatchPolicy, MATCH_POLICY_KIND, MATCH_RULES, LIMITATIONS };

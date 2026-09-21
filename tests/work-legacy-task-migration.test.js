@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -9,6 +9,20 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { legacyKey, migrateLegacyTasks } from '../packages/work/src/legacy-tasks.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+
+test('the declared M2A slice has no raw-driver reachability', () => {
+  const paths = [
+    'packages/modules/approval/src/approval-service.js',
+    'packages/modules/contact/src/contact-service.js',
+    'packages/modules/opportunity/src/opportunity-service.js',
+    'packages/work/src/legacy-tasks.js',
+  ];
+  for (const path of paths) {
+    const source = readFileSync(join(repoRoot, path), 'utf8');
+    assert.doesNotMatch(source, /database\.raw|\.raw\.prepare\s*\(|\.raw\.exec\s*\(|DatabaseSync/,
+      `${path} must remain behind the structured storage seam`);
+  }
+});
 
 /**
  * **An existing starter database must stay readable, and it does.**

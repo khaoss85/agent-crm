@@ -59,6 +59,61 @@ lowercase token, so a provenance string carrying hyphens
 (`signed-order-terms`) is observed through a boolean the journey publishes
 beside it rather than by widening the grammar for one document.
 
+### The fifth consumer, which is made almost entirely of refusals
+
+`tenant-isolation-and-authorization` (Production Spine v1, ADR-038) is the
+fifth, over a sixth composition — and the composition is the emptiest yet: **no
+domain packages at all**, two tenants as two bound instances over one shared
+control plane. That is deliberate. The
+properties under test belong to the framework, so proving them over a
+composition holding nothing shows they do not depend on any package being
+present.
+
+It is unlike its predecessors in what it must prove. **Every security claim in
+ADR-038 is a negative one** — nothing leaked, nobody escalated, no credential
+was stored — and a negative claim a run never tests is indistinguishable from a
+feature that was never built. So the journey performs each forbidden operation
+and publishes that it was refused, and the scenario observes those refusals as
+positive facts.
+
+**Contract 1 again needed nothing added**, and it met the same bound the third
+and fourth consumers met, in the same place: an observed value may only be a
+lowercase token, so `database-per-tenant` is observed through a boolean the
+journey publishes beside it.
+
+**A correction the review forced, and the reason it belongs here.** The run
+originally observed `tenantStrategyIsDatabasePerTenant` and narrated *"isolation
+is two databases, not a filter anybody could forget to write"*. Both were true
+of the run and false of the framework: the journey composed the two
+applications and the two database files **itself**, and nothing in the product
+did that for an operator. Two organizations inside one application shared one
+database, and the review measured the owner of one reading and writing the
+other's records and audit rows.
+
+This is the failure mode a scenario is meant to catch and did not: **a run can
+prove a property of its own composition and be read as proving a property of
+the framework.** The discriminator is cheap — if the journey had to build the
+arrangement by hand, the arrangement is part of the claim, not part of the
+product — and it is worth applying to every future journey that composes more
+than one application.
+
+The gap is now closed rather than disclaimed, and the journey shows the
+difference in one line: it no longer passes a database path, because a
+spine-composed application refuses one and takes its data plane from the tenant
+binding. The observations are `crmDataPlaneIsolationEnforced: true`,
+`tenantStorageBoundaryWired: true` and — the one that matters most —
+`twoTenantsInOneApplicationRefused: true`, which the run earns by attempting
+that configuration and recording the startup refusal. The two instances share
+one control plane deliberately, so the run also proves the distinction between
+*seeing that another tenant exists* and *having any authority over its data*.
+
+One claim was written and then deliberately removed. `JTBD-DG-07` (restrict
+sensitive fields by role) was cited with a note explaining that v1 authorizes
+*operations* and never *fields* — but the runner labels every cited row
+`established` regardless of what its note says, so citing a row in order to
+disclaim it reports the opposite of the truth. The row is simply not claimed,
+which is what "not established" already means.
+
 ### The fourth consumer, and the one thing it could not observe
 
 `customer-identity-governance` (Customer Data Foundation v1) is the fourth, over
@@ -310,7 +365,7 @@ nothing to check.
 | `JOURNEY_SOURCE_TRUSTED` | the journey is checked-in repository source running with the operator's authority. The child is bounded in time, output and process group — isolation, not a sandbox |
 | `BROWSER_EVIDENCE_NOT_AUTOMATED` | no browser is driven; nothing here is evidence about the Admin as a user sees it |
 | `NO_PROVIDER_CONTACTED` | offline by construction; every provider in the journey is a checked-in fixture |
-| `PRODUCTION_READINESS_NOT_ASSESSED` | no auth, tenancy or RBAC exists, and nothing here assesses deployment or operational readiness |
+| `PRODUCTION_READINESS_NOT_ASSESSED` | this framework ships no authentication, and nothing here assesses deployment or operational readiness |
 
 ### What the journey does not prove — journey-scoped
 
@@ -320,6 +375,7 @@ nothing to check.
 | `service-sla-escalation` | `SLA_IS_ELAPSED_TIME_NOT_A_CONTRACTUAL_JUDGEMENT`, `NOTHING_WAS_NOTIFIED_OR_ROUTED`, `ESCALATION_IS_MANUALLY_RECORDED`, `SERVICE_COVERAGE_IS_NOT_A_CONTRACT` |
 | `contract-renewal-execution` | `NOTHING_RENEWS_ON_A_CLOCK`, `A_SUCCESSOR_IS_NOT_A_LEGAL_RENEWAL`, `SIGNED_TERM_REQUIRED_AND_PROVEN_BY_REFUSAL`, `NOTHING_WAS_BILLED_OR_NOTIFIED` |
 | `customer-identity-governance` | `MATCHING_IS_EXACT_ONLY`, `CANONICAL_IDENTITY_IS_A_LOGICAL_LINK`, `THIS_IS_NOT_A_CDP_OR_A_WAREHOUSE`, `NO_CONSENT_RETENTION_OR_ERASURE_CLAIM`, `THE_PROFILE_IS_A_PROJECTION_NOT_A_TIMELINE` |
+| `tenant-isolation-and-authorization` | `ISOLATION_IS_TWO_DATABASES_NOT_A_ROW_COLUMN`, `NO_IDENTITY_PROVIDER_IS_CONTACTED`, `EVERY_REFUSAL_IS_EARNED_BY_ATTEMPTING_IT`, `NOT_PRODUCTION_READINESS` |
 
 No code appears in more than one list — not in both journeys, and not shadowing a
 global one. A limitation true of both journeys belongs in the global set; a

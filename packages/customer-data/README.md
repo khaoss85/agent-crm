@@ -1,15 +1,15 @@
 # `customer-data` — governed customer identity, import provenance and data quality
 
-Six records, three human actions, three application operations and one declared
+Eight records, three human actions, five application operations and one declared
 capability. It **requires nothing**.
 
 | | |
 |---|---|
-| Owns | `customer-import-run`, `customer-import-row`, `external-identity`, `duplicate-candidate`, `canonical-link`, `data-quality-issue` |
+| Owns | `customer-import-run`, `customer-import-row`, `external-identity`, `duplicate-candidate`, `canonical-link`, `data-quality-issue`, `customer-bulk-run`, `customer-bulk-item` |
 | Requires | **nothing** |
 | Offers | `customer-identity@1` |
 | Actions | `duplicate-candidate.link-canonical-identity`, `duplicate-candidate.dismiss-duplicate-candidate`, `data-quality-issue.govern-data-quality-issue` |
-| Operations | `preview-customer-import`, `apply-customer-import`, `read-customer-profile` (ADR-032) |
+| Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile` (ADR-032) |
 | Policies | `deterministic-customer-match@1` |
 | ADR | ADR-037 · ExecPlan `docs/plans/customer-data-foundation-v1.md` |
 
@@ -39,8 +39,8 @@ Stated here, in `metadata().notModeled`, and asserted as absent by the tests:
 > **not a CDP** · no customer data platform · no warehouse or lakehouse · no
 > real-time streaming or activation · no probabilistic identity graph · no
 > machine-learning entity resolution · no fuzzy or phonetic matching · no
-> arbitrary ETL · no global full-text search · no saved views · no bulk actions
-> · no export at scale · **no physical merge or consolidation** · no consent
+> arbitrary ETL · no global full-text search · no saved views ·
+> **no physical merge or consolidation** · no consent
 > orchestration · **no GDPR, retention or erasure claim** · no scheduler · no
 > RBAC.
 
@@ -51,7 +51,8 @@ not a description of this package anywhere.
 
 ```bash
 for m in customer-import-run customer-import-row external-identity \
-         duplicate-candidate canonical-link data-quality-issue; do
+         duplicate-candidate canonical-link data-quality-issue \
+         customer-bulk-run customer-bulk-item; do
   npm run crm -- module create packages/customer-data/modules/$m.module.json --apply
 done
 ```
@@ -130,6 +131,53 @@ each carrying who decided and why.
   Data Operations v2. An operator who wants two rows to become one row does not
   get that here.
 
+## Bulk: one decision across many records, one receipt per record
+
+`apply-bulk-customer-action` applies one of the three human decisions above —
+link, dismiss or govern — across up to 500 records in one call.
+
+```text
+bulk  →  one transaction per item, one receipt per item, one run row
+```
+
+- **Partial reads partial.** Every item gets a receipt naming `applied`,
+  `failed` (with the refusal's code) or — on resume — `already-applied`. A
+  run that did not apply every item reads `partial`, never `completed`, and
+  a partial run is a result, not an error.
+- **One refusal stops nothing else.** Each record runs in its own
+  transaction with the action runtime's own `fromStates` guard, so a refusal
+  on one record neither rolls back nor blocks the rest.
+- **Resumable, never silently reapplied.** The idempotency key is derived
+  from the action and the sorted item digests. Retrying a finished bulk
+  replays the stored run with `replayed: true` and runs nothing twice; an
+  interrupted run stays `in_progress` and the retry continues the items with
+  no applied receipt.
+- **The human boundary holds per item.** Every bulked decision keeps its
+  human-only check: a non-user actor gets one `HUMAN_APPROVAL_REQUIRED`
+  receipt per item, never one silent refusal for the batch.
+
+## Export: counted first, refused rather than truncated
+
+`export-customer-records` exports one of this package's eight managed record
+sets — the import log and its receipts, the identities, the candidates, the
+links, the findings, and the bulk runs with their receipts.
+
+```text
+export  →  count, then rows — or a refusal, never a short file
+```
+
+- **Counted first.** The set is counted with the complete exact-match query
+  before anything is returned, and the answer states the row count and the
+  bound. Display pages (`list()`, clamped to 500) are never the read behind
+  an export.
+- **Truncation is a refusal.** A set larger than the bound refuses with
+  `EXPORT_WOULD_TRUNCATE` (409) naming the resource, the count and the
+  bound. At most 10,000 rows; a smaller bound may be asked, never a larger
+  one.
+- **Writes nothing.** An export creates no run, no receipt and no audit
+  entry. The role boundary lives at the enumerated HTTP route, which gates
+  `records.read` before the operation runs.
+
 ## The profile: a projection, where absence is part of the contract
 
 `read-customer-profile` reads one customer across the packages this application
@@ -173,12 +221,13 @@ back door around that.
 ## The human-actor boundary, stated exactly
 
 Every decision here requires `actor.type === "user"`. That is an **audit**
-boundary — this framework has no auth, tenancy or RBAC, so it is not Sales,
+boundary — this framework ships no authentication, so it is not Sales,
 Legal or Finance role enforcement, and this README does not pretend otherwise.
 
 ## Evidence
 
 - `tests/customer-data-foundation.test.js` — the v1 claims against a real composed application
+- `tests/customer-data-operations-v2.test.js` — bulk actions and export at scale: per-record receipts, partial honesty, resume and replay, truncation refusal
 - `tests/customer-data-faults.test.js` — faults, two-connection races, restart, detach and old-database upgrade
 - `tests/admin-customer-data.test.js` — the Admin section, including the failure states
 - `examples/scenarios/customer-identity-governance.scenario.json` — the DX6 journey and what it does *not* establish

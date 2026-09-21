@@ -54,7 +54,7 @@
  *   it handed in — including a field the mapping does not know — are nowhere in
  *   the database afterwards.
  * - **Nothing here is a GDPR, consent, retention or erasure claim**, and there
- *   is no auth, tenancy or RBAC anywhere in this framework, so "a human did it"
+ *   ships no authentication, so "a human did it"
  *   means an actor object said so.
  *
  * Run it directly:

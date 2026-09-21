@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SUPPORTED_PACKAGE_CONTRACT } from '../../core/index.js';
+import { SUPPORTED_PACKAGE_CONTRACTS } from '../../core/src/package-contract-versions.js';
 import { canonicalJson, inspectionFingerprint } from '../../core/src/solution-plan.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
 import { runReportingChild } from './child-report.js';
@@ -374,6 +375,7 @@ function envelope({ root, location, name, definition, declaration, checks, probl
       version: definition?.version ?? null,
       packageContract: definition?.packageContract ?? null,
       supportedPackageContract: SUPPORTED_PACKAGE_CONTRACT,
+      acceptedPackageContracts: [...SUPPORTED_PACKAGE_CONTRACTS],
       resources: declaration.published.resources,
       actions: declaration.published.actions,
       requires: declaration.published.requires,

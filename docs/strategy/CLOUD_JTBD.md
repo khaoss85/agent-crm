@@ -4,9 +4,12 @@ Operator and builder jobs for the optional managed layer. `AGENT_CRM_CLOUD.md`
 describes *what* Accordo Cloud is; this file states *what someone is trying to
 get done* and what would have to be true to claim it.
 
-**Every job below is `not supported`.** No control plane, no deployment code, no
-account system, no billing exists — Cloud is design only and is gated on the
-Production Spine (Phase 6). Self-hosting stays first-class forever, and every
+**These are target jobs for a public managed offering, not acceptance receipts.**
+This framework repository has no Cloud control plane. Private platform/pilot
+repositories own their implementation and live acceptance state; no row here
+promotes private deployment evidence to public availability. Cloud readiness is
+gated on the relevant Production Spine and deployment proof (Phase 6).
+<!-- truth: cloud_control_plane.implemented=absent --> Self-hosting stays first-class forever, and every
 job here must have a self-host equivalent or an export path.
 
 Two actors recur, and conflating them is the main design risk:

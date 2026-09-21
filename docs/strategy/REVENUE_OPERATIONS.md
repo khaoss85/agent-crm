@@ -88,7 +88,7 @@ Publication makes a version the effective one from an explicit timestamp. **Roll
 - RevOps may publish scoring/routing policy versions.
 - Admin overrides follow RBAC.
 
-The **service boundary** enforces all of this — never the UI. Honest limit: real multi-user authorization cannot be validated before the Production Spine (authentication, tenancy, RBAC — `EXECUTION_ROADMAP.md` Phase 6). Until then these permissions are enforced against declared actor identity on a local-development surface, and the JTBD matrix must not claim them validated.
+The **service boundary** enforces all of this — never the UI. Honest limit: framework authorization and instance tenancy are enforced, while authentication is supplied by the deployment verifier (`EXECUTION_ROADMAP.md` Phase 6). A real multi-user deployment needs its own verified-identity and access evidence; domain policy tests alone do not validate that deployment.
 
 ---
 

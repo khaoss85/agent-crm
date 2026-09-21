@@ -42,7 +42,10 @@ test('a declared operation is validated fail-closed at registration', () => {
     `expected refusal matching ${pattern}`,
   );
 
-  refuse([op({ operationContract: 2 })], /operationContract must be 1/);
+  assert.doesNotThrow(() => new PackageRegistry({
+    packages: [definePackage(base({ packageContract: 2, operations: [op({ operationContract: 2 })] }))],
+  }));
+  refuse([op({ operationContract: 3 })], /operationContract must be one of 1, 2/);
   refuse([op({ name: 'Not A Name!' })], /operation name must match/);
   refuse([op({ appMethod: 'not-camel' })], /appMethod must match/);
   refuse([op(), op()], /duplicate operation "probe-op"/);
@@ -182,8 +185,8 @@ test('a declared alias attaches generically, and a shadowing alias stops startup
   assert.ok(line, `boot failed:\n${attached.stderr}`);
   const seen = JSON.parse(line.slice('__RESULT__'.length));
   assert.deepEqual(seen.result, { echoed: 7, boundedConfig: true });
-  assert.deepEqual(seen.published, [{ name: 'probe-op', appMethod: 'probeEcho' }]);
-  assert.deepEqual(seen.metadata, [{ name: 'probe-op', label: 'Probe', appMethod: 'probeEcho' }]);
+  assert.deepEqual(seen.published, [{ name: 'probe-op', operationContract: 1, appMethod: 'probeEcho' }]);
+  assert.deepEqual(seen.metadata, [{ name: 'probe-op', operationContract: 1, label: 'Probe', appMethod: 'probeEcho' }]);
 
   // An alias may add application surface, never replace it: a collision with
   // an existing key — the kernel's own surface first of all — stops startup.

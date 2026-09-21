@@ -2,13 +2,13 @@
   "claimsContract": 2,
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used. Contract 2 (ADR-027): measuredAgainst additionally requires testFiles and testsTree, and no claim, limitation or repoFact may type an exact test count — the one number lives in measuredAgainst and reaches a page as {{measured.tests}}.",
   "measuredAgainst": {
-    "date": "2026-08-20",
-    "sha": "2d74503",
+    "date": "2026-09-19",
+    "sha": "bffb1c2",
     "command": "npm run verify",
-    "tests": 1400,
+    "tests": 2196,
     "failures": 0,
-    "testFiles": 124,
-    "testsTree": "d944b76bb2708ac008725becf0bed32ecff11cb5",
+    "testFiles": 189,
+    "testsTree": "2895aa7733173dc82ddb915d63cabee608968423",
     "note": "Written by `node scripts/measure-suite.js --apply` from a real run on a clean tree. Never edit these numbers by hand: scripts/site-check.js verifies sha, testsTree and testFiles against the commit, so a record moved forward without a re-run fails the build."
   },
   "claims": [
@@ -89,7 +89,7 @@
         ],
         "testName": "approval workflow rejects an agent pretending to make the human decision"
       },
-      "limitation": "The actor is asserted, not authenticated: there is no auth, tenancy or RBAC, and an actor header is not identity. This holds a boundary against an honest agent, not against an attacker with network access.",
+      "limitation": "In local-development mode the actor is asserted, not authenticated: no authentication ships, so an actor header there is not an identity. This holds a boundary against an honest agent, not against an attacker with network access.",
       "surfaces": [
         "site",
         "readme",
@@ -204,13 +204,20 @@
         "tests": [
           "tests/contracts-activation-e2e.test.js",
           "tests/contracts-contract.test.js",
-          "tests/admin-contracts.test.js"
+          "tests/admin-contracts.test.js",
+          "tests/lifecycle-amendment-execution-e2e.test.js",
+          "tests/lifecycle-amendment-execution.test.js",
+          "tests/signed-terms-e2e.test.js"
         ],
         "docs": [
-          "docs/CONTRACT_ACTIVATION.md"
+          "docs/CONTRACT_ACTIVATION.md",
+          "docs/RENEWAL_AMENDMENT.md"
+        ],
+        "facts": [
+          "domain.lifecycle.package_native=package_native"
         ]
       },
-      "limitation": "The term is post-signature operational metadata, not a signed contractual term. Nothing bills, renews, amends or cancels: there is no scheduler, so auto-renew and notice periods are recorded and never fire.",
+      "limitation": "Terms frozen into the signed quote document retain signed-order provenance; legacy orders without signed terms can use explicitly labelled post-signature operational metadata. Operational dates are never promoted to signed terms. Governed renewal and amendment execution creates a successor agreement from its own signed Order, with immutable lineage and a derived line delta. Historical contracts and subscriptions are not edited. There is no automatic renewal, cancellation execution, billing or customer notification.",
       "surfaces": [
         "site",
         "readme"
@@ -255,6 +262,26 @@
       ]
     },
     {
+      "id": "C-24",
+      "text": "A pending service obligation activates into operational coverage and an immutable entitlement; support cases then move through a declared transition table with elapsed-time SLA evidence and human-recorded escalation.",
+      "evidence": {
+        "jtbd": "JTBD-SV-01, JTBD-SV-03, JTBD-SV-07",
+        "tests": [
+          "tests/service-operations-e2e.test.js",
+          "tests/service-operations-evidence.test.js",
+          "tests/service-operations-integration.test.js"
+        ],
+        "docs": [
+          "docs/SERVICE_OPERATIONS.md",
+          "examples/scenarios/service-sla-escalation.scenario.json"
+        ]
+      },
+      "limitation": "No authenticated customer portal, notification delivery, business-hours calendar or automatic escalation ships. SLA evidence records elapsed-time observations; it is not a contractual breach determination, and a recorded escalation routes to nobody.",
+      "surfaces": [
+        "site"
+      ]
+    },
+    {
       "id": "C-13",
       "text": "A customer-authored domain package attaches and detaches with the kernel's fingerprint unchanged, and reaches another package only through a capability it declares.",
       "evidence": {
@@ -266,6 +293,17 @@
         ],
         "docs": [
           "docs/PACKAGE_AUTHORING.md"
+        ],
+        "facts": [
+          "domain.commercial.package_native=package_native",
+          "domain.contracts.package_native=package_native",
+          "domain.customer_data.package_native=package_native",
+          "domain.delivery.package_native=package_native",
+          "domain.intelligence.package_native=package_native",
+          "domain.lifecycle.package_native=package_native",
+          "domain.service.package_native=package_native",
+          "domain.signature.package_native=package_native",
+          "domain.work.package_native=package_native"
         ]
       },
       "limitation": "The scaffold that starts one writes an empty package and nothing else: no business logic, no composition, no global identity-uniqueness check. There is no registry, no marketplace, no publication and no sandboxing — package code runs with the host process's authority. Detaching leaves its data behind; there is no uninstall.",
@@ -285,6 +323,11 @@
         "docs": [
           "docs/APPLICATION_INSPECTION.md",
           "docs/AGENT_HARNESS_COMPATIBILITY.md"
+        ],
+        "facts": [
+          "rail.app_inspect.implemented=implemented",
+          "rail.project_doctor.implemented=implemented",
+          "rail.solution_check.implemented=implemented"
         ]
       },
       "limitation": "Source-only and read-only. It never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state — and it lists those blind spots as machine-readable limitations in its own output.",
@@ -310,6 +353,17 @@
           "npm run tour runs examples/starters/b2b-lead-qualification/install.mjs, which CI runs on every push, into a directory it keeps",
           "the counts are the app inspect report of that composed project",
           "scripts/tour.js exits non-zero if the composed application is ever empty"
+        ],
+        "facts": [
+          "domain.commercial.package_native=package_native",
+          "domain.contracts.package_native=package_native",
+          "domain.customer_data.package_native=package_native",
+          "domain.delivery.package_native=package_native",
+          "domain.intelligence.package_native=package_native",
+          "domain.lifecycle.package_native=package_native",
+          "domain.service.package_native=package_native",
+          "domain.signature.package_native=package_native",
+          "domain.work.package_native=package_native"
         ]
       },
       "limitation": "It composes the starter's application, not yours, and it runs entirely locally against SQLite with no authentication. The counts describe what that starter applies; a different composition gives different numbers. Wall-clock time varies by machine and is deliberately not claimed.",
@@ -350,6 +404,10 @@
         ],
         "docs": [
           "docs/SOLUTION_PLAN.md"
+        ],
+        "facts": [
+          "rail.solution_check.implemented=implemented",
+          "rail.solution_verify.implemented=implemented"
         ]
       },
       "limitation": "A document contract, not a planner and not a runtime. Nothing executes a plan, and the validator refuses a plan that carries a command.",
@@ -382,14 +440,16 @@
     },
     {
       "id": "C-17",
-      "text": "Zero third-party runtime dependencies. Node 22 and a checkout — no build step, no bundler, no framework underneath your framework.",
+      "text": "SQLite is Node's built-in node:sqlite. PostgreSQL requires one pinned runtime driver, pg@8.23.0. There is no ORM, no query builder, no build step and no framework underneath your framework.",
       "evidence": {
         "repoFacts": [
-          "package.json has no dependencies field",
+          "package.json.dependencies is exactly { pg: \"8.23.0\" }",
           "SQLite via node:sqlite",
-          "the HTTP server, test runner and database adapter are all Node built-ins"
+          "the HTTP server and test runner are Node built-ins",
+          "PostgreSQL uses the pinned pg@8.23.0 driver; there is no ORM"
         ],
         "tests": [
+          "tests/spine-v2-m3b-postgresql-adapter.test.js",
           "tests/api.test.js"
         ],
         "docs": [
@@ -397,7 +457,7 @@
           "AGENTS.md"
         ]
       },
-      "limitation": "Development dependencies and the eventual PostgreSQL adapter are separate questions. Having no runtime dependencies is a property of the framework, not of whatever you add on top of it.",
+      "limitation": "Applications that select PostgreSQL carry pg@8.23.0. The SQLite path still needs no third-party driver. This is not a production-readiness claim and not shared-database tenancy; composition is dedicated-database, not row tenancy.",
       "surfaces": [
         "site",
         "readme",
@@ -452,6 +512,10 @@
         ],
         "docs": [
           "docs/QUALITY_GATES.md"
+        ],
+        "facts": [
+          "rail.project_verify.implemented=implemented",
+          "rail.scenario_run.implemented=implemented"
         ]
       },
       "limitation": "A test count measures effort, not correctness — read the adversarial-review categories in docs/QUALITY_GATES.md to see what is actually attacked. Real-browser tests are run manually and are not in CI.",
@@ -489,16 +553,29 @@
   "limitations": [
     {
       "id": "L-01",
-      "headline": "No authentication, tenancy or RBAC.",
-      "text": "The server is local-development-only. An actor header is an assertion, not an identity. Do not expose it to a network.",
+      "headline": "No authentication ships: the framework authenticates nobody.",
+      "text": "Production Spine v1 (ADR-038) gives the framework verified identity, organizations and memberships, server-authoritative authorization and one tenant per application instance — so tenancy and authorization now exist and are enforced. What does not exist is authentication: no login, password, session or OIDC implementation ships, and a deployment must supply the adapter that verifies the request. Production mode refuses to start without one. In local-development mode an actor header is accepted as an assertion and is not an identity, which is the default developer posture. This is not shared-database multi-tenancy and it is not a readiness claim.",
       "evidence": {
         "jtbd": "JTBD-15",
         "docs": [
           "docs/PROJECT_STATUS.md",
-          "README.md"
+          "README.md",
+          "DECISIONS.md"
+        ],
+        "tests": [
+          "tests/production-spine.test.js",
+          "tests/actor-fails-closed.test.js"
         ],
         "repoFacts": [
-          "crm app inspect reports productionPosture: local development only"
+          "crm app inspect reports a productionPosture that refuses to be read as a readiness claim"
+        ],
+        "facts": [
+          "spine.authentication.framework_verifier=absent",
+          "spine.authorization.enforced=enforced",
+          "spine.tenant.isolation.mode=one_tenant_per_instance",
+          "spine.tenant.crm_data_plane_enforced=enforced_by_binding",
+          "spine.multi_tenant_single_instance=refused_at_startup",
+          "spine.identity.contract=1"
         ]
       },
       "surfaces": [
@@ -509,12 +586,15 @@
     },
     {
       "id": "L-02",
-      "headline": "SQLite only.",
-      "text": "Persistence is Node's built-in SQLite adapter. PostgreSQL is on the Production Spine track and is not implemented.",
+      "headline": "Not shared-database tenancy.",
+      "text": "createAccordoAppAsync can boot one tenant onto dedicated PostgreSQL databases. Shared-database row-level tenancy is not implemented, and this is not a production-readiness claim.",
       "evidence": {
         "docs": [
           "docs/PROJECT_STATUS.md",
           "docs/strategy/PLATFORM_CAPABILITIES.md"
+        ],
+        "facts": [
+          "spine.postgresql.implemented=implemented"
         ]
       },
       "surfaces": [
@@ -530,6 +610,10 @@
         "docs": [
           "docs/strategy/CRM_BUILD_BENCHMARK.md",
           "docs/PROJECT_STATUS.md"
+        ],
+        "facts": [
+          "benchmark.build_rate.measured=not_measured",
+          "benchmark.tool_selection.comparative=false"
         ]
       },
       "surfaces": [
@@ -540,12 +624,18 @@
     },
     {
       "id": "L-04",
-      "headline": "No scheduler, no reminders, nothing on a timer.",
-      "text": "Follow-up Tasks and an Activity timeline are one shared model that a person moves by hand: a due date changes no state. There is no recurring work, no delayed workflow, no queue — so nothing fires on a renewal notice period either.",
+      "headline": "Timers exist; a service that runs them for you does not.",
+      "text": "Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included.",
       "evidence": {
         "jtbd": "JTBD-07, JTBD-10",
         "docs": [
           "docs/strategy/JOBS_AND_OUTBOX.md"
+        ],
+        "facts": [
+          "spine.timer_consumers.implemented=implemented",
+          "spine.managed_jobs_service.implemented=absent",
+          "spine.durable_job_store.implemented=implemented",
+          "spine.transactional_outbox.implemented=implemented"
         ]
       },
       "surfaces": [
@@ -556,11 +646,18 @@
     {
       "id": "L-05",
       "headline": "No email, calendar or marketing integrations.",
-      "text": "An in-memory notification provider contract exists. No adapter sends anything to anyone.",
+      "text": "An in-memory notification provider contract exists. MK1 marketing records supplied funnel observations and human-reviewed proposals only; it has no sending, publishing or spending path.",
       "evidence": {
         "jtbd": "JTBD-14",
         "docs": [
           "docs/strategy/INTEGRATION_RUNTIME.md"
+        ],
+        "facts": [
+          "marketing_runtime.implemented=implemented"
+        ],
+        "tests": [
+          "tests/marketing-no-external-effect.test.js",
+          "tests/marketing-e2e.test.js"
         ]
       },
       "surfaces": [
@@ -570,11 +667,18 @@
     },
     {
       "id": "L-06",
-      "headline": "No import, export, dedupe, merge, bulk edit, saved views or global search.",
-      "text": "Table stakes in every commercial CRM, and none of them has a milestone yet. This is recorded deliberately rather than left for you to discover.",
+      "headline": "Bounded customer imports and logical identity; incomplete data operations.",
+      "text": "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search.",
       "evidence": {
         "docs": [
           "docs/benchmarks/CRM_JTBD_MATRIX.md"
+        ],
+        "tests": [
+          "tests/customer-data-foundation.test.js"
+        ],
+        "facts": [
+          "domain.customer_data.package_native=package_native",
+          "cdf.full_cdp.implemented=absent"
         ]
       },
       "surfaces": [
@@ -585,7 +689,7 @@
     {
       "id": "L-08",
       "headline": "Ownership means vendored source: there is no framework dependency to bump.",
-      "text": "The `npm create` route works — the published create package, 0.1.0, scaffolds a project that boots, reports `valid` from `app inspect` and exits 0 from `project doctor` — but what it installs is a scaffolder, not the framework. The framework source is copied into the new project, so you own the result outright, a versioned framework dependency does not exist, and upgrading means merging changes into your copy, not bumping a number. The framework's own npm name remains an empty 0.0.1 reservation, deliberately: nothing installs the framework as a library, and the scope is unclaimed.",
+      "text": "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08). The framework is copied into the project, not installed as a framework library dependency. The accordo npm name is an empty reservation; the @accordo scope is claimed and deliberately empty.",
       "evidence": {
         "tests": [
           "tests/project-bootstrap.test.js"
@@ -609,21 +713,27 @@
     },
     {
       "id": "L-09",
-      "headline": "You cannot put real customer data in this yet.",
-      "text": "A CRM is a personal-data system by definition, and this one has no authentication, no tenancy, no export and no erasure path — so there is no way to service a data-subject access or deletion request with it. Data governance is designed and unimplemented. The one thing that does hold today: lead scoring is deterministic, versioned and explainable, not a model's judgement about a person.",
+      "headline": "Personal-data readiness requires deployment work beyond the foundation.",
+      "text": "Customer Data Foundation supplies bounded import and identity governance, not complete personal-data operations. Authentication must be supplied by the deployment, and complete subject export and erasure remain absent; the framework alone does not establish compliance or suitability for real customer data. Lead scoring remains deterministic, versioned and explainable.",
       "evidence": {
         "jtbd": "JTBD-15",
         "tests": [
-          "tests/lead-intelligence-e2e.test.js"
+          "tests/lead-intelligence-e2e.test.js",
+          "tests/customer-data-foundation.test.js"
         ],
         "docs": [
           "docs/strategy/DATA_GOVERNANCE.md",
           "docs/benchmarks/CRM_JTBD_MATRIX.md"
         ],
         "repoFacts": [
-          "DATA_GOVERNANCE.md records the whole track as design only",
-          "no import or export exists (L-06)",
+          "Customer Data Foundation records bounded imports and human-governed logical canonical identity without deleting or rewriting source records",
+          "Complete subject export and erasure are not supplied by Customer Data Foundation",
           "scoring is a deterministic weighted model with a persisted version fingerprint (C-07)"
+        ],
+        "facts": [
+          "spine.authentication.framework_verifier=absent",
+          "cdf.full_cdp.implemented=absent",
+          "customer_timeline.complete=absent"
         ]
       },
       "surfaces": [
@@ -662,6 +772,9 @@
           "EXECUTION_ROADMAP.md lists invoicing, billing, payment, usage rating, proration, tax and FX as explicitly deferred",
           "packages/contracts/modules/subscription.module.json describes itself as a commercial activation record, not a billing engine, with no invoice schedule, usage rating, proration, payment, renewal or cancellation state",
           "JTBD-DS-10 (activate billing on accepted milestones) and JTBD-CS-05 (calculate MRR, ARR and TCV from real contract data) both read 'not supported'"
+        ],
+        "facts": [
+          "billing.implemented=absent"
         ]
       },
       "surfaces": [
@@ -670,8 +783,8 @@
     },
     {
       "id": "L-11",
-      "headline": "Marketing is a design document, not a package.",
-      "text": "All 43 marketing jobs read 'not supported', no marketing package exists, and the strategy document says nothing in it is implemented.",
+      "headline": "Marketing proposals are local evidence; campaign execution is absent.",
+      "text": "The optional MK1 package records supplied funnel counts, derives a drop insight and prepares a complete-or-refused proposal for human approval. It performs no audience execution, consent enforcement, sending, publishing, spending, scheduling or attribution. JTBD row promotion remains a separate review.",
       "evidence": {
         "jtbd": "JTBD-MK-01",
         "docs": [
@@ -679,9 +792,15 @@
           "docs/benchmarks/CRM_JTBD_MATRIX.md"
         ],
         "repoFacts": [
-          "MARKETING_GROWTH_OPERATIONS.md opens with 'Status: product strategy and roadmap only. Nothing in this document is implemented.'",
-          "all 43 JTBD-MK rows in docs/benchmarks/jobs.json read 'not supported'",
-          "the work is sequenced as EXECUTION_ROADMAP track MK0-MK7 and none of it is merged"
+          "packages/marketing is optional and the default generated domain registry is empty",
+          "MK1 approval creates local immutable evidence and declares no provider or external operation"
+        ],
+        "facts": [
+          "marketing_runtime.implemented=implemented"
+        ],
+        "tests": [
+          "tests/marketing-e2e.test.js",
+          "tests/marketing-no-external-effect.test.js"
         ]
       },
       "surfaces": [

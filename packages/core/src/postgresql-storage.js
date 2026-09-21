@@ -1,0 +1,907 @@
+// @ts-check
+
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
+import { AppError, ConflictError } from './errors.js';
+import {
+  quoteStorageIdentifier,
+  renderPostgresqlStatement,
+  requireStorageMethodKind,
+  STORAGE_CONTRACT,
+  STORAGE_READ_KINDS,
+  STORAGE_WRITE_KINDS,
+} from './storage-contract.js';
+import { openTransactionScope } from './transaction-minter.js';
+import { currentTransactionWitness } from './transaction-witness.js';
+import {
+  registerDurableJobTransactionAuthority,
+  registerDurableJobStorageOwner,
+  registerPostgresqlDurableJobStorage,
+} from './durable-job-storage.js';
+
+const DEFAULT_ACQUISITION_MS = 2_000;
+const DEFAULT_QUERY_MS = 5_000;
+const DEFAULT_LOCK_TIMEOUT_MS = 1_000;
+const DEFAULT_STATEMENT_TIMEOUT_MS = 5_000;
+const SCHEMA_NAME = /^[a-z][a-z0-9_]{0,62}$/;
+const CANONICAL_INT = /^-?(?:0|[1-9]\d*)$/;
+const INT_OIDS = new Set([20, 21, 23, 26]);
+const BOOL_OID = 16;
+const TIMESTAMP_OIDS = new Set([1082, 1114, 1184]);
+const PROBES = new WeakMap();
+const TX_BIND = new AsyncLocalStorage();
+const DESTROYED = new WeakSet();
+
+/**
+ * The PostgreSQL wire driver, loaded only where a real pool or client is
+ * constructed. Importing this module must not require it: callers that inject
+ * their own pool — and the repository-truth probe, which proves read-only
+ * refusal against a pool that throws when touched — never open a wire
+ * connection, so a missing driver must not stop them from loading. A caller
+ * that does need a real connection gets a named refusal instead of an import
+ * crash.
+ *
+ * @returns {Promise<{ Pool: any, Client: any }>}
+ */
+async function loadPgDriver() {
+  try {
+    return await import('pg');
+  } catch (error) {
+    throw new AppError('PostgreSQL driver unavailable: opening a real pool needs the "pg" package', {
+      code: 'STORAGE_DRIVER_UNAVAILABLE',
+      status: 500,
+      details: { package: 'pg', reason: /** @type {any} */ (error)?.code ?? 'UNKNOWN' },
+    });
+  }
+}
+
+/**
+ * @typedef {{
+ *   poolStorage: object,
+ *   client: any,
+ *   affine: object | null,
+ *   closed: boolean,
+ *   destroyed: boolean,
+ * }} TxBind
+ */
+
+function publicUnavailable() {
+  return new AppError('PostgreSQL storage is unavailable', {
+    code: 'STORAGE_UNAVAILABLE',
+    status: 503,
+  });
+}
+
+function publicTimeout(kind) {
+  return new AppError(`PostgreSQL ${kind} deadline exceeded`, {
+    code: 'STORAGE_TIMEOUT',
+    status: 504,
+  });
+}
+
+function integerUnsafe() {
+  return new AppError('PostgreSQL integer is outside JavaScript safe-integer range', {
+    code: 'STORAGE_INTEGER_UNSAFE',
+    status: 500,
+  });
+}
+
+function connectionLost(error) {
+  const code = error && typeof error === 'object' ? /** @type {any} */ (error).code : undefined;
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return (
+    code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ECONNRESET' || code === 'ETIMEDOUT'
+    || code === '57P01' || code === '08000' || code === '08003' || code === '08006' || code === '08001'
+    || /connection (?:terminated|refused|ended)|client has encountered a connection|server closed the connection/i.test(message)
+  );
+}
+
+/**
+ * Map a driver failure to a bounded framework error. Driver messages, hosts,
+ * users, passwords and URLs never leave this function.
+ * @param {unknown} error
+ */
+function isPgDriverError(error) {
+  const code = error && typeof error === 'object' ? /** @type {any} */ (error).code : undefined;
+  if (typeof code !== 'string' || code.length === 0) return false;
+  if (/^[0-9A-Z]{5}$/.test(code)) return true;
+  return connectionLost(error);
+}
+
+function sanitizePgError(error) {
+  if (error instanceof AppError) return error;
+  if (error instanceof Error && !isPgDriverError(error)) return error;
+  const code = error && typeof error === 'object' ? /** @type {any} */ (error).code : undefined;
+  if (code === '23505') {
+    return new ConflictError('The write conflicts with an existing row', { dialect: 'postgresql' });
+  }
+  if (code === '40001') {
+    return new ConflictError('The write lost a serialization contest; retry the request', {
+      transient: true, reason: 'serialization', dialect: 'postgresql',
+    });
+  }
+  if (code === '40P01') {
+    return new ConflictError('The write deadlocked; retry the request', {
+      transient: true, reason: 'deadlock', dialect: 'postgresql',
+    });
+  }
+  if (code === '57014' || code === '55P03') return publicTimeout('statement');
+  if (code === '53300' || code === '53400' || code === '57P03') return publicUnavailable();
+  if (code === '28P01' || code === '28000' || code === '3D000' || connectionLost(error)) {
+    return publicUnavailable();
+  }
+  return new AppError('PostgreSQL storage failed', { code: 'STORAGE_UNAVAILABLE', status: 503 });
+}
+
+function withDeadline(promise, ms, kind) {
+  if (!Number.isInteger(ms) || ms <= 0) return Promise.resolve(promise);
+  /** @type {any} */
+  let timer;
+  const guarded = Promise.resolve(promise);
+  guarded.catch(() => {});
+  return Promise.race([
+    guarded,
+    new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(publicTimeout(kind)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+function fromDriverInteger(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'bigint') {
+    if (value < BigInt(Number.MIN_SAFE_INTEGER) || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw integerUnsafe();
+    }
+    return Number(value);
+  }
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) throw integerUnsafe();
+    return value;
+  }
+  if (typeof value === 'string') {
+    if (!CANONICAL_INT.test(value)) throw integerUnsafe();
+    const n = Number(value);
+    if (!Number.isSafeInteger(n) || String(n) !== value) throw integerUnsafe();
+    return n;
+  }
+  throw integerUnsafe();
+}
+
+function fromDriverTimestamp(value) {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new AppError('PostgreSQL timestamp is not a valid date', {
+        code: 'STORAGE_UNAVAILABLE', status: 500,
+      });
+    }
+    return value.toISOString();
+  }
+  if (typeof value === 'string') return value;
+  throw new AppError('PostgreSQL timestamp is not a valid date', {
+    code: 'STORAGE_UNAVAILABLE', status: 500,
+  });
+}
+
+function normalizeValue(value, oid) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date || TIMESTAMP_OIDS.has(oid)) return fromDriverTimestamp(value);
+  if (oid === BOOL_OID || typeof value === 'boolean') return value ? 1 : 0;
+  if (INT_OIDS.has(oid) || typeof value === 'bigint') return fromDriverInteger(value);
+  return value;
+}
+
+function normalizeRow(row, fields) {
+  if (!row) return null;
+  /** @type {Record<string, unknown>} */
+  const out = {};
+  for (const field of fields) {
+    out[field.name] = normalizeValue(row[field.name], field.dataTypeID);
+  }
+  return out;
+}
+
+function bindValue(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'bigint') return fromDriverInteger(value);
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) throw integerUnsafe();
+    return value;
+  }
+  return value;
+}
+
+function bindParams(params) {
+  return params.map((value) => bindValue(value));
+}
+
+function destroyClient(client) {
+  DESTROYED.add(client);
+  try {
+    client.release(new Error('accordo-postgresql-client-destroyed'));
+  } catch {
+    try { client.release(true); } catch {
+      try { client.end(); } catch { /* already gone */ }
+    }
+  }
+}
+
+function isPoolCheckoutTimeout(error) {
+  if (error instanceof AppError && error.code === 'STORAGE_TIMEOUT') return true;
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /timeout exceeded when trying to connect/i.test(message);
+}
+
+function releaseClient(client) {
+  if (DESTROYED.has(client)) return;
+  try { client.release(); } catch { /* already gone */ }
+}
+
+/**
+ * PostgreSQL adapter for Storage Contract v1. Raw driver access never leaves
+ * this closure. The object a consumer proves a transaction against is the
+ * **acquired client handle**, never this pool facade (ADR-018 addendum 8).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{
+ *   schema?: string,
+ *   acquisitionDeadlineMs?: number,
+ *   queryDeadlineMs?: number,
+ *   lockTimeoutMs?: number,
+ *   statementTimeoutMs?: number,
+ *   writerGuard?: () => void,
+ *   readOnly?: true,
+ * }} [options]
+ */
+export function createPostgresqlStorage(pool, options = {}) {
+  const schema = options.schema;
+  if (schema !== undefined && (typeof schema !== 'string' || !SCHEMA_NAME.test(schema))) {
+    throw new AppError('PostgreSQL schema name is not a closed identifier', {
+      code: 'STORAGE_STATEMENT_UNSUPPORTED', status: 500,
+    });
+  }
+  const acquisitionDeadlineMs = options.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS;
+  const queryDeadlineMs = options.queryDeadlineMs ?? DEFAULT_QUERY_MS;
+  const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
+  const statementTimeoutMs = options.statementTimeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS;
+  const quotedSchema = schema ? quoteStorageIdentifier(schema, 'schema') : null;
+  const durableJobTable = quotedSchema
+    ? `${quotedSchema}.${quoteStorageIdentifier('spine_jobs', 'table')}`
+    : quoteStorageIdentifier('spine_jobs', 'table');
+  const durableJobOwner = Object.freeze({});
+  const writerGuard = typeof options.writerGuard === 'function' ? options.writerGuard : null;
+  // Read-only is not a weaker `writerGuard`. The guard is applied uniformly to
+  // all four entry points because holding the lease is required even to read;
+  // this policy is asymmetric — reads untouched, writes refused — so it is its
+  // own mode rather than a guard that happens to always throw.
+  if (options.readOnly !== undefined && options.readOnly !== true) {
+    throw new AppError('read-only storage is requested with `readOnly: true` or not at all', {
+      code: 'STORAGE_READ_ONLY_INVALID', status: 500,
+    });
+  }
+  const readOnly = options.readOnly === true;
+  // A lease guard in a composition that holds no lease is a contradiction, and
+  // a silent one: the guard would refuse reads this mode is meant to allow.
+  if (readOnly && writerGuard) {
+    throw new AppError('read-only storage holds no writer lease, so it accepts no writer guard', {
+      code: 'STORAGE_READ_ONLY_INVALID', status: 500,
+    });
+  }
+  const checkedOut = new Set();
+
+  function assertWriter() {
+    if (writerGuard) writerGuard();
+  }
+
+  /**
+   * Raised before the statement is rendered, so a refused mutation issues no
+   * SQL at all — not a statement the database rejects, and not a transaction
+   * that opens and rolls back. "Refused" and "refused before any SQL" are
+   * different claims; only the second is the constraint.
+   *
+   * @param {string} method
+   */
+  function refuseMutation(method) {
+    throw new AppError(
+      `this application is composed read-only, so storage "${method}" is refused`,
+      { code: 'STORAGE_READ_ONLY', status: 403, details: { method } },
+    );
+  }
+
+  /** @type {object} */
+  const poolStorage = {};
+
+  function track(client) {
+    checkedOut.add(client);
+    return client;
+  }
+
+  function forget(client) {
+    checkedOut.delete(client);
+  }
+
+  function destroyTracked(client) {
+    forget(client);
+    destroyClient(client);
+  }
+
+  function releaseTracked(client) {
+    forget(client);
+    releaseClient(client);
+  }
+
+  async function acquire() {
+    let timedOut = false;
+    let settled = false;
+    const pending = pool.connect();
+    pending.then(
+      (client) => {
+        if (settled && timedOut) destroyTracked(client);
+      },
+      () => {},
+    );
+    try {
+      const client = await withDeadline(pending, acquisitionDeadlineMs, 'acquisition');
+      settled = true;
+      track(client);
+      if (client.listenerCount('error') === 0) {
+        client.on('error', () => {
+          destroyTracked(client);
+        });
+      }
+      if (quotedSchema) {
+        await queryOn(client, `SET search_path TO ${quotedSchema}`, []);
+      }
+      return client;
+    } catch (error) {
+      timedOut = isPoolCheckoutTimeout(error);
+      settled = true;
+      if (timedOut) throw publicTimeout('acquisition');
+      throw error instanceof AppError ? error : sanitizePgError(error);
+    }
+  }
+
+  /**
+   * @param {any} client
+   * @param {string} sql
+   * @param {unknown[]} [params]
+   */
+  async function queryOn(client, sql, params = []) {
+    try {
+      return await withDeadline(client.query(sql, params), queryDeadlineMs, 'query');
+    } catch (error) {
+      const mapped = error instanceof AppError ? error : sanitizePgError(error);
+      if (mapped.code === 'STORAGE_TIMEOUT' || mapped.code === 'STORAGE_UNAVAILABLE') {
+        destroyTracked(client);
+        const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+        if (bind && bind.client === client) bind.destroyed = true;
+      }
+      throw mapped;
+    }
+  }
+
+  function render(statement) {
+    return renderPostgresqlStatement(statement, schema ? { schema } : {});
+  }
+
+  async function executeOn(client, statement) {
+    requireStorageMethodKind('execute', statement, STORAGE_WRITE_KINDS);
+    const rendered = render(statement);
+    const result = await queryOn(client, rendered.sql, bindParams(rendered.params));
+    return Object.freeze({ affectedRows: Number(result.rowCount ?? 0) });
+  }
+
+  async function maybeOneOn(client, statement) {
+    requireStorageMethodKind('maybeOne', statement, STORAGE_READ_KINDS);
+    const rendered = render(statement);
+    const result = await queryOn(client, rendered.sql, bindParams(rendered.params));
+    const row = result.rows[0];
+    return row ? Object.freeze(normalizeRow(row, result.fields)) : null;
+  }
+
+  async function manyOn(client, statement) {
+    requireStorageMethodKind('many', statement, STORAGE_READ_KINDS);
+    const rendered = render(statement);
+    const result = await queryOn(client, rendered.sql, bindParams(rendered.params));
+    return result.rows.map((row) => Object.freeze(normalizeRow(row, result.fields)));
+  }
+
+  async function beginSerializable(client) {
+    await queryOn(client, 'BEGIN ISOLATION LEVEL SERIALIZABLE');
+    await queryOn(client, `SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
+    await queryOn(client, `SET LOCAL statement_timeout = '${statementTimeoutMs}ms'`);
+  }
+
+  async function rollbackSafely(client, primaryError) {
+    if (DESTROYED.has(client)) return;
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      console.error('[accordo] PostgreSQL rollback failed after a storage error');
+    }
+    void primaryError;
+  }
+
+  async function commitOrUnknown(client) {
+    const probe = PROBES.get(poolStorage);
+    const bound = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+    const inCallerTx = Boolean(bound && bound.client === client && !bound.closed);
+    let fault = probe?.commitFault ?? null;
+    if (fault && !inCallerTx) {
+      fault = null;
+    } else if (fault && (probe.commitFaultSkip ?? 0) > 0) {
+      probe.commitFaultSkip -= 1;
+      fault = null;
+    } else if (fault) {
+      probe.commitFault = null;
+    }
+    if (fault === 'pre-commit-drop') {
+      destroyTracked(client);
+      const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+      if (bind && bind.client === client) bind.destroyed = true;
+      throw new AppError('PostgreSQL commit outcome is unknown', {
+        code: 'COMMIT_OUTCOME_UNKNOWN', status: 503,
+      });
+    }
+    try {
+      await queryOn(client, 'COMMIT');
+    } catch (error) {
+      destroyTracked(client);
+      const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+      if (bind && bind.client === client) bind.destroyed = true;
+      const mapped = error instanceof AppError ? error : sanitizePgError(error);
+      const lost = mapped.code === 'STORAGE_TIMEOUT'
+        || mapped.code === 'STORAGE_UNAVAILABLE'
+        || mapped.code === 'STORAGE_CLIENT_AFFINITY'
+        || connectionLost(error);
+      if (lost) {
+        throw new AppError('PostgreSQL commit outcome is unknown', {
+          code: 'COMMIT_OUTCOME_UNKNOWN', status: 503,
+        });
+      }
+      throw mapped;
+    }
+    if (fault === 'post-commit-ack-drop') {
+      destroyTracked(client);
+      const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+      if (bind && bind.client === client) bind.destroyed = true;
+      throw new AppError('PostgreSQL commit outcome is unknown', {
+        code: 'COMMIT_OUTCOME_UNKNOWN', status: 503,
+      });
+    }
+  }
+
+  function assertAffine(bind, client) {
+    if (!bind || bind.closed) {
+      throw new AppError('PostgreSQL transaction is closed', {
+        code: 'STORAGE_TRANSACTION_CLOSED', status: 500,
+      });
+    }
+    if (bind.client !== client || bind.destroyed) {
+      throw new AppError('PostgreSQL statement is not bound to the active transaction client', {
+        code: 'STORAGE_CLIENT_AFFINITY', status: 500,
+      });
+    }
+    const current = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+    if (!current || current.client !== client) {
+      throw new AppError('PostgreSQL statement is not bound to the active transaction client', {
+        code: 'STORAGE_CLIENT_AFFINITY', status: 500,
+      });
+    }
+  }
+
+  /**
+   * @param {any} client
+   * @param {TxBind} bind
+   */
+  function createAffineStorage(client, bind) {
+    /** @type {any} */
+    const affine = {};
+    const run = {
+      async execute(statement) {
+        assertAffine(bind, client);
+        return executeOn(client, statement);
+      },
+      async maybeOne(statement) {
+        assertAffine(bind, client);
+        return maybeOneOn(client, statement);
+      },
+      async many(statement) {
+        assertAffine(bind, client);
+        return manyOn(client, statement);
+      },
+      async savepoint(name, fn) {
+        assertAffine(bind, client);
+        const safeName = quoteStorageIdentifier(name, 'savepoint');
+        await queryOn(client, `SAVEPOINT ${safeName}`);
+        try {
+          const result = await fn();
+          await queryOn(client, `RELEASE SAVEPOINT ${safeName}`);
+          return result;
+        } catch (error) {
+          try {
+            await queryOn(client, `ROLLBACK TO SAVEPOINT ${safeName}`);
+            await queryOn(client, `RELEASE SAVEPOINT ${safeName}`);
+          } catch {
+            /* primary error wins */
+          }
+          throw error;
+        }
+      },
+      async transaction() {
+        throw new AppError(
+          'Nested outer transactions are not supported on one connection: actions and workflows cannot start a transaction inside another. Compose module services inside a single action instead.',
+          { code: 'NESTED_TRANSACTION', status: 500 },
+        );
+      },
+    };
+    Object.assign(affine, {
+      contract: STORAGE_CONTRACT,
+      activeTransaction: () => currentTransactionWitness(affine),
+      execute: run.execute,
+      maybeOne: run.maybeOne,
+      many: run.many,
+      savepoint: run.savepoint,
+      transaction: run.transaction,
+    });
+    Object.freeze(affine);
+    PROBES.set(affine, { queryOn: (sql, params) => queryOn(client, sql, params), client });
+    registerPostgresqlDurableJobStorage(affine, {
+      query: (sql, params) => {
+        assertAffine(bind, client);
+        return queryOn(client, sql, params);
+      },
+      table: durableJobTable,
+      owner: durableJobOwner,
+    });
+    registerDurableJobTransactionAuthority(affine, affine);
+    return affine;
+  }
+
+  function refusePoolDuringTx() {
+    const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+    if (bind && bind.poolStorage === poolStorage && !bind.closed) {
+      throw new AppError(
+        'PostgreSQL pool storage cannot run statements while a connection-affine transaction is open; use the transaction handle',
+        { code: 'STORAGE_CLIENT_AFFINITY', status: 500 },
+      );
+    }
+  }
+
+  async function withAutocommitWrite(fn) {
+    refusePoolDuringTx();
+    const client = await acquire();
+    let active = false;
+    try {
+      await beginSerializable(client);
+      active = true;
+      const result = await fn(client);
+      await commitOrUnknown(client);
+      active = false;
+      return result;
+    } catch (error) {
+      if (active && !DESTROYED.has(client)) await rollbackSafely(client, error);
+      throw error instanceof AppError ? error : sanitizePgError(error);
+    } finally {
+      const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+      if (!(bind && bind.destroyed && bind.client === client)) releaseTracked(client);
+    }
+  }
+
+  async function withAutocommitRead(fn) {
+    refusePoolDuringTx();
+    const client = await acquire();
+    try {
+      return await fn(client);
+    } catch (error) {
+      throw error instanceof AppError ? error : sanitizePgError(error);
+    } finally {
+      const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+      if (!(bind && bind.destroyed && bind.client === client)) releaseTracked(client);
+    }
+  }
+
+  async function runTransaction(fn) {
+    if (readOnly) refuseMutation('transaction');
+    assertWriter();
+    const current = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+    if (current && current.poolStorage === poolStorage && !current.closed) {
+      throw new AppError(
+        'Nested outer transactions are not supported on one connection: actions and workflows cannot start a transaction inside another. Compose module services inside a single action instead.',
+        { code: 'NESTED_TRANSACTION', status: 500 },
+      );
+    }
+    const client = await acquire();
+    /** @type {TxBind} */
+    const bind = { poolStorage, client, affine: null, closed: false, destroyed: false };
+    const affine = createAffineStorage(client, bind);
+    bind.affine = affine;
+    let active = false;
+    try {
+      return await TX_BIND.run(bind, async () => {
+        await beginSerializable(client);
+        active = true;
+        try {
+          const result = await openTransactionScope(affine, () => fn(affine));
+          await commitOrUnknown(client);
+          active = false;
+          return result;
+        } catch (error) {
+          if (active && !bind.destroyed) await rollbackSafely(client, error);
+          throw error instanceof AppError ? error : sanitizePgError(error);
+        }
+      });
+    } finally {
+      bind.closed = true;
+      if (!bind.destroyed) releaseTracked(client);
+    }
+  }
+
+  function abandonCheckedOut() {
+    for (const client of [...checkedOut]) destroyTracked(client);
+  }
+
+  Object.assign(poolStorage, {
+    contract: STORAGE_CONTRACT,
+    // Published so a consumer can ask the storage what it is instead of being
+    // told by whoever composed it. A registry that writes on a code path it
+    // believes to be read-only cannot check a flag it was never passed — and
+    // the flag would have to be threaded through every `persistFingerprints`
+    // signature to reach one. The storage already knows.
+    ...(readOnly ? { readOnly: true } : {}),
+    activeTransaction: () => null,
+    async execute(statement) {
+      if (readOnly) refuseMutation('execute');
+      assertWriter();
+      return withAutocommitWrite((client) => executeOn(client, statement));
+    },
+    async maybeOne(statement) {
+      assertWriter();
+      return withAutocommitRead((client) => maybeOneOn(client, statement));
+    },
+    async many(statement) {
+      assertWriter();
+      return withAutocommitRead((client) => manyOn(client, statement));
+    },
+    async savepoint() {
+      throw new AppError('PostgreSQL savepoints require an open connection-affine transaction', {
+        code: 'STORAGE_SAVEPOINT_WITHOUT_TRANSACTION', status: 500,
+      });
+    },
+    transaction: runTransaction,
+    async close() {
+      abandonCheckedOut();
+      await pool.end();
+    },
+  });
+  Object.freeze(poolStorage);
+  registerDurableJobStorageOwner(poolStorage, durableJobOwner);
+
+  PROBES.set(poolStorage, {
+    pool,
+    acquire,
+    queryOn,
+    destroyClient: destroyTracked,
+    releaseClient: releaseTracked,
+    abandonCheckedOut,
+    commitFault: /** @type {string | null} */ (null),
+    commitFaultSkip: 0,
+  });
+  return poolStorage;
+}
+
+/**
+ * Isolated PostgreSQL handle for Storage Contract tests. Not an application
+ * factory: it does not compose modules, migrate the CRM schema, or replace
+ * `createAccordoApp()`.
+ *
+ * @param {{
+ *   connection?: string,
+ *   ddl?: string[],
+ *   max?: number,
+ *   acquisitionDeadlineMs?: number,
+ *   queryDeadlineMs?: number,
+ *   lockTimeoutMs?: number,
+ *   statementTimeoutMs?: number,
+ *   schema?: string,
+ * }} [options]
+ */
+export async function createPostgresqlDatabase(options = {}) {
+  const connection = options.connection
+    ?? process.env.ACCORDO_PG_TEST_URL
+    ?? 'postgres://postgres@127.0.0.1:5432/accordo_test';
+  const schema = options.schema ?? `accordo_${randomUUID().replace(/-/g, '').slice(0, 24)}`;
+  if (!SCHEMA_NAME.test(schema)) {
+    throw new AppError('PostgreSQL schema name is not a closed identifier', {
+      code: 'STORAGE_STATEMENT_UNSUPPORTED', status: 500,
+    });
+  }
+  const quoted = quoteStorageIdentifier(schema, 'schema');
+  const { Pool } = await loadPgDriver();
+  const pool = new Pool({
+    connectionString: connection,
+    max: options.max ?? 4,
+    connectionTimeoutMillis: options.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS,
+    idleTimeoutMillis: 10_000,
+    allowExitOnIdle: true,
+  });
+  pool.on('error', () => {
+    /* never log connection details */
+  });
+  let setup;
+  const setupPending = pool.connect();
+  let setupTimedOut = false;
+  setupPending.then(
+    (client) => { if (setupTimedOut) destroyClient(client); },
+    () => {},
+  );
+  try {
+    setup = await withDeadline(setupPending, options.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS, 'acquisition');
+    await setup.query(`CREATE SCHEMA ${quoted}`);
+    await setup.query(`SET search_path TO ${quoted}`);
+    for (const sql of options.ddl ?? []) await setup.query(sql);
+  } catch (error) {
+    setupTimedOut = isPoolCheckoutTimeout(error);
+    try { if (setup) setup.release(); } catch { /* ignore */ }
+    try { await pool.end(); } catch { /* ignore */ }
+    throw error instanceof AppError ? error : sanitizePgError(error);
+  }
+  setup.release();
+
+  const storage = createPostgresqlStorage(pool, {
+    schema,
+    acquisitionDeadlineMs: options.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS,
+    queryDeadlineMs: options.queryDeadlineMs ?? DEFAULT_QUERY_MS,
+    lockTimeoutMs: options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS,
+    statementTimeoutMs: options.statementTimeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS,
+  });
+
+  let closed = false;
+  return Object.freeze({
+    storage,
+    adapter: 'postgresql',
+    schema,
+    async close() {
+      if (closed) return;
+      closed = true;
+      const probe = PROBES.get(storage);
+      try { probe?.abandonCheckedOut?.(); } catch { /* already gone */ }
+      const { Client } = await loadPgDriver();
+      const admin = new Client({ connectionString: connection, connectionTimeoutMillis: 2000 });
+      try {
+        await withDeadline(admin.connect(), 2000, 'acquisition');
+        await admin.query(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`);
+      } catch {
+        /* teardown is best-effort */
+      } finally {
+        try { await admin.end(); } catch { /* ignore */ }
+      }
+      try { await storage.close(); } catch {
+        try { await pool.end(); } catch { /* ignore */ }
+      }
+    },
+  });
+}
+
+/**
+ * Test-only probe: run `SELECT pg_sleep($1)` through the same query-deadline
+ * wrapper. Not a statement-vocabulary escape hatch and not exported from the
+ * public kernel.
+ *
+ * @param {object} storage
+ * @param {number} seconds
+ */
+/**
+ * Test-only probe: run one SQL string on the affine client. Not a statement
+ * vocabulary escape hatch and not exported from the public kernel.
+ *
+ * @param {object} storage
+ * @param {string} sql
+ * @param {unknown[]} [params]
+ */
+export async function probePostgresqlQuery(storage, sql, params = []) {
+  const probe = PROBES.get(storage);
+  if (!probe?.queryOn) {
+    throw new AppError('PostgreSQL query probe requires an adapter handle', {
+      code: 'STORAGE_UNAVAILABLE', status: 500,
+    });
+  }
+  if (probe.acquire) {
+    const client = await probe.acquire();
+    try {
+      return await probe.queryOn(client, sql, params);
+    } finally {
+      const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+      if (!(bind && bind.destroyed && bind.client === client)) {
+        if (probe.releaseClient) probe.releaseClient(client);
+        else try { client.release(); } catch { /* ignore */ }
+      }
+    }
+  }
+  return probe.queryOn(sql, params);
+}
+
+/**
+ * Test-only one-shot COMMIT fault. `pre-commit-drop` destroys the client
+ * before COMMIT is sent; `post-commit-ack-drop` applies COMMIT then hides
+ * the acknowledgement. Not a public kernel export.
+ *
+ * @param {object} storage
+ * @param {'pre-commit-drop' | 'post-commit-ack-drop' | null} kind
+ * @param {{ skip?: number }} [options]
+ */
+export function injectPostgresqlCommitFault(storage, kind, options = {}) {
+  const probe = PROBES.get(storage);
+  if (!probe) {
+    throw new AppError('PostgreSQL commit-fault probe requires an adapter handle', {
+      code: 'STORAGE_UNAVAILABLE', status: 500,
+    });
+  }
+  probe.commitFault = kind;
+  probe.commitFaultSkip = Number.isInteger(options.skip) ? options.skip : 0;
+}
+
+export async function probePostgresqlQueryDeadline(storage, seconds) {
+  const probe = PROBES.get(storage);
+  if (!probe) {
+    throw new AppError('PostgreSQL query-deadline probe requires an adapter handle', {
+      code: 'STORAGE_UNAVAILABLE', status: 500,
+    });
+  }
+  const client = await probe.acquire();
+  try {
+    await probe.queryOn(client, 'SELECT pg_sleep($1)', [seconds]);
+  } finally {
+    const bind = /** @type {TxBind | undefined} */ (TX_BIND.getStore());
+    if (!(bind && bind.destroyed && bind.client === client)) {
+      if (probe.releaseClient) probe.releaseClient(client);
+      else try { client.release(); } catch { /* ignore */ }
+    }
+  }
+}
+
+/**
+ * Open a Pool from an already-parsed endpoint. Credentials never appear in
+ * errors. `ssl: false` is the explicit test-harness loopback exception.
+ *
+ * @param {{
+ *   host: string,
+ *   port?: number,
+ *   database: string,
+ *   user: string,
+ *   password: string,
+ *   ssl?: false | object,
+ *   max?: number,
+ *   acquisitionDeadlineMs?: number,
+ *   queryDeadlineMs?: number,
+ * }} endpoint
+ */
+export async function createPostgresqlPool(endpoint) {
+  // search_path / options / connectionString are never isolation inputs. The
+  // adapter always qualifies objects under the fixed schema and SET search_path
+  // on checkout; hostile caller path settings are ignored here.
+  const { Pool } = await loadPgDriver();
+  const pool = new Pool({
+    host: endpoint.host,
+    port: endpoint.port ?? 5432,
+    database: endpoint.database,
+    user: endpoint.user,
+    password: endpoint.password,
+    ssl: endpoint.ssl ?? false,
+    max: endpoint.max ?? 4,
+    connectionTimeoutMillis: endpoint.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS,
+    ...(Number.isInteger(endpoint.queryDeadlineMs) && endpoint.queryDeadlineMs > 0
+      ? { query_timeout: endpoint.queryDeadlineMs, statement_timeout: endpoint.queryDeadlineMs }
+      : {}),
+    idleTimeoutMillis: 10_000,
+    allowExitOnIdle: true,
+  });
+  pool.on('error', () => {
+    /* never log connection details */
+  });
+  return pool;
+}
+
+export const POSTGRESQL_DRIVER = Object.freeze({ name: 'pg', version: '8.23.0' });

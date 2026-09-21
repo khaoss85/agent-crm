@@ -1,6 +1,6 @@
 # Worked example — "track and optimize the Lead → Won funnel by acquisition channel"
 
-**Status: a worked design, not a transcript of something that ran.** Parts of the solution below are buildable today; the analytics and campaign parts are not, and each row says which. Nothing here claims the end-to-end loop executes.
+**Status: a worked design, not a transcript of something that ran.** The bounded Analytics compiler and MK1 supplied-observation/proposal primitives do not establish the complete acquisition-channel journey below. Nothing here claims that this end-to-end loop executes; current review and merge status live in `../PROJECT_STATUS.md`.
 
 The prompt this traces:
 
@@ -38,10 +38,10 @@ If the user had not supplied a metric, the agent asks for one instead of choosin
 | Delivery handover (M13) | **merged** |
 | Custom package authoring, `definePackage`, capabilities (M13) | **merged** |
 | Module evolution (ADR-019) | **merged** |
-| Marketing packages — campaigns, audiences, journeys | **not implemented** (MK track, design only) |
-| Analytics Studio — semantic metrics, safe query compilation | **not implemented** (M16, design only) |
+| Marketing packages — campaigns, audiences, journeys | Optional MK1 supplied-count observations and proposal approval only; no audience or campaign execution |
+| Analytics Studio — semantic metrics, safe query compilation | Bounded compiler exists; this acquisition-channel journey is not proven by it |
 | Attribution and identity/touchpoint model | **not implemented** (MK7, and it needs an identity model that does not exist) |
-| Durable automation (scheduler, outbox) | **not implemented** |
+| Durable automation (scheduler, outbox) | Bounded self-host jobs/outbox/timers implemented; marketing journey automation remains unimplemented |
 
 ## ASSESS — the capability gap, stated plainly
 
@@ -51,9 +51,9 @@ If the user had not supplied a metric, the agent asks for one instead of choosin
 
 1. **acquisition fields on the Lead** — nothing today records channel, source, medium, campaign or landing page;
 2. **a touchpoint record** — a Lead has no history of how it arrived;
-3. **funnel definition and evaluation** — no primitive computes stage-to-stage conversion;
+3. **data-backed funnel evaluation** — MK1 derives a relative drop from supplied counts; it does not query acquisition-channel data;
 4. **attribution** — no model, and no identity graph to hang one on;
-5. **a campaign proposal object** — MK1, not built;
+5. **automatic proposal preparation from this goal** — MK1 stores supplied proposal content, but does not infer a campaign from acquisition-channel analysis;
 6. **any sending capability** — MK2 onward, not built.
 
 **Data-quality gaps the agent must surface before promising anything:** leads created before this change have no acquisition data and never will; a channel captured from a referrer is a guess unless a UTM is present; and consent state for any future outreach does not exist yet (`DATA_GOVERNANCE.md`).

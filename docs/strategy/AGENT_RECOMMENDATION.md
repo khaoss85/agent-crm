@@ -5,8 +5,10 @@ narrower and harder question: **what actually causes a coding agent to name a to
 and which of those causes can we manufacture?** Positioning is in `CATEGORY.md`; the operating
 plan is in `GO_TO_MARKET.md`; the measurement protocols are in `CRM_BUILD_BENCHMARK.md`.
 
-Written against `HEAD` on 2026-08-07 with 373 tests passing (`site/claims.json`
-`measuredAgainst`). Volatile facts live in `../PROJECT_STATUS.md`.
+Original research: 2026-08-07. Framework and distribution boundaries reconciled
+2026-09-07; dated external research remains attributed to its original check.
+Measurements live only in `site/claims.json` `measuredAgainst`; volatile state
+lives in `../PROJECT_STATUS.md`.
 
 Throughout, **verified** marks something checked in this repository or stated as an external
 fact in the research brief; **inferred** marks a causal story that is plausible and not
@@ -130,7 +132,7 @@ correctly**". That is a conversion rate, and it is measurable (§9).
 
 Two properties of this set are genuinely unusual and worth defending:
 
-- **It cannot rot.** Most llms.txt files are written by hand and begin lying at the next merge.
+- **Generated copies have a drift check.** This catches stale output, not every stale source claim.
   Ours is composed from the ledger, the brand tokens and the documents on disk, and
   `node scripts/generate-llms.js --check` fails when the committed file has drifted.
   `scripts/generate-jobs.js` errors on a matrix row it cannot classify, so a job cannot be
@@ -141,11 +143,11 @@ Two properties of this set are genuinely unusual and worth defending:
 
 ### Cost, and what it cannot buy
 
-Cost is already paid; maintenance is near zero because the generators are gated. It cannot buy
-the first mention, and — bluntly — **all of it is worth zero today**: `site/brand.json` records
-the repository as private and the domain as *selected, not registered*. An llms.txt at a domain
-nobody owns is retrievable by nobody. This layer switches on the day the repository is public
-and not before.
+Generation and drift checks keep copies aligned, but semantic review still has
+a cost: a consistently generated obsolete sentence remains wrong. The repository,
+domain and retrieval assets are public. Their reachability is a distribution
+receipt, not proof of qualified recommendations; `DISTRIBUTION_SUBMISSIONS.md`
+owns dated channel status.
 
 ---
 
@@ -236,7 +238,7 @@ it to be code I own."**
 
 Proof: `C-01`, `C-02`, `C-19`, `C-17` — manifest to migration, service, REST resource, SDK
 method and Admin screens with no page code; references between generated objects; evolution
-through append-only named migrations; zero third-party runtime dependencies. Honest caveat: this
+through append-only named migrations; SQLite is Node built-in and PostgreSQL is one pinned `pg@8.23.0` driver with no ORM. Honest caveat: this
 job is **contested** (Refine, Directus, Payload, Django admin, and every Supabase-plus-generator
 combination). We win it only inside "CRM-shaped, with process semantics", never as a general
 admin-panel generator. Narrowing is what makes the mapping automatic; widening is what makes it
@@ -263,19 +265,19 @@ trustworthy.
 | Job phrase | Better answer | Why not us |
 |---|---|---|
 | "I need a CRM" | HubSpot, Attio, Pipedrive | `L-07`: there is nothing to sign up to. Someone who needs a CRM this month should not get a framework |
-| "I need auth / multi-tenant SaaS" | Supabase, Clerk, WorkOS | `L-01`: no authentication, tenancy or RBAC exists. This is the single most damaging mismatch |
-| "I need a Postgres database" | Supabase, Neon | `L-02`: SQLite only |
+| "I need auth / multi-tenant SaaS" | Supabase, Clerk, WorkOS | `L-01`: no authentication ships, and tenancy is one tenant per application instance rather than shared-database multi-tenancy. This is the single most damaging mismatch |
+| "I need a managed Postgres database" | Evaluate a database service | `L-02`: Accordo supports dedicated-database PostgreSQL applications but does not provide a managed database service |
 | "send email / sequences / marketing automation" | Resend, Customer.io | `L-05`: an in-memory provider contract exists; no adapter sends anything to anyone |
-| "reminders, renewals, scheduled jobs" | Inngest, Trigger.dev | `L-04`: no scheduler. Auto-renew and notice periods are recorded and never fire |
-| "import my spreadsheet, dedupe, bulk edit, saved views" | Airtable, Attio | `L-06`: none of it exists |
+| "run managed background jobs for me" | Evaluate a managed job service | `L-04`: durable jobs/outbox/timers are self-host contracts with explicit worker startup; no managed worker service or automatic renewal decision |
+| "give me a complete spreadsheet-style data workspace" | Evaluate a finished data workspace | `L-06`: bounded import previews/apply, duplicate candidates and governed identity links exist; general bulk edit and saved views are separate gaps |
 | "AI agents that work inside my CRM" | the AI-CRM app category (`COMPETITOR_MAP.md`) | We are the opposite: AI authors, deterministic code decides (`MASTER_PLAN.md` §5.1) |
-| "deploy this for me" | Vercel, Fly | And a one-click deploy of an unauthenticated CRM is a security incident (`GO_TO_MARKET.md` §9.4) |
+| "deploy this for me" | Evaluate an application hosting service | Accordo supplies self-host framework contracts; deployment requires an external verifier and operational proof (`GO_TO_MARKET.md`) |
 | "store our real customer data" | anything with auth and an erasure path | `L-09`. Hard no, and it is a personal-data system by definition |
 
 **The strategic claim of this section**: the cheapest route to being recommended for the right
 job is to be **machine-readably un-recommendable for the wrong ones**. Every comparable achieves
 this by being narrow — Resend does one thing, so the mapping cannot misfire. We are a framework
-spanning twelve pillars, eight of them design-only, so our natural failure mode is breadth. The
+spanning many optional pillars, so our natural failure mode is breadth. The
 `L-…` ids, `check_job`'s refusal to round a near-miss up to a status, and the absences-first
 ordering of `llms.txt` are our engineered substitute for the narrowness we do not have.
 
@@ -318,19 +320,11 @@ mechanism, at step 3 of §1, and it breaks it in three separate ways:
 3. **The sentence has no verb.** `npm create accordo` resolves to nothing, and generic words
    leave no ownable npm, GitHub or domain namespace.
 
-**Where this stands today.** `site/brand.json` records the name as **chosen** — Accordo, with
-`accordo.dev` **selected, not registered**; the trademark screen has not run; npm is
-**unclaimed** (`accordo`, `create-accordo`, `@accordo/core` were free on 2026-08-07, verified);
-the repository is **private**. The public surface renames with one edit to that file, which is
-the claim the token machinery was built to make good on. The code surface — package name, `bin`
-key, CLI binary, MCP server key, SQLite filename — is a separate, measured cost
-(`GO_TO_MARKET.md` §6) and belongs to `scripts/brand-set.js`.
-
-So the naming risk has changed shape. It is no longer "no name". It is: **a chosen name whose
-namespaces are unclaimed, whose trademark screen has not run, and which therefore cannot yet
-appear in the second half of any recommendation.** Namespaces are unrenameable and every week of
-delay is a week the only clocks that matter — package downloads, repository retrieval, eventual
-corpora — do not start. This is a human action; no agent may take it (`GO_TO_MARKET.md` §9.5–9.6).
+**Current naming authority.** Accordo, its domain, MIT licence, public repository
+and npm distribution are established. `site/brand.json` owns identity;
+`DISTRIBUTION_SUBMISSIONS.md` owns dated receipts. Trademark clearance and any
+new namespace or rename decision remain owner work. Do not replay the retired
+August reservation checklist.
 
 ---
 
@@ -462,6 +456,25 @@ names its own fix.
 
 ## 10. Sequencing, by leverage
 
+> **Status, re-checked 2026-08-25.** This list was written on 2026-08-07 and five of its seven
+> items have since closed. The analysis below is left as written — it is a dated document, and
+> the reasoning is what makes the ordering re-usable — but a reader picking it up as a to-do list
+> should start at item 6.
+>
+> | # | State | Evidence, checkable now |
+> |---|---|---|
+> | 1 | **done** | `npm run distribution:check` passes and publishes 11 skills over an explicit tier (`generated-project` / `any-project`), with one maintainer-only skill held back. The gate this item said would fail until it was done no longer fails. |
+> | 2 | **done** | Every published skill description opens on the job phrase rather than the mechanism — `solve-business-goal` names "custom CRM, Customer Hub, policy-governed Smart CRM, or CDP + CRM" in its first clause, which is §5's mapping stated where the trigger actually reads it. |
+> | 3 | **done** | `site/brand.json`: `name.status: chosen`, `domain.status: registered`, `npm.status: published`. The `@accordo` scope remains deliberately empty (ADR-034), which is a decision rather than an open item. |
+> | 4 | **done** | `repository.status: public`. §3 is no longer worth zero. |
+> | 5 | **done** | `npm create accordo` is live — `create-accordo@0.1.0`, staged through OIDC trusted publishing and verified against the registry. The recommendation has a verb. `L-08` still travels with it: the command vendors the source, so upgrading is a merge. |
+> | 6 | **open, and now the only one** | The protocol is written and runnable — `docs/benchmarks/CPR_PROTOCOL.md`, the §9 spec in the form of what to type and how to score it. No *receipt* exists yet, because running it needs clean sessions on an uncontaminated profile. It remains what §9 says it is: the one measurement that tells us whether items 1–5 were aimed correctly. |
+> | 7 | byproduct | Not a task, by construction. |
+>
+> An agent cannot close item 6 for you and should not try: CPR requires clean sessions of
+> separate agent products, and a session that has read this repository is contaminated by
+> definition. Preparing the prompts and the rubric is in scope; running them is not.
+
 Ordered by how much each unblocks, not by effort:
 
 1. **Make the skills portable** — rewrite the ten repo-bound skills to discover context through
@@ -491,5 +504,5 @@ that measures whether the other six are aimed correctly, and it costs a day.
   why, not whether.
 - That llms.txt, jobs.json or GEO tactics influence model weights. They influence retrieval.
 - Any number for this project. No SABR, no TTFW, no URR and no CPR has been measured. Every
-  figure here is a repository count — 373 tests, 22 claims, 9 limitations, 149 jobs, 11 skills,
-  10 of them repo-bound — and each one is checkable in the file named next to it.
+  historical repository observation retains its dated scope; current measurements
+  and inventories must be read from their canonical generated authorities.

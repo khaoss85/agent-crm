@@ -1,5 +1,12 @@
 # Platform alignment gate
 
+> **Historical design baseline, scoped on 2026-09-07.** The specification and
+> snapshot below preserve the original planning context. Past-tense implementation
+> gaps in that baseline are not current capability claims. Current coverage and
+> limitations are resolved through `../PROJECT_STATUS.md`, `../repository-truth.json`
+> and `GTM_TECHNICAL_EVIDENCE_HANDOFF.md`; use those before publishing or planning a fix.
+
+
 A short architecture and roadmap checkpoint taken **after Milestone 11 merged
 and before Delivery, Service and further domain code is written**. It adds no
 runtime feature, moves no runtime file and changes no product decision. Its

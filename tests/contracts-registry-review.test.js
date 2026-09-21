@@ -37,7 +37,9 @@ test('the domain seam refuses everything malformed, fail-closed', () => {
   for (const name of ['', 'D', '1domain', 'has space', 'has_underscore', '__proto__x'.replace('x', ''), null, 42]) {
     refuses(() => validatePackageDefinition(domain({ name })), /name must match|must be an object/);
   }
-  refuses(() => validatePackageDefinition(domain({ packageContract: 2 })), /packageContract/);
+  // M2E-1: 2 is a supported graph; 3 is the first unsupported one.
+  assert.doesNotThrow(() => validatePackageDefinition(domain({ packageContract: 2 })));
+  refuses(() => validatePackageDefinition(domain({ packageContract: 3 })), /packageContract/);
   refuses(() => validatePackageDefinition(domain({ packageContract: undefined })), /packageContract/);
   refuses(() => validatePackageDefinition(domain({ actions: 'nope' })), /actions must be an array/);
   refuses(() => validatePackageDefinition(domain({ policies: {} })), /policies must be an array/);
@@ -138,7 +140,16 @@ test('policy fingerprints are persisted, drift-checked and all-or-nothing', asyn
   let inserts = 0;
   app.database.raw.prepare = (sql) => {
     const statement = realPrepare(sql);
-    if (!sql.startsWith('INSERT INTO definition_versions')) return statement;
+    // `renderSqliteStatement` quotes every identifier, so the statement the
+    // driver receives is `INSERT INTO "definition_versions" (…)` and the old
+    // `startsWith('INSERT INTO definition_versions')` no longer matches it —
+    // which would leave this interception silently never firing and the
+    // rollback assertion below passing without testing anything. The optional
+    // opening quote covers both spellings; `\b` after the table name closes the
+    // match whether the next character is `"` or `(`. Nothing else here moved:
+    // the fault is still thrown on the second insert, and the assertions are
+    // unchanged.
+    if (!/^INSERT INTO "?definition_versions\b/.test(sql)) return statement;
     return {
       ...statement,
       run: (...args) => {

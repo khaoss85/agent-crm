@@ -1,6 +1,6 @@
 ---
 name: solve-business-goal
-description: Turn a custom CRM, Customer Hub, policy-governed Smart CRM, or CDP + CRM process objective into a working Accordo solution - discover installed packages, capabilities and providers, analyse the gap, choose or create packages, produce a Solution Plan, build checked-in source, verify it and report evidence. For CDP + CRM, Accordo owns process, not ingestion, identity resolution or segmentation. Use when the user states a business goal rather than a technical change. Do not use for a single custom object (create-crm-module), one lifecycle step (create-crm-workflow), a named milestone (the build-* skills) or a pre-merge review (adversarial-review).
+description: Turn a custom CRM, Customer Hub, policy-governed Smart CRM, or CDP + CRM process objective into a working Accordo solution - discover installed packages, capabilities and providers, analyse the gap, choose or create packages, produce a Solution Plan, build checked-in source, verify it and report evidence. For CDP + CRM, Accordo owns process with bounded JSON imports and logical identity; no streaming ingestion, audience segmentation or CDP activation. Use when the user states a business goal rather than a technical change. Do not use for a single custom object (create-crm-module), one lifecycle step (create-crm-workflow), a named milestone (the build-* skills) or a pre-merge review (adversarial-review).
 requires:
   tier: generated-project
   command: "crm app inspect"
@@ -71,7 +71,7 @@ Guide, where the project carries it: `docs/APPLICATION_INSPECTION.md`. The repor
 
 - whether any **database** has applied a migration, holds data, or holds *good* data — it reads source only;
 - whether a **provider** is configured, authenticated or reachable. A provider entry means a definition was composed in source, nothing more. Never infer credentials;
-- any **runtime authorization**. There is no auth, tenancy or RBAC in this framework, so no role is enforced anywhere;
+- any **role enforced from an approval code**. Production Spine v1 added authorization, but approval codes stay descriptive labels and the framework authenticates nobody;
 - **JTBD or quality-gate status.** `evidence.status` is `not_aggregated` and carries paths, not claims. Read the documents yourself.
 
 Verify the reliability of source **data** separately: `app inspect` says a record exists, never that its rows are complete, deduplicated or correct. Count the nulls yourself.

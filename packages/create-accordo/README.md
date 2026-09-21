@@ -21,10 +21,10 @@ node packages/create-accordo/bin/create-accordo.js my-crm --json     # the contr
   emits it without changing this private source manifest. The package test packs
   it twice, compares the tarballs byte-for-byte, installs one offline and runs
   the generated project's inspect, doctor, tests and smoke.
-- **Still true:** `npm create accordo` **installs nothing**. The package
-  published under that name is the empty `0.0.1` name reservation, and this
-  repository publishes nothing. Until a human publishes the real package, no
-  document here may say that `npm create accordo` creates a project.
+- **Registry state:** `create-accordo@0.1.0` is the published version confirmed
+  by the September 7 audit. This tree prepares **0.2.0** with refreshed framework
+  source and corrected infrastructure boundaries; it is a candidate until the
+  staged publication is approved and the registry artifact is verified.
 
 The command does not infer registry origin from nearby bytes. Its limitation
 `SOURCE_ORIGIN_NOT_VERIFIED` says that finding bundled framework source does not
@@ -35,6 +35,11 @@ prove whether npm served it or whether a provenance attestation exists.
 `scripts/distribution-check.js` fails the build if either drifts from the
 repository it describes.
 
+The assembled archive carries `framework-source.json`, a versioned SHA-256
+inventory. The installed bootstrap reports the same framework fingerprint, so
+the archive and generated project can be compared without inferring registry
+origin. npm provenance separately binds the release to its workflow commit.
+
 ## What it produces
 
 The framework source (`packages/`, `apps/`, `skills/`, `examples/modules/`)
@@ -43,10 +48,11 @@ an `AGENTS.md` written for that project, `.gitignore`, `.env.example`,
 `.mcp.json`, `data/.gitkeep`, and the project's own `scripts/check.js`,
 `scripts/smoke.js` and `tests/project.test.js`.
 
-The generated project needs **no `npm install`** — the framework has no
-third-party runtime dependencies — and its own tests assert that it boots, that
-an agent actor still cannot take a human approval decision, and that it composes
-zero domain packages.
+The generated project needs **no `npm install` for SQLite** — Node's built-in
+adapter — and its own tests assert that it boots, that an agent actor still
+cannot take a human approval decision, and that it composes zero domain
+packages. PostgreSQL requires the pinned `pg@8.23.0` driver and is not selected
+by the generated project.
 
 ## What it deliberately does not do
 
@@ -88,5 +94,5 @@ It is dry-run by default and refuses output inside this repository.
 other than reviewed `main`, verifies the repository, assembles twice and uses
 npm trusted publishing to **stage** the candidate. A human must configure the
 matching npm trusted publisher and approve the staged version with 2FA. Only a
-live registry receipt may change `site/brand.json` → `npm.status: published` or
-make the public sentence “`npm create accordo` works” true.
+live registry receipt may update `site/brand.json` → `npm.status: published` or
+identify a new version as published.

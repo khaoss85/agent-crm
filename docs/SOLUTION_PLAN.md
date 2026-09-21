@@ -200,7 +200,7 @@ whether or not its author wrote it, along with three others:
 | Code | Meaning |
 |---|---|
 | `PLAN_NOT_EXECUTED` | a document, not a runtime — nothing here runs, installs, deploys or modifies source |
-| `APPROVAL_NOT_RBAC` | no auth, tenancy or RBAC exists, so no role is enforced anywhere |
+| `APPROVAL_NOT_RBAC` | approval codes stay descriptive labels rather than enforced permissions (ADR-038), so no role is enforced from one |
 | `EVIDENCE_NOT_VERIFIED` | an observed fact is checked for shape and citation, never for truth |
 | `BINDING_IS_SOURCE_ONLY` | the bound report is AX1: source-only, and says nothing about a database, a provider's health or what is deployed |
 

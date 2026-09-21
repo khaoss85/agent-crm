@@ -140,7 +140,7 @@ function pascalName(moduleName) {
 
 /**
  * The quote/version evidence reads as ONE interface with two providers, both
- * mirroring the `commercial-quotes@1` method names exactly:
+ * mirroring the `commercial-quotes@2` method names exactly:
  *
  * - the capability itself (the action path): the declared, versioned edge the
  *   Commercial extraction sized from this domain's measured consumption;
@@ -175,7 +175,7 @@ function moduleQuotesReader(modules, names) {
 }
 
 /**
- * Open `commercial-quotes@1` through the package registry — the consumer
+ * Open `commercial-quotes@2` through the package registry — the consumer
  * identity is registry-proven, the reads run inside this transaction via the
  * caller's modules view, and an application without the commercial package
  * refuses composition long before this line can run. The capability answers
@@ -508,7 +508,7 @@ export function buildRequestSignatureAction(config, registries) {
         throw new AppError('Requesting a signature requires a human user actor', { code: 'HUMAN_APPROVAL_REQUIRED', status: 403 });
       }
       const { definition: provider, fingerprint } = registries.getSignatureProvider(input.provider, input.providerVersion);
-      // Every quote/version read below goes through commercial-quotes@1 — the
+      // Every quote/version read below goes through commercial-quotes@2 — the
       // declared, registry-proven edge onto the commercial package.
       const reader = openCommercialQuotes(domains, modules, names);
       const { version } = requireApprovedVersion(reader, quote, input.quoteVersionId);

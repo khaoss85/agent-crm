@@ -9,10 +9,10 @@ export const requestOpportunityStageChangeWorkflow = Object.freeze({
   steps: [
     {
       name: 'load-opportunity',
-      execute({ input, services }) {
+      async execute({ input, services }) {
         const opportunityId = requiredString(input.opportunityId, 'opportunityId');
         const targetStage = enumValue(input.targetStage, [...OPPORTUNITY_STAGES], 'targetStage');
-        const opportunity = services.opportunities.get(opportunityId);
+        const opportunity = await Promise.resolve(services.opportunities.get(opportunityId));
         return { opportunity, opportunityId, targetStage, originalStage: opportunity.stage };
       },
     },

@@ -1,6 +1,7 @@
 # Accordo Cloud
 
-**Status: product design and roadmap track only. Nothing in this document is implemented.** No control plane, no managed runtime, no Cloud CLI, no project MCP deployment tools exist today. This document defines what "Accordo Cloud" means so the roadmap can name it, sequence it, and gate it honestly.
+**Status: public product specification, not an available managed offer.** This repository does not implement the Cloud control plane. Private platform and pilot repositories have separate implementation and deployment records; their receipts must distinguish deployed from validated and cannot establish public availability. The target below is broader than any private pilot slice.
+<!-- truth: cloud_control_plane.implemented=absent -->
 
 ## 1. What Accordo Cloud is
 
@@ -56,7 +57,11 @@ Zero-downtime deployment · Health checks · Preview environments
 Production environments · Domain and TLS management
 ```
 
-**Hard gate:** the first six items are the **Production Spine** (EXECUTION_ROADMAP Phase 6). **No public managed deployment may be considered production-ready before the Production Spine exists.** The current framework is explicitly local-development-only (no auth, no tenancy, actor headers are identity claims, SQLite file storage); putting it on the public internet as-is would be negligent, and no Cloud milestone may shortcut that gate.
+**Hard gate:** the first six items are the **Production Spine** (EXECUTION_ROADMAP Phase 6). **No public managed deployment may be considered production-ready before the Production Spine exists.** Framework authorization, instance tenancy, dedicated PostgreSQL and bounded self-host operations exist. An externally exposed deployment still requires its own identity verifier and security/operating evidence; no Cloud milestone may shortcut that gate.
+<!-- truth: spine.authorization.enforced=enforced -->
+<!-- truth: spine.tenant.isolation.mode=one_tenant_per_instance -->
+<!-- truth: spine.postgresql.implemented=implemented -->
+<!-- truth: spine.authentication.framework_verifier=absent -->
 
 ## 4. Agent Operations track (future)
 
@@ -116,6 +121,8 @@ The product's own philosophy — deterministic policy, human approval — applie
 - environment deletion;
 - any spend-increasing action.
 
+`crmcloud` and the project MCP surface are an infrastructure operation surface for operating deployed CRM/Cloud resources only — not a second agent orchestrator. Governed work selection, checkpoint/supervisor lifecycle, and loop ledger remain Factory-owned; Cloud traces/audit/logs are projections, not a second ledger (see `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §§2.3, FA4, 9).
+
 Read operations (status, logs, traces, audit) are agent-autonomous. **Agents never receive plaintext production secrets**: `environment_variables` returns names and metadata, values are write-only through the secret store, and smoke tests run server-side rather than shipping credentials to the agent's context.
 
 ## 5. Plugin operations track (future)
@@ -151,6 +158,8 @@ The Cloud extension of the North Star (`NORTH_STAR_EXPERIENCE.md` owns the canon
 ```
 
 Steps 5–6 are approval gates, not friction to optimize away.
+
+Execution in the agent-driven steps above runs through the user-owned coding-agent loop (`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §§FA1, 6); Cloud only exposes the operation surface in §4. Cloud hosts no models and selects/supervises no work (§9 there).
 
 ## 7. Cloud acceptance metrics
 
@@ -196,6 +205,8 @@ Production Spine (Phase 6: PostgreSQL, auth, tenancy, RBAC, sessions/API keys)
 
 **The dependency that gates everything: Production Spine gates public managed deployment.** Completed milestones (0–7) are not reordered by this track; Cloud phases slot after Phase 6 and alongside Phases 9–12 (deploy/operate, distribution, launch), replacing the former vague "possible later operations layer" note.
 
+Cloud adds no hosted model or model API, no duplicate Factory queue or ledger, no selector or coding-agent supervisor, and no credential/customer-data store beyond the managed business secrets above — see `FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §§FA4, 9.
+
 ## 10. What this document does not decide
 
 - Prices, tiers, free-plan limits — human decisions, undefined here.
@@ -209,4 +220,4 @@ The Marketing track sharpens what a managed deployment must get right about **ag
 
 ## AX4 — the objective-driven case in a managed deployment
 
-The objective-driven experience (`OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`) ends locally at "built and verified". **AX4** is what extends it through deploy, observe and fix in a managed environment — and it is gated on the Production Spine, because everything it adds (real approval roles, production deployment, live observation) needs authenticated identity that does not exist yet. Until then an objective-driven build is a local-development artifact, and Cloud must not present it as more.
+The objective-driven experience (`OBJECTIVE_DRIVEN_AGENT_EXPERIENCE.md`) ends locally at "built and verified". **AX4** is what extends it through deploy, observe and fix in a managed environment — and it is gated on the Production Spine. Observe here is Accordo measurement plus Cloud health/logs; fix is new governed implementation work via Factory SELECT → EXECUTE (`FACTORY_ACCORDO_INTEGRATION_ROADMAP.md` §6), not Cloud-side supervision, because everything it adds (real approval roles, production deployment, live observation) needs authenticated identity that does not exist yet. Until then an objective-driven build is a local-development artifact, and Cloud must not present it as more.

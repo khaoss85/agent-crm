@@ -1,6 +1,16 @@
 # Contract, subscription and renewal
 
-**Status: design only. None of the primitives below exists.**
+> **Historical design baseline, scoped on 2026-09-07.** The specification and
+> snapshot below preserve the original planning context. Past-tense implementation
+> gaps in that baseline are not current capability claims. Current coverage and
+> limitations are resolved through `../PROJECT_STATUS.md`, `../repository-truth.json`
+> and `GTM_TECHNICAL_EVIDENCE_HANDOFF.md`; use those before publishing or planning a fix.
+
+
+**Original design specification.** Contract activation and governed lifecycle amendments now have package implementations. Automatic renewals and billing are not implied. See `packages/lifecycle/src/amendment.js`, `tests/lifecycle-amendment-execution-e2e.test.js` and the technical handoff.
+<!-- truth: domain.contracts.package_native=package_native -->
+<!-- truth: domain.lifecycle.package_native=package_native -->
+<!-- truth: billing.implemented=absent -->
 
 Milestone 11 ends at an immutable Order. The roadmap then went straight to
 Delivery — which skips the layer every SaaS business actually runs on. An Order
@@ -96,8 +106,10 @@ The M10/M11 grouped totals are period sums of one quote — they are **not** MRR
 | CS-09 | Cancel or non-renew a subscription with an audited reason |
 | CS-10 | Read a complete amendment history for a subscription |
 
-CS-06 and CS-07 additionally require `JOBS_AND_OUTBOX.md`: there is no scheduler,
-so nothing can trigger on a future date. M12 therefore stops at activation.
+At the original M12 baseline, CS-06 and CS-07 depended on unimplemented
+scheduling and M12 stopped at activation. Bounded timers and governed lifecycle
+amendments have since shipped; they do not imply automatic renewal decisions.
+Use the technical handoff for current scope.
 
 ## Boundaries
 

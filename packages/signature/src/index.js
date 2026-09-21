@@ -1,6 +1,6 @@
 // @ts-check
 
-import { definePackage } from '../../core/index.js';
+import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { SignatureRegistries } from './registry.js';
 import { buildRequestSignatureAction, createSignatureOperations } from './operations.js';
 import { createSignatureOrdersCapability } from './capability.js';
@@ -25,7 +25,7 @@ import { createSignatureOrdersCapability } from './capability.js';
  * What did change is that the domain is now *optional and declared*: composed
  * by a static import in `packages/domains/generated/index.js`, never imported
  * by the kernel, reaching Commercial only through the declared capabilities
- * `commercial-quotes@1` and `commercial-quote-binding@1`, and attaching its
+ * `commercial-quotes@2` and `commercial-quote-binding@1`, and attaching its
  * two application-scoped operations (`ingestSignatureEvent`,
  * `reconcileSignature`) through the ADR-032 operations contract instead of
  * named kernel wiring. The raw-body webhook route stays a hand-written,
@@ -183,7 +183,12 @@ export function createSignatureDomain(options = {}) {
 
   /** The registries, for the composition that owns this package instance. */
   pkg.registries = registries;
-  return pkg;
+  return selectPackageGraph(pkg, options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct awaited contract-2 graph. Existing `createSignatureDomain()` callers keep v1. */
+export function createSignatureDomainV2(options = {}) {
+  return createSignatureDomain({ ...options, packageContract: 2 });
 }
 
 export { SignatureRegistries } from './registry.js';

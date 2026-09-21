@@ -146,7 +146,7 @@ JourneyDefinition   the shape: steps, waits, conditions, exit criteria, goals
 
 What it requires, and why MK4 cannot be pulled forward:
 
-- a **scheduler** — nothing in the framework fires on a date today, deliberately;
+- integration with the bounded **self-host timer/worker contracts** — application startup is explicit; this does not implement a marketing journey engine;
 - **durable waits** that survive a restart;
 - **retry and backoff** with a bounded, explained failure;
 - **exit criteria** evaluated on every tick, not just at the end;

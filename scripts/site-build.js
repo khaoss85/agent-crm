@@ -14,12 +14,12 @@
  * Tokens:
  *   {{brand.name}} {{brand.slug}} {{brand.promise}} {{brand.domain}}
  *   {{brand.repository}} {{brand.license}} {{brand.createCommand}}
- *   {{color.accent}} … {{font.sans}} {{font.mono}}
+ *   {{color.accent}} … {{site.paper}} … {{flow.agent}} … {{font.sans}} {{font.mono}} {{font.display}}
  *   {{measured.tests}} {{measured.sha}} {{measured.date}}
  *   {{claim:C-01}}              the claim sentence
  *   {{claim:C-01.limitation}}   the limitation that must travel with it
  *   {{limitation:L-01.headline}} {{limitation:L-01.text}}
- *   {{include:partial.html}}    inlines site/partials/<name>
+ *   {{include:partial.html}}    inlines site/partials/<name>, and partials may include partials
  *   {{year}}
  */
 
@@ -28,6 +28,8 @@ import { join, dirname, relative } from 'node:path';
 
 import { buildJobPages, buildAnswerPages, hasOwnPage, STATUS_MEANING } from './site-pages.js';
 import { buildClusterPages, readBlogPosts } from './site-clusters.js';
+import { STRATEGIC_PAGES, markdownPath } from './site-strategic-pages.js';
+import { checkoutSha } from './site-provenance.js';
 
 const root = process.cwd();
 const siteDir = join(root, 'site');
@@ -52,6 +54,8 @@ mkdirSync(outDir, { recursive: true });
  * absolute origin, and inventing one per template is how a site ends up with three of them.
  */
 const ORIGIN = `https://${brand.domain.value}`;
+const sourceSha = checkoutSha({ cwd: root });
+const sourceBranch = process.env.VERCEL_GIT_COMMIT_REF || 'local';
 
 /**
  * Every page written to dist, in the order it was written. The sitemap is derived from this rather
@@ -101,6 +105,17 @@ const templates = readdirSync(join(siteDir, 'templates')).filter((name) => name.
 for (const page of templates) {
   const source = readFileSync(join(siteDir, 'templates', page), 'utf8');
   emit(page, render(source, page), { jsonLd: STRUCTURED_DATA[page] ?? [] });
+}
+
+// HTML is the canonical human authority. Markdown is generated from the rendered page so there
+// is no second body of marketing copy for an agent or answer engine to retrieve after it drifts.
+for (const page of STRATEGIC_PAGES) {
+  const htmlPath = join(outDir, page);
+  if (!existsSync(htmlPath)) {
+    unresolved.push({ file: page, token: 'strategic page declared but not emitted' });
+    continue;
+  }
+  writeFileSync(join(outDir, markdownPath(page)), htmlToMarkdown(readFileSync(htmlPath, 'utf8'), page));
 }
 
 // The catalogue pages. They are generated rather than written because the thing being published is
@@ -171,6 +186,20 @@ writeFileSync(join(outDir, 'claims.json'), `${JSON.stringify({
   sourceVisibility: repositoryIsPublic
     ? { repository: brand.repository.value, note: 'Evidence paths resolve in the public repository.' }
     : { repository: null, note: 'The repository is not public yet, so every evidence path names a real file you cannot fetch. Treat them as citations, not as links.' },
+}, null, 2)}\n`);
+
+// Cheap deployment freshness: the public artifact identifies the exact source tree. Vercel
+// supplies its immutable commit; local builds use HEAD and avoid secrets or account APIs.
+writeFileSync(join(outDir, 'version.json'), `${JSON.stringify({
+  provenanceContract: 2,
+  product: brand.name.value,
+  commit: sourceSha,
+  branch: sourceBranch,
+  repository: brand.repository.value,
+  measuredAgainst: ledger.measuredAgainst.sha,
+  generatedAt: ledger.measuredAgainst.date,
+  generation: process.env.VERCEL ? 'vercel' : 'local',
+  note: 'Build provenance only. It is not product, benchmark or deployment-readiness evidence.',
 }, null, 2)}\n`);
 
 // Non-template assets are copied verbatim.
@@ -300,6 +329,20 @@ writeFileSync(join(outDir, 'sitemap.xml'), [
 // what you found. The `noindex` arrives twice, in the meta tag here and in the `X-Robots-Tag`
 // header in vercel.json — which is the only one of the two that reaches llms.txt, jobs.json and
 // sitemap.xml, none of which can carry a meta tag. site-check.js refuses to let the two disagree.
+/**
+ * The crawlers that feed model training corpora and live answer engines, listed so the site's
+ * position on them is stated rather than inferred. Two families, both wanted here: the ones that
+ * build corpora (mechanism (a) in docs/strategy/AGENT_RECOMMENDATION.md) and the ones that fetch
+ * at answer time (mechanism (b)). Adding a name to this list grants nothing the wildcard above
+ * did not already grant; removing the wildcard without removing these would be the point.
+ */
+const AI_CRAWLERS = [
+  'GPTBot', 'OAI-SearchBot', 'ChatGPT-User',
+  'ClaudeBot', 'Claude-Web', 'Claude-User', 'Claude-SearchBot', 'anthropic-ai',
+  'PerplexityBot', 'Perplexity-User',
+  'Google-Extended', 'Applebot-Extended', 'CCBot', 'cohere-ai', 'Meta-ExternalAgent',
+];
+
 writeFileSync(join(outDir, 'robots.txt'), [
   '# Indexing follows the repository\'s visibility (site/brand.json).',
   repositoryIsPublic
@@ -324,6 +367,19 @@ writeFileSync(join(outDir, 'robots.txt'), [
   `# A machine-readable summary lives at /llms.txt and /llms-full.txt,`,
   `# and every CRM job with its status and evidence at /jobs.json.`,
   '',
+  // `User-agent: *` above already allows these, so none of the groups below changes what any
+  // crawler is permitted to do today. They are written out because the default in this category
+  // is the opposite — operators commonly disallow model crawlers wholesale — and a named,
+  // explicit Allow states the intent rather than leaving it to be inferred from a wildcard.
+  // It also fails safe: if a future Disallow is ever added to `*`, these groups keep the
+  // retrieval surface reachable instead of silently going dark, which is the failure mode that
+  // would be discovered months later by its absence.
+  '# Model and answer-engine crawlers are welcome, deliberately and by name.',
+  '# The retrieval surface is built for them: /llms.txt, /llms-full.txt, /claims.json',
+  '# (every capability with its evidence and its limit), /jobs.json and /answers.json.',
+  '# Every cluster page also serves a plain-markdown variant at the same path with .md.',
+  '',
+  ...AI_CRAWLERS.flatMap((agent) => [`User-agent: ${agent}`, 'Allow: /', '']),
 ].join('\n'));
 
 if (unresolved.length) {
@@ -359,8 +415,24 @@ function emit(path, html, options = {}) {
 
   const depth = path.split('/').length - 1;
   const output = html
+    // The one recorded recipe asset is enhanced into a native, script-free player.
+    .replace('<a href="../recipes/quote-approval-result.webm">Watch the recorded result</a>.',
+      '<video controls preload="none" width="1440" height="1000" style="max-width:100%;height:auto" poster="../recipes/quote-approved.png" aria-label="Recorded synthetic quote approval result and audit"><source src="../recipes/quote-approval-result.webm" type="video/webm"><a href="../recipes/quote-approval-result.webm">Download the recorded result</a></video>')
     .replaceAll('{{page.root}}', '../'.repeat(depth))
-    .replace('{{page.seo}}', () => seoBlock(path, title, description, options.jsonLd ?? []));
+    .replace('{{page.seo}}', () => seoBlock(path, title, description, options.jsonLd ?? []))
+    .replace(/<a\b([^>]*?)href="([^"]+)"([^>]*)>/g, (anchor, before, href, after) => {
+      if (anchor.includes('data-site-event=')) return anchor;
+      const knownTargets = new Map([
+        [`${ORIGIN}/blog/run-a-b2b-quote-approval-workflow.html`, 'tutorial_open'],
+        [`${ORIGIN}/recipes/quote-approval-brief.md`, 'example_open'],
+        [`${brand.repository.value}/blob/main/examples/recipes/quote-approval/run.mjs`, 'example_open'],
+        [`${ORIGIN}/developers.html`, 'quickstart_open'],
+      ]);
+      let event;
+      try { event = knownTargets.get(new URL(href, `${ORIGIN}/${path}`).href); } catch { return anchor; }
+      return event ? `<a${before}href="${href}"${after} data-site-event="${event}">` : anchor;
+    })
+    .replace('</head>', `  <script defer src="${'../'.repeat(depth)}analytics.js" data-page="${escapeHtml(path === 'index.html' ? `${ORIGIN}/` : `${ORIGIN}/${path}`)}" referrerpolicy="no-referrer"></script>\n</head>`);
   if (output.includes('{{page.seo}}')) unresolved.push({ file: path, token: 'page.seo' });
   if (output.includes('{{')) unresolved.push({ file: path, token: 'a token survived the whole render' });
 
@@ -374,8 +446,8 @@ function emit(path, html, options = {}) {
  * Canonical, social cards and structured data for one page.
  *
  * Structured data is emitted as `application/ld+json`, which the site's own CSP
- * (`default-src 'none'` with no `script-src`) does not block — measured in headless Chromium
- * rather than assumed, because a silently dropped block would be invisible in the HTML source.
+ * does not treat as executable inline JavaScript. Keep it inert JSON: the policy allows
+ * only same-origin executable scripts, and analytics does not change that boundary.
  *
  * @param {string} path @param {string} title @param {string} description @param {any[]} jsonLd
  */
@@ -394,12 +466,59 @@ function seoBlock(path, title, description, jsonLd) {
     `  <meta name="twitter:title" content="${escapeHtml(title)}" />`,
     `  <meta name="twitter:description" content="${escapeHtml(description)}" />`,
     `  <meta name="twitter:image" content="${escapeHtml(image)}" />`,
+    ...(STRATEGIC_PAGES.includes(path)
+      ? [`  <link rel="alternate" type="text/markdown" href="${escapeHtml(`${ORIGIN}/${markdownPath(path)}`)}" title="Markdown equivalent" />`]
+      : []),
   ];
   for (const block of jsonLd) {
     lines.push(`  <script type="application/ld+json">${jsonLdText(block)}</script>`);
   }
   return lines.join('\n');
 }
+
+/** Generate retrieval text from canonical rendered HTML; never maintain parallel copy. */
+function htmlToMarkdown(html, path) {
+  const main = firstMatch(html, /<main[^>]*>([\s\S]*?)<\/main>/) || html;
+  const text = main
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, (_match, contents) => {
+      const code = contents.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '$1').trim();
+      return `\n\n\`\`\`text\n${code}\n\`\`\`\n\n`;
+    })
+    .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n')
+    .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n')
+    .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n')
+    .replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_match, contents) => {
+      const items = [...contents.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)];
+      return `\n\n${items.map((item, index) => `${index + 1}. ${item[1]}`).join('\n\n')}\n\n`;
+    })
+    .replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_match, contents) => {
+      const items = [...contents.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)];
+      return `\n\n${items.map((item) => `- ${item[1]}`).join('\n\n')}\n\n`;
+    })
+    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`')
+    .replace(/<\/a>\s*<a/gi, '</a>\n\n<a')
+    .replace(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?(?:address|article|aside|blockquote|div|fieldset|figcaption|figure|footer|header|main|nav|p|section)[^>]*>/gi, '\n\n')
+    .replace(/<[^>]+>/g, ' ')
+    // The Markdown peer is what an answer engine retrieves, so an entity that survives into it is
+    // a literal `&middot;` in the text a model quotes back. Named entities first, then numeric,
+    // and `&amp;` last of all — decoding it earlier would turn `&amp;middot;` into a separator.
+    .replace(/&(rarr|larr|middot|mdash|ndash|minus|hellip|euro|nbsp|lsquo|rsquo|ldquo|rdquo|times|check|lt|gt);/g,
+      (_m, name) => ({
+        rarr: '→', larr: '←', middot: '·', mdash: '—', ndash: '–', minus: '−', hellip: '…',
+        euro: '€', nbsp: ' ', lsquo: '\u2018', rsquo: '\u2019', ldquo: '"', rdquo: '"',
+        times: '×', check: '✓', lt: '<', gt: '>',
+      })[name])
+    .replace(/&#(\d+);/g, (_m, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return `${text}\n\n---\nCanonical: ${canonicalUrl(path)}\nImplementation evidence: ${ORIGIN}/claims.json\nBuild provenance: ${ORIGIN}/version.json\n`;
+}
+
 
 /**
  * JSON-LD is data, not script, but it still sits inside a `<script>` element: a literal `</script>`
@@ -430,14 +549,25 @@ function firstMatch(text, pattern) {
 function render(source, file) {
   let output = source;
   // Includes first, so a partial's own tokens are resolved in the same pass.
-  output = output.replace(/\{\{include:([\w.-]+)\}\}/g, (_match, name) => {
-    const path = join(siteDir, 'partials', name);
-    if (!existsSync(path)) {
-      unresolved.push({ file, token: `include:${name}` });
-      return '';
+  //
+  // Repeated rather than run once, so a partial may include a partial: the mark is drawn in one
+  // place and pulled into the nav, the footer and half the templates, instead of eleven copies
+  // of the same five circles drifting apart one edit at a time. The depth cap is what stops a
+  // partial that includes itself from taking the build down.
+  for (let depth = 0; output.includes('{{include:'); depth += 1) {
+    if (depth >= 8) {
+      unresolved.push({ file, token: 'include: nested more than 8 deep — probably a cycle' });
+      break;
     }
-    return readFileSync(path, 'utf8');
-  });
+    output = output.replace(/\{\{include:([\w.-]+)\}\}/g, (_match, name) => {
+      const path = join(siteDir, 'partials', name);
+      if (!existsSync(path)) {
+        unresolved.push({ file, token: `include:${name}` });
+        return '';
+      }
+      return readFileSync(path, 'utf8');
+    });
+  }
 
   output = output.replace(/\{\{([\w.:-]+)\}\}/g, (match, token) => {
     const value = resolve(String(token));
@@ -534,8 +664,8 @@ function resolve(token) {
       : `\u201c${brand.name.value}\u201d is a working title, not the public name.`,
     'status.headline': repositoryIsPublic ? 'Open source.' : 'Open source; repository not yet public.',
     'status.text': repositoryIsPublic
-      ? 'Not deployable to production. This page states what the tests prove and what is missing — nothing else.'
-      : 'The repository opens shortly; until it does, every source link here will not resolve for you. Not deployable to production either. This page states what the tests prove and what is missing — nothing else.',
+      ? 'Self-host framework source. Deployments require an application-supplied authentication verifier and operational configuration. Passing tests does not certify production readiness.'
+      : 'The repository is not public; source links here will not resolve for you. Deployments require an application-supplied authentication verifier and operational configuration. Passing tests does not certify production readiness.',
   };
   if (token in derived) return escapeHtml(derived[token]);
 
@@ -547,10 +677,12 @@ function resolve(token) {
     'brand.repository': brand.repository.value,
     'brand.license': brand.license.value,
     'brand.createCommand': brand.npm.createCommand,
+    'brand.publishedVersion': brand.npm.publishedVersion,
     'brand.scope': brand.npm.scope,
     'brand.nameStatus': brand.name.status,
     'font.sans': brand.typography.sans,
     'font.mono': brand.typography.mono,
+    'font.display': brand.typography.display,
     'measured.tests': String(ledger.measuredAgainst.tests),
     'measured.sha': ledger.measuredAgainst.sha,
     'measured.date': ledger.measuredAgainst.date,
@@ -560,6 +692,19 @@ function resolve(token) {
   if (token.startsWith('color.')) {
     const key = token.slice('color.'.length);
     return key in brand.colors ? brand.colors[key] : null;
+  }
+
+  // The semantic actor colors, kept in their own namespace because they mean something the
+  // product palette does not: each one names an actor in the decision the framework exists to
+  // govern. The mark, the social preview and the stylesheet all draw the seal from these.
+  if (token.startsWith('flow.')) {
+    const key = token.slice('flow.'.length);
+    return key in brand.flowColors ? brand.flowColors[key] : null;
+  }
+
+  if (token.startsWith('site.')) {
+    const key = token.slice('site.'.length);
+    return key in brand.siteColors ? brand.siteColors[key] : null;
   }
 
   return null;

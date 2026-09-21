@@ -49,7 +49,7 @@ test('every first-contact distribution surface carries the checked intent vocabu
 });
 
 test('every CDP-adjacent discovery surface keeps the non-CDP boundary in the same artifact', () => {
-  const boundary = /not ingestion,\s*identity resolution or segmentation|external cdp owns\s+ingestion,\s*identity resolution and audiences/i;
+  const boundary = /no streaming ingestion,\s*audience segmentation or CDP activation/i;
   for (const [surface, copy] of surfaces) {
     assert.match(copy, boundary, `${surface} mentions CDP + CRM without its ownership boundary`);
   }
@@ -60,7 +60,7 @@ test('negating ingestion alone cannot hide an identity-resolution or segmentatio
     ['attacked surface', 'custom CRM Customer Hub Smart CRM CDP + CRM: not ingestion, but Accordo owns identity resolution and segmentation'],
   ];
   assert.deepEqual(validateDiscoverySurfaces(contradictory), [
-    'attacked surface: CDP + CRM appears without the CDP boundary (not ingestion, identity resolution or segmentation)',
+    'attacked surface: CDP + CRM appears without the CDP boundary (no streaming ingestion, audience segmentation or CDP activation)',
   ]);
 });
 
@@ -80,7 +80,7 @@ test('ignored and prototype-shaped manifest fields cannot smuggle intent past pu
     'root package: missing the checked Customer Hub discovery signal',
     'root package: missing the checked Smart CRM discovery signal',
     'root package: missing the checked CDP + CRM discovery signal',
-    'root package: CDP + CRM appears without the CDP boundary (not ingestion, identity resolution or segmentation)',
+    'root package: CDP + CRM appears without the CDP boundary (no streaming ingestion, audience segmentation or CDP activation)',
   ]);
 });
 
@@ -97,7 +97,7 @@ test('the prepared GitHub description carries the whole bounded agent-native int
   assert.match(description, /custom CRM/i);
   assert.match(description, /Customer Hub/i);
   assert.match(description, /Smart CRM is policy-governed/i);
-  assert.match(description, /CDP \+ CRM means process layer—not ingestion, identity resolution or segmentation/i);
+  assert.match(description, /CDP \+ CRM adds bounded imports and logical identity/i);
   assert.doesNotMatch(description, /coding agents use to build/i);
 });
 
@@ -126,4 +126,14 @@ test('the registry description obeys the registry\'s own limit and claims no CRM
     validateRegistryDescription({ description: `${'x'.repeat(101)} CRM` }),
     [`MCP Registry server: description is ${105} characters; the registry refuses anything over ${REGISTRY_DESCRIPTION_LIMIT} (422 on publish)`],
   );
+});
+
+// The former required phrase denied capabilities already present in Customer Data Foundation.
+test('retired blanket CDP denial cannot satisfy current discovery boundaries', () => {
+  assert.notDeepEqual(validateDiscoverySurfaces([
+    ['old metadata', 'custom CRM Customer Hub Smart CRM CDP + CRM: not ingestion, identity resolution or segmentation'],
+  ]), []);
+  assert.deepEqual(validateDiscoverySurfaces([
+    ['current metadata', 'custom CRM Customer Hub Smart CRM CDP + CRM: bounded JSON imports and logical identity; no streaming ingestion, audience segmentation or CDP activation'],
+  ]), []);
 });

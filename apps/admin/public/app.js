@@ -1,3 +1,5 @@
+import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
+
 const elements = {
   metrics: document.querySelector('#metrics'),
   opportunities: document.querySelector('#opportunities'),
@@ -21,26 +23,54 @@ const headers = {
   'x-actor-id': 'admin-demo',
 };
 
+function isMutation(method) {
+  return ['POST', 'PUT', 'PATCH', 'DELETE'].includes(String(method ?? 'GET').toUpperCase());
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: { ...headers, ...(options.headers || {}) } });
+  const method = options.method ?? 'GET';
+  /** @type {Record<string, string>} */
+  const requestHeaders = { ...headers, ...(options.headers || {}) };
+  if (isMutation(method)) {
+    requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
+  }
+  const response = await fetch(path, { ...options, headers: requestHeaders });
   const body = await response.json();
-  if (!response.ok) throw new Error(body?.error?.message || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(body?.error?.message || `Request failed (${response.status})`);
+    Object.assign(error, { status: response.status, code: body?.error?.code, details: body?.error?.details ?? null });
+    throw error;
+  }
   return body;
 }
 
+const submissions = createSubmissionController({
+  transport: (path, options) => api(path, {
+    method: options.method,
+    body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body ?? {}),
+    idempotencyKey: options.idempotencyKey,
+  }),
+});
+
 // Request client for generated-module views. A declared identity for audit —
 // NOT authentication; a local caller can set any actor. The Admin is
-// local-development-only until auth/tenancy/RBAC exist.
+// local-development-only until a deployment supplies an identity verifier.
 const moduleClient = {
   async request(path, options = {}) {
+    const method = options.method ?? 'GET';
+    /** @type {Record<string, string>} */
+    const requestHeaders = {
+      'content-type': 'application/json',
+      'x-actor-type': 'user',
+      'x-actor-id': 'admin-ui',
+      ...(options.headers || {}),
+    };
+    if (isMutation(method)) {
+      requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
+    }
     const response = await fetch(path, {
       ...options,
-      headers: {
-        'content-type': 'application/json',
-        'x-actor-type': 'user',
-        'x-actor-id': 'admin-ui',
-        ...(options.headers || {}),
-      },
+      headers: requestHeaders,
     });
     const text = await response.text();
     let payload;
@@ -66,16 +96,28 @@ const moduleClient = {
 async function refresh() {
   toggleBusy(elements.refreshButton, true);
   try {
-    const [health, opportunities, approvals, traces] = await Promise.all([
+    const metricsPromise = api('/api/admin/metrics').then(
+      (body) => ({ available: true, counts: body.counts }),
+      () => ({ available: false, counts: null }),
+    );
+    const [health, metrics, opportunities, approvals, traces, pendingWrites] = await Promise.all([
       api('/health'),
+      metricsPromise,
       api('/api/opportunities'),
       api('/api/approvals?status=pending'),
       api('/api/traces?limit=8'),
+      api('/api/write-outcomes').then((body) => body, () => ({ items: [] })),
     ]);
-    renderMetrics(health.counts);
+    if (health.ok !== true) throw new Error('Runtime health check failed');
+    if (metrics.available) renderMetrics(metrics.counts);
+    else renderMetricsUnavailable();
     renderOpportunities(opportunities.items);
     renderApprovals(approvals.items);
     renderTraces(traces.items);
+    const unacked = Array.isArray(pendingWrites?.items) ? pendingWrites.items.length : 0;
+    if (unacked > 0) {
+      toast(`${unacked} unacknowledged submission${unacked === 1 ? '' : 's'} recovered.`);
+    }
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -83,12 +125,27 @@ async function refresh() {
   }
 }
 
-function renderMetrics(counts) {
-  const items = [
+function metricItems(counts) {
+  return [
     ['Companies', counts.companies],
     ['Opportunities', counts.opportunities],
     ['Pending approvals', counts.pendingApprovals],
     ['Traced runs', counts.workflowRuns],
+  ];
+}
+
+function renderMetrics(counts) {
+  elements.metrics.innerHTML = metricItems(counts).map(([label, value]) => `
+    <div class="metric"><strong>${value}</strong><span>${label}</span></div>
+  `).join('');
+}
+
+function renderMetricsUnavailable() {
+  const items = [
+    ['Companies', '—'],
+    ['Opportunities', '—'],
+    ['Pending approvals', '—'],
+    ['Traced runs', '—'],
   ];
   elements.metrics.innerHTML = items.map(([label, value]) => `
     <div class="metric"><strong>${value}</strong><span>${label}</span></div>
@@ -106,7 +163,7 @@ function renderOpportunities(items) {
         <td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.type.replace('_', ' '))}</small></td>
         <td>${escapeHtml(item.companyName || '—')}</td>
         <td><strong>${formatMoney(item.valueCents, item.currency)}</strong></td>
-        <td><span class="badge ${item.stage}">${escapeHtml(item.stage.replace('_', ' '))}</span></td>
+        <td><span class="badge ${item.stage}">${escapeHtml(item.stage)}</span></td>
         <td>${escapeHtml(item.owner)}</td>
         <td>${action}</td>
       </tr>
@@ -166,9 +223,10 @@ function renderTraces(items) {
 async function requestProposal(id, button) {
   toggleBusy(button, true);
   try {
-    const result = await api(`/api/opportunities/${id}/stage`, {
+    const result = await submissions.submit({
+      path: `/api/opportunities/${id}/stage`,
       method: 'POST',
-      body: JSON.stringify({ targetStage: 'proposal' }),
+      body: { targetStage: 'proposal' },
     });
     toast(result.output.outcome === 'approval_required' ? 'Approval requested.' : 'Moved to Proposal.');
     await refresh();
@@ -182,7 +240,11 @@ async function requestProposal(id, button) {
 async function decide(id, decision, button) {
   toggleBusy(button, true);
   try {
-    await api(`/api/approvals/${id}/${decision}`, { method: 'POST', body: '{}' });
+    await submissions.submit({
+      path: `/api/approvals/${id}/${decision}`,
+      method: 'POST',
+      body: {},
+    });
     toast(decision === 'approve' ? 'Renewal approved.' : 'Renewal rejected.');
     await refresh();
   } catch (error) {
@@ -216,7 +278,7 @@ async function showTrace(id) {
 async function runDemo() {
   toggleBusy(elements.demoButton, true);
   try {
-    await api('/api/demo/run', { method: 'POST', body: '{}' });
+    await submissions.submit({ path: '/api/demo/run', method: 'POST', body: {} });
     toast('Demo created: €20k moved to Proposal; €80k awaits approval.');
     await refresh();
   } catch (error) {
@@ -269,7 +331,9 @@ import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
 import { createWorkView } from './admin-work.js';
+import { createMarketingView } from './admin-marketing.js';
 import { createCustomerDataView } from './admin-customer-data.js';
+import { createSpineView } from './admin-spine.js';
 import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
 
 const dashboardView = document.querySelector('#view-dashboard');
@@ -280,6 +344,7 @@ const moduleAdmin = createModuleAdmin({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
   toast,
 });
@@ -288,6 +353,7 @@ const pipelineBoard = createPipelineBoard({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   toast,
 });
 
@@ -298,6 +364,7 @@ const quoteView = createQuoteView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -307,6 +374,18 @@ const workView = createWorkView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
+  navigate: (hash) => { window.location.hash = hash; },
+});
+
+// Marketing proposals (MK1): the review screen for a complete-or-refused
+// campaign proposal. Renders only while the server publishes the marketing
+// package.
+const marketingView = createMarketingView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -317,7 +396,19 @@ const customerDataView = createCustomerDataView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
+});
+
+// Production Spine (ADR-038): verified identity, the tenant, memberships and
+// what this build cannot promise. Always available — an application with no
+// spine composed still renders the section, saying exactly that, because a
+// missing security screen reads as "fine" and it is not.
+const spineView = createSpineView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  submissions,
 });
 
 async function populateNav() {
@@ -348,6 +439,14 @@ async function populateNav() {
       link.textContent = 'Quotes';
       generatedNav.appendChild(link);
     }
+    // Marketing (MK1): one nav link when the project composes the marketing package.
+    if (schema?.domains?.marketing?.marketingContract === 1) {
+      const link = document.createElement('a');
+      link.setAttribute('href', '#/marketing');
+      link.setAttribute('data-nav', 'marketing');
+      link.textContent = 'Proposals';
+      generatedNav.appendChild(link);
+    }
     // Work (ADR-030): one nav link when the project composes the work package.
     if (schema?.domains?.work?.workContract === 1) {
       const link = document.createElement('a');
@@ -363,6 +462,15 @@ async function populateNav() {
       link.setAttribute('href', '#/customer-data');
       link.setAttribute('data-nav', 'customer-data');
       link.textContent = 'Customer data';
+      generatedNav.appendChild(link);
+    }
+    // The spine link is unconditional: whether or not a spine is composed is
+    // exactly the thing an operator needs to be able to look up.
+    {
+      const link = document.createElement('a');
+      link.setAttribute('href', '#/spine');
+      link.setAttribute('data-nav', 'spine');
+      link.textContent = 'Identity & access';
       generatedNav.appendChild(link);
     }
     // Pipeline boards (ADR-014): one nav link per registered pipeline, from
@@ -395,7 +503,9 @@ async function route() {
       (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`) ||
       ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
+      ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
       ((target.view === 'customer-data' || target.view === 'customer-profile') && link.getAttribute('href') === '#/customer-data')
+      || (target.view === 'spine' && link.getAttribute('href') === '#/spine')
     );
     link.classList.toggle('active', active);
   }
@@ -418,10 +528,13 @@ async function route() {
     else if (target.view === 'pipeline') await pipelineBoard.renderBoard(target.pipelineName);
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
+    else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') await customerDataView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();
     else if (target.view === 'work-task') await workView.renderTask(target.taskId);
+    else if (target.view === 'marketing') await marketingView.renderProposalList();
+    else if (target.view === 'marketing-proposal') await marketingView.renderProposalDetail(target.proposalId);
   } catch (error) {
     toast(error.message, true);
   }

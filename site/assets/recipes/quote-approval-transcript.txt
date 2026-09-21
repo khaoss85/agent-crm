@@ -1,0 +1,20 @@
+Accordo quote approval recipe — recorded local execution
+Executed at: 2026-09-07T18:58:22.920Z
+Source checkout: 3b5b5f0c4c3e582e48d54501136024b064756daa
+Framework baseline: 3b51b97fa7ae4ae5cfad3edd97d0ceec8e75a01e
+Recipe SHA-256: 209e4ea8ac08acea972a967c48b30df835edd8f5a9dc650b81d6f7f38a936678
+Node: v24.10.0
+Command shape: node --no-warnings examples/recipes/quote-approval/run.mjs <empty-project-directory>
+The actual target was a local handoff directory. Both actors and all customer data were synthetic.
+
+Captured stdout (unmodified):
+Created a fresh local CRM project from the framework source.
+Composed the existing commercial package, fixture catalog and 10% auto-approval policy.
+Priced 30 seats at 25% off: EUR 3,750 one-time; EUR 2,400 per month. Periods stay separate.
+Submitted: pending_approval. Policy standard-sales-discount v1 requires a user decision.
+Agent approval refused: 403 HUMAN_APPROVAL_REQUIRED. Quote and approval remain pending; no business audit added.
+Simulated user approved. One user decision audit recorded; submitted commercial snapshot unchanged.
+PASS. Saved data/accordo.sqlite and data/quote-approval-receipt.json in the requested project.
+This was a deterministic SDK/HTTP replay, not a coding-agent build or authenticated human session.
+
+Development history: the initial recipe attempt failed because alphabetically generated modules referenced quote before it existed. The recipe was corrected to use dependency order. The generated project then failed its existing empty-composition assertion; the recipe now updates that assertion to require the commercial package. The recorded recipe execution above passed after these corrections. No agent-build success rate or production result was measured.

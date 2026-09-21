@@ -182,7 +182,7 @@ export const EVIDENCE_LIMITATIONS = Object.freeze([
   },
   {
     code: 'PRODUCTION_EVIDENCE_ABSENT',
-    message: 'nothing here contacts a provider, reads a database, deploys, or observes a live or external system. There is no auth, tenancy or RBAC in this framework, and no deployment or operational readiness is assessed',
+    message: 'nothing here contacts a provider, reads a database, deploys, or observes a live or external system. This framework ships no authentication, and no deployment or operational readiness is assessed',
   },
   {
     code: 'EXECUTABLE_TEXT_SCAN_IS_NOT_A_PARSER',

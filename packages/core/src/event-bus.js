@@ -70,7 +70,7 @@ export class EventBus {
    * "business writes committed but a subscriber failed".
    *
    * @template T
-   * @param {(controller: {commit: () => Promise<void>, discard: () => void}) => Promise<T>} fn
+   * @param {(controller: {commit: () => Promise<void>, discard: () => void, peek: () => Array<{event: string, payload: unknown}>}) => Promise<T>} fn
    * @returns {Promise<T>}
    */
   async buffered(fn) {
@@ -112,6 +112,7 @@ export class EventBus {
         flushed = true;
         store.queue = [];
       },
+      peek: () => store.queue.map((entry) => ({ event: entry.event, payload: entry.payload })),
     };
     return this.outbox.run(store, async () => {
       try {

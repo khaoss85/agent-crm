@@ -1,16 +1,23 @@
 # Accordo
 
-> **Describe your sales process to your coding agent; own the CRM it builds.**
+> **Build the customer and revenue system your business actually runs.**
 
-An open-source framework that Claude Code, Codex and Gemini CLI use to generate a CRM
-application as code you own — deterministic workflows, policy-gated human approvals,
-audit and trace built in.
+Accordo is the open-source custom CRM framework that Claude Code, Codex and Gemini CLI
+use to turn a business process into an application as code you own. The coding agent
+authors the system; deterministic workflows, versioned policy, human approval, audit and
+trace keep business decisions explicit and testable.
+
+Human product overview: [accordo.dev](https://accordo.dev/) · coding-agent entry point:
+[For AI agents](https://accordo.dev/for-ai-agents.html) · current implementation proof:
+[claims ledger](https://accordo.dev/evidence.html).
 
 The name is chosen and the domain registered. `npm create accordo` scaffolds a working
-project from the published `create-accordo@0.1.0`; the `accordo` package itself remains
+project from the published `create-accordo@0.1.0`, the August 19 source snapshot.
+Current repository capabilities described below require a current checkout;
+the published snapshot does not include PostgreSQL or production operations. The `accordo` package itself remains
 an empty `0.0.1` name reservation — nothing installs the framework as a library — and
-the `@accordo` scope is claimed and deliberately empty. No trademark screen has been run, and the project is
-not deployable to production. What that means precisely is in
+the `@accordo` scope is claimed and deliberately empty. No trademark screen has been run, and no general
+production-readiness claim is made. What that means precisely is in
 [Where it stops](#where-it-stops), which is worth reading before the rest.
 
 ```text
@@ -23,6 +30,15 @@ Modules + deterministic workflows + versioned policy
 API + Admin + trace + audit — in your repository, as code you review
 ```
 
+That sentence, run for real — the scaffold, an agent advancing two renewals, and the
+€80,000 one stopping at the gate until a human decides:
+
+![Terminal recording: npm create accordo scaffolds a project; an agent advances two renewals; the 80,000-euro one stops in approval_pending, requested by the agent and decided by nobody yet; workflow:list shows the evaluate-commercial-policy step that stopped it](.github/demo.gif)
+
+Recorded from the real commands with [VHS](https://github.com/charmbracelet/vhs); the
+script is [.github/demo.tape](.github/demo.tape), so the recording can be reproduced
+rather than trusted.
+
 ---
 
 ## When to reach for Accordo
@@ -30,14 +46,15 @@ API + Admin + trace + audit — in your repository, as code you review
 - **Custom CRM:** when the commercial process is the product and the result should be
   reviewable code rather than configuration inside somebody else's runtime.
 - **[Customer Hub](https://accordo.dev/concepts/customer-hub.html):** when “hub” means one
-  local commercial record chain with governed actions. Accordo does not ingest sources or
-  resolve customer identities like a CDP.
+  commercial record chain with governed actions, bounded JSON imports and logical
+  customer identity. Accordo is not a full CDP.
 - **[Smart CRM](https://accordo.dev/concepts/smart-crm.html):** when a coding agent should
   compose the application while versioned policy and named humans retain business decisions.
   It is agent-built software, not an autonomous decision-maker.
 - **[CDP + CRM](https://accordo.dev/concepts/cdp-plus-crm.html):** when an external CDP owns
-  ingestion, identity resolution and audiences, and Accordo owns the deterministic CRM
-  process layer beside it. Accordo ships no CDP, connector, importer or sync runtime.
+  broad ingestion, identity graphs and audiences, and Accordo owns the deterministic CRM
+  process layer beside it with bounded JSON imports and logical identity. Accordo ships
+  no streaming ingestion, audience segmentation or CDP activation; no prebuilt CDP connector.
 
 Those adjacent terms are retrieval paths, not extra capability claims. The checked
 [recommendation map](docs/strategy/RECOMMENDATION_MAP.md) binds each one to what the
@@ -58,8 +75,8 @@ both cost something:
 This framework is the third option: an agent generates the application, and the framework
 supplies the parts teams always get wrong under deadline. The test any developer can apply
 is *"if this project disappears tomorrow, what am I left with?"* Here the answer is: a Node
-application in your repository, with no third-party runtime dependencies and a SQLite file
-any client can open.
+application in your repository, with SQLite as a Node built-in, one pinned `pg@8.23.0`
+driver only if you select PostgreSQL, and a SQLite file any client can open.
 
 ## What is proven
 
@@ -77,8 +94,8 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 | Lead capture, enrichment, explainable versioned scoring, deterministic routing, qualification, conversion | enrichment runs against a fixture provider; no real data source is wired | `tests/lead-intelligence-e2e.test.js`, `tests/lead-conversion-e2e.test.js` |
 | Server-priced composite quotes, immutable quote versions, versioned discount policy with approval | fixture catalog provider; integer cents with no FX — currencies are never summed | `tests/commercial-e2e.test.js` |
 | Signature envelope → verified events → signed-artifact evidence → exactly one immutable Order | fixture signature provider, test-only webhook key, provider-reported artifact hash | `tests/signature-order-e2e.test.js` |
-| Order activation into Contract, immutable version, Subscription and pending obligations | nothing bills, renews, amends or cancels; there is no scheduler | `tests/contracts-activation-e2e.test.js` |
-| Delivery handover into a project with work packages, milestones and an optional partner; human-driven execution | nothing schedules, staffs, accepts or bills; deliverables do not exist as objects | `tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js` |
+| Order activation and governed renewal/amendment into signed successor agreements | immutable history; no automatic renewal, cancellation execution or billing | `tests/contracts-activation-e2e.test.js`, `tests/lifecycle-amendment-execution-e2e.test.js` |
+| Delivery handover into a project with work packages, milestones and an optional partner; human-driven execution | no resource scheduling, staffing or billing; deliverables and user-recorded acceptance exist, without authenticating the customer | `tests/delivery-handover-e2e.test.js`, `tests/delivery-execution-e2e.test.js`, `tests/delivery-change-acceptance-e2e.test.js` |
 | Append-only time and expense evidence, costed by a versioned policy, with a reproducible contribution estimate | deliberately not a margin: no revenue recognition, no COGS, no ARR/MRR, no FX | `tests/delivery-economics-e2e.test.js` |
 | A customer-authored domain package attaches and detaches with the kernel fingerprint unchanged | the scaffold that starts one writes an empty package and nothing else; no registry, no publication, no sandboxing — package code runs with the host's authority | `tests/package-contract.test.js`, `tests/custom-package-e2e.test.js` |
 | `accordo package scaffold <name>` — a minimal, empty, conforming local package, written atomically, dry-run by default | it invents no business logic, composes nothing, verifies no global identity uniqueness and installs or publishes nothing | `tests/package-scaffold.test.js`, `tests/package-test-command.test.js` |
@@ -91,7 +108,9 @@ behind it is [`docs/QUALITY_GATES.md`](docs/QUALITY_GATES.md).
 
 ## Run it
 
-Node.js 22.16 or newer. There are no third-party runtime dependencies and no build step.
+Node.js 22.16 or newer. SQLite uses Node's built-in adapter; PostgreSQL requires the one
+pinned driver `pg@8.23.0` (`tests/spine-v2-m3b-postgresql-adapter.test.js`). No ORM, no
+build step.
 
 ```bash
 npm run tour     # compose the whole application and inspect it
@@ -110,8 +129,23 @@ same one CI runs on every push) into a directory it keeps, then inspects the res
   modules       76        resources     71        policies       7
   packages       9        actions       64        providers      1
 
-  production posture — local development only: no authentication, tenancy or RBAC
-                       exists, and actor headers are not identity
+  production posture — not a readiness claim: the framework authenticates
+                       nobody (a deployment adapter supplies verified
+                       identity), while tenancy — one tenant per application
+                       instance — and authorization are owned and enforced by
+                       the framework. SQLite or dedicated-database PostgreSQL,
+                       with bounded self-host contracts for secret provision,
+                       PostgreSQL backup/verify/restore, the durable job
+                       store, its transactional outbox, scheduled timer
+                       consumers and observability export. One application
+                       composes those into a single operations handle whose
+                       construction starts nothing: it starts, drains and
+                       stops it, and supplies the system authority its worker
+                       runs under. Nothing autostarts. Absent: shared-database
+                       tenancy, an autostarted or operator-managed worker
+                       service, any managed jobs service, managed secret
+                       custody, managed backup custody/scheduling/retention
+                       and an observability backend
 ```
 
 It ends on the eleven things the inspector says it cannot see, because a tour that shows only
@@ -167,27 +201,79 @@ Read this before evaluating anything above. `docs/benchmarks/CRM_JTBD_MATRIX.md`
 CRM job with a conservative status vocabulary in which *not supported* is the default and
 evidence is required to leave it.
 
-- **No authentication, tenancy or RBAC.** The server is local-development-only; an actor
-  header is an assertion, not an identity. Do not expose it to a network.
-- **SQLite only.** PostgreSQL is on the Production Spine track and is not implemented.
+Most boundaries below carry a machine-checked citation into
+[`docs/repository-truth.json`](docs/repository-truth.json), the generated fact document
+(`repositoryTruthContract: 1`, ADR-039). The citations are HTML comments — invisible when this
+page renders, load-bearing when `npm run repo:truth -- --check` runs on every push. A cited
+sentence that survives the code it describes fails that check. Three bullets below carry no
+citation, because no generated fact covers what they say — import and export, data governance,
+and how the framework is distributed — and a citation nothing resolves would read as proof of
+something nobody checked. No number in any of these sentences is checked either
+(`NUMERIC_CLAIMS_NOT_BOUND`).
+
+- **No authentication ships: the framework authenticates nobody.** Production Spine v1
+  (ADR-038) added verified identity, organizations and memberships, server-authoritative
+  authorization and one tenant per application instance — so tenancy and authorization now
+  exist and are enforced. Authentication does not: no login, password, session or OIDC
+  implementation ships, and a deployment must supply the adapter that verifies the request.
+  Production mode refuses to start without one. In local-development mode an actor header is
+  accepted as an assertion and is not an identity, which is the default developer posture.
+  This is not shared-database multi-tenancy and it is not a readiness claim.
+  <!-- truth: spine.authentication.framework_verifier=absent -->
+  <!-- truth: spine.authorization.enforced=enforced -->
+  <!-- truth: spine.tenant.isolation.mode=one_tenant_per_instance -->
+  <!-- truth: spine.tenant.crm_data_plane_enforced=enforced_by_binding -->
+  <!-- truth: spine.multi_tenant_single_instance=refused_at_startup -->
+- **Not shared-database tenancy.** `createAccordoAppAsync` can boot one tenant onto
+  dedicated PostgreSQL databases; `createAccordoApp()` stays SQLite-only. Shared-database
+  row-level tenancy is not implemented, and this is not a production-readiness claim.
+  <!-- truth: spine.postgresql.implemented=implemented -->
 - **The build benchmark has not been run.** No Successful Agent Build Rate exists. Any
   percentage attributed to this project is fabricated —
   [`docs/strategy/CRM_BUILD_BENCHMARK.md`](docs/strategy/CRM_BUILD_BENCHMARK.md) is the
   protocol, not a result.
-- **No scheduler, no reminders, nothing on a timer.** Follow-up Tasks and an Activity
-  timeline exist as one shared model (`docs/WORK_TASKS.md`) and a person moves every one of
-  them: a due date changes no state, nothing recurring exists, nothing is assigned or
-  notified, and renewal notice periods are recorded and never fire.
-- **No email, calendar or marketing integrations.** A notification provider contract exists;
-  no adapter sends anything to anyone.
-- **No import, export, dedupe, merge, bulk edit, saved views or global search.** Table stakes
-  in every commercial CRM, and none of them has a milestone yet.
-- **You cannot put real customer data in this yet.** No authentication, no tenancy, no export
-  and no erasure path — so a data-subject access or deletion request cannot be serviced with it.
-  `docs/strategy/DATA_GOVERNANCE.md` is design-only. The one thing that does hold: lead scoring is
-  deterministic, versioned and explainable, not a model's judgement about a person.
+  <!-- truth: benchmark.build_rate.measured=not_measured -->
+  <!-- truth: benchmark.tool_selection.comparative=false -->
+- **Timers exist; a service that runs them for you does not.** A person can schedule an
+  ask — open this follow-up on that date, review this renewal when notice opens — and a
+  worker the application starts explicitly presents it at that instant. Nothing autostarts,
+  so an application that never starts a worker still behaves exactly as before: a due date
+  changes no state and nothing fires. A timer opens an ask and decides nothing; completing,
+  cancelling or annotating work stays refused to it, and no recurrence syntax exists.
+  <!-- truth: spine.timer_consumers.implemented=implemented -->
+  <!-- truth: spine.managed_jobs_service.implemented=absent -->
+- **Marketing proposals have no execution path.** The optional MK1 package records
+  supplied funnel observations and human-reviewed proposals. It sends, publishes
+  and spends nothing; email/calendar integrations and audience execution remain absent.
+  No email, calendar or marketing integrations.
+  <!-- truth: marketing_runtime.implemented=implemented -->
+- **Nothing bills.** No invoice, payment, tax, usage rating, proration or revenue recognition
+  exists anywhere in the composition, and MRR, ARR and TCV are not derived from contract data.
+  <!-- truth: billing.implemented=absent -->
+- **No backups, restore or managed secret custody/service.** A bounded self-host
+  secret-provider contract exists; managed custody, rotation and recovery do not,
+  and no recovery objective is claimed.
+  <!-- truth: spine.secret_provider.implemented=implemented -->
+  <!-- truth: spine.secrets_backups.implemented=absent -->
+- **The customer foundation is not a CDP, and the profile is not a timeline.** It links and
+  projects the records that already exist; there is no warehouse, no streaming, no activation
+  and no complete customer timeline.
+  <!-- truth: cdf.full_cdp.implemented=absent -->
+  <!-- truth: customer_timeline.complete=absent -->
+- **Bounded customer imports and logical identity; incomplete data operations.** Preview/apply takes
+  bounded JSON rows, with per-row receipts, idempotency and deterministic matching;
+  a human decides canonical links without deleting or rewriting source records.
+  No CSV importer, physical merge, complete export/erasure, bulk editing, saved views
+  or global search ships. See `tests/customer-data-foundation.test.js`.
+  <!-- truth: domain.customer_data.package_native=package_native -->
+- **Personal-data readiness requires deployment work beyond the foundation.** Supply authentication and
+  complete subject export/erasure for your application; the customer foundation alone
+  establishes neither compliance nor suitability for real customer data.
+  Lead scoring is deterministic, versioned and explainable.
 - **This is a framework, not a product you sign up for.** There is no hosted CRM, no free
-  tier, no account. The output is an application you run.
+  tier, no account, and no control plane that provisions, deploys or meters anything. The
+  output is an application you run.
+  <!-- truth: cloud_control_plane.implemented=absent -->
 - **Ownership means vendored source: there is no framework dependency to bump.**
   `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a project that boots,
   reports `valid` from `app inspect` and exits 0 from `project doctor`, by copying the framework

@@ -179,8 +179,9 @@ if (serverJson) {
  * checked Customer Hub, Smart CRM and CDP + CRM pages cannot help retrieval.
  *
  * The CDP signal is deliberately inseparable from its boundary. Accordo owns the
- * deterministic process layer beside a CDP; it does not ship ingestion, identity
- * resolution or segmentation. This gate checks copy, not product capability.
+ * deterministic process layer beside a CDP. Bounded imports and logical identity exist;
+ * the retained boundary is no streaming ingestion, audiences or CDP activation.
+ * This gate checks copy, not product capability.
  */
 const discoverySurfaces = collectDiscoverySurfaces({
   readme: readFileSync(join(root, 'README.md'), 'utf8'),

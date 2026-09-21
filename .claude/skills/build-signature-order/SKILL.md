@@ -64,6 +64,6 @@ Only `actor.type === 'user'` may request a signature (agents get `403 HUMAN_APPR
 
 ## Do not implement here
 
-Real signature credentials or APIs, production PDF generation, legal signature qualification, payments, billing, invoicing, tax, FX, revenue recognition, fulfillment, Delivery/Service, cancellation, refunds, order amendments, renewals, a background scheduler, a durable distributed outbox, a generic workflow or document DSL, auth/tenancy/RBAC.
+Real signature credentials or APIs, production PDF generation, legal signature qualification, payments, billing, invoicing, tax, FX, revenue recognition, fulfillment, Delivery/Service, cancellation, refunds, order amendments, renewals, a background scheduler, a durable distributed outbox, a generic workflow or document DSL, authentication.
 
 Finish with `npm run verify` and the starter (`node examples/starters/b2b-lead-qualification/install.mjs`).

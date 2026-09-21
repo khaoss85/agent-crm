@@ -23,6 +23,40 @@ export const MANIFEST_FIELD_TYPES = Object.freeze([
 
 export const REFERENCE_ON_DELETE = Object.freeze(['restrict', 'cascade', 'set_null']);
 
+/**
+ * Personal-data taxonomy for manifest fields (Data Governance criterion 1,
+ * `docs/strategy/DATA_GOVERNANCE.md` §Classification).
+ *
+ * Owner decision 2026-09-19 (`backlog:0c1af0e22dc6`): three GDPR-anchored
+ * classes — `identification`, `special-category`, `non-personal` — reused by
+ * the later provider-sharing, retention and export records so the three
+ * registries name the same categories. `unclassified` is report-only output
+ * for a field with no marker: it is never accepted as input and never treated
+ * as `non-personal` (fail closed).
+ */
+export const DATA_CLASSIFICATIONS = Object.freeze(['identification', 'special-category', 'non-personal']);
+
+export const UNCLASSIFIED_DATA = 'unclassified';
+
+/**
+ * Tables owned by the core schema (`packages/core/src/database.js`) plus the
+ * framework's own bookkeeping tables. Generated modules must not claim them:
+ * their CREATE TABLE IF NOT EXISTS would silently no-op against the existing
+ * table and the module would run on the wrong schema. Shared with the module
+ * factory and the runtime record-module constructor so the guard cannot drift.
+ */
+export const CORE_RESERVED_TABLES = Object.freeze(new Set([
+  'companies',
+  'contacts',
+  'opportunities',
+  'approvals',
+  'workflow_runs',
+  'trace_spans',
+  'audit_events',
+  'schema_migrations',
+  'module_migrations',
+]));
+
 export const SUPPORTED_MANIFEST_VERSION = 1;
 /**
  * An enum value ends up inside a SQL `CHECK` constraint and inside every
@@ -67,6 +101,7 @@ const TABLE_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
  *   values?: string[],
  *   references?: string,
  *   onDelete?: string,
+ *   classification?: string,
  * }} NormalizedManifestField
  *
  * @typedef {{
@@ -198,7 +233,7 @@ function normalizeField(rawField, index, errors) {
   const label = typeof field.name === 'string' ? `fields[${index}] "${field.name}"` : `fields[${index}]`;
 
   for (const key of Object.keys(field)) {
-    if (!['name', 'type', 'required', 'unique', 'values', 'references', 'onDelete', 'column', 'writable', 'default', 'index'].includes(key)) {
+    if (!['name', 'type', 'required', 'unique', 'values', 'references', 'onDelete', 'column', 'writable', 'default', 'index', 'classification'].includes(key)) {
       errors.push(`${label}: unknown property "${key}"`);
     }
   }
@@ -331,6 +366,20 @@ function normalizeField(rawField, index, errors) {
     valid = false;
   }
 
+  // Personal-data classification (Data Governance criterion 1): optional,
+  // closed vocabulary. `unclassified` is never accepted as input — it is the
+  // report-only value `fieldDataClassifications` emits for a field with no
+  // marker, so accepting it would let a writer launder an unreviewed field.
+  let classification;
+  if (field.classification !== undefined) {
+    if (typeof field.classification !== 'string' || !DATA_CLASSIFICATIONS.includes(field.classification)) {
+      errors.push(`${label}: classification must be one of: ${DATA_CLASSIFICATIONS.join(', ')}`);
+      valid = false;
+    } else {
+      classification = field.classification;
+    }
+  }
+
   // Optional default value, used to initialise the field on create (mainly for
   // managed fields, e.g. a status enum defaulting to "new").
   let defaultValue;
@@ -392,7 +441,29 @@ function normalizeField(rawField, index, errors) {
     ...(defaultValue !== undefined ? { default: defaultValue } : {}),
     ...(values ? { values } : {}),
     ...(references ? { references, onDelete } : {}),
+    ...(classification ? { classification } : {}),
   };
+}
+
+/**
+ * Per-field personal-data classification for a manifest.
+ *
+ * Fail-closed reporting (Data Governance criterion 1): a field with no
+ * `classification` marker is reported as `unclassified`, never as
+ * `non-personal`. Downstream tooling (export, redaction, logging, analytics)
+ * must treat `unclassified` as not-safe until a human classifies it.
+ *
+ * @param {unknown} manifest — raw or already-normalized manifest
+ * @returns {ReadonlyArray<{name: string, classification: string}>}
+ */
+export function fieldDataClassifications(manifest) {
+  const normalized = validateModuleManifest(manifest);
+  return Object.freeze(
+    normalized.fields.map((field) => Object.freeze({
+      name: field.name,
+      classification: field.classification ?? UNCLASSIFIED_DATA,
+    })),
+  );
 }
 
 /**

@@ -235,10 +235,10 @@ function normalizeEnrichment(raw) {
  * complete regardless of table size; deterministic tie-break retrievedAt desc,
  * id desc.
  */
-function latestValidSnapshot(modules, snapshotModule, leadId, providerName, atIso) {
-  const candidates = modules
+async function latestValidSnapshot(modules, snapshotModule, leadId, providerName, atIso) {
+  const candidates = (await modules
     .get(snapshotModule)
-    .service.listWhere({ leadId, provider: providerName })
+    .service.listWhere({ leadId, provider: providerName }))
     .filter((snapshot) => typeof snapshot.expiresAt === 'string' && snapshot.expiresAt > atIso)
     .sort((a, b) => (a.retrievedAt === b.retrievedAt ? (a.id < b.id ? 1 : -1) : a.retrievedAt < b.retrievedAt ? 1 : -1));
   return candidates[0] ?? null;
@@ -306,7 +306,7 @@ export function buildEnrichAction(config, registries) {
         });
       }
       const at = now();
-      const reusable = latestValidSnapshot(modules, cfg.snapshotModule, record.id, provider.name, at);
+      const reusable = await latestValidSnapshot(modules, cfg.snapshotModule, record.id, provider.name, at);
       if (reusable) {
         step('enrich.reuse', { snapshotId: reusable.id, sourceKey: reusable.sourceKey });
         return { reuse: true };
@@ -347,7 +347,7 @@ export function buildEnrichAction(config, registries) {
       // have created a valid snapshot after prepare — reuse it and discard the
       // prepared provider result (recorded honestly as a step).
       const at = now();
-      const existing = latestValidSnapshot(modules, cfg.snapshotModule, record.id, input.provider, at);
+      const existing = await latestValidSnapshot(modules, cfg.snapshotModule, record.id, input.provider, at);
       if (existing) {
         if (prepared && prepared.reuse === false) {
           step('enrich.discarded-provider-result', { reason: 'a concurrent enrichment won; reusing its snapshot' });
@@ -362,7 +362,7 @@ export function buildEnrichAction(config, registries) {
         throw new ConflictError('The reusable enrichment snapshot changed during the request; retry', { transient: true });
       }
       const snapshots = modules.get(cfg.snapshotModule).service;
-      const sequence = snapshots.countWhere({ leadId: record.id, provider: prepared.provider.name }) + 1;
+      const sequence = (await snapshots.countWhere({ leadId: record.id, provider: prepared.provider.name })) + 1;
       const sourceKey = `enrich:${record.id}:${prepared.provider.name}@${prepared.provider.version}:${sequence}`;
       const snapshot = await createRecord(
         modules,
@@ -497,7 +497,7 @@ export function buildScoreAction(config, registries) {
       /** @type {any} */
       let snapshot = null;
       if (record.enrichmentSnapshotId) {
-        snapshot = modules.get(cfg.snapshotModule).service.get(record.enrichmentSnapshotId);
+        snapshot = await modules.get(cfg.snapshotModule).service.get(record.enrichmentSnapshotId);
         if (snapshot.leadId !== record.id) {
           throw new AppError('The lead\'s enrichment snapshot link points at another lead\'s snapshot', {
             code: 'INTELLIGENCE_STATE_CORRUPT',
@@ -509,9 +509,9 @@ export function buildScoreAction(config, registries) {
         if (typeof snapshot.expiresAt === 'string' && snapshot.expiresAt <= evaluatedAt) snapshot = null;
       }
 
-      const signals = modules
+      const signals = (await modules
         .get(cfg.signalModule)
-        .service.listWhere({ leadId: record.id })
+        .service.listWhere({ leadId: record.id }))
         .sort((a, b) => (a.observedAt === b.observedAt ? (a.id < b.id ? -1 : 1) : a.observedAt < b.observedAt ? -1 : 1));
 
       const context = Object.freeze({
@@ -637,7 +637,7 @@ export function buildRouteAction(config, registries) {
         });
       }
       const { definition, fingerprint } = registries.getRoutingPolicy(input.policy, input.version);
-      const scoreRun = modules.get(cfg.scoreRunModule).service.get(record.scoreRunId);
+      const scoreRun = await modules.get(cfg.scoreRunModule).service.get(record.scoreRunId);
       if (scoreRun.leadId !== record.id) {
         throw new AppError('The lead\'s score-run link points at another lead\'s run', {
           code: 'INTELLIGENCE_STATE_CORRUPT',
@@ -645,17 +645,17 @@ export function buildRouteAction(config, registries) {
         });
       }
       const snapshot = record.enrichmentSnapshotId
-        ? modules.get(cfg.snapshotModule).service.get(record.enrichmentSnapshotId)
+        ? await modules.get(cfg.snapshotModule).service.get(record.enrichmentSnapshotId)
         : null;
       const routedAt = now();
 
       // Exact indexed ACTIVE-workload count per target (capacity semantics).
       const leadService = modules.get(cfg.module).service;
-      const loadOf = (key) => leadService.countWhere({ assignedTargetId: key, status: [...ACTIVE_LEAD_STATUSES] });
+      const loadOf = async (key) => await leadService.countWhere({ assignedTargetId: key, status: [...ACTIVE_LEAD_STATUSES] });
       const score = record.score ?? scoreRun.totalScore;
-      const allTargets = registries
+      const allTargets = await Promise.all(registries
         .listTargets()
-        .map((target) => Object.freeze({ ...target, currentLoad: loadOf(target.key) }));
+        .map(async (target) => Object.freeze({ ...target, currentLoad: await loadOf(target.key) })));
       const candidates = allTargets.filter((target) => target.kind !== 'fallback');
       /** @param {any} target — null when eligible, else the exclusion reason */
       const exclusionReason = (target) => {

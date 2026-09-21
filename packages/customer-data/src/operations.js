@@ -1,21 +1,24 @@
 // @ts-check
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import { createBulkRunner } from './bulk.js';
+import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
 import { detectIssues } from './quality.js';
 import { canonicalClusterFor, profileFor } from './profile.js';
 import { optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted } from './store.js';
 
 /**
- * **The application operations (ADR-032): import preview, import apply, and the
- * consolidated profile read.**
+ * **The application operations (ADR-032): import preview, import apply, bulk
+ * apply, export, and the consolidated profile read.**
  *
  * These are application-scoped rather than record actions because none of them
  * belongs to a single record: an import is about a batch that may create the
- * very records it targets, and a profile spans every optional package that
- * happens to be composed. That is exactly the shape ADR-032 exists for, and the
- * bounded context it hands over — database, modules, events, config — is all
- * they take.
+ * very records it targets, a bulk spans many records, an export spans a whole
+ * record set, and a profile spans every optional package that happens to be
+ * composed. That is exactly the shape ADR-032 exists for, and the bounded
+ * context it hands over — database, modules, events, config — is all they
+ * take.
  *
  * The three properties worth stating once:
  *
@@ -44,17 +47,19 @@ export function createCustomerDataOperations({ database, modules, events, config
    * the operation was composed.
    */
   const readerFor = () => ({
-    externalIdentity(system, externalId) {
-      return trusted(modules, names.identity)
-        .listWhere({ sourceKey: `${system}:${externalId}` })
-        .find((row) => row.status === 'active') ?? null;
+    async externalIdentity(system, externalId) {
+      const rows = await trusted(modules, names.identity)
+        .listWhere({ sourceKey: `${system}:${externalId}` });
+      return rows.find((row) => row.status === 'active') ?? null;
     },
-    contactByEmail(email) {
+    async contactByEmail(email) {
       // Delegated: core owns email uniqueness and its normalization.
-      return core && typeof core.findContactByEmail === 'function' ? core.findContactByEmail(email) : null;
+      if (!core || typeof core.findContactByEmail !== 'function') return null;
+      return await core.findContactByEmail(email);
     },
-    companiesByName(name) {
-      return core && typeof core.findCompaniesByNormalizedName === 'function' ? core.findCompaniesByNormalizedName(name) : [];
+    async companiesByName(name) {
+      if (!core || typeof core.findCompaniesByNormalizedName !== 'function') return [];
+      return await core.findCompaniesByNormalizedName(name);
     },
   });
 
@@ -87,7 +92,7 @@ export function createCustomerDataOperations({ database, modules, events, config
      * @param {any} request
      */
     async previewCustomerImport(request) {
-      const resolution = resolveBatch({ request, policy, reader: readerFor() });
+      const resolution = await resolveBatch({ request, policy, reader: readerFor() });
       return Object.freeze({
         ...summarize(resolution, 'preview'),
         writes: 'nothing — this is a preview, and it records neither business data nor an import run',
@@ -103,7 +108,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       const actor = normalizeActor(request?.actor);
       // Re-resolve authoritatively. A preview handed in by the caller is
       // deliberately ignored: stale readiness authorises nothing.
-      const resolution = resolveBatch({ request, policy, reader: readerFor() });
+      const resolution = await resolveBatch({ request, policy, reader: readerFor() });
 
       if (resolution.acceptance === 'all_or_nothing' && resolution.counts.rejected + resolution.counts.skipped > 0) {
         throw new AppError(
@@ -116,7 +121,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       }
 
       const runs = trusted(modules, names.run);
-      const existing = runs.listWhere({ idempotencyKey: resolution.idempotencyKey })[0];
+      const existing = (await runs.listWhere({ idempotencyKey: resolution.idempotencyKey }))[0];
       if (existing) {
         // Same payload → same run. A *different* payload cannot reach here:
         // the key is derived from the payload itself.
@@ -206,6 +211,28 @@ export function createCustomerDataOperations({ database, modules, events, config
     },
 
     /**
+     * Bulk-apply one of this package's human decisions across many records.
+     * One transaction per item, one receipt per item, and a run that reads
+     * `partial` when not every item applied. See `./bulk.js` for the
+     * resume and replay discipline.
+     * @param {any} request
+     */
+    async applyBulkCustomerAction(request) {
+      return createBulkRunner({ database, modules, events, config, core, policy, names })
+        .applyBulkAction(request);
+    },
+
+    /**
+     * Export one of this package's managed record sets: counted first,
+     * refused rather than truncated, complete or not at all. Writes nothing.
+     * @param {any} request
+     */
+    async exportCustomerRecords(request) {
+      return createCustomerDataExport({ database, modules, events, config })
+        .exportCustomerRecords(request);
+    },
+
+    /**
      * The consolidated, read-only profile. Creates nothing.
      * @param {{resource?: string, id?: string}} request
      */
@@ -253,7 +280,7 @@ export function createCustomerDataOperations({ database, modules, events, config
   async function recordExternalIdentity(row, subject, runId, actor) {
     const identities = trusted(modules, names.identity);
     const sourceKey = `${row.system}:${row.externalId}`;
-    const existing = identities.listWhere({ sourceKey })[0];
+    const existing = (await identities.listWhere({ sourceKey }))[0];
     const now = new Date().toISOString();
     if (existing) {
       await identities.applyManaged(existing.id, { lastObservedRunId: runId, lastObservedAt: now }, { actor });
@@ -280,7 +307,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       for (let j = i + 1; j < list.length; j += 1) {
         const { left, right } = orderedPair(list[i], list[j]);
         const sourceKey = `duplicate:${subjectKey(left)}|${subjectKey(right)}`;
-        if (candidates.listWhere({ sourceKey })[0]) continue;
+        if ((await candidates.listWhere({ sourceKey }))[0]) continue;
         await candidates.createManaged({
           sourceKey,
           ...subjectFields(left, 'left'),
@@ -307,11 +334,11 @@ export function createCustomerDataOperations({ database, modules, events, config
 
   async function recordIssues({ resolution, runId, actor }) {
     const issues = trusted(modules, names.issue);
-    const found = detectIssues({ resolution, modules, names });
+    const found = await detectIssues({ resolution, modules, names });
     let written = 0;
     for (const issue of found) {
       const sourceKey = `issue:${issue.kind}:${issue.subject ? subjectKey(issue.subject) : `run:${runId}:${issue.index ?? 0}`}`;
-      if (issues.listWhere({ sourceKey })[0]) continue;
+      if ((await issues.listWhere({ sourceKey }))[0]) continue;
       await issues.createManaged({
         sourceKey,
         kind: issue.kind,
@@ -343,6 +370,8 @@ export const LIMITATIONS = Object.freeze([
   'NO_RBAC — a human actor is an audit identity, not role enforcement; the Production Spine does not exist',
   'NO_LEGAL_ASSURANCE — nothing here is a GDPR, consent, retention or erasure claim',
   'NOT_A_COMPLETE_TIMELINE — the profile spans Accordo-managed records only, and says so per package',
+  'PARTIAL_IS_PARTIAL — a bulk run that did not apply every item reads partial, never completed',
+  'NO_SILENT_TRUNCATION — an export that would exceed its bound refuses instead of returning a short file',
 ]);
 
 export { canonicalClusterFor };

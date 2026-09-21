@@ -174,9 +174,9 @@ export function createCommercialQuotesCapability(registries, config) {
  * becomes required for correctness or a stronger semantic guarantee arrives.
  * Both are true here: `verifySignedTerms` is not an optional convenience —
  * a consumer that skips it can describe a corrupted row as signed — and `@2`
- * carries a guarantee `@1` never made. `@1` stays offered, byte-identical, so
- * a consumer that has not migrated keeps exactly the answers it had; the
- * registry keys capabilities `name@version`, so both compose side by side.
+ * carries a guarantee `@1` never made. `@1` is retired: its reads live on
+ * byte-identically in `@2`'s base, no consumer declares it anymore, and the
+ * registry refuses a `@1` requirement naming the consumer.
  *
  * @param {any} registries the package's CommercialRegistries instance
  * @param {Record<string, string>} [config] module renames

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError } from '../../core/index.js';
+import { AppError, TRANSACTION_PROOF, proveCallerTransaction } from '../../core/index.js';
 import { resolvedNames } from './activation.js';
 
 /**
@@ -145,7 +145,20 @@ export function createDeliveryObligationsCapability(moduleNames) {
             throw new AppError('A handover reference is required', { code: 'HANDOVER_REF_REQUIRED', status: 400 });
           }
           const obligations = service(names.deliveryObligation);
-          const updated = [];
+
+          // **Preflight, in two passes, and the order is the contract.**
+          //
+          // Every requested row is read and judged before anything is written
+          // AND before the transaction is proved. A stale plan, a foreign id or
+          // a second handover therefore still answers with its own 409 exactly
+          // as it did before this capability proved anything — the transaction
+          // refusal is added to the surface, it does not shadow it.
+          //
+          // The single-pass version validated id N only after writing id N-1,
+          // which is what made a refusal partway through leave the earlier rows
+          // committed outside a transaction. Splitting the passes fixes the
+          // precedence and the partial commit with the same change.
+          const rows = [];
           for (const id of new Set(obligationIds)) {
             const row = safeGet(obligations, id);
             if (!row || row.contractId !== contractId) {
@@ -158,6 +171,15 @@ export function createDeliveryObligationsCapability(moduleNames) {
                 code: 'OBLIGATION_ALREADY_HANDED_OVER', status: 409, details: { obligationId: row.id },
               });
             }
+            rows.push(row);
+          }
+
+          // Nothing has been written yet, so this is still "before the first
+          // write" — now with every input refusal already past.
+          requireCallerTransaction([obligations], 'A delivery handover');
+
+          const updated = [];
+          for (const row of rows) {
             // Awaited, deliberately: an unawaited managed write would escape
             // the caller's transaction, and a failure in it would surface as an
             // unhandled rejection AFTER a "successful" handover.
@@ -172,6 +194,65 @@ export function createDeliveryObligationsCapability(moduleNames) {
       };
     },
   };
+}
+
+/**
+ * **Refuse to start a write set that cannot be finished as one.**
+ *
+ * A handover marks N obligations, and each `applyManaged` lands on its own
+ * SAVEPOINT so it nests safely inside an enclosing transaction. Outside one,
+ * that SAVEPOINT *is* the transaction and `RELEASE` commits it — so a refusal
+ * at obligation 3 leaves obligations 1 and 2 committed, marked handed over to
+ * a delivery project that will never exist, and permanently un-handoverable
+ * because `OBLIGATION_ALREADY_HANDED_OVER` is terminal.
+ *
+ * That was reachable and it was measured, not reasoned about: the probe is in
+ * `docs/plans/spine-v2-m2d-transaction-context.md` §2 and it is now a checked-in
+ * regression. The doc comments on both write methods have always promised "in
+ * the caller's transaction"; this is the line that makes the promise checkable.
+ *
+ * `proveCallerTransaction` asks the storage seam — never the SQLite driver —
+ * for the opaque witness the database wrapper mints per outer transaction, on
+ * the same handle the write is about to use.
+ *
+ * @param {any[]} services @param {string} what
+ */
+export function requireCallerTransaction(services, what) {
+  const proof = proveCallerTransaction(services);
+  if (proof === TRANSACTION_PROOF.ACTIVE) return;
+  // No `details.proof` here, matching Work: this branch has a message of its
+  // own, so there is nothing for a diagnostic field to disambiguate. `proof`
+  // rides only on the refusal that four outcomes share.
+  if (proof === TRANSACTION_PROOF.NO_TRANSACTION) {
+    throw new AppError(
+      `${what} must run inside the caller's transaction: it writes a set of rows that are only correct together, `
+        + 'and outside a transaction a refusal partway through would leave the earlier ones committed. '
+        + "Call it from a package action's execute, or from inside database.transactionAsync.",
+      { code: 'CONTRACT_TRANSACTION_REQUIRED', status: 500 },
+    );
+  }
+  // A real transaction, opened by somebody else. Named as such, because telling
+  // a caller there is no transaction when one is plainly open is the worst
+  // version of this message.
+  if (proof === TRANSACTION_PROOF.NOT_TRANSACTION_OWNER) {
+    throw new AppError(
+      `${what} found a transaction open on this connection that this call does not own, so it refuses to write `
+        + 'the first row of a set into it. '
+        + 'It was opened by a different asynchronous flow. Either another request owns it — and writing here '
+        + 'would join a transaction this code does not control, to be committed or rolled back by somebody '
+        + 'else — or this call has crossed a boundary that dropped its async context. Context survives await, '
+        + 'queueMicrotask, process.nextTick, setTimeout, setImmediate and an event emitted inside the '
+        + 'transaction; it is lost by a callback that leaves the transaction and is invoked later, including a '
+        + 'listener registered inside it and emitted outside. Call this inside the transaction, or wrap the '
+        + 'callback with AsyncResource.bind before it leaves.',
+      { code: 'CONTRACT_TRANSACTION_REQUIRED', status: 500, details: { proof } },
+    );
+  }
+  throw new AppError(
+    `${what} cannot prove it is running inside the caller's transaction, so it refuses to write the first row `
+      + 'of a set whose remainder might not commit with it.',
+    { code: 'CONTRACT_TRANSACTION_REQUIRED', status: 500, details: { proof } },
+  );
 }
 
 /** @param {any} service @param {string} id */

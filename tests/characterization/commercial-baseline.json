@@ -607,6 +607,7 @@
       "observed": [
         "examples/journeys/contract-renewal-execution/journey.mjs",
         "examples/journeys/service-sla-escalation/journey.mjs",
+        "examples/recipes/quote-approval/run.mjs",
         "examples/starters/b2b-lead-qualification/install.mjs"
       ],
       "surface": "sdk"
@@ -4223,10 +4224,10 @@
     }
   ],
   "source": {
-    "apps/admin/public/admin-quotes.js": "2989d42b38ddc8e114f32524f9fb163bdee18c33ba3fd849e21b57c93dbeb066",
-    "apps/server/src/http-server.js": "7938afe244a781b7ae1e6bf449b23e280a80a714c95b02a37dea0c7ddf5a8c8e",
+    "apps/admin/public/admin-quotes.js": "0b10c72526cf510247dd27fd5ac0eba742e98c7176fe375cd9fc2a0010efb9c6",
+    "apps/server/src/http-server.js": "0d3e177a90abac56b718dd5c40062cbbbd2f8d55eac86708770beef3f9d8142a",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
-    "packages/app/src/create-app.js": "6953e136f94f446a9c1ef886610dacabd732c67b03e02f21f29a53b74fb629a3",
+    "packages/app/src/create-app.js": "39d5984c0e302de3838646ddc2b0b76d6ba7f27478b0f21255f999a186d350bf",
     "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",
     "packages/commercial/modules/offer.module.json": "3eb3c85338d22f8a8962ed0c0c0fe79da0007e8c4e66a44aad14d9b8bbca22c4",
     "packages/commercial/modules/price-book.module.json": "35793cdd5dca999c30760f055622b607d1e68b215b4f9ceaf8fac63ce1b0a670",
@@ -4244,15 +4245,17 @@
     "packages/commercial/modules/quote-version.module.json": "b3a209f5f45c1486f942e145437e69f091cd3bd77972485386607af0dc5f3bc9",
     "packages/commercial/modules/quote.module.json": "08a6d9a8e48d2d412837a8a52c6fae22520b3add5a82275901ce4754c31386b0",
     "packages/commercial/src/actions.js": "d256803ff214681f88c5fe74b1991c0d6c0da7c0dbb1bd04a1daff9c3f7f5cbb",
-    "packages/commercial/src/capability.js": "cbdc76f98c7d8a45554c196b0aade0aecaaa7d19650ccf772594420c4a49fac1",
+    "packages/commercial/src/capability.js": "46a561e9021b601b12f4467e2c7facead61d459391e307d004c00e704cadbf98",
     "packages/commercial/src/catalog-sync.js": "f9ac765ce30ebde27e35aa9f441f417dd1da640a70a98dbb7a013b900489bdb4",
-    "packages/commercial/src/index.js": "449f4c95e5b4c9bf35cf63664a4aa371a17941ac25101d836025652be01929fe",
+    "packages/commercial/src/index.js": "b9206140542dd3c9576b03a09b8cfad91f859325950114310b23c4f8f6ff8f3f",
     "packages/commercial/src/money.js": "5a2716542ebac08388b75d425c0c8c7b91b3dbc8ec756e42927d6d9b203d5a86",
-    "packages/commercial/src/registry.js": "b10cf6027eb889385ac9169502cfebf91036108af22ae631735ae60dacc4c07b",
+    "packages/commercial/src/registry.js": "60d7ceff3de3bf88363288cb2c0a9386a335f6c1b10bf6a935306695a75b40af",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",
     "packages/commercial/src/verify-terms.js": "e3c4e150fc4e6a0efe925f8db6d14698e4a69e9c6518d5e3f7ee90473db8871c",
-    "packages/core/src/action-runtime.js": "45bf0027248180f2fc9ea9edf5a5e0b82c7dbfa84d9b9b76568ea4c2f897d1f6",
+    "packages/core/src/action-runtime.js": "b8870679dfe76d2293912866085c83713aa1bdbe8509acaabaa81fe6a100c851",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
+    "packages/core/src/definition-version-store.js": "fde9bbfcd95687fb0aa7bd7bddb1eb6bb69104f6dc291a3773f70412677b0ca3",
+    "packages/core/src/execution-run-store.js": "73c5f36371b21b02b7e476d93cc06a29cbae6c5ea9ef8539579a62c94e1545ac",
     "packages/core/src/money.js": "67d7c03a14cf053e1e6f52d73ed2ca96608a8c3992615fe6a6738bcfc930e705",
     "packages/core/src/timeout.js": "9af8f74ac0f6fa7b229576c43540364d9014ce2225198c0e84e18070d952ff88",
     "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325"

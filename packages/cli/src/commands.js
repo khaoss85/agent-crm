@@ -1,6 +1,13 @@
 // @ts-check
 
 import { resolve } from 'node:path';
+import { AppError } from '../../core/src/errors.js';
+import {
+  DEPLOYMENT_STORAGE_ENV,
+  describeDeploymentStorage,
+} from '../../core/src/deployment-storage.js';
+import { prepareDeploymentPreconnect } from '../../core/src/identity-verifier.js';
+import { assertBindAddress } from '../../core/src/tenant-binding.js';
 import { scaffoldModule } from './scaffold-module.js';
 import { validateManifestCommand, generateMigrationCommand, readManifestFile } from './manifest-commands.js';
 import { planModule, applyModulePlan } from './module-factory.js';
@@ -13,6 +20,28 @@ import { projectVerifyCommand } from './project-verify-command.js';
 import { scenarioRunCommand } from './scenario-run-command.js';
 import { solutionCommand } from './solution-command.js';
 import { solutionVerifyCommand } from './solution-verify-command.js';
+
+/** Canonical application CLI commands. M2-32 reads this export, not a copy. */
+export const APP_COMMANDS = Object.freeze([
+  'serve', 'seed', 'demo', 'doctor', 'db:migrate', 'workflow:list', 'trace:list',
+]);
+
+/**
+ * PostgreSQL classification for each APP_COMMANDS entry (M2-32).
+ * At M2 the loader refuses PostgreSQL before this map can run.
+ */
+export const APP_COMMAND_POSTGRESQL_CLASSIFICATION = Object.freeze({
+  serve: 'READ_ONLY_SUPPORTED',
+  seed: 'STABLE_REFUSAL_ON_POSTGRESQL',
+  demo: 'STABLE_REFUSAL_ON_POSTGRESQL',
+  doctor: 'STABLE_REFUSAL_ON_POSTGRESQL',
+  'db:migrate': 'STABLE_REFUSAL_ON_POSTGRESQL',
+  'workflow:list': 'STABLE_REFUSAL_ON_POSTGRESQL',
+  'trace:list': 'STABLE_REFUSAL_ON_POSTGRESQL',
+});
+
+export const CLI_VERIFIED_OPERATOR_REQUIRED = 'CLI_VERIFIED_OPERATOR_REQUIRED';
+export const POSTGRESQL_HTTP_SPINE_REQUIRED = 'POSTGRESQL_HTTP_SPINE_REQUIRED';
 
 /** @param {string[]} argv */
 export async function runCli(argv) {
@@ -80,8 +109,6 @@ export async function runCli(argv) {
     command = 'solution:verify';
     positional = positional.slice(1);
   }
-  const dbPath = typeof flags.db === 'string' ? resolve(flags.db) : undefined;
-
   // Help is not a database operation. It used to fall through to the branch
   // that constructs the application, so asking for help created a SQLite file;
   // now that the app import is lazy, there is no reason for it to.
@@ -237,25 +264,59 @@ export async function runCli(argv) {
 
   if (command === 'mcp') {
     const { startMcpStdio } = await import('../../mcp/src/stdio.js');
-    await startMcpStdio({ dbPath });
+    const loader = loaderOptionsFromFlags(flags);
+    await startMcpStdio({
+      configPath: loader.configPath,
+      dbPath: loader.dbPath,
+      env: loader.env,
+      projectRoot: projectRootFromFlags(flags),
+    });
     return;
   }
 
   // Only these commands need a running application. Checking first means an
   // unknown command reports itself instead of quietly creating a database on
   // the way to saying it does not exist.
-  const APP_COMMANDS = new Set(['serve', 'seed', 'demo', 'doctor', 'db:migrate', 'workflow:list', 'trace:list']);
-  if (!APP_COMMANDS.has(String(command))) {
+  if (!APP_COMMANDS.includes(/** @type {typeof APP_COMMANDS[number]} */ (command))) {
     throw new Error(`Unknown command: ${command}\n\n${helpText()}`);
   }
+
+  const prepared = await prepareDeploymentPreconnect({
+    ...loaderOptionsFromFlags(flags),
+    projectRoot: projectRootFromFlags(flags),
+  });
+  refusePostgresqlCommand(String(command), prepared.selection);
 
   // The application is imported here, not at the top of this file, because
   // `packages/app` statically imports the project's checked-in composition. A
   // top-level import made every CLI command — including the read-only ones —
   // fail to load when the composition was broken, which is precisely when
   // `app inspect` and `package validate` are the commands you need.
-  const { createAccordoApp } = await import('../../app/src/index.js');
-  const app = createAccordoApp({ dbPath });
+  const { createAccordoApp, createAccordoAppAsync } = await import('../../app/src/index.js');
+  const postgresql = prepared.selection.adapter === 'postgresql';
+  if (postgresql && command === 'serve') {
+    const mode = prepared.selection.spine?.mode ?? 'local-development';
+    if (mode === 'production') {
+      throw new AppError(
+        'PostgreSQL HTTP serve in production requires a composed request spine',
+        { code: POSTGRESQL_HTTP_SPINE_REQUIRED, status: 403 },
+      );
+    }
+    assertBindAddress(mode, String(flags.host ?? '127.0.0.1'));
+  }
+  let app;
+  try {
+    app = postgresql
+      ? await createAccordoAppAsync({
+        deployment: prepared,
+        projectRoot: projectRootFromFlags(flags),
+        selected: await portableSelectedGraphForServe(),
+        listenMode: prepared.selection.spine?.mode ?? 'local-development',
+      })
+      : createAccordoApp({ dbPath: sqliteFactoryPath(prepared.selection) });
+  } catch (error) {
+    throw error;
+  }
   let shouldClose = true;
   try {
     switch (command) {
@@ -264,19 +325,27 @@ export async function runCli(argv) {
         const host = String(flags.host ?? '127.0.0.1');
         const { createHttpServer } = await import('../../../apps/server/src/index.js');
         const server = createHttpServer(app);
-        await new Promise((resolveListen, reject) => {
-          server.once('error', reject);
-          server.listen(port, host, resolveListen);
-        });
+        try {
+          await new Promise((resolveListen, reject) => {
+            server.once('error', reject);
+            server.listen(port, host, resolveListen);
+          });
+        } catch (error) {
+          server.close();
+          throw error;
+        }
         const address = server.address();
         const actualPort = typeof address === 'object' && address ? address.port : port;
         console.log(`Accordo running at http://${host}:${actualPort}`);
-        console.log(`Database: ${app.database.path}`);
+        if (documentSelected(prepared.selection)) {
+          console.log(JSON.stringify(describeDeploymentStorage(prepared.selection)));
+        } else if (!postgresql) {
+          console.log(`Database: ${app.database.path}`);
+        }
         shouldClose = false;
         const shutdown = () => {
           server.close(() => {
-            app.close();
-            process.exit(0);
+            Promise.resolve(app.close()).finally(() => process.exit(0));
           });
         };
         process.once('SIGINT', shutdown);
@@ -290,10 +359,10 @@ export async function runCli(argv) {
         print(await app.runDemo());
         break;
       case 'doctor':
-        print(app.doctor());
+        print(publicDoctor(app.doctor(), prepared.selection));
         break;
       case 'db:migrate':
-        print({ ok: true, database: app.database.path, message: 'Migrations are current.' });
+        print(publicMigrate(app.database.path, prepared.selection));
         break;
       case 'workflow:list':
         print({ items: app.workflows.list() });
@@ -310,6 +379,121 @@ export async function runCli(argv) {
 /** @param {unknown} value */
 function print(value) {
   console.log(JSON.stringify(value, null, 2));
+}
+
+/** @param {Record<string, unknown>} flags */
+function projectRootFromFlags(flags) {
+  return typeof flags.root === 'string' ? flags.root : process.cwd();
+}
+
+/**
+ * Map CLI flags onto the shared loader. No executable invents adapter parsing.
+ *
+ * @param {Record<string, unknown>} flags
+ * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} [env]
+ */
+export function loaderOptionsFromFlags(flags, env = process.env) {
+  const hasConfigFlag = Object.hasOwn(flags, 'deployment-storage');
+  const hasDbFlag = Object.hasOwn(flags, 'db');
+  const configPath = typeof flags['deployment-storage'] === 'string'
+    ? resolve(/** @type {string} */ (flags['deployment-storage']))
+    : undefined;
+  const dbFlag = typeof flags.db === 'string'
+    ? (/** @type {string} */ (flags.db) === ':memory:'
+      ? /** @type {string} */ (flags.db)
+      : resolve(/** @type {string} */ (flags.db)))
+    : undefined;
+
+  if (hasConfigFlag && hasDbFlag) {
+    return {
+      configPath: configPath || '.',
+      dbPath: dbFlag || '.',
+      env,
+    };
+  }
+
+  const envPath = env && typeof env[DEPLOYMENT_STORAGE_ENV] === 'string' && env[DEPLOYMENT_STORAGE_ENV] !== ''
+    ? env[DEPLOYMENT_STORAGE_ENV]
+    : null;
+  if (configPath || envPath) {
+    return { configPath, dbPath: dbFlag, env };
+  }
+
+  return {
+    dbPath: dbFlag ?? env.CRM_DB_PATH ?? './data/accordo.sqlite',
+    env,
+  };
+}
+
+/** @param {{ source?: unknown }} selection */
+function documentSelected(selection) {
+  return selection.source === 'config' || selection.source === 'env';
+}
+
+/** @param {{ adapter?: unknown, connection?: { path?: unknown } }} selection */
+async function portableSelectedGraphForServe() {
+  const { generatedDomains } = await import('../../domains/generated/index.js');
+  const packages = Array.isArray(generatedDomains) ? generatedDomains : [];
+  if (packages.length === 0) return undefined;
+  if (packages.some((pkg) => pkg?.packageContract !== 2)) {
+    throw new AppError(
+      'PostgreSQL serve requires an explicit packageContract 2 graph; v1 generated packages cannot compose on the portable factory',
+      { code: 'PACKAGE_ASYNC_CONTRACT_REQUIRED', status: 400 },
+    );
+  }
+  const modules = [...new Set(packages.flatMap((pkg) => (
+    Array.isArray(pkg?.modules)
+      ? pkg.modules.map((entry) => (typeof entry === 'string' ? entry : entry?.name))
+      : []
+  )).filter((name) => typeof name === 'string'))];
+  return { packageContract: 2, packages, actions: [], modules };
+}
+
+function sqliteFactoryPath(selection) {
+  if (selection.adapter !== 'sqlite') return undefined;
+  return typeof selection.connection?.path === 'string' ? selection.connection.path : undefined;
+}
+
+/**
+ * @param {string} command
+ * @param {{ adapter?: unknown }} selection
+ */
+function refusePostgresqlCommand(command, selection) {
+  if (selection.adapter !== 'postgresql') return;
+  const classification = APP_COMMAND_POSTGRESQL_CLASSIFICATION[
+    /** @type {keyof typeof APP_COMMAND_POSTGRESQL_CLASSIFICATION} */ (command)
+  ];
+  if (classification === 'STABLE_REFUSAL_ON_POSTGRESQL') {
+    throw new AppError(
+      'this command requires a verified operator on PostgreSQL; the unauthenticated CLI is not identity',
+      { code: CLI_VERIFIED_OPERATOR_REQUIRED, status: 403 },
+    );
+  }
+}
+
+/**
+ * @param {Record<string, unknown>} report
+ * @param {{ source?: unknown, adapter?: unknown }} selection
+ */
+function publicDoctor(report, selection) {
+  if (!documentSelected(selection)) return report;
+  const { database: _database, ...rest } = report;
+  return { ...rest, storage: describeDeploymentStorage(selection) };
+}
+
+/**
+ * @param {string} databasePath
+ * @param {{ source?: unknown, adapter?: unknown }} selection
+ */
+function publicMigrate(databasePath, selection) {
+  if (!documentSelected(selection)) {
+    return { ok: true, database: databasePath, message: 'Migrations are current.' };
+  }
+  return {
+    ok: true,
+    storage: describeDeploymentStorage(selection),
+    message: 'Migrations are current.',
+  };
 }
 
 /** @param {ReturnType<import('./module-factory.js').planModule>} plan */
@@ -360,11 +544,11 @@ function helpText() {
   return `Accordo CLI
 
 Usage:
-  accordo serve [--port 4000] [--db ./data/accordo.sqlite]
-  accordo seed [--db path]
-  accordo demo [--db path]
-  accordo doctor [--db path]
-  accordo db:migrate [--db path]
+  accordo serve [--port 4000] [--db ./data/accordo.sqlite] [--deployment-storage path]
+  accordo seed [--db path] [--deployment-storage path]
+  accordo demo [--db path] [--deployment-storage path]
+  accordo doctor [--db path] [--deployment-storage path]
+  accordo db:migrate [--db path] [--deployment-storage path]
   accordo app inspect [--json] [--root dir]
   accordo project doctor [--json] [--root dir]
   accordo project verify [--json] [--root dir]
@@ -373,8 +557,8 @@ Usage:
   accordo solution validate <plan.json> [--json]
   accordo solution check <plan.json> [--json] [--root dir]
   accordo solution verify <plan.json> --evidence <evidence.json> [--json] [--root dir]
-  accordo workflow:list [--db path]
-  accordo trace:list [--limit 20] [--db path]
+  accordo workflow:list [--db path] [--deployment-storage path]
+  accordo trace:list [--limit 20] [--db path] [--deployment-storage path]
   accordo module:plan <manifest.json> [--root path] [--json]
   accordo module:create <manifest.json> [--apply] [--root path]
   accordo module:create <name> [--apply] [--root path]
@@ -384,7 +568,7 @@ Usage:
   accordo package:validate <package-directory>
   accordo package:inspect <package-directory>
   accordo package:test <package-directory> [--json] [--root dir]
-  accordo mcp [--db path]
+  accordo mcp [--db path] [--deployment-storage path]
 
 "module plan", "module create", "module validate" and "module migration" are accepted aliases.
 module:plan is always read-only. module:create with a manifest generates a complete
