@@ -1,0 +1,7 @@
+name: probe-selfhosted
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: [self-hosted, accordo-ci]
+    steps:
+      - run: echo "SELFHOSTED_PROBE_OK $(uname -a)"
