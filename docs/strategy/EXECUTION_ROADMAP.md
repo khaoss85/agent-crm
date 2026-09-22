@@ -244,7 +244,9 @@ Each milestone below follows the standard per-phase format.
   extracted, and ADR-033 supplied the missing fact — a term the customer actually
   signed.
 
-### M16 — Analytics Studio v1
+### M16 — Analytics Studio v1 — **in progress**
+
+**Merged first slice (#187):** `packages/analytics` now contains a pipeline semantic model, the declared `pipeline_value_by_stage` metric, a bounded safe report compiler and known-correct fixture tests. It adds no dashboard, saved report, public query surface or JTBD promotion yet.
 
 - **Outcome:** trusted metrics and dashboards compiled safely from semantic definitions — no agent-generated raw SQL surface.
 - **Deliverables:** SemanticModel/MetricDefinition/DimensionDefinition/Dataset; Report/Dashboard/Widget/SavedView with versions + rollback; safe query compiler (parameterized, bounded, permission hooks at the query boundary); metric correctness tests in `npm run verify`; skills `build-revenue-dashboard`, `build-delivery-margin-dashboard`.
@@ -255,11 +257,11 @@ Each milestone below follows the standard per-phase format.
 
 ## Marketing & Growth track (MK0–MK7)
 
-A **parallel** lane, not a successor to the M-lane. It shares the platform and nothing else, and it is deliberately sequenced so the first useful milestone needs no provider, no scheduler and no spend. Strategy: `MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md`. **Nothing below is implemented.**
+A **parallel** lane, not a successor to the M-lane. It shares the platform and nothing else, and it is deliberately sequenced so the first useful milestone needs no provider, no scheduler and no spend. Strategy: `MARKETING_GROWTH_OPERATIONS.md`, `CAMPAIGNS_JOURNEYS.md`, `EXPERIMENTATION_ATTRIBUTION.md`. **MK1 is merged (#194); MK2–MK7 remain roadmap work.**
 
 ```text
 MK0  Marketing strategy, package contracts and JTBDs
-MK1  Funnel Insight + Campaign Proposal            no send, no spend
+MK1  Funnel Insight + Campaign Proposal            merged — no send, no spend
 MK2  Audience + Consent + one-shot email           fixture provider first
 MK3  Content + Landing Page + Form + CTA + Tracking
 MK4  Durable Journey Orchestration                 hard-blocked on JOBS_AND_OUTBOX
@@ -274,7 +276,7 @@ MK7  Attribution and Closed-loop Optimization      hard-blocked on ANALYTICS_STU
 - **Deliverables:** the three strategy documents; the Marketing JTBD sections (all rows **not supported**); the planned E2E-M1…E2E-M5 benchmark scenarios; the package-native architecture and its capability dependencies.
 - **Acceptance:** every document agrees that no Marketing runtime exists; no JavaScript, package metadata, migration, test or CI change.
 
-### MK1 — Funnel Insight + Campaign Proposal
+### MK1 — Funnel Insight + Campaign Proposal — **merged**
 
 - **Outcome:** an agent observes a bounded funnel insight and prepares a **complete** CampaignProposal in Admin. Nothing is sent, published or spent.
 - **Deliverables:** `packages/marketing` with FunnelDefinition/FunnelRun/FunnelDropInsight and CampaignProposal/CampaignVersion; a versioned proposal policy; the Admin review screen; plan-then-approve as a human-actor boundary.
