@@ -1,6 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
+  "git": {
+    "deploymentEnabled": {
+      "claude/*": false,
+      "agent/*": false,
+      "codex/*": false,
+      "worktree-*": false
+    }
+  },
+  "ignoreCommand": "node scripts/vercel-ignore-build.js",
   "installCommand": "npm install",
   "buildCommand": "node scripts/vercel-unshallow.js && npm run site:check && node scripts/assemble-docs-mcp-runtime.js",
   "outputDirectory": "site/dist",
