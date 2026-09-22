@@ -737,11 +737,18 @@ export async function createPostgresqlDatabase(options = {}) {
     (client) => { if (setupTimedOut) destroyClient(client); },
     () => {},
   );
+  const setupDeadlineMs = options.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS;
   try {
-    setup = await withDeadline(setupPending, options.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS, 'acquisition');
-    await setup.query(`CREATE SCHEMA ${quoted}`);
-    await setup.query(`SET search_path TO ${quoted}`);
-    for (const sql of options.ddl ?? []) await setup.query(sql);
+    setup = await withDeadline(setupPending, setupDeadlineMs, 'acquisition');
+    // Every setup statement is bounded: an unbounded DDL wait on a half-dead
+    // connection never settles, and the file reads as stuck-idle (no CPU,
+    // idle PG) instead of failing fast with STORAGE_TIMEOUT
+    // (backlog:b705667ad23b).
+    await withDeadline(setup.query(`CREATE SCHEMA ${quoted}`), setupDeadlineMs, 'acquisition');
+    await withDeadline(setup.query(`SET search_path TO ${quoted}`), setupDeadlineMs, 'acquisition');
+    for (const sql of options.ddl ?? []) {
+      await withDeadline(setup.query(sql), setupDeadlineMs, 'acquisition');
+    }
   } catch (error) {
     setupTimedOut = isPoolCheckoutTimeout(error);
     try { if (setup) setup.release(); } catch { /* ignore */ }
@@ -772,7 +779,7 @@ export async function createPostgresqlDatabase(options = {}) {
       const admin = new Client({ connectionString: connection, connectionTimeoutMillis: 2000 });
       try {
         await withDeadline(admin.connect(), 2000, 'acquisition');
-        await admin.query(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`);
+        await withDeadline(admin.query(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`), 10_000, 'query');
       } catch {
         /* teardown is best-effort */
       } finally {
