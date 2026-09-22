@@ -16,6 +16,7 @@ import { STORAGE_CONTRACT } from '../packages/core/src/storage-contract.js';
 import {
   assertNoSecrets,
   openPostgresqlFixture,
+  PG_REQUIRED,
   PG_TEST_URL,
 } from './helpers/storage-contract-cases.js';
 
@@ -401,6 +402,26 @@ test('M3B close returns while a max:1 transaction still holds its client', { tim
   await first.catch(() => {});
 });
 
+test('M3B database open bounds setup statements instead of hanging', { timeout: 15_000 }, async (t) => {
+  // Setup DDL used to wait without any deadline: on a half-dead connection
+  // the file never settles and reads as stuck-idle (no CPU, idle PG) instead
+  // of failing fast (backlog:b705667ad23b).
+  const started = Date.now();
+  const outcome = await createPostgresqlDatabase({
+    ddl: ['SELECT pg_sleep(5)'], acquisitionDeadlineMs: 300, max: 1,
+  }).then(
+    async (db) => { await db.close().catch(() => {}); return 'opened'; },
+    (error) => error,
+  );
+  if (outcome === 'opened') assert.fail('setup DDL outlived the acquisition deadline');
+  if (outcome.code === 'STORAGE_UNAVAILABLE') {
+    if (!PG_REQUIRED) { t.skip('PostgreSQL 16 is not reachable locally'); return; }
+    throw outcome;
+  }
+  assert.equal(outcome.code, 'STORAGE_TIMEOUT');
+  assert.ok(Date.now() - started < 4000, `setup wait took ${Date.now() - started}ms`);
+});
+
 test('M3B query deadline destroys a black-holed client and recovers', { timeout: 15_000 }, async (t) => {
   const db = await openPostgresqlFixture(t, { queryDeadlineMs: 80, max: 2 });
   if (!db) return;
@@ -409,8 +430,29 @@ test('M3B query deadline destroys a black-holed client and recovers', { timeout:
     assertNoSecrets(error);
     return true;
   });
-  await db.storage.execute(insertCompany('after-timeout', 'Alive'));
-  assert.equal((await db.storage.maybeOne(selectName('after-timeout'))).name, 'Alive');
+  // Recovery runs on the same 80ms-deadline handle that just destroyed a
+  // client: under load the deadline can fire on the recovery COMMIT
+  // (COMMIT_OUTCOME_UNKNOWN — the write may have applied) or on the statement
+  // (STORAGE_TIMEOUT). Both are deadline artifacts, not a dead pool, so retry
+  // with a fresh id per attempt and confirm unknown outcomes by reading back.
+  // Anything else rethrows: real defects must stay red.
+  let recoveredId = null;
+  for (let attempt = 0; attempt < 10 && recoveredId === null; attempt += 1) {
+    const id = `after-timeout-${attempt}`;
+    try {
+      await db.storage.execute(insertCompany(id, 'Alive'));
+      recoveredId = id;
+    } catch (error) {
+      if (error.code === 'COMMIT_OUTCOME_UNKNOWN') {
+        const row = await db.storage.maybeOne(selectName(id)).catch(() => null);
+        if (row && row.name === 'Alive') recoveredId = id;
+      } else if (error.code !== 'STORAGE_TIMEOUT') {
+        throw error;
+      }
+    }
+  }
+  assert.ok(recoveredId, 'pool did not recover after the black-holed client was destroyed');
+  assert.equal((await db.storage.maybeOne(selectName(recoveredId))).name, 'Alive');
 });
 
 test('M3B lock_timeout maps to STORAGE_TIMEOUT without leaking the URL', { timeout: 15_000 }, async (t) => {
