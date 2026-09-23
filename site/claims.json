@@ -2,13 +2,13 @@
   "claimsContract": 2,
   "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used. Contract 2 (ADR-027): measuredAgainst additionally requires testFiles and testsTree, and no claim, limitation or repoFact may type an exact test count — the one number lives in measuredAgainst and reaches a page as {{measured.tests}}.",
   "measuredAgainst": {
-    "date": "2026-09-22",
-    "sha": "20d453e",
+    "date": "2026-09-23",
+    "sha": "e259bf5",
     "command": "npm run verify",
-    "tests": 2407,
+    "tests": 2409,
     "failures": 0,
-    "testFiles": 202,
-    "testsTree": "5ed1c7d21881c278741db914ca0a664eb1109385",
+    "testFiles": 203,
+    "testsTree": "a4c7368dd5fe42a36a9b0174d3443c142112021f",
     "files": {
       "tests/action-contract.test.js": {
         "tests": 12
@@ -108,6 +108,9 @@
       },
       "tests/characterization/source-scan.test.js": {
         "tests": 9
+      },
+      "tests/codex-mcp-cwd.test.js": {
+        "tests": 1
       },
       "tests/collection-filter.test.js": {
         "tests": 2
@@ -527,7 +530,7 @@
         "tests": 13
       },
       "tests/spine-v2-m3b-postgresql-adapter.test.js": {
-        "tests": 16
+        "tests": 17
       },
       "tests/spine-v2-m3c-postgresql-application.test.js": {
         "tests": 11
