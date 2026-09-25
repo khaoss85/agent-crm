@@ -420,23 +420,32 @@ Folding `repo:truth` into `npm run gtm:check` itself — so one command name cov
 both — is v2 work, and it needs `gtm:check` to stop being something a developer runs
 in a shallow clone.
 
-## The measured ledger is visibly stale, and that is the design
+## The measured ledger alternates, and the rule is re-measure before publish
 
 `site/claims.json` `measuredAgainst` names a commit that **is** a genuine ancestor of
-`HEAD`, and `tests/` has moved since. So:
+`HEAD` — provenance intact even when the suite has since moved (ADR-027: a record
+naming its own ancestor commit is truthful). What the three measurement facts read
+depends on **when** you ask, because every `tests/` move flips them and every
+re-measure flips them back:
 
-```text
-measurement.source_is_ancestor   true      (provenance intact)
-measurement.test_tree_current    false     (the corpus moved)
-measurement.source_sha           status: stale
-measurement.test_count           status: stale
-measurement.test_file_count      status: current or stale (see below)
-```
+- Right after a full re-measure on a clean tree, all three read `current`:
+  the corpus matches the record, and so do the sha and the count it cites.
+- When `tests/` has moved since the measured commit, the ledger reads visible
+  staleness instead: `measurement.test_tree_current` reports the move itself,
+  and `measurement.source_sha` and `measurement.test_count` read `stale` until
+  the next re-measure. `measurement.test_file_count` may stay `current` across
+  the move (see below).
 
-Nothing here fails because of that, and nothing papers over it. ADR-027 already
-settled that a record naming its own ancestor commit is truthful even when the suite
-has since moved; what must not exist is a *sentence* quoting a stale number as
-current, and the citation check is what makes writing one fail.
+Neither state is the design: staleness is the transient half of the cycle, and a
+stale reading is the signal to re-measure, not a failure of the record. What fails
+is publishing without re-measuring — `--check` refuses a document that no longer
+matches its authorities, and `--check --require-current` in the `public-claims`
+CI job refuses any fact that is not `current`. The operating rule that keeps the
+goal's ratio at one is to **re-measure before publish**: a PR that moves `tests/`
+re-anchors the record (a full `--apply` run, or `measure:refresh` where it
+qualifies) before it merges to main, so the three measurement facts are `current`
+at every merge. What must not exist, in either state, is a *sentence* quoting a
+stale number as current, and the citation check is what makes writing one fail.
 
 The three statuses do not move together. A full re-measure
 (`node scripts/measure-suite.js --apply` on a clean tree) makes all three
