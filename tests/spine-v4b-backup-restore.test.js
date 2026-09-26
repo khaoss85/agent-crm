@@ -147,7 +147,10 @@ function fixtureProvider(overrides = {}) {
     },
     async prepareRestore() {},
     async withTargetLock(_input, operation) { return operation(lockedState()); },
-    async restoreArtifact() {},
+    async renderRestoreArtifact({ renderedPath }) {
+      await writeFile(renderedPath, Buffer.from('closed-fixture-render'));
+    },
+    async applyRestoreArtifact() {},
     ...overrides,
   });
 }
@@ -222,7 +225,7 @@ test('contract vocabulary is closed and SQLite is explicitly unsupported', () =>
   assert.deepEqual(backupVocabulary(), {
     contract: 1,
     adapters: ['postgresql'],
-    providerKeys: ['contract', 'name', 'adapter', 'inspectAuthority', 'createArtifact', 'prepareRestore', 'withTargetLock', 'restoreArtifact'],
+    providerKeys: ['contract', 'name', 'adapter', 'inspectAuthority', 'createArtifact', 'prepareRestore', 'withTargetLock', 'renderRestoreArtifact', 'applyRestoreArtifact'],
     evidenceKeys: ['contract', 'adapter', 'bindingUuid', 'tenantFingerprint', 'resourceFingerprint', 'migrationSetFingerprint', 'repositoryFingerprint'],
     expectedIntentKeys: [
       'bindingUuid', 'tenantFingerprint', 'resourceFingerprint',
@@ -802,14 +805,14 @@ test('non-empty target refuses before restore and provider failure is visibly pa
   let restored = false;
   const occupied = fixtureProvider({
     async withTargetLock(_input, operation) { return operation(lockedState(false)); },
-    async restoreArtifact() { restored = true; },
+    async applyRestoreArtifact() { restored = true; },
   });
   await assert.rejects(operations(occupied).restore({
     bundlePath, expected, target: connection, actor: RESTORE_ACTOR, operationId: 'occupied-target',
   }), (error) => error?.code === 'BACKUP_TARGET_NOT_EMPTY');
   assert.equal(restored, false);
 
-  const partial = fixtureProvider({ async restoreArtifact() { throw new Error(`${SENTINEL} ${LOCATOR}`); } });
+  const partial = fixtureProvider({ async applyRestoreArtifact() { throw new Error(`${SENTINEL} ${LOCATOR}`); } });
   await assert.rejects(operations(partial).restore({
     bundlePath, expected, target: connection, actor: RESTORE_ACTOR, operationId: 'partial-target',
   }), (error) => {
@@ -834,7 +837,7 @@ test('restore requires an actor and records path-free control-plane attempt plus
       receiptLockHeld = true;
       try { return await operation(lockedState()); } finally { receiptLockHeld = false; }
     },
-    async restoreArtifact() {
+    async applyRestoreArtifact() {
       sequence.push('target-mutation');
       throw new Error(SENTINEL);
     },
@@ -954,7 +957,7 @@ test('restore consumes its verified private snapshot and rechecks those exact by
       await writeFile(join(bundlePath, 'artifact.dump'), 'substituted-after-verify');
       return operation(lockedState());
     },
-    async restoreArtifact({ artifactPath }) {
+    async applyRestoreArtifact({ artifactPath }) {
       assert.equal((await readFile(artifactPath, 'utf8')), 'closed-fixture-artifact');
       throw new Error('stop before database authority probe');
     },
@@ -969,7 +972,7 @@ test('restore consumes its verified private snapshot and rechecks those exact by
   const changedBundle = join(root, 'changed-bundle');
   await operations().create({ bundlePath: changedBundle });
   const scratchMutation = fixtureProvider({
-    async restoreArtifact({ artifactPath }) {
+    async applyRestoreArtifact({ artifactPath }) {
       await chmod(artifactPath, 0o600);
       await writeFile(artifactPath, 'changed-during-restore');
     },
@@ -1023,7 +1026,7 @@ test('restore resolves one target for lock, import, and post-restore authority',
         }));
       } finally { locked = false; }
     },
-    async restoreArtifact({ connection: bound }) { await observe(bound); },
+    async applyRestoreArtifact({ connection: bound }) { await observe(bound); },
   });
   const restoreReceipts = [];
   const baseRestoreControl = fixtureRestoreControl(restoreReceipts);
@@ -1091,7 +1094,7 @@ test('a restore routed away from the held-lock backend is possibly partial and n
         },
       }));
     },
-    async restoreArtifact() { wrongBackendMutated = true; },
+    async applyRestoreArtifact() { wrongBackendMutated = true; },
     async inspectAuthority() {
       throw new Error('a fresh post-restore connection must never replace held-lock authority');
     },
@@ -1125,7 +1128,7 @@ test('target-lock provider cannot return before its unique callback settles', as
       void operation(lockedState());
       return undefined;
     },
-    async restoreArtifact({ artifactPath }) {
+    async applyRestoreArtifact({ artifactPath }) {
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal((await readFile(artifactPath, 'utf8')), 'closed-fixture-artifact');
       restored = true;

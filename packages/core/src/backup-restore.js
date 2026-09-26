@@ -25,11 +25,17 @@ const BACKUP_TOOL_TIMEOUT_CEILING_MS = 300_000;
 export const BACKUP_ADAPTERS = Object.freeze(['postgresql']);
 export const BACKUP_ARTIFACT_NAME = 'artifact.dump';
 export const BACKUP_MANIFEST_NAME = 'manifest.json';
+const RESTORE_RENDERED_NAME = 'rendered.sql';
 export const BACKUP_TOOL_MAJOR = 16;
 export const BACKUP_TOOL_TIMEOUT_MS = 60_000;
 
 const PROVIDER_KEYS = Object.freeze([
-  'contract', 'name', 'adapter', 'inspectAuthority', 'createArtifact', 'prepareRestore', 'withTargetLock', 'restoreArtifact',
+  'contract', 'name', 'adapter', 'inspectAuthority', 'createArtifact', 'prepareRestore', 'withTargetLock',
+  // Restore is two boundaries, not one: render turns the archive into local
+  // SQL without touching any target, and apply imports that SQL behind the
+  // target lock. A render failure therefore never opens the target and never
+  // mints a receipt (TASKS.md:217, ADR-042).
+  'renderRestoreArtifact', 'applyRestoreArtifact',
 ]);
 const EVIDENCE_KEYS = Object.freeze([
   'contract', 'adapter', 'bindingUuid', 'tenantFingerprint', 'resourceFingerprint',
@@ -514,7 +520,8 @@ export function defineBackupProvider(definition) {
   if (provider.contract !== BACKUP_CONTRACT || provider.adapter !== 'postgresql' || !NAME.test(provider.name)
     || typeof provider.inspectAuthority !== 'function' || typeof provider.createArtifact !== 'function'
     || typeof provider.prepareRestore !== 'function'
-    || typeof provider.withTargetLock !== 'function' || typeof provider.restoreArtifact !== 'function') {
+    || typeof provider.withTargetLock !== 'function' || typeof provider.renderRestoreArtifact !== 'function'
+    || typeof provider.applyRestoreArtifact !== 'function') {
     refuse('BACKUP_PROVIDER_INVALID', 'backup provider is not a closed runtime contract');
   }
   return Object.freeze(provider);
@@ -764,6 +771,24 @@ export function createBackupOperations(options) {
           });
         }
         await providerCall('prepare-restore', () => provider.prepareRestore());
+        // The render boundary is purely local — archive bytes to staged SQL,
+        // no target, no connection — so it runs before the attempt receipt is
+        // minted. A render failure (missing binary, corrupt archive, no
+        // scratch space) therefore records nothing and leaves the operation id
+        // replayable; only apply can mark the target possibly partial.
+        const renderedPath = join(scratch, RESTORE_RENDERED_NAME);
+        await providerCall('render-restore', () => provider.renderRestoreArtifact({
+          artifactPath: scratchArtifact,
+          renderedPath,
+        }));
+        try {
+          await access(renderedPath);
+        } catch {
+          refuse('BACKUP_PROVIDER_FAILED', 'backup provider render produced no artifact', {
+            contract: BACKUP_CONTRACT,
+            operation: 'render-restore',
+          });
+        }
         receipt = await beginRestore(restoreControl, actor, intent, request.operationId);
         if (receipt.attempt === 'existing' && receipt.outcome === null) {
           receipt = null;
@@ -807,8 +832,9 @@ export function createBackupOperations(options) {
               if (!inspected.empty) refuse('BACKUP_TARGET_NOT_EMPTY', 'restore target is not explicitly empty');
               targetMutationStarted = true;
               try {
-                await providerCall('restore', () => provider.restoreArtifact({
+                await providerCall('apply-restore', () => provider.applyRestoreArtifact({
                   artifactPath: scratchArtifact,
+                  renderedPath,
                   connection: boundConnection,
                   lockedTarget: inspected.lockedTarget,
                   expectedAuthority: {
@@ -1187,21 +1213,34 @@ export function createPostgresqlNativeBackupProvider(options = {}) {
         }, configuration.createPool);
       });
     },
-    async restoreArtifact({ artifactPath, connection, lockedTarget, expectedAuthority }) {
+    // Render is the purely local half of restore: the archive becomes staged
+    // SQL with an empty environment and no connection, so a failure here —
+    // missing binary, corrupt archive, no scratch space — never opens the
+    // target and never mints a receipt.
+    async renderRestoreArtifact({ artifactPath, renderedPath }) {
+      if (!exactString(artifactPath, 4096) || !exactString(renderedPath, 4096)) {
+        refuse('BACKUP_PATH_INVALID', 'backup render path is invalid');
+      }
+      await runTool(
+        restoreCommand,
+        ['--no-owner', '--no-privileges', '--schema=accordo', `--file=${renderedPath}`, artifactPath],
+        {},
+        timeoutMs,
+      );
+    },
+    // Apply is the target-mutating half: it runs only behind the coordinator
+    // target lock, after the attempt receipt exists, so its failures still
+    // mark the target possibly partial.
+    async applyRestoreArtifact({ artifactPath, renderedPath, connection, lockedTarget, expectedAuthority }) {
       const locked = nativeLockedTargets.get(lockedTarget);
       if (!locked) refuse('BACKUP_TARGET_LOCK_INVALID', 'restore target fence is unavailable');
       const expected = acceptedObservedAuthority(expectedAuthority, 'BACKUP_RESTORED_AUTHORITY_MISMATCH');
-      const sqlPath = `${artifactPath}.restore.sql`;
+      if (!exactString(renderedPath, 4096)) refuse('BACKUP_PATH_INVALID', 'backup rendered path is invalid');
+      const sqlPath = renderedPath;
       const preludePath = `${artifactPath}.prelude.sql`;
       const postludePath = `${artifactPath}.postlude.sql`;
       const authorityPath = `${artifactPath}.authority`;
       try {
-        await runTool(
-          restoreCommand,
-          ['--no-owner', '--no-privileges', '--schema=accordo', `--file=${sqlPath}`, artifactPath],
-          {},
-          timeoutMs,
-        );
         // `pg_restore --schema` filters the objects inside the schema but never
         // emits the schema itself, so the child creates it — unqualified and
         // without IF NOT EXISTS, because a schema that already exists means the
