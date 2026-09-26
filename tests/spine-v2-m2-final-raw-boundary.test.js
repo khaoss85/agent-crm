@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -144,18 +145,18 @@ function walkJs(dir, files) {
   }
 }
 
-function productionJsFiles() {
+function productionJsFiles(scanRoot = repoRoot) {
   /** @type {string[]} */
   const files = [];
-  for (const root of PRODUCTION_ROOTS) walkJs(join(repoRoot, root), files);
+  for (const root of PRODUCTION_ROOTS) walkJs(join(scanRoot, root), files);
   return files;
 }
 
-function scanProductionRawDriver() {
+function scanProductionRawDriver(scanRoot = repoRoot) {
   /** @type {{ file: string, pattern: string }[]} */
   const hits = [];
-  for (const full of productionJsFiles()) {
-    const file = relative(repoRoot, full).split('\\').join('/');
+  for (const full of productionJsFiles(scanRoot)) {
+    const file = relative(scanRoot, full).split('\\').join('/');
     if (Object.hasOwn(ALLOWLIST, file)) continue;
     const source = stripComments(readFileSync(full, 'utf8'));
     const found = rawDriverSpelling(source);
@@ -275,24 +276,29 @@ test('the scan catches the spellings it claims to cover', () => {
  */
 test('every supported spelling fails the production guard when planted, then restores', (t) => {
   const original = readFileSync(PLANT_TARGET, 'utf8');
+  // The plant lives in a scratch copy of the production tree, never in the
+  // checkout: node --test runs files in parallel, and a sibling
+  // solution-verify run samples `git status` before and after its own window —
+  // a planted production file inside that window is reported as a mutation
+  // caused by verifying (VERIFICATION_DIRTIED_WORKTREE), failing CI while a
+  // sequential local run stays green.
+  const overlay = mkdtempSync(join(tmpdir(), 'm2-raw-boundary-'));
   t.after(() => {
-    writeFileSync(PLANT_TARGET, original);
+    rmSync(overlay, { recursive: true, force: true });
   });
+  for (const root of PRODUCTION_ROOTS) cpSync(join(repoRoot, root), join(overlay, root), { recursive: true });
+  const planted = join(overlay, 'packages/core/src/core-adapters.js');
 
   for (const spelling of PLANTED_SPELLINGS) {
     writeFileSync(
-      PLANT_TARGET,
+      planted,
       `${original}\nfunction __m2FinalRawBoundaryPlant() { void ${asJsStringLiteral(spelling)}; }\n`,
     );
-    try {
-      const hits = scanProductionRawDriver();
-      assert.ok(
-        hits.some((hit) => hit.file === 'packages/core/src/core-adapters.js'),
-        `planted spelling must fail the production guard: ${spelling}`,
-      );
-    } finally {
-      writeFileSync(PLANT_TARGET, original);
-    }
+    const hits = scanProductionRawDriver(overlay);
+    assert.ok(
+      hits.some((hit) => hit.file === 'packages/core/src/core-adapters.js'),
+      `planted spelling must fail the production guard: ${spelling}`,
+    );
   }
 
   assert.equal(readFileSync(PLANT_TARGET, 'utf8'), original);
