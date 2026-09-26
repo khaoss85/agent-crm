@@ -147,7 +147,10 @@ export async function backupFixture(t, telemetry, options = {}) {
     },
     async prepareRestore() {},
     async withTargetLock(_input, operation) { return operation(lockedState()); },
-    async restoreArtifact() {
+    async renderRestoreArtifact({ renderedPath }) {
+      await writeFile(renderedPath, Buffer.from(ARTIFACT_BYTES));
+    },
+    async applyRestoreArtifact() {
       if (options.partialRestore) {
         throw Object.assign(new Error(BACKUP_SENTINELS.backupLocator), { code: 'FIXTURE_RESTORE_FAILED' });
       }
