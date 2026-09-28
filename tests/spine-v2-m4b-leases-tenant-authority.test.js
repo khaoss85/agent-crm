@@ -476,22 +476,42 @@ describe('M4B PostgreSQL leases and tenant authority', { concurrency: 1 }, () =>
     );
     const counted = await bootstrap.dataStorage.maybeOne({ kind: 'count', table: 'companies' });
     assert.equal(Number(counted?.n ?? 0), 0);
-    await bootstrap.dataStorage.execute({
-      kind: 'insert',
-      table: 'companies',
-      values: [
-        { column: 'id', value: 'after-timeout' },
-        { column: 'name', value: 'Alive' },
-        { column: 'domain', value: null },
-        { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
-        { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
-      ],
-    });
+    // Recovery runs on the same 80ms-deadline handle that just destroyed a
+    // client: under load the deadline can fire on the recovery COMMIT
+    // (COMMIT_OUTCOME_UNKNOWN — the write may have applied) or on the
+    // statement (STORAGE_TIMEOUT). Retry with a fresh id per attempt and
+    // confirm unknown outcomes by reading back; anything else rethrows.
+    const insertValues = (id) => [
+      { column: 'id', value: id },
+      { column: 'name', value: 'Alive' },
+      { column: 'domain', value: null },
+      { column: 'created_at', value: '2026-01-01T00:00:00.000Z' },
+      { column: 'updated_at', value: '2026-01-01T00:00:00.000Z' },
+    ];
+    let recoveredId = null;
+    for (let attempt = 0; attempt < 10 && recoveredId === null; attempt += 1) {
+      const id = `after-timeout-${attempt}`;
+      try {
+        await bootstrap.dataStorage.execute({ kind: 'insert', table: 'companies', values: insertValues(id) });
+        recoveredId = id;
+      } catch (error) {
+        if (error.code === 'COMMIT_OUTCOME_UNKNOWN') {
+          const found = await bootstrap.dataStorage.maybeOne({
+            kind: 'select', table: 'companies', columns: ['name'],
+            where: [{ column: 'id', op: 'eq', value: id }],
+          }).catch(() => null);
+          if (found?.name === 'Alive') recoveredId = id;
+        } else if (error.code !== 'STORAGE_TIMEOUT') {
+          throw error;
+        }
+      }
+    }
+    assert.ok(recoveredId, 'pool did not recover after the black-holed client was destroyed');
     const row = await bootstrap.dataStorage.maybeOne({
       kind: 'select',
       table: 'companies',
       columns: ['name'],
-      where: [{ column: 'id', op: 'eq', value: 'after-timeout' }],
+      where: [{ column: 'id', op: 'eq', value: recoveredId }],
     });
     assert.equal(row?.name, 'Alive');
     assert.equal(bootstrap.health().ok, true);
