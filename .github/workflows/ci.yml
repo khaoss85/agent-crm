@@ -64,7 +64,7 @@ jobs:
       # checkout. Reuse that run instead of maintaining an unmeasured suite and
       # asking a maintainer to run it again on a different machine.
       - name: Verify and emit the measured claim record
-        run: set -o pipefail; node scripts/measure-suite.js | tee "$RUNNER_TEMP/measurement.json"
+        run: node scripts/measure-suite.js > "$RUNNER_TEMP/measurement.json"
       - run: npm run smoke
       - name: Replay the published quote approval recipe
         run: |
