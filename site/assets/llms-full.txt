@@ -163,6 +163,9 @@ has no answer here yet — not a plausible reconstruction.
 Evidence-backed articles are canonical on the project site. Syndicated copies may exist,
 but these URLs are the versions bound to this repository's claims and transcripts.
 
+- [What developers use instead of HubSpot](blog/what-developers-use-instead-of-hubspot.html) — 2026-09-30; evidence C-01, C-03, C-04, C-16, C-17, C-21.
+- [MIT-licensed CRM options, by shape](blog/mit-licensed-crm-options-by-shape.html) — 2026-09-30; evidence C-01, C-03, C-04, C-16, C-17.
+- [Headless CRM for Claude and Codex, three ways](blog/headless-crm-for-claude-and-codex-three-ways.html) — 2026-09-30; evidence C-01, C-04, C-14, C-16, C-18.
 - [Run a B2B quote approval workflow: from client brief to audit receipt](blog/run-a-b2b-quote-approval-workflow.html) — 2026-09-07; evidence C-04, C-08, C-16.
 - [Build a custom CRM with Claude Code: what day 30 looks like](blog/build-a-custom-crm-with-claude-code-day-30.html) — 2026-08-19; evidence C-01, C-03, C-04, C-05, C-08, C-16, C-17, C-19, C-21, C-22, C-23.
 - [When to use a CRM platform instead of this](blog/when-to-use-a-crm-platform-instead-of-this.html) — 2026-08-18; evidence C-01, C-03, C-04, C-16, C-18.
@@ -360,7 +363,7 @@ An id that appears above but not here has lost its evidence, and `npm run site:c
 
 ## What this file omits
 
-Held under 46,000 characters so it fits a context window whole. Everything below is
+Held under 46,500 characters so it fits a context window whole. Everything below is
 optional and reachable at the path given; the claims ledger's evidence is never in this list,
 because the generator refuses to publish a file missing it rather than shortening one. Not inlined:
 
