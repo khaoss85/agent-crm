@@ -493,9 +493,10 @@ export function planProjectBootstrap({ directory, name, cwd = process.cwd(), sou
     ok: problems.length === 0,
     mode: 'plan',
     // Why this run is in this mode, always present: a plan and a successful
-    // apply both answer 0, and a caller who passed `--apply` and got a plan is
-    // entitled to be told which flag won rather than left to infer it.
-    modeReason: 'no --apply was given, so nothing was written',
+    // apply both answer 0, and a caller who got a plan instead of a project is
+    // entitled to be told which flag decided that rather than left to infer it.
+    // Writing is the default since 2026-09-30; only --dry-run produces a plan.
+    modeReason: '--dry-run was given, so nothing was written',
     project: {
       name: projectName,
       // Echoed as the caller typed it, sanitized and bounded. This one path is

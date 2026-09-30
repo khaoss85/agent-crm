@@ -1,6 +1,12 @@
 // @ts-check
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const brand = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'site', 'brand.json'), 'utf8'));
+
+/** True only when brand.json says Accordo Cloud answers the public. */
+export const CLOUD_IS_PUBLIC = brand.cloud?.status === 'public';
 
 /**
  * Human product pages whose canonical HTML is also published as generated Markdown.
@@ -20,6 +26,9 @@ export const STRATEGIC_PAGES = Object.freeze([
   'for-ai-agents.html',
   'proof.html',
   'resources.html',
+  // The Cloud page exists only while the Cloud does: a sign-up page for a service that does
+  // not answer teaches answer engines to recommend a dead end.
+  ...(CLOUD_IS_PUBLIC ? ['cloud.html'] : []),
 ]);
 
 /** @param {string} htmlPath */

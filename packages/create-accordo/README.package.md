@@ -4,13 +4,16 @@ Create a local Accordo CRM project that a coding agent can inspect, extend and
 verify as source you own.
 
 ```bash
-npm create accordo my-crm -- --apply
+npm create accordo my-crm
 cd my-crm
 npm run verify
 npm run crm -- app inspect --json
 ```
 
-Without `--apply`, the command prints a deterministic plan and writes nothing.
+Then open the folder in Claude Code, Codex, Grok, Muse or Gemini CLI and describe
+how you sell; the project's `AGENTS.md` tells the agent what to run first.
+
+With `--dry-run`, the command prints a deterministic plan and writes nothing.
 Use `--json` for the versioned machine-readable contract.
 
 The package carries the framework source it copies, so project creation needs no

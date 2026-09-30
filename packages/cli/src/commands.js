@@ -109,6 +109,14 @@ export async function runCli(argv) {
     command = 'solution:verify';
     positional = positional.slice(1);
   }
+  // "cloud login|link|status|push|propose" carries a project's Blueprint and
+  // record changes to its Accordo Cloud workspace. It opens no local database
+  // and constructs no application, so it is routed before either.
+  if (command === 'cloud') {
+    const { runCloudCommand } = await import('./cloud-command.js');
+    await runCloudCommand(positional, flags);
+    return;
+  }
   // Help is not a database operation. It used to fall through to the branch
   // that constructs the application, so asking for help created a SQLite file;
   // now that the app import is lazy, there is no reason for it to.
@@ -569,6 +577,11 @@ Usage:
   accordo package:inspect <package-directory>
   accordo package:test <package-directory> [--json] [--root dir]
   accordo mcp [--db path] [--deployment-storage path]
+  accordo cloud login [--origin url]
+  accordo cloud link <workspaceId> [--origin url]
+  accordo cloud status [--json]
+  accordo cloud push [--file accordo.cloud.json] [--json]
+  accordo cloud propose <model> [<recordId>] --values '<json>' [--json]
 
 "module plan", "module create", "module validate" and "module migration" are accepted aliases.
 module:plan is always read-only. module:create with a manifest generates a complete

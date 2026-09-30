@@ -198,13 +198,26 @@ test('a plan writes nothing, and says which flag decided that', (t) => {
   const workspace = scratch(t);
   const target = join(workspace, 'planned');
 
-  const { exitCode, report } = bootstrap([target]);
+  const { exitCode, report } = bootstrap([target, '--dry-run']);
   assert.equal(exitCode, 0);
   assert.equal(report.mode, 'plan');
-  assert.equal(report.modeReason, 'no --apply was given, so nothing was written');
+  assert.equal(report.modeReason, '--dry-run was given, so nothing was written');
   assert.equal(report.ok, true);
   assert.equal(existsSync(target), false, 'a plan reserves nothing and creates nothing');
   assert.equal(readdirSync(workspace).length, 0, 'not even a staging directory');
+});
+
+test('with no flag it writes the project, like every npm create initializer; --apply stays accepted', (t) => {
+  const workspace = scratch(t);
+  const target = join(workspace, 'written');
+
+  const { exitCode, report } = bootstrap([target]);
+  assert.equal(exitCode, 0);
+  assert.equal(report.mode, 'applied', 'npm create accordo my-crm must leave a project behind');
+  assert.equal(existsSync(join(target, 'AGENTS.md')), true);
+
+  const explicit = bootstrap([join(workspace, 'explicit'), '--apply']);
+  assert.equal(explicit.report.mode, 'applied', 'scripts written against the old default keep working');
 });
 
 test('two plans for the same request are byte-identical, and the fingerprint ignores where it would go', (t) => {
@@ -645,7 +658,7 @@ test('the text view leads with the refusal, not with files that were never writt
   // And the successful plan says plainly that it wrote nothing.
   const planned = render(planProjectBootstrap({ directory: join(workspace, 'fine'), cwd: workspace }).report);
   assert.match(planned, /Files it would generate \(10\)/);
-  assert.match(planned, /Re-run with --apply/);
+  assert.match(planned, /Re-run without --dry-run/);
   assert.equal(planned.includes('Refused'), false);
 
   // Both views end with the limitations, so the text reader gets them too.

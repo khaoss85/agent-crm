@@ -10,18 +10,22 @@ import { applyProjectBootstrap, planProjectBootstrap } from '../src/project-boot
  * The executable `npm create accordo <directory>` would run.
  *
  * ```text
- * create-accordo <directory> [--name <project-name>] [--apply] [--json]
+ * create-accordo <directory> [--name <project-name>] [--dry-run] [--json]
  * ```
  *
- * Dry-run is the default. `--apply` is the only thing that writes, and it
- * writes only inside the target directory.
+ * It writes the project, like every `npm create` initializer: a person who
+ * typed `npm create accordo my-crm` and got a plan instead of a folder was
+ * the first thing the product did to them. `--dry-run` reports the plan and
+ * writes nothing. Writes stay inside the target directory, which must be empty
+ * or absent. `--apply` is still accepted, as the explicit spelling of the
+ * default, so scripts written against the dry-run default keep working.
  *
  * **Exit codes are the contract**, so an agent or a CI job can act on them
  * without parsing prose. A full report is printed in every case, including both
  * refusals — stopping at the first fault would send the reader back to guessing.
  *
  * ```text
- * 0   the plan is clean, or --apply wrote the project
+ * 0   the project was written, or the --dry-run plan is clean
  * 1   refused because of the request      (bad name, non-empty target, …)
  * 2   refused because of the environment  (no framework source, no target given)
  * ```
@@ -46,7 +50,8 @@ const USAGE = `create-accordo — create a new Accordo CRM project
 
   --name <project-name>   the npm package name for the new project
                           (default: the target directory's own name)
-  --apply                 write the project. Without it, nothing is written.
+  --dry-run               report the plan and write nothing
+  --apply                 write the project (the default; kept for scripts)
   --json                  the machine-readable report — this is the contract
   --help                  this message
 
@@ -59,11 +64,12 @@ operations source require explicit configuration; no authentication verifier shi
 /** @param {string[]} argv */
 export function parseArguments(argv) {
   /** @type {{directory: string|null, name: string|null, apply: boolean, json: boolean, help: boolean, error: string|null}} */
-  const parsed = { directory: null, name: null, apply: false, json: false, help: false, error: null };
+  const parsed = { directory: null, name: null, apply: true, json: false, help: false, error: null };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === '--help' || argument === '-h') { parsed.help = true; continue; }
     if (argument === '--apply') { parsed.apply = true; continue; }
+    if (argument === '--dry-run') { parsed.apply = false; continue; }
     if (argument === '--json') { parsed.json = true; continue; }
     if (argument === '--name') {
       const value = argv[index + 1];
@@ -95,6 +101,10 @@ export function exitCodeFor(report) {
  * @param {any} report
  */
 export function render(report) {
+  // A project that was just written gets the short view: what exists now and what to do next.
+  // The inventory and the limitations are the same facts --json carries; printing thirty lines
+  // of them over the one instruction that matters buried it.
+  if (report.ok && report.mode === 'applied') return renderCreated(report);
   const lines = [];
   lines.push(`Accordo project bootstrap (contract ${report.projectBootstrapContract})`);
   lines.push(`Mode:    ${report.mode} — ${report.modeReason}`);
@@ -124,7 +134,7 @@ export function render(report) {
   }
 
   if (report.problems.length === 0 && report.mode === 'plan') {
-    lines.push('', 'Nothing was written. Re-run with --apply to create the project.');
+    lines.push('', 'Nothing was written. Re-run without --dry-run to create the project.');
   } else if (report.mode === 'applied') {
     lines.push('', 'Next');
     for (const step of report.nextSteps) lines.push(`  ${step}`);
@@ -133,6 +143,19 @@ export function render(report) {
   lines.push('', 'What this project is not');
   for (const limitation of report.limitations) lines.push(`  [${limitation.code}] ${limitation.message}`);
   lines.push('', 'Run with --json for the machine-readable report — this view is a convenience, not the contract.');
+  return lines.join('\n');
+}
+
+/** @param {any} report */
+export function renderCreated(report) {
+  const lines = [];
+  lines.push(`Created ${report.project.name} in ${report.project.directory} — ${report.files.length} files, framework source included.`);
+  lines.push('', 'Next');
+  for (const step of report.nextSteps) lines.push(`  ${step}`);
+  lines.push('', 'Then open the folder in Claude Code, Codex, Grok, Muse or Gemini CLI and describe how you sell.');
+  lines.push('AGENTS.md tells the agent what to run first.');
+  lines.push('', 'It starts in local SQLite mode. Production needs your own authentication and deployment');
+  lines.push(`configuration; README.md and --json carry the posture and the ${report.limitations.length} documented limits.`);
   return lines.join('\n');
 }
 
