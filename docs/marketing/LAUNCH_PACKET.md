@@ -82,7 +82,7 @@ before a commenter gets to say them.
 >   candidates and human-governed identity linking exist in current source; they
 >   do not provide a complete export/erasure or compliance program. Deployment
 >   authentication and data-governance requirements need their own review. [L-09]
-> - **It is a framework, not a product.** There is nothing to sign up for. [L-07]
+> - **It is a framework you run; the hosted Cloud runs only Blueprint-configured workspaces for free.** Custom code runs on a paid Dedicated Cell. [L-07]
 >
 > If you want to judge it in a minute rather than read about it: clone and run `npm run tour`.
 > Install the checkout dependencies first. It composes the whole application from manifests —

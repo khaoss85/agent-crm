@@ -270,9 +270,11 @@ something nobody checked. No number in any of these sentences is checked either
   complete subject export/erasure for your application; the customer foundation alone
   establishes neither compliance nor suitability for real customer data.
   Lead scoring is deterministic, versioned and explainable.
-- **This is a framework, not a product you sign up for.** There is no hosted CRM, no free
-  tier, no account, and no control plane that provisions, deploys or meters anything. The
-  output is an application you run.
+- **The framework is source you run; the Cloud hosts only what a Blueprint expresses.** This
+  repository contains no control plane that provisions, deploys or meters anything, and its
+  output is an application you run. The managed Cloud is a separate, private service: a free
+  workspace on shared capacity configured through a Project Blueprint (record types, fields and
+  approval gates), and a paid Dedicated Cell for custom application code.
   <!-- truth: cloud_control_plane.implemented=absent -->
 - **Ownership means vendored source: there is no framework dependency to bump.**
   `npm create accordo` — the published `create-accordo@0.1.0` — scaffolds a project that boots,

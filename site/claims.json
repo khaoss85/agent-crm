@@ -1358,8 +1358,8 @@
     },
     {
       "id": "L-07",
-      "headline": "This is a framework, not a product you sign up for.",
-      "text": "There is no hosted CRM, no free tier and no account. The output is an application in your repository that you run.",
+      "headline": "The framework is source you run; the Cloud hosts only what a Blueprint expresses.",
+      "text": "The framework is not a hosted service: its output is an application in your repository that you run. The managed Cloud is a separate offer: a free workspace on shared capacity configured through a Project Blueprint (record types, fields and approval gates), and a paid Dedicated Cell for custom application code.",
       "evidence": {
         "docs": [
           "PRODUCT.md",
