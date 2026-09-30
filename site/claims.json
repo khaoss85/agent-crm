@@ -1,20 +1,634 @@
 {
   "claimsContract": 2,
-  "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test — a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used. Contract 2 (ADR-027): measuredAgainst additionally requires testFiles and testsTree, and no claim, limitation or repoFact may type an exact test count — the one number lives in measuredAgainst and reaches a page as {{measured.tests}}.",
+  "$comment": "The only sentences any public asset may assert about what this framework does. AGENTS.md: 'every claim in the docs, the ADR, the PR body and the JTBD matrix traces to a merged test \u2014 a capability and its limitation are stated in the same breath.' This file extends that rule to marketing. Templates reference claims by id ({{claim:C-01}}); `npm run site:check` fails the build if a claim is missing evidence, missing a limitation, references a file that does not exist, or is defined and never used. Contract 2 (ADR-027): measuredAgainst additionally requires testFiles and testsTree, and no claim, limitation or repoFact may type an exact test count \u2014 the one number lives in measuredAgainst and reaches a page as {{measured.tests}}.",
   "measuredAgainst": {
-    "date": "2026-09-19",
-    "sha": "bffb1c2",
+    "date": "2026-09-29",
+    "sha": "eacce47",
     "command": "npm run verify",
-    "tests": 2196,
+    "tests": 2413,
     "failures": 0,
-    "testFiles": 189,
-    "testsTree": "2895aa7733173dc82ddb915d63cabee608968423",
-    "note": "Written by `node scripts/measure-suite.js --apply` from a real run on a clean tree. Never edit these numbers by hand: scripts/site-check.js verifies sha, testsTree and testFiles against the commit, so a record moved forward without a re-run fails the build."
+    "testFiles": 204,
+    "testsTree": "1113cd908e60afb159f8259ce092529de90e08c8",
+    "files": {
+      "tests/action-contract.test.js": {
+        "tests": 12
+      },
+      "tests/action-runtime-semantics.test.js": {
+        "tests": 6
+      },
+      "tests/actor-fails-closed.test.js": {
+        "tests": 8
+      },
+      "tests/admin-actions.test.js": {
+        "tests": 8
+      },
+      "tests/admin-contracts.test.js": {
+        "tests": 8
+      },
+      "tests/admin-core.test.js": {
+        "tests": 9
+      },
+      "tests/admin-customer-data.test.js": {
+        "tests": 9
+      },
+      "tests/admin-delivery-change.test.js": {
+        "tests": 23
+      },
+      "tests/admin-delivery.test.js": {
+        "tests": 5
+      },
+      "tests/admin-lifecycle.test.js": {
+        "tests": 16
+      },
+      "tests/admin-marketing.test.js": {
+        "tests": 7
+      },
+      "tests/admin-modules.test.js": {
+        "tests": 15
+      },
+      "tests/admin-pipeline.test.js": {
+        "tests": 8
+      },
+      "tests/admin-quotes.test.js": {
+        "tests": 7
+      },
+      "tests/admin-service.test.js": {
+        "tests": 27
+      },
+      "tests/admin-signature.test.js": {
+        "tests": 5
+      },
+      "tests/admin-spine.test.js": {
+        "tests": 13
+      },
+      "tests/admin-work.test.js": {
+        "tests": 17
+      },
+      "tests/agent-tool-selection-contract.test.js": {
+        "tests": 28
+      },
+      "tests/agent-tool-selection-prompts.test.js": {
+        "tests": 31
+      },
+      "tests/agent-tool-selection-scoring.test.js": {
+        "tests": 67
+      },
+      "tests/analytics-pipeline-metrics.test.js": {
+        "tests": 6
+      },
+      "tests/api.test.js": {
+        "tests": 1
+      },
+      "tests/app-inspect.test.js": {
+        "tests": 27
+      },
+      "tests/async-record-modules-packages.test.js": {
+        "tests": 2
+      },
+      "tests/async-record-modules-postgresql.test.js": {
+        "tests": 2
+      },
+      "tests/async-record-modules.test.js": {
+        "tests": 4
+      },
+      "tests/benchmark-harness.test.js": {
+        "tests": 13
+      },
+      "tests/benchmark-scorer.test.js": {
+        "tests": 15
+      },
+      "tests/characterization/commercial-characterization.test.js": {
+        "tests": 24
+      },
+      "tests/characterization/intelligence-characterization.test.js": {
+        "tests": 29
+      },
+      "tests/characterization/signature-characterization.test.js": {
+        "tests": 23
+      },
+      "tests/characterization/source-scan.test.js": {
+        "tests": 9
+      },
+      "tests/codex-mcp-cwd.test.js": {
+        "tests": 1
+      },
+      "tests/collection-filter.test.js": {
+        "tests": 2
+      },
+      "tests/commercial-capabilities.test.js": {
+        "tests": 2
+      },
+      "tests/commercial-contract.test.js": {
+        "tests": 10
+      },
+      "tests/commercial-e2e.test.js": {
+        "tests": 3
+      },
+      "tests/commercial-package-absence.test.js": {
+        "tests": 2
+      },
+      "tests/commercial-quotes-deprecation.test.js": {
+        "tests": 2
+      },
+      "tests/contracts-activation-e2e.test.js": {
+        "tests": 7
+      },
+      "tests/contracts-contract.test.js": {
+        "tests": 9
+      },
+      "tests/contracts-registry-review.test.js": {
+        "tests": 5
+      },
+      "tests/contracts-review.test.js": {
+        "tests": 6
+      },
+      "tests/core-adapters.test.js": {
+        "tests": 4
+      },
+      "tests/create-accordo-package.test.js": {
+        "tests": 8
+      },
+      "tests/custom-package-e2e.test.js": {
+        "tests": 1
+      },
+      "tests/customer-data-complete-reads.test.js": {
+        "tests": 4
+      },
+      "tests/customer-data-faults.test.js": {
+        "tests": 6
+      },
+      "tests/customer-data-foundation.test.js": {
+        "tests": 15
+      },
+      "tests/customer-data-identity-conflicts.test.js": {
+        "tests": 4
+      },
+      "tests/customer-data-label-snapshot.test.js": {
+        "tests": 1
+      },
+      "tests/customer-data-operations-v2.test.js": {
+        "tests": 15
+      },
+      "tests/data-governance-classification.test.js": {
+        "tests": 7
+      },
+      "tests/delivery-change-acceptance-e2e.test.js": {
+        "tests": 9
+      },
+      "tests/delivery-change-acceptance-evidence.test.js": {
+        "tests": 12
+      },
+      "tests/delivery-change-acceptance-integration.test.js": {
+        "tests": 7
+      },
+      "tests/delivery-economics-e2e.test.js": {
+        "tests": 14
+      },
+      "tests/delivery-execution-e2e.test.js": {
+        "tests": 12
+      },
+      "tests/delivery-handover-e2e.test.js": {
+        "tests": 8
+      },
+      "tests/distribution-intent.test.js": {
+        "tests": 7
+      },
+      "tests/docs-mcp-http.test.js": {
+        "tests": 10
+      },
+      "tests/docs-mcp.test.js": {
+        "tests": 24
+      },
+      "tests/event-bus-outbox.test.js": {
+        "tests": 8
+      },
+      "tests/falsify.test.js": {
+        "tests": 7
+      },
+      "tests/generated-api-e2e.test.js": {
+        "tests": 1
+      },
+      "tests/generated-api.test.js": {
+        "tests": 4
+      },
+      "tests/gtm-current-claims.test.js": {
+        "tests": 4
+      },
+      "tests/gtm-release-integration.test.js": {
+        "tests": 3
+      },
+      "tests/http-envelope.test.js": {
+        "tests": 2
+      },
+      "tests/http-keep-alive-reap.test.js": {
+        "tests": 3
+      },
+      "tests/implementation-evidence.test.js": {
+        "tests": 32
+      },
+      "tests/intelligence-capability-consumer.test.js": {
+        "tests": 3
+      },
+      "tests/intelligence-contract.test.js": {
+        "tests": 11
+      },
+      "tests/intelligence-package-absence.test.js": {
+        "tests": 2
+      },
+      "tests/intelligence-pre-extraction-upgrade.test.js": {
+        "tests": 3
+      },
+      "tests/intelligence-signal-value.test.js": {
+        "tests": 11
+      },
+      "tests/jobs-json.test.js": {
+        "tests": 15
+      },
+      "tests/jtbd-portfolio-gate.test.js": {
+        "tests": 45
+      },
+      "tests/jtbd-publication-surface.test.js": {
+        "tests": 8
+      },
+      "tests/jtbd-query-tool.test.js": {
+        "tests": 7
+      },
+      "tests/lead-conversion-e2e.test.js": {
+        "tests": 15
+      },
+      "tests/lead-intelligence-e2e.test.js": {
+        "tests": 3
+      },
+      "tests/lead-qualification-e2e.test.js": {
+        "tests": 2
+      },
+      "tests/lifecycle-amendment-execution-e2e.test.js": {
+        "tests": 17
+      },
+      "tests/lifecycle-amendment-execution.test.js": {
+        "tests": 16
+      },
+      "tests/lifecycle-amendment-upgrade.test.js": {
+        "tests": 2
+      },
+      "tests/lifecycle-renewal-operations-e2e.test.js": {
+        "tests": 13
+      },
+      "tests/lifecycle-renewal-operations.test.js": {
+        "tests": 19
+      },
+      "tests/marketing-e2e.test.js": {
+        "tests": 3
+      },
+      "tests/marketing-funnel.test.js": {
+        "tests": 7
+      },
+      "tests/marketing-no-external-effect.test.js": {
+        "tests": 4
+      },
+      "tests/marketing-package.test.js": {
+        "tests": 6
+      },
+      "tests/marketing-proposal.test.js": {
+        "tests": 15
+      },
+      "tests/mcp.test.js": {
+        "tests": 3
+      },
+      "tests/measure-refresh.test.js": {
+        "tests": 18
+      },
+      "tests/measurement-report.test.js": {
+        "tests": 7
+      },
+      "tests/module-evolution-factory.test.js": {
+        "tests": 17
+      },
+      "tests/module-evolution.test.js": {
+        "tests": 11
+      },
+      "tests/module-factory-e2e.test.js": {
+        "tests": 1
+      },
+      "tests/module-factory.test.js": {
+        "tests": 14
+      },
+      "tests/module-manifest-cli.test.js": {
+        "tests": 4
+      },
+      "tests/module-manifest.test.js": {
+        "tests": 11
+      },
+      "tests/module-migrations.test.js": {
+        "tests": 6
+      },
+      "tests/opportunity-pipeline-e2e.test.js": {
+        "tests": 12
+      },
+      "tests/package-contract.test.js": {
+        "tests": 11
+      },
+      "tests/package-operations-seam.test.js": {
+        "tests": 5
+      },
+      "tests/package-scaffold.test.js": {
+        "tests": 35
+      },
+      "tests/package-test-command.test.js": {
+        "tests": 34
+      },
+      "tests/pinned-certificate-verification.test.js": {
+        "tests": 6
+      },
+      "tests/pipeline-contract.test.js": {
+        "tests": 5
+      },
+      "tests/production-spine.test.js": {
+        "tests": 22
+      },
+      "tests/project-bootstrap.test.js": {
+        "tests": 29
+      },
+      "tests/project-doctor.test.js": {
+        "tests": 33
+      },
+      "tests/project-verify.test.js": {
+        "tests": 44
+      },
+      "tests/public-evidence.test.js": {
+        "tests": 22
+      },
+      "tests/read-only-composition-postgresql.test.js": {
+        "tests": 15
+      },
+      "tests/read-only-storage-mode.test.js": {
+        "tests": 6
+      },
+      "tests/reference-fields-e2e.test.js": {
+        "tests": 2
+      },
+      "tests/reference-resolver.test.js": {
+        "tests": 6
+      },
+      "tests/repository-truth-contract.test.js": {
+        "tests": 76
+      },
+      "tests/repository-truth.test.js": {
+        "tests": 13
+      },
+      "tests/scaffold.test.js": {
+        "tests": 1
+      },
+      "tests/scenario-document.test.js": {
+        "tests": 21
+      },
+      "tests/scenario-run.test.js": {
+        "tests": 43
+      },
+      "tests/service-operations-e2e.test.js": {
+        "tests": 6
+      },
+      "tests/service-operations-evidence.test.js": {
+        "tests": 11
+      },
+      "tests/service-operations-integration.test.js": {
+        "tests": 5
+      },
+      "tests/service-operations-upgrade.test.js": {
+        "tests": 1
+      },
+      "tests/signature-contract.test.js": {
+        "tests": 13
+      },
+      "tests/signature-order-e2e.test.js": {
+        "tests": 5
+      },
+      "tests/signature-orders-capability.test.js": {
+        "tests": 1
+      },
+      "tests/signature-package-absence.test.js": {
+        "tests": 2
+      },
+      "tests/signature-signer-input.test.js": {
+        "tests": 1
+      },
+      "tests/signed-terms-consumption-guard.test.js": {
+        "tests": 3
+      },
+      "tests/signed-terms-e2e.test.js": {
+        "tests": 4
+      },
+      "tests/signed-terms-integrity.test.js": {
+        "tests": 16
+      },
+      "tests/signed-terms-upgrade.test.js": {
+        "tests": 1
+      },
+      "tests/site-analytics.test.js": {
+        "tests": 4
+      },
+      "tests/site-art-direction.test.js": {
+        "tests": 12
+      },
+      "tests/site-pages.test.js": {
+        "tests": 18
+      },
+      "tests/site-seo.test.js": {
+        "tests": 19
+      },
+      "tests/skill-parity.test.js": {
+        "tests": 3
+      },
+      "tests/solution-plan.test.js": {
+        "tests": 18
+      },
+      "tests/solution-verify.test.js": {
+        "tests": 60
+      },
+      "tests/spine-configuration-refusal.test.js": {
+        "tests": 15
+      },
+      "tests/spine-integration-production-operations-postgresql.test.js": {
+        "tests": 4
+      },
+      "tests/spine-integration-production-operations.test.js": {
+        "tests": 16
+      },
+      "tests/spine-plane-collision.test.js": {
+        "tests": 5
+      },
+      "tests/spine-route-authorization.test.js": {
+        "tests": 7
+      },
+      "tests/spine-tenancy-truth.test.js": {
+        "tests": 6
+      },
+      "tests/spine-v2-m0-characterization.test.js": {
+        "tests": 8
+      },
+      "tests/spine-v2-m1-storage-contract.test.js": {
+        "tests": 10
+      },
+      "tests/spine-v2-m2-final-portable-exit.test.js": {
+        "tests": 7
+      },
+      "tests/spine-v2-m2-final-posture.test.js": {
+        "tests": 21
+      },
+      "tests/spine-v2-m2-final-raw-boundary.test.js": {
+        "tests": 8
+      },
+      "tests/spine-v2-m2-requirement-map.test.js": {
+        "tests": 11
+      },
+      "tests/spine-v2-m2b-definition-version-store.test.js": {
+        "tests": 40
+      },
+      "tests/spine-v2-m2c-execution-run-store.test.js": {
+        "tests": 43
+      },
+      "tests/spine-v2-m2d-transaction-context.test.js": {
+        "tests": 16
+      },
+      "tests/spine-v2-m2e1-contract-versions.test.js": {
+        "tests": 23
+      },
+      "tests/spine-v2-m2e2-async-lifecycle.test.js": {
+        "tests": 12
+      },
+      "tests/spine-v2-m2e2-portable-facade.test.js": {
+        "tests": 12
+      },
+      "tests/spine-v2-m2e2-portable-http.test.js": {
+        "tests": 15
+      },
+      "tests/spine-v2-m2e3-public-async-factory.test.js": {
+        "tests": 12
+      },
+      "tests/spine-v2-m2f-cross-plane-audit.test.js": {
+        "tests": 31
+      },
+      "tests/spine-v2-m2f-deployment-storage.test.js": {
+        "tests": 29
+      },
+      "tests/spine-v2-m2f-entry-wiring.test.js": {
+        "tests": 16
+      },
+      "tests/spine-v2-m2f-verifier-preconnect.test.js": {
+        "tests": 12
+      },
+      "tests/spine-v2-m3a-dialect-intent.test.js": {
+        "tests": 4
+      },
+      "tests/spine-v2-m3a-module-state-adoption.test.js": {
+        "tests": 7
+      },
+      "tests/spine-v2-m3a-physical-names.test.js": {
+        "tests": 5
+      },
+      "tests/spine-v2-m3a-schema-migrations-ledger.test.js": {
+        "tests": 13
+      },
+      "tests/spine-v2-m3b-postgresql-adapter.test.js": {
+        "tests": 16
+      },
+      "tests/spine-v2-m3c-postgresql-application.test.js": {
+        "tests": 11
+      },
+      "tests/spine-v2-m3p-dual-bundled-graphs.test.js": {
+        "tests": 8
+      },
+      "tests/spine-v2-m4a-idempotency-recovery.test.js": {
+        "tests": 12
+      },
+      "tests/spine-v2-m4b-leases-tenant-authority.test.js": {
+        "tests": 12
+      },
+      "tests/spine-v2-m4c-http-sdk-admin-cli.test.js": {
+        "tests": 12
+      },
+      "tests/spine-v3a-durable-jobs-postgresql.test.js": {
+        "tests": 2
+      },
+      "tests/spine-v3a-durable-jobs-sqlite.test.js": {
+        "tests": 27
+      },
+      "tests/spine-v3b-transactional-outbox-postgresql.test.js": {
+        "tests": 10
+      },
+      "tests/spine-v3b-transactional-outbox-sqlite.test.js": {
+        "tests": 9
+      },
+      "tests/spine-v3c-timer-consumers-postgresql.test.js": {
+        "tests": 3
+      },
+      "tests/spine-v3c-timer-consumers-sqlite.test.js": {
+        "tests": 12
+      },
+      "tests/spine-v4a-secrets-provider.test.js": {
+        "tests": 13
+      },
+      "tests/spine-v4b-backup-restore-postgresql.test.js": {
+        "tests": 4
+      },
+      "tests/spine-v4b-backup-restore-render-boundary.test.js": {
+        "tests": 2
+      },
+      "tests/spine-v4b-backup-restore.test.js": {
+        "tests": 20
+      },
+      "tests/spine-v4c-observability-export-postgresql.test.js": {
+        "tests": 3
+      },
+      "tests/spine-v4c-observability-export.test.js": {
+        "tests": 27
+      },
+      "tests/surface-budget.test.js": {
+        "tests": 6
+      },
+      "tests/tour-claim.test.js": {
+        "tests": 5
+      },
+      "tests/vercel-unshallow.test.js": {
+        "tests": 8
+      },
+      "tests/work-legacy-task-migration.test.js": {
+        "tests": 5
+      },
+      "tests/work-operations-e2e.test.js": {
+        "tests": 13
+      },
+      "tests/work-operations-evidence.test.js": {
+        "tests": 6
+      },
+      "tests/work-package-absence.test.js": {
+        "tests": 4
+      },
+      "tests/work-provenance-and-actor.test.js": {
+        "tests": 4
+      },
+      "tests/work-source-key-stability.test.js": {
+        "tests": 3
+      },
+      "tests/workflow.test.js": {
+        "tests": 4
+      },
+      "tests/writer-guard-covers-reads.test.js": {
+        "tests": 4
+      },
+      "tests/writer-lease-renewal-postgresql.test.js": {
+        "tests": 3
+      },
+      "tests/writer-lease-renewer.test.js": {
+        "tests": 9
+      }
+    },
+    "note": "Written by `node scripts/measure-suite.js --apply` from a real run on a clean tree. Never edit these numbers by hand: scripts/site-check.js verifies sha, testsTree, testFiles and the per-file map against the commit, so a record moved forward without a re-run fails the build."
   },
   "claims": [
     {
       "id": "C-01",
-      "text": "Write a module manifest; the agent turns it into a migration, a service, a REST resource, an SDK method and Admin screens — with no page code.",
+      "text": "Write a module manifest; the agent turns it into a migration, a service, a REST resource, an SDK method and Admin screens \u2014 with no page code.",
       "evidence": {
         "jtbd": "JTBD-01",
         "tests": [
@@ -28,7 +642,7 @@
           "docs/ADMIN.md"
         ]
       },
-      "limitation": "Generated CRUD only. The factory does not generate workflows or approvals for a custom object — that is still handwritten (JTBD-06, partially supported).",
+      "limitation": "Generated CRUD only. The factory does not generate workflows or approvals for a custom object \u2014 that is still handwritten (JTBD-06, partially supported).",
       "surfaces": [
         "site",
         "readme",
@@ -98,7 +712,7 @@
     },
     {
       "id": "C-05",
-      "text": "Opportunities move through code-first pipeline stages under a server-authoritative action — the client asks, the server decides.",
+      "text": "Opportunities move through code-first pipeline stages under a server-authoritative action \u2014 the client asks, the server decides.",
       "evidence": {
         "jtbd": "JTBD-03",
         "tests": [
@@ -130,7 +744,7 @@
           "docs/LEAD_INTELLIGENCE.md"
         ]
       },
-      "limitation": "Enrichment runs against a fixture provider — no real external data source is wired. The Lead model is the starter's, not a built-in core module.",
+      "limitation": "Enrichment runs against a fixture provider \u2014 no real external data source is wired. The Lead model is the starter's, not a built-in core module.",
       "surfaces": [
         "site",
         "readme",
@@ -158,7 +772,7 @@
     },
     {
       "id": "C-08",
-      "text": "Quotes price on the server from a catalog — one-time and recurring, flat, per-unit, volume and graduated tiers — and freeze into an immutable version when a discount goes for approval.",
+      "text": "Quotes price on the server from a catalog \u2014 one-time and recurring, flat, per-unit, volume and graduated tiers \u2014 and freeze into an immutable version when a discount goes for approval.",
       "evidence": {
         "jtbd": "JTBD-CO-01, JTBD-CO-03",
         "tests": [
@@ -170,7 +784,7 @@
           "docs/COMMERCIAL_OPERATIONS.md"
         ]
       },
-      "limitation": "Catalog sync runs against a fixture provider; no real external catalog (Stripe, Zuora, ERP) is connected. Money is integer cents with no FX — currencies are never summed.",
+      "limitation": "Catalog sync runs against a fixture provider; no real external catalog (Stripe, Zuora, ERP) is connected. Money is integer cents with no FX \u2014 currencies are never summed.",
       "surfaces": [
         "site",
         "readme"
@@ -198,7 +812,7 @@
     },
     {
       "id": "C-10",
-      "text": "A signed Order activates into a Commercial Contract, an immutable contract version, a Subscription and explicitly pending delivery and service obligations — every component classified, never guessed.",
+      "text": "A signed Order activates into a Commercial Contract, an immutable contract version, a Subscription and explicitly pending delivery and service obligations \u2014 every component classified, never guessed.",
       "evidence": {
         "jtbd": "JTBD-CS-01, JTBD-CS-02",
         "tests": [
@@ -225,7 +839,7 @@
     },
     {
       "id": "C-11",
-      "text": "Pending obligations hand over into a Delivery Project with work packages, milestones and an optional partner — atomically, idempotently, and across a package boundary the kernel never learns about.",
+      "text": "Pending obligations hand over into a Delivery Project with work packages, milestones and an optional partner \u2014 atomically, idempotently, and across a package boundary the kernel never learns about.",
       "evidence": {
         "jtbd": "JTBD-DS-01",
         "tests": [
@@ -237,7 +851,7 @@
           "docs/DELIVERY_HANDOVER.md"
         ]
       },
-      "limitation": "It hands work over and runs it through human-driven transitions. Nothing schedules, staffs, computes percent complete or bills. Deliverables and recorded customer acceptance exist as of M14b2, and acceptance there is evidence a user actor recorded — never an authenticated customer, a legal signature or authorization to bill.",
+      "limitation": "It hands work over and runs it through human-driven transitions. Nothing schedules, staffs, computes percent complete or bills. Deliverables and recorded customer acceptance exist as of M14b2, and acceptance there is evidence a user actor recorded \u2014 never an authenticated customer, a legal signature or authorization to bill.",
       "surfaces": [
         "site",
         "readme"
@@ -306,7 +920,7 @@
           "domain.work.package_native=package_native"
         ]
       },
-      "limitation": "The scaffold that starts one writes an empty package and nothing else: no business logic, no composition, no global identity-uniqueness check. There is no registry, no marketplace, no publication and no sandboxing — package code runs with the host process's authority. Detaching leaves its data behind; there is no uninstall.",
+      "limitation": "The scaffold that starts one writes an empty package and nothing else: no business logic, no composition, no global identity-uniqueness check. There is no registry, no marketplace, no publication and no sandboxing \u2014 package code runs with the host process's authority. Detaching leaves its data behind; there is no uninstall.",
       "surfaces": [
         "site",
         "readme"
@@ -314,7 +928,7 @@
     },
     {
       "id": "C-14",
-      "text": "One command tells an agent what an application actually is — packages, capabilities, resources, actions, policies, providers — read from checked-in source, in a single deterministic JSON report.",
+      "text": "One command tells an agent what an application actually is \u2014 packages, capabilities, resources, actions, policies, providers \u2014 read from checked-in source, in a single deterministic JSON report.",
       "evidence": {
         "jtbd": "JTBD-AX-01, JTBD-AX-02",
         "tests": [
@@ -330,7 +944,7 @@
           "rail.solution_check.implemented=implemented"
         ]
       },
-      "limitation": "Source-only and read-only. It never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state — and it lists those blind spots as machine-readable limitations in its own output.",
+      "limitation": "Source-only and read-only. It never opens the database, contacts a provider, reads a secret, or reports runtime, CI or authorization state \u2014 and it lists those blind spots as machine-readable limitations in its own output.",
       "surfaces": [
         "site",
         "readme",
@@ -339,7 +953,7 @@
     },
     {
       "id": "C-22",
-      "text": "One command composes the whole thing and then inspects it: 76 modules, 9 packages, 71 resources, 64 actions, 7 policies and 1 providers, applied from manifests and driven end to end — then it prints the eleven things the inspector says it cannot see.",
+      "text": "One command composes the whole thing and then inspects it: 76 modules, 9 packages, 71 resources, 64 actions, 7 policies and 1 providers, applied from manifests and driven end to end \u2014 then it prints the eleven things the inspector says it cannot see.",
       "evidence": {
         "tests": [
           "tests/app-inspect.test.js",
@@ -385,7 +999,7 @@
           "docs/COMMERCIAL_OPERATIONS.md"
         ],
         "testName": "commercial e2e: approval boundary, revise/version-2, concurrency, fault injection, provider failures, drift",
-        "assertion": "tests/commercial-e2e.test.js — quote.approve with actor { type: 'agent' } rejects with status 403 and code HUMAN_APPROVAL_REQUIRED"
+        "assertion": "tests/commercial-e2e.test.js \u2014 quote.approve with actor { type: 'agent' } rejects with status 403 and code HUMAN_APPROVAL_REQUIRED"
       },
       "limitation": "The assertion lives inside a composite end-to-end test rather than a test named for it, so the citation is a file and a line rather than a test name. Extracting it into a named test is tracked in docs/strategy/GO_TO_MARKET.md; until then, cite the line.",
       "surfaces": [
@@ -396,7 +1010,7 @@
     },
     {
       "id": "C-15",
-      "text": "A Solution Plan is a checked-in file with a contract and a canonical fingerprint, validated against a real inspection — so a plan written against a composition that has since moved reports itself stale.",
+      "text": "A Solution Plan is a checked-in file with a contract and a canonical fingerprint, validated against a real inspection \u2014 so a plan written against a composition that has since moved reports itself stale.",
       "evidence": {
         "jtbd": "JTBD-AX-03",
         "tests": [
@@ -504,7 +1118,7 @@
     },
     {
       "id": "C-20",
-      "text": "The verification gate runs on every push — source checks and then the whole test suite — covering happy paths and the policy boundaries that matter: hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
+      "text": "The verification gate runs on every push \u2014 source checks and then the whole test suite \u2014 covering happy paths and the policy boundaries that matter: hostile input, transaction rollback, idempotency, concurrency and immutability among them.",
       "evidence": {
         "repoFacts": [
           "measuredAgainst in this file records the run: npm run verify, green, at the commit named there, with a fingerprint of the tests/ tree it was taken over",
@@ -518,7 +1132,7 @@
           "rail.scenario_run.implemented=implemented"
         ]
       },
-      "limitation": "A test count measures effort, not correctness — read the adversarial-review categories in docs/QUALITY_GATES.md to see what is actually attacked. Real-browser tests are run manually and are not in CI.",
+      "limitation": "A test count measures effort, not correctness \u2014 read the adversarial-review categories in docs/QUALITY_GATES.md to see what is actually attacked. Real-browser tests are run manually and are not in CI.",
       "surfaces": [
         "site",
         "readme"
@@ -526,7 +1140,7 @@
     },
     {
       "id": "C-23",
-      "text": "Five rules can be removed on purpose in one command, and the suite catches every one in about two seconds — naming the test that caught it. Anything that survives is reported as a gap, not omitted.",
+      "text": "Five rules can be removed on purpose in one command, and the suite catches every one in about two seconds \u2014 naming the test that caught it. Anything that survives is reported as a gap, not omitted.",
       "evidence": {
         "tests": [
           "tests/falsify.test.js",
@@ -542,7 +1156,7 @@
           "the run refuses to start over uncommitted target files and verifies every restore byte-for-byte"
         ]
       },
-      "limitation": "It falsifies six named rules, not the claims in this ledger, and it proves only that a test holds each one — a rule that is wrong but faithfully defended passes every mutation. It is not mutation testing: nothing is generated or sampled, and no score is derived.",
+      "limitation": "It falsifies six named rules, not the claims in this ledger, and it proves only that a test holds each one \u2014 a rule that is wrong but faithfully defended passes every mutation. It is not mutation testing: nothing is generated or sampled, and no score is derived.",
       "surfaces": [
         "site",
         "readme",
@@ -554,7 +1168,7 @@
     {
       "id": "L-01",
       "headline": "No authentication ships: the framework authenticates nobody.",
-      "text": "Production Spine v1 (ADR-038) gives the framework verified identity, organizations and memberships, server-authoritative authorization and one tenant per application instance — so tenancy and authorization now exist and are enforced. What does not exist is authentication: no login, password, session or OIDC implementation ships, and a deployment must supply the adapter that verifies the request. Production mode refuses to start without one. In local-development mode an actor header is accepted as an assertion and is not an identity, which is the default developer posture. This is not shared-database multi-tenancy and it is not a readiness claim.",
+      "text": "Production Spine v1 (ADR-038) gives the framework verified identity, organizations and memberships, server-authoritative authorization and one tenant per application instance \u2014 so tenancy and authorization now exist and are enforced. What does not exist is authentication: no login, password, session or OIDC implementation ships, and a deployment must supply the adapter that verifies the request. Production mode refuses to start without one. In local-development mode an actor header is accepted as an assertion and is not an identity, which is the default developer posture. This is not shared-database multi-tenancy and it is not a readiness claim.",
       "evidence": {
         "jtbd": "JTBD-15",
         "docs": [
