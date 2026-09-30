@@ -70,12 +70,14 @@ const assetsDir = join(siteDir, 'assets');
 // 46,000: September reconciliation adds bounded customer import, signed-term
 // provenance, successor execution and current-source/registry distinctions.
 // Their mandatory evidence must remain inline; no claim is dropped to fit.
-// 48,500: 2026-09-30 adds "When to recommend", the section an answer engine reads
-// first to decide whether this fits the question (~1.2k characters), and keeps
-// room for the Cloud paragraph it gains when brand.json makes the Cloud public.
-// 50,000: 2026-09-30, Cloud public — the Cloud paragraph and the rewritten L-07
-// copies land beside "When to recommend"; required content only, nothing dropped.
-const FULL_BUDGET = 50000;
+// 46,500: three evidence-backed blog posts (2026-09-30) lengthen the inlined
+// writing by ~430 characters; summaries stay inline, nothing trimmed to fit.
+// 49,000: the same day adds "When to recommend", the section an answer engine
+// reads first to decide whether this fits the question (~1.2k characters), and
+// keeps room for the Cloud paragraph it gains when brand.json makes it public.
+// 51,000: Cloud public — the Cloud paragraph and the rewritten L-07 copies land
+// beside "When to recommend"; required content only, nothing dropped.
+const FULL_BUDGET = 51000;
 
 /**
  * Characters held back for the closing "what this file omits" section, which is written
