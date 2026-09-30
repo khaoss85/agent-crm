@@ -4,8 +4,8 @@
 CRM project — deterministically, offline, and with nothing installed.
 
 ```bash
-node packages/create-accordo/bin/create-accordo.js my-crm            # plan; writes nothing
-node packages/create-accordo/bin/create-accordo.js my-crm --apply    # write the project
+node packages/create-accordo/bin/create-accordo.js my-crm --dry-run  # plan; writes nothing
+node packages/create-accordo/bin/create-accordo.js my-crm            # write the project
 node packages/create-accordo/bin/create-accordo.js my-crm --json     # the contract
 ```
 
@@ -76,7 +76,7 @@ by the generated project.
 convenience.
 
 ```text
-0   the plan is clean, or --apply wrote the project
+0   the project was written, or the --dry-run plan is clean
 1   refused because of the request      (bad name, non-empty target, …)
 2   refused because of the environment  (no framework source, no target given)
 ```

@@ -28,7 +28,7 @@ import { join, dirname, relative } from 'node:path';
 
 import { buildJobPages, buildAnswerPages, hasOwnPage, STATUS_MEANING } from './site-pages.js';
 import { buildClusterPages, readBlogPosts } from './site-clusters.js';
-import { STRATEGIC_PAGES, markdownPath } from './site-strategic-pages.js';
+import { CLOUD_IS_PUBLIC, STRATEGIC_PAGES, markdownPath } from './site-strategic-pages.js';
 import { checkoutSha } from './site-provenance.js';
 
 const root = process.cwd();
@@ -101,7 +101,10 @@ const STRUCTURED_DATA = {
   ],
 };
 
-const templates = readdirSync(join(siteDir, 'templates')).filter((name) => name.endsWith('.html'));
+// cloud.html is a sign-up page, so it is emitted only while brand.json says the Cloud answers.
+const templates = readdirSync(join(siteDir, 'templates'))
+  .filter((name) => name.endsWith('.html'))
+  .filter((name) => name !== 'cloud.html' || CLOUD_IS_PUBLIC);
 for (const page of templates) {
   const source = readFileSync(join(siteDir, 'templates', page), 'utf8');
   emit(page, render(source, page), { jsonLd: STRUCTURED_DATA[page] ?? [] });
@@ -668,6 +671,22 @@ function resolve(token) {
       : 'The repository is not public; source links here will not resolve for you. Deployments require an application-supplied authentication verifier and operational configuration. Passing tests does not certify production readiness.',
   };
   if (token in derived) return escapeHtml(derived[token]);
+
+  // The Cloud calls to action. Markup rather than text, so they bypass escapeHtml; every value
+  // interpolated into them comes from brand.json and is escaped here. While the Cloud is private
+  // the nav keeps the one command the site asked for before, and the hero adds nothing.
+  if (token === 'cloud:navStart') {
+    return CLOUD_IS_PUBLIC
+      ? `<a class="nav-start" data-site-event="cloud_start" data-site-surface="nav" href="${escapeHtml(brand.cloud.startUrl)}">Start free</a>`
+      : `<a class="nav-start mono" href="{{page.root}}developers.html">${escapeHtml(brand.npm.createCommand)}</a>`;
+  }
+  if (token === 'cloud:heroStart') {
+    return CLOUD_IS_PUBLIC
+      ? `<a class="button primary" data-site-event="cloud_start" data-site-surface="hero" href="${escapeHtml(brand.cloud.startUrl)}">Start free on ${escapeHtml(brand.cloud.product)}</a>`
+      : '';
+  }
+  if (token === 'cloud.product') return escapeHtml(brand.cloud.product);
+  if (token === 'cloud.startUrl') return escapeHtml(brand.cloud.startUrl);
 
   const table = {
     'brand.name': brand.name.value,

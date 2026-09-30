@@ -84,6 +84,31 @@ for (const path of [
   }
 }
 
+// The Cloud switch in brand.json has two false states, and both are refused here. A public Cloud
+// next to "no hosted CRM, no free tier, no account" (limitation L-07 and its copies) tells a model
+// two opposite things about the same sign-up; a private Cloud with a sign-up page in dist sends a
+// visitor to a service that does not answer.
+const cloudIsPublic = brand.cloud?.status === 'public';
+if (cloudIsPublic) {
+  if (!/^https:\/\/[^/]+\.[^/]+\//.test(String(brand.cloud.startUrl ?? ''))) {
+    fail('brand.json: cloud.status is public but cloud.startUrl is not an absolute https URL.');
+  }
+  const noSignUp = /no hosted CRM|no free tier|nothing to sign up for|not (?:a product|an application) you sign up for/i;
+  for (const path of [
+    ...collect(join(siteDir, 'templates'), '.html'),
+    ...collect(siteDir, '.json'),
+    ...collect(outDir, '.html'),
+    ...collect(outDir, '.md'),
+  ]) {
+    if (relative(siteDir, path).split(sep).includes('blog')) continue;
+    if (noSignUp.test(readFileSync(path, 'utf8'))) {
+      fail(`${relative(root, path)}: says there is nothing to sign up for while brand.json says ${brand.cloud.product} is public.`);
+    }
+  }
+} else if (existsSync(join(outDir, 'cloud.html'))) {
+  fail('site/dist/cloud.html: a Cloud sign-up page was emitted while brand.json says the Cloud is private.');
+}
+
 // ---------------------------------------------------------------- 1 & 2. ledger integrity
 
 const seen = new Set();
