@@ -33,7 +33,7 @@ import { dirname, join, resolve } from 'node:path';
  * no credential is printed.
  */
 
-export const CLOUD_DEFAULT_ORIGIN = 'https://cloud.accordo.dev';
+export const CLOUD_DEFAULT_ORIGIN = 'https://app.accordo.dev';
 export const CLOUD_FILE = 'accordo.cloud.json';
 
 export class CloudRefused extends Error {
