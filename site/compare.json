@@ -41,12 +41,12 @@
           "body": [
             "No time or cost estimate, and no build-rate figure. The agent build benchmark is designed and published but has not been run, so no Successful Agent Build Rate exists and any number quoted for this project is not ours (L-03). Nothing on this page says an agent finishes faster here, because that has not been measured.",
             "No comparison to any specific starter, template or boilerplate. This page compares against the empty repository, not against a named project — the dated competitor research the rest of this cluster reads carries facts about other software, and this entry needs none of them, so it uses none.",
-            "Nothing about production posture or hosting. There is no hosted CRM, no free tier and no account; the output is an application in your repository that you run (L-07). The comparison assumes you are the one deploying it, and says nothing about how."
+            "Nothing about production posture or hosting. The framework's output is an application in your repository that you run; hosting is the managed Cloud, free for Blueprint-configured workspaces and paid for custom code (L-07). The comparison assumes you are the one deploying it, and says nothing about how."
           ]
         }
       ],
       "boundaries": [
-        "This is a framework, not an application you sign up for. There is no hosted CRM, no free tier and no account (L-07).",
+        "This is a framework whose output you run; the managed Cloud hosts a free Blueprint-configured workspace, and custom code only on a paid Dedicated Cell (L-07).",
         "Ownership means vendored source, not a dependency: `npm create accordo` scaffolds a project with the framework source copied in, and upgrading means merging rather than bumping (L-08).",
         "The framework authenticates nobody, and ships no verifier. In local-development mode an actor header is an assertion, not an identity, and that server must not be exposed to a network (L-01).",
         "The synchronous factory uses SQLite; the async factory supports one tenant on dedicated PostgreSQL databases. Shared-database row tenancy and general production readiness are not claimed (L-02).",
@@ -143,7 +143,7 @@
           "body": [
             "As of the research date this page carries, August 4, 2026, Twenty is the largest project in the researched set by GitHub stars — 54.3k — with YC S23 backing, roughly $5.5M raised, and weekly releases. It runs as a NestJS/React/PostgreSQL platform you can self-host with Docker, or as a cloud product; the per-seat cloud pricing in the research file came from third-party teardowns rather than a primary page, so treat the figures there as indicative and do not budget from this page. The headline fact is simpler than any of that: it is a CRM a technical team can run and use, and this framework is not.",
             "Its coding-agent story is real rather than a slide. The research file records an MIT-licensed SDK, a create-twenty-app command, a CLAUDE.md checked into the repository, AI agents inside the product, and native MCP confirmed for cloud workspaces — with self-host parity explicitly unverified. Measured on getting an agent productive against a running CRM this afternoon, that is ahead of where this project stands: `npm create accordo` scaffolds a local development project with the framework vendored in — ownership means keeping that copied source, and upgrading means merging (L-08) — and the MCP server here is stdio and local only, with no hosted or authenticated endpoint (C-18).",
-            "And the plain asymmetry. Twenty 2.0 added an apps platform, in-product AI agents and git-backed workspace config, and its customization surface spans a settings UI, APIs and an Apps SDK covering entities, serverless logic functions and UI widgets. This framework ships no authentication at all (L-01), supports SQLite and dedicated-database PostgreSQL (L-02), and is not a product you sign up for (L-07). If what you want is a CRM, that comparison is not close, and pretending otherwise here would forfeit your trust in everything else on this site."
+            "And the plain asymmetry. Twenty 2.0 added an apps platform, in-product AI agents and git-backed workspace config, and its customization surface spans a settings UI, APIs and an Apps SDK covering entities, serverless logic functions and UI widgets. This framework ships no authentication at all (L-01), supports SQLite and dedicated-database PostgreSQL (L-02), and is source you run, with a managed Cloud that hosts Blueprint-configured workspaces for free and custom code only for a fee (L-07). If what you want is a CRM, that comparison is not close, and pretending otherwise here would forfeit your trust in everything else on this site."
           ]
         },
         {
@@ -295,7 +295,7 @@
         "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04; the Enterprise-only-AI point is flagged there as secondary-sourced and is flagged here the same way.",
         "No feature comparison, no pricing comparison and no migration path — the source carries none of the three.",
         "Licence descriptions are factual summaries, not legal advice.",
-        "This framework is not a product a business buys: no hosted CRM, no free tier, no account (L-07).",
+        "What a business signs up for is the managed Cloud: a free Blueprint-configured workspace, with custom code on a paid Dedicated Cell (L-07).",
         "No authentication ships, so nothing here is ready for a sales team to log into (L-01).",
         "No prebuilt connector to a suite ships. Bounded customer-row import exists; mapping source data and completing export remain application work (L-05, L-06).",
         "Real customer data cannot go in yet: no export and no erasure path means a subject request cannot be serviced (L-09)."
@@ -538,7 +538,7 @@
         "Licence descriptions are factual summaries of published texts, not legal advice.",
         "This framework ships no authentication; in local-development mode an actor header is an assertion, not an identity (L-01).",
         "The synchronous factory uses SQLite; the async factory supports one tenant on dedicated PostgreSQL databases. Shared-database row tenancy and general production readiness are not claimed (L-02).",
-        "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",
+        "This is a framework whose output you run; the managed Cloud hosts a free Blueprint-configured workspace, and custom code only on a paid Dedicated Cell (L-07).",
         "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
         "No build-rate or speed claim in either direction — the benchmark has not been run (L-03)."
       ],
@@ -602,7 +602,7 @@
         {
           "heading": "Where Relaticle wins",
           "body": [
-            "On the axis it chose, it is ahead of everything else in the researched set — including this project's own runtime story. The research file — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records a first-party MCP server with 30 tools, calls it the most agent-forward incumbent claim, and names Relaticle the first mover on agent-native CRM language. It is a working application on a modern PHP stack — Laravel, Filament, PHP 8.4, Postgres — that a developer-led team or an AI-forward SMB can self-host and point an agent at today. The MCP server here, by contrast, is stdio and local only, with no hosted or authenticated endpoint (C-18), and there is no product around it to operate: no hosted CRM, no free tier, no account (L-07).",
+            "On the axis it chose, it is ahead of everything else in the researched set — including this project's own runtime story. The research file — docs/strategy/COMPETITOR_MAP.md, dated August 4, 2026 — records a first-party MCP server with 30 tools, calls it the most agent-forward incumbent claim, and names Relaticle the first mover on agent-native CRM language. It is a working application on a modern PHP stack — Laravel, Filament, PHP 8.4, Postgres — that a developer-led team or an AI-forward SMB can self-host and point an agent at today. The MCP server here, by contrast, is stdio and local only, with no hosted or authenticated endpoint (C-18), and the only hosted product around it is the managed Cloud, which runs Blueprint-configured workspaces for free and custom code on a paid Dedicated Cell (L-07).",
             "Runtime flexibility without a deploy. The file records 22 custom field types and no-migration schema changes — a record can be reshaped inside the running app without touching a repository. And the baseline asymmetry holds here as everywhere on this site: Relaticle is a CRM you can use, while this framework has no authentication ships, and a deployment must supply the verifier (L-01), supports SQLite and dedicated-database PostgreSQL (L-02), and arrives vendored — `npm create accordo` copies the framework source into the project, so ownership means keeping that copy and upgrading means merging (L-08)."
           ]
         },
@@ -640,7 +640,7 @@
         "The MCP server here is stdio and local only, with no hosted or authenticated endpoint, and it inherits the local process's authority.",
         "No authentication ships; in local-development mode an actor header is an assertion, not an identity (L-01).",
         "The synchronous factory uses SQLite; the async factory supports one tenant on dedicated PostgreSQL databases. Shared-database row tenancy and general production readiness are not claimed (L-02).",
-        "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",
+        "This is a framework whose output you run; the managed Cloud hosts a free Blueprint-configured workspace, and custom code only on a paid Dedicated Cell (L-07).",
         "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
         "No claim that an agent builds faster or more reliably here — the benchmark has not been run (L-03)."
       ],
@@ -704,7 +704,7 @@
           "heading": "Where Comp AI's CRM wins",
           "body": [
             "It proved the demand is real, and has since proved more than that. The research file this page reads — docs/strategy/COMPETITOR_MAP.md — recorded 4.4k GitHub stars on August 4, 2026; a re-check dated August 20 records 8.7k stars, 1.0k forks and 211 commits, under an MIT licence, TypeScript end-to-end on Next.js, NestJS and Prisma. Its thesis is an autonomous background agent with a work queue, evidence-based facts and a sandboxed design the file calls genuinely novel. If what you want is a CRM in which the agent is a worker inside the product, that is its entire thesis — and nothing in this framework attempts it. No autonomous sales agent ships here. Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04).",
-            "It is also far simpler to stand up. The file records deployment as three Vercel deployments. This project is not a product at all — no hosted CRM, no free tier, no account (L-07) — with no authentication ships, and a deployment must supply the verifier (L-01), SQLite or dedicated-database PostgreSQL persistence (L-02), and an npm scaffolder shipping the dated 0.1.0 source snapshot or a current-checkout bootstrap; upgrading means merging source (L-08)."
+            "It is also far simpler to stand up. The file records deployment as three Vercel deployments. This project's hosted form is the managed Cloud, limited to Blueprint-configured workspaces unless a paid Dedicated Cell runs custom code (L-07) — with no authentication ships, and a deployment must supply the verifier (L-01), SQLite or dedicated-database PostgreSQL persistence (L-02), and an npm scaffolder shipping the dated 0.1.0 source snapshot or a current-checkout bootstrap; upgrading means merging source (L-08)."
           ]
         },
         {
@@ -741,7 +741,7 @@
         "No autonomous background sales agent ships. Durable jobs, a transactional outbox and scheduled asks exist for self-hosted applications that explicitly start a worker. Nothing autostarts; a timer opens an ask, never makes a decision, and no managed worker service or recurrence is included (L-04).",
         "No authentication ships; in local-development mode an actor header is an assertion, not an identity (L-01).",
         "The synchronous factory uses SQLite; the async factory supports one tenant on dedicated PostgreSQL databases. Shared-database row tenancy and general production readiness are not claimed (L-02).",
-        "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",
+        "This is a framework whose output you run; the managed Cloud hosts a free Blueprint-configured workspace, and custom code only on a paid Dedicated Cell (L-07).",
         "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
         "No measured comparison in either direction — the benchmark has not been run (L-03)."
       ],
@@ -840,7 +840,7 @@
         "No hands-on evaluation: nothing from either product was installed, configured or run to produce this page.",
         "Every competitor fact is single-sourced to docs/strategy/COMPETITOR_MAP.md and dated 2026-08-04.",
         "Licence descriptions are factual summaries of published texts, not legal advice.",
-        "This framework is not a product a business buys: no hosted CRM, no free tier, no account (L-07).",
+        "What a business signs up for is the managed Cloud: a free Blueprint-configured workspace, with custom code on a paid Dedicated Cell (L-07).",
         "No authentication ships, so nothing here is ready for a sales team to log into (L-01).",
         "No prebuilt CRM migration or business-service connector ships. Bounded customer-row import exists; source mapping and complete export remain application work (L-05, L-06).",
         "Real customer data cannot go in yet: no export and no erasure path means a subject request cannot be serviced (L-09).",
@@ -945,7 +945,7 @@
         "This framework ships no authentication; in local-development mode an actor header is an assertion, not an identity (L-01).",
         "The synchronous factory uses SQLite; the async factory supports one tenant on dedicated PostgreSQL databases. Shared-database row tenancy and general production readiness are not claimed (L-02). This is not a Supabase-specific starter.",
         "Customer Data Foundation supports bounded JSON imports with preview/apply, per-row receipts and idempotency, deterministic duplicate candidates, and human-governed canonical identity as logical links. It does not provide CSV ingestion, physical merge, complete export/erasure, bulk editing, saved views or global search (L-06).",
-        "This is a framework, not a product you sign up for: no hosted CRM, no free tier, no account (L-07).",
+        "This is a framework whose output you run; the managed Cloud hosts a free Blueprint-configured workspace, and custom code only on a paid Dedicated Cell (L-07).",
         "The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
         "No measured comparison in either direction — the benchmark has not been run (L-03)."
       ],

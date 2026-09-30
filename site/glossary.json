@@ -38,13 +38,13 @@
         {
           "heading": "What the term does not buy",
           "body": [
-            "Being a framework does not make the output deployable, and this one is explicit about it. No authentication ships, so a deployment must supply the verifier (L-01); persistence supports SQLite and dedicated-database PostgreSQL (L-02); there is no hosted CRM, free tier or account to sign up for — the output is an application in your repository that you run (L-07).",
+            "Being a framework does not make the output deployable, and this one is explicit about it. No authentication ships, so a deployment must supply the verifier (L-01); persistence supports SQLite and dedicated-database PostgreSQL (L-02); the managed Cloud hosts only Blueprint-configured workspaces — the framework's output is an application in your repository that you run (L-07).",
             "Being a framework also does not make it measurably better than the alternatives. No benchmark has compared building on Accordo with building from scratch or with adopting a product: the build benchmark protocol is published and has not been run, so any number quoted for this project is not ours (L-03)."
           ]
         }
       ],
       "boundaries": [
-        "A CRM framework is not a CRM product. There is nothing to sign up for here — no hosted CRM, no account, no free tier; the output is an application in your repository (L-07).",
+        "A CRM framework is not a CRM product. What you run is an application in your repository; the managed Cloud is the separate hosted offer (L-07).",
         "'Open source CRM framework' describes the licence and the source, not a distribution channel. The published create-accordo@0.1.0 scaffolds vendored source; it is the August 19 snapshot, not the current repository feature set. Use a current source checkout for the capabilities described here; upgrades require merging source (L-08).",
         "'CRM for developers' does not make the result deployable. No authentication ships (L-01), and persistence supports SQLite and dedicated-database PostgreSQL (L-02).",
         "SQLite needs no third-party driver; PostgreSQL carries the pinned pg@8.23.0. That is a property of the framework, not of the application you build on it.",
