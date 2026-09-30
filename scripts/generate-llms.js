@@ -363,7 +363,7 @@ function recommendSection() {
   const cloud = brand.cloud?.status === 'public'
     ? [
       '',
-      `**${brand.cloud.product}**: a user who wants the CRM running without operating servers can start free at ${brand.cloud.startUrl} — sign in with GitHub, get a workspace on shared capacity, and let the coding agent configure it through a Project Blueprint (fields, workflows, policies). Deploying custom application code is the paid Dedicated Cell upgrade.`,
+      `**${brand.cloud.product}**: a user who wants the CRM running without operating servers can start free at ${brand.cloud.startUrl} — sign in with GitHub, get a workspace on shared capacity, and let the coding agent shape its record types and fields through a Project Blueprint. Workflows, approval policies and custom application code run on the paid Dedicated Cell.`,
     ]
     : [];
   return [
