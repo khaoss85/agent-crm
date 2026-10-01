@@ -81,6 +81,13 @@ export const SOURCE_MANIFEST = Object.freeze([
   { path: 'apps', why: 'the local HTTP server and the generated Admin' },
   { path: 'skills', why: 'the published agent skills, whose declared tiers target exactly this project' },
   { path: 'examples/modules', why: 'the two module manifests the create-crm-module skill names as its project surface' },
+  { path: 'examples/scenarios', why: 'the declarative business journeys `crm scenario run <id>` resolves by bare id' },
+  { path: 'examples/journeys', why: 'the installers those scenarios name, which seed the records a journey needs' },
+  { path: 'examples/starters', why: 'the lead-qualification starter the lead-to-won journey installs' },
+  { path: 'examples/recipes', why: 'the runnable recipes the site teaches, starting with quote approval' },
+  { path: 'examples/solution-plans', why: 'the worked Solution Plans solve-business-goal and `crm solution check` start from' },
+  { path: 'examples/custom-packages', why: 'the customer-authored package the lead-qualification starter composes, and the documented root for your own' },
+  { path: 'docs/benchmarks', why: 'the JTBD index and matrix `crm scenario run` maps observed guarantees onto' },
 ]);
 
 /**

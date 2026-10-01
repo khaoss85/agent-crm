@@ -2,7 +2,7 @@
 // Deterministic local recipe; simulated actors, fixture catalog, no real customer data.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -25,8 +25,18 @@ const sourceCommit = sha.status === 0 ? sha.stdout.trim() : null;
 const recipeSha256 = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex');
 
 // The existing bootstrap refuses nonempty targets before any composition writes.
-run(process.execPath, [join(source, 'packages/create-accordo/bin/create-accordo.js'), target, '--name', 'quote-approval-example', '--apply', '--json'], source);
-console.log('Created a fresh local CRM project from the framework source.');
+// From the framework repository the local bootstrapper is used; inside a project
+// created by `npm create accordo` there is none (a project is not a bootstrapper),
+// so the published package creates the fresh project instead.
+// ACCORDO_CREATE_ACCORDO_BIN names a bootstrapper explicitly (tests, unreleased builds).
+const localBootstrapper = process.env.ACCORDO_CREATE_ACCORDO_BIN ?? join(source, 'packages/create-accordo/bin/create-accordo.js');
+const bootstrapArgs = [target, '--name', 'quote-approval-example', '--apply', '--json'];
+if (existsSync(localBootstrapper)) {
+  run(process.execPath, [localBootstrapper, ...bootstrapArgs], source);
+} else {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['exec', '--yes', 'create-accordo@latest', '--', ...bootstrapArgs], source);
+}
+console.log('Created a fresh local CRM project.');
 // Installs the generated project's pinned dependency. No provider calls occur in the journey.
 run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--no-audit', '--no-fund'], target);
 mkdirSync(join(target, 'examples/quote-approval'), { recursive: true });

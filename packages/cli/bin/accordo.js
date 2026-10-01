@@ -20,6 +20,15 @@ runCli(process.argv.slice(2)).catch((error) => {
     // the entry must still exit nonzero inside the bound.
     process.exit(1);
   }
-  console.error(error instanceof Error ? error.stack ?? error.message : error);
+  // A refusal the framework names — a validation error, a Cloud refusal — is an
+  // answer, not a crash: print its name and message, which already say what to
+  // do. A stack is printed only for errors nobody named (a bug), or on request.
+  const named = error instanceof Error && /^[A-Z][A-Z0-9_]{2,}$/.test(code);
+  if (named && !process.env.ACCORDO_DEBUG) {
+    console.error(`${error.name}: ${error.message}`);
+    console.error('(set ACCORDO_DEBUG=1 to print the stack)');
+  } else {
+    console.error(error instanceof Error ? error.stack ?? error.message : error);
+  }
   process.exitCode = 1;
 });
