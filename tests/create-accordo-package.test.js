@@ -94,7 +94,10 @@ test('the private source manifest and public publication manifest cannot be conf
   assert.equal(assembly.files.some((file) => file.relativePath === 'README.md'), true);
   assert.equal(assembly.files.some((file) => file.relativePath === 'LICENSE'), true);
   assert.equal(assembly.files.some((file) => file.relativePath.startsWith('framework/site/')), false);
-  assert.equal(assembly.files.some((file) => file.relativePath.startsWith('framework/docs/')), false);
+  // Only the JTBD index and matrix `crm scenario run` reads travel; strategy, plans and marketing never do.
+  assert.equal(assembly.files.some((file) => file.relativePath === 'framework/docs/benchmarks/jobs.json'), true);
+  assert.equal(assembly.files.some((file) => file.relativePath.startsWith('framework/docs/')
+    && !file.relativePath.startsWith('framework/docs/benchmarks/')), false);
 });
 
 test('the release workflow redirects JSON-only assembly output', (t) => {
@@ -181,7 +184,8 @@ test('two assemblies pack byte-identically, install offline and create a working
   assert.equal(packA.files.some((file) => file.path === 'framework/packages/core/index.js'), true);
   assert.equal(packA.files.some((file) => file.path === 'framework/packages/create-accordo/package.json'), false);
   assert.equal(packA.files.some((file) => file.path.startsWith('framework/site/')), false);
-  assert.equal(packA.files.some((file) => file.path.startsWith('framework/docs/')), false);
+  assert.equal(packA.files.some((file) => file.path.startsWith('framework/docs/')
+    && !file.path.startsWith('framework/docs/benchmarks/')), false);
 
   const consumer = join(workspace, 'consumer');
   // The directory is created through the package manifest write so npm has a
@@ -294,7 +298,7 @@ test('assembly never follows a publication-file symlink outside the repository',
   const workspace = scratch(t, 'accordo-package-symlink-');
   const fakeRoot = join(workspace, 'source');
   mkdirSync(fakeRoot);
-  for (const entry of ['LICENSE', 'packages', 'apps', 'skills', 'examples']) {
+  for (const entry of ['LICENSE', 'packages', 'apps', 'skills', 'examples', 'docs/benchmarks']) {
     cpSync(join(repoRoot, entry), join(fakeRoot, entry), { recursive: true });
   }
   const outside = join(workspace, 'outside.txt');

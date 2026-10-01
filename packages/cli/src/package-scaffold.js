@@ -314,7 +314,7 @@ proves nothing about whether the domain logic is right — that is what this
 package's own tests are for, and the report says so as
 \`DOMAIN_CORRECTNESS_NOT_PROVEN\`.
 
-Guides: \`docs/PACKAGE_AUTHORING.md\`, \`DECISIONS.md\` (ADR-018).
+Guides (in the framework repository, not copied into projects): https://github.com/khaoss85/agent-crm/blob/main/docs/PACKAGE_AUTHORING.md and ADR-018 in https://github.com/khaoss85/agent-crm/blob/main/DECISIONS.md.
 `;
 
   return [

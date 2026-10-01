@@ -243,8 +243,13 @@ test('the source inventory excludes the bootstrapper, the state and the reposito
   assert.equal(bootstrap([target, '--apply']).exitCode, 0);
 
   assert.equal(existsSync(join(target, 'packages/create-accordo')), false, 'a project is not a bootstrapper');
-  for (const absent of ['node_modules', '.git', 'docs', 'site', 'benchmarks', 'ARCHITECTURE.md', 'DECISIONS.md', 'CLAUDE.md', 'TASKS.md']) {
+  for (const absent of ['node_modules', '.git', 'docs/strategy', 'docs/plans', 'docs/marketing', 'site', 'benchmarks', 'ARCHITECTURE.md', 'DECISIONS.md', 'CLAUDE.md', 'TASKS.md']) {
     assert.equal(existsSync(join(target, absent)), false, `${absent} does not belong to a customer's project`);
+  }
+  // The one part of docs/ a project needs: the JTBD index `crm scenario run` maps onto.
+  assert.equal(existsSync(join(target, 'docs/benchmarks/jobs.json')), true);
+  for (const present of ['examples/scenarios', 'examples/journeys', 'examples/starters', 'examples/recipes']) {
+    assert.equal(existsSync(join(target, present)), true, `${present} travels, so scenario run and the recipes work`);
   }
   // The project has tests — its own, written by the bootstrap, not this
   // repository's 40-odd suites copied across.
@@ -423,11 +428,11 @@ test('an incomplete framework source is named, not half-copied', (t) => {
     mkdirSync(join(fake, dirname(marker)), { recursive: true });
     writeFileSync(join(fake, marker), '// marker\n');
   }
-  // `apps/`, `skills/` and `examples/modules/` are missing.
+  // Every manifest entry except `packages/` is missing.
   const report = applyProjectBootstrap({ directory: join(workspace, 'partial'), cwd: workspace, sourceRoot: fake });
   assert.equal(report.ok, false);
   const incomplete = report.problems.filter((problem) => problem.code === 'FRAMEWORK_SOURCE_INCOMPLETE');
-  assert.equal(incomplete.length, 3, 'each missing manifest entry is its own finding');
+  assert.equal(incomplete.length, SOURCE_MANIFEST.length - 1, 'each missing manifest entry is its own finding');
   assert.equal(existsSync(join(workspace, 'partial')), false);
 });
 
