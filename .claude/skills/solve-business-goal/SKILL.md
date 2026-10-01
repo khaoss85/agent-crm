@@ -28,6 +28,7 @@ This workflow is usable **today**, including where capabilities are missing — 
 1. Restate the business outcome in one sentence and confirm it.
 2. Name the **primary metric**. A goal with no metric cannot be verified in step 8 — ask for one rather than inventing it.
 3. Name the scope, the constraints and the sensitive-action boundaries.
+4. Ask where it must run. If the answer is the person's **Accordo Cloud** workspace, the free workspace runs only what a Blueprint expresses — record types, fields and approval rules — so follow the "Accordo Cloud" section of the project's `AGENTS.md` for that part, and keep any custom code for a Dedicated Cell or self-hosting.
 
 ## 2. Discover what actually exists
 

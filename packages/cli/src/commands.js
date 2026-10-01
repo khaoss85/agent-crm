@@ -580,6 +580,7 @@ Usage:
   accordo cloud login [--origin url]
   accordo cloud link <workspaceId> [--origin url]
   accordo cloud status [--json]
+  accordo cloud pull [--file accordo.cloud.json] [--json]
   accordo cloud push [--file accordo.cloud.json] [--json]
   accordo cloud propose <model> [<recordId>] --values '<json>' [--json]
 

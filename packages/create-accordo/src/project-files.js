@@ -233,6 +233,46 @@ already inconsistent, and it is cheap enough to run before every change.
   \`packages/domains/generated/index.js\`.
 - Run \`npm run verify\` before considering work complete.
 
+## Accordo Cloud (the hosted workspace)
+
+Use this when the person mentions Accordo Cloud, a workspace id, or asks to
+"push it to the Cloud". The free Cloud workspace runs what a Blueprint
+expresses — record types, their fields and approval rules — and nothing else:
+code you write in this repository (workflows, policies, packages) does not run
+there. Custom code on the Cloud is a paid Dedicated Cell.
+
+1. **Link once.** If \`.accordo/cloud.json\` is missing, ask for the workspace id
+   (the person copies it from their workspace page at https://app.accordo.dev),
+   then run \`npm run crm -- cloud login\` — it opens a browser where the person
+   signs in with GitHub; wait for them — and \`npm run crm -- cloud link <id>\`.
+2. **Start from what exists.** \`npm run crm -- cloud pull --json\` writes
+   \`accordo.cloud.json\` from the workspace as it is now. Always pull before
+   editing: a push replaces the record types whole.
+3. **Edit \`accordo.cloud.json\`**, which holds \`models\` and \`approvals\` only:
+   - at most 8 record types; each \`{ name, label, fields }\`, with \`name\`
+     matching \`^[a-z][a-z0-9_]{0,31}$\`;
+   - at most 16 fields per type; each \`{ name, label, type, required }\`, with
+     \`type\` one of \`text\`, \`number\`, \`boolean\`;
+   - labels use letters, digits, spaces and \`. , ' ( ) & _ -\` only (no \`%\`);
+   - **additive only**: never remove or rename a type or a field, never change a
+     field's type, never make an existing field required; a field added to an
+     existing type is optional (\`"required": false\`);
+   - at most 8 approval rules; each \`{ name, label, model, field, above }\`: a
+     change that sets that **number** field above the constant waits for a person.
+     A rule is a comparison with a constant — nothing richer exists here.
+4. **Push.** \`npm run crm -- cloud push --json\`. \`outcome: "applied"\` means the
+   workspace now runs it. A refusal names its code:
+   \`WORKSPACE_REVISION_MODEL_NOT_ADDITIVE\` (you removed or changed something —
+   pull again and redo the edit), \`WORKSPACE_APPROVAL_TARGET_REFUSED\` (the rule
+   names a missing type or a field that is not a number),
+   \`WORKSPACE_BLUEPRINT_REFUSED\` (a name, label or limit above),
+   \`WORKSPACE_REVISION_STALE\` (someone changed it meanwhile — pull, redo, push).
+5. **Records**, only when asked:
+   \`npm run crm -- cloud propose <type> [<id>] --values '{"field": 25}'\`. A change
+   above a rule is held for a person. **You never approve**: there is no approve
+   command, and the Cloud refuses a decision from an agent. Tell the person to
+   open Approvals in their CRM.
+
 ## What this project is not
 
 The default is local SQLite with no deployment authentication verifier.

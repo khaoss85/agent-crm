@@ -162,3 +162,16 @@ test('nothing runs against a project that is not linked or a terminal that is no
   await assert.rejects(() => run(['login'], { origin: 'http://cloud.example.test' }, { ...dirs, fetchImpl: cloud.fetchImpl }),
     { code: 'CLOUD_ORIGIN_REFUSED' });
 });
+
+test('pull writes the workspace as it is, so a push starts from everything that exists', async () => {
+  const cloud = fakeCloud();
+  const dirs = await signedInAndLinked(cloud);
+  const report = await run(['pull'], {}, { ...dirs, fetchImpl: cloud.fetchImpl });
+  assert.equal(report.wrote, 'accordo.cloud.json');
+  const written = JSON.parse(readFileSync(join(dirs.projectRoot, 'accordo.cloud.json'), 'utf8'));
+  assert.deepEqual(Object.keys(written), ['models', 'approvals']);
+  assert.equal(written.models[0].name, 'quote');
+  assert.equal(written.approvals[0].name, 'big_discount');
+  const pushed = await run(['push'], {}, { ...dirs, fetchImpl: cloud.fetchImpl });
+  assert.equal(pushed.outcome, 'applied', 'what pull wrote is a file push accepts');
+});

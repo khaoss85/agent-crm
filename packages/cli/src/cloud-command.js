@@ -19,6 +19,8 @@ import { dirname, join, resolve } from 'node:path';
  *                                     session in the user's config, mode 0600
  *   cloud link <workspaceId>          remembers which workspace this project is
  *   cloud status                      the linked workspace's Blueprint, hash and gates
+ *   cloud pull [--file <path>]        writes accordo.cloud.json from the workspace as it
+ *                                     is now: the starting point for every change
  *   cloud push [--file <path>]        one Blueprint revision from accordo.cloud.json:
  *                                     `models` (additive only) and `approvals`
  *   cloud propose <model> [<id>] --values '<json>'
@@ -75,11 +77,12 @@ export async function runCloudCommand(positional, flags, overrides = {}) {
     case 'login': return emit(await login(deps, originFrom(flags)));
     case 'link': return emit(link(deps, rest[0], originFrom(flags)));
     case 'status': return emit(await status(deps));
+    case 'pull': return emit(await pull(deps, typeof flags.file === 'string' ? flags.file : CLOUD_FILE));
     case 'push': return emit(await push(deps, typeof flags.file === 'string' ? flags.file : CLOUD_FILE));
     case 'propose': return emit(await propose(deps, rest[0], rest[1], flags.values));
     default:
       throw new CloudRefused('CLOUD_COMMAND_UNKNOWN',
-        'use one of: cloud login | link <workspaceId> | status | push | propose <model> [<id>] --values <json>');
+        'use one of: cloud login | link <workspaceId> | status | pull | push | propose <model> [<id>] --values <json>');
   }
 }
 
@@ -156,6 +159,23 @@ async function status(deps) {
     models: (workspace.blueprint?.models ?? []).map((m) => ({ name: m.name, fields: m.fields.map((f) => `${f.name}:${f.type}`) })),
     approvals: workspace.blueprint?.approvals ?? [],
   };
+}
+
+// ---------------------------------------------------------------- pull
+
+/**
+ * The workspace's record types and approval rules, written where push reads
+ * them. Push replaces `models` whole and the Cloud refuses any removal, so the
+ * file must start from what exists: this is that start.
+ */
+async function pull(deps, file) {
+  const { origin, workspaceId, bearer } = linked(deps);
+  const { workspace } = await call(deps, `${origin}/v1/workspaces/${workspaceId}`, { bearer });
+  const blueprint = workspace.blueprint ?? {};
+  const declared = { models: blueprint.models ?? [], approvals: blueprint.approvals ?? [] };
+  writeFileSync(resolve(deps.projectRoot, file), `${JSON.stringify(declared, null, 2)}\n`);
+  return { ok: true, command: 'cloud pull', workspaceId, wrote: file, blueprintHash: workspace.blueprintHash,
+    models: declared.models.length, approvals: declared.approvals.length };
 }
 
 // ---------------------------------------------------------------- push
