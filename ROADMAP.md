@@ -10,6 +10,7 @@ both implemented and planned, so the lists live in one place each:
 |---|---|
 | What is merged today, and at which commit? | `docs/PROJECT_STATUS.md` |
 | What is the next product task? | `TASKS.md` |
+| What is the current AS-IS → TO-DO capability snapshot? | `docs/strategy/CURRENT_PRODUCT_ROADMAP.md` |
 | How are the milestones sequenced, and what depends on what? | `docs/strategy/EXECUTION_ROADMAP.md` |
 | Which coding-agent surfaces exist, and which do not? | `docs/CODER_TOOLING_ROADMAP.md` |
 | Which business jobs does the framework actually earn? | `docs/benchmarks/CRM_JTBD_MATRIX.md` |
