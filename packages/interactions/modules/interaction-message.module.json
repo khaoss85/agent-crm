@@ -1,0 +1,24 @@
+{
+  "manifestVersion": 1,
+  "name": "interaction-message",
+  "table": "interaction_messages",
+  "description": "One inbound or outbound message on a conversation: the channel, the direction, the team author of an outbound message, and the delivery state. Every field is managed: a message exists only through the interactions package's log capability or its advance action, and no client can create, forge or rewrite one. Inbound messages are stored as received and have no lifecycle. Outbound messages move sent -> delivered -> read, with sent -> failed and delivered -> failed as the only other moves; read and failed are terminal. The body is bounded plain text (at most 2000 characters): no provider payload, no attachment and no markup is stored. The subject envelope is denormalized onto the row so the timeline reads one table per source instead of joining through the conversation.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "conversationId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "direction", "type": "enum", "values": ["inbound", "outbound"], "index": true, "writable": "managed" },
+    { "name": "channel", "type": "enum", "values": ["whatsapp", "instagram", "facebook", "tiktok", "website-form", "email", "phone"], "index": true, "writable": "managed" },
+    { "name": "status", "type": "enum", "values": ["received", "sent", "delivered", "read", "failed"], "index": true, "writable": "managed" },
+    { "name": "body", "type": "string", "writable": "managed" },
+    { "name": "teamAuthorId", "type": "string", "writable": "managed" },
+    { "name": "remoteHandle", "type": "string", "writable": "managed" },
+    { "name": "errorCode", "type": "string", "writable": "managed" },
+    { "name": "subjectResource", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "occurredAt", "type": "timestamp", "writable": "managed" },
+    { "name": "actorType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "actorId", "type": "string", "writable": "managed" },
+    { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
+    { "name": "sourceAction", "type": "string", "writable": "managed" }
+  ]
+}
