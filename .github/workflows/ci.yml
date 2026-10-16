@@ -81,11 +81,13 @@ jobs:
         run: scripts/ci-heavy.sh measure -- node scripts/measure-suite.js > "$RUNNER_TEMP/measurement.json"
       # The account's artifact storage can be full (the billing lock also stops the
       # quota from being freed), and both jobs run on the same self-hosted runner, so
-      # the record is also kept on the runner, keyed by the commit both jobs check out.
+      # the record is also kept on the runner. Keyed by this run and attempt, never by
+      # commit: a re-run of a commit whose verify failed must not find the record an
+      # earlier green run left behind.
       - name: Keep the measurement on the runner for public-claims
         run: |
           mkdir -p "$HOME/.accordo-ci/measurements"
-          cp "$RUNNER_TEMP/measurement.json" "$HOME/.accordo-ci/measurements/${{ github.sha }}.json"
+          cp "$RUNNER_TEMP/measurement.json" "$HOME/.accordo-ci/measurements/${{ github.run_id }}-${{ github.run_attempt }}.json"
       - run: scripts/ci-heavy.sh smoke -- npm run smoke
       - name: Replay the published quote approval recipe
         run: |
@@ -162,6 +164,12 @@ jobs:
       # refuses in that case — a missing measurement fails red, never quiet.
       # `apply-ci-measurement.js` binds the record to this checkout (HEAD,
       # `HEAD:tests`, clean tree, green run) before writing anything.
+      # Gate 1 on the committed document, before anything is regenerated: the
+      # document the PR commits must equal a fresh generation from the PR's own
+      # inputs (TRUTH_DOCUMENT_STALE otherwise). Only the measurement re-anchor
+      # below is CI's to do; every other fact stays the author's to regenerate.
+      - name: The committed truth document agrees with its authorities
+        run: npm run repo:truth -- --check
       - name: Take the measurement verify just produced on this tree
         uses: actions/download-artifact@v4
         continue-on-error: true
@@ -175,18 +183,17 @@ jobs:
         run: |
           dest="${{ runner.temp }}/ci-measurement/measurement.json"
           if [ ! -s "$dest" ]; then
-            src="$HOME/.accordo-ci/measurements/${{ github.sha }}.json"
-            [ -s "$src" ] || { echo "no CI measurement for ${{ github.sha }}: neither artifact nor runner copy" >&2; exit 1; }
+            src="$HOME/.accordo-ci/measurements/${{ github.run_id }}-${{ github.run_attempt }}.json"
+            [ -s "$src" ] || { echo "no CI measurement from this run (${{ github.run_id }}-${{ github.run_attempt }}): neither artifact nor runner copy" >&2; exit 1; }
             mkdir -p "$(dirname "$dest")" && cp "$src" "$dest"
           fi
       - name: Re-anchor the ledger at the CI measurement
         run: node scripts/apply-ci-measurement.js "${{ runner.temp }}/ci-measurement/measurement.json"
-      # The committed `docs/repository-truth.json` still describes the last
-      # locally measured tree, so it is regenerated here from the re-anchored
-      # ledger rather than checked as committed: the check below compares a
-      # fresh generation against a fresh build, and citations, codes and
-      # freshness are still enforced on this tree. Developers never regenerate
-      # it locally for this anymore.
+      # The committed document was checked as committed above. Its measurement
+      # facts still name the last measured tree, so it is regenerated here from
+      # the re-anchored ledger for the freshness check below only. Authors still
+      # regenerate and commit it for every other fact they move (QUALITY_GATES
+      # s6.1); what they no longer do is re-measure the suite on a Mac.
       - run: npm run repo:truth
       # `--require-current` holds the freshness ratio at 1: any fact whose
       # status is not `current` (a measurement that no longer describes this
