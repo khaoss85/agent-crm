@@ -79,11 +79,20 @@ jobs:
       # asking a maintainer to run it again on a different machine.
       - name: Verify and emit the measured claim record
         run: scripts/ci-heavy.sh measure -- node scripts/measure-suite.js > "$RUNNER_TEMP/measurement.json"
+      # The account's artifact storage can be full (the billing lock also stops the
+      # quota from being freed), and both jobs run on the same self-hosted runner, so
+      # the record is also kept on the runner, keyed by the commit both jobs check out.
+      - name: Keep the measurement on the runner for public-claims
+        run: |
+          mkdir -p "$HOME/.accordo-ci/measurements"
+          cp "$RUNNER_TEMP/measurement.json" "$HOME/.accordo-ci/measurements/${{ github.sha }}.json"
       - run: scripts/ci-heavy.sh smoke -- npm run smoke
       - name: Replay the published quote approval recipe
         run: |
           scripts/ci-heavy.sh recipe -- bash -c 'node --no-warnings examples/recipes/quote-approval/run.mjs "$RUNNER_TEMP/quote-approval-crm" && npm --prefix "$RUNNER_TEMP/quote-approval-crm" run verify'
       - uses: actions/upload-artifact@v4
+        # Best effort: the runner-local copy above is what public-claims falls back to.
+        continue-on-error: true
         with:
           name: claims-measurement-${{ github.sha }}
           path: ${{ runner.temp }}/measurement.json
@@ -155,9 +164,21 @@ jobs:
       # `HEAD:tests`, clean tree, green run) before writing anything.
       - name: Take the measurement verify just produced on this tree
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: claims-measurement-${{ github.sha }}
           path: ${{ runner.temp }}/ci-measurement
+      # The artifact is missing when storage is full; the runner-local copy written by
+      # `verify` for this same commit stands in. Neither present means verify never
+      # measured this tree, and the job fails red here.
+      - name: Fall back to the runner-local measurement
+        run: |
+          dest="${{ runner.temp }}/ci-measurement/measurement.json"
+          if [ ! -s "$dest" ]; then
+            src="$HOME/.accordo-ci/measurements/${{ github.sha }}.json"
+            [ -s "$src" ] || { echo "no CI measurement for ${{ github.sha }}: neither artifact nor runner copy" >&2; exit 1; }
+            mkdir -p "$(dirname "$dest")" && cp "$src" "$dest"
+          fi
       - name: Re-anchor the ledger at the CI measurement
         run: node scripts/apply-ci-measurement.js "${{ runner.temp }}/ci-measurement/measurement.json"
       # The committed `docs/repository-truth.json` still describes the last
