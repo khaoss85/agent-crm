@@ -20,7 +20,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { validateArtifactRecord } from '../scripts/apply-ci-measurement.js';
-import { gitIn } from '../scripts/measurement.js';
 
 const applier = fileURLToPath(new URL('../scripts/apply-ci-measurement.js', import.meta.url));
 
@@ -30,15 +29,25 @@ function scratch(prefix) {
 }
 
 /**
- * Git asserting success for fixture setup.
+ * The environment without any GIT_* variable. Run from a git hook (pre-push sets
+ * GIT_DIR in a worktree), a fixture's `git init` / `git commit` would otherwise
+ * write into the real repository instead of the scratch one: on 2026-10-16 this
+ * file, run by a pre-push hook, committed its fixtures onto the branch being
+ * pushed, deleting 1869 files.
+ */
+const isolatedEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
+);
+
+/**
+ * Git asserting success for fixture setup, isolated from any enclosing repository.
  * @param {string} cwd
  */
 function setupGit(cwd) {
-  const git = gitIn(cwd);
   return (/** @type {string[]} */ args) => {
-    const result = git(args);
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: isolatedEnv });
     assert.equal(result.status, 0, `git ${args.join(' ')} failed in the fixture`);
-    return result.stdout;
+    return String(result.stdout ?? '').trim();
   };
 }
 
@@ -94,7 +103,7 @@ const writeArtifact = (dir, body) => {
 };
 
 const apply = (/** @type {string} */ root, /** @type {string} */ artifact) => spawnSync(
-  process.execPath, [applier, artifact], { cwd: root, encoding: 'utf8' },
+  process.execPath, [applier, artifact], { cwd: root, encoding: 'utf8', env: isolatedEnv },
 );
 
 // ---------------------------------------------------------------- validator units
