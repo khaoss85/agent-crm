@@ -4,6 +4,14 @@ on:
   push:
   pull_request:
 
+# One self-hosted runner serves this repository: without this, a push to a PR
+# branch starts two identical runs (the `push` event and the `pull_request`
+# event) and the second queues behind the first for the whole suite. One run
+# per ref, always the newest; a superseded run is cancelled, never queued.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 # Both jobs read the Node version from `.nvmrc` rather than pinning it inline.
 #
 # `package.json` `engines` stays the **floor** — ">=22.16.0" is the oldest runtime this

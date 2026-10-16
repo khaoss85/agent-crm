@@ -1,0 +1,29 @@
+name: Nightly tool-selection matrix
+
+# The full worktree-heavy cartesian product behind ACCORDO_FULL_TOOL_SELECTION:
+# tests/agent-tool-selection-scoring.test.js runs its fast scoring, contract and
+# receipt tests on every CI run and skips the 21 worktree-heavy cells unless the
+# variable is set. This job sets it, so the whole matrix still runs daily, off
+# peak, on the same self-hosted runner — coverage is moved, not removed.
+on:
+  schedule:
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-tool-selection
+  cancel-in-progress: false
+
+jobs:
+  full-matrix:
+    runs-on: [self-hosted, accordo-ci]
+    env:
+      ACCORDO_FULL_TOOL_SELECTION: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: node --no-warnings --test tests/agent-tool-selection-scoring.test.js
