@@ -53,7 +53,7 @@
  *   arithmetic rests on green runs, same as the full record.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -126,7 +126,11 @@ async function main() {
     });
     if (run.status !== 0 || run.error || run.signal) {
       process.stderr.write(`${run.stdout ?? ''}\n${run.stderr ?? ''}`);
-      throw new MeasurementError(`verify failed: exit=${run.status}, signal=${run.signal}, error=${run.error?.message ?? 'none'}; nothing recorded`);
+      // Synchronous: this diagnosis must reach the log even though the process
+      // exits right after. The async write it replaces lost this exact line on
+      // CI, leaving a truncated mid-line dump and exit 1 with no named cause.
+      writeSync(2, `${formatVerifyFailure(run)}\n`);
+      throw new MeasurementError(formatVerifyFailure(run));
     }
     measured = parseMeasurementReport(readFileSync(reportPath, 'utf8'), root, testFiles);
     assertMeasurementUnchanged(git, sha);
@@ -167,9 +171,30 @@ async function main() {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   main().catch((error) => {
-    process.stderr.write(`measure-suite: ${error?.stack ?? error}\n`);
+    // Synchronous for the same reason as above: the runner must see the cause.
+    writeSync(2, `measure-suite: ${error?.stack ?? error}\n`);
     process.exit(error.exitCode ?? 2);
   });
+}
+
+/**
+ * One-line diagnosis of a dead `npm run verify` child. A run killed from the
+ * outside (null exit + signal) reports no failing test by construction, so the
+ * message says so outright: without this, an environment kill reads exactly
+ * like a red suite with its failure lines missing.
+ *
+ * @param {{ status: number | null, signal: string | null, error?: { message?: string } | null }} run
+ *   the `spawnSync` result of the verify child.
+ * @returns {string} the diagnosis line.
+ */
+export function formatVerifyFailure(run) {
+  const base = `verify failed: exit=${run.status}, signal=${run.signal}, `
+    + `error=${run.error?.message ?? 'none'}; nothing recorded`;
+  if (run.status === null && run.signal) {
+    return `${base}. The suite process died (${run.signal}) without reporting a failing test: `
+      + 'suspect the machine (concurrent jobs, memory), not the tests.';
+  }
+  return base;
 }
 
 /**
