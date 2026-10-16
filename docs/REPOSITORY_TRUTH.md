@@ -466,6 +466,18 @@ fixture edit under `tests/`, a broken lineage, a red targeted run, a record
 that predates the map — fails closed with the reason, and only a full run may
 speak for the new tree.
 
+That full run now belongs to CI, not to a developer machine. The `verify` job
+runs `measure-suite.js` on the PR tree and uploads the record as the
+`claims-measurement` artifact; the `public-claims` job downloads that artifact,
+binds it to its own checkout with `scripts/apply-ci-measurement.js` (HEAD, the
+`tests/` fingerprint, a clean tree, a green run — anything else refuses), and
+regenerates the truth document from the re-anchored ledger before running
+`--check --require-current`. A PR that changes code and tests goes green without
+any local measure commit, and a missing or failed CI measurement fails the job
+red instead of passing quietly. The local `--apply` and `--refresh` remain for
+verifying the ledger on a workstation; no CI step and no turn needs them on a
+shared machine anymore.
+
 A superseded measurement says *what* superseded it: the site-check provenance
 note and `repo:truth -- --check` name the commits that touched `tests/` since
 the measured one. The names live in console output, never in the committed

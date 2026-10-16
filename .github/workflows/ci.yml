@@ -97,6 +97,16 @@ jobs:
   public-claims:
     # Same billing-lock routing as `verify` above.
     runs-on: [self-hosted, accordo-ci]
+    # The measurement this job checks is the one `verify` just produced on
+    # this same tree (same workflow run, same checkout ref): no local
+    # `measure-suite --apply` commit is needed for a PR to go green
+    # (backlog:98cb04b959e6). `needs` orders the two jobs; `!cancelled()`
+    # keeps the ordering without silencing a failure — a `needs` alone would
+    # SKIP this job when `verify` fails, and a skipped gate reads as quiet.
+    # Running unless cancelled means a missing or failed measurement fails
+    # this job red instead: the download finds no artifact and refuses.
+    needs: [verify]
+    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -136,6 +146,28 @@ jobs:
       # developer runs locally in a possibly shallow clone — is unchanged. It
       # takes about half a second.
       #
+      # Before this step the ledger still names the last locally measured
+      # commit, so any PR that moved `tests/` would fail below until somebody
+      # re-ran the suite on a Mac. Instead the job takes the measurement
+      # `verify` just produced on this exact tree: the artifact is missing
+      # exactly when `verify` failed or never measured, and the download
+      # refuses in that case — a missing measurement fails red, never quiet.
+      # `apply-ci-measurement.js` binds the record to this checkout (HEAD,
+      # `HEAD:tests`, clean tree, green run) before writing anything.
+      - name: Take the measurement verify just produced on this tree
+        uses: actions/download-artifact@v4
+        with:
+          name: claims-measurement-${{ github.sha }}
+          path: ${{ runner.temp }}/ci-measurement
+      - name: Re-anchor the ledger at the CI measurement
+        run: node scripts/apply-ci-measurement.js "${{ runner.temp }}/ci-measurement/measurement.json"
+      # The committed `docs/repository-truth.json` still describes the last
+      # locally measured tree, so it is regenerated here from the re-anchored
+      # ledger rather than checked as committed: the check below compares a
+      # fresh generation against a fresh build, and citations, codes and
+      # freshness are still enforced on this tree. Developers never regenerate
+      # it locally for this anymore.
+      - run: npm run repo:truth
       # `--require-current` holds the freshness ratio at 1: any fact whose
       # status is not `current` (a measurement that no longer describes this
       # tree) fails this job, exactly like a test would. A local `--check`
