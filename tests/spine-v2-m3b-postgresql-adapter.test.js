@@ -422,6 +422,34 @@ test('M3B database open bounds setup statements instead of hanging', { timeout: 
   assert.ok(Date.now() - started < 4000, `setup wait took ${Date.now() - started}ms`);
 });
 
+test('M3B timed-out setup drops the schema it already created', { timeout: 15_000 }, async (t) => {
+  // A later setup statement can time out after CREATE SCHEMA has committed.
+  // Creation then rejects without a handle, so the setup path itself must
+  // drop the orphan schema: callers could never close() it away.
+  const schema = `accordo_setup_timeout_${Date.now().toString(36)}`;
+  const outcome = await createPostgresqlDatabase({
+    schema,
+    ddl: ['SELECT pg_sleep(5)'], acquisitionDeadlineMs: 300, max: 1,
+  }).then(
+    async (db) => { await db.close().catch(() => {}); return 'opened'; },
+    (error) => error,
+  );
+  if (outcome === 'opened') assert.fail('setup DDL outlived the acquisition deadline');
+  if (outcome.code === 'STORAGE_UNAVAILABLE') {
+    if (!PG_REQUIRED) { t.skip('PostgreSQL 16 is not reachable locally'); return; }
+    throw outcome;
+  }
+  assert.equal(outcome.code, 'STORAGE_TIMEOUT');
+  const admin = new pg.Client({ connectionString: PG_TEST_URL, connectionTimeoutMillis: 2000 });
+  await admin.connect();
+  try {
+    const found = await admin.query('SELECT 1 AS orphan FROM pg_namespace WHERE nspname = $1', [schema]);
+    assert.equal(found.rowCount, 0, `timed-out setup left schema ${schema} behind`);
+  } finally {
+    await admin.end();
+  }
+});
+
 test('M3B query deadline destroys a black-holed client and recovers', { timeout: 15_000 }, async (t) => {
   const db = await openPostgresqlFixture(t, { queryDeadlineMs: 80, max: 2 });
   if (!db) return;

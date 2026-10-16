@@ -738,6 +738,22 @@ export async function createPostgresqlDatabase(options = {}) {
     () => {},
   );
   const setupDeadlineMs = options.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS;
+  const dropSchemaBestEffort = async () => {
+    const { Client } = await loadPgDriver();
+    const admin = new Client({ connectionString: connection, connectionTimeoutMillis: 2000 });
+    try {
+      await withDeadline(admin.connect(), 2000, 'acquisition');
+      await withDeadline(admin.query(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`), 10_000, 'query');
+    } catch {
+      /* teardown is best-effort */
+    } finally {
+      try { await admin.end(); } catch { /* ignore */ }
+    }
+  };
+  // Set once CREATE SCHEMA has committed: a later setup statement can still
+  // time out, and since creation then rejects without a handle the caller
+  // could never close() the orphan schema away.
+  let schemaCreated = false;
   try {
     setup = await withDeadline(setupPending, setupDeadlineMs, 'acquisition');
     // Every setup statement is bounded: an unbounded DDL wait on a half-dead
@@ -745,6 +761,7 @@ export async function createPostgresqlDatabase(options = {}) {
     // idle PG) instead of failing fast with STORAGE_TIMEOUT
     // (backlog:b705667ad23b).
     await withDeadline(setup.query(`CREATE SCHEMA ${quoted}`), setupDeadlineMs, 'acquisition');
+    schemaCreated = true;
     await withDeadline(setup.query(`SET search_path TO ${quoted}`), setupDeadlineMs, 'acquisition');
     for (const sql of options.ddl ?? []) {
       await withDeadline(setup.query(sql), setupDeadlineMs, 'acquisition');
@@ -753,6 +770,7 @@ export async function createPostgresqlDatabase(options = {}) {
     setupTimedOut = isPoolCheckoutTimeout(error);
     try { if (setup) setup.release(); } catch { /* ignore */ }
     try { await pool.end(); } catch { /* ignore */ }
+    if (schemaCreated) await dropSchemaBestEffort();
     throw error instanceof AppError ? error : sanitizePgError(error);
   }
   setup.release();
@@ -775,16 +793,7 @@ export async function createPostgresqlDatabase(options = {}) {
       closed = true;
       const probe = PROBES.get(storage);
       try { probe?.abandonCheckedOut?.(); } catch { /* already gone */ }
-      const { Client } = await loadPgDriver();
-      const admin = new Client({ connectionString: connection, connectionTimeoutMillis: 2000 });
-      try {
-        await withDeadline(admin.connect(), 2000, 'acquisition');
-        await withDeadline(admin.query(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`), 10_000, 'query');
-      } catch {
-        /* teardown is best-effort */
-      } finally {
-        try { await admin.end(); } catch { /* ignore */ }
-      }
+      await dropSchemaBestEffort();
       try { await storage.close(); } catch {
         try { await pool.end(); } catch { /* ignore */ }
       }
