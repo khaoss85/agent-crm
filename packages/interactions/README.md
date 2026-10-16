@@ -84,6 +84,17 @@ outbound:  sent → delivered → read
 - **Outbound messages name their team author.** An outbound row without one
   names nobody for words the business sent; an inbound row with one would claim
   the team wrote the customer's message. Both are refused.
+- **Every log names its actor.** Opening a conversation, logging a message or
+  logging a call without an actor is refused: anonymous evidence would store
+  words the business sent with nobody accountable for them.
+- **A retry replays only an identical claim.** The same source key with the
+  same payload returns the stored row; a divergent payload — including a
+  subject moved from host-owned to package-owned — is refused `409`, never
+  adopted.
+- **An advance re-reads before writing.** The action re-reads the authoritative
+  status inside its transaction and refuses a move the message no longer
+  allows, so a concurrent branch that committed first wins and the loser names
+  it instead of silently writing last.
 
 ## The Call record
 

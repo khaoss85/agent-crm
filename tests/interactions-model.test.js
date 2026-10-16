@@ -10,14 +10,18 @@ import {
   MESSAGE_TERMINAL,
   MESSAGE_TRANSITIONS,
   advanceMessage,
+  logCall,
   logMessage,
+  openConversation,
+  readConversationThread,
   sortEntries,
   validateCallRequest,
   validateConversationRequest,
   validateMessageRequest,
   validateSubject,
 } from '../packages/interactions/src/index.js';
-import { ConflictError } from '../packages/core/index.js';
+import { ConflictError, NotFoundError } from '../packages/core/index.js';
+import { resolveModule } from '../packages/interactions/src/interactions.js';
 
 /**
  * Interactions v1 model and message-state tests, with no application boot:
@@ -175,7 +179,8 @@ test('the loser of a source-key race replays the winner row instead of surfacing
   const winner = {
     id: 'm-winner', sourceKey: 'wa:msg:race', conversationId: 'conv-1', direction: 'outbound',
     channel: 'whatsapp', body: 'Si, alle 18.', teamAuthorId: 'guido', remoteHandle: null,
-    subjectResource: 'contact', subjectId: 'c-1', occurredAt: '2026-09-15T10:00:00.000Z',
+    subjectResource: 'contact', subjectId: 'c-1', subjectOwner: 'host', subjectOwnerPackage: null,
+    occurredAt: '2026-09-15T10:00:00.000Z',
     sourcePackage: 'host', sourceAction: 'seed', status: 'sent',
   };
   let reads = 0;
@@ -203,4 +208,47 @@ test('the timeline order is occurredAt oldest-first, with deterministic tie-brea
     { id: 'b', occurredAt: '2026-09-15T10:00:01.000Z', createdAt: 'a' },
   ];
   assert.deepEqual(sortEntries(rows).map((row) => row.id), ['b', 'a', 'c']);
+});
+
+test('evidence names its author: log writes without an actor are refused', async () => {
+  const service = {
+    listWhere: async () => [],
+    createManaged: async () => { throw new Error('unreached: the actor check runs first'); },
+  };
+  const modules = { get: () => ({ service }) };
+  const conversation = {
+    sourceKey: 'wa:thread:anon', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  };
+  const isActorRefusal = (error) => error.name === 'ValidationError';
+  await assert.rejects(openConversation({ modules, actor: undefined }, conversation), isActorRefusal);
+  await assert.rejects(logMessage({ modules, actor: null }, message()), isActorRefusal);
+  await assert.rejects(logCall({ modules, actor: {} }, call()), isActorRefusal);
+});
+
+test('only the expected registry miss reads as absent: other failures propagate', () => {
+  assert.equal(resolveModule({ get: () => { throw new NotFoundError('Module', 'work-activity'); } }, 'work-activity'), null);
+  assert.throws(
+    () => resolveModule({ get: () => { throw new Error('connection reset'); } }, 'work-activity'),
+    /connection reset/,
+  );
+});
+
+test('only the expected conversation miss reads as absent: an outage propagates', async () => {
+  const threadModules = (get) => ({
+    get: (name) => (name === 'conversation'
+      ? { service: { get, listWhere: async () => [] } }
+      : { service: { listWhere: async () => [] } }),
+  });
+  const absent = await readConversationThread(
+    { modules: threadModules(async () => { throw new NotFoundError('Conversation', 'no-such-id'); }), moduleNames: {} },
+    'no-such-id',
+  );
+  assert.equal(absent, null);
+  await assert.rejects(
+    readConversationThread(
+      { modules: threadModules(async () => { throw new Error('storage unavailable'); }), moduleNames: {} },
+      'conv-1',
+    ),
+    /storage unavailable/,
+  );
 });

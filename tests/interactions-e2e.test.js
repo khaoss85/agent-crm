@@ -186,6 +186,99 @@ test('messages walk the delivery lifecycle through record actions, never rewrite
 });
 
 // ---------------------------------------------------------------------------
+// Replay identity: the whole subject envelope, including who owns it
+// ---------------------------------------------------------------------------
+
+test('replay identity carries the whole subject envelope: a moved owner is refused', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'owner.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, logCall } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:owner', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const base = {
+    sourceKey: 'wa:msg:own:1', conversationId: conversation.id, direction: 'outbound',
+    channel: 'whatsapp', body: 'Ti mando il preventivo in serata.', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:01.000Z', source: SOURCE,
+  };
+  const first = await logMessage({ modules: app.modules, actor: ACTOR }, base);
+  assert.equal(first.message.subjectOwner, 'host');
+  assert.equal(first.message.subjectOwnerPackage, null);
+
+  const replay = await logMessage({ modules: app.modules, actor: ACTOR }, base);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.message.id, first.message.id);
+
+  // Same key, same contact, moved from host-owned to package-owned: a
+  // different claim behind the same key — refused 409, never replayed.
+  await assert.rejects(
+    logMessage({ modules: app.modules, actor: ACTOR }, {
+      ...base,
+      subject: { resource: 'contact', id: 'c-presti', owner: 'package', ownerPackage: 'work' },
+    }),
+    (error) => error.code === 'INTERACTIONS_LOG_CONFLICT' && error.status === 409,
+  );
+
+  const completed = await logCall({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'tel:call:own:1', direction: 'outbound', channel: 'phone', outcome: 'completed',
+    durationSec: 60, teamAuthorId: 'guido', subject: SUBJECT,
+    occurredAt: '2026-09-15T10:00:02.000Z', source: SOURCE,
+  });
+  assert.equal(completed.call.subjectOwner, 'host');
+  await assert.rejects(
+    logCall({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'tel:call:own:1', direction: 'outbound', channel: 'phone', outcome: 'completed',
+      durationSec: 60, teamAuthorId: 'guido',
+      subject: { resource: 'contact', id: 'c-presti', owner: 'package', ownerPackage: 'work' },
+      occurredAt: '2026-09-15T10:00:02.000Z', source: SOURCE,
+    }),
+    (error) => error.code === 'INTERACTIONS_LOG_CONFLICT' && error.status === 409,
+  );
+});
+
+test('a concurrent move beats a stale advance: the loser names the winner', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'stale.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage } = await interactionsFrom(root);
+  const { buildAdvanceMessageAction } = await import(
+    pathToFileURL(join(root, 'packages/interactions/src/interactions.js')).href
+  );
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:stale', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const { message } = await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:stale:1', conversationId: conversation.id, direction: 'outbound',
+    channel: 'whatsapp', body: 'Ci vediamo domani.', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:01.000Z', source: SOURCE,
+  });
+  const stale = { ...message };
+  assert.equal(stale.status, 'sent');
+
+  // The concurrent branch commits first, through the action runtime.
+  await run(app, 'interaction-message', 'advance', message.id, { to: 'delivered' });
+  await run(app, 'interaction-message', 'advance', message.id, { to: 'read' });
+
+  // The stale branch re-reads before writing: without the re-read, sent ->
+  // delivered would still be a legal move on the stale record and would
+  // silently drag a read message back to delivered.
+  const advance = buildAdvanceMessageAction();
+  await assert.rejects(
+    advance.execute({ record: stale, input: { to: 'delivered' }, actor: ACTOR, modules: app.modules }),
+    (error) => error.code === 'INTERACTIONS_INVALID_STATE'
+      && error.status === 409
+      && /moved while this action ran/.test(error.message),
+  );
+  const messages = app.modules.get('interaction-message').service;
+  assert.equal((await messages.get(message.id)).status, 'read');
+});
+
+// ---------------------------------------------------------------------------
 // Calls: outcome and duration logged once, with the team author on outbound
 // ---------------------------------------------------------------------------
 

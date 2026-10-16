@@ -1,7 +1,7 @@
 // @ts-check
 
 import {
-  AppError, ConflictError, ValidationError, isCalendarDate, normalizeActor,
+  AppError, ConflictError, NotFoundError, ValidationError, isCalendarDate, requireActor,
   optionalIsoDate,
 } from '../../core/index.js';
 
@@ -267,8 +267,9 @@ export function isUniqueConflict(error) {
 export function resolveModule(modules, name) {
   try {
     return modules?.get?.(name) ?? null;
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof NotFoundError) return null;
+    throw error;
   }
 }
 
@@ -301,7 +302,10 @@ function interactionServices(context) {
 /**
  * Same key, same payload → the row that already exists. Same key, different
  * payload → 409 naming the fields, so recorded evidence is never overwritten
- * and the caller is never left diffing two rows to find out why.
+ * and the caller is never left diffing two rows to find out why. The compared
+ * payload carries the whole subject envelope: a retry that moves a subject
+ * from host-owned to package-owned (or names another owning package) is a
+ * different claim behind the same key, and is refused rather than replayed.
  * `subjectLabel` is deliberately not identity: it is a display snapshot taken
  * at creation and never refreshed, so a caller whose only difference is a
  * renamed contact describes the same conversation with a newer label.
@@ -342,7 +346,9 @@ export async function openConversation(context, request) {
   const names = resolvedNames(context.moduleNames);
   const { conversations } = interactionServices({ modules: context.modules, names });
   const actor = context.actor;
-  const who = normalizeActor(actor);
+  // Evidence names its author: an anonymous log would store words the business
+  // sent with nobody accountable for them, so a missing actor is refused.
+  const who = requireActor(actor);
   const input = validateConversationRequest(request);
   const source = bindSourcePackage(input.source, context.consumer);
   const now = typeof context.now === 'function' ? context.now() : new Date().toISOString();
@@ -432,7 +438,9 @@ export async function logMessage(context, request) {
   const names = resolvedNames(context.moduleNames);
   const { messages } = interactionServices({ modules: context.modules, names });
   const actor = context.actor;
-  const who = normalizeActor(actor);
+  // Evidence names its author: an anonymous log would store words the business
+  // sent with nobody accountable for them, so a missing actor is refused.
+  const who = requireActor(actor);
   const input = validateMessageRequest(request);
   const source = bindSourcePackage(input.source, context.consumer);
 
@@ -445,6 +453,8 @@ export async function logMessage(context, request) {
     remoteHandle: input.remoteHandle,
     subjectResource: input.subject.resource,
     subjectId: input.subject.id,
+    subjectOwner: input.subject.owner,
+    subjectOwnerPackage: input.subject.ownerPackage,
     occurredAt: input.occurredAt,
     sourcePackage: source.package,
     sourceAction: source.action,
@@ -565,7 +575,9 @@ export async function logCall(context, request) {
   const names = resolvedNames(context.moduleNames);
   const { calls } = interactionServices({ modules: context.modules, names });
   const actor = context.actor;
-  const who = normalizeActor(actor);
+  // Evidence names its author: an anonymous log would store words the business
+  // sent with nobody accountable for them, so a missing actor is refused.
+  const who = requireActor(actor);
   const input = validateCallRequest(request);
   const source = bindSourcePackage(input.source, context.consumer);
 
@@ -580,6 +592,8 @@ export async function logCall(context, request) {
     errorCode: input.errorCode,
     subjectResource: input.subject.resource,
     subjectId: input.subject.id,
+    subjectOwner: input.subject.owner,
+    subjectOwnerPackage: input.subject.ownerPackage,
     occurredAt: input.occurredAt,
     sourcePackage: source.package,
     sourceAction: source.action,
@@ -762,12 +776,17 @@ export async function readConversationThread({ modules, moduleNames }, conversat
   return Object.freeze({ conversation: Object.freeze({ ...found }), entries: Object.freeze(entries) });
 }
 
-/** Exact read of one conversation by row id — a primary-key lookup, never a scan. */
+/**
+ * Exact read of one conversation by row id — a primary-key lookup, never a
+ * scan. Only the expected miss becomes absence: a storage or connection
+ * failure is the caller's outage to see, never a quiet unknown conversation.
+ */
 async function findConversationById(service, id) {
   try {
     return await service.get(id);
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof NotFoundError) return null;
+    throw error;
   }
 }
 
@@ -896,7 +915,32 @@ export function buildAdvanceMessageAction(moduleNames) {
     /** @param {any} ctx */
     async execute({ record, input, actor, modules }) {
       const service = resolveModule(modules, names.message)?.service;
-      return { message: await advanceMessage({ messages: service, actor }, record, input.to, input.errorCode) };
+      if (!service?.get || !service?.applyManaged) {
+        throw new AppError('The interactions package is installed without a managed "interaction-message" record module', {
+          code: 'INTERACTIONS_STORAGE_INVALID', status: 500,
+        });
+      }
+      // The runtime gates the entry state before this code runs, but a
+      // concurrent advance can commit between that gate and this write: the
+      // record handed here may already be stale. Re-read the authoritative
+      // status immediately before writing, inside the same transaction, and
+      // refuse a move the current state no longer allows — so two branches
+      // from one state cannot both commit, and the loser names the move that
+      // beat it instead of silently deciding the final state last.
+      // (Residual: the framework's managed update is unconditional once
+      // issued; a row lock or compare-and-set primitive in core would close
+      // the remaining window between this read and the write.)
+      const current = await service.get(record.id);
+      if (current.status !== record.status) {
+        const allowed = MESSAGE_TRANSITIONS[current.status] ?? [];
+        throw new AppError(
+          `An interaction message in state "${current.status}" cannot advance to "${input.to}": `
+            + 'the message moved while this action ran'
+            + (allowed.length > 0 ? `; it may advance to ${allowed.join(' or ')}` : '; it is terminal and advances nowhere'),
+          { code: 'INTERACTIONS_INVALID_STATE', status: 409, details: { from: current.status, to: input.to, allowed } },
+        );
+      }
+      return { message: await advanceMessage({ messages: service, actor }, current, input.to, input.errorCode) };
     },
   };
 }
