@@ -26,4 +26,4 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: node --no-warnings --test tests/agent-tool-selection-scoring.test.js
+      - run: scripts/ci-heavy.sh nightly-scoring -- node --no-warnings --test tests/agent-tool-selection-scoring.test.js
