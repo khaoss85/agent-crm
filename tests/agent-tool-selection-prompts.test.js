@@ -631,13 +631,43 @@ function heredocCrossProduct() {
   return cases;
 }
 
+/**
+ * ## How much of the corpus runs
+ *
+ * The full product below is 8 positions x 8 wrappers x 10 redirects x 7
+ * branches x 6 groupings (26,880 cells) plus the heredoc delimiter min-corpus,
+ * and the oracle forks a shell per cell: about 13 minutes on an idle machine,
+ * 30-40 on a shared one, which is why `npm test` could not be green on any
+ * Mac anyone actually works on. So the default run keeps every position,
+ * every branch and every grouping — those are the questions the oracle asks —
+ * and crosses them with the three wrappers and two redirects that move the
+ * answer most: `none` (the baseline), `xargs` (it externalises builtins, so
+ * it changes what runs) and `sudo` (it eats the next word, so it changes
+ * where the command is), over `none` and `file` (the write boundary the
+ * mutation witness is about). That is 2,016 cells, a few minutes anywhere.
+ *
+ * The complete product, including the delimiter-boundary min-corpus, runs
+ * wherever `ACCORDO_FULL_SHELL_ORACLE=1` is set — CI sets it, so Linux
+ * coverage is exactly what it was. A local full run is legitimate but slow:
+ * give it its own timeout and never hold the shared machine lock for it.
+ */
+const SHELL_ORACLE_FULL = process.env.ACCORDO_FULL_SHELL_ORACLE === '1';
+const SHELL_ORACLE_WRAPPERS = SHELL_ORACLE_FULL
+  ? Object.keys(ORACLE_WRAPPERS)
+  : ['none', 'xargs', 'sudo'];
+const SHELL_ORACLE_REDIRECTS = SHELL_ORACLE_FULL
+  ? Object.keys(ORACLE_REDIRECTS)
+  : ['none', 'file'];
+
 /** The whole corpus: one cross-product for command shape, one for heredoc shape. */
 function shellCorpus() {
   /** @type {Array<{ label: string, snippet: string, probe: string }>} */
   const cases = [];
   for (const [positionName, position] of Object.entries(ORACLE_POSITIONS)) {
-    for (const [wrapperName, wrapper] of Object.entries(ORACLE_WRAPPERS)) {
-      for (const [redirectName, redirect] of Object.entries(ORACLE_REDIRECTS)) {
+    for (const wrapperName of SHELL_ORACLE_WRAPPERS) {
+      const wrapper = ORACLE_WRAPPERS[wrapperName];
+      for (const redirectName of SHELL_ORACLE_REDIRECTS) {
+        const redirect = ORACLE_REDIRECTS[redirectName];
         const inner = `${position.lead}${wrapper}${position.head}${redirect.suffix}${position.tail}${redirect.after}`;
         for (const [branchName, branch] of Object.entries(ORACLE_BRANCHES)) {
           for (const [groupingName, grouping] of Object.entries(ORACLE_GROUPINGS)) {
@@ -654,7 +684,7 @@ function shellCorpus() {
       }
     }
   }
-  return [...cases, ...heredocCrossProduct()];
+  return SHELL_ORACLE_FULL ? [...cases, ...heredocCrossProduct()] : cases;
 }
 
 /**
@@ -829,13 +859,16 @@ test('the shell classifier agrees with bash over the whole cross-product', () =>
   // The size is asserted against the product of the axes rather than against a number
   // somebody typed, so removing a value from an axis fails here instead of quietly
   // shrinking what is checked.
+  // The active product, not the full one: in default mode the wrapper and
+  // redirect lists are the documented subset, and the full mode carries the
+  // heredoc min-corpus on top — so the bound is "at least", never "exactly".
   const expectedCells = Object.keys(ORACLE_POSITIONS).length
-    * Object.keys(ORACLE_WRAPPERS).length
-    * Object.keys(ORACLE_REDIRECTS).length
+    * SHELL_ORACLE_WRAPPERS.length
+    * SHELL_ORACLE_REDIRECTS.length
     * Object.keys(ORACLE_BRANCHES).length
     * Object.keys(ORACLE_GROUPINGS).length;
   assert.ok(
-    corpus.length > expectedCells,
+    corpus.length >= expectedCells,
     `the corpus generated ${corpus.length} texts and the axes alone are ${expectedCells}; an axis has been dropped`,
   );
 
@@ -881,7 +914,7 @@ test('the shell classifier agrees with bash over the whole cross-product', () =>
     }
 
     assert.equal(unparseable, 0, `${unparseable} of ${corpus.length} texts are not shell bash will accept; the generator is producing nonsense`);
-    assert.ok(compared > expectedCells, `only ${compared} texts were compared against the shell`);
+    assert.ok(compared >= expectedCells, `only ${compared} texts were compared against the shell`);
     assert.ok(
       guardedWrites > 0,
       'not one text in the corpus writes a file under a guard bash does not take; the branch axis '
