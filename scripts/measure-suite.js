@@ -125,7 +125,12 @@ async function main() {
       cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: standaloneEnv(),
     });
     if (run.status !== 0 || run.error || run.signal) {
-      process.stderr.write(`${run.stdout ?? ''}\n${run.stderr ?? ''}`);
+      // Synchronous, all of it: an async write of the suite's stdout is cut when
+      // the process exits right after, and the failing test's line is exactly the
+      // part that went missing (2026-10-16, run 38976039643: ~700 of ~2400 lines).
+      writeAllSync(2, `${run.stdout ?? ''}\n${run.stderr ?? ''}\n`);
+      const failing = failingTestLines(run.stdout ?? '');
+      if (failing.length > 0) writeAllSync(2, `measure-suite: failing tests:\n${failing.join('\n')}\n`);
       // Synchronous: this diagnosis must reach the log even though the process
       // exits right after. The async write it replaces lost this exact line on
       // CI, leaving a truncated mid-line dump and exit 1 with no named cause.
@@ -187,6 +192,47 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
  *   the `spawnSync` result of the verify child.
  * @returns {string} the diagnosis line.
  */
+/**
+ * writeSync for a large string on a pipe that may be non-blocking (stderr is a
+ * pipe on the macOS runner, and Node leaves pipes asynchronous there): write in
+ * chunks and wait out EAGAIN instead of losing the rest.
+ *
+ * @param {number} fd
+ * @param {string} text
+ */
+function writeAllSync(fd, text) {
+  const buffer = Buffer.from(text, 'utf8');
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  let offset = 0;
+  while (offset < buffer.length) {
+    try {
+      offset += writeSync(fd, buffer, offset, Math.min(65536, buffer.length - offset));
+    } catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'EAGAIN') throw error;
+      Atomics.wait(pause, 0, 0, 10);
+    }
+  }
+}
+
+/**
+ * The lines of a spec/TAP run that name a failing test, in order, deduplicated.
+ * Printed last on a red verify so the cause survives any truncation above it.
+ *
+ * @param {string} output the suite's stdout
+ * @returns {string[]}
+ */
+export function failingTestLines(output) {
+  const seen = new Set();
+  const lines = [];
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim();
+    if (!/^(✖|not ok\b)/.test(trimmed) || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    lines.push(trimmed);
+  }
+  return lines;
+}
+
 export function formatVerifyFailure(run) {
   const base = `verify failed: exit=${run.status}, signal=${run.signal}, `
     + `error=${run.error?.message ?? 'none'}; nothing recorded`;

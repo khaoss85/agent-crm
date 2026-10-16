@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatVerifyFailure } from '../scripts/measure-suite.js';
+import { failingTestLines, formatVerifyFailure } from '../scripts/measure-suite.js';
 
 test('an externally killed suite names the signal and clears the tests', () => {
   const line = formatVerifyFailure({ status: null, signal: 'SIGKILL' });
@@ -28,4 +28,22 @@ test('a red suite names its exit code and stays silent about the machine', () =>
 test('a spawn failure names the spawn error', () => {
   const line = formatVerifyFailure({ status: null, signal: null, error: new Error('spawn npm ENOBUFS') });
   assert.match(line, /spawn npm ENOBUFS/);
+});
+
+test('the failing test lines are picked out of the run, in order and once', () => {
+  const output = [
+    '✔ a passing test (1ms)',
+    '✖ the outbox drains in order (12ms)',
+    '  AssertionError: expected 2',
+    'not ok 7 - a TAP failure',
+    '✖ the outbox drains in order (12ms)',
+  ].join('\n');
+  assert.deepEqual(failingTestLines(output), [
+    '✖ the outbox drains in order (12ms)',
+    'not ok 7 - a TAP failure',
+  ]);
+});
+
+test('a green or truncated output names no failing test', () => {
+  assert.deepEqual(failingTestLines('✔ one (1ms)\n✔ concurrent buffered sc'), []);
 });
