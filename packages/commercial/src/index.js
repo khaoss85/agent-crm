@@ -184,6 +184,7 @@ export function createCommercialDomainV2(options = {}) {
 }
 
 export { CommercialRegistries } from './registry.js';
+export { createPriceListCatalogProvider, validatePriceListConfig } from './price-list.js';
 export { buildCommercialActions } from './actions.js';
 export { createCatalogSync } from './catalog-sync.js';
 export {
