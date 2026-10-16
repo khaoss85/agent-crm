@@ -2,14 +2,20 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
-# One self-hosted runner serves this repository: without this, a push to a PR
-# branch starts two identical runs (the `push` event and the `pull_request`
-# event) and the second queues behind the first for the whole suite. One run
-# per ref, always the newest; a superseded run is cancelled, never queued.
+# One self-hosted runner serves this repository: a push to a PR branch used to
+# start two identical runs (the `push` event and the `pull_request` event) and
+# the second queued behind the first for the whole suite. Keying the group on
+# `github.ref` did not fix it: push carries refs/heads/* while pull_request
+# carries refs/pull/*/merge, so the two groups never matched and
+# cancel-in-progress never fired across them. The PR number unites both events
+# of the same PR (and `push` is limited to main, so a branch push runs once,
+# through the pull_request event). One run per PR, always the newest; a
+# superseded run is cancelled, never queued.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 # Both jobs read the Node version from `.nvmrc` rather than pinning it inline.
