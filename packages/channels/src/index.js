@@ -226,7 +226,7 @@ export function createChannelsPackage(options = {}) {
         humanApproval: 'register, status changes and sends require actor.type === "user"; provider-driven ingest runs under a system actor and ignores any caller-supplied actor',
         notModeled: [
           'dead-letter requeue (human retry of an open letter) — follow-up voice with its own state machine',
-          'real provider adapters beyond WhatsApp (Instagram, …) — fixture only until credentials exist',
+          'real provider adapters beyond WhatsApp (Instagram, Gmail, …) — fixture only until credentials exist',
           'the per-space HTTP route — the pilot owns it and passes spaceId from the verified path',
           'secret custody and rotation flow — the deployment owns it via resolveSecret',
           'reconciliation against provider truth — redelivery resumes unprocessed rows',
@@ -272,4 +272,16 @@ export {
   canonicalWhatsAppNumber,
   createWhatsAppChannelAdapter,
 } from './whatsapp.js';
+export {
+  GMAIL_ADAPTER_NAME,
+  GMAIL_ADAPTER_VERSION,
+  GMAIL_MAX_TEXT,
+  GMAIL_SUBJECT_PREFIX,
+  buildGmailSendRequest,
+  canonicalGmailAddress,
+  createGmailChannelAdapter,
+  gmailPushBody,
+  gmailThreadIdForSubject,
+  gmailThreadSubject,
+} from './gmail.js';
 export { verifyHmacWebhook, fingerprintPayload, hmacWebhookHeaders } from './crypto.js';
