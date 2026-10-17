@@ -40,11 +40,6 @@ import { REQUEST_TERMINAL, transitionRequest } from './transitions.js';
 export const PAYMENT_CREATE_TIMEOUT_MS = 10000;
 export const PAYMENT_VERIFY_TIMEOUT_MS = 2000;
 export const PAYMENT_MAX_BODY_BYTES = 1024 * 1024;
-/**
- * One delivery may carry several provider items: one event row per item,
- * so the batch is bounded and a hostile adapter cannot loop forever.
- */
-export const PAYMENT_MAX_BATCH_EVENTS = 100;
 export const PAYMENT_SECRET_PURPOSE_INBOUND = 'payment-inbound';
 export const PAYMENT_SECRET_PURPOSE_OUTBOUND = 'payment-outbound';
 
@@ -53,6 +48,14 @@ export const PAYMENT_SECRET_PURPOSE_OUTBOUND = 'payment-outbound';
  * name: a minted checkout value carrying one is refused, never stored.
  */
 const STRIPE_SECRET_SHAPE = /(?:sk_live_|sk_test_|rk_live_|rk_test_|whsec_)/;
+
+/**
+ * Quarantine-reason prefix for deliveries held only because their
+ * connection was not active. A same-id redelivery after reactivation
+ * resumes from this marker instead of replaying the old quarantine
+ * forever (suspend-connection quarantines "until reinstatement").
+ */
+const QUARANTINE_INACTIVE_PREFIX = 'connection is ';
 
 /** @param {Record<string, string>} [config] */
 function resolvedNames(config = {}) {
@@ -247,8 +250,10 @@ export function createPaymentOperations(deps) {
     const spaceId = assertSpaceId(params?.spaceId);
     const connection = requireActiveConnection(spaceId, params?.connectionKey);
     const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
-    const quoteId = typeof params?.quoteId === 'string' ? params.quoteId : '';
-    const offerId = typeof params?.offerId === 'string' ? params.offerId : '';
+    // Trimmed before the exactly-one check: a whitespace-only id is no
+    // id at all, and the trimmed value is what gets stored and compared.
+    const quoteId = typeof params?.quoteId === 'string' ? params.quoteId.trim() : '';
+    const offerId = typeof params?.offerId === 'string' ? params.offerId.trim() : '';
     if ((quoteId === '') === (offerId === '')) {
       throw new ValidationError('payment needs exactly one of quoteId or offerId', { field: 'quoteId' });
     }
@@ -417,49 +422,44 @@ export function createPaymentOperations(deps) {
     if (!verified || verified.ok !== true) {
       throw new AppError('Payment event verification failed: invalid signature', { code: 'PAYMENT_SIGNATURE_INVALID', status: 401 });
     }
+    // Awaited like verifyInbound and createPayment: the adapter contract
+    // allows an async normalizeInbound, and an async rejection maps to the
+    // same 422 as a sync throw. Stripe sends one event per delivery, never
+    // a batch — a list-shaped normalization is refused, never mapped.
     let normalized;
     try {
-      normalized = adapter.normalizeInbound(verified.event);
+      normalized = await Promise.resolve(adapter.normalizeInbound(verified.event));
     } catch {
       throw new AppError('Payment event is not well-formed', { code: 'PAYMENT_EVENT_MALFORMED', status: 422 });
     }
-    const rawEvents = Array.isArray(normalized) ? normalized : [normalized];
-    if (rawEvents.length === 0 || rawEvents.length > PAYMENT_MAX_BATCH_EVENTS) {
+    if (!normalized || typeof normalized !== 'object' || Array.isArray(normalized)) {
       throw new AppError('Payment event is not well-formed', { code: 'PAYMENT_EVENT_MALFORMED', status: 422 });
     }
     const service = events();
     const requestService = requests();
     const now = nowIso();
     const payloadFingerprint = fingerprintPayload(rawBody);
-    // Every event is validated before any row is written, so a malformed
-    // item refuses the whole delivery instead of storing half of it.
-    const items = rawEvents.map((event) => {
-      const providerEventId = typeof event?.providerEventId === 'string' && event.providerEventId !== ''
-        && event.providerEventId.length <= 256 ? event.providerEventId : null;
-      if (!providerEventId) {
-        throw new AppError('Payment event is not well-formed', { code: 'PAYMENT_EVENT_MALFORMED', status: 422 });
-      }
-      const paymentRef = typeof event?.paymentRef === 'string' && event.paymentRef !== ''
-        && event.paymentRef.length <= 256 ? event.paymentRef : '';
-      const eventType = typeof event?.eventType === 'string' && event.eventType !== ''
-        && event.eventType.length <= 128 ? event.eventType : '';
-      if (paymentRef === '' || eventType === '') {
-        throw new AppError('Payment event is not well-formed', { code: 'PAYMENT_EVENT_MALFORMED', status: 422 });
-      }
-      return {
-        providerEventId,
-        paymentRef,
-        eventType,
-        occurredAt: isCanonicalInstant(event?.occurredAt) ? event.occurredAt : now,
-        sourceKey: boundedKey('pay-evt', spaceId, connection.sourceKey, providerEventId),
-      };
-    });
-
-    const outcomes = [];
-    for (const item of items) {
-      outcomes.push(await storeOne(item));
+    const event = normalized;
+    const providerEventId = typeof event?.providerEventId === 'string' && event.providerEventId !== ''
+      && event.providerEventId.length <= 256 ? event.providerEventId : null;
+    if (!providerEventId) {
+      throw new AppError('Payment event is not well-formed', { code: 'PAYMENT_EVENT_MALFORMED', status: 422 });
     }
-    return rawEvents.length === 1 ? outcomes[0] : { batched: true, events: outcomes };
+    const paymentRef = typeof event?.paymentRef === 'string' && event.paymentRef !== ''
+      && event.paymentRef.length <= 256 ? event.paymentRef : '';
+    const eventType = typeof event?.eventType === 'string' && event.eventType !== ''
+      && event.eventType.length <= 128 ? event.eventType : '';
+    if (paymentRef === '' || eventType === '') {
+      throw new AppError('Payment event is not well-formed', { code: 'PAYMENT_EVENT_MALFORMED', status: 422 });
+    }
+    const item = {
+      providerEventId,
+      paymentRef,
+      eventType,
+      occurredAt: isCanonicalInstant(event?.occurredAt) ? event.occurredAt : now,
+      sourceKey: boundedKey('pay-evt', spaceId, connection.sourceKey, providerEventId),
+    };
+    return storeOne(item);
 
     /**
      * Insert one event row. A concurrent delivery of the same event that won
@@ -488,22 +488,79 @@ export function createPaymentOperations(deps) {
     /**
      * Record the event against an already-terminal request: an agreeing
      * outcome resolves without moving the request, a contradicting one
-     * quarantines, and the stored outcome always wins.
+     * quarantines, and the stored outcome always wins. With `stored`, the
+     * existing event row is moved instead of inserting a new one — the
+     * resume path after reactivation.
      */
-    async function storeTerminalEvent(terminalRequest, item, outcome) {
+    async function storeTerminalEvent(terminalRequest, item, outcome, stored = null) {
       const agrees = (outcome === 'pay' && terminalRequest.status === 'paid')
         || (outcome === 'fail' && terminalRequest.status === 'failed');
-      const stored = await insertEvent({
-        sourceKey: item.sourceKey, spaceId, connectionKey: connection.sourceKey,
-        providerEventId: item.providerEventId, paymentRequestId: terminalRequest.id,
-        eventType: item.eventType, payloadFingerprint,
-        occurredAt: item.occurredAt, receivedAt: now,
+      const patch = {
         processed: true, effect: agrees ? 'applied' : 'quarantined',
         effectReason: agrees
           ? `request already ${terminalRequest.status}: no state change`
           : `request already ${terminalRequest.status}: contradicting provider event held as evidence`,
+      };
+      if (stored) {
+        const updated = await service.applyManaged(stored.id, patch, { actor });
+        return { duplicate: true, alreadyFinal: true, eventId: updated.id, effect: updated.effect };
+      }
+      const inserted = await insertEvent({
+        sourceKey: item.sourceKey, spaceId, connectionKey: connection.sourceKey,
+        providerEventId: item.providerEventId, paymentRequestId: terminalRequest.id,
+        eventType: item.eventType, payloadFingerprint,
+        occurredAt: item.occurredAt, receivedAt: now,
+        ...patch,
       });
-      return { duplicate: true, alreadyFinal: true, eventId: stored.row.id, effect: stored.row.effect };
+      return { duplicate: true, alreadyFinal: true, eventId: inserted.row.id, effect: inserted.row.effect };
+    }
+
+    /**
+     * Resume a delivery quarantined only because its connection was not
+     * active: the binding is active again, so the same Stripe retry bytes
+     * are re-evaluated instead of replaying the old quarantine forever.
+     * The request lookup stays scoped to the webhook connection, so a
+     * sibling binding still cannot finalize another connection's checkout.
+     */
+    async function resumeOne(stored, item) {
+      const request = requestService.listWhere({
+        spaceId, connectionKey: connection.sourceKey, providerRef: item.paymentRef,
+      })[0] ?? null;
+      if (!request || !STRIPE_FINAL_TYPES.includes(item.eventType)) {
+        return { duplicate: true, eventId: stored.id, effect: stored.effect };
+      }
+      const outcome = item.eventType === 'checkout.session.completed' ? 'pay' : 'fail';
+      if (REQUEST_TERMINAL.includes(request.status)) {
+        return storeTerminalEvent(request, item, outcome, stored);
+      }
+      let finalized;
+      try {
+        finalized = await transitionRequest(requestService, request.id, {
+          event: outcome,
+          patch: outcome === 'pay'
+            ? { paidAt: now, statusReason: `provider webhook ${item.providerEventId}: checkout completed` }
+            : { statusReason: `provider webhook ${item.providerEventId}: ${item.eventType}` },
+          actor,
+        });
+      } catch (error) {
+        // A concurrent delivery finalized the request first: the redelivery
+        // follows the terminal contract instead of erroring the provider.
+        if (error && typeof error === 'object' && error.code === 'PAYMENT_TRANSITION_INVALID') {
+          const current = await requestService.get(request.id);
+          if (current && REQUEST_TERMINAL.includes(current.status)) {
+            return storeTerminalEvent(current, item, outcome, stored);
+          }
+        }
+        throw error;
+      }
+      // applyManaged validates every patched field required-style, so the
+      // reason is a real sentence, never blank — and the audit keeps why
+      // this row moved long after the suspension ended.
+      const updated = await service.applyManaged(stored.id, {
+        processed: true, effect: 'applied',
+        effectReason: `resumed after reactivation: provider webhook ${item.providerEventId} applied`,
+      }, { actor });
+      return { duplicate: true, eventId: updated.id, effect: updated.effect, status: finalized.status, resumed: true };
     }
 
     async function storeOne(item) {
@@ -513,6 +570,12 @@ export function createPaymentOperations(deps) {
           throw new AppError('Provider event id was already recorded with a different payload', {
             code: 'PAYMENT_EVENT_ID_CONFLICT', status: 409, details: { providerEventId: item.providerEventId },
           });
+        }
+        if (already.effect === 'quarantined'
+          && typeof already.effectReason === 'string'
+          && already.effectReason.startsWith(QUARANTINE_INACTIVE_PREFIX)
+          && connection.status === 'active') {
+          return resumeOne(already, item);
         }
         return { duplicate: true, eventId: already.id, effect: already.effect };
       }
@@ -533,7 +596,7 @@ export function createPaymentOperations(deps) {
           eventType: item.eventType, payloadFingerprint,
           occurredAt: item.occurredAt, receivedAt: now,
           processed: true, effect: 'quarantined',
-          effectReason: `connection is ${connection.status}: verify the binding before applying provider state`,
+          effectReason: `${QUARANTINE_INACTIVE_PREFIX}${connection.status}: verify the binding before applying provider state`,
         });
         if (stored.raced) return { duplicate: true, eventId: stored.row.id, effect: stored.row.effect };
         const row = stored.row;

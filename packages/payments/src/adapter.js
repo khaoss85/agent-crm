@@ -19,10 +19,11 @@ import { AppError, ValidationError, computeDefinitionFingerprint, createDefiniti
  * - finalize: `verifyInbound` + `normalizeInbound` on the provider webhook,
  *   which moves the intent to its terminal state exactly once.
  *
- * `normalizeInbound` returns one event per provider item: a single object
- * for a single delivery, or a list when the provider batches several items
- * in one webhook. Operations stores one event row per item, atomically,
- * with dedup per providerEventId — an adapter never truncates a batch.
+ * `normalizeInbound` returns the one event of the delivery as a single
+ * object. Stripe sends one event per webhook delivery and never batches
+ * (see the package README): a list-shaped normalization is refused
+ * fail-closed by operations, so an adapter never truncates anything —
+ * there is nothing to truncate.
  */
 
 export const PAYMENT_ADAPTER_CONTRACT = 1;

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { createPaymentsHarness } from './helpers/payments-harness.js';
 import { createPaymentOperations } from '../packages/payments/src/operations.js';
+import { buildPaymentConnectionActions } from '../packages/payments/src/index.js';
 import {
   createFixtureStripeAdapter,
   fixturePaymentEventBody,
@@ -338,6 +339,148 @@ test('no secret material rests in rows or audit', async (t) => {
   assert.ok(!dump.includes(SECRET), 'secret value appears nowhere in stored rows or audit');
   assert.ok(dump.includes(SECRET_REF), 'the reference is what is stored');
   assert.ok(dump.includes(request.providerRef), 'the provider reference is scanned, not just rows');
+});
+
+/** Drive a package action the way a direct execute caller does (no framework envelope). */
+function directAction(harness, moduleName, actionName, record, input) {
+  const action = buildPaymentConnectionActions().find((entry) => entry.name === actionName);
+  if (!action) throw new Error(`unknown test action ${actionName}`);
+  const service = harness.internals.modules.get(moduleName).service;
+  return action.execute({
+    record,
+    input,
+    actor: harness.userActor,
+    managed: (id, patch) => service.applyManaged(id, patch, { actor: harness.userActor }),
+    now: () => new Date().toISOString(),
+  });
+}
+
+function connectionRow(harness, spaceId, connectionKey) {
+  return harness.internals.modules.get('payment-connection').service
+    .listWhere({ spaceId, sourceKey: connectionKey })[0];
+}
+
+function requestRow(harness, spaceId, sourceKey) {
+  return harness.internals.modules.get('payment-request').service
+    .listWhere({ spaceId, sourceKey })[0];
+}
+
+test('ingest awaits an async adapter normalization instead of failing closed', async (t) => {
+  const { definition } = createFixtureStripeAdapter({ secret: SECRET });
+  const syncNormalize = definition.normalizeInbound;
+  const asyncDef = { ...definition, normalizeInbound: async (event) => syncNormalize(event) };
+  const { harness } = setup({ adapterDefinition: asyncDef });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const { request } = await harness.request(SPACE_A, {
+    connectionKey: key, quoteId: 'quote-async', amount: 100, currency: 'EUR', requestKey: 'req-async',
+  });
+  const body = paidBody(request.providerRef, 'evt_async_1');
+  const ingested = await harness.ingest(SPACE_A, {
+    connectionKey: key, rawBody: body, headers: harness.faults.sign(body),
+  });
+  assert.equal(ingested.effect, 'applied');
+  assert.equal(harness.status(SPACE_A, request.id).status, 'paid');
+  // An async rejection maps to the same 422 as a sync throw, never a crash.
+  const failing = { ...definition, normalizeInbound: async () => { throw new Error('provider boom'); } };
+  const { harness: failingHarness } = setup({ adapterDefinition: failing });
+  t.after(() => failingHarness.close());
+  const failingKey = await registeredActive(failingHarness);
+  const pending = await failingHarness.request(SPACE_A, {
+    connectionKey: failingKey, quoteId: 'quote-async-fail', amount: 100, currency: 'EUR', requestKey: 'req-async-fail',
+  });
+  const failBody = paidBody(pending.request.providerRef, 'evt_async_f1');
+  await assert.rejects(
+    failingHarness.ingest(SPACE_A, {
+      connectionKey: failingKey, rawBody: failBody, headers: failingHarness.faults.sign(failBody),
+    }),
+    (e) => e.code === 'PAYMENT_EVENT_MALFORMED' && e.status === 422,
+  );
+});
+
+test('a list-shaped normalization is refused, never silently mapped', async (t) => {
+  const { definition } = createFixtureStripeAdapter({ secret: SECRET });
+  const listed = { ...definition, normalizeInbound: () => [{ providerEventId: 'e1', paymentRef: 'cs_1', eventType: 'checkout.session.completed' }] };
+  const { harness } = setup({ adapterDefinition: listed });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const { request } = await harness.request(SPACE_A, {
+    connectionKey: key, quoteId: 'quote-list', amount: 100, currency: 'EUR', requestKey: 'req-list',
+  });
+  const body = paidBody(request.providerRef, 'evt_list_1');
+  await assert.rejects(
+    harness.ingest(SPACE_A, { connectionKey: key, rawBody: body, headers: harness.faults.sign(body) }),
+    (e) => e.code === 'PAYMENT_EVENT_MALFORMED' && e.status === 422,
+  );
+});
+
+test('a same-id redelivery after reactivation resumes instead of replaying quarantine', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const { request } = await harness.request(SPACE_A, {
+    connectionKey: key, quoteId: 'quote-resume', amount: 100, currency: 'EUR', requestKey: 'req-resume',
+  });
+  await directAction(harness, 'payment-connection', 'suspend-connection', connectionRow(harness, SPACE_A, key), { reason: 'kit suspends before the retry' });
+  const body = paidBody(request.providerRef, 'evt_resume_1');
+  const held = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: body, headers: harness.faults.sign(body) });
+  assert.equal(held.quarantined, true);
+  assert.equal(harness.status(SPACE_A, request.id).status, 'pending');
+  // The binding is reinstated; Stripe retries the identical bytes.
+  await directAction(harness, 'payment-connection', 'activate-connection', connectionRow(harness, SPACE_A, key), { reason: 'kit reinstates the binding' });
+  const resumed = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: body, headers: harness.faults.sign(body) });
+  assert.equal(resumed.duplicate, true);
+  assert.equal(resumed.effect, 'applied');
+  assert.equal(resumed.status, 'paid');
+  assert.equal(harness.status(SPACE_A, request.id).status, 'paid');
+  assert.equal(JSON.parse(harness.dumpStorage()).events.length, 1);
+});
+
+test('whitespace-only quoteId or offerId is refused', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  await assert.rejects(
+    harness.request(SPACE_A, {
+      connectionKey: key, quoteId: '   ', amount: 100, currency: 'EUR', requestKey: 'req-blank-q',
+    }),
+    (e) => e.code === 'VALIDATION_ERROR',
+  );
+  await assert.rejects(
+    harness.request(SPACE_A, {
+      connectionKey: key, offerId: '\t ', amount: 100, currency: 'EUR', requestKey: 'req-blank-o',
+    }),
+    (e) => e.code === 'VALIDATION_ERROR',
+  );
+  assert.equal(harness.list(SPACE_A).length, 0);
+});
+
+test('cancel-request on a terminal request refuses instead of regressing it', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const { request } = await harness.request(SPACE_A, {
+    connectionKey: key, quoteId: 'quote-cancel', amount: 100, currency: 'EUR', requestKey: 'req-cancel',
+  });
+  const body = paidBody(request.providerRef, 'evt_cancel_1');
+  await harness.ingest(SPACE_A, { connectionKey: key, rawBody: body, headers: harness.faults.sign(body) });
+  const paid = requestRow(harness, SPACE_A, request.sourceKey);
+  assert.equal(paid.status, 'paid');
+  // Direct execute — outside the framework fromStates envelope — refuses.
+  await assert.rejects(
+    directAction(harness, 'payment-request', 'cancel-request', paid, { reason: 'kit cancels too late' }),
+    (e) => e.code === 'PAYMENT_TRANSITION_INVALID',
+  );
+  assert.equal(harness.status(SPACE_A, request.id).status, 'paid');
+  // An open intent still cancels through the same path.
+  const open = await harness.request(SPACE_A, {
+    connectionKey: key, quoteId: 'quote-cancel-2', amount: 100, currency: 'EUR', requestKey: 'req-cancel-2',
+  });
+  const canceled = await directAction(
+    harness, 'payment-request', 'cancel-request',
+    requestRow(harness, SPACE_A, open.request.sourceKey), { reason: 'kit cancels in time' },
+  );
+  assert.equal(canceled.request.status, 'canceled');
 });
 
 test('unwired composition refuses instead of inventing custody', async (t) => {

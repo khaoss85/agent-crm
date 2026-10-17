@@ -4,6 +4,7 @@ import { AppError, ValidationError, definePackage, selectPackageGraph } from '..
 import { PAYMENT_PROVIDERS, PaymentRegistries } from './adapter.js';
 import { CONNECTION_STATUSES, assertConnectionTransition, assertSecretReference } from './connection.js';
 import { createPaymentOperations } from './operations.js';
+import { assertRequestTransition } from './transitions.js';
 
 /**
  * The Payments domain package (backlog:1972e16d33f2).
@@ -131,6 +132,10 @@ export function buildPaymentConnectionActions(config = {}) {
       async execute({ record, input, actor, managed }) {
         requireUserActor(actor, 'Cancel payment request');
         const reason = boundedReason(input, 'cancel-request');
+        // The guard lives in the action itself, not only in the framework
+        // fromStates envelope: a direct execute on a paid, failed or
+        // canceled request is refused instead of regressing it.
+        assertRequestTransition(record.status, 'cancel');
         const updated = await managed(record.id, { status: 'canceled', statusReason: reason });
         return { request: { id: updated.id, status: updated.status } };
       },

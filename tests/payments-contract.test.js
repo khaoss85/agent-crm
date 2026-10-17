@@ -123,6 +123,22 @@ test('request transitions move intent to terminal exactly once', () => {
   assert.equal(paymentEventState({ processed: false }), 'received');
 });
 
+test('control characters never land in keys, accounts or request ids', () => {
+  for (const hostile of ['a\nb', 'a\rb', 'a\tb', 'a\x7fb', 'a\x00b']) {
+    assert.throws(() => boundedKey('pay-evt', 'presti', 'k', hostile), /single-line/, JSON.stringify(hostile));
+    assert.throws(
+      () => assertConnectionInput(connectionInput({ account: hostile }), registries()),
+      /single-line/,
+      JSON.stringify(hostile),
+    );
+    assert.throws(
+      () => paymentIntentKey({ spaceId: 'presti', connectionKey: 'k', requestKey: hostile }),
+      /single-line/,
+      JSON.stringify(hostile),
+    );
+  }
+});
+
 test('space, currency and intent keys are bounded and injective', () => {
   assert.equal(assertSpaceId('presti'), 'presti');
   assert.throws(() => assertSpaceId('Presti'), /spaceId/);

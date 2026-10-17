@@ -68,16 +68,17 @@ export function createFixtureStripeAdapter(options = {}) {
         } catch {
           throw new AppError('Fixture payment event is not JSON', { code: 'PAYMENT_EVENT_MALFORMED', status: 422 });
         }
+        // Stripe sends one event per webhook delivery — never a batch
+        // (README): a list-shaped body is refused, never silently mapped.
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
           throw new AppError('Fixture payment event is not an object', { code: 'PAYMENT_EVENT_MALFORMED', status: 422 });
         }
-        const items = Array.isArray(parsed) ? parsed : [parsed];
-        return items.map((item) => ({
-          providerEventId: typeof item?.id === 'string' ? item.id : '',
-          paymentRef: typeof item?.paymentRef === 'string' ? item.paymentRef : '',
-          eventType: typeof item?.type === 'string' ? item.type : '',
-          occurredAt: typeof item?.at === 'string' ? item.at : null,
-        }));
+        return {
+          providerEventId: typeof parsed?.id === 'string' ? parsed.id : '',
+          paymentRef: typeof parsed?.paymentRef === 'string' ? parsed.paymentRef : '',
+          eventType: typeof parsed?.type === 'string' ? parsed.type : '',
+          occurredAt: typeof parsed?.at === 'string' ? parsed.at : null,
+        };
       },
 
       async createPayment({ amount, currency, intentKey, secret }) {

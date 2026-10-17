@@ -35,7 +35,10 @@ const MAX_SECRET_REF = 256;
 // fingerprint, so short keys stay readable and long keys still dedup.
 const KEY_COMPONENT_MAX = 128;
 const KEY_TOTAL_MAX = 256;
-const CONTROL_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
+// Every C0 control (including tab, LF and CR) and DEL is refused: keys,
+// rows and audit stay single-line, matching the operations hasControlChar
+// gate — a newline in a key would split line-oriented audit consumers.
+const CONTROL_RE = /[\x00-\x1f\x7f]/;
 const CURRENCY_RE = /^[A-Z]{3}$/;
 
 /**

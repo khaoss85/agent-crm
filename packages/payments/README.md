@@ -15,7 +15,10 @@ Stripe payments for commercial packages (backlog:1972e16d33f2).
 - `payment-event` — one verified provider webhook item per row, DB-unique
   per (space, connection, provider event id). A replay resolves
   identically; a different payload under the same id is a provider
-  contract violation (409), never a second payment.
+  contract violation (409), never a second payment. Stripe sends one
+  event per webhook delivery and never batches: `normalizeInbound`
+  returns a single object, and a list-shaped body is refused (422),
+  never silently mapped.
 
 ## What it needs
 
