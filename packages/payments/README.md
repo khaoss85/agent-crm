@@ -34,6 +34,19 @@ const { definition } = createFixtureStripeAdapter({ secret: 'test-only' });
 createPaymentsPackage({ paymentAdapters: [definition], resolveSecret });
 ```
 
+Every payment-request state change goes through one function
+(`advancePaymentRequest` in `src/transitions.js`): it re-reads the request
+and its connection inside one transaction and derives the move from the
+lifecycle table, so a mint racing another mint resolves to the same
+checkout and a suspend racing a delivery quarantines instead of applying.
+
+A deployment that renamed the record modules maps the canonical record
+names to its own; anything else is refused, never silently ignored:
+
+```js
+createPaymentsPackage({ paymentAdapters: [definition], resolveSecret, modules: { 'payment-request': 'shop-payment-request' } });
+```
+
 ## How to enable it
 
 A project composes it like any domain package (docs/PACKAGE_AUTHORING.md

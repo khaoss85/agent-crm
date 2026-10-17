@@ -32,6 +32,10 @@ import {
   assertRequestTransition,
   paymentEventState,
 } from '../packages/payments/src/transitions.js';
+import {
+  buildPaymentConnectionActions,
+  resolvePaymentModuleNames,
+} from '../packages/payments/src/index.js';
 
 /**
  * Payments contract tests (backlog:1972e16d33f2): the adapter contract, the
@@ -170,3 +174,30 @@ test('webhook verification is constant-time over timestamp.body and refuses skew
 function pick(headers) {
   return { signature: headers['x-payment-signature-256'], timestamp: headers['x-payment-timestamp'] };
 }
+
+test('module renames are honored by actions and config, and unknown names are refused', () => {
+  const canonical = resolvePaymentModuleNames({});
+  assert.deepEqual({ ...canonical }, {
+    'payment-connection': 'payment-connection',
+    'payment-request': 'payment-request',
+    'payment-event': 'payment-event',
+  });
+  const renamed = resolvePaymentModuleNames({ modules: { 'payment-request': 'shop-payment-request' } });
+  assert.equal(renamed['payment-request'], 'shop-payment-request');
+  assert.equal(renamed['payment-connection'], 'payment-connection');
+  const actions = buildPaymentConnectionActions(renamed);
+  assert.equal(actions.find((entry) => entry.name === 'cancel-request').module, 'shop-payment-request');
+  assert.equal(actions.find((entry) => entry.name === 'suspend-connection').module, 'payment-connection');
+  const fromConfig = resolvePaymentModuleNames({ config: { requestModule: 'shop-payment-request' } });
+  assert.equal(fromConfig['payment-request'], 'shop-payment-request');
+  // A modules entry wins over the config key saying the same thing.
+  const both = resolvePaymentModuleNames({
+    config: { requestModule: 'cfg-payment-request' },
+    modules: { 'payment-request': 'shop-payment-request' },
+  });
+  assert.equal(both['payment-request'], 'shop-payment-request');
+  assert.throws(() => resolvePaymentModuleNames({ modules: { 'payment-ledger': 'x' } }), /unknown payment module/);
+  assert.throws(() => resolvePaymentModuleNames({ modules: { 'payment-request': '' } }), /non-empty string/);
+  assert.throws(() => resolvePaymentModuleNames({ modules: ['payment-request'] }), /must map record names/);
+  assert.throws(() => resolvePaymentModuleNames({ config: { requestModule: '' } }), /non-empty string/);
+});

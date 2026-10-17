@@ -4,7 +4,7 @@ import { AppError, ValidationError, definePackage, selectPackageGraph } from '..
 import { PAYMENT_PROVIDERS, PaymentRegistries } from './adapter.js';
 import { CONNECTION_STATUSES, assertConnectionTransition, assertSecretReference } from './connection.js';
 import { createPaymentOperations } from './operations.js';
-import { assertRequestTransition } from './transitions.js';
+import { REQUEST_STATUSES, advancePaymentRequest } from './transitions.js';
 
 /**
  * The Payments domain package (backlog:1972e16d33f2).
@@ -54,9 +54,9 @@ function requireUserActor(actor, action) {
   return actor;
 }
 
-function statusAction(name, label, description, fromStates, toState, extra = {}) {
+function statusAction(moduleName, name, label, description, fromStates, toState, extra = {}) {
   return {
-    module: 'payment-connection',
+    module: moduleName,
     name,
     label,
     description,
@@ -79,21 +79,116 @@ function statusAction(name, label, description, fromStates, toState, extra = {})
   };
 }
 
-/** @param {Record<string, string>} [config] */
-export function buildPaymentConnectionActions(config = {}) {
-  void config;
+/**
+ * Resolve the record-module names this package writes. `modules` maps the
+ * canonical record names (`payment-connection`, `payment-request`,
+ * `payment-event`) to the composed module names; the `connectionModule`
+ * family of config keys says the same thing the long way. Both are honored;
+ * anything else is refused, never silently ignored.
+ */
+export function resolvePaymentModuleNames({ config = {}, modules = null } = {}) {
+  const names = {
+    'payment-connection': 'payment-connection',
+    'payment-request': 'payment-request',
+    'payment-event': 'payment-event',
+  };
+  const fromConfig = {
+    'payment-connection': config.connectionModule,
+    'payment-request': config.requestModule,
+    'payment-event': config.eventModule,
+  };
+  for (const [key, value] of Object.entries(fromConfig)) {
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || value === '') {
+      throw new ValidationError(`payment module name for "${key}" must be a non-empty string`, { field: 'modules' });
+    }
+    names[key] = value;
+  }
+  if (modules !== undefined && modules !== null) {
+    if (!modules || typeof modules !== 'object' || Array.isArray(modules)) {
+      throw new ValidationError('payment modules must map record names to module names', { field: 'modules' });
+    }
+    for (const [key, value] of Object.entries(modules)) {
+      if (!Object.hasOwn(names, key)) {
+        throw new ValidationError(`unknown payment module "${key}": expected one of ${Object.keys(names).join(', ')}`, { field: 'modules' });
+      }
+      if (typeof value !== 'string' || value === '') {
+        throw new ValidationError(`payment module name for "${key}" must be a non-empty string`, { field: 'modules' });
+      }
+      names[key] = value;
+    }
+  }
+  return Object.freeze({ ...names });
+}
+
+/**
+ * The stores the cancel-request action moves through. The framework runs
+ * the action inside its own transaction with a freshly re-read record and
+ * hands over services, modules and database; a minimal direct-execute
+ * caller passes only the record under test plus `managed`, and the table
+ * still guards the move.
+ */
+function cancelStores(names, { record, managed, modules, database }) {
+  const serviceFor = (name) => {
+    try {
+      return modules?.get?.(name)?.service ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const requests = serviceFor(names['payment-request']);
+  const connections = serviceFor(names['payment-connection']);
+  if (requests && connections
+    && typeof requests.get === 'function' && typeof requests.applyManaged === 'function'
+    && typeof connections.listWhere === 'function') {
+    return { requests, connections, database: database ?? requests.database ?? null };
+  }
+  return {
+    requests: {
+      get: async (id) => {
+        if (id !== record.id) {
+          throw new AppError('Unknown payment request', { code: 'PAYMENT_REQUEST_UNKNOWN', status: 404 });
+        }
+        return record;
+      },
+      applyManaged: managed,
+      database: null,
+    },
+    connections: { listWhere: () => [] },
+    database: null,
+  };
+}
+
+/**
+ * @param {Record<string, string>} [names] resolved record-module names
+ * (`resolvePaymentModuleNames`); defaults to the canonical names.
+ */
+export function buildPaymentConnectionActions(names = {}) {
+  const moduleName = (canonical) => (
+    typeof names[canonical] === 'string' && names[canonical] !== '' ? names[canonical] : canonical
+  );
+  const connectionModule = moduleName('payment-connection');
+  const requestModule = moduleName('payment-request');
+  const resolved = {
+    'payment-connection': connectionModule,
+    'payment-request': requestModule,
+    'payment-event': moduleName('payment-event'),
+  };
   return [
     statusAction(
+      connectionModule,
       'activate-connection', 'Activate connection',
       'Activate a pending or suspended payment connection: requests and inbound finalization resume.',
       ['pending', 'suspended'], 'active',
     ),
     statusAction(
+      connectionModule,
       'suspend-connection', 'Suspend connection',
       'Suspend a payment connection: requests refuse and inbound deliveries quarantine until reinstatement.',
       ['pending', 'active'], 'suspended',
     ),
     statusAction(
+      connectionModule,
       'revoke-connection', 'Revoke connection',
       'Revoke a payment connection permanently. Terminal: a revoked binding never reactivates — register a new one.',
       ['pending', 'active', 'suspended'], 'revoked', { confirm: true },
@@ -118,7 +213,7 @@ export function buildPaymentConnectionActions(config = {}) {
       },
     },
     {
-      module: 'payment-request',
+      module: requestModule,
       name: 'cancel-request',
       label: 'Cancel payment request',
       description: 'Cancel an open or pending payment request. A paid or failed request never regresses: canceling it is refused.',
@@ -129,15 +224,18 @@ export function buildPaymentConnectionActions(config = {}) {
         { name: 'reason', type: 'string', required: true, hint: 'Why this request is canceled.' },
       ],
       /** @param {any} ctx */
-      async execute({ record, input, actor, managed }) {
-        requireUserActor(actor, 'Cancel payment request');
+      async execute({ record, input, actor, managed, modules, database }) {
+        const who = requireUserActor(actor, 'Cancel payment request');
         const reason = boundedReason(input, 'cancel-request');
-        // The guard lives in the action itself, not only in the framework
-        // fromStates envelope: a direct execute on a paid, failed or
-        // canceled request is refused instead of regressing it.
-        assertRequestTransition(record.status, 'cancel');
-        const updated = await managed(record.id, { status: 'canceled', statusReason: reason });
-        return { request: { id: updated.id, status: updated.status } };
+        // Cancel moves through the same single state path as mint and
+        // ingest: the table owns the move, so a direct execute on a paid,
+        // failed or canceled request is refused instead of regressing it.
+        const { request } = await advancePaymentRequest(
+          cancelStores(resolved, { record, managed, modules, database }),
+          record.id,
+          { event: 'cancel', patch: { statusReason: reason }, actor: who },
+        );
+        return { request: { id: request.id, status: request.status } };
       },
     },
   ];
@@ -164,7 +262,16 @@ export function createPaymentsPackage(options = {}) {
   if (resolveSecret !== undefined && typeof resolveSecret !== 'function') {
     throw new ValidationError('payment resolveSecret must be a function', { field: 'resolveSecret' });
   }
-  const config = options.config ?? {};
+  // The record-module names are resolved once, honored by both layers —
+  // the actions declare them and the operations write through them — and
+  // anything else in `modules` is refused, never silently ignored.
+  const moduleNames = resolvePaymentModuleNames({ config: options.config ?? {}, modules: options.modules ?? null });
+  const opsConfig = {
+    ...(options.config ?? {}),
+    connectionModule: moduleNames['payment-connection'],
+    requestModule: moduleNames['payment-request'],
+    eventModule: moduleNames['payment-event'],
+  };
 
   // One composed instance PER APPLICATION runtime: operations close over
   // the registries and custody edge, and over the runtime's own database
@@ -180,7 +287,7 @@ export function createPaymentsPackage(options = {}) {
         modules: runtime.modules,
         registries,
         resolveSecret,
-        config,
+        config: opsConfig,
       });
       composedByRuntime.set(runtime, composed);
     }
@@ -194,7 +301,7 @@ export function createPaymentsPackage(options = {}) {
     label: 'Payments',
     description: 'Space-scoped Stripe payment bindings: one connection record per space (provider, account, status, secret reference), payment requests from a quote or an offer (intent, provider checkout, verified once-only finalization), and the status reads the card and the pipeline render.',
     resources: [...PAYMENTS_RESOURCES],
-    actions: buildPaymentConnectionActions(options.modules),
+    actions: buildPaymentConnectionActions(moduleNames),
     operations: [
       {
         operationContract: 1,
@@ -252,6 +359,29 @@ export function createPaymentsPackage(options = {}) {
         create(runtime) {
           const ops = operations(runtime);
           return (params) => ops.getPaymentStatus(params?.spaceId, params?.requestId);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'list-payments',
+        label: 'List payments',
+        appMethod: 'listPayments',
+        description: 'List the payment requests of one space for the sales pipeline: function-free data, never a secret. An unknown status filter is refused, never an empty list.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+          { name: 'status', type: 'string', required: false, hint: 'Optional request status filter.' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          // Async so a refused filter rejects the returned promise like
+          // every other operation outcome, never throws synchronously.
+          return async (params) => {
+            const status = params?.status ?? null;
+            if (status !== null && status !== undefined && !REQUEST_STATUSES.includes(status)) {
+              throw new ValidationError(`payment status filter must be one of: ${REQUEST_STATUSES.join(', ')}`, { field: 'status' });
+            }
+            return ops.listPayments(params?.spaceId, { status: status ?? null });
+          };
         },
       },
     ],

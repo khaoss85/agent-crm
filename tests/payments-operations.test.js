@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 
 import { createPaymentsHarness } from './helpers/payments-harness.js';
 import { createPaymentOperations } from '../packages/payments/src/operations.js';
-import { buildPaymentConnectionActions } from '../packages/payments/src/index.js';
+import {
+  buildPaymentConnectionActions,
+  createPaymentsPackage,
+  resolvePaymentModuleNames,
+} from '../packages/payments/src/index.js';
 import {
   createFixtureStripeAdapter,
   fixturePaymentEventBody,
@@ -181,40 +185,46 @@ test('a raced duplicate delivery resolves as a replay, not a raw violation', asy
   assert.equal(JSON.parse(harness.dumpStorage()).events.length, 1);
 });
 
-test('a delivery raced on the request transition follows the terminal contract', async (t) => {
-  const { harness } = setup();
+test('two concurrent deliveries finalize once: the loser follows the terminal contract', async (t) => {
+  const { definition } = createFixtureStripeAdapter({ secret: SECRET });
+  // Both deliveries must be past verification before either may move the
+  // request row: the loser's move then reads the winner's paid state.
+  // (The old write-then-throw injection is unrepresentable now: the move
+  // rolls back with the throw, so the race is driven for real instead.)
+  let entered = 0;
+  let releaseGate;
+  const gate = new Promise((resolve) => { releaseGate = resolve; });
+  const gated = {
+    ...definition,
+    verifyInbound: async (args) => {
+      const out = await definition.verifyInbound(args);
+      entered += 1;
+      if (entered >= 2) releaseGate();
+      else await gate;
+      return out;
+    },
+  };
+  const { harness } = setup({ adapterDefinition: gated });
   t.after(() => harness.close());
   const key = await registeredActive(harness);
   const { request } = await harness.request(SPACE_A, {
     connectionKey: key, quoteId: 'quote-race-t', amount: 1000, currency: 'EUR', requestKey: 'req-race-t',
   });
-  const rawBody = paidBody(request.providerRef, 'evt_race_t_1');
-  const headers = harness.faults.sign(rawBody);
-  // A concurrent delivery finalizes the request first; this delivery's
-  // transition then throws on the stale state instead of winning.
-  const entry = harness.internals.modules.get('payment-request');
-  const real = entry.service;
-  const realApply = real.applyManaged.bind(real);
-  let armed = true;
-  const raced = Object.create(real);
-  raced.applyManaged = async (id, patch, opts) => {
-    if (armed) {
-      armed = false;
-      await realApply(id, { status: 'paid', paidAt: patch.paidAt, statusReason: patch.statusReason }, opts);
-      throw Object.assign(new Error('Payment request cannot "pay" from "paid"'), { code: 'PAYMENT_TRANSITION_INVALID' });
-    }
-    return realApply(id, patch, opts);
-  };
-  entry.service = raced;
-  try {
-    const ingested = await harness.ingest(SPACE_A, { connectionKey: key, rawBody, headers });
-    assert.equal(ingested.duplicate, true);
-    assert.equal(ingested.alreadyFinal, true);
-    assert.equal(ingested.effect, 'applied');
-  } finally {
-    entry.service = real;
-  }
+  const bodyA = paidBody(request.providerRef, 'evt_race_t_1');
+  const bodyB = paidBody(request.providerRef, 'evt_race_t_2');
+  const [first, second] = await Promise.all([
+    harness.ingest(SPACE_A, { connectionKey: key, rawBody: bodyA, headers: harness.faults.sign(bodyA) }),
+    harness.ingest(SPACE_A, { connectionKey: key, rawBody: bodyB, headers: harness.faults.sign(bodyB) }),
+  ]);
+  const applied = [first, second].filter((result) => result.duplicate === false);
+  const replayed = [first, second].filter((result) => result.duplicate === true);
+  assert.equal(entered, 2, 'both deliveries were in flight before either moved the row');
+  assert.equal(applied.length, 1, 'exactly one delivery finalizes');
+  assert.equal(applied[0].effect, 'applied');
+  assert.equal(replayed.length, 1, 'the loser follows the terminal contract');
+  assert.equal(replayed[0].alreadyFinal, true);
   assert.equal(harness.status(SPACE_A, request.id).status, 'paid');
+  assert.equal(JSON.parse(harness.dumpStorage()).events.length, 2);
 });
 
 test('a secret-shaped provider reference is refused and never stored', async (t) => {
@@ -481,6 +491,182 @@ test('cancel-request on a terminal request refuses instead of regressing it', as
     requestRow(harness, SPACE_A, open.request.sourceKey), { reason: 'kit cancels in time' },
   );
   assert.equal(canceled.request.status, 'canceled');
+});
+
+/** The kit secret custody, for package-level compositions over the harness stores. */
+function kitSecrets() {
+  return async (ref) => {
+    if (ref !== SECRET_REF) {
+      const error = new Error('unknown secret reference');
+      error.code = 'SECRET_NOT_FOUND';
+      throw error;
+    }
+    return SECRET;
+  };
+}
+
+test('two concurrent mints from open mint one checkout: the loser resolves duplicate', async (t) => {
+  const { definition, api } = createFixtureStripeAdapter({ secret: SECRET });
+  // Force the overlap the single path exists to close: both mints must be
+  // inside the provider call before either may move the row. Reaching
+  // `pending` is impossible without passing this gate, so the test cannot
+  // hang on a missed interleaving.
+  let entered = 0;
+  let releaseGate;
+  const gate = new Promise((resolve) => { releaseGate = resolve; });
+  const gated = {
+    ...definition,
+    createPayment: async (args) => {
+      entered += 1;
+      if (entered >= 2) releaseGate();
+      else await gate;
+      return definition.createPayment(args);
+    },
+  };
+  const { harness } = setup({ adapterDefinition: gated });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const params = {
+    connectionKey: key, quoteId: 'quote-race-mint', amount: 100, currency: 'EUR', requestKey: 'req-race-mint',
+  };
+  const [first, second] = await Promise.all([
+    harness.request(SPACE_A, { ...params }),
+    harness.request(SPACE_A, { ...params }),
+  ]);
+  assert.equal(entered, 2, 'both mints reached the provider before either moved the row');
+  const winner = first.duplicate ? second : first;
+  const loser = first.duplicate ? first : second;
+  assert.equal(winner.duplicate, false);
+  assert.equal(loser.duplicate, true);
+  assert.equal(loser.request.providerRef, winner.request.providerRef);
+  assert.equal(loser.request.status, 'pending');
+  assert.equal(api.state.createdByKey.size, 1, 'one checkout for one intent');
+  assert.equal(harness.list(SPACE_A, { status: 'pending' }).length, 1);
+});
+
+test('a suspend racing an in-flight delivery quarantines instead of applying', async (t) => {
+  const { definition } = createFixtureStripeAdapter({ secret: SECRET });
+  // Park the delivery inside verification: the suspend below must land
+  // after the stale connection read and before the finalize decision.
+  let enteredVerify = false;
+  let releaseVerify;
+  const verifyGate = new Promise((resolve) => { releaseVerify = resolve; });
+  const gated = {
+    ...definition,
+    verifyInbound: async (args) => {
+      enteredVerify = true;
+      await verifyGate;
+      return definition.verifyInbound(args);
+    },
+  };
+  const { harness } = setup({ adapterDefinition: gated });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const { request } = await harness.request(SPACE_A, {
+    connectionKey: key, quoteId: 'quote-suspend-race', amount: 100, currency: 'EUR', requestKey: 'req-suspend-race',
+  });
+  const body = paidBody(request.providerRef, 'evt_suspend_race_1');
+  const headers = harness.faults.sign(body);
+  const flight = harness.ingest(SPACE_A, { connectionKey: key, rawBody: body, headers });
+  let spins = 0;
+  while (!enteredVerify && spins < 1000) {
+    spins += 1;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(enteredVerify, 'the delivery parked inside verification');
+  await directAction(harness, 'payment-connection', 'suspend-connection', connectionRow(harness, SPACE_A, key), { reason: 'kit suspends mid-delivery' });
+  releaseVerify();
+  const held = await flight;
+  assert.equal(held.quarantined, true);
+  assert.equal(harness.status(SPACE_A, request.id).status, 'pending');
+  // Reactivation resumes the identical retry bytes to paid, on one event row.
+  await directAction(harness, 'payment-connection', 'activate-connection', connectionRow(harness, SPACE_A, key), { reason: 'kit reinstates the binding' });
+  const resumed = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: body, headers });
+  assert.equal(resumed.effect, 'applied');
+  assert.equal(harness.status(SPACE_A, request.id).status, 'paid');
+  assert.equal(JSON.parse(harness.dumpStorage()).events.length, 1);
+});
+
+test('a case-only retry of the same account resolves duplicate instead of conflicting', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const first = await harness.register(SPACE_A, {
+    provider: 'stripe', account: 'Acct_Presti', adapter: 'fixture-stripe', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  assert.equal(first.duplicate, false);
+  await harness.activate(SPACE_A, first.connection.sourceKey);
+  const second = await harness.register(SPACE_A, {
+    provider: 'stripe', account: 'acct_presti', adapter: 'fixture-stripe', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  assert.equal(second.duplicate, true);
+  assert.equal(second.connection.sourceKey, first.connection.sourceKey);
+});
+
+test('listPayments is a composed package operation with a refused unknown filter', async (t) => {
+  const { definition } = createFixtureStripeAdapter({ secret: SECRET });
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const pkg = createPaymentsPackage({ paymentAdapters: [definition], resolveSecret: kitSecrets() });
+  const byMethod = Object.fromEntries(pkg.operations.map((entry) => [entry.appMethod, entry]));
+  assert.ok(byMethod.listPayments, 'list-payments is registered on the composed package');
+  assert.equal(byMethod.listPayments.name, 'list-payments');
+  const runtime = harness.internals;
+  const register = byMethod.registerPaymentConnection.create(runtime);
+  const request = byMethod.requestPayment.create(runtime);
+  const list = byMethod.listPayments.create(runtime);
+  const { connection } = await register({
+    spaceId: SPACE_A, provider: 'stripe', account: ACCOUNT_A,
+    adapter: 'fixture-stripe', adapterVersion: 1, secretRef: SECRET_REF, actor: harness.userActor,
+  });
+  await harness.activate(SPACE_A, connection.sourceKey);
+  await request({
+    spaceId: SPACE_A, connectionKey: connection.sourceKey,
+    quoteId: 'quote-pkg-op', amount: 100, currency: 'EUR', requestKey: 'req-pkg-op',
+    actor: harness.userActor,
+  });
+  const rows = await list({ spaceId: SPACE_A });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].quoteId, 'quote-pkg-op');
+  assert.equal((await list({ spaceId: SPACE_A, status: 'pending' })).length, 1);
+  assert.equal((await list({ spaceId: SPACE_A, status: 'paid' })).length, 0);
+  await assert.rejects(list({ spaceId: SPACE_A, status: 'bogus' }), (error) => error.code === 'VALIDATION_ERROR');
+});
+
+test('operations honor a renamed request module, and cancel moves through the single path', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const renamed = new Map(harness.internals.modules);
+  renamed.set('shop-payment-request', renamed.get('payment-request'));
+  const ops = createPaymentOperations({
+    database: harness.internals.database,
+    modules: renamed,
+    registries: harness.internals.registries,
+    resolveSecret: kitSecrets(),
+    config: { requestModule: 'shop-payment-request' },
+  });
+  const key = await registeredActive(harness);
+  const { request } = await ops.requestPayment({
+    spaceId: SPACE_A, connectionKey: key, quoteId: 'quote-remap', amount: 100, currency: 'EUR',
+    requestKey: 'req-remap', actor: harness.userActor,
+  });
+  assert.equal(request.status, 'pending');
+  const cancel = buildPaymentConnectionActions(
+    resolvePaymentModuleNames({ modules: { 'payment-request': 'shop-payment-request' } }),
+  ).find((entry) => entry.name === 'cancel-request');
+  assert.equal(cancel.module, 'shop-payment-request');
+  const service = renamed.get('shop-payment-request').service;
+  const row = service.listWhere({ spaceId: SPACE_A, sourceKey: request.sourceKey })[0];
+  const canceled = await cancel.execute({
+    record: row,
+    input: { reason: 'kit cancels a remapped request' },
+    actor: harness.userActor,
+    managed: (id, patch) => service.applyManaged(id, patch, { actor: harness.userActor }),
+    modules: renamed,
+    database: harness.internals.database,
+    now: () => new Date().toISOString(),
+  });
+  assert.equal(canceled.request.status, 'canceled');
+  assert.equal(ops.getPaymentStatus(SPACE_A, request.id).status, 'canceled');
 });
 
 test('unwired composition refuses instead of inventing custody', async (t) => {
