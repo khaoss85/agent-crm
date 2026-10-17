@@ -8,7 +8,6 @@
     { "name": "conversationId", "type": "string", "index": true, "writable": "managed" },
     { "name": "memberId", "type": "string", "index": true, "writable": "managed" },
     { "name": "lastReadAt", "type": "timestamp", "writable": "managed" },
-    { "name": "updatedAt", "type": "timestamp", "writable": "managed" },
     { "name": "updatedByType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
     { "name": "updatedById", "type": "string", "writable": "managed" }
   ]

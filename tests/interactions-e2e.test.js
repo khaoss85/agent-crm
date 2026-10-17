@@ -670,7 +670,11 @@ test('the assign action replays a repeated handover instead of writing audit noi
 
 test('team unread is per member, counts inbound only, and ignores channel delivery', async (t) => {
   const root = project(t);
-  const context = await boot(root, join(root, 'data', 'read.sqlite'));
+  // The harness clock is fixed: pin it past the fixtures so the action-path
+  // mark below moves its watermark past every message, like a real reader.
+  const context = await boot(root, join(root, 'data', 'read.sqlite'), {
+    clock: () => '2026-09-15T10:08:00.000Z',
+  });
   t.after(() => context.close());
   const { app } = context;
   const { openConversation, logMessage, markConversationRead, unreadCount } = await interactionsFrom(root);

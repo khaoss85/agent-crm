@@ -769,13 +769,23 @@ export function validateAssignRequest(request) {
 }
 
 /**
+ * The latest handover before this one: rows carrying this very source key are
+ * excluded, so a retry recomputes the same previous owner the first attempt
+ * saw instead of conflicting with its own stamp. A retry that arrives after
+ * the thread moved on still names the move that beat it, through the replay
+ * comparison, rather than silently adopting it.
+ *
  * @param {any} assignments
  * @param {string} conversationId
+ * @param {string|null} excludeSourceKey
  */
-async function currentAssignmentRow(assignments, conversationId) {
+async function currentAssignmentRow(assignments, conversationId, excludeSourceKey = null) {
   const rows = await assignments.listWhere({ conversationId });
-  if (rows.length === 0) return null;
-  return sortByStamp(rows)[rows.length - 1];
+  const others = excludeSourceKey === null
+    ? rows
+    : rows.filter((row) => row.sourceKey !== excludeSourceKey);
+  if (others.length === 0) return null;
+  return sortByStamp(others)[others.length - 1];
 }
 
 export async function assignConversation(context, request) {
@@ -793,7 +803,7 @@ export async function assignConversation(context, request) {
   const conversation = await findConversationById(conversations, input.conversationId);
   if (!conversation) throw new NotFoundError('conversation', input.conversationId);
 
-  const previousRow = await currentAssignmentRow(assignments, input.conversationId);
+  const previousRow = await currentAssignmentRow(assignments, input.conversationId, input.sourceKey);
   const previous = previousRow ? previousRow.assigneeMemberId ?? null : null;
 
   const submitted = {
@@ -910,7 +920,6 @@ export async function markConversationRead(context, request) {
   if (existing) {
     const read = await reads.applyManaged(existing.id, {
       lastReadAt: now,
-      updatedAt: now,
       updatedByType: who.type,
       updatedById: who.id,
     }, { actor });
@@ -922,7 +931,6 @@ export async function markConversationRead(context, request) {
       conversationId,
       memberId,
       lastReadAt: now,
-      updatedAt: now,
       updatedByType: who.type,
       updatedById: who.id,
     }, { actor });
@@ -933,7 +941,6 @@ export async function markConversationRead(context, request) {
     if (!raced) throw error;
     const read = await reads.applyManaged(raced.id, {
       lastReadAt: now,
-      updatedAt: now,
       updatedByType: who.type,
       updatedById: who.id,
     }, { actor });
@@ -1400,7 +1407,7 @@ export function buildAssignConversationAction(moduleNames) {
         conversationId: record.id,
         assigneeMemberId,
         note,
-        source: { package: INTERACTIONS_PACKAGE, action: 'conversation.assign' },
+        source: { package: INTERACTIONS_PACKAGE, action: 'assign' },
       });
       return { assignment: written.assignment, replayed: written.replayed, previous: written.previous };
     },
@@ -1441,7 +1448,7 @@ export function buildMarkReadConversationAction(moduleNames) {
       };
       const marked = await markConversationRead(scope, {
         conversationId: record.id,
-        source: { package: INTERACTIONS_PACKAGE, action: 'conversation.mark-read' },
+        source: { package: INTERACTIONS_PACKAGE, action: 'mark-read' },
       });
       const who = requireActor(actor);
       const unread = await unreadCount(
