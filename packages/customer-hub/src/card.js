@@ -1,8 +1,10 @@
 // @ts-check
 
 import { NotFoundError, ValidationError } from '../../core/index.js';
-import { profileFor } from '../../customer-data/src/profile.js';
-import { resolvedNames } from '../../customer-data/src/store.js';
+// This module imports nothing from customer-data — not even its entry. The
+// consolidated profile arrives as a bound reader opened by `src/index.js`
+// through the declared `customer-profile@1` capability, so the shaping below
+// cannot diverge from the provider's name resolution.
 
 /**
  * **The customer card: one readable projection, zero new records.**
@@ -73,16 +75,18 @@ const HISTORY_SECTIONS = Object.freeze([
 const HISTORY_LIMIT = 50;
 
 /**
- * @param {{modules: any, core?: any, names?: any, subject: {resource: string, id: string}}} input
+ * @param {{core?: any, subject: {resource: string, id: string}, readProfile: (input: {core?: any, subject: {resource: string, id: string}}) => Promise<any>}} input
  */
-export async function readCustomerCard({ modules, core, names, subject }) {
+export async function readCustomerCard({ core, subject, readProfile }) {
   const resource = subject?.resource;
   const id = subject?.id;
   if (typeof resource !== 'string' || typeof id !== 'string' || resource === '' || id === '') {
     throw new ValidationError('a customer card needs a subject resource and id', { field: 'id' });
   }
-  const resolved = names ?? resolvedNames(undefined);
-  const profile = await profileFor({ modules, core, names: resolved, subject: { resource, id } });
+  if (typeof readProfile !== 'function') {
+    throw new ValidationError('a customer card needs the customer-data profile reader (customer-profile@1)', { field: 'profile' });
+  }
+  const profile = await readProfile({ core, subject: { resource, id } });
   return shapeCustomerCard(profile, { resource, id });
 }
 
@@ -160,26 +164,47 @@ export function shapeCustomerCard(profile, subject) {
   const subscriptions = profile.subscriptions?.available === true ? profile.subscriptions : null;
   // The profile count is a floor, not a total, when the owning module offers
   // no exact query (countIsComplete:false with a countNote): carry that
-  // qualifier so the card never prints a bounded page as an exact total.
+  // qualifier so the card never prints a bounded page as an exact total. And
+  // the active list is filtered from the profile's first-50 slice: when that
+  // slice is truncated and holds no active record, the card must not report a
+  // definitive "no active package" — the active record may sit past the slice.
   const packageCountIsComplete = subscriptions ? subscriptions.countIsComplete !== false : true;
-  const activePackage = subscriptions
+  const packageTruncated = subscriptions ? subscriptions.truncated === true : false;
+  const packageActive = Object.freeze((subscriptions?.items ?? []).filter((item) => item.status === 'active'));
+  const packageQualifier = packageCountIsComplete
+    ? null
+    : (subscriptions?.countNote
+      ?? 'the subscriptions count is a floor from a bounded page, not an exact total');
+  const activePackage = !subscriptions
     ? Object.freeze({
-      available: true,
-      count: subscriptions.count,
-      countIsComplete: packageCountIsComplete,
-      countNote: subscriptions.countNote ?? null,
-      active: Object.freeze((subscriptions.items ?? []).filter((item) => item.status === 'active')),
-      items: subscriptions.items ?? Object.freeze([]),
-      reason: packageCountIsComplete
-        ? null
-        : (subscriptions.countNote
-          ?? 'the subscriptions count is a floor from a bounded page, not an exact total'),
-    })
-    : Object.freeze({
-      available: false, count: null, active: Object.freeze([]), items: Object.freeze([]),
+      available: false, count: null, countIsComplete: true, countNote: null, truncated: false,
+      active: Object.freeze([]), items: Object.freeze([]),
       reason: profile.subscriptions?.reason
         ?? 'subscriptions are not composed in this application — this is not a claim the customer holds no package',
-    });
+    })
+    : (packageActive.length > 0 || !packageTruncated)
+      ? Object.freeze({
+        available: true,
+        count: subscriptions.count,
+        countIsComplete: packageCountIsComplete,
+        countNote: subscriptions.countNote ?? null,
+        truncated: packageTruncated,
+        active: packageActive,
+        items: subscriptions.items ?? Object.freeze([]),
+        reason: packageQualifier,
+      })
+      : Object.freeze({
+        available: false,
+        count: subscriptions.count,
+        countIsComplete: packageCountIsComplete,
+        countNote: subscriptions.countNote ?? null,
+        truncated: true,
+        active: Object.freeze([]),
+        items: subscriptions.items ?? Object.freeze([]),
+        reason: 'the subscriptions page is truncated and holds no active record in hand: '
+          + 'an active package may exist past the readable slice, so this is not a claim none exists'
+          + (packageQualifier ? ` (${packageQualifier})` : ''),
+      });
 
   const notes = Object.freeze({
     available: false, items: null,

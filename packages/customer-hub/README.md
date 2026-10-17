@@ -19,7 +19,7 @@ no tables and creates nothing.
 | phone           | channel identity on a phone-bearing system (WhatsApp, SMS…) whose id dials as E.164; a non-dialable id reads as unavailable with a reason |
 | social profiles | channel identities on Instagram, Facebook, TikTok            |
 | status          | derived: `cliente` only on signed business (orders, contracts, subscriptions); otherwise `contatto` — a definitive "none" only when all three evidence packages are readable with complete zero counts, otherwise the reason names what was not readable |
-| active package  | subscriptions section of the profile, with its count qualifier (`countIsComplete`/`countNote`): a floor count reads as "at least N" |
+| active package  | subscriptions section of the profile, with its count qualifier (`countIsComplete`/`countNote`): a floor count reads as "at least N"; when the subscriptions page is truncated and holds no active record, the package reads as unavailable with a reason (an active record may sit past the slice), never as a definitive "none" |
 | notes           | unavailable: no notes record exists — reported with a reason   |
 | history         | profile sections flattened, newest first within each section  |
 
@@ -31,6 +31,13 @@ reason — never an empty value that could be mistaken for "none".
 Composition, not a flag: a space whose project lists
 `createCustomerHubPackage()` in `packages/domains/generated/index.js` serves
 `readCustomerCard`; a space that does not list it has no card operation.
+
+The hub declares `requires: [{ package: 'customer-data', capability:
+'customer-profile', version: 1 }]` and reads the profile through that
+capability, so both packages share customer-data's name resolution. Compose
+both factories with the same config: `createCustomerDataPackage({ config })`
+and `createCustomerHubPackage({ config })` side by side. Without customer-data
+composed, the application refuses to start naming the unmet edge.
 
 ## Rendering
 

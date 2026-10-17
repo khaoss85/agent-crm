@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { shapeCustomerCard } from '../packages/customer-hub/src/card.js';
 import { renderCustomerCardHtml } from '../packages/customer-hub/src/render.js';
 import { boot, project } from './helpers/customer-data-project.js';
@@ -112,6 +113,31 @@ test('the hub package owns no records by declaration', async (t) => {
   const definition = createCustomerHubPackage();
   assert.deepEqual(definition.resources, [], 'the hub owns no tables — the guarantee is a declaration, not a comment');
   assert.equal(definition.metadata().ownsRecords, false, 'the published metadata repeats the guarantee');
+});
+
+test('the hub declares its customer-data edge instead of reaching into its source', async (t) => {
+  const { createCustomerHubPackage } = await import('../packages/customer-hub/src/index.js');
+  const definition = createCustomerHubPackage();
+  assert.deepEqual(definition.requires,
+    [{ package: 'customer-data', capability: 'customer-profile', version: 1 }],
+    'the profile arrives through the declared customer-profile@1 capability, so both packages share one name resolution');
+});
+
+test('without customer-data composed the application refuses to start naming the edge', async (t) => {
+  const root = project(t, {});
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
+    "import { createCustomerHubPackage } from '../../customer-hub/src/index.js';",
+    'export const generatedDomains = [',
+    '  createCustomerHubPackage(),',
+    '];',
+    '',
+  ].join('\n'));
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  assert.throws(
+    () => createAccordoApp({ dbPath: join(root, 'data', 'hub-no-provider.sqlite') }),
+    /customer-data/,
+    'a missing provider stops startup naming the edge — never a missing-module stack at card-read time',
+  );
 });
 
 test('a space without the hub has no card operation', async (t) => {
@@ -278,4 +304,37 @@ test('a floor package count reads as "at least N", never as an exact total', () 
   const exactHtml = renderCustomerCardHtml({ ...exact, name: 'A B', email: 'a@b.it' });
   assert.ok(exactHtml.includes('(record: 2)'), 'a complete count keeps its exact reading');
   assert.ok(!exactHtml.includes('almeno'), 'no floor qualifier leaks into an exact count');
+});
+
+test('a truncated subscriptions page without an active record in hand refuses the definitive "none"', () => {
+  const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
+  const off = { available: false, count: 0, items: [] };
+  const slice = Array.from({ length: 50 }, (_, index) => ({ id: `s${index}`, status: 'expired', name: `Pacchetto ${index}` }));
+  const card = shapeCustomerCard({
+    identity, externalIdentities: [],
+    subscriptions: { available: true, count: 60, items: slice, truncated: true },
+    orders: off, contracts: off,
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(card.activePackage.available, false, 'no active record in hand on a truncated page is not a "none"');
+  assert.equal(card.activePackage.truncated, true, 'the qualifier travels with the package');
+  assert.equal(card.activePackage.count, 60);
+  assert.match(card.activePackage.reason, /not a claim none exists/,
+    'the reason says an active package may sit past the readable slice');
+  const html = renderCustomerCardHtml({ ...card, name: 'A B', email: 'a@b.it' });
+  assert.ok(!html.includes('nessun pacchetto attivo'), 'no definitive negative is rendered from a truncated page');
+});
+
+test('a truncated page that holds an active record still shows it', () => {
+  const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
+  const off = { available: false, count: 0, items: [] };
+  const slice = [{ id: 's-active', status: 'active', name: 'Pacchetto annuale' },
+    ...Array.from({ length: 49 }, (_, index) => ({ id: `s${index}`, status: 'expired', name: `Pacchetto ${index}` }))];
+  const card = shapeCustomerCard({
+    identity, externalIdentities: [],
+    subscriptions: { available: true, count: 60, items: slice, truncated: true },
+    orders: off, contracts: off,
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(card.activePackage.available, true, 'an active record in hand is shown even when the page is truncated');
+  assert.equal(card.activePackage.truncated, true);
+  assert.deepEqual(card.activePackage.active.map((item) => item.id), ['s-active']);
 });
