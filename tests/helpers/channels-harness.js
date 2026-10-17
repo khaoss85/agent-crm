@@ -152,11 +152,18 @@ export function createChannelsHarness(options) {
     letters: (spaceId, state = null) => ops.listDeadLetters(spaceId, state),
     jobs: () => jobStore.list(500),
     auditRows: () => audit.list({ limit: 500 }),
-    dumpStorage() {
+    async dumpStorage() {
+      // The outbox is part of the evidence: a secret smuggled into a job
+      // payload must fail the no-secrets scan like any row or audit entry.
+      const jobs = await jobStore.list(500);
       return JSON.stringify({
         connections: [...modules.get('channel-connection').service.listWhere({})],
         inbox: [...modules.get('channel-inbox-event').service.listWhere({})],
         letters: [...modules.get('channel-dead-letter').service.listWhere({})],
+        jobs: jobs.map((job) => ({
+          id: job.id, kind: job.kind, state: job.state,
+          idempotencyRoot: job.idempotencyRoot, payload: job.payload,
+        })),
         audit: audit.list({ limit: 500 }).map((row) => row.data),
       });
     },

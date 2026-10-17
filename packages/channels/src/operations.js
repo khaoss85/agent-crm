@@ -13,6 +13,7 @@ import {
 } from '../../core/index.js';
 import { assertConnectionInput, assertSpaceId, boundedKey, channelSendIdempotencyKey } from './connection.js';
 import { fingerprintPayload } from './crypto.js';
+import { transitionInbox, transitionLetter } from './transitions.js';
 
 /**
  * Channel operations (backlog:e5532d1c9146).
@@ -29,6 +30,9 @@ import { fingerprintPayload } from './crypto.js';
 
 export const CHANNEL_SEND_KIND = 'channel-send';
 export const CHANNEL_SEND_HANDLER = 'channel-send';
+// Worker-control codes the adapter layer must never speak: thrown by a
+// buggy or hostile adapter they are refusals, never worker instructions.
+const WORKER_CONTROL_CODES = new Set(['JOB_HANDLER_FAILED', 'JOB_HANDLER_TEMPORARY_UNAVAILABLE']);
 export const CHANNEL_SEND_CONTRACT = 1;
 export const CHANNEL_SEND_VERSION = 1;
 export const CHANNEL_SEND_MAX_ATTEMPTS = 5;
@@ -362,11 +366,20 @@ export function createChannelOperations(deps) {
         return { duplicate: true, eventId: already.id, effect: already.effect };
       }
       // A row whose processing never completed is evidence of an event that
-      // has not had its effect yet: a redelivery resumes it.
+      // has not had its effect yet: a redelivery resumes it — but only while
+      // its connection is active. Against a pending, suspended or revoked
+      // binding the row stays quarantined: provider state is never applied
+      // to a binding that was never activated, or to a revoked one.
+      if (connection.status !== 'active') {
+        return { duplicate: true, quarantined: true, eventId: already.id, effect: already.effect };
+      }
       const decision = decideEffect(service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
-      const resumed = await service.applyManaged(already.id, {
-        processed: true, effect: decision.effect, effectReason: decision.effectReason,
-      }, { actor });
+      const event = decision.effect === 'applied' ? 'apply' : decision.effect === 'ignored' ? 'discard' : 'quarantine';
+      const resumed = await transitionInbox(service, already.id, {
+        event,
+        patch: { effectReason: decision.effectReason === '' ? 'redelivery resumed the received row' : decision.effectReason },
+        actor,
+      });
       return { duplicate: false, resumed: true, eventId: resumed.id, effect: resumed.effect };
     }
 
@@ -554,13 +567,17 @@ export function createChannelOperations(deps) {
           }
           return { outcomeReference: idempotencyKey };
         } catch (error) {
-          if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'JOB_HANDLER_FAILED') throw error;
           const normalized = normalizeError(error);
           const transient = normalized.code === 'CHANNEL_SEND_TRANSIENT' || normalized.code === 'PROVIDER_TIMEOUT';
           if (transient && job.attempt < job.maxAttempts) failRetryable(normalized.code);
           const rawCode = /** @type {any} */ (error)?.code;
+          // Worker-control codes are never adapter vocabulary: a buggy or
+          // hostile adapter that throws one lands in the dead letter as a
+          // refusal. Every adapter throw writes the dead-letter row first —
+          // no bypass — and only then settles the job terminal.
           const code = transient ? normalized.code
-            : (typeof rawCode === 'string' && /^[A-Z][A-Z0-9_]*$/.test(rawCode) ? rawCode : 'CHANNEL_SEND_REFUSED');
+            : (typeof rawCode === 'string' && !WORKER_CONTROL_CODES.has(rawCode)
+              && /^[A-Z][A-Z0-9_]*$/.test(rawCode) ? rawCode : 'CHANNEL_SEND_REFUSED');
           return failTerminal(code);
         }
       },
@@ -621,7 +638,26 @@ export function createChannelOperations(deps) {
       }
       throw error;
     }
-    const updated = await letters().applyManaged(letter.id, { state: 'requeued', stateReason: `requeued as job ${job.id}` }, { actor });
+    // The state move is conditional on the letter still being open: the
+    // transition re-reads after the enqueue, so a concurrent requeue that
+    // won first makes this one refuse instead of double-sending. The loser
+    // cancels its just-created job — one letter, one provider send — and
+    // reports the settled letter.
+    let updated;
+    try {
+      updated = await transitionLetter(letters(), letter.id, {
+        event: 'requeue', patch: { stateReason: `requeued as job ${job.id}` }, actor,
+      });
+    } catch (error) {
+      if (!error || typeof error !== 'object' || /** @type {any} */ (error).code !== 'CHANNEL_TRANSITION_INVALID') throw error;
+      try {
+        await jobs().cancel(job.id, { actor });
+      } catch {
+        // Best effort: the worker may already have claimed the job. The
+        // 404 below still stands — the letter is settled either way.
+      }
+      throw new AppError('Unknown or settled dead letter', { code: 'CHANNEL_LETTER_UNKNOWN', status: 404 });
+    }
     return { jobId: job.id, letterId: updated.id, idempotencyKey };
   }
 

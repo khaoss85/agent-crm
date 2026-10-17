@@ -21,6 +21,17 @@ import {
   hmacWebhookHeaders,
   verifyHmacWebhook,
 } from '../packages/channels/src/crypto.js';
+import {
+  INBOX_EVENTS,
+  INBOX_STATES,
+  LETTER_EVENTS,
+  LETTER_STATES,
+  assertInboxTransition,
+  assertLetterTransition,
+  inboxState,
+  transitionInbox,
+  transitionLetter,
+} from '../packages/channels/src/transitions.js';
 
 /**
  * Channels contract tests (backlog:e5532d1c9146): the adapter contract, the
@@ -173,6 +184,114 @@ test('send idempotency keys stay within the outbox bound at max-length inputs', 
     key,
     channelSendIdempotencyKey({ spaceId: 'presti', connectionKey, messageKey: `${'m'.repeat(255)}n` }),
     'a different message still keys differently',
+  );
+});
+
+test('inbox and letter rows move on one explicit table; every other pair is refused', () => {
+  // Review round 3: the lifecycle lives in transitions.js, not in scattered
+  // checks. Every (state, event) pair is enumerated here: allowed pairs
+  // resolve to the mapped state, everything else throws
+  // CHANNEL_TRANSITION_INVALID — including unknown states and events.
+  const inboxAllowed = {
+    received: { apply: 'applied', discard: 'discarded', quarantine: 'quarantined' },
+    quarantined: { replay: 'quarantined' },
+    applied: { replay: 'applied' },
+    discarded: { replay: 'discarded' },
+  };
+  for (const from of INBOX_STATES) {
+    for (const event of INBOX_EVENTS) {
+      const want = inboxAllowed[from]?.[event] ?? null;
+      if (want === null) {
+        assert.throws(
+          () => assertInboxTransition(from, event),
+          (e) => e.code === 'CHANNEL_TRANSITION_INVALID',
+          `inbox ${from} + ${event} is refused`,
+        );
+      } else {
+        assert.equal(assertInboxTransition(from, event), want, `inbox ${from} + ${event} resolves`);
+      }
+    }
+  }
+  const letterAllowed = {
+    open: { requeue: 'requeued', resolve: 'resolved' },
+    requeued: { resolve: 'resolved' },
+    resolved: {},
+  };
+  for (const from of LETTER_STATES) {
+    for (const event of LETTER_EVENTS) {
+      const want = letterAllowed[from]?.[event] ?? null;
+      if (want === null) {
+        assert.throws(
+          () => assertLetterTransition(from, event),
+          (e) => e.code === 'CHANNEL_TRANSITION_INVALID',
+          `letter ${from} + ${event} is refused`,
+        );
+      } else {
+        assert.equal(assertLetterTransition(from, event), want, `letter ${from} + ${event} resolves`);
+      }
+    }
+  }
+  for (const [fn, states, events] of [
+    [assertInboxTransition, INBOX_STATES, INBOX_EVENTS],
+    [assertLetterTransition, LETTER_STATES, LETTER_EVENTS],
+  ]) {
+    assert.throws(() => fn('nope', events[0]), (e) => e.code === 'CHANNEL_TRANSITION_INVALID');
+    assert.throws(() => fn(states[0], 'nope'), (e) => e.code === 'CHANNEL_TRANSITION_INVALID');
+  }
+  // The inbox state is derived from the stored row, never stored twice.
+  assert.equal(inboxState({ processed: false, effect: 'quarantined' }), 'received');
+  assert.equal(inboxState({ processed: false, effect: 'pending' }), 'received');
+  assert.equal(inboxState({ processed: true, effect: 'applied' }), 'applied');
+  assert.equal(inboxState({ processed: true, effect: 'ignored' }), 'discarded');
+  assert.equal(inboxState({ processed: true, effect: 'quarantined' }), 'quarantined');
+  assert.equal(inboxState(null), 'received');
+});
+
+test('state moves go through one function; replay writes nothing; patches carry no state', async () => {
+  const memoryService = (row) => {
+    let current = { ...row };
+    return {
+      async get(id) {
+        if (!current || current.id !== id) {
+          throw Object.assign(new Error('missing'), { code: 'NOT_FOUND' });
+        }
+        return current;
+      },
+      async applyManaged(id, patch) {
+        if (!current || current.id !== id) throw new Error('missing');
+        current = { ...current, ...patch };
+        return current;
+      },
+    };
+  };
+  const actor = { type: 'system', id: 't' };
+  const inbox = memoryService({ id: 'r1', processed: false, effect: 'quarantined' });
+  const moved = await transitionInbox(inbox, 'r1', { event: 'apply', patch: { effectReason: 'r' }, actor });
+  assert.equal(moved.processed, true);
+  assert.equal(moved.effect, 'applied');
+  assert.equal(moved.effectReason, 'r');
+  const replayed = await transitionInbox(inbox, 'r1', { event: 'replay', patch: {}, actor });
+  assert.equal(replayed.effect, 'applied');
+  await assert.rejects(
+    transitionInbox(inbox, 'r1', { event: 'quarantine', patch: {}, actor }),
+    (e) => e.code === 'CHANNEL_TRANSITION_INVALID',
+  );
+  // A patch cannot smuggle state past the table.
+  const smuggled = memoryService({ id: 'r2', processed: false, effect: 'quarantined' });
+  const discarded = await transitionInbox(smuggled, 'r2', {
+    event: 'discard', patch: { processed: false, effect: 'applied', effectReason: 'x' }, actor,
+  });
+  assert.equal(discarded.processed, true);
+  assert.equal(discarded.effect, 'ignored');
+  const letters = memoryService({ id: 'l1', state: 'open' });
+  const requeued = await transitionLetter(letters, 'l1', {
+    event: 'requeue', patch: { state: 'resolved', stateReason: 'j' }, actor,
+  });
+  assert.equal(requeued.state, 'requeued');
+  assert.equal(requeued.stateReason, 'j');
+  await assert.rejects(
+    transitionLetter(letters, 'l1', { event: 'requeue', patch: {}, actor }),
+    (e) => e.code === 'CHANNEL_TRANSITION_INVALID',
   );
 });
 

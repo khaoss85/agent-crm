@@ -295,9 +295,11 @@ test('no secret material rests in rows, audit or jobs', async (t) => {
   api.setMode('flaky', 1);
   const queued = await harness.queue(SPACE_A, { connectionKey: key, message: { to: ACCOUNT_A, text: 'secretless' }, messageKey: 'm-sec' });
   await harness.pump(queued.jobId);
-  const dump = harness.dumpStorage();
+  const dump = await harness.dumpStorage();
   assert.ok(!dump.includes(SECRET), 'secret value appears nowhere in stored rows, audit or jobs');
   assert.ok(dump.includes(SECRET_REF), 'the reference is what is stored');
+  assert.ok(dump.includes('"jobs":'), 'the outbox is part of the scanned evidence');
+  assert.ok(dump.includes('m-sec'), 'the queued job payload is scanned, not just rows and audit');
 });
 
 test('unwired composition refuses instead of inventing custody or tenancy', async (t) => {
@@ -399,7 +401,7 @@ test('registration and rotation refuse a raw secret value as secretRef', async (
   });
   assert.equal(rotated.connection.secretRef, 'vault://kit/rotated');
   assert.equal(written.secretRef, 'vault://kit/rotated');
-  assert.ok(!harness.dumpStorage().includes(SECRET), 'the refused value appears nowhere in stored rows or audit');
+  assert.ok(!(await harness.dumpStorage()).includes(SECRET), 'the refused value appears nowhere in stored rows or audit');
 });
 
 test('a raced conflicting delivery reports CHANNEL_EVENT_ID_CONFLICT, not the raw violation', async (t) => {
@@ -493,4 +495,142 @@ test('a requeue at max-length inputs fits the outbox bound and keys the new mess
     boundedKey('ch-send', SPACE_A, reg.connection.sourceKey, `requeue:${letter.id}`, fpA),
     boundedKey('ch-send', SPACE_A, reg.connection.sourceKey, `requeue:${letter.id}`, fpB),
   );
+});
+
+test('redelivery while the connection is inactive stays quarantined; activation resumes it', async (t) => {
+  // Review round 3 P1: replaying a quarantined row while its connection was
+  // still inactive flipped it to applied. Provider state must never apply
+  // to a binding that was never activated.
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const reg = await harness.register(SPACE_A, {
+    channel: 'whatsapp', account: ACCOUNT_A,
+    adapter: 'fixture-channel', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  const rawBody = fixtureEventBody({ id: 'evt-quar-replay-1', subject: 'chat-1', seq: 1 });
+  const first = await harness.ingest(SPACE_A, { connectionKey: reg.connection.sourceKey, rawBody, headers: harness.faults.sign(rawBody) });
+  assert.equal(first.effect, 'quarantined');
+  const redelivery = await harness.ingest(SPACE_A, { connectionKey: reg.connection.sourceKey, rawBody, headers: harness.faults.sign(rawBody) });
+  assert.equal(redelivery.effect, 'quarantined', 'an inactive binding never applies on redelivery');
+  assert.equal(redelivery.duplicate, true);
+  const held = harness.inbox(SPACE_A);
+  assert.equal(held.length, 1);
+  assert.equal(held[0].processed, false, 'the row is still undecided evidence');
+  await harness.activate(SPACE_A, reg.connection.sourceKey);
+  const resumed = await harness.ingest(SPACE_A, { connectionKey: reg.connection.sourceKey, rawBody, headers: harness.faults.sign(rawBody) });
+  assert.equal(resumed.effect, 'applied', 'after activation the same redelivery resumes the row');
+  assert.equal(resumed.resumed, true);
+  assert.equal(harness.inbox(SPACE_A)[0].processed, true);
+});
+
+test('an adapter that throws a worker-control code still lands in the dead letter', async (t) => {
+  // Review round 3 P1: an adapter throwing JOB_HANDLER_FAILED bypassed the
+  // dead-letter write and settled terminal with no inventory. Worker-control
+  // codes are never adapter vocabulary: they land as a refusal, with a row.
+  const { definition, api } = createFixtureChannelAdapter({ secret: SECRET });
+  const hostile = {
+    ...definition,
+    name: 'hostile-channel',
+    sendOutbound: async () => {
+      throw Object.assign(new Error('adapter speaks worker codes'), { code: 'JOB_HANDLER_FAILED' });
+    },
+  };
+  const harness = createChannelsHarness({
+    adapterDefinition: hostile, fixtureApi: api, secretRef: SECRET_REF, secretValue: SECRET,
+    tenantId: 'channel-kit-hostile',
+  });
+  t.after(() => harness.close());
+  const reg = await harness.register(SPACE_A, {
+    channel: 'whatsapp', account: ACCOUNT_A,
+    adapter: 'hostile-channel', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  await harness.activate(SPACE_A, reg.connection.sourceKey);
+  const queued = await harness.queue(SPACE_A, {
+    connectionKey: reg.connection.sourceKey, message: { to: ACCOUNT_A, text: 'hostile' }, messageKey: 'm-hostile',
+  });
+  const settled = await harness.pump(queued.jobId);
+  assert.equal(settled.state, 'failed_terminal');
+  const letters = harness.letters(SPACE_A, 'open');
+  assert.equal(letters.length, 1, 'the terminal failure leaves inventory');
+  assert.equal(letters[0].errorCode, 'CHANNEL_SEND_REFUSED', 'the worker code is not trusted as an error code');
+});
+
+test('a settled letter refuses requeue without enqueueing another job', async (t) => {
+  // The winner's path: once the letter is requeued, a second requeue with a
+  // different approved message 404s before touching the outbox — one letter,
+  // one provider send.
+  const { harness, api } = setup({ config: { maxSendAttempts: 2 } });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  api.setMode('refuse');
+  const queued = await harness.queue(SPACE_A, { connectionKey: key, message: { to: ACCOUNT_A, text: 'first try' }, messageKey: 'm-race' });
+  await harness.pump(queued.jobId);
+  const [letter] = harness.letters(SPACE_A, 'open');
+  const jobsBefore = (await harness.jobs()).length;
+  api.setMode('ok');
+  const won = await harness.ops.requeueChannelLetter({
+    spaceId: SPACE_A, letterId: letter.id,
+    message: { to: ACCOUNT_A, text: 'retry-a' }, actor: harness.userActor,
+  });
+  await assert.rejects(
+    harness.ops.requeueChannelLetter({
+      spaceId: SPACE_A, letterId: letter.id,
+      message: { to: ACCOUNT_A, text: 'retry-b' }, actor: harness.userActor,
+    }),
+    (error) => error.code === 'CHANNEL_LETTER_UNKNOWN' && error.status === 404,
+  );
+  assert.equal((await harness.jobs()).length, jobsBefore + 1, 'the refused requeue enqueues nothing');
+  const settled = await harness.pump(won.jobId);
+  assert.equal(settled.state, 'succeeded');
+  assert.equal(api.state.sentByKey.size, 1, 'one letter causes one provider send');
+  assert.equal(harness.letters(SPACE_A, 'requeued').length, 1);
+});
+
+test('a requeue that loses its race cancels its job and reports unknown', async (t) => {
+  // The loser's path, simulated like the raced-delivery test above: a
+  // concurrent requeue wins between this call's enqueue and its conditional
+  // state move, so the move refuses. The loser cancels its just-created job
+  // — one letter, one provider send — and reports the settled letter.
+  // (Two truly-concurrent enqueues on one sqlite connection trip the
+  // storage layer's NESTED_TRANSACTION first — pre-existing, follow-up.)
+  const { harness, api } = setup({ config: { maxSendAttempts: 2 } });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  api.setMode('refuse');
+  const queued = await harness.queue(SPACE_A, { connectionKey: key, message: { to: ACCOUNT_A, text: 'first try' }, messageKey: 'm-loser' });
+  await harness.pump(queued.jobId);
+  const [letter] = harness.letters(SPACE_A, 'open');
+  api.setMode('ok');
+  const entry = harness.internals.modules.get('channel-dead-letter');
+  const real = entry.service;
+  const realApply = real.applyManaged.bind(real);
+  let armed = true;
+  const raced = Object.create(real);
+  raced.applyManaged = async (id, patch, opts) => {
+    if (armed && patch?.state === 'requeued') {
+      armed = false;
+      throw Object.assign(new Error('Channel dead letter cannot "requeue" from "requeued"'), {
+        code: 'CHANNEL_TRANSITION_INVALID', status: 409,
+      });
+    }
+    return realApply(id, patch, opts);
+  };
+  entry.service = raced;
+  try {
+    await assert.rejects(
+      harness.ops.requeueChannelLetter({
+        spaceId: SPACE_A, letterId: letter.id,
+        message: { to: ACCOUNT_A, text: 'retry-b' }, actor: harness.userActor,
+      }),
+      (error) => error.code === 'CHANNEL_LETTER_UNKNOWN' && error.status === 404,
+    );
+  } finally {
+    entry.service = real;
+  }
+  assert.equal(harness.letters(SPACE_A, 'open').length, 1, 'the letter is still open for a real retry');
+  const jobs = await harness.jobs();
+  const loserJob = jobs.find((job) => job.idempotencyRoot.includes('retry-b') || JSON.stringify(job.payload).includes('retry-b'));
+  assert.ok(loserJob, 'the loser did enqueue before losing the race');
+  assert.equal(loserJob.state, 'cancelled', 'the loser cancels its just-created job');
+  assert.equal(api.state.sentByKey.size, 0, 'nothing was sent');
 });

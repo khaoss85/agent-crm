@@ -29,7 +29,7 @@
  *     sign(rawBody) -> headers,
  *   },
  *   connections(spaceId) -> rows, inbox(spaceId) -> rows,
- *   letters(spaceId, state?) -> rows, dumpStorage() -> string,
+ *   letters(spaceId, state?) -> rows, dumpStorage() -> Promise<string>,
  * }
  * ```
  */
@@ -181,7 +181,7 @@ export async function runChannelAdapterKit(options) {
   });
 
   await check('no-secrets', async () => {
-    const dump = harness.dumpStorage();
+    const dump = await harness.dumpStorage();
     if (dump.includes(secretValue)) fail('secret value present in stored rows');
     const connections = harness.connections(spaceA);
     if (!connections.some((row) => row.secretRef === secretRef)) fail('secret reference missing from the connection row');
