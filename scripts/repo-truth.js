@@ -5,6 +5,10 @@
  *
  *   node scripts/repo-truth.js              regenerate docs/repository-truth.json
  *   node scripts/repo-truth.js --check      fail when the repository and the facts disagree
+ *   node scripts/repo-truth.js --check --drift-advisory [--base <ref>]
+ *     advisory-only drift warns instead of failing; with --base, an added
+ *     fact warns only when the base already carries it (the PR fast gate) —
+ *     a moved or dropped fact value still fails everywhere (parallel PRs, S70)
  *   node scripts/repo-truth.js --json       print the report rather than a human summary
  *
  * ## The failure this exists to close
@@ -3148,18 +3152,23 @@ export function findRetiredClaims(source, { javascript = false } = {}) {
 }
 
 /**
- * Is the committed document still what the authorities produce?
+ * How far the committed document drifted from a fresh generation, before
+ * anyone decides whether that drift fails the run.
  *
- * Compared canonically, so key order and formatting cannot hide a difference —
- * and the message names the facts whose **values** moved, because that is the
- * part a reader has to act on. A change with no moved value (a new evidence
- * pointer, a renamed authority) is still stale and still says so, but it says a
- * different thing.
+ * Pure over the two documents, so a test can classify a drift without
+ * generating anything. `moved` and `dropped` are the blocking half: a fact
+ * whose value changed, or a fact that no longer exists, means a claim about
+ * the code moved under the document. `added` and metadata-only drift are the
+ * advisory half: a fact the base merge brought in, a regenerated evidence
+ * pointer, a renamed authority, a limitation restated, a `sourceSha` moved by
+ * a comment-only edit — the document is behind, but no claim it carries went
+ * wrong. Parallel PRs (S70) drift exactly this way: each one is correct alone,
+ * and the merge moves the ground under the others without moving a value.
  *
  * @param {any} committed
  * @param {any} fresh
  */
-export function diffDocuments(committed, fresh) {
+export function classifyDocumentDrift(committed, fresh) {
   // `environment` is provenance, not a conclusion: two documents with the
   // same facts from two environments are the same document, not a stale one.
   // The field stays in the file so a reader comparing them can see what
@@ -3169,23 +3178,71 @@ export function diffDocuments(committed, fresh) {
     const { environment: _environment, ...rest } = document;
     return rest;
   };
-  if (canonical(withoutEnvironment(committed)) === canonical(withoutEnvironment(fresh))) return [];
+  const committedBody = withoutEnvironment(committed);
+  const freshBody = withoutEnvironment(fresh);
+  if (canonical(committedBody) === canonical(freshBody)) {
+    return {
+      inSync: true, moved: [], added: [], dropped: [],
+      bodyChanged: false, sourceChanged: false, blocking: false, kind: 'in-sync',
+    };
+  }
   const before = new Map((committed?.facts ?? []).map((fact) => [fact.id, fact]));
-  const moved = (fresh?.facts ?? [])
-    .filter((fact) => String(before.get(fact.id)?.value) !== String(fact.value))
-    .map((fact) => `${fact.id}: ${JSON.stringify(before.get(fact.id)?.value ?? null)} → ${JSON.stringify(fact.value)}`);
-  const dropped = [...before.keys()].filter((id) => !(fresh?.facts ?? []).some((fact) => fact.id === id));
+  const after = new Map((fresh?.facts ?? []).map((fact) => [fact.id, fact]));
+  const moved = [...after.keys()]
+    .filter((id) => before.has(id) && String(before.get(id)?.value) !== String(after.get(id)?.value));
+  const added = [...after.keys()].filter((id) => !before.has(id));
+  const dropped = [...before.keys()].filter((id) => !after.has(id));
   // `sourceSha` is a fingerprint of the bytes that were *read*, so a
   // comment-only edit to any authority source moves it while every fact,
-  // every piece of evidence and the semantic `fingerprint` stand still. That
-  // is by design — but v1's message then reported "the evidence, the authority
+  // every piece of evidence and the semantic `fingerprint` stand still.
+  const sourceChanged = String(committed?.sourceSha ?? '') !== String(fresh?.sourceSha ?? '');
+  const bodyChanged = canonical({ ...committedBody, sourceSha: null })
+    !== canonical({ ...freshBody, sourceSha: null });
+  const blocking = moved.length > 0 || dropped.length > 0;
+  return {
+    inSync: false,
+    moved,
+    added,
+    dropped,
+    bodyChanged,
+    sourceChanged,
+    blocking,
+    kind: blocking ? 'facts-changed' : added.length > 0 ? 'facts-added' : 'metadata-only',
+  };
+}
+
+/**
+ * Is the committed document still what the authorities produce?
+ *
+ * Compared canonically, so key order and formatting cannot hide a difference —
+ * and the message names the facts whose **values** moved, because that is the
+ * part a reader has to act on. A change with no moved value (a new evidence
+ * pointer, a renamed authority) is still stale and still says so, but it says a
+ * different thing. Whether that staleness fails the run is the caller's, via
+ * {@link classifyDocumentDrift}: this function reports, in one problem, what
+ * moved.
+ *
+ * @param {any} committed
+ * @param {any} fresh
+ */
+export function diffDocuments(committed, fresh) {
+  const drift = classifyDocumentDrift(committed, fresh);
+  if (drift.inSync) return [];
+  const before = new Map((committed?.facts ?? []).map((fact) => [fact.id, fact]));
+  // A fact the fresh generation carries that the committed document never saw
+  // reads here exactly as it always did — `id: null → value` inside "Facts
+  // that moved" — so the message this gate prints is unchanged by the split
+  // above, only its routing (failure or warning) can differ.
+  const moved = (fresh?.facts ?? [])
+    .filter((fact) => drift.moved.includes(fact.id) || drift.added.includes(fact.id))
+    .map((fact) => `${fact.id}: ${JSON.stringify(before.get(fact.id)?.value ?? null)} → ${JSON.stringify(fact.value)}`);
+  const dropped = drift.dropped;
+  // That is by design — but v1's message then reported "the evidence, the authority
   // list or a limitation did", naming three things that had not changed. A
   // gate that misdescribes its own failure teaches the reader to stop reading
   // it, which is the habit this contract exists to break.
-  const sourceMoved = String(committed?.sourceSha ?? '') !== String(fresh?.sourceSha ?? '');
-  const bodyMoved = !moved.length && !dropped.length
-    && canonical({ ...withoutEnvironment(committed), sourceSha: null })
-    !== canonical({ ...withoutEnvironment(fresh), sourceSha: null });
+  const sourceMoved = drift.sourceChanged;
+  const bodyMoved = !moved.length && !dropped.length && drift.bodyChanged;
   return [{
     code: 'TRUTH_DOCUMENT_STALE',
     message: `${TRUTH_DOCUMENT} no longer matches its authorities. `
@@ -3231,17 +3288,64 @@ export function checkFactFreshness(document) {
 }
 
 /**
+ * The fact ids the base ref's committed truth document carries, for the PR
+ * fast-gate semantics of {@link checkRepository}: an added fact warns only
+ * when it is in this list. Best effort over git — `null` when the ref cannot
+ * be read, and the caller fails closed (an unreadable base proves nothing, so
+ * added facts stay red). Reuses {@link gitIn}; one `fetch` retry for
+ * `origin/*` refs, because a checkout may not have the base locally yet.
+ *
+ * @param {string} rootDir
+ * @param {string} ref
+ * @returns {Array<string> | null}
+ */
+export function resolveBaseFactIds(rootDir, ref) {
+  const git = gitIn(rootDir);
+  const show = (revision) => git(['show', `${revision}:${TRUTH_DOCUMENT}`]);
+  let shown = show(ref);
+  if (shown.status !== 0 && ref.startsWith('origin/')) {
+    // Into its tracking ref, not just FETCH_HEAD: the retry below reads the
+    // same ref, and a bare `git fetch origin <branch>` would leave it unread.
+    const short = ref.slice('origin/'.length);
+    git(['fetch', '--no-tags', 'origin', `${short}:refs/remotes/origin/${short}`]);
+    shown = show(ref);
+  }
+  if (shown.status !== 0 || !shown.stdout) return null;
+  try {
+    const base = JSON.parse(shown.stdout);
+    return (base?.facts ?? []).map((fact) => String(fact?.id ?? '')).filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The whole check: regeneration, citations, code vocabulary, measurement.
  *
  * `requireCurrent` opts into the fourth gate: every fact must have status
  * `current`, so a freshness ratio below 1 fails the run. The public-claims CI
  * job passes it; a local `--check` without it is unchanged.
  *
- * @param {{rootDir: string, requireCurrent?: boolean}} options
+ * `driftAdvisory` routes advisory-only drift — {@link classifyDocumentDrift}
+ * kinds `facts-added` and `metadata-only`, the parallel-PR drift of S70 — to
+ * `warnings` instead of `problems`, so the run stays green and the drift stays
+ * visible. Blocking drift (a moved or dropped value) and every other problem
+ * still fail. The `fast` CI job and the `public-claims` agreement gate pass
+ * it; a local `--check` without it is unchanged.
+ *
+ * `baseFactIds` selects the PR fast-gate semantics (S70, backlog:6a3d0316):
+ * an added fact warns only when the base already carries it — a fact this
+ * branch added without regenerating stays red. Without it (the
+ * `public-claims` agreement gate, a local run) every non-blocking drift
+ * still warns: the realign PR shows the whole diff under the normal gate.
+ *
+ * @param {{rootDir: string, requireCurrent?: boolean, driftAdvisory?: boolean, baseFactIds?: Array<string> | null}} options
  */
-export async function checkRepository({ rootDir, requireCurrent = false }) {
+export async function checkRepository({ rootDir, requireCurrent = false, driftAdvisory = false, baseFactIds = undefined }) {
   /** @type {Array<{code: string, message: string}>} */
   const problems = [];
+  /** @type {Array<{code: string, message: string, advisory: true}>} */
+  const warnings = [];
   const { document, problems: buildProblems } = await buildTruthDocument({ rootDir });
   problems.push(...buildProblems);
 
@@ -3263,7 +3367,26 @@ export async function checkRepository({ rootDir, requireCurrent = false }) {
       });
     }
   }
-  if (committed) problems.push(...diffDocuments(committed, document));
+  let drift = null;
+  if (committed) {
+    const stale = diffDocuments(committed, document);
+    drift = classifyDocumentDrift(committed, document);
+    // With a base (the PR fast gate) an added fact is advisory only when the
+    // base already carries it; `metadata-only` drift has no added facts, so
+    // `every` holds and it still warns. Without a base every non-blocking
+    // drift warns. A moved or dropped value fails either way.
+    const baseCoversAdded = baseFactIds === undefined
+      || drift.added.every((id) => (baseFactIds ?? []).includes(id));
+    if (stale.length && driftAdvisory && !drift.blocking && baseCoversAdded) {
+      // Advisory-only drift: the document is behind, but no claim it carries
+      // went wrong — warn loudly, fail nothing. Main realigns after merge
+      // through a normal-gated PR (scripts/realign-truth-main.js); a moved
+      // or dropped value below still fails, advisory mode or not.
+      for (const problem of stale) warnings.push({ ...problem, advisory: true });
+    } else {
+      problems.push(...stale);
+    }
+  }
 
   // ── 2 & 3. citations and machine codes across the bound surfaces ─────────
   const factIndex = new Map(document.facts.map((fact) => [fact.id, fact]));
@@ -3330,6 +3453,8 @@ export async function checkRepository({ rootDir, requireCurrent = false }) {
   return {
     document,
     problems,
+    warnings,
+    drift,
     ok: problems.length === 0,
     counts: {
       facts: document.facts.length,
@@ -3357,17 +3482,40 @@ async function main() {
   const wantsCheck = argv.includes('--check');
   const wantsJson = argv.includes('--json');
   const wantsRequireCurrent = argv.includes('--require-current');
+  const wantsDriftAdvisory = argv.includes('--drift-advisory');
   const rootDir = process.cwd();
-
-  for (const flag of argv) {
-    if (flag !== '--check' && flag !== '--json' && flag !== '--require-current') {
-      process.stderr.write(`repo:truth: unknown flag ${flag}. Usage: node scripts/repo-truth.js [--check [--require-current]] [--json]\n`);
+  let baseRef = null;
+  const known = new Set(['--check', '--json', '--require-current', '--drift-advisory', '--base']);
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (flag === '--base') {
+      const ref = argv[index + 1];
+      if (!ref || known.has(ref)) {
+        process.stderr.write('repo:truth: --base needs a ref: --base origin/main. '
+          + 'Usage: node scripts/repo-truth.js --check --drift-advisory --base <ref>\n');
+        process.exit(2);
+      }
+      baseRef = ref;
+      index += 1;
+    } else if (!known.has(flag)) {
+      process.stderr.write('repo:truth: unknown flag '
+        + `${flag}. Usage: node scripts/repo-truth.js [--check [--require-current] [--drift-advisory [--base <ref>]]] [--json]\n`);
       process.exit(2);
     }
   }
   if (wantsRequireCurrent && !wantsCheck) {
     process.stderr.write('repo:truth: --require-current applies to --check: it fails the check when the freshness ratio drops below 1. '
       + 'Usage: node scripts/repo-truth.js --check --require-current\n');
+    process.exit(2);
+  }
+  if (wantsDriftAdvisory && !wantsCheck) {
+    process.stderr.write('repo:truth: --drift-advisory applies to --check: advisory-only drift warns instead of failing. '
+      + 'Usage: node scripts/repo-truth.js --check --drift-advisory\n');
+    process.exit(2);
+  }
+  if (baseRef && (!wantsCheck || !wantsDriftAdvisory)) {
+    process.stderr.write('repo:truth: --base applies to --check --drift-advisory: without advisory mode there is no warning to narrow. '
+      + 'Usage: node scripts/repo-truth.js --check --drift-advisory --base <ref>\n');
     process.exit(2);
   }
 
@@ -3387,7 +3535,20 @@ async function main() {
     return;
   }
 
-  const report = await checkRepository({ rootDir, requireCurrent: wantsRequireCurrent });
+  // Fail closed: an unreadable base proves nothing about where an added fact
+  // came from, so added facts stay red rather than warning on a guess.
+  let baseFactIds;
+  if (baseRef) {
+    baseFactIds = resolveBaseFactIds(rootDir, baseRef);
+    if (baseFactIds === null) {
+      process.stderr.write(`repo:truth: the base ${baseRef} cannot be read here, so added facts fail closed. `
+        + `Fetch it first (git fetch --no-tags origin <branch>:refs/remotes/origin/<branch>).\n`);
+      baseFactIds = [];
+    }
+  }
+  const report = await checkRepository({
+    rootDir, requireCurrent: wantsRequireCurrent, driftAdvisory: wantsDriftAdvisory, baseFactIds,
+  });
   // Informational only, and deliberately not a problem: a truthful record of
   // an older tree is a stale status, not a failure (backlog:79405f9df589).
   // Naming the commits here — and not in the document — keeps `--check` green
@@ -3395,20 +3556,35 @@ async function main() {
   const treeFact = report.document.facts.find((fact) => fact.id === 'measurement.test_tree_current');
   const supersededBy = treeFact?.value === 'false' ? readMeasurement(rootDir, []).supersededBy : [];
   const stalenessNotes = supersededBy.map(({ sha, subject }) => `tests/ moved since the measured commit in ${sha.slice(0, 7)} — ${subject}`);
+  // A GitHub workflow annotation is a single line: escape the three characters
+  // the command format reserves. Printed only on Actions, so a local run
+  // keeps the human-readable warning below without the machine line.
+  const annotate = (warning) => {
+    if (process.env.GITHUB_ACTIONS !== 'true') return;
+    const singleLine = String(warning.message).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+    process.stdout.write(`::warning file=${TRUTH_DOCUMENT}::${warning.code} (advisory drift): ${singleLine}\n`);
+  };
   if (wantsJson) {
     process.stdout.write(`${JSON.stringify({
       repositoryTruthContract: REPOSITORY_TRUTH_CONTRACT,
       ok: report.ok,
       counts: report.counts,
       problems: report.problems,
+      warnings: report.warnings,
+      drift: report.drift,
       notes: stalenessNotes,
       fingerprint: report.document.fingerprint,
     }, null, 2)}\n`);
   } else {
-    process.stderr.write(`\n  repo:truth --check${wantsRequireCurrent ? ' --require-current' : ''} — ${report.counts.facts} facts `
+    const mode = `${wantsRequireCurrent ? ' --require-current' : ''}${wantsDriftAdvisory ? ' --drift-advisory' : ''}${baseRef ? ` --base ${baseRef}` : ''}`;
+    process.stderr.write(`\n  repo:truth --check${mode} — ${report.counts.facts} facts `
       + `(${report.counts.currentFacts} current, ratio ${report.counts.factsCurrentRatio.toFixed(3)}), ${report.counts.citations} citations `
       + `across ${report.counts.surfaces} bound surfaces\n\n`);
     for (const problem of report.problems) process.stderr.write(`  ✗ ${problem.code}\n    ${problem.message}\n\n`);
+    for (const warning of report.warnings) {
+      process.stderr.write(`  ! ${warning.code} (advisory — warns, does not fail)\n    ${warning.message}\n\n`);
+      annotate(warning);
+    }
     for (const note of stalenessNotes) process.stderr.write(`  · ${note}\n`);
     if (stalenessNotes.length) process.stderr.write('\n');
     process.stderr.write(report.ok
