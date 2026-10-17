@@ -57,12 +57,20 @@ createChannelsPackage({
   signature, out-of-order) plus no-secrets and space isolation. The
   fixture adapter passes it; every real adapter must pass it before it
   ships. The WhatsApp adapter (`src/whatsapp.js`) passes it
-  (`tests/channels-whatsapp.test.js`).
+  (`tests/channels-whatsapp.test.js`); for adapters behind a service
+  window the kit seeds one windowed inbound before its send check, so
+  the send proves the seeded window rather than an absent one.
 - The WhatsApp Business Cloud adapter (`src/whatsapp.js`, fake-backed
   until the Meta decision): Meta inbound shapes (`messages[]`,
-  `statuses[]`) with one inbox row per delivery state, free text only
-  inside the 24-hour window, approved templates outside it, and the REST
-  mapping as a pure function the fake records per send.
+  `statuses[]`) with one inbox row per delivery state and exactly one
+  item per delivery (a batched webhook refuses loudly instead of
+  dropping items); free text only inside the 24-hour window resolved
+  server-side from the inbox (absent, future or stale observations
+  refuse with `CHANNEL_TEMPLATE_REQUIRED`, intact through the queue
+  path), approved templates outside it; the bound business line is
+  required so self echoes and statuses to our own number quarantine;
+  and the REST mapping as a pure function whose retained copy never
+  holds the call-time secret.
 - `npm run crm -- package validate packages/channels` and
   `npm run crm -- package test packages/channels` (DX4 conformance).
 

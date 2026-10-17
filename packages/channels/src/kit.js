@@ -135,6 +135,16 @@ export async function runChannelAdapterKit(options) {
 
   await check('send', async () => {
     faults.reset();
+    // Adapters behind a service window (Meta's 24 hours) refuse free text
+    // with no observed inbound: the kit seeds one windowed inbound through
+    // the real ingest path first, so the send proves the seeded window
+    // rather than an absent one. Adapters without the capability send
+    // exactly as before.
+    if (adapter.outboundWindow && typeof adapter.outboundWindow.seedInbound === 'function') {
+      const seed = adapter.outboundWindow.seedInbound({ from: accountA });
+      const seeded = await harness.ingest(spaceA, { connectionKey: keyA, rawBody: seed, headers: faults.sign(seed) });
+      if (seeded.effect !== 'applied') fail(`window seed must apply, got ${JSON.stringify(seeded)}`);
+    }
     const before = faults.sentCount();
     const queued = await harness.queue(spaceA, {
       connectionKey: keyA, message: { to: accountA, text: 'kit hello' }, messageKey: 'kit-send-1',

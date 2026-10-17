@@ -15,6 +15,15 @@ import { AppError, ValidationError, computeDefinitionFingerprint, createDefiniti
  * (owner decision MEM_ACC_DECISIONS), so every adapter runs against the kit
  * in `kit.js` with a fixture secret. A real adapter implements the same
  * five functions against its provider's scheme.
+ *
+ * An adapter whose provider restricts free text to a service window (Meta's
+ * 24-hour customer-service window) additionally declares the optional
+ * `outboundWindow` capability: `{ windowMs, subjectForRecipient,
+ * seedInbound, isObservation }`. `operations.js` then resolves the last
+ * inbound observation server-side from the inbox and hands it to
+ * `normalizeOutbound` as `{ lastInboundAt }` — a caller-supplied instant is
+ * never trusted on that path — and `kit.js` seeds one windowed inbound
+ * before its send check. Adapters without it behave exactly as before.
  */
 
 export const CHANNEL_ADAPTER_CONTRACT = 1;
@@ -37,6 +46,7 @@ const ADAPTER_KEYS = Object.freeze([
   'name', 'version', 'label', 'channel', 'config',
   'verifyInbound', 'normalizeInbound', 'normalizeOutbound', 'sendOutbound',
 ]);
+const ADAPTER_OPTIONAL_KEYS = Object.freeze(['outboundWindow']);
 
 function isPlainJsonSafe(value, depth = 0) {
   if (depth > 12) return false;
@@ -46,6 +56,34 @@ function isPlainJsonSafe(value, depth = 0) {
   if (typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return false;
   return Object.keys(value).every((key) => key.length <= 128 && !HOSTILE_KEYS.includes(key)
     && isPlainJsonSafe(value[key], depth + 1));
+}
+
+/**
+ * Validate the optional service-window capability fail-closed. Absent is
+ * fine (adapters without a window behave exactly as before); present must
+ * be the full shape — a half-declared window would enforce nothing while
+ * looking enforced.
+ */
+function validateOutboundWindow(window) {
+  if (window === undefined) return;
+  if (!window || typeof window !== 'object' || Array.isArray(window)) {
+    throw new ValidationError('channel adapter outboundWindow must be a plain object', { field: 'adapter.outboundWindow' });
+  }
+  if (Object.getOwnPropertyNames(window).some((key) => HOSTILE_KEYS.includes(key))) {
+    throw new ValidationError('channel adapter outboundWindow carries a hostile key', { field: 'adapter.outboundWindow' });
+  }
+  if (!Number.isSafeInteger(window.windowMs) || window.windowMs < 1 || window.windowMs > 30 * 24 * 3600 * 1000) {
+    throw new ValidationError('channel adapter outboundWindow.windowMs must be a positive duration in milliseconds', {
+      field: 'adapter.outboundWindow.windowMs',
+    });
+  }
+  for (const key of ['subjectForRecipient', 'seedInbound', 'isObservation']) {
+    if (typeof window[key] !== 'function') {
+      throw new ValidationError(`channel adapter outboundWindow.${key} must be a function`, {
+        field: `adapter.outboundWindow.${key}`,
+      });
+    }
+  }
 }
 
 /**
@@ -65,11 +103,12 @@ export function validateChannelAdapter(definition) {
       throw new ValidationError(`channel adapter requires "${key}"`, { field: `adapter.${key}` });
     }
   }
-  const unknown = names.find((key) => !ADAPTER_KEYS.includes(key));
+  const unknown = names.find((key) => !ADAPTER_KEYS.includes(key) && !ADAPTER_OPTIONAL_KEYS.includes(key));
   if (unknown) {
     throw new ValidationError(`channel adapter carries an unsupported field "${unknown}"`, { field: `adapter.${unknown}` });
   }
   const value = /** @type {Record<string, any>} */ (definition);
+  validateOutboundWindow(value.outboundWindow);
   if (typeof value.name !== 'string' || !ADAPTER_NAME.test(value.name) || value.name.length > 64) {
     throw new ValidationError('channel adapter name must match ^[a-z][a-z0-9-]*$ (at most 64 characters)', { field: 'adapter.name' });
   }
@@ -104,6 +143,7 @@ export function validateChannelAdapter(definition) {
     normalizeInbound: value.normalizeInbound,
     normalizeOutbound: value.normalizeOutbound,
     sendOutbound: value.sendOutbound,
+    ...(value.outboundWindow === undefined ? {} : { outboundWindow: value.outboundWindow }),
   });
   return Object.freeze({
     contract: CHANNEL_ADAPTER_CONTRACT,
@@ -116,6 +156,7 @@ export function validateChannelAdapter(definition) {
     normalizeInbound: value.normalizeInbound,
     normalizeOutbound: value.normalizeOutbound,
     sendOutbound: value.sendOutbound,
+    ...(value.outboundWindow === undefined ? {} : { outboundWindow: Object.freeze({ ...value.outboundWindow }) }),
     fingerprint,
   });
 }

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { validateChannelAdapter } from '../packages/channels/src/adapter.js';
 import { hmacWebhookHeaders } from '../packages/channels/src/crypto.js';
 import { runChannelAdapterKit } from '../packages/channels/src/kit.js';
 import {
@@ -73,6 +74,24 @@ const metaBody = ({ messages, statuses } = {}) => JSON.stringify({
 });
 
 const signedHeaders = (rawBody) => hmacWebhookHeaders(rawBody, SECRET, Math.floor(Date.now() / 1000));
+
+/** One Meta text delivery through the real ingest path, asserting it applies. */
+async function ingestMetaMessage(harness, key, { id, from, at }) {
+  const rawBody = metaBody({
+    messages: [{ id, from, timestamp: String(at), type: 'text', text: { body: 'Ciao' } }],
+  });
+  const out = await harness.ingest(SPACE, { connectionKey: key, rawBody, headers: signedHeaders(rawBody) });
+  assert.equal(out.effect, 'applied');
+  return out;
+}
+
+/** One Meta status delivery through the real ingest path. */
+async function ingestMetaStatus(harness, key, { id, to, at, status }) {
+  const rawBody = metaBody({
+    statuses: [{ id, recipient_id: to, timestamp: String(at), status }],
+  });
+  return harness.ingest(SPACE, { connectionKey: key, rawBody, headers: signedHeaders(rawBody) });
+}
 
 /** The adapter definition without any harness: pure unit tests open no database and start no worker. */
 function whatsappDefinition(options = {}) {
@@ -175,33 +194,66 @@ test('unknown statuses and malformed bodies refuse without writing', async (t) =
 test('free text sends inside the window and refuses outside it', () => {
   const definition = whatsappDefinition();
   const hoursAgo = (hours) => new Date(NOW - hours * 3600 * 1000).toISOString();
+  const win = (lastInboundAt) => ({ lastInboundAt });
   assert.deepEqual(
-    definition.normalizeOutbound({ to: ACCOUNT, text: 'Ciao!', lastInboundAt: hoursAgo(1) }),
+    definition.normalizeOutbound({ to: ACCOUNT, text: 'Ciao!' }, win(hoursAgo(1))),
     { to: ACCOUNT, kind: 'text', text: 'Ciao!' },
   );
   assert.deepEqual(
-    definition.normalizeOutbound({ to: ACCOUNT, text: 'Al limite', lastInboundAt: hoursAgo(24) }),
+    definition.normalizeOutbound({ to: ACCOUNT, text: 'Al limite' }, win(hoursAgo(24))),
     { to: ACCOUNT, kind: 'text', text: 'Al limite' },
     'exactly 24h is still inside the window',
   );
   assert.throws(
-    () => definition.normalizeOutbound({ to: ACCOUNT, text: 'Troppo tardi', lastInboundAt: hoursAgo(25) }),
+    () => definition.normalizeOutbound({ to: ACCOUNT, text: 'Troppo tardi' }, win(hoursAgo(25))),
     (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED' && /24-hour window/.test(error.message),
   );
-  assert.doesNotThrow(
-    () => definition.normalizeOutbound({ to: ACCOUNT, text: 'Mai osservata' }),
-    'a never-observed conversation attempts the send; the provider has the final word',
+  // Fail-closed: no observation, a future instant or a non-canonical one
+  // never opens the window — the caller sends a template instead.
+  for (const [name, ctx] of [
+    ['absent context', undefined],
+    ['absent observation', win(undefined)],
+    ['null observation', win(null)],
+    ['future observation', win(new Date(NOW + 3600 * 1000).toISOString())],
+  ]) {
+    assert.throws(
+      () => definition.normalizeOutbound({ to: ACCOUNT, text: 'Senza prova' }, ctx),
+      (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
+      `${name} refuses fail-closed`,
+    );
+  }
+  assert.throws(
+    () => definition.normalizeOutbound({ to: ACCOUNT, text: 'x' }, win('not-a-date')),
+    (error) => error.code === 'CHANNEL_MESSAGE_MALFORMED',
+    'a non-instant observation is malformed, not a window refusal',
+  );
+  // Caller time is never read: a forged lastInboundAt in the message cannot
+  // open a stale window, nor close a fresh one.
+  assert.throws(
+    () => definition.normalizeOutbound(
+      { to: ACCOUNT, text: 'Falso fresco', lastInboundAt: hoursAgo(1) },
+      win(hoursAgo(25)),
+    ),
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
+    'a forged fresh instant in the message is ignored',
+  );
+  assert.deepEqual(
+    definition.normalizeOutbound(
+      { to: ACCOUNT, text: 'Falso vecchio', lastInboundAt: hoursAgo(25) },
+      win(hoursAgo(1)),
+    ),
+    { to: ACCOUNT, kind: 'text', text: 'Falso vecchio' },
+    'a forged stale instant in the message is ignored',
   );
   assert.equal(WHATSAPP_WINDOW_MS, 24 * 3600 * 1000);
 });
 
 test('outside the window only an approved template sends', () => {
   const definition = whatsappDefinition();
-  const old = new Date(NOW - 25 * 3600 * 1000).toISOString();
+  // Templates ignore the window entirely: no observation needed, none read.
   const sent = definition.normalizeOutbound({
     to: ACCOUNT,
     template: { name: 'presti_reminder', variables: ['Marco', 'domani alle 18'] },
-    lastInboundAt: old,
   });
   assert.deepEqual(sent, {
     to: ACCOUNT,
@@ -209,17 +261,16 @@ test('outside the window only an approved template sends', () => {
     template: { name: 'presti_reminder', language: 'it', variables: ['Marco', 'domani alle 18'] },
   });
   assert.throws(
-    () => definition.normalizeOutbound({ to: ACCOUNT, template: { name: 'promo_fantasma' }, lastInboundAt: old }),
+    () => definition.normalizeOutbound({ to: ACCOUNT, template: { name: 'promo_fantasma' } }),
     /not an approved template/,
   );
   assert.throws(
-    () => definition.normalizeOutbound({ to: ACCOUNT, template: { name: 'presti_reminder', language: 'en' }, lastInboundAt: old }),
+    () => definition.normalizeOutbound({ to: ACCOUNT, template: { name: 'presti_reminder', language: 'en' } }),
     /approved language/,
   );
   assert.throws(
     () => definition.normalizeOutbound({
       to: ACCOUNT, template: { name: 'presti_reminder', variables: Array.from({ length: 33 }, (_, index) => `v${index}`) },
-      lastInboundAt: old,
     }),
     /bounded list/,
   );
@@ -274,6 +325,7 @@ test('sends are idempotent and refusals carry the provider code', async (t) => {
   const { harness, api } = setup();
   t.after(() => harness.close());
   const key = await registeredActive(harness);
+  await ingestMetaMessage(harness, key, { id: 'wamid.WIN1', from: '390200000001', at: Math.floor(NOW / 1000) - 60 });
   const queued = await harness.queue(SPACE, {
     connectionKey: key, message: { to: ACCOUNT, text: 'Arrivederci!' }, messageKey: 'wa-once',
   });
@@ -300,12 +352,210 @@ test('adapter config validates fail-closed at composition', () => {
     () => createWhatsAppChannelAdapter({ phoneNumberId: PHONE_NUMBER_ID, approvedTemplates: [{ name: 'BAD NAME' }] }),
     /approvedTemplates/,
   );
+  // The bound business line is required: without it the echo quarantine
+  // cannot tell our own number from a customer.
+  assert.throws(
+    () => createWhatsAppChannelAdapter({ phoneNumberId: PHONE_NUMBER_ID }),
+    /businessNumber/,
+  );
+  assert.throws(
+    () => createWhatsAppChannelAdapter({ phoneNumberId: PHONE_NUMBER_ID, businessNumber: 'call-me' }),
+    /businessNumber/,
+  );
   const { definition } = createWhatsAppChannelAdapter({
     phoneNumberId: PHONE_NUMBER_ID, approvedTemplates: [], secret: SECRET,
+    businessNumber: '+390200000099',
   });
   assert.throws(
     () => definition.normalizeOutbound({ to: ACCOUNT, template: { name: 'anything' } }),
     /not an approved template/,
     'with no approved templates every template refuses',
+  );
+});
+
+test('a batched Meta delivery refuses loudly instead of dropping items', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const rawBody = metaBody({
+    messages: [
+      { id: 'wamid.A', from: '390200000002', timestamp: String(TS), type: 'text', text: { body: 'uno' } },
+      { id: 'wamid.B', from: '390200000003', timestamp: String(TS), type: 'text', text: { body: 'due' } },
+    ],
+    statuses: [
+      { id: 'wamid.A', recipient_id: '390200000002', timestamp: String(TS + 1), status: 'delivered' },
+      { id: 'wamid.B', recipient_id: '390200000003', timestamp: String(TS + 1), status: 'sent' },
+    ],
+  });
+  await assert.rejects(
+    harness.ingest(SPACE, { connectionKey: key, rawBody, headers: signedHeaders(rawBody) }),
+    (error) => error.code === 'CHANNEL_EVENT_MALFORMED',
+  );
+  assert.equal(harness.inbox(SPACE).length, 0, 'nothing is stored from a refused batch');
+});
+
+test('the real queue path resolves the window server-side and keeps the template code', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const nowSec = Math.floor(NOW / 1000);
+  // No observation anywhere: free text refuses fail-closed, never attempting.
+  await assert.rejects(
+    harness.queue(SPACE, {
+      connectionKey: key, message: { to: ACCOUNT, text: 'Mai vista' }, messageKey: 'wa-absent',
+    }),
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
+  );
+  // A forged fresh instant in the message never opens the window.
+  await assert.rejects(
+    harness.queue(SPACE, {
+      connectionKey: key,
+      message: { to: ACCOUNT, text: 'Falsa', lastInboundAt: new Date(NOW).toISOString() },
+      messageKey: 'wa-forged',
+    }),
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
+  );
+  assert.equal((await harness.jobs()).length, 0, 'refused sends never reach the outbox');
+  // A stale observation: free text refuses with the template code intact,
+  // while the approved template sends end to end.
+  await ingestMetaMessage(harness, key, { id: 'wamid.OLD1', from: '390200000001', at: nowSec - 25 * 3600 });
+  await assert.rejects(
+    harness.queue(SPACE, {
+      connectionKey: key, message: { to: ACCOUNT, text: 'Troppo tardi' }, messageKey: 'wa-stale',
+    }),
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
+  );
+  const tpl = await harness.queue(SPACE, {
+    connectionKey: key,
+    message: { to: ACCOUNT, template: { name: 'presti_reminder', variables: ['Marco'] } },
+    messageKey: 'wa-tpl-stale',
+  });
+  assert.equal((await harness.pump(tpl.jobId)).state, 'succeeded');
+  // A fresh observation reopens the window — and a forged stale instant in
+  // the message cannot close it again.
+  await ingestMetaMessage(harness, key, { id: 'wamid.FRESH1', from: '390200000001', at: nowSec - 3600 });
+  const ok = await harness.queue(SPACE, {
+    connectionKey: key,
+    message: {
+      to: ACCOUNT, text: 'Di nuovo dentro',
+      lastInboundAt: new Date(NOW - 25 * 3600 * 1000).toISOString(),
+    },
+    messageKey: 'wa-fresh',
+  });
+  assert.equal((await harness.pump(ok.jobId)).state, 'succeeded');
+});
+
+test('a future-dated inbound never opens the window', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  await ingestMetaMessage(harness, key, {
+    id: 'wamid.FUT1', from: '390200000001', at: Math.floor(NOW / 1000) + 3600,
+  });
+  await assert.rejects(
+    harness.queue(SPACE, {
+      connectionKey: key, message: { to: ACCOUNT, text: 'Dal futuro' }, messageKey: 'wa-future',
+    }),
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
+  );
+});
+
+test('the fake retains the wire shape but never the secret', async (t) => {
+  const { harness, api } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  await ingestMetaMessage(harness, key, { id: 'wamid.SEC1', from: '390200000001', at: Math.floor(NOW / 1000) - 60 });
+  const queued = await harness.queue(SPACE, {
+    connectionKey: key, message: { to: ACCOUNT, text: 'Senza segreti' }, messageKey: 'wa-sec',
+  });
+  assert.equal((await harness.pump(queued.jobId)).state, 'succeeded');
+  const retained = JSON.stringify({ requests: api.sentRequests(), messages: api.sentMessages() });
+  assert.ok(!retained.includes(SECRET), 'no retained copy carries the call-time secret');
+  const [request] = api.sentRequests();
+  assert.equal(request.method, 'POST');
+  assert.equal(request.url, `https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`);
+  assert.equal(request.headers.Authorization, undefined);
+  assert.equal(request.headers['Content-Type'], 'application/json');
+});
+
+test('a status to the bound business number quarantines', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const out = await ingestMetaStatus(harness, key, {
+    id: 'wamid.OUT7', to: '390200000099', at: TS, status: 'delivered',
+  });
+  assert.equal(out.effect, 'quarantined');
+  const rows = harness.inbox(SPACE).filter((row) => row.providerEventId === 'wamid.OUT7:delivered');
+  assert.equal(rows.length, 1);
+  // The store reads the empty quarantine subject back as null (same as the
+  // message echo): either way it is no customer conversation.
+  assert.ok(!rows[0].subject, 'a status to our own line maps to no customer subject');
+});
+
+test('every delivery state is its own row', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  for (const status of ['sent', 'delivered', 'read', 'failed']) {
+    const out = await ingestMetaStatus(harness, key, {
+      id: 'wamid.OUT2', to: '390200000002', at: TS, status,
+    });
+    assert.equal(out.effect, 'applied', `status ${status} applies`);
+  }
+  const rows = harness.inbox(SPACE).filter((row) => row.subject === 'wa:+390200000002');
+  assert.deepEqual(
+    rows.map((row) => row.providerEventId).sort(),
+    ['wamid.OUT2:delivered', 'wamid.OUT2:failed', 'wamid.OUT2:read', 'wamid.OUT2:sent'],
+  );
+});
+
+test('a late status of another message still applies', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const at = Math.floor(NOW / 1000);
+  const first = await ingestMetaStatus(harness, key, {
+    id: 'wamid.MA', to: '390200000002', at: at + 100, status: 'delivered',
+  });
+  assert.equal(first.effect, 'applied');
+  const second = await ingestMetaStatus(harness, key, {
+    id: 'wamid.MB', to: '390200000002', at: at + 90, status: 'sent',
+  });
+  assert.equal(second.effect, 'applied', 'an older-timestamp status of another message is not suppressed');
+  const rows = harness.inbox(SPACE).filter((row) => row.subject === 'wa:+390200000002');
+  assert.deepEqual(
+    rows.map((row) => row.providerEventId).sort(),
+    ['wamid.MA:delivered', 'wamid.MB:sent'],
+  );
+});
+
+test('the window capability validates fail-closed on the shared contract', () => {
+  const definition = whatsappDefinition();
+  assert.equal(definition.outboundWindow.windowMs, WHATSAPP_WINDOW_MS);
+  assert.equal(definition.outboundWindow.subjectForRecipient('+390200000001'), 'wa:+390200000001');
+  assert.equal(definition.outboundWindow.isObservation({ providerEventId: 'wamid.X' }), true);
+  for (const status of ['sent', 'delivered', 'read', 'failed']) {
+    assert.equal(
+      definition.outboundWindow.isObservation({ providerEventId: `wamid.X:${status}` }),
+      false,
+      `a ${status} report is not a window observation`,
+    );
+  }
+  for (const [name, bad] of [
+    ['missing functions', { windowMs: WHATSAPP_WINDOW_MS }],
+    ['zero window', { ...definition.outboundWindow, windowMs: 0 }],
+    ['non-object', 'window'],
+  ]) {
+    assert.throws(
+      () => validateChannelAdapter({ ...definition, outboundWindow: bad }),
+      /outboundWindow/,
+      `${name} refuses`,
+    );
+  }
+  assert.throws(
+    () => validateChannelAdapter({ ...definition, extra: 1 }),
+    /unsupported field/,
+    'unrelated fields still refuse',
   );
 });

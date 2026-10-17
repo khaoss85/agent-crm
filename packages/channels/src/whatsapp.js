@@ -25,19 +25,25 @@ import { verifyHmacWebhook } from './crypto.js';
  *
  * What the adapter owns (the WhatsApp policy, fail-closed):
  * - inbound: Meta Cloud API webhook shapes (`messages[]`, `statuses[]`)
- *   normalized to the channel event; each delivery/read state is its own
- *   inbox row (`<message-id>:<status>`), so the conversation timeline is
- *   the ordered rows. A delivery with no customer peer (a self echo off
- *   the bound business number) normalizes to an empty subject and is
+ *   normalized to the channel event — exactly one item per delivery. A
+ *   batched delivery (two or more messages/statuses in one webhook) is
+ *   refused loudly instead of silently dropping every item but the first:
+ *   batch ingest is a follow-up voice with its own inbox loop. Each
+ *   delivery/read state is its own inbox row (`<message-id>:<status>`),
+ *   with no cross-message sequence (statuses of different messages never
+ *   suppress each other), so the conversation timeline is the ordered
+ *   rows. A delivery off our own line (a self echo or a status to the
+ *   bound business number) normalizes to an empty subject and is
  *   quarantined as evidence, never mapped to a ghost customer.
  * - outbound: free text sends only inside the 24-hour window measured
- *   from the caller-observed `lastInboundAt`; outside the window only an
- *   approved template from the adapter config sends. The caller reads
- *   `lastInboundAt` from the channel inbox for the conversation — the
- *   adapter owns the policy, the inbox owns the observation. An absent
- *   `lastInboundAt` (a conversation never observed, and every kit send)
- *   attempts the send and leaves the final word to the provider, whose
- *   refusal lands in the dead letter with the provider code.
+ *   from the last inbound the inbox observed — resolved server-side by
+ *   operations from the conversation rows, never from caller time. A
+ *   `message.lastInboundAt` is never read: the observation arrives as the
+ *   second argument (`{ lastInboundAt }`), which operations always
+ *   provides on the real path. Absent, future or stale observations
+ *   refuse with CHANNEL_TEMPLATE_REQUIRED; outside the window only an
+ *   approved template from the adapter config sends, and that code
+ *   reaches the caller intact through the real queue path.
  */
 
 export const WHATSAPP_ADAPTER_NAME = 'whatsapp-cloud';
@@ -99,9 +105,16 @@ function unixToParts(timestamp) {
   return { sequence: seconds, occurredAt: new Date(seconds * 1000).toISOString() };
 }
 
-function firstMetaItem(payload) {
+/**
+ * Every Meta item of one delivery, in document order. The ingest path
+ * stores exactly one inbox row per normalized event, so a delivery that
+ * carries more than one item cannot be normalized to one event without
+ * losing customer messages — it is refused loudly at the call site.
+ */
+function collectMetaItems(payload) {
   const entries = payload?.entry;
-  if (!Array.isArray(entries)) return null;
+  if (!Array.isArray(entries)) return [];
+  const found = [];
   for (const entry of entries) {
     const changes = entry?.changes;
     if (!Array.isArray(changes)) continue;
@@ -109,15 +122,15 @@ function firstMetaItem(payload) {
       const value = change?.value;
       if (!value || typeof value !== 'object') continue;
       if (value.messaging_product !== undefined && value.messaging_product !== 'whatsapp') continue;
-      const messages = Array.isArray(value.messages) ? value.messages : [];
-      const firstMessage = messages.find((item) => item && typeof item === 'object');
-      if (firstMessage) return { kind: 'message', item: firstMessage };
-      const statuses = Array.isArray(value.statuses) ? value.statuses : [];
-      const firstStatus = statuses.find((item) => item && typeof item === 'object');
-      if (firstStatus) return { kind: 'status', item: firstStatus };
+      for (const item of Array.isArray(value.messages) ? value.messages : []) {
+        if (item && typeof item === 'object') found.push({ kind: 'message', item });
+      }
+      for (const item of Array.isArray(value.statuses) ? value.statuses : []) {
+        if (item && typeof item === 'object') found.push({ kind: 'status', item });
+      }
     }
   }
-  return null;
+  return found;
 }
 
 /**
@@ -135,7 +148,11 @@ function normalizeWhatsAppInbound(event, config) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     malformedEvent('body is not an object');
   }
-  const meta = firstMetaItem(parsed);
+  const items = collectMetaItems(parsed);
+  if (items.length > 1) {
+    malformedEvent(`batched deliveries carry ${items.length} items: this adapter ingests one delivery per webhook — split the batch`);
+  }
+  const meta = items.length === 1 ? items[0] : null;
   if (!meta) {
     // The kit/fake minimal envelope: the provider id and subject directly.
     const providerEventId = typeof parsed.id === 'string' && parsed.id !== '' && parsed.id.length <= 256
@@ -170,7 +187,7 @@ function normalizeWhatsAppInbound(event, config) {
     if (!parts) malformedEvent('message needs a valid timestamp');
     return {
       providerEventId: item.id,
-      subject: `wa:${peer}`,
+      subject: conversationSubject(peer),
       sequence: parts.sequence,
       occurredAt: parts.occurredAt,
     };
@@ -188,15 +205,23 @@ function normalizeWhatsAppInbound(event, config) {
   } catch {
     malformedEvent('status needs a valid recipient');
   }
+  // The echo quarantine covers statuses too: a delivery report addressed
+  // to our own line is evidence, never a customer conversation.
+  if (config.businessNumber && peer === config.businessNumber) {
+    return { providerEventId: `${item.id}:${item.status}`, subject: '', sequence: null, occurredAt: null };
+  }
   const parts = unixToParts(item.timestamp);
   if (!parts) malformedEvent('status needs a valid timestamp');
   // One row per delivery state: sent, delivered and read updates share the
   // message id, so the state joins the key — otherwise read would replay
-  // delivered. The timeline of a message is its ordered rows.
+  // delivered. The timeline of a message is its ordered rows. Statuses
+  // carry no cross-message sequence: every status of every message applies
+  // on its own row, so a late report of one message never suppresses the
+  // report of another through the per-subject out-of-order rule.
   return {
     providerEventId: `${item.id}:${item.status}`,
-    subject: `wa:${peer}`,
-    sequence: parts.sequence,
+    subject: conversationSubject(peer),
+    sequence: null,
     occurredAt: parts.occurredAt,
   };
 }
@@ -228,8 +253,15 @@ function assertApprovedTemplate(template, approved) {
  * Normalize one outbound message and enforce the window policy.
  * Free text needs the conversation inside the 24-hour window; an approved
  * template sends at any time. `nowMs` is injectable for tests.
+ *
+ * The window observation is never caller time: `message.lastInboundAt` is
+ * not read at all. On the real path operations resolves the last inbound
+ * server-side from the inbox and hands it in as `{ lastInboundAt }`;
+ * direct calls (unit tests) pass the observation the same way. An absent,
+ * future or stale observation refuses fail-closed with
+ * CHANNEL_TEMPLATE_REQUIRED — the caller sends a template instead.
  */
-function normalizeWhatsAppOutbound(message, config, nowMs) {
+function normalizeWhatsAppOutbound(message, config, nowMs, windowCtx) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
     malformedMessage('message must be a plain object');
   }
@@ -247,11 +279,15 @@ function normalizeWhatsAppOutbound(message, config, nowMs) {
   if (text === '' || text.length > MAX_TEXT) {
     malformedMessage('message needs non-empty "text" (at most 4096 chars) or an approved "template"');
   }
-  if (message.lastInboundAt !== undefined) {
-    const at = Date.parse(message.lastInboundAt);
-    if (!Number.isFinite(at)) malformedMessage('"lastInboundAt" must be an ISO-8601 instant');
-    if (nowMs() - at > WHATSAPP_WINDOW_MS) templateRequired();
+  const observed = windowCtx && typeof windowCtx === 'object' ? windowCtx.lastInboundAt : undefined;
+  if (observed === undefined || observed === null) templateRequired();
+  if (typeof observed !== 'string') malformedMessage('"lastInboundAt" must be an ISO-8601 instant');
+  const at = Date.parse(observed);
+  if (!Number.isFinite(at) || new Date(observed).toISOString() !== observed) {
+    malformedMessage('"lastInboundAt" must be an ISO-8601 instant');
   }
+  if (at > nowMs()) templateRequired();
+  if (nowMs() - at > WHATSAPP_WINDOW_MS) templateRequired();
   return { to, kind: 'text', text };
 }
 
@@ -334,13 +370,19 @@ function assertAdapterConfig(input = {}) {
       || !TEMPLATE_LANGUAGE.test(entry.language))) {
     throw new ValidationError('WhatsApp adapter approvedTemplates must be a bounded list of {name, language}', { field: 'config.approvedTemplates' });
   }
-  let businessNumber = null;
-  if (input.businessNumber !== undefined) {
-    try {
-      businessNumber = canonicalWhatsAppNumber(input.businessNumber);
-    } catch {
-      throw new ValidationError('WhatsApp adapter businessNumber must be an E.164 number', { field: 'config.businessNumber' });
-    }
+  // The bound business line is required at composition: without it the
+  // self-echo quarantine cannot tell our own number from a customer, and a
+  // status to our own line would land as a business-as-customer ghost row.
+  if (input.businessNumber === undefined) {
+    throw new ValidationError('WhatsApp adapter needs businessNumber: the bound business line the echo quarantine compares against', {
+      field: 'config.businessNumber',
+    });
+  }
+  let businessNumber;
+  try {
+    businessNumber = canonicalWhatsAppNumber(input.businessNumber);
+  } catch {
+    throw new ValidationError('WhatsApp adapter businessNumber must be an E.164 number', { field: 'config.businessNumber' });
   }
   const nowMs = input.nowMs === undefined ? () => Date.now() : input.nowMs;
   if (typeof nowMs !== 'function') {
@@ -373,6 +415,7 @@ export function createWhatsAppChannelAdapter(options = {}) {
     /** @type {Map<string, {providerMessageId: string, request: any}>} */
     sentByKey: new Map(),
     sendCalls: 0,
+    seedCounter: 0,
   };
 
   const api = {
@@ -426,8 +469,35 @@ export function createWhatsAppChannelAdapter(options = {}) {
         return normalizeWhatsAppInbound(event, config);
       },
 
-      normalizeOutbound(message) {
-        return normalizeWhatsAppOutbound(message, config, nowMs);
+      normalizeOutbound(message, windowCtx) {
+        return normalizeWhatsAppOutbound(message, config, nowMs, windowCtx);
+      },
+
+      /**
+       * The service-window capability the shared contract allows: the
+       * conversation subject for one recipient, a seedable windowed
+       * inbound for the kit, and the customer-message predicate that
+       * keeps delivery reports out of the window observation.
+       */
+      outboundWindow: {
+        windowMs: WHATSAPP_WINDOW_MS,
+        subjectForRecipient(to) {
+          return conversationSubject(to);
+        },
+        seedInbound({ from } = {}) {
+          const peer = canonicalWhatsAppNumber(from);
+          state.seedCounter += 1;
+          return JSON.stringify({
+            id: `wa-window-seed-${state.seedCounter}`,
+            subject: `wa:${peer}`,
+            seq: 1,
+            at: new Date(nowMs()).toISOString(),
+          });
+        },
+        isObservation(row) {
+          return typeof row?.providerEventId === 'string'
+            && !/:(sent|delivered|read|failed)$/.test(row.providerEventId);
+        },
       },
 
       async sendOutbound({ message, secret, idempotencyKey }) {
@@ -459,7 +529,14 @@ export function createWhatsAppChannelAdapter(options = {}) {
           secret,
         });
         const providerMessageId = `wamid.fake-${state.sentByKey.size + 1}`;
-        state.sentByKey.set(idempotencyKey, { providerMessageId, request });
+        // The Bearer [REDACTED] is call-time only: the retained copy keeps the
+        // wire shape minus the secret, so no dump of sentRequests() leaks it.
+        const { Authorization: _withheld, ...publicHeaders } = request.headers;
+        void _withheld;
+        state.sentByKey.set(idempotencyKey, {
+          providerMessageId,
+          request: { method: request.method, url: request.url, headers: publicHeaders, body: request.body },
+        });
         return { providerMessageId };
       },
     },

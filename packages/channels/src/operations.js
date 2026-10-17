@@ -439,6 +439,39 @@ export function createChannelOperations(deps) {
   }
 
   /**
+   * Resolve the service-window observation server-side for adapters that
+   * declare `outboundWindow`: the latest applied customer-message instant
+   * recorded in the inbox for the recipient's conversation — the provider
+   * timestamp when present, else our receipt time. Caller time never
+   * enters: a forged or absent `lastInboundAt` cannot open the window.
+   * Returns the canonical instant, or null when nothing observable opens it.
+   */
+  function resolveWindowObservation(spaceId, connectionKey, rawMessage, window) {
+    let subject = null;
+    try {
+      subject = window.subjectForRecipient(rawMessage?.to);
+    } catch {
+      return null;
+    }
+    if (typeof subject !== 'string' || subject === '') return null;
+    let latest = null;
+    for (const row of inbox().listWhere({ spaceId, connectionKey })) {
+      if (row.subject !== subject || row.effect !== 'applied') continue;
+      try {
+        if (!window.isObservation(row)) continue;
+      } catch {
+        continue;
+      }
+      const at = typeof row.occurredAt === 'string' ? row.occurredAt : row.receivedAt;
+      if (typeof at !== 'string') continue;
+      const ms = Date.parse(at);
+      if (!Number.isFinite(ms)) continue;
+      if (latest === null || ms > latest) latest = ms;
+    }
+    return latest === null ? null : new Date(latest).toISOString();
+  }
+
+  /**
    * Queue one outbound message through the durable-jobs outbox. The payload
    * carries routing and content only — the handler resolves the secret at
    * execution time, so no secret material ever rests in the jobs table.
@@ -450,9 +483,26 @@ export function createChannelOperations(deps) {
     const connection = requireActiveConnection(spaceId, connectionKey);
     const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
     let message;
+    // Resolved outside the normalize try: a storage failure here is a 500
+    // of its own, never a malformed message.
+    const windowCtx = adapter.outboundWindow
+      ? {
+        lastInboundAt: resolveWindowObservation(
+          spaceId, connection.sourceKey, params?.message, adapter.outboundWindow,
+        ),
+      }
+      : undefined;
     try {
-      message = adapter.normalizeOutbound(params?.message);
-    } catch {
+      message = adapter.outboundWindow
+        ? adapter.normalizeOutbound(params?.message, windowCtx)
+        : adapter.normalizeOutbound(params?.message);
+    } catch (error) {
+      // A window refusal is the adapter's contract with its callers (send a
+      // template instead): it travels intact, never flattened into the
+      // generic malformed code.
+      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'CHANNEL_TEMPLATE_REQUIRED') {
+        throw error;
+      }
       throw new AppError('Channel message is not well-formed', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
     }
     assertOutboundMessage(message);
