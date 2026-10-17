@@ -1,6 +1,8 @@
 // @ts-check
 
-import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import {
+  AppError, ConflictError, ValidationError, normalizeActor,
+} from '../../core/index.js';
 import {
   MAX_EXTERNAL_ID_LENGTH, domainShape, emailShape, safeString,
 } from './normalize.js';
@@ -52,6 +54,27 @@ export const SENDER_RUN_ID = 'channel-sender';
 const PHONE_SEPARATOR_RE = /[ .\-()/]/g;
 
 /**
+ * A uniqueness conflict means somebody else won the race: the handle or the
+ * email this resolution is about to claim is already stored. The caller
+ * re-reads and replays the winner instead of surfacing a 500. Anything that
+ * is not a uniqueness conflict is rethrown untouched.
+ *
+ * @param {unknown} error
+ */
+function isWinnerConflict(error) {
+  if (error instanceof ConflictError) return true;
+  if (error instanceof Error) {
+    if (error.message.includes('UNIQUE constraint failed')) return true;
+    if (error.message.includes('duplicate key value violates unique constraint')) return true;
+  }
+  if (error !== null && typeof error === 'object') {
+    const code = /** @type {any} */ (error).code;
+    if (code === '23505' || code === 'SQLITE_CONSTRAINT_UNIQUE') return true;
+  }
+  return false;
+}
+
+/**
  * Normalize one channel handle to the external id stored beside the contact.
  * Exact after normalization — the same discipline as the match policy: no
  * fuzzy comparison, no scoring, no tie-break.
@@ -98,6 +121,17 @@ export function normalizeChannelSender(request) {
   let email = null;
   if (channel === 'email') {
     email = externalId;
+    if (request.email !== undefined && request.email !== null && request.email !== '') {
+      // On the email channel the handle IS the observed address, so a
+      // caller-supplied email naming another address is contradictory
+      // evidence about one sender. It is kept, never silently dropped: the
+      // resolver turns the contradiction into a candidate for a human.
+      const shaped = emailShape(request.email);
+      if (!shaped.ok) {
+        throw new ValidationError('the sender email is not a valid address shape', { field: 'email' });
+      }
+      email = shaped.value;
+    }
   } else if (request.email !== undefined && request.email !== null && request.email !== '') {
     const shaped = emailShape(request.email);
     if (!shaped.ok) {
@@ -339,23 +373,46 @@ export function createChannelSenderResolution({
         label: emailContact.email ?? sender.email,
       }
       : null;
-
-    if (known) {
-      const knownSubject = {
+    const knownSubject = known
+      ? {
         resource: known.subjectResource,
         id: known.subjectId,
         owner: known.subjectOwner,
         ownerPackage: known.subjectOwnerPackage,
         label: known.subjectLabel,
-      };
-      const knownContact = asContact(knownSubject);
+      }
+      : null;
+
+    if (sender.system === 'email' && sender.email !== sender.externalId) {
+      // The observed handle and the caller-supplied email name different
+      // addresses. Both point at one sender, so dropping either would decide
+      // who the sender is: a candidate for a human instead. The one case
+      // that still resolves is agreement — both name the same contact —
+      // which falls through to the known-identity path below.
+      const knownContactForEmail = knownSubject && knownSubject.resource === 'contact' ? knownSubject : null;
+      const agrees = Boolean(knownContactForEmail && emailSubject && emailSubject.id === knownContactForEmail.id);
+      if (!agrees) {
+        const subjects = [];
+        if (knownSubject) subjects.push(knownSubject);
+        if (emailSubject && (!knownSubject || emailSubject.id !== knownSubject.id)) subjects.push(emailSubject);
+        return senderUnresolved(sender, actor, {
+          rule: 'external-identity',
+          candidates: subjects,
+          evidence: `channel handle ${sender.system} contradicts the sender email carried with it; a human decides`,
+        });
+      }
+    }
+
+    if (known) {
+      const knownSubjectHere = /** @type {{resource: string, id: string, owner: string, ownerPackage: string|null, label: string|null}} */ (knownSubject);
+      const knownContact = asContact(knownSubjectHere);
       if (knownContact && emailSubject && emailSubject.id !== knownContact.id) {
         // The handle names one contact and the email names another. That is
         // conflicting evidence about one sender: a candidate for a human,
         // never an automatic re-link.
         const written = await database.transactionAsync(async () => recordCandidatePairs({
           modules, names, policy,
-          pairs: distinctPairs([knownSubject, emailSubject]),
+          pairs: distinctPairs([knownSubjectHere, emailSubject]),
           rule: 'external-identity',
           evidence: `channel handle ${sender.system} names one contact and the sender email names another`,
           runId: SENDER_RUN_ID,
@@ -366,13 +423,20 @@ export function createChannelSenderResolution({
           outcome: 'unresolved',
           rule: 'external-identity',
           contact: null,
-          candidates: [knownSubject, emailSubject].map((subject) => Object.freeze({ ...subject })),
+          candidates: [knownSubjectHere, emailSubject].map((subject) => Object.freeze({ ...subject })),
           candidatesWritten: written,
           identity: null,
           evidence: `channel handle ${sender.system} names one contact and the sender email names another; a human decides`,
         });
       }
       if (knownContact) {
+        // A second sighting refreshes lastObserved, never a second row —
+        // the recorded promise in the package metadata and README.
+        const identity = await database.transactionAsync(async () => recordExternalIdentityRow({
+          modules, names, system: sender.system, externalId: sender.externalId,
+          subject: knownSubjectHere,
+          runId: SENDER_RUN_ID, actor,
+        }));
         return Object.freeze({
           system: sender.system,
           outcome: 'matched',
@@ -380,13 +444,13 @@ export function createChannelSenderResolution({
           contact: Object.freeze({ ...knownContact }),
           candidates: [],
           candidatesWritten: 0,
-          identity: 'existing',
+          identity,
           evidence: `channel handle ${sender.system} already names this contact`,
         });
       }
       return senderUnresolved(sender, actor, {
         rule: 'external-identity',
-        candidates: emailSubject ? [knownSubject, emailSubject] : [knownSubject],
+        candidates: emailSubject ? [knownSubjectHere, emailSubject] : [knownSubjectHere],
         evidence: `channel handle ${sender.system} names a ${known.subjectResource}, not a contact, so it cannot identify this sender`,
       });
     }
@@ -408,10 +472,20 @@ export function createChannelSenderResolution({
         // A concurrent resolution won: replay it. A non-contact winner is
         // not a contact — the next call takes the known-identity path.
         if (raced && raced.subjectResource !== 'contact') return 'non-contact';
-        if (raced) return 'existing';
+        const winner = raced
+          ? {
+            resource: 'contact',
+            id: raced.subjectId,
+            owner: raced.subjectOwner,
+            ownerPackage: raced.subjectOwnerPackage,
+            label: raced.subjectLabel,
+          }
+          : subject;
+        // recordExternalIdentityRow links a first sighting and refreshes
+        // lastObserved on a replayed one — never a second row.
         return recordExternalIdentityRow({
           modules, names, system: sender.system, externalId: sender.externalId,
-          subject, runId: SENDER_RUN_ID, actor,
+          subject: winner, runId: SENDER_RUN_ID, actor,
         });
       });
       if (identity === 'non-contact') {
@@ -426,6 +500,54 @@ export function createChannelSenderResolution({
         candidatesWritten: 0,
         identity,
         evidence: result.evidence,
+      });
+    }
+
+    /**
+     * A sender email that appeared after the pre-transaction reads — a
+     * concurrent resolution created its contact first. The caller links this
+     * handle to the winner instead of creating a duplicate beside it.
+     */
+    async function replayEmailWinner() {
+      if (!sender.email) return null;
+      const winner = await reader.contactByEmail(sender.email);
+      if (!winner) return null;
+      return { replayed: true, contactId: winner.id };
+    }
+
+    /**
+     * The creation write lost a uniqueness race after the re-checks. Re-read:
+     * whoever won is now stored, so replay the winner. When no winner is
+     * visible the error is genuine — rethrow it untouched.
+     *
+     * @param {unknown} error
+     */
+    async function replayRaceLoser(error) {
+      if (!isWinnerConflict(error)) throw error;
+      const retryHandle = await reader.externalIdentity(sender.system, sender.externalId);
+      if (retryHandle && retryHandle.subjectResource === 'contact') {
+        return { replayed: true, contactId: retryHandle.subjectId };
+      }
+      const retryEmail = await replayEmailWinner();
+      if (retryEmail) return retryEmail;
+      throw error;
+    }
+
+    /**
+     * One write for a replayed handle: refresh its sighting, never a second
+     * row. The refresh path only touches lastObserved, so the stored subject
+     * snapshot is never rewritten.
+     *
+     * @param {string} contactId
+     */
+    async function refreshReplayed(contactId) {
+      return recordExternalIdentityRow({
+        modules, names, system: sender.system, externalId: sender.externalId,
+        subject: {
+          resource: 'contact', id: contactId, owner: 'host', ownerPackage: null,
+          label: sender.email,
+        },
+        runId: SENDER_RUN_ID, actor,
       });
     }
 
@@ -449,21 +571,32 @@ export function createChannelSenderResolution({
         if (raced) {
           return { replayed: true, contactId: raced.subjectId };
         }
-        const contact = await core.createContact({
-          companyId: result.subject.id,
-          firstName: sender.firstName ?? 'Unknown',
-          lastName: sender.lastName ?? 'Unknown',
-          email: sender.email,
-        }, { actor });
-        const subject = {
-          resource: 'contact', id: contact.id, owner: 'host', ownerPackage: null,
-          label: contact.email ?? sender.email,
-        };
-        await recordExternalIdentityRow({
-          modules, names, system: sender.system, externalId: sender.externalId,
-          subject, runId: SENDER_RUN_ID, actor,
-        });
-        return { replayed: false, contactId: contact.id };
+        // The contact email is globally unique: a concurrent resolution may
+        // have created its contact after the pre-transaction reads. Replay
+        // the winner instead of duplicating it — or throwing on its
+        // constraint. (The company itself is matched by id and guarded by
+        // its foreign key, so there is no second record to re-check there.)
+        const emailReplay = await replayEmailWinner();
+        if (emailReplay) return emailReplay;
+        try {
+          const contact = await core.createContact({
+            companyId: result.subject.id,
+            firstName: sender.firstName ?? 'Unknown',
+            lastName: sender.lastName ?? 'Unknown',
+            email: sender.email,
+          }, { actor });
+          const subject = {
+            resource: 'contact', id: contact.id, owner: 'host', ownerPackage: null,
+            label: contact.email ?? sender.email,
+          };
+          await recordExternalIdentityRow({
+            modules, names, system: sender.system, externalId: sender.externalId,
+            subject, runId: SENDER_RUN_ID, actor,
+          });
+          return { replayed: false, contactId: contact.id };
+        } catch (error) {
+          return replayRaceLoser(error);
+        }
       });
       if (created.nonContact) {
         // A concurrent write linked this handle to a non-contact: re-resolve
@@ -471,6 +604,7 @@ export function createChannelSenderResolution({
         return decide({ ...request, handle: sender.externalId });
       }
       if (created.replayed && created.contactId) {
+        const identity = await database.transactionAsync(async () => refreshReplayed(created.contactId));
         return Object.freeze({
           system: sender.system,
           outcome: 'matched',
@@ -478,7 +612,7 @@ export function createChannelSenderResolution({
           contact: Object.freeze({ resource: 'contact', id: created.contactId }),
           candidates: [],
           candidatesWritten: 0,
-          identity: 'existing',
+          identity,
           evidence: `channel handle ${sender.system} already names this contact`,
         });
       }
@@ -524,25 +658,34 @@ export function createChannelSenderResolution({
       if (raced) {
         return { replayed: true, contactId: raced.subjectId };
       }
-      const subject = await createSubjectForRow(core, sender, actor);
-      if (subject.resource !== 'contact') {
-        throw new AppError('a sender resolution creates a contact, never a bare company', {
-          code: 'SENDER_SUBJECT_INVALID', status: 500,
+      // Same globally-unique email re-check as the company path: a
+      // concurrent sender carrying this email may have created its contact
+      // after the pre-transaction reads.
+      const emailReplay = await replayEmailWinner();
+      if (emailReplay) return emailReplay;
+      try {
+        const subject = await createSubjectForRow(core, sender, actor);
+        if (subject.resource !== 'contact') {
+          throw new AppError('a sender resolution creates a contact, never a bare company', {
+            code: 'SENDER_SUBJECT_INVALID', status: 500,
+          });
+        }
+        await recordExternalIdentityRow({
+          modules, names, system: sender.system, externalId: sender.externalId,
+          subject: {
+            resource: subject.resource,
+            id: subject.id,
+            owner: subject.owner,
+            ownerPackage: subject.ownerPackage,
+            label: subject.label,
+          },
+          runId: SENDER_RUN_ID,
+          actor,
         });
+        return { replayed: false, contactId: subject.id };
+      } catch (error) {
+        return replayRaceLoser(error);
       }
-      await recordExternalIdentityRow({
-        modules, names, system: sender.system, externalId: sender.externalId,
-        subject: {
-          resource: subject.resource,
-          id: subject.id,
-          owner: subject.owner,
-          ownerPackage: subject.ownerPackage,
-          label: subject.label,
-        },
-        runId: SENDER_RUN_ID,
-        actor,
-      });
-      return { replayed: false, contactId: subject.id };
     });
     if (created.nonContact) {
       // A concurrent write linked this handle to a non-contact: re-resolve
@@ -550,6 +693,7 @@ export function createChannelSenderResolution({
       return decide({ ...request, handle: sender.externalId });
     }
     if (created.replayed && created.contactId) {
+      const identity = await database.transactionAsync(async () => refreshReplayed(created.contactId));
       return Object.freeze({
         system: sender.system,
         outcome: 'matched',
@@ -557,7 +701,7 @@ export function createChannelSenderResolution({
         contact: Object.freeze({ resource: 'contact', id: created.contactId }),
         candidates: [],
         candidatesWritten: 0,
-        identity: 'existing',
+        identity,
         evidence: `channel handle ${sender.system} already names this contact`,
       });
     }

@@ -176,6 +176,125 @@ test('a sender with no linkable identity and no email stays unresolved with no w
     'one bare handle with no other evidence names no pair');
 });
 
+test('a second sighting refreshes lastObserved instead of writing twice', async (t) => {
+  const { app } = await scene(t, 'sender-refresh-sighting');
+  const identities = () => app.modules.get('external-identity').service
+    .listWhere({ status: 'active' });
+
+  const first = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393331112222', email: 'refresh@prestigroup.example',
+    firstName: 'Rita', lastName: 'Verdi', companyName: 'Presti Group', actor: ACTOR,
+  });
+  assert.equal(first.outcome, 'created');
+  assert.equal(first.identity, 'linked');
+  assert.equal(identities().length, 1);
+
+  // Age the sighting so a refresh is observable rather than assumed.
+  await app.modules.get('external-identity').service.applyManaged(
+    identities()[0].id,
+    { lastObservedAt: '2000-01-01T00:00:00.000Z', lastObservedRunId: 'stale-run' },
+    { actor: ACTOR },
+  );
+
+  const replay = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+39 333 1112222', email: 'refresh@prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(replay.outcome, 'matched');
+  assert.equal(replay.contact.id, first.contact.id);
+  assert.equal(replay.identity, 'refreshed');
+
+  const rows = identities();
+  assert.equal(rows.length, 1, 'a replay refreshes the row instead of writing a second one');
+  assert.equal(rows[0].lastObservedRunId, 'channel-sender');
+  assert.notEqual(rows[0].lastObservedAt, '2000-01-01T00:00:00.000Z');
+  assert.equal(contactsCount(app), 1);
+});
+
+test('an email handle contradicting the caller email becomes a candidate, never a merge', async (t) => {
+  const { app } = await scene(t, 'sender-email-contradiction');
+
+  const anna = await app.resolveChannelSender({
+    channel: 'email', handle: 'anna@prestigroup.example',
+    firstName: 'Anna', lastName: 'Bianchi', companyName: 'Presti Group', domain: 'prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(anna.outcome, 'created');
+
+  const bruno = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000002', email: 'bruno@prestigroup.example',
+    firstName: 'Bruno', lastName: 'Neri', companyName: 'Presti Group', domain: 'prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(bruno.outcome, 'created');
+
+  // The observed handle is Anna's address but the caller also carries
+  // Bruno's: contradictory evidence about one sender.
+  const conflict = await app.resolveChannelSender({
+    channel: 'email', handle: 'anna@prestigroup.example', email: 'bruno@prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(conflict.outcome, 'unresolved');
+  assert.equal(conflict.contact, null);
+  assert.equal(conflict.rule, 'external-identity');
+
+  const candidates = app.modules.get('duplicate-candidate').service.listWhere({ status: 'unresolved' });
+  assert.equal(candidates.length, 1, 'the contradiction became exactly one candidate for a human');
+  const pair = [`${candidates[0].leftResource}:${candidates[0].leftId}`, `${candidates[0].rightResource}:${candidates[0].rightId}`].sort();
+  assert.deepEqual(pair, [`contact:${anna.contact.id}`, `contact:${bruno.contact.id}`].sort());
+  assert.equal(contactsCount(app), 2, 'no contact was fused or created');
+});
+
+test('an unknown email handle carrying another contact email stays unresolved with no duplicate', async (t) => {
+  const { app } = await scene(t, 'sender-email-unknown-handle');
+
+  const bruno = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000003', email: 'bruno@prestigroup.example',
+    firstName: 'Bruno', lastName: 'Neri', companyName: 'Presti Group', domain: 'prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(bruno.outcome, 'created');
+
+  const answer = await app.resolveChannelSender({
+    channel: 'email', handle: 'newcomer@prestigroup.example', email: 'bruno@prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(answer.outcome, 'unresolved');
+  assert.equal(answer.contact, null);
+  assert.equal(contactsCount(app), 1, 'no duplicate contact was created for the unknown handle');
+  const handles = app.modules.get('external-identity').service
+    .listWhere({ status: 'active' }).map((row) => row.externalId);
+  assert.ok(!handles.includes('newcomer@prestigroup.example'), 'the unknown handle was not recorded against anybody');
+});
+
+test('two senders racing on the same email converge on one contact', async (t) => {
+  const { app } = await scene(t, 'sender-email-race');
+
+  // Deterministic stand-in for the interleaving the in-transaction
+  // re-checks close: a winner commits between this resolution's reads and
+  // its creation transaction. Without the re-check the loser would hit the
+  // globally-unique email constraint and throw instead of replaying.
+  const realTransactionAsync = app.database.transactionAsync.bind(app.database);
+  let armed = true;
+  app.database.transactionAsync = async (fn) => {
+    if (armed) {
+      armed = false;
+      const company = await app.services.companies.create(
+        { name: 'Race Srl', domain: 'race.example' }, { actor: ACTOR });
+      await app.services.contacts.create({
+        companyId: company.id, firstName: 'Race', lastName: 'Winner', email: 'race@prestigroup.example',
+      }, { actor: ACTOR });
+    }
+    return realTransactionAsync(fn);
+  };
+  t.after(() => { app.database.transactionAsync = realTransactionAsync; });
+
+  const answer = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393339999999', email: 'race@prestigroup.example',
+    firstName: 'Late', lastName: 'Loser', companyName: 'Race Srl', domain: 'race.example', actor: ACTOR,
+  });
+  assert.equal(answer.outcome, 'matched');
+  assert.equal(contactsCount(app), 1, 'the loser replayed the winner instead of duplicating it');
+  const winner = app.database.raw.prepare('SELECT id FROM contacts WHERE email = ?').get('race@prestigroup.example');
+  assert.equal(answer.contact.id, winner.id);
+  const systems = identitiesOf(app, winner.id).map((row) => row.system);
+  assert.ok(systems.includes('whatsapp'), 'the loser handle was linked to the winner contact');
+});
+
 test('malformed sender requests are refused before anything is read or written', async (t) => {
   const { app } = await scene(t, 'sender-validation');
 
