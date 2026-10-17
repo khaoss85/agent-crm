@@ -139,10 +139,11 @@ rules:
   and names the commits that touched `tests/` since — and does not fail. Failing
   there would block every PR that adds a test until it re-ran the suite, which is
   a worse outcome than a note. Re-measuring before publishing is the CI's job,
-  not the author's: the `public-claims` job re-anchors the ledger from the
-  `verify` job's measurement artifact on the same tree
+  not the author's: on `main` the `public-claims` job re-anchors the ledger
+  from the `verify` job's measurement artifact on the same tree
   (`scripts/apply-ci-measurement.js`), so a PR goes green with no local measure
-  commit. Locally, `node scripts/measure-suite.js --apply` on a clean tree, or
+  commit and the merged tree is re-measured at merge time (§7). Locally, `node
+  scripts/measure-suite.js --apply` on a clean tree, or
   `npm run measure:refresh` when only test files changed (it runs the changed
   files and carries the rest). Inputs outside `tests/` also refuse refresh;
   only a ledger update restricted to `measuredAgainst` is exempt. Full measurement
@@ -182,23 +183,24 @@ npm run repo:truth -- --check   # fail when the repository and the facts disagre
 | the measured commit is an ancestor of `HEAD` | `git merge-base --is-ancestor`; object existence is not provenance (ADR-027) | `TRUTH_MEASUREMENT_NOT_ANCESTOR` |
 | an authority that cannot be read stops the run | no fact is defaulted, and two authorities that disagree publish neither answer | `TRUTH_AUTHORITY_UNAVAILABLE`, `TRUTH_AUTHORITIES_CONTRADICT` |
 
-**In a feature PR.** `npm run repo:truth -- --check` runs on every push and every
-pull request, as its own step in the `public-claims` CI job. Run it locally when
-the PR changes a product boundary, a rail, a package's contract, the spine, or
-any sentence in a bound document that states what the framework does or does not
-do. If a fact moved, run `npm run repo:truth` and commit the regenerated document
-in the same PR — a regenerated fact and a stale sentence citing it fail together,
-which is the point.
+**In a feature PR.** `npm run repo:truth -- --check` runs on every pull request,
+as its own step in the `fast` CI job (§7) — agreement only, without
+`--require-current`, which needs a fresh full-suite measurement and runs only
+on `main`. Run it locally when the PR changes a product boundary, a rail, a
+package's contract, the spine, or any sentence in a bound document that states
+what the framework does or does not do. If a fact moved, run `npm run
+repo:truth` and commit the regenerated document in the same PR — a regenerated
+fact and a stale sentence citing it fail together, which is the point.
 
 The boundaries, which are as much of the gate as the rules:
 
-- **It runs in `public-claims`, not in `verify`.** Its measurement checks need
-  full git history; `public-claims` is checked out with `fetch-depth: 0` and the
-  `verify` job deliberately is not. It is a separate step rather than a member of
-  `npm run gtm:check`, because `gtm:check` is also run locally in a clone that may
-  be shallow. The history-free half is covered by `verify` too, through
-  `tests/repository-truth-contract.test.js`, which asserts the refusal rather than
-  skipping when history is absent.
+- **Agreement runs in `fast`, freshness in `public-claims`, neither in
+  `verify`.** The agreement check needs full git history; `fast` is checked
+  out with `fetch-depth: 0` and `verify` deliberately is not. It is a separate
+  step rather than a member of `npm run gtm:check`, because `gtm:check` is also
+  run locally in a clone that may be shallow. The history-free half is covered
+  by `verify` too, through `tests/repository-truth-contract.test.js`, which
+  asserts the refusal rather than skipping when history is absent.
 - **It is not an Accordo rail and not a product command.** Nothing is added to
   the surface budget, no Skill names it, and it never leaves this repository.
 - **It reads no prose and writes none.** A fact id constrains what a bound
@@ -241,10 +243,54 @@ This remains a finite regression set. It does not infer arbitrary prose or
 replace independent editorial review. Dated articles and plans preserve their
 historical scope; scoped absences remain valid.
 
-The CI verification job invokes `scripts/measure-suite.js`, which runs the same
-`npm run verify` and emits its machine-generated measurement as an artifact.
-The artifact names the actual checked-out commit. Use the push run for the
-reviewed branch, verify its ancestry, and copy the generated record into the
-ledger in a follow-up commit. Never relabel a PR synthetic-merge measurement as
-a measurement of a different commit. Registry publication still requires its
-own installed-artifact and live-registry receipts.
+On `main` the CI verification job invokes `scripts/measure-suite.js`, which runs
+the same `npm run verify` and emits its machine-generated measurement as an
+artifact. The artifact names the actual checked-out commit. Never relabel a
+measurement of one commit as a measurement of another. Registry publication
+still requires its own installed-artifact and live-registry receipts.
+
+## 7. What runs where: PR, `main`, nightly
+
+One self-hosted runner serves this repository, on a Mac it shares with other
+factories under a single heavy-job machine lock. The full suite with its
+measurement holds that lock ~25 minutes per run (CI run 38983644969: the
+22.9-minute measure step over the full two-hundred-file suite, plus a smoke
+step that waited
+~20 minutes on another factory's lock before running for under a second), so
+it runs only where a merge has already happened — never on a PR push.
+
+| Gate | Where | What |
+|---|---|---|
+| `fast` | every pull request | `npm run check`, the tests of the touched files (`scripts/ci-touched-tests.js`: transitive through every relative JS import in the repo — `tests/helpers` and `packages/` barrels incl. `export-from` — fail-closed refusal when no test reaches a changed source, selected run bounded to 270 s), the smoke demo, the published recipe replay, `npm run gtm:check`, `npm run repo:truth -- --check` (agreement only) |
+| `verify` | push to `main` only | full `npm run verify` via `scripts/measure-suite.js`, measured record kept as artifact and runner-local copy, smoke, recipe replay |
+| `public-claims` | push to `main` only | `gtm:check`, agreement `--check` on the committed document, re-anchor from `verify`'s measurement, regenerate, `--require-current` |
+| nightly matrix | daily 01:17 UTC | the full worktree-heavy tool-selection product behind its opt-in variable (see the nightly workflow), skipped by default elsewhere |
+
+Budgets, which are as much of the gate as the steps: every `fast` step runs
+under the machine lock via `scripts/ci-heavy.sh` — a budget per passo di
+300 s, set at each step in `.github/workflows/ci.yml` and applied by the
+wrapper killing the step past it (the touched-tests selection additionally
+enforces its own 270-second bound and fails red rather than hanging the
+lock). No timer enforces a total
+across the steps: keeping a PR under ten minutes of lock in total stays an
+objective the step budgets make room for, not a gate that fails the build.
+A step that cannot fit its budget does not get a longer budget — it gets
+split, or moved to `main`. The touched selection itself fails closed: a
+changed JavaScript source no test reaches refuses red, naming the uncovered
+files, instead of exiting green with nothing run — and instead of running
+the default `npm test` suite, which holds the lock ~20 minutes and could
+never fit the step budget.
+
+The boundaries, which are as much of the gate as the budgets:
+
+- **A PR proves agreement, `main` proves freshness.** A PR whose `tests/`
+  moved does not re-measure: the moved-corpus note of §6 stays advisory, and
+  the merged tree is re-measured at merge time by `verify`/`public-claims`.
+  `--require-current` therefore runs only on `main`.
+- **`main` stays protected.** The measure step has no `continue-on-error`,
+  and `public-claims` refuses a missing measurement instead of going quiet —
+  a failed measurement on `main` is a red job, exactly like a failed test.
+- **The nightly matrix is coverage, not a gate.** It runs the cells the
+  default suite skips; it does not re-measure `main` and does not replace
+  `verify`. A scheduled full re-measurement stays an option, not a job: with
+  no pushes there is nothing new to measure.
