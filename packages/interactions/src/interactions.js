@@ -988,9 +988,10 @@ const OPPORTUNITY_CURRENCY_RE = /^[A-Za-z]{3}$/;
  * `packages/customer-data`; this action only follows the link the channel
  * adapter already recorded.
  *
- * The trigger must be an inbound message of this conversation: the sale opens
- * from the customer's words, never from the team's own outbound message, and
- * never from a message logged on another thread.
+ * The trigger must be an inbound message of this conversation about the same
+ * subject: the sale opens from the customer's words, never from the team's
+ * own outbound message, never from a message logged on another thread, and
+ * never from another customer's words logged under this conversation.
  *
  * @param {Record<string, string>} [moduleNames]
  */
@@ -1046,7 +1047,7 @@ export function buildOpenOpportunityAction(moduleNames) {
         throw new ValidationError('currency must be a 3-letter ISO-4217 code', { field: 'currency' });
       }
       const actorId = actor && typeof actor === 'object' && typeof actor.id === 'string' ? actor.id : 'sale';
-      const owner = input.owner ?? actorId;
+      const owner = optionalSafeText(input.owner, 'owner', MAX_LABEL) ?? actorId;
 
       // 1. The trigger: an inbound message of THIS conversation.
       const message = await messageService.get(messageId);
@@ -1060,6 +1061,17 @@ export function buildOpenOpportunityAction(moduleNames) {
         throw new AppError(
           'Cannot open an opportunity: the trigger must be an inbound message — a sale opens from the customer\u2019s words, not the team\u2019s',
           { code: 'OPPORTUNITY_NOT_INBOUND', status: 409, details: { messageId, direction: message.direction } },
+        );
+      }
+      if (
+        message.subjectResource !== record.subjectResource ||
+        message.subjectId !== record.subjectId ||
+        message.subjectOwner !== record.subjectOwner ||
+        (message.subjectOwnerPackage ?? null) !== (record.subjectOwnerPackage ?? null)
+      ) {
+        throw new AppError(
+          `Cannot open an opportunity: message ${messageId} is about another subject, not this conversation's customer — a sale opens from this customer's words`,
+          { code: 'OPPORTUNITY_MESSAGE_SUBJECT_MISMATCH', status: 409, details: { messageId, conversationId: record.id } },
         );
       }
       step('message', { id: message.id, direction: message.direction });

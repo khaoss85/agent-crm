@@ -158,7 +158,38 @@ test('one conversation opens one opportunity; the trigger must be its own inboun
   const { conversation, inbound } = await saleConversation(app, interactions, { subject });
   const input = (messageId) => ({ messageId, opportunityName: 'Prova', valueCents: 100 });
 
-  await app.runAction({ module: 'conversation', action: 'open-opportunity', recordId: conversation.id, input: input(inbound.id), actor: ACTOR });
+  // A message logged under this conversation but about ANOTHER customer is
+  // refused: a sale never opens from the wrong customer's words, and the
+  // refused attempt stores nothing (the valid open below would hit the
+  // duplicate-409 otherwise).
+  const stranger = await app.services.contacts.create(
+    { companyId: company.id, firstName: 'Estraneo', lastName: 'Cliente', email: 'estraneo@presti.example' },
+    { actor: ACTOR },
+  );
+  const foreign = await interactions.logMessage(
+    { modules: app.modules, actor: ACTOR },
+    {
+      sourceKey: `wa:msg:foreign:${conversation.id}`, conversationId: conversation.id, direction: 'inbound',
+      channel: 'whatsapp', body: 'Vorrei un rimborso!', remoteHandle: '+3902000099',
+      subject: { resource: 'contact', id: stranger.id, owner: 'host' },
+      occurredAt: new Date().toISOString(), source: SOURCE,
+    },
+  );
+  await assert.rejects(
+    () => app.runAction({ module: 'conversation', action: 'open-opportunity', recordId: conversation.id, input: input(foreign.message.id), actor: ACTOR }),
+    (error) => error.code === 'OPPORTUNITY_MESSAGE_SUBJECT_MISMATCH' && error.status === 409,
+  );
+
+  const first = await app.runAction({ module: 'conversation', action: 'open-opportunity', recordId: conversation.id, input: input(inbound.id), actor: ACTOR });
+  // No owner passed: the acting user owns the sale; control characters never land in owner.
+  assert.equal((await app.services.opportunities.get(first.result.opportunity.id)).owner, ACTOR.id);
+  await assert.rejects(
+    () => app.runAction({
+      module: 'conversation', action: 'open-opportunity', recordId: conversation.id,
+      input: { ...input(inbound.id), owner: 'alice\nINJECTED' }, actor: ACTOR,
+    }),
+    (error) => error.code === 'VALIDATION_ERROR' && error.status === 400,
+  );
   // A second message in the same thread does not open a second sale.
   const second = await interactions.logMessage(
     { modules: app.modules, actor: ACTOR },
