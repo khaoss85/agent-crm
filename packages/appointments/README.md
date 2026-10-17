@@ -70,6 +70,17 @@ provider composed, the application refuses to start naming the unmet edge.
 apart), optional `notes` (bounded plain text) and optional `remindAt` (before
 `startsAt`): one work follow-up reminder due at that instant.
 
+A booking with `remindAt` must run inside the caller's
+`database.transactionAsync`: the appointment and its reminder commit as one
+pair, so a reminder refusal rolls the booking back with it. A booking without
+`remindAt` is one atomic row and carries no such requirement. The reminder is
+recorded with this package as its source (`appointments`), the identity the
+follow-up handle is opened as. Replays answer with the same shape as the fresh
+booking; the reminder intent (added, removed or moved) is part of the source-key
+identity, so a retry that changes it is refused 409. An advance is enforced
+against the row as stored, re-read inside the call — never against a stale
+copy.
+
 ## Blueprint
 
 This package is the `appointments` module of the workspace Blueprint: the

@@ -1,8 +1,8 @@
 // @ts-check
 
 import {
-  AppError, ConflictError, NotFoundError, ValidationError, isCalendarDate, requireActor,
-  optionalIsoDate, requireAmount,
+  AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
+  requireActor, optionalIsoDate, requireAmount,
 } from '../../core/index.js';
 
 /**
@@ -275,6 +275,53 @@ function appointmentService(context) {
   return service;
 }
 
+/**
+ * **Refuse to start a booking pair that cannot finish as one.**
+ *
+ * A booking with `remindAt` stores the appointment row and opens its work
+ * follow-up reminder as one pair. Each managed write lands on its own
+ * SAVEPOINT so it nests safely inside an enclosing transaction — but outside
+ * one that SAVEPOINT *is* the transaction and `RELEASE` commits it, so a
+ * reminder refusal after the booking commit leaves a row that claims a
+ * reminder that was never created (and every retry under the same source key
+ * then replays without ever creating it). The proof is the same storage-seam
+ * witness `packages/work` and `packages/contracts` require, on the handle the
+ * appointment write is about to land on; the reminder write is proven again by
+ * work itself on its own services when it runs.
+ *
+ * A booking without `remindAt` is one atomic row and needs no enclosing
+ * transaction, so this is required only on the reminder path — before the
+ * first write, with every input refusal already past.
+ *
+ * @param {any} appointments the resolved appointment module service
+ */
+function requireBookingTransaction(appointments) {
+  const proof = proveCallerTransaction([appointments]);
+  if (proof === TRANSACTION_PROOF.ACTIVE) return;
+  if (proof === TRANSACTION_PROOF.NO_TRANSACTION) {
+    throw new AppError(
+      'A booking with remindAt must run inside the caller\'s transaction: it stores the appointment and opens '
+        + 'its work follow-up reminder as one pair, and outside a transaction a reminder refusal would leave a booking '
+        + 'that claims a reminder that was never created. Call it from inside database.transactionAsync.',
+      { code: 'APPOINTMENTS_TRANSACTION_REQUIRED', status: 500 },
+    );
+  }
+  if (proof === TRANSACTION_PROOF.NOT_TRANSACTION_OWNER) {
+    throw new AppError(
+      'A booking with remindAt found a transaction open on this connection that this call does not own, so it refuses '
+        + 'to store the first row of a pair into it. Either another request owns it, or this call crossed a boundary '
+        + 'that dropped its async context; call it inside the transaction, or wrap the callback with AsyncResource.bind '
+        + 'before it leaves.',
+      { code: 'APPOINTMENTS_TRANSACTION_REQUIRED', status: 500, details: { proof } },
+    );
+  }
+  throw new AppError(
+    'A booking with remindAt cannot prove it is running inside the caller\'s transaction, so it refuses to store '
+      + 'the first row of a pair whose reminder might not commit with it.',
+    { code: 'APPOINTMENTS_TRANSACTION_REQUIRED', status: 500, details: { proof } },
+  );
+}
+
 /** @param {unknown} request */
 export function validateAppointmentRequest(request) {
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
@@ -403,10 +450,43 @@ export function reminderSourceKey(sourceKey) {
 }
 
 /**
+ * The follow-up request a booking's reminder is made of, derived once so the
+ * fresh path and the replay path cannot describe two different reminders: the
+ * same booking always names the same reminder identity, title, instant,
+ * customer and provenance.
+ */
+function reminderRequest(input, source) {
+  return {
+    sourceKey: reminderSourceKey(input.sourceKey),
+    title: `Appointment reminder: ${input.serviceKey} at ${input.startsAt}`.slice(0, MAX_FOLLOW_UP_TITLE),
+    dueAt: input.remindAt,
+    // The reminder is follow-up work on the customer, so it names the
+    // appointment's customer subject — the same envelope, the same record.
+    subject: {
+      resource: input.subject.resource,
+      id: input.subject.id,
+      owner: input.subject.owner,
+      ownerPackage: input.subject.ownerPackage,
+      label: input.subject.label,
+    },
+    // The provenance work binds is the identity the follow-up handle was
+    // opened as — this package — never the booking's own source package:
+    // forwarding the booking source (e.g. `host`) makes work refuse the write
+    // with WORK_SOURCE_PACKAGE_MISMATCH after the booking row is committed.
+    source: { package: APPOINTMENTS_PACKAGE, action: source.action },
+  };
+}
+
+/**
  * Book one appointment: validate, refuse a slot the team member already holds,
  * store the row as `booked`, and — when the request names `remindAt` — open
  * exactly one work follow-up reminder inside the same transaction, due at the
  * named instant. Idempotent by source key.
+ *
+ * A booking with `remindAt` must run inside the caller's
+ * `database.transactionAsync`: the appointment and its reminder commit as one
+ * pair, so a reminder refusal rolls the booking back with it. A booking
+ * without `remindAt` is one atomic row and carries no such requirement.
  *
  * The reminder title fits the follow-up bound by construction: the service key
  * is at most 48 characters and the instant renders at 24.
@@ -425,6 +505,21 @@ export async function bookAppointment(context, request) {
   // fails closed at validation time rather than mid-booking.
   const reminderKey = input.remindAt === null ? null : reminderSourceKey(input.sourceKey);
 
+  // The overlap and idempotency reads below are exact-match — never a bounded
+  // page: a booking that silently misses a row past a page boundary is a
+  // double booking or a duplicate. Without an exact-match read neither
+  // invariant can be checked, so a service without one fails closed before the
+  // first read rather than booking blind.
+  if (typeof appointments.listWhere !== 'function') {
+    throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
+      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
+    });
+  }
+
+  // The pair promise, proven before the first write: with a reminder named,
+  // the booking and its follow-up must commit together.
+  if (input.remindAt !== null) requireBookingTransaction(appointments);
+
   const submitted = {
     subjectResource: input.subject.resource,
     subjectId: input.subject.id,
@@ -437,25 +532,33 @@ export async function bookAppointment(context, request) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes,
+    // The reminder intent IS the booking's identity: the same source key with
+    // a different reminder (added, removed or moved) is a different claim
+    // behind the same key and is refused 409 rather than replayed into a
+    // booking whose reminder row says something else.
+    reminderSourceKey: reminderKey,
+    reminderDueAt: input.remindAt,
     sourcePackage: source.package,
     sourceAction: source.action,
   };
 
   const existing = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0];
-  if (existing) return { appointment: replayOrConflict(existing, submitted), replayed: true };
+  if (existing) {
+    // A stable shape on every path: the replay answers with the same keys the
+    // fresh booking does. With a reminder named, the reminder is re-issued
+    // through work — which replays the identical reminder rather than
+    // duplicating it, and heals a booking whose reminder was never created —
+    // or an explicit null when no reminder handle is composed.
+    return {
+      appointment: replayOrConflict(existing, submitted),
+      reminder: await replayReminder(context, { input, source }),
+      replayed: true,
+    };
+  }
 
-  // The overlap read is exact-match on the team member — never a bounded
-  // page: a booking that silently misses a held slot past a page boundary is
-  // a double booking. Without an exact-match read the invariant cannot be
-  // checked, so a service without one fails closed rather than booking blind.
   // (Residual: two concurrent bookings can both read an empty slot and both
   // commit; a conditional write or slot lock in core would close the window.
   // The loser of a source-key race still replays.)
-  if (typeof appointments.listWhere !== 'function') {
-    throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
-      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
-    });
-  }
   const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
   const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs }, held);
   if (conflict) {
@@ -486,7 +589,11 @@ export async function bookAppointment(context, request) {
     if (!isUniqueConflict(error)) throw error;
     const raced = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0];
     if (!raced) throw error;
-    return { appointment: replayOrConflict(raced, submitted), replayed: true };
+    return {
+      appointment: replayOrConflict(raced, submitted),
+      reminder: await replayReminder(context, { input, source }),
+      replayed: true,
+    };
   }
 
   let reminder = null;
@@ -509,23 +616,23 @@ async function createReminder(context, { input, source }) {
       { code: 'APPOINTMENTS_REMINDER_UNAVAILABLE', status: 500 },
     );
   }
-  const title = `Appointment reminder: ${input.serviceKey} at ${input.startsAt}`.slice(0, MAX_FOLLOW_UP_TITLE);
-  const { task, activity, replayed } = await followUps.createFollowUp({
-    sourceKey: reminderSourceKey(input.sourceKey),
-    title,
-    dueAt: input.remindAt,
-    // The reminder is follow-up work on the customer, so it names the
-    // appointment's customer subject — the same envelope, the same record.
-    subject: {
-      resource: input.subject.resource,
-      id: input.subject.id,
-      owner: input.subject.owner,
-      ownerPackage: input.subject.ownerPackage,
-      label: input.subject.label,
-    },
-    source: { package: source.package, action: source.action },
-  });
+  const { task, activity, replayed } = await followUps.createFollowUp(reminderRequest(input, source));
   return { task, activity, replayed: replayed ?? false };
+}
+
+/**
+ * The reminder half of a replay: with a reminder named, the identical reminder
+ * is re-issued through work — which replays it rather than duplicating it,
+ * and heals a booking whose reminder was never created — or an explicit null
+ * when no reminder handle is composed. Without a reminder named there is
+ * nothing to re-issue: an explicit null keeps the shape stable.
+ */
+async function replayReminder(context, { input, source }) {
+  if (input.remindAt === null) return null;
+  const followUps = context.followUps;
+  if (!followUps || typeof followUps.createFollowUp !== 'function') return null;
+  const { task, activity, replayed } = await followUps.createFollowUp(reminderRequest(input, source));
+  return { task, activity, replayed: replayed ?? true };
 }
 
 /**
@@ -535,15 +642,34 @@ async function createReminder(context, { input, source }) {
  * terminal state — is a 409 naming the moves the current state allows. A
  * cancellation without a reason is refused: a cancelled slot nobody can
  * explain is not evidence.
+ *
+ * The move is enforced against the row as stored, re-read inside this call —
+ * never against the caller-supplied copy, which another writer may have moved
+ * since it was read. A stale copy advancing from a state the row already left
+ * is refused 409. (Residual: two advances racing between the re-read and the
+ * write can still interleave; inside a package action the transaction envelope
+ * closes the window.)
  */
 export async function advanceAppointment({ appointments, actor, now }, record, to, reason) {
+  // A state change names its author, like the booking path does: an undefined
+  // actor would flow into the audit write for a lifecycle mutation.
+  requireActor(actor);
+  if (!appointments?.get || !appointments?.applyManaged) {
+    throw new AppError('The appointments package is installed without a managed "appointment" record module', {
+      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
+    });
+  }
   const target = typeof to === 'string' ? to.trim() : to;
-  const allowed = APPOINTMENT_TRANSITIONS[record.status] ?? [];
+  // The fresh row, not the caller's copy: the transition below is enforced
+  // against what is stored now. A row deleted since it was read surfaces the
+  // storage's own miss rather than advancing a ghost.
+  const current = await appointments.get(record.id);
+  const allowed = APPOINTMENT_TRANSITIONS[current.status] ?? [];
   if (!APPOINTMENT_STATES.includes(target) || !allowed.includes(target)) {
     throw new AppError(
-      `An appointment in state "${record.status}" cannot advance to "${target}"`
+      `An appointment in state "${current.status}" cannot advance to "${target}"`
         + (allowed.length > 0 ? `; it may advance to ${allowed.join(' or ')}` : '; it is terminal and advances nowhere'),
-      { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: record.status, to: target, allowed } },
+      { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: current.status, to: target, allowed } },
     );
   }
   const cancelReason = target === CANCELLED_STATE
@@ -552,13 +678,8 @@ export async function advanceAppointment({ appointments, actor, now }, record, t
   if (target !== CANCELLED_STATE && reason !== undefined && reason !== null && reason !== '') {
     throw new ValidationError('cancelReason is recorded only when an appointment is cancelled', { field: 'cancelReason' });
   }
-  if (!appointments?.applyManaged) {
-    throw new AppError('The appointments package is installed without a managed "appointment" record module', {
-      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
-    });
-  }
   const stamp = typeof now === 'function' ? now() : new Date().toISOString();
-  return appointments.applyManaged(record.id, { status: target, cancelReason, decidedAt: stamp }, { actor });
+  return appointments.applyManaged(current.id, { status: target, cancelReason, decidedAt: stamp }, { actor });
 }
 
 /**

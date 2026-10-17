@@ -18,6 +18,7 @@ import {
 } from '../packages/appointments/src/index.js';
 import { createAppointmentsPackage } from '../packages/appointments/src/index.js';
 import { NotFoundError } from '../packages/core/index.js';
+import { createDatabase } from '../packages/core/src/database.js';
 import { assertPackageConforms } from './helpers/package-conformance.js';
 
 /**
@@ -45,10 +46,22 @@ const booking = (overrides = {}) => ({
   ...overrides,
 });
 
-function fakeAppointments(seed = []) {
+/**
+ * An in-memory database handle with no tables: fakes that carry it can prove
+ * a caller transaction through the same storage-seam witness production uses,
+ * while staying table-free and fast.
+ */
+function txDatabase(t) {
+  const db = createDatabase({ path: ':memory:' });
+  t.after(() => db.close());
+  return db;
+}
+
+function fakeAppointments(seed = [], database = null) {
   const rows = seed.map((row, index) => ({ id: `a-${index + 1}`, ...row }));
   return {
     rows,
+    database,
     async listWhere(where) {
       return rows.filter((row) => Object.entries(where).every(([key, value]) => row[key] === value));
     },
@@ -87,12 +100,22 @@ const contextFor = (service, overrides = {}) => ({
   ...overrides,
 });
 
-const fakeFollowUps = (calls = []) => ({
-  async createFollowUp(request) {
-    calls.push(request);
-    return { task: { id: 't-1', ...request }, activity: null, replayed: false };
-  },
-});
+const fakeFollowUps = (calls = []) => {
+  const seen = new Map();
+  return {
+    async createFollowUp(request) {
+      calls.push(request);
+      // Replay-aware like the real handle: the same reminder identity answers
+      // with its task rather than opening a second one.
+      if (seen.has(request.sourceKey)) {
+        return { task: seen.get(request.sourceKey), activity: null, replayed: true };
+      }
+      const task = { id: `t-${seen.size + 1}`, ...request };
+      seen.set(request.sourceKey, task);
+      return { task, activity: null, replayed: false };
+    },
+  };
+};
 
 test('the package conforms: identity, one owned record, one declared reach, one offered capability', () => {
   const definition = createAppointmentsPackage();
@@ -167,13 +190,67 @@ test('the same source key with the same payload replays; a divergent payload is 
   const context = contextFor(service);
   const first = await bookAppointment(context, booking());
   assert.equal(first.replayed, false);
+  assert.equal(first.reminder, null);
   const second = await bookAppointment(context, booking());
   assert.equal(second.replayed, true);
   assert.equal(second.appointment.id, first.appointment.id);
+  assert.equal(second.reminder, null, 'a replay without a reminder answers the same shape, with an explicit null');
   await assert.rejects(
     bookAppointment(context, booking({ priceCents: 5000 })),
     (error) => error.code === 'APPOINTMENTS_LOG_CONFLICT' && error.status === 409,
   );
+});
+
+test('the reminder intent is part of the source-key identity: adding, removing or moving it is a 409', async (t) => {
+  const db = txDatabase(t);
+  const withReminder = booking({ remindAt: '2026-10-19T17:00:00.000Z' });
+  // Booked without a reminder, retried with one: refused, never silently dropped.
+  {
+    const service = fakeAppointments([], db);
+    const context = contextFor(service, { followUps: fakeFollowUps() });
+    await bookAppointment(context, booking());
+    await assert.rejects(
+      db.transactionAsync(() => bookAppointment(context, withReminder)),
+      (error) => {
+        assert.equal(error.code, 'APPOINTMENTS_LOG_CONFLICT');
+        assert.equal(error.status, 409);
+        assert.ok(error.details.conflictingFields.includes('reminderDueAt'), `names the reminder: ${JSON.stringify(error.details.conflictingFields)}`);
+        assert.ok(error.details.conflictingFields.includes('reminderSourceKey'), `names the reminder identity: ${JSON.stringify(error.details.conflictingFields)}`);
+        return true;
+      },
+    );
+  }
+  // Booked with a reminder, retried without one — or with a moved one: refused.
+  {
+    const service = fakeAppointments([], db);
+    const context = contextFor(service, { followUps: fakeFollowUps() });
+    await db.transactionAsync(() => bookAppointment(context, withReminder));
+    await assert.rejects(
+      bookAppointment(context, booking()),
+      (error) => error.code === 'APPOINTMENTS_LOG_CONFLICT' && error.status === 409,
+    );
+    await assert.rejects(
+      db.transactionAsync(() => bookAppointment(context, booking({ remindAt: '2026-10-18T17:00:00.000Z' }))),
+      (error) => error.code === 'APPOINTMENTS_LOG_CONFLICT' && error.status === 409,
+    );
+  }
+});
+
+test('a replay with the same reminder answers the same shape, with the reminder handle', async (t) => {
+  const db = txDatabase(t);
+  const service = fakeAppointments([], db);
+  const calls = [];
+  const context = contextFor(service, { followUps: fakeFollowUps(calls) });
+  const request = booking({ remindAt: '2026-10-19T17:00:00.000Z' });
+  const first = await db.transactionAsync(() => bookAppointment(context, request));
+  assert.equal(first.replayed, false);
+  assert.equal(first.reminder.task.id, 't-1');
+  const second = await db.transactionAsync(() => bookAppointment(context, request));
+  assert.equal(second.replayed, true);
+  assert.equal(second.appointment.id, first.appointment.id);
+  assert.equal(second.reminder.task.id, 't-1', 'the replay re-issues the identical reminder rather than opening a second');
+  assert.equal(second.reminder.replayed, true);
+  assert.equal(calls.length, 2);
 });
 
 test('an overlapping booking for the same member is refused 409 naming the held row', async () => {
@@ -260,11 +337,53 @@ test('cancelling always carries a reason; any other move carries none', async ()
   assert.equal(cancelled.cancelReason, 'customer asked on WhatsApp');
 });
 
-test('a booking with remindAt opens exactly one work follow-up reminder, due at the named instant', async () => {
+test('an advance is enforced against the stored row, never against a stale copy', async () => {
   const service = fakeAppointments();
+  const context = contextFor(service);
+  const { appointment } = await bookAppointment(context, booking());
+  const confirmed = await advanceAppointment({ appointments: service, actor: ACTOR }, appointment, 'confirmed');
+  assert.equal(confirmed.status, 'confirmed');
+  // A snapshot taken while the row was still confirmed...
+  const stale = { ...confirmed };
+  // ...then another writer cancels the booking...
+  await advanceAppointment({ appointments: service, actor: ACTOR }, confirmed, 'cancelled', 'customer called back');
+  // ...so the stale copy advancing to done is refused: confirmed -> done is
+  // legal on the copy, but the stored row is cancelled and terminal.
+  await assert.rejects(
+    advanceAppointment({ appointments: service, actor: ACTOR }, stale, 'done'),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_INVALID_STATE');
+      assert.equal(error.status, 409);
+      assert.equal(error.details.from, 'cancelled');
+      return true;
+    },
+  );
+  assert.equal(service.rows[0].status, 'cancelled', 'the refused move writes nothing');
+});
+
+test('an advance without an actor is refused before anything is read or written', async () => {
+  const service = fakeAppointments();
+  const context = contextFor(service);
+  const { appointment } = await bookAppointment(context, booking());
+  await assert.rejects(
+    advanceAppointment({ appointments: service, actor: null }, appointment, 'confirmed'),
+    /an actor is required/,
+  );
+  await assert.rejects(
+    advanceAppointment({ appointments: service, actor: undefined }, appointment, 'confirmed'),
+    /an actor is required/,
+  );
+  assert.equal(service.rows[0].status, 'booked', 'the refused move writes nothing');
+});
+
+test('a booking with remindAt opens exactly one work follow-up reminder, due at the named instant', async (t) => {
+  const db = txDatabase(t);
+  const service = fakeAppointments([], db);
   const calls = [];
   const context = contextFor(service, { followUps: fakeFollowUps(calls) });
-  const { appointment, reminder } = await bookAppointment(context, booking({ remindAt: '2026-10-19T17:00:00.000Z' }));
+  const { appointment, reminder } = await db.transactionAsync(
+    () => bookAppointment(context, booking({ remindAt: '2026-10-19T17:00:00.000Z' })),
+  );
   assert.equal(calls.length, 1);
   assert.equal(calls[0].sourceKey, reminderSourceKey('gym:booking:1'));
   assert.equal(calls[0].sourceKey, appointment.reminderSourceKey);
@@ -272,25 +391,42 @@ test('a booking with remindAt opens exactly one work follow-up reminder, due at 
   assert.equal(calls[0].dueAt, appointment.reminderDueAt);
   assert.equal(calls[0].subject.resource, 'contact');
   assert.equal(calls[0].subject.id, 'c-presti');
-  assert.equal(calls[0].source.package, 'host');
+  // The reminder is opened as this package: forwarding the booking source
+  // (e.g. `host`) makes work refuse the write after the booking is committed.
+  assert.equal(calls[0].source.package, 'appointments');
   assert.ok(calls[0].title.length <= 200);
   assert.equal(reminder.task.id, 't-1');
 });
 
-test('remindAt must be before the slot, and a reminder without the work handle fails closed', async () => {
+test('a booking with remindAt outside a transaction is refused before anything is written', async (t) => {
+  const db = txDatabase(t);
+  const service = fakeAppointments([], db);
+  const context = contextFor(service, { followUps: fakeFollowUps() });
+  await assert.rejects(
+    bookAppointment(context, booking({ remindAt: '2026-10-19T17:00:00.000Z' })),
+    (error) => error.code === 'APPOINTMENTS_TRANSACTION_REQUIRED' && error.status === 500,
+  );
+  assert.equal(service.rows.length, 0, 'the pair promise is proven before the first write');
+});
+
+test('remindAt must be before the slot, and a reminder without the work handle fails closed', async (t) => {
   assert.throws(
     () => validateAppointmentRequest(booking({ remindAt: '2026-10-20T17:00:00.000Z' })),
     /remindAt must be before startsAt/,
   );
-  const service = fakeAppointments();
+  const db = txDatabase(t);
+  const service = fakeAppointments([], db);
   await assert.rejects(
-    bookAppointment(contextFor(service), booking({ remindAt: '2026-10-19T17:00:00.000Z' })),
+    db.transactionAsync(
+      () => bookAppointment(contextFor(service), booking({ remindAt: '2026-10-19T17:00:00.000Z' })),
+    ),
     (error) => error.code === 'APPOINTMENTS_REMINDER_UNAVAILABLE' && error.status === 500,
   );
 });
 
-test('the offered capability opens the provider handle with the opener modules', async () => {
-  const service = fakeAppointments();
+test('the offered capability opens the provider handle with the opener modules', async (t) => {
+  const db = txDatabase(t);
+  const service = fakeAppointments([], db);
   const calls = [];
   const provider = {
     name: 'follow-up',
@@ -302,7 +438,9 @@ test('the offered capability opens the provider handle with the opener modules',
   };
   const capability = createAppointmentBookCapability({ provider });
   const opened = capability.create({ modules: modulesFor(service), actor: ACTOR, now: () => NOW, consumer: 'host' });
-  const { appointment } = await opened.bookAppointment(booking({ remindAt: '2026-10-19T17:00:00.000Z' }));
+  const { appointment } = await db.transactionAsync(
+    () => opened.bookAppointment(booking({ remindAt: '2026-10-19T17:00:00.000Z' })),
+  );
   assert.equal(calls.length, 1);
   assert.equal(appointment.reminderDueAt, '2026-10-19T17:00:00.000Z');
   const reread = await opened.appointment(appointment.id);
