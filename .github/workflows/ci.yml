@@ -18,7 +18,7 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# Both jobs read the Node version from `.nvmrc` rather than pinning it inline.
+# All jobs read the Node version from `.nvmrc` rather than pinning it inline.
 #
 # `package.json` `engines` stays the **floor** — ">=22.16.0" is the oldest runtime this
 # framework supports, and lowering the bar in CI would not change that. `.nvmrc` is the
@@ -28,11 +28,78 @@ concurrency:
 # first wave of this milestone. One file, read by `nvm`, by `actions/setup-node` and by a
 # human, is how the two stay the same number.
 jobs:
+  # The PR gate. `push` is limited to `main` above, so this is every change
+  # that is not yet merged: `npm run check`, the tests of the touched files
+  # (`scripts/ci-touched-tests.js`), the smoke demo, the published recipe
+  # replay and the agreement gates (`gtm:check`, `repo:truth -- --check`
+  # without `--require-current`). Every suite step runs under the machine lock
+  # via `scripts/ci-heavy.sh`, each under five minutes, under ten minutes of
+  # lock held in total — the full `npm test` holds it ~20 minutes
+  # (CI run 38983644969), so it runs only on `main` (job `verify`
+  # below), not on every PR push.
+  fast:
+    if: github.event_name == 'pull_request'
+    # Same billing-lock routing as `verify` below.
+    runs-on: [self-hosted, accordo-ci]
+    env:
+      ACCORDO_TEST_POSTGRES: '1'
+      ACCORDO_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/accordo_test
+    steps:
+      # Full history: the touched-file selection diffs against the PR base,
+      # and the truth agreement check reads history like `public-claims` does.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Fetch the PR base for touched-file selection
+        run: git fetch --no-tags origin ${{ github.base_ref }}
+      - name: Start PostgreSQL 16 (self-hosted macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew services start postgresql@16
+          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 && break; sleep 2; done
+          pg_isready -h 127.0.0.1 -p 5432
+          psql -h /tmp -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'postgres') THEN CREATE ROLE postgres SUPERUSER LOGIN; END IF; END \$\$;"
+          psql -h /tmp -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'accordo_test'" | grep -q 1 || psql -h /tmp -d postgres -c "CREATE DATABASE accordo_test OWNER postgres;"
+      - name: Start PostgreSQL 16 (GitHub-hosted Linux)
+        if: runner.os == 'Linux'
+        run: |
+          docker run -d --name accordo-pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16
+          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 -U postgres && break; sleep 2; done
+      - run: npm ci
+      - name: Syntax check every JavaScript file
+        run: scripts/ci-heavy.sh check -- npm run check
+      - name: Tests of the touched files
+        run: scripts/ci-heavy.sh touched -- node scripts/ci-touched-tests.js --base FETCH_HEAD
+      - name: Smoke demo
+        run: scripts/ci-heavy.sh smoke -- npm run smoke
+      - name: Replay the published quote approval recipe
+        run: |
+          scripts/ci-heavy.sh recipe -- bash -c 'node --no-warnings examples/recipes/quote-approval/run.mjs "$RUNNER_TEMP/quote-approval-crm" && npm --prefix "$RUNNER_TEMP/quote-approval-crm" run verify'
+      - name: Public claims and packaging agree
+        run: scripts/ci-heavy.sh gtm -- npm run gtm:check
+      # Agreement only: the committed truth document must equal a fresh
+      # generation from the PR's own inputs (TRUTH_DOCUMENT_STALE otherwise).
+      # Freshness against a new measurement (`--require-current`) needs the
+      # full suite, so it runs only on `main` in `public-claims` below.
+      - name: The committed truth document agrees with its authorities
+        run: scripts/ci-heavy.sh truth -- npm run repo:truth -- --check
+
   # Left at the default fetch-depth: 1 deliberately. Nothing under `npm run verify` or
   # `npm run smoke` reads git history — the only git these run is `ls-files`, `status`
   # and `diff HEAD`, all of which work in a one-commit checkout, and the provenance
   # tests build their own fixture repositories rather than reading this one.
   verify:
+    # The full suite with its measurement runs only on `main`: on a PR it
+    # would hold the shared Mac's single heavy lock ~25 minutes per push,
+    # queueing Arvo's releases behind it. (What runs where is §7 of
+    # docs/QUALITY_GATES.md.) A red measurement here keeps `main` red: the
+    # step below has no `continue-on-error`, and `public-claims` refuses a
+    # missing measurement instead of going quiet.
+    if: github.event_name == 'push'
     # Self-hosted while the account billing lock rejects every GitHub-hosted
     # job at start (0 steps, "account is locked due to a billing issue").
     # Switch back to ubuntu-latest once billing is unlocked.
@@ -115,8 +182,11 @@ jobs:
     # SKIP this job when `verify` fails, and a skipped gate reads as quiet.
     # Running unless cancelled means a missing or failed measurement fails
     # this job red instead: the download finds no artifact and refuses.
+    # Freshness against a new measurement (`--require-current`) needs the full
+    # suite, so like `verify` this runs only on `main`: a PR proves agreement
+    # in `fast` and is re-measured at merge time here.
     needs: [verify]
-    if: ${{ !cancelled() }}
+    if: ${{ github.event_name == 'push' && !cancelled() }}
     steps:
       - uses: actions/checkout@v4
         with:
