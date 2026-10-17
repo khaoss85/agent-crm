@@ -20,33 +20,55 @@
  *   repository — `tests/helpers` and fixtures, `packages/` barrels,
  *   `scripts/`, `apps/`, `examples/`: a test that reaches the changed file
  *   only via a helper or a barrel re-export is still selected;
- * - `export ... from` re-exports count as imports for the mapping above;
+ * - `export ... from` re-exports count as imports for the mapping above.
+ *   The mapping walks the graph backwards: forward edges are indexed once
+ *   per run, then a single reverse search from the changed files finds the
+ *   reaching tests, instead of one forward search per test file;
  * - a changed file no test file reaches selects nothing only when no
  *   JavaScript source changed (docs, workflows, `package.json`, site
  *   content): the agreement gates of the same CI job (`gtm:check`,
  *   `repo:truth -- --check`) still run. A changed `.js`/`.cjs`/`.mjs` file
  *   with no reaching test fails closed instead: the step refuses with
  *   exit 1, naming the uncovered files, rather than exiting 0 without
- *   running anything. It does not run the default `npm test` suite as a
- *   fallback: the full suite holds the machine lock ~20 minutes and cannot
- *   fit this step's five-minute budget, so a fallback run would time out
- *   red on every PR that triggers it.
+ *   running anything.
+ *
+ * Two budgets bound the step so a big PR cannot wedge it (CI run
+ * 39044361164: 100 selected files, the run outlived its bound and the step
+ * failed red on a change that needed the gate most):
+ *
+ * - the selection phase (graph build plus mapping) has 60 seconds
+ *   (`--select-timeout-sec`). Past it the gate warns and runs the default
+ *   fast suite instead of failing for the timeout;
+ * - a selection bigger than `--max-selected` (default 50: that run executed
+ *   ~65 of 100 selected files in the full 270 s, so 50 leaves margin for
+ *   the slowest files) never starts the run it cannot finish: the gate
+ *   warns and runs the default fast suite instead.
+ *
+ * The default fast suite is the PR's own changed test files — always
+ * relevant, self-maintaining, and small by construction. It is not the
+ * default `npm test` suite: the full suite holds the machine lock
+ * ~20 minutes and cannot fit this step's five-minute budget, so it still
+ * runs only on `main`, which stays the safety net behind every fallback.
  *
  * Usage:
  *
  *   node scripts/ci-touched-tests.js [--base <rev>] [--list] [--timeout-sec <n>]
+ *     [--select-timeout-sec <n>] [--max-selected <n>]
  *
  * `--base` is the revision the change is measured against (`origin/main` by
  * default; CI fetches the PR base and passes it explicitly). `--list` prints
- * the selected files without running them. The run itself is bounded: the
- * per-step CI budget is five minutes, so the default timeout refuses to hold
- * the machine lock longer than that — a hanging selection fails red instead
- * of queueing every other factory behind it.
+ * the files that would run (the selection, or the default fast suite when
+ * the gate would fall back) without running them. The run itself is bounded:
+ * the per-step CI budget is five minutes, so the run timeout refuses to hold
+ * the machine lock longer than that — a hanging run fails red instead of
+ * queueing every other factory behind it. The run bound additionally yields
+ * to the selection phase so select-plus-run always fits the step wrapper.
  *
- * Exit codes: 0 the selected tests passed (or only non-source files
- * changed and there was nothing to run), 1 the selection failed, a test
- * failed, or the fail-closed refusal (a changed source file no test
- * reaches), 2 unusable input.
+ * Exit codes: 0 the tests that ran passed (the selection, or the default
+ * fast suite after a warned fallback; or only non-source files changed and
+ * there was nothing to run), 1 the selection failed, a test failed, the
+ * fallback run failed, or the fail-closed refusal (a changed source file no
+ * test reaches), 2 unusable input.
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
@@ -61,6 +83,21 @@ const SOURCE_EXT = /\.[cm]?js$/;
 
 /** This step's share of the PR machine-lock budget (<5 minutes per step). */
 const DEFAULT_TIMEOUT_SEC = 270;
+
+/** The selection phase's own budget: graph build plus mapping, in seconds. */
+const DEFAULT_SELECT_TIMEOUT_SEC = 60;
+
+/**
+ * Past this many selected test files the gate runs the default fast suite
+ * instead of starting a run the budget cannot hold (see the header).
+ */
+const DEFAULT_MAX_SELECTED = 50;
+
+/**
+ * The step wrapper's budget in `.github/workflows/ci.yml`: select-plus-run
+ * must fit inside it, with a few seconds of margin for process startup.
+ */
+const STEP_BUDGET_SEC = 300;
 
 const git = (/** @type {string[]} */ args) => {
   const run = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
@@ -155,42 +192,56 @@ export function selectTouchedTests(
   const changed = new Set(
     changedFiles.map((file) => stripSourceExtension(normalize(file).replace(/\\/g, '/'))),
   );
-  const importsOf = (/** @type {string} */ file) => {
-    const extra = fileImports.get(file);
-    if (extra) return extra;
-    const content = testContents.get(file);
-    if (content === undefined) return new Set();
-    return relativeImportsOf(file, content);
-  };
-  /** The files a test reaches: its own imports, then theirs, cycle-safe. */
-  const reachesOf = (/** @type {string} */ testPath) => {
-    const reached = new Set();
-    const queue = [...importsOf(testPath)];
-    while (queue.length > 0) {
-      const next = queue.pop();
-      if (!next || reached.has(next)) continue;
-      reached.add(next);
-      // Only non-test files are followed: a test importing another test
-      // does not run it, so the graph stops at test boundaries. Reached
-      // paths are extension-free, so the boundary is the trailing `.test`.
-      if (!/\.test$/.test(next)) {
-        for (const deeper of importsOf(next)) {
-          if (!reached.has(deeper)) queue.push(deeper);
-        }
+  // Forward edges for every known file, indexed once and reused: test files
+  // parse their own content, every other file comes from the repository
+  // index. The index wins on the rare stripped-path collision, the way the
+  // per-test lookup it replaces preferred it. Files absent from both maps
+  // are leaves.
+  const forward = new Map();
+  for (const [testPath, content] of testContents) {
+    forward.set(stripSourceExtension(testPath), relativeImportsOf(testPath, content));
+  }
+  for (const [file, imports] of fileImports) {
+    forward.set(file, imports);
+  }
+  // The reverse index: which files relatively import each file. One search
+  // backwards from the changed files then finds every reaching test, in
+  // time proportional to the graph instead of tests-times-the-graph.
+  const importersOf = new Map();
+  for (const [file, imports] of forward) {
+    for (const target of imports) {
+      let importers = importersOf.get(target);
+      if (!importers) {
+        importers = new Set();
+        importersOf.set(target, importers);
       }
+      importers.add(file);
     }
-    return reached;
-  };
+  }
+  const testByStripped = new Map();
   for (const [testPath] of testContents) {
-    const stripped = stripSourceExtension(testPath);
-    if (changed.has(stripped) || changed.has(testPath)) {
-      selected.add(testPath);
-      continue;
+    testByStripped.set(stripSourceExtension(testPath), testPath);
+  }
+  // Backward reachability from the changed files. A test reached this way
+  // runs — and the walk stops there, unless the test itself changed: a test
+  // importing another test does not pull that test's importers in, so the
+  // boundary is the trailing `.test`, the way the forward walk cut it.
+  // Reached paths are extension-free throughout.
+  const visited = new Set(changed);
+  const queue = [...changed];
+  while (queue.length > 0) {
+    const next = queue.pop();
+    if (/\.test$/.test(next ?? '')) {
+      const testPath = next === undefined ? undefined : testByStripped.get(next);
+      if (testPath !== undefined) selected.add(testPath);
+      // A changed test file still contributes its importers (a test
+      // importing a changed test runs too); any other test is a boundary.
+      if (next === undefined || !changed.has(next)) continue;
     }
-    for (const reached of reachesOf(testPath)) {
-      if (changed.has(reached)) {
-        selected.add(testPath);
-        break;
+    for (const importer of importersOf.get(next ?? '') ?? []) {
+      if (!visited.has(importer)) {
+        visited.add(importer);
+        queue.push(importer);
       }
     }
   }
@@ -198,12 +249,104 @@ export function selectTouchedTests(
 }
 
 /**
+ * The PR's own changed test files: the default fast suite the gate runs
+ * when the selection cannot be used (it expired, or it outgrew the run
+ * budget). Same scope as the selection rule: `*.test.js`/`*.test.mjs`
+ * under `tests/`. Returns sorted repository-relative paths.
+ */
+export function changedTestFiles(
+  /** @type {string[]} */ changedFiles,
+) {
+  return changedFiles
+    .map((file) => normalize(file).replace(/\\/g, '/'))
+    .filter((file) => file.startsWith('tests/') && TEST_FILE.test(file))
+    .sort();
+}
+
+/**
+ * What the gate does with a finished selection: skip (no code changed),
+ * refuse (code changed, nothing reaches it — the fail-closed case), run
+ * the selection, or fall back to the PR's own changed test files when the
+ * selection outgrew the run budget. An oversized selection with no changed
+ * test file of its own refuses, fail-closed: there is no evidence to run.
+ * Pure: unit-tested without git or timers.
+ */
+export function planGate(
+  /** @type {string[]} */ changedFiles,
+  /** @type {string[]} */ selectedTests,
+  /** @type {number} */ maxSelected = DEFAULT_MAX_SELECTED,
+) {
+  if (selectedTests.length === 0) {
+    return fallbackPlan(changedFiles, 'empty-selection');
+  }
+  if (selectedTests.length <= maxSelected) {
+    return { kind: 'run', tests: selectedTests, reason: null };
+  }
+  return fallbackPlan(changedFiles, 'oversized-selection');
+}
+
+/**
+ * The warned fallback for an unusable selection (empty, oversized, or
+ * expired): the default fast suite when the PR carries its own tests, the
+ * fail-closed refusal when JavaScript changed without any, the skip when
+ * only non-source files changed.
+ */
+export function fallbackPlan(
+  /** @type {string[]} */ changedFiles,
+  /** @type {string} */ reason,
+) {
+  const tests = changedTestFiles(changedFiles);
+  if (tests.length > 0) {
+    return { kind: 'fallback', tests, reason };
+  }
+  if (!hasCodeChange(changedFiles)) {
+    return { kind: 'skip', tests: [], reason };
+  }
+  const uncovered = changedFiles.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
+  return { kind: 'refuse', tests: [], reason, uncovered };
+}
+
+/**
+ * The bound for the test run once the selection phase is over: the
+ * configured run timeout, reduced by the selection's elapsed time so
+ * select-plus-run always fits the step wrapper's budget, and never below
+ * a minute (a bound under that cannot run even one slow file). Pure:
+ * unit-tested.
+ */
+export function runBudgetSec(
+  /** @type {number} */ timeoutSec,
+  /** @type {number} */ selectionElapsedSec,
+  /** @type {number} */ stepBudgetSec = STEP_BUDGET_SEC,
+) {
+  return Math.max(60, Math.min(timeoutSec, stepBudgetSec - 5 - Math.ceil(selectionElapsedSec)));
+}
+
+/**
  * Command-line options, exported so the unit test locks the documented
  * usage (`--timeout-sec <n>` followed by other flags) instead of trusting
  * it. Error paths exit the process and are not unit-tested.
  */
+/**
+ * A positive number of seconds for a `--*-sec` flag, or a `--max-selected`
+ * count. Error paths exit the process and are not unit-tested.
+ */
+function positiveNumber(/** @type {string} */ flag, /** @type {string | undefined} */ raw) {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    process.stderr.write(`ci-touched-tests: ${flag} needs a positive number\n`);
+    process.exit(2);
+  }
+  return value;
+}
+
 export function parseArgs(argv) {
-  const options = { base: 'origin/main', list: false, timeoutSec: DEFAULT_TIMEOUT_SEC };
+  const options = {
+    base: 'origin/main',
+    list: false,
+    timeoutSec: DEFAULT_TIMEOUT_SEC,
+    selectTimeoutSec: DEFAULT_SELECT_TIMEOUT_SEC,
+    maxSelected: DEFAULT_MAX_SELECTED,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--base') {
@@ -217,12 +360,13 @@ export function parseArgs(argv) {
     } else if (arg === '--list') {
       options.list = true;
     } else if (arg === '--timeout-sec') {
-      const value = Number(argv[i + 1]);
-      if (!Number.isFinite(value) || value <= 0) {
-        process.stderr.write('ci-touched-tests: --timeout-sec needs a positive number of seconds\n');
-        process.exit(2);
-      }
-      options.timeoutSec = value;
+      options.timeoutSec = positiveNumber('--timeout-sec', argv[i + 1]);
+      i += 1;
+    } else if (arg === '--select-timeout-sec') {
+      options.selectTimeoutSec = positiveNumber('--select-timeout-sec', argv[i + 1]);
+      i += 1;
+    } else if (arg === '--max-selected') {
+      options.maxSelected = positiveNumber('--max-selected', argv[i + 1]);
       i += 1;
     } else {
       process.stderr.write(`ci-touched-tests: unknown argument ${arg}\n`);
@@ -294,6 +438,11 @@ async function main() {
   }
   const changed = diff.stdout ? diff.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : [];
 
+  // The selection phase is synchronous file reads, so its budget is
+  // enforced after the fact: past it the gate runs the default fast suite
+  // instead of failing for the timeout (or starting a run it cannot finish
+  // on top of an already over-budget selection).
+  const selectStarted = Date.now();
   const testFiles = listTestFiles().map((absolute) => absolute.slice(root.length + 1).replace(/\\/g, '/'));
   const contents = new Map();
   for (const testPath of testFiles) {
@@ -306,9 +455,22 @@ async function main() {
   }
 
   const selected = selectTouchedTests(changed, contents, buildFileImports(root));
+  const selectionElapsedSec = (Date.now() - selectStarted) / 1000;
+
+  const plan = selectionElapsedSec > options.selectTimeoutSec
+    ? fallbackPlan(changed, 'selection-timeout')
+    : planGate(changed, selected, options.maxSelected);
+  // The over-budget note is reported on the fallback only; the run path
+  // keeps the full bound minus the selection's elapsed time.
+  const selectNote = selectionElapsedSec > options.selectTimeoutSec
+    ? `selection took ${selectionElapsedSec.toFixed(1)}s, past the ${options.selectTimeoutSec}s budget`
+    : null;
 
   if (options.list) {
-    process.stdout.write(selected.length === 0 ? '' : `${selected.join('\n')}\n`);
+    if (plan.reason && plan.kind === 'fallback') {
+      process.stderr.write(`ci-touched-tests: warning: ${selectNote ?? 'oversized selection'} — listing the default fast suite.\n`);
+    }
+    process.stdout.write(plan.tests.length === 0 ? '' : `${plan.tests.join('\n')}\n`);
     process.exit(0);
   }
 
@@ -317,22 +479,13 @@ async function main() {
   // here would merge an untested change green and redden `main` after the
   // merge, so the gate refuses with exit 1, naming the uncovered files:
   // add a test that relatively imports them (directly or through
-  // `tests/helpers`) and the gate runs it. The step deliberately does not
-  // run the default `npm test` suite as a fallback: the full suite holds
+  // `tests/helpers`) and the gate runs it. The full `npm test` suite holds
   // the machine lock ~20 minutes and cannot fit this step's five-minute
-  // budget, so a fallback run would time out red on every PR that triggers
-  // it — a refusal that says what to do instead of a timeout that cannot
-  // pass. The full suite still runs on `main` after the merge. Docs,
-  // workflows, manifests and site-only changes keep the exit-0 skip: their
-  // gates run in the same CI job.
-  if (selected.length === 0) {
-    if (!hasCodeChange(changed)) {
-      process.stdout.write(
-        `ci-touched-tests: ${changed.length} changed file(s), no test file reaches them — nothing to run.\n`,
-      );
-      process.exit(0);
-    }
-    const uncovered = changed.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
+  // budget, so it still runs only on `main` after the merge, never here —
+  // including as a fallback. Docs, workflows, manifests and site-only
+  // changes keep the exit-0 skip: their gates run in the same CI job.
+  if (plan.kind === 'refuse') {
+    const uncovered = plan.uncovered ?? changed.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
     process.stdout.write(
       'ci-touched-tests: refusing — no test file relatively reaches these '
       + `changed source file(s): ${uncovered.join(', ')}.\n`
@@ -342,17 +495,40 @@ async function main() {
     );
     process.exit(1);
   }
+  if (plan.kind === 'skip') {
+    process.stdout.write(
+      `ci-touched-tests: ${changed.length} changed file(s), no test file reaches them — nothing to run.\n`,
+    );
+    process.exit(0);
+  }
+
+  if (plan.kind === 'fallback') {
+    const why = plan.reason === 'selection-timeout' && selectNote !== null
+      ? selectNote
+      : `selected ${selected.length} test file(s), past the ${options.maxSelected} this step can run`;
+    process.stdout.write(
+      `ci-touched-tests: warning: ${why} — running the default fast suite instead `
+      + `(${plan.tests.length} changed test file(s)): ${plan.tests.join(', ')}.\n`,
+    );
+    process.stdout.write(
+      `::warning::ci-touched-tests: ${why} — running ${plan.tests.length} changed test file(s) instead of ${selected.length} selected.\n`,
+    );
+  }
 
   // Same flags as `npm test`: two files at a time keeps peak memory inside
   // what the shared 16 GB runner survived (ci.yml), at the price of wall time
-  // this step bounds with its timeout instead.
+  // this step bounds with its timeout instead. The bound yields to the
+  // selection phase so select-plus-run always fits the step wrapper; the
+  // floor of a minute still runs at least one slow file.
+  const runBudget = runBudgetSec(options.timeoutSec, selectionElapsedSec);
   const run = spawnSync(
     process.execPath,
-    ['--no-warnings', '--test', '--test-concurrency=2', '--test-reporter=spec', ...selected],
-    { cwd: root, stdio: 'inherit', timeout: options.timeoutSec * 1000, killSignal: 'SIGKILL' },
+    ['--no-warnings', '--test', '--test-concurrency=2', '--test-reporter=spec', ...plan.tests],
+    { cwd: root, stdio: 'inherit', timeout: runBudget * 1000, killSignal: 'SIGKILL' },
   );
   if (run.error) {
-    process.stderr.write(`ci-touched-tests: selection did not finish in ${options.timeoutSec}s — failing red, not hanging the lock.\n`);
+    const what = plan.kind === 'fallback' ? 'default fast suite' : 'selected run';
+    process.stderr.write(`ci-touched-tests: ${what} did not finish in ${runBudget}s — failing red, not hanging the lock.\n`);
     process.exit(1);
   }
   process.exit(run.status ?? 1);
