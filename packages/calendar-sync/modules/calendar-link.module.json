@@ -1,0 +1,17 @@
+{
+  "manifestVersion": 1,
+  "name": "calendar-link",
+  "table": "calendar_links",
+  "description": "One joined identity between a Google Calendar event and an appointment row: the Google event id (scoped to its calendar, so two calendars never share a link) and the appointment sourceKey it was imported from or exported to, the last Google `updated` the sync applied, the fingerprint of the local row at that instant, and a pending conflict note until the two sides converge. Every field is managed: links exist only through the calendar-sync package, and no client can create, forge or rewrite one.",
+  "fields": [
+    { "name": "linkKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "calendarId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "googleEventId", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "appointmentSourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "appointmentId", "type": "string", "writable": "managed" },
+    { "name": "googleUpdated", "type": "string", "writable": "managed" },
+    { "name": "localFingerprint", "type": "string", "writable": "managed" },
+    { "name": "revision", "type": "integer", "writable": "managed" },
+    { "name": "conflictNote", "type": "string", "writable": "managed" }
+  ]
+}
