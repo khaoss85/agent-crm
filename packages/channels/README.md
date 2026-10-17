@@ -62,24 +62,33 @@ createChannelsPackage({
   the send proves the seeded window rather than an absent one.
 - The WhatsApp Business Cloud adapter (`src/whatsapp.js`, fake-backed
   until the Meta decision): Meta inbound shapes (`messages[]`,
-  `statuses[]`) with one inbox row per delivery state and exactly one
-  item per delivery (a batched webhook refuses loudly instead of
-  dropping items); free text only inside the 24-hour window resolved
+  `statuses[]`) normalized to a list with one inbox row per item in a
+  single transaction (a batched webhook stores every item, never just
+  the first); free text only inside the 24-hour window resolved
   server-side from the inbox (absent, future or stale observations
   refuse with `CHANNEL_TEMPLATE_REQUIRED`, intact through the queue
   path), approved templates outside it; the bound business line is
   required so self echoes and statuses to our own number quarantine;
   and the REST mapping as a pure function whose retained copy never
   holds the call-time secret.
+- The Instagram Graph adapter (`src/instagram.js`,
+  `tests/channels-instagram.test.js`): Graph webhook bodies
+  (`object: 'instagram'` with `entry[].messaging[]`) with hub
+  signatures, normalized to a list with one inbox row per message of
+  every entry (echoes off our own account stay out); Graph replies
+  with the 24-hour reply window (7 days with the `HUMAN_AGENT` tag)
+  read from the inbox per space and connection — against a fake
+  transport, no credentials.
 - `npm run crm -- package validate packages/channels` and
   `npm run crm -- package test packages/channels` (DX4 conformance).
 
 ## What it deliberately does not do
 
-- No real provider adapters beyond WhatsApp (Instagram, …): fixture
+- No real provider adapters beyond WhatsApp and Instagram: fixture
   only until credentials exist. No credential is invented, requested or
-  stored. WhatsApp itself is fake-backed until the Meta decision: the
-  same modes as the fixture, the same HMAC scheme, no Meta edge.
+  stored. Both are fake-backed until the Meta decision: the same modes
+  as the fixture, no Meta edge (WhatsApp shares the channel HMAC scheme,
+  Instagram verifies hub signatures).
 - No per-space HTTP route: the pilot owns it and passes `spaceId` from
   the verified path, never from the body.
 - No secret custody or rotation flow: the deployment resolves `secretRef`
