@@ -210,21 +210,9 @@ export function createChannelsPackage(options = {}) {
           return (params) => ops.queueChannelSend(params);
         },
       },
-      {
-        operationContract: 1,
-        name: 'requeue-channel-letter',
-        label: 'Requeue dead letter',
-        appMethod: 'requeueChannelLetter',
-        description: 'Retry one open dead letter with a human-supplied message: the letter carries no payload by design, so retrying means approving the content again.',
-        input: [
-          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
-          { name: 'letterId', type: 'string', required: true, hint: 'The open dead-letter id.' },
-        ],
-        create(runtime) {
-          const ops = operations(runtime);
-          return (params) => ops.requeueChannelLetter(params);
-        },
-      },
+      // Dead-letter requeue is deferred to a follow-up voice with its own
+      // state machine: this PR ships register / ingest / queue / dead-letter
+      // inventory only.
     ],
     /** Function-free, additive schema metadata — never a secret, never a function. */
     metadata() {
@@ -235,8 +223,9 @@ export function createChannelsPackage(options = {}) {
         replayScope: 'space + connection + providerEventId; the payload fingerprint must match or the reuse is refused 409 CHANNEL_EVENT_ID_CONFLICT',
         sendRetry: 'bounded attempts on the durable job (default 5); transient failures ride the worker backoff; exhaustion writes a dead-letter row with phase, error code and payload fingerprint',
         secretDiscipline: 'connections store secretRef, never the secret; the deployment resolves it at call time; outbox payloads carry no secret-shaped keys',
-        humanApproval: 'register, status changes, sends and requeues require actor.type === "user"; provider-driven ingest runs under a system actor',
+        humanApproval: 'register, status changes and sends require actor.type === "user"; provider-driven ingest runs under a system actor and ignores any caller-supplied actor',
         notModeled: [
+          'dead-letter requeue (human retry of an open letter) — follow-up voice with its own state machine',
           'real provider adapters (WhatsApp, Instagram, …) — fixture only until credentials exist',
           'the per-space HTTP route — the pilot owns it and passes spaceId from the verified path',
           'secret custody and rotation flow — the deployment owns it via resolveSecret',

@@ -36,10 +36,15 @@ const KEY_TOTAL_MAX = 256;
 
 /**
  * Join key parts with ':' keeping every part at most 128 chars and the whole
- * key at most 256 chars. Parts longer than 128 become `sha256:<hex>`; when
- * the joined form still exceeds 256, the tail is folded into one sha256 so
- * the key always fits. Deterministic: the same parts always give the same
- * key, and different parts give a different key.
+ * key at most 256 chars. Every part escapes '%' then ':' first, so the join
+ * is injective: a separator inside a component (a nested connection key, a
+ * provider event id, a caller message key) can never collide with the real
+ * separator or with another tuple's split. Nothing else is escaped, so short
+ * readable parts — phone accounts included — keep their exact shape. Parts
+ * longer than 128 become `sha256:<hex>`; when the joined form still exceeds
+ * 256, the tail is folded into one sha256 so the key always fits.
+ * Deterministic: the same parts always give the same key, and different
+ * parts give a different key.
  */
 export function boundedKey(...parts) {
   if (parts.length === 0) {
@@ -49,7 +54,7 @@ export function boundedKey(...parts) {
     if (typeof part !== 'string' || part === '' || part.length > 1024 || CONTROL_RE.test(part)) {
       throw new ValidationError('boundedKey parts must be bounded single-line text', { field: 'key' });
     }
-    return part;
+    return part.replace(/%/g, '%25').replace(/:/g, '%3A');
   });
   const safe = texts.map((text) => (
     text.length <= KEY_COMPONENT_MAX

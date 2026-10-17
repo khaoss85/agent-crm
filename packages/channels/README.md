@@ -49,7 +49,9 @@ createChannelsPackage({
 - `tests/channels-operations.test.js` — behavior on real `:memory:`
   sqlite with real module services, the real durable-job store and the
   real worker: registration, activation, ingest (apply/replay/forgery/
-  out-of-order/quarantine), send with retries, dead letters, requeue.
+  out-of-order/quarantine/verify-timeout/system-actor), send with retries
+  and the dead-letter queue. Dead-letter requeue is deferred to a follow-up
+  voice and has no test here.
 - The kit: `runChannelAdapterKit({ adapter, secrets, harness })` — the
   same seven checks the acceptance names (receive, send, replay, bad
   signature, out-of-order) plus no-secrets and space isolation. The
@@ -69,6 +71,8 @@ createChannelsPackage({
   CRM data.
 - No reconciliation against provider truth and no per-connection
   observability aggregates yet (follow-ups).
-- Sends, registrations, status changes and requeues require
+- No dead-letter requeue (human retry of an open letter): follow-up voice
+  with its own state machine.
+- Sends, registrations and status changes require
   `actor.type === 'user'`. Provider-driven ingest runs under a system
-  actor after verification.
+  actor after verification and ignores any caller-supplied actor.

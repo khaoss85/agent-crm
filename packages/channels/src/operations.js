@@ -13,7 +13,7 @@ import {
 } from '../../core/index.js';
 import { assertConnectionInput, assertSpaceId, boundedKey, channelSendIdempotencyKey } from './connection.js';
 import { fingerprintPayload } from './crypto.js';
-import { transitionInbox, transitionLetter } from './transitions.js';
+import { transitionInbox } from './transitions.js';
 
 /**
  * Channel operations (backlog:e5532d1c9146).
@@ -285,6 +285,8 @@ export function createChannelOperations(deps) {
     const spaceId = assertSpaceId(params?.spaceId);
     const connectionKey = typeof params?.connectionKey === 'string' ? params.connectionKey : '';
     const connection = requireConnection(spaceId, connectionKey);
+    // Provider-driven writes always run under the package system actor: a
+    // caller-supplied actor is ignored, never trusted for audit attribution.
     const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
     const rawBody = Buffer.isBuffer(params?.rawBody) ? params.rawBody : String(params?.rawBody ?? '');
     if (Buffer.byteLength(rawBody) > CHANNEL_MAX_BODY_BYTES) {
@@ -292,7 +294,7 @@ export function createChannelOperations(deps) {
     }
     const headers = params?.headers && typeof params.headers === 'object' && !Array.isArray(params.headers)
       ? params.headers : {};
-    const actor = params?.actor ?? SYSTEM();
+    const actor = SYSTEM();
 
     // Resolve + verify first. A failure never echoes the payload, the
     // signature or the secret, and never writes anything.
@@ -314,7 +316,15 @@ export function createChannelOperations(deps) {
       );
     } catch (error) {
       const normalized = normalizeError(error);
-      throw new AppError(`Channel event verification failed: ${normalized.code === 'PROVIDER_TIMEOUT' ? 'verification timed out' : 'invalid signature'}`, {
+      // A verification timeout is a retryable provider-side stall, never a
+      // bad signature: reporting 401 would tell the provider to drop a
+      // delivery that was never recorded. The 503 keeps the redelivery coming.
+      if (normalized.code === 'PROVIDER_TIMEOUT') {
+        throw new AppError('Channel event verification timed out: retry the delivery', {
+          code: 'CHANNEL_VERIFY_UNAVAILABLE', status: 503,
+        });
+      }
+      throw new AppError('Channel event verification failed: invalid signature', {
         code: 'CHANNEL_SIGNATURE_INVALID', status: 401,
       });
     }
@@ -585,81 +595,10 @@ export function createChannelOperations(deps) {
     return registry;
   }
 
-  /**
-   * Requeue one open dead letter with a human-supplied message. The letter
-   * carries no payload by design, so retrying means approving the content
-   * again — a human actor owns it, and the new job gets a deterministic key
-   * derived from the letter AND the new message (boundedKey, always within
-   * the 256-char outbox bound), so the same content dedups and different
-   * content keys differently. A settled (requeued) letter 404s on repeat.
-   */
-  async function requeueChannelLetter(params) {
-    const actor = requireUser(params?.actor);
-    const spaceId = assertSpaceId(params?.spaceId);
-    // Exact read by id, then the space check: a letter from another space is
-    // not found (404), never forbidden (403).
-    let letter = null;
-    try {
-      letter = typeof params?.letterId === 'string' && params.letterId !== ''
-        ? letters().get(params.letterId) : null;
-    } catch {
-      letter = null;
-    }
-    if (!letter || letter.spaceId !== spaceId || letter.state !== 'open') {
-      throw new AppError('Unknown or settled dead letter', { code: 'CHANNEL_LETTER_UNKNOWN', status: 404 });
-    }
-    const connection = requireActiveConnection(spaceId, letter.connectionKey);
-    const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
-    let message;
-    try {
-      message = adapter.normalizeOutbound(params?.message);
-    } catch {
-      throw new AppError('Channel message is not well-formed', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
-    }
-    assertOutboundMessage(message);
-    const messageFingerprint = fingerprintPayload(JSON.stringify(message));
-    const idempotencyKey = boundedKey('ch-send', spaceId, connection.sourceKey, `requeue:${letter.id}`, messageFingerprint);
-    let job;
-    try {
-      job = await jobs().enqueue({
-        kind: CHANNEL_SEND_KIND,
-        handler: { name: CHANNEL_SEND_HANDLER, contract: CHANNEL_SEND_CONTRACT, version: CHANNEL_SEND_VERSION },
-        payload: { spaceId, connectionKey: connection.sourceKey, idempotencyKey, message },
-        idempotencyRoot: idempotencyKey,
-        outcomeReference: idempotencyKey,
-        recoveryPolicy: 'reconcilable_at_least_once',
-        maxAttempts: maxSendAttempts,
-      }, { actor });
-    } catch (error) {
-      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'DURABLE_JOB_PAYLOAD_INVALID') {
-        throw new AppError('Channel message is not well-formed: message refused by the outbox payload controls', {
-          code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
-        });
-      }
-      throw error;
-    }
-    // The state move is conditional on the letter still being open: the
-    // transition re-reads after the enqueue, so a concurrent requeue that
-    // won first makes this one refuse instead of double-sending. The loser
-    // cancels its just-created job — one letter, one provider send — and
-    // reports the settled letter.
-    let updated;
-    try {
-      updated = await transitionLetter(letters(), letter.id, {
-        event: 'requeue', patch: { stateReason: `requeued as job ${job.id}` }, actor,
-      });
-    } catch (error) {
-      if (!error || typeof error !== 'object' || /** @type {any} */ (error).code !== 'CHANNEL_TRANSITION_INVALID') throw error;
-      try {
-        await jobs().cancel(job.id, { actor });
-      } catch {
-        // Best effort: the worker may already have claimed the job. The
-        // 404 below still stands — the letter is settled either way.
-      }
-      throw new AppError('Unknown or settled dead letter', { code: 'CHANNEL_LETTER_UNKNOWN', status: 404 });
-    }
-    return { jobId: job.id, letterId: updated.id, idempotencyKey };
-  }
+  // Dead-letter requeue (human retry of an open letter) is intentionally NOT
+  // here: it moves to its own follow-up voice with its own state machine, so
+  // this PR keeps register / ingest / queue / dead-letter inventory only.
+  // The dead-letter rows stay readable through listDeadLetters.
 
   function listConnections(spaceId) {
     return connections().listWhere({ spaceId: assertSpaceId(spaceId) });
@@ -688,7 +627,6 @@ export function createChannelOperations(deps) {
     registerChannelConnection,
     ingestChannelEvent,
     queueChannelSend,
-    requeueChannelLetter,
     registerChannelSendHandlers,
   });
 }

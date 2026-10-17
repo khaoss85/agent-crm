@@ -106,10 +106,9 @@ export async function transitionInbox(service, id, { event, patch = {}, actor } 
 
 /**
  * Move one dead letter through the machine. Same contract: re-read, refuse
- * what the table does not allow, one managed write. Callers that raced
- * (a concurrent requeue won first) get CHANNEL_TRANSITION_INVALID and
- * decide there — the requeue path cancels its just-created job and reports
- * the settled letter instead of sending twice.
+ * what the table does not allow, one managed write. The human-retry path
+ * that moves letters lives in a follow-up voice; until it lands, the table
+ * documents the lifecycle and nothing moves a letter past `open`.
  */
 export async function transitionLetter(service, id, { event, patch = {}, actor } = {}) {
   const current = await service.get(id);

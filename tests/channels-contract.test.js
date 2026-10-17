@@ -139,18 +139,31 @@ test('connection status moves on an explicit table; revoked never regresses', ()
 
 test('send idempotency keys are deterministic per space, connection and message', () => {
   const key = channelSendIdempotencyKey({ spaceId: 'presti', connectionKey: 'ch-conn:presti:whatsapp:x', messageKey: 'm1' });
-  assert.equal(key, 'ch-send:presti:ch-conn:presti:whatsapp:x:m1', 'short keys stay readable');
+  assert.equal(key, 'ch-send:presti:ch-conn%3Apresti%3Awhatsapp%3Ax:m1', 'nested keys encode their separators; short keys stay readable');
   assert.equal(key, channelSendIdempotencyKey({ spaceId: 'presti', connectionKey: 'ch-conn:presti:whatsapp:x', messageKey: 'm1' }));
   assert.notEqual(key, channelSendIdempotencyKey({ spaceId: 'arvo', connectionKey: 'ch-conn:presti:whatsapp:x', messageKey: 'm1' }));
 });
 
+test('colon-bearing components never collide across different tuples', () => {
+  // Review round 4 P2: bare ':' joins let account 'a:b' + event 'c' collide
+  // with account 'a' + event 'b:c'. Every component is encoded before the
+  // join, so different tuples always key differently.
+  assert.notEqual(boundedKey('k', 'a:b', 'c'), boundedKey('k', 'a', 'b:c'));
+  assert.notEqual(boundedKey('k', '%3A'), boundedKey('k', ':'), 'a literal escape never equals an escaped separator');
+  assert.notEqual(
+    boundedKey('ch-in', 'presti', 'ch-conn:presti:whatsapp:x', 'e:1'),
+    boundedKey('ch-in', 'presti', 'ch-conn:presti:whatsapp:x:e', '1'),
+  );
+  assert.equal(boundedKey('ch-send', 'presti', 'c', 'm'), 'ch-send:presti:c:m', 'plain parts stay readable');
+});
+
 test('boundedKey keeps every package key within 128 per part and 256 total', () => {
   // One function for every key of the package (review round 2): send,
-  // requeue, connection/inbox/dead-letter source keys. Each shape is tried
-  // at its legal maximum, and every ':'-separated part stays within 128.
+  // connection/inbox/dead-letter source keys. Each shape is tried at its
+  // legal maximum, and every ':'-separated part stays within 128.
   const shapes = [
     ['ch-send', 'presti', `ch-conn:presti:whatsapp:${'a'.repeat(256)}`, 'm'.repeat(256)],
-    ['ch-send', 'presti', 'ch-conn:presti:whatsapp:x', `requeue:letter-id-1`, 'f'.repeat(64)],
+    ['ch-send', 'presti', 'ch-conn:presti:whatsapp:x', 'letter-id-1', 'f'.repeat(64)],
     ['ch-conn', 'presti', 'whatsapp', 'a'.repeat(256)],
     ['ch-in', 'presti', `ch-conn:presti:whatsapp:${'a'.repeat(256)}`, 'e'.repeat(256)],
     ['ch-dl', 'k'.repeat(256)],
