@@ -8,6 +8,11 @@
 // (examples/starters/b2b-lead-qualification) registers its sales pipeline here
 // when applied into a project. An empty registry keeps all pre-pipeline
 // behavior unchanged: opportunities simply carry null pipeline state.
+//
+// The Accordo sales pipeline (../accordo-sales.js) is opt-in per space or
+// project: a composition registers it here explicitly (exactly one pipeline
+// per module — startup refuses a second one fail-closed), so spaces without
+// that configuration keep the null-pipeline behavior above unchanged.
 
 /**
  * @typedef {import('../../core/src/pipeline-registry.js').PipelineDefinition} PipelineDefinition

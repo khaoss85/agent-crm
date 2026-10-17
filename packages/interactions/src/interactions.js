@@ -970,4 +970,162 @@ export function buildCloseConversationAction(moduleNames) {
   };
 }
 
+const OPPORTUNITY_CURRENCY_RE = /^[A-Za-z]{3}$/;
+
+/**
+ * `open-opportunity` — open the sale this conversation is about.
+ *
+ * One conversation opens exactly one opportunity: the origin key
+ * `conversation-opportunity:<conversationId>` carries the database UNIQUE
+ * enforcement, so a retry or a second message in the same thread replays the
+ * 409 naming the existing opportunity instead of opening a duplicate.
+ *
+ * The customer is never guessed — it is read from the conversation's own
+ * subject envelope (a contact, or a company when no contact is named), through
+ * the runtime services handle. Any other subject is refused: inventing a
+ * customer for a sale is precisely the defect this action exists to prevent.
+ * Identity resolution (which channel handle names which record) stays in
+ * `packages/customer-data`; this action only follows the link the channel
+ * adapter already recorded.
+ *
+ * The trigger must be an inbound message of this conversation about the same
+ * subject: the sale opens from the customer's words, never from the team's
+ * own outbound message, never from a message logged on another thread, and
+ * never from another customer's words logged under this conversation.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function buildOpenOpportunityAction(moduleNames) {
+  const names = resolvedNames(moduleNames);
+  return {
+    module: names.conversation,
+    name: 'open-opportunity',
+    label: 'Open opportunity',
+    description: 'Open one opportunity for this conversation\u2019s customer, from one of its inbound messages, entering the sales pipeline default stage.',
+    actionContract: 1,
+    stateField: 'status',
+    fromStates: ['open', 'closed'],
+    input: [
+      { name: 'messageId', type: 'string', required: true, hint: 'The inbound message of this conversation the sale opens from.' },
+      { name: 'opportunityName', type: 'string', required: true, hint: 'The sale name, e.g. the trial the customer asked about.' },
+      {
+        name: 'valueCents', type: 'integer', required: true,
+        hint: 'Integer MINOR units: 500000 means 5,000.00 (not 500,000) in the chosen currency.',
+      },
+      { name: 'currency', type: 'string', required: false, hint: '3-letter ISO-4217 code, e.g. EUR (default). Uppercased automatically.' },
+      { name: 'owner', type: 'string', required: false, hint: 'Defaults to the acting user id.' },
+    ],
+    /** @param {any} ctx */
+    async execute({ record, input, actor, core, modules, services, step, now }) {
+      if (!core || typeof core.createOpportunity !== 'function' || typeof core.enterOpportunityPipeline !== 'function') {
+        throw new AppError('conversation.open-opportunity needs the core-module adapters (ctx.core); run it through the application', {
+          code: 'CORE_ADAPTERS_MISSING',
+          status: 500,
+        });
+      }
+      if (!services || !services.contacts || !services.companies) {
+        throw new AppError('conversation.open-opportunity needs the customer services (ctx.services); run it through the application', {
+          code: 'CUSTOMER_SERVICES_MISSING',
+          status: 500,
+        });
+      }
+      const messageService = resolveModule(modules, names.message)?.service;
+      if (!messageService?.get) {
+        throw new AppError('The interactions package is installed without a managed "interaction-message" record module', {
+          code: 'INTERACTIONS_STORAGE_INVALID', status: 500,
+        });
+      }
+      // Validate everything before the first write, so a bad input never
+      // costs a rollback.
+      const messageId = safeText(input.messageId, 'messageId', MAX_ID);
+      const opportunityName = safeText(input.opportunityName, 'opportunityName', MAX_LABEL);
+      if (typeof input.valueCents !== 'number' || !Number.isInteger(input.valueCents) || input.valueCents < 0) {
+        throw new ValidationError('valueCents must be zero or positive (integer minor units)', { field: 'valueCents' });
+      }
+      const currency = input.currency ?? 'EUR';
+      if (!OPPORTUNITY_CURRENCY_RE.test(currency)) {
+        throw new ValidationError('currency must be a 3-letter ISO-4217 code', { field: 'currency' });
+      }
+      const actorId = actor && typeof actor === 'object' && typeof actor.id === 'string' ? actor.id : 'sale';
+      const owner = optionalSafeText(input.owner, 'owner', MAX_LABEL) ?? actorId;
+
+      // 1. The trigger: an inbound message of THIS conversation.
+      const message = await messageService.get(messageId);
+      if (message.conversationId !== record.id) {
+        throw new AppError(
+          `Cannot open an opportunity: message ${messageId} belongs to conversation ${message.conversationId}, not this one`,
+          { code: 'OPPORTUNITY_MESSAGE_MISMATCH', status: 409, details: { messageId, conversationId: record.id } },
+        );
+      }
+      if (message.direction !== 'inbound') {
+        throw new AppError(
+          'Cannot open an opportunity: the trigger must be an inbound message — a sale opens from the customer\u2019s words, not the team\u2019s',
+          { code: 'OPPORTUNITY_NOT_INBOUND', status: 409, details: { messageId, direction: message.direction } },
+        );
+      }
+      if (
+        message.subjectResource !== record.subjectResource ||
+        message.subjectId !== record.subjectId ||
+        message.subjectOwner !== record.subjectOwner ||
+        (message.subjectOwnerPackage ?? null) !== (record.subjectOwnerPackage ?? null)
+      ) {
+        throw new AppError(
+          `Cannot open an opportunity: message ${messageId} is about another subject, not this conversation's customer — a sale opens from this customer's words`,
+          { code: 'OPPORTUNITY_MESSAGE_SUBJECT_MISMATCH', status: 409, details: { messageId, conversationId: record.id } },
+        );
+      }
+      step('message', { id: message.id, direction: message.direction });
+
+      // 2. The customer: read from the conversation's subject, never guessed.
+      let company;
+      let contact = null;
+      if (record.subjectResource === 'contact') {
+        contact = await services.contacts.get(record.subjectId);
+        company = await services.companies.get(contact.companyId);
+      } else if (record.subjectResource === 'company') {
+        company = await services.companies.get(record.subjectId);
+      } else {
+        throw new AppError(
+          `Cannot open an opportunity: this conversation is about subject "${record.subjectResource}", not a contact or company the sale can name`,
+          { code: 'OPPORTUNITY_SUBJECT_UNSUPPORTED', status: 409, details: { subjectResource: record.subjectResource } },
+        );
+      }
+      step('customer', { companyId: company.id, ...(contact ? { contactId: contact.id } : {}) });
+
+      // 3. Exactly one Opportunity, database-enforced via the unique sourceKey.
+      // The legacy stage stays `qualification` (the pipeline stage carries the
+      // sale's position); the pipeline entry below is what places it on the
+      // board. With no pipeline installed the documented deterministic default
+      // is legacy behavior: null pipeline state, never an invented stage.
+      const opportunity = await core.createOpportunity(
+        {
+          companyId: company.id,
+          ...(contact ? { contactId: contact.id } : {}),
+          name: opportunityName,
+          type: 'new_business',
+          valueCents: input.valueCents,
+          currency: currency.toUpperCase(),
+          stage: 'qualification',
+          owner,
+          sourceKey: `conversation-opportunity:${record.id}`,
+        },
+        { actor },
+      );
+      const entered = await core.enterOpportunityPipeline(opportunity.id, { actor, now });
+      step('opportunity', { id: opportunity.id, ...(entered ? { pipeline: entered.pipeline, stage: entered.stage } : {}) });
+
+      return {
+        opportunity: {
+          id: opportunity.id,
+          sourceKey: opportunity.sourceKey,
+          ...(entered ? { pipeline: entered.pipeline, stage: entered.stage } : {}),
+        },
+        company: { id: company.id },
+        ...(contact ? { contact: { id: contact.id } } : {}),
+        message: { id: message.id },
+      };
+    },
+  };
+}
+
 export { safeText, optionalSafeText };
