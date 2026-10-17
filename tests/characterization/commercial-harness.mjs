@@ -128,6 +128,10 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/commercial/src/registry.js',
   'packages/commercial/src/catalog-sync.js',
   'packages/commercial/src/capability.js',
+  // The workspace price-list catalog provider (listino as configuration):
+  // it decides which products and prices a workspace exposes, so it is
+  // behaviour-bearing by definition.
+  'packages/commercial/src/price-list.js',
   // Signed commercial terms: digest-owned, deliberately NOT in
   // COMMERCIAL_MODULES - the baseline application's applied-manifest set is
   // part of the frozen shape, and a baseline project without the term

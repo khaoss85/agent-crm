@@ -13,10 +13,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { spawnGit } from './helpers/isolated-git.js';
 import { buildFileImports, hasCodeChange, parseArgs, relativeImportsOf, selectTouchedTests } from '../scripts/ci-touched-tests.js';
 
 /** @param {Record<string, string>} entries */
@@ -239,7 +239,7 @@ test('selection is end to end on a throwaway repository with real git', () => {
   const directory = mkdtempSync(join(tmpdir(), 'touched-'));
   try {
     const git = (/** @type {string[]} */ args) =>
-      spawnSync('git', args, { cwd: directory, encoding: 'utf8' });
+      spawnGit(args, { cwd: directory });
     const write = (/** @type {string} */ path, /** @type {string} */ body) => {
       const full = join(directory, path);
       mkdirSync(join(full, '..'), { recursive: true });

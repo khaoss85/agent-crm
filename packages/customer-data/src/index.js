@@ -8,6 +8,7 @@ import { EXPORT_MAX_ROWS } from './export.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
 import { createCustomerDataOperations, LIMITATIONS } from './operations.js';
 import { MATCH_POLICY_KIND, MATCH_RULES, defineCustomerMatchPolicy } from './policy.js';
+import { CHANNEL_SYSTEMS, createChannelSenderResolution } from './sender.js';
 import { resolvedNames } from './store.js';
 
 /**
@@ -16,10 +17,11 @@ import { resolvedNames } from './store.js';
  *
  * What it does: brings bounded external customer rows in, keeps their source
  * and provenance, finds *deterministic* duplicates or leaves them unresolved,
- * lets a human govern canonical identity, surfaces data-quality findings,
- * applies one human decision across many records with per-record receipts,
- * exports a managed record set completely or not at all, and reads one
- * consolidated profile across whatever packages are composed.
+ * resolves one channel sender to its contact, lets a human govern canonical
+ * identity, surfaces data-quality findings, applies one human decision across
+ * many records with per-record receipts, exports a managed record set
+ * completely or not at all, and reads one consolidated profile across
+ * whatever packages are composed.
  *
  * What it deliberately is **not**: a CDP, a warehouse, real-time activation, a
  * probabilistic identity graph, ML entity resolution, arbitrary ETL, global
@@ -74,9 +76,9 @@ export function createCustomerDataPackage(options = {}) {
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
-      + 'identifiers held beside the records they name, deterministic duplicate candidates, human-decided canonical identity '
-      + 'as a logical link, explainable data-quality findings, bulk decisions with per-record receipts, scale-safe '
-      + 'export, and one read-only consolidated profile.',
+      + 'identifiers held beside the records they name, deterministic duplicate candidates, channel senders, '
+      + 'human-decided canonical identity as a logical link, explainable data-quality findings, bulk decisions '
+      + 'with per-record receipts, scale-safe export, and one read-only consolidated profile.',
     resources: [...CUSTOMER_DATA_RESOURCES],
 
     // Nothing is required. The foundation reads the host through the core
@@ -135,6 +137,33 @@ export function createCustomerDataPackage(options = {}) {
             config: runtime.config, core: runtime.core, policy, names,
           });
           return (request) => operations.applyCustomerImport(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'resolve-channel-sender',
+        appMethod: 'resolveChannelSender',
+        label: 'Resolve one channel sender to its contact',
+        description:
+          'Resolve one channel sender (a WhatsApp number, an Instagram, Facebook or TikTok id, an email address or a '
+          + 'phone number) to its contact through the external-identity records and the deterministic customer match '
+          + 'policy. An unknown sender carrying an email creates its contact; ambiguous evidence becomes an unresolved '
+          + 'duplicate candidate for a human and is never merged.',
+        input: [
+          { name: 'channel', type: 'enum', values: [...CHANNEL_SYSTEMS], hint: 'Which channel the sender wrote from.' },
+          { name: 'handle', type: 'string', hint: 'The sender handle on that channel: number, id or address.' },
+          { name: 'email', type: 'string', hint: 'Sender email evidence, when the channel carries one.' },
+          { name: 'firstName', type: 'string', hint: 'Sender given name, when known.' },
+          { name: 'lastName', type: 'string', hint: 'Sender family name, when known.' },
+          { name: 'companyName', type: 'string', hint: 'Sender company evidence, when the channel carries one.' },
+          { name: 'domain', type: 'string', hint: 'Sender company domain evidence, when the channel carries one.' },
+        ],
+        create(runtime) {
+          const senders = createChannelSenderResolution({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+          });
+          return (request) => senders.resolveChannelSender(request);
         },
       },
       {
@@ -225,6 +254,14 @@ export function createCustomerDataPackage(options = {}) {
           rules: [...MATCH_RULES],
           deterministic: true,
           note: 'Exact rules only. Ambiguity is reported unresolved with candidates; no rule breaks a tie.',
+        },
+        sender: {
+          channels: [...CHANNEL_SYSTEMS],
+          outcomes: ['matched', 'created', 'unresolved'],
+          identity: 'every resolved handle is recorded as an external-identity against its contact; a second sighting refreshes it',
+          creation: 'an unknown sender carrying an email creates its contact through the core adapters, like an accepted import row',
+          ambiguity: 'conflicting or multi-record evidence becomes an unresolved duplicate candidate; nothing is ever merged automatically',
+          noEmailNoContact: 'a sender that matches nothing and carries no email creates no contact and is reported unresolved',
         },
         canonicalIdentity: {
           semantics: 'logical canonical merge — a link, never a deletion',
