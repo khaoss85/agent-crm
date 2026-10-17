@@ -1,13 +1,13 @@
 # `interactions` — customer messages and calls
 
-Three records, three actions and two declared capabilities.
+Five records, five actions and two declared capabilities.
 
 | | |
 |---|---|
-| Owns | `conversation`, `interaction-message`, `interaction-call` |
+| Owns | `conversation`, `interaction-message`, `interaction-call`, `conversation-assignment`, `conversation-read` |
 | Requires | **nothing** |
 | Offers | `interaction-log@1`, `interaction-timeline@1` |
-| Actions | `interaction-message.advance`, `conversation.close`, `conversation.open-opportunity` |
+| Actions | `interaction-message.advance`, `conversation.close`, `conversation.open-opportunity`, `conversation.assign`, `conversation.mark-read` |
 | Policies | none |
 | ADR | ADR-030 (the subject envelope) |
 
@@ -15,10 +15,14 @@ Three records, three actions and two declared capabilities.
 
 Native evidence of every customer exchange the first use case names: the chat
 apps (WhatsApp, Instagram, Facebook, TikTok), the site form, email and the
-company phones. A **Conversation** is one thread with one customer on one
-channel. A **Message** is one inbound or outbound message with its delivery
-state. A **Call** is one inbound or outbound call with its outcome and its
-duration in seconds.
+company phones. A **Conversation** is one thread with one customer across
+channels: WhatsApp, Instagram and email with the same customer stay one
+conversation, read oldest first. A **Message** is one inbound or outbound
+message with its delivery state. A **Call** is one inbound or outbound call
+with its outcome and its duration in seconds. An **Assignment** is one
+handover of a thread to a team member — the rows for one conversation are the
+audit trail of who owned it. A **Read watermark** is one member's position on
+one thread, from which that member's unread count is derived.
 
 The subject is the ADR-030 opaque envelope — the same shape `work` and
 `customer-data` store — pointing at a contact or company the host application
@@ -35,8 +39,7 @@ Stated here, in `metadata().notModeled`, and asserted as absent by the tests:
 
 > no provider integration · no sending, no delivery, no webhook, no polling ·
 > no channel identity resolution · no duplicate detection across channels · no
-> scheduling, reminders or notifications · no assignment or ownership · no call
-> recording or consent · no cross-channel threading.
+> scheduling, reminders or notifications · no call recording or consent.
 
 Nothing in this package contacts a provider. Adapters log evidence here — the
 channel credentials do not exist yet, so delivery outside the log is faked by
@@ -45,7 +48,7 @@ the consuming project's test kit, never by this package.
 ## Enable it
 
 ```bash
-for m in conversation interaction-message interaction-call; do
+for m in conversation interaction-message interaction-call conversation-assignment conversation-read; do
   npm run crm -- module create packages/interactions/modules/$m.module.json --apply
 done
 ```
@@ -104,6 +107,41 @@ immutable evidence, not a lifecycle. `durationSec` is whole seconds, `0`
 unless the outcome is `completed` — minutes on a missed call would read as
 talk time in every report built on the row. A `failed` call carries a reason
 code; any other outcome with one is refused.
+
+## One thread per customer
+
+`openConversation` joins the customer's open thread when there is one: the
+same ADR-030 subject with a new source key returns the open conversation
+(`joined: true`) instead of opening a second one, whatever channel the new
+key arrived on. The channel on the conversation is where the thread started;
+every message keeps its own channel, and the thread reads them all oldest
+first. A closed thread stays resolved — the next message opens a fresh thread
+— and a different subject always gets its own thread. Which channel handle
+names which customer is still `customer-data`'s job: the join matches the
+exact subject envelope, never a fuzzy handle.
+
+## Ownership with audit
+
+`assignConversation` hands a thread to one team member, or clears it when the
+member is null. Every handover is one immutable row naming the new owner, the
+previous owner, who decided it and when — the latest row is the current owner
+and the rows together are the audit trail. The same source key with the same
+handover replays; a divergent handover behind the same key is refused `409`.
+The `conversation.assign` action does the same through the record runtime and
+defaults its key to the conversation and its resulting owner, so repeating
+the current owner replays instead of writing audit noise. The thread read
+carries the current owner and the whole trail. A member id is an opaque team
+string with no roster behind it: there is no team table here and none is
+created.
+
+## Read watermarks, not channel receipts
+
+`markConversationRead` moves the acting member's watermark to now — one row
+per conversation and member, updated in place, so nobody marks another member
+read. `unreadCount` derives that member's unread: inbound messages later than
+the watermark, nothing else. Outbound messages never count, and advancing a
+message through its channel delivery (`sent → delivered → read`) moves no
+team watermark: the two read meanings stay separate facts.
 
 ## The Timeline
 

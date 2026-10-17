@@ -8,12 +8,17 @@ import {
 /**
  * **Interactions — the native message and call records.**
  *
- * Three evidence records and no more: a **Conversation** — one message thread
- * with a customer on one channel — an **Interaction message** — one inbound or
- * outbound message with its delivery state — and an **Interaction call** — one
- * inbound or outbound call with its outcome and duration. Every row is fully
- * managed: there is no public create or update path to any of them, so a
- * client cannot forge a message, rewrite a delivery state or invent a call.
+ * Three evidence records, one ownership trail and one read watermark per
+ * member: a **Conversation** — one message thread with a customer across
+ * channels — an **Interaction message** — one inbound or outbound message with
+ * its delivery state — an **Interaction call** — one inbound or outbound call
+ * with its outcome and duration — a **Conversation assignment** — one
+ * immutable handover event per row, whose rows for one conversation are the
+ * audit trail of who owned the thread — and a **Conversation read** — one
+ * watermark row per conversation and member, from which each member's unread
+ * count is derived. Every row is fully managed: there is no public create or
+ * update path to any of them, so a client cannot forge a message, rewrite a
+ * delivery state, invent a call, steal a thread or fake having read one.
  *
  * **Reuse, not duplication (the packet's first acceptance bullet).**
  *
@@ -36,6 +41,8 @@ import {
 export const CONVERSATION_MODULE = 'conversation';
 export const MESSAGE_MODULE = 'interaction-message';
 export const CALL_MODULE = 'interaction-call';
+export const ASSIGNMENT_MODULE = 'conversation-assignment';
+export const READ_MODULE = 'conversation-read';
 export const WORK_ACTIVITY_MODULE = 'work-activity';
 
 export const INTERACTIONS_PACKAGE = 'interactions';
@@ -89,11 +96,14 @@ const MAX_LABEL = 200;
 const MAX_ERROR_CODE = 120;
 const MAX_ID = 200;
 const MAX_CALL_SECONDS = 86400;
+const MAX_MEMBER = 64;
+const MAX_NOTE = 500;
 
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 const RESOURCE_RE = /^[a-z][a-z0-9-]*$/;
 const PACKAGE_RE = /^[a-z][a-z0-9-]*$/;
 const SOURCE_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9:._@/-]*$/;
+const MEMBER_RE = /^[A-Za-z0-9][A-Za-z0-9._@/-]*$/;
 
 export const bounds = Object.freeze({
   sourceKey: MAX_SOURCE_KEY,
@@ -102,6 +112,8 @@ export const bounds = Object.freeze({
   label: MAX_LABEL,
   errorCode: MAX_ERROR_CODE,
   callSeconds: MAX_CALL_SECONDS,
+  member: MAX_MEMBER,
+  note: MAX_NOTE,
 });
 
 /** @param {unknown} value @param {string} field @param {number} max */
@@ -164,6 +176,26 @@ export function validateSubject(value) {
     // snapshot everywhere it is rendered.
     label: optionalSafeText(subject.label, 'subject.label', MAX_LABEL),
   };
+}
+
+/**
+ * A team member id: an opaque string naming one person on the team, the same
+ * shape as the team author on an outbound message. It starts with a letter or
+ * a digit so prototype-pollution names (`__proto__`, `constructor`) never
+ * become owners or readers, and it stays short so it fits the deterministic
+ * read-state key with room to spare.
+ *
+ * @param {unknown} value @param {string} field
+ */
+export function validateMemberId(value, field) {
+  const member = safeText(value, field, MAX_MEMBER);
+  if (!MEMBER_RE.test(member) || member === '__proto__' || member === 'constructor' || member === 'prototype') {
+    throw new ValidationError(
+      `${field} must start with a letter or digit and hold only letters, digits, dots, underscores, @, slashes and hyphens`,
+      { field },
+    );
+  }
+  return member;
 }
 
 /** Where a row came from. Caller-asserted, exactly like a capability's `consumer`. */
@@ -279,6 +311,8 @@ function resolvedNames(moduleNames = {}) {
     conversation: moduleNames[CONVERSATION_MODULE] ?? CONVERSATION_MODULE,
     message: moduleNames[MESSAGE_MODULE] ?? MESSAGE_MODULE,
     call: moduleNames[CALL_MODULE] ?? CALL_MODULE,
+    assignment: moduleNames[ASSIGNMENT_MODULE] ?? ASSIGNMENT_MODULE,
+    read: moduleNames[READ_MODULE] ?? READ_MODULE,
     workActivity: moduleNames[WORK_ACTIVITY_MODULE] ?? WORK_ACTIVITY_MODULE,
   };
 }
@@ -297,6 +331,28 @@ function interactionServices(context) {
     );
   }
   return { conversations, messages, calls };
+}
+
+/**
+ * The ownership and read-state records. Required by the writes that keep
+ * them, optional on the reads: an application composed before these records
+ * existed still opens threads, and the thread says the ownership trail is
+ * unavailable rather than reporting no owner.
+ *
+ * @param {{modules: any, names: {assignment: string, read: string}}} context
+ */
+function inboxServices(context) {
+  const { names } = context;
+  const assignments = resolveModule(context.modules, names.assignment)?.service;
+  const reads = resolveModule(context.modules, names.read)?.service;
+  if (!assignments?.createManaged || !reads?.createManaged) {
+    throw new AppError(
+      'The interactions package is installed without its "conversation-assignment" and "conversation-read" records. '
+        + 'Apply all five manifests with `crm module create` before composing it.',
+      { code: 'INTERACTIONS_STORAGE_INVALID', status: 500 },
+    );
+  }
+  return { assignments, reads };
 }
 
 /**
@@ -338,9 +394,18 @@ export function validateConversationRequest(request) {
 }
 
 /**
- * Open one conversation: one thread with one customer on one channel.
+ * Open one conversation: one thread with one customer across channels.
  * Idempotent by source key: the key is the adapter's business identity for the
- * thread (provider + remote thread id), stable under every retry.
+ * thread (provider + remote thread id), stable under every retry. A new key
+ * for a customer that already has an open thread joins that thread — the
+ * channel on the request names where this message arrived, and the thread
+ * keeps messages from every channel in time order — so WhatsApp, Instagram
+ * and email with one customer stay one conversation. Only an `open` thread
+ * joins: a closed thread stays resolved, and the next message opens a fresh
+ * one. When two opens for one customer race, both rows exist and the earliest
+ * one is the thread every read joins; the check-then-create window between
+ * the lookup and the insert is the documented residual, exactly like the
+ * advance-action window this package already names.
  */
 export async function openConversation(context, request) {
   const names = resolvedNames(context.moduleNames);
@@ -365,7 +430,12 @@ export async function openConversation(context, request) {
   };
 
   const existing = (await conversations.listWhere({ sourceKey: input.sourceKey }))[0];
-  if (existing) return { conversation: replayOrConflict(existing, submitted, 'conversation'), replayed: true };
+  if (existing) {
+    return { conversation: replayOrConflict(existing, submitted, 'conversation'), replayed: true, joined: false };
+  }
+
+  const joined = await findOpenConversation(conversations, input.subject);
+  if (joined) return { conversation: joined, replayed: false, joined: true };
 
   let conversation;
   try {
@@ -383,9 +453,56 @@ export async function openConversation(context, request) {
     if (!isUniqueConflict(error)) throw error;
     const raced = (await conversations.listWhere({ sourceKey: input.sourceKey }))[0];
     if (!raced) throw error;
-    return { conversation: replayOrConflict(raced, submitted, 'conversation'), replayed: true };
+    return { conversation: replayOrConflict(raced, submitted, 'conversation'), replayed: true, joined: false };
   }
-  return { conversation, replayed: false };
+  return { conversation, replayed: false, joined: false };
+}
+
+/**
+ * The customer's open thread, if any: same ADR-030 subject envelope, still
+ * open. `subjectOwnerPackage` is matched in memory rather than in the query
+ * because a null owner package (every host-owned subject) is not an equality
+ * any query builder can be trusted to spell the same way twice. When legacy
+ * rows or a race left more than one open thread, the earliest one wins, by
+ * the same oldest-first order the timeline reads.
+ *
+ * @param {any} conversations
+ * @param {{resource: string, id: string, owner: string, ownerPackage: string|null}} subject
+ */
+async function findOpenConversation(conversations, subject) {
+  const candidates = await conversations.listWhere({
+    subjectResource: subject.resource,
+    subjectId: subject.id,
+    status: 'open',
+  });
+  const matching = candidates.filter((row) => (
+    row.subjectOwner === subject.owner
+    && (row.subjectOwnerPackage ?? null) === (subject.ownerPackage ?? null)
+  ));
+  if (matching.length === 0) return null;
+  return sortByStamp(matching)[0];
+}
+
+/**
+ * Oldest first, deterministically: the business stamp, then the row's own
+ * creation stamp, then its id — the same tiebreak the timeline reads, so the
+ * thread every read joins is the thread every read names.
+ *
+ * @param {any[]} rows
+ */
+function sortByStamp(rows) {
+  /** @param {unknown} a @param {unknown} b */
+  const lexical = (a, b) => {
+    const left = String(a ?? '');
+    const right = String(b ?? '');
+    if (left < right) return -1;
+    return left > right ? 1 : 0;
+  };
+  return [...rows].sort((a, b) => (
+    lexical(a.openedAt ?? a.assignedAt, b.openedAt ?? b.assignedAt)
+    || lexical(a.createdAt, b.createdAt)
+    || lexical(a.id, b.id)
+  ));
 }
 
 /** @param {unknown} request */
@@ -620,6 +737,240 @@ export async function logCall(context, request) {
 }
 
 /**
+ * Assign one conversation to one team member — or to nobody, which clears it.
+ * One row per handover, immutable: the rows for one conversation ARE the
+ * audit trail, the latest row names the current owner, and reassigning writes
+ * a new row rather than rewriting one. Idempotent by source key, like every
+ * other write in this package: same key with the same payload replays the
+ * stored row, a divergent payload behind the same key is refused 409. The
+ * compared payload carries the handover but not its stamp — `assignedAt` is
+ * when the row was written, not what the handover claims, exactly like
+ * `subjectLabel` on a conversation — so a retry that arrives later still
+ * replays instead of conflicting with its own stamp.
+ *
+ * @param {unknown} request
+ */
+export function validateAssignRequest(request) {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) {
+    throw new ValidationError('an assignment request object is required', { field: 'request' });
+  }
+  const value = /** @type {any} */ (request);
+  const rawAssignee = value.assigneeMemberId;
+  const assigneeMemberId = rawAssignee === undefined || rawAssignee === null
+    ? null
+    : validateMemberId(rawAssignee, 'assigneeMemberId');
+  return {
+    sourceKey: validateSourceKey(value.sourceKey, 'sourceKey'),
+    conversationId: safeText(value.conversationId, 'conversationId', MAX_ID),
+    assigneeMemberId,
+    note: optionalSafeText(value.note, 'note', MAX_NOTE),
+    source: validateSource(value.source),
+  };
+}
+
+/**
+ * @param {any} assignments
+ * @param {string} conversationId
+ */
+async function currentAssignmentRow(assignments, conversationId) {
+  const rows = await assignments.listWhere({ conversationId });
+  if (rows.length === 0) return null;
+  return sortByStamp(rows)[rows.length - 1];
+}
+
+export async function assignConversation(context, request) {
+  const names = resolvedNames(context.moduleNames);
+  const { conversations } = interactionServices({ modules: context.modules, names });
+  const { assignments } = inboxServices({ modules: context.modules, names });
+  const actor = context.actor;
+  // Ownership names who decided it: an anonymous handover would move a
+  // customer's thread with nobody accountable for the move.
+  const who = requireActor(actor);
+  const input = validateAssignRequest(request);
+  const source = bindSourcePackage(input.source, context.consumer);
+  const now = typeof context.now === 'function' ? context.now() : new Date().toISOString();
+
+  const conversation = await findConversationById(conversations, input.conversationId);
+  if (!conversation) throw new NotFoundError('conversation', input.conversationId);
+
+  const previousRow = await currentAssignmentRow(assignments, input.conversationId);
+  const previous = previousRow ? previousRow.assigneeMemberId ?? null : null;
+
+  const submitted = {
+    conversationId: input.conversationId,
+    assigneeMemberId: input.assigneeMemberId,
+    previousAssigneeMemberId: previous,
+    note: input.note,
+    sourcePackage: source.package,
+    sourceAction: source.action,
+  };
+
+  const existing = (await assignments.listWhere({ sourceKey: input.sourceKey }))[0];
+  if (existing) {
+    return {
+      assignment: replayOrConflict(existing, submitted, 'assignment'),
+      replayed: true,
+      previous,
+    };
+  }
+
+  let assignment;
+  try {
+    assignment = await assignments.createManaged({
+      sourceKey: input.sourceKey,
+      ...submitted,
+      assignedAt: now,
+      assignedByType: who.type,
+      assignedById: who.id,
+    }, { actor });
+  } catch (error) {
+    if (!isUniqueConflict(error)) throw error;
+    const raced = (await assignments.listWhere({ sourceKey: input.sourceKey }))[0];
+    if (!raced) throw error;
+    return { assignment: replayOrConflict(raced, submitted, 'assignment'), replayed: true, previous };
+  }
+  return { assignment, replayed: false, previous };
+}
+
+/**
+ * The ownership trail of one conversation, oldest first, with the current
+ * owner on top. Unknown conversations answer null — absence, never an empty
+ * trail presented as an unowned thread. When the assignment records were
+ * never applied, the trail reports itself unavailable rather than reporting
+ * no owner.
+ */
+export async function readConversationAssignment({ modules, moduleNames }, conversationId) {
+  const names = resolvedNames(moduleNames);
+  const id = safeText(conversationId, 'conversationId', MAX_ID);
+  const conversations = resolveModule(modules, names.conversation)?.service;
+  if (!conversations?.listWhere) {
+    throw new AppError('The interactions package is installed without its records', {
+      code: 'INTERACTIONS_STORAGE_INVALID', status: 500,
+    });
+  }
+  const found = await findConversationById(conversations, id);
+  if (!found) return null;
+  const assignments = resolveModule(modules, names.assignment)?.service;
+  if (!assignments?.listWhere) {
+    return Object.freeze({
+      available: false,
+      assignee: null,
+      assignedAt: null,
+      assignedBy: null,
+      history: Object.freeze([]),
+      reason: 'the conversation-assignment record is not applied in this application, so the ownership trail is not available — this is not a claim that the thread is unowned',
+    });
+  }
+  const rows = await assignments.listWhere({ conversationId: id });
+  const history = Object.freeze(sortByStamp(rows).map((row) => Object.freeze({
+    assignee: row.assigneeMemberId ?? null,
+    previous: row.previousAssigneeMemberId ?? null,
+    note: row.note ?? null,
+    assignedAt: row.assignedAt,
+    assignedBy: Object.freeze({ type: row.assignedByType, id: row.assignedById }),
+  })));
+  const current = history.length > 0 ? history[history.length - 1] : null;
+  return Object.freeze({
+    available: true,
+    assignee: current ? current.assignee : null,
+    assignedAt: current ? current.assignedAt : null,
+    assignedBy: current ? current.assignedBy : null,
+    history,
+  });
+}
+
+/**
+ * Mark one conversation read for the acting member: the watermark moves to
+ * now. There is exactly one row per conversation and member, keyed
+ * deterministically, so marking read twice updates the same row. The member
+ * is always the actor — nobody marks another member read.
+ */
+export async function markConversationRead(context, request) {
+  const names = resolvedNames(context.moduleNames);
+  const { conversations } = interactionServices({ modules: context.modules, names });
+  const { reads } = inboxServices({ modules: context.modules, names });
+  const actor = context.actor;
+  // A read watermark without a reader would store that somebody saw the
+  // customer's words with nobody saying who.
+  const who = requireActor(actor);
+  if (!request || typeof request !== 'object' || Array.isArray(request)) {
+    throw new ValidationError('a mark-read request object is required', { field: 'request' });
+  }
+  const value = /** @type {any} */ (request);
+  const conversationId = safeText(value.conversationId, 'conversationId', MAX_ID);
+  bindSourcePackage(validateSource(value.source), context.consumer);
+  const memberId = validateMemberId(who.id, 'memberId');
+  const now = typeof context.now === 'function' ? context.now() : new Date().toISOString();
+
+  const conversation = await findConversationById(conversations, conversationId);
+  if (!conversation) throw new NotFoundError('conversation', conversationId);
+
+  const sourceKey = `read:${conversationId}:${memberId}`;
+  const existing = (await reads.listWhere({ sourceKey }))[0];
+  if (existing) {
+    const read = await reads.applyManaged(existing.id, {
+      lastReadAt: now,
+      updatedAt: now,
+      updatedByType: who.type,
+      updatedById: who.id,
+    }, { actor });
+    return { read, created: false };
+  }
+  try {
+    const read = await reads.createManaged({
+      sourceKey,
+      conversationId,
+      memberId,
+      lastReadAt: now,
+      updatedAt: now,
+      updatedByType: who.type,
+      updatedById: who.id,
+    }, { actor });
+    return { read, created: true };
+  } catch (error) {
+    if (!isUniqueConflict(error)) throw error;
+    const raced = (await reads.listWhere({ sourceKey }))[0];
+    if (!raced) throw error;
+    const read = await reads.applyManaged(raced.id, {
+      lastReadAt: now,
+      updatedAt: now,
+      updatedByType: who.type,
+      updatedById: who.id,
+    }, { actor });
+    return { read, created: false };
+  }
+}
+
+/**
+ * One member's unread on one conversation: inbound messages later than the
+ * member's watermark. Outbound messages never count — the team does not
+ * unread its own words — and a channel delivery confirmation never moves a
+ * team watermark, so this count and a message's `read` state stay two
+ * different facts. Without a watermark every inbound message is unread.
+ */
+export async function unreadCount({ modules, moduleNames }, conversationId, memberId) {
+  const names = resolvedNames(moduleNames);
+  const id = safeText(conversationId, 'conversationId', MAX_ID);
+  const member = validateMemberId(memberId, 'memberId');
+  const conversations = resolveModule(modules, names.conversation)?.service;
+  const messages = resolveModule(modules, names.message)?.service;
+  const reads = resolveModule(modules, names.read)?.service;
+  if (!conversations?.listWhere || !messages?.listWhere || !reads?.listWhere) {
+    throw new AppError('The interactions package is installed without its records', {
+      code: 'INTERACTIONS_STORAGE_INVALID', status: 500,
+    });
+  }
+  const found = await findConversationById(conversations, id);
+  if (!found) throw new NotFoundError('conversation', id);
+  const watermark = (await reads.listWhere({ conversationId: id, memberId: member }))[0]?.lastReadAt ?? null;
+  const inbound = await messages.listWhere({ conversationId: id, direction: 'inbound' });
+  const unread = watermark === null
+    ? inbound.length
+    : inbound.filter((row) => String(row.occurredAt ?? '') > String(watermark)).length;
+  return Object.freeze({ conversationId: id, memberId: member, unread, lastReadAt: watermark });
+}
+
+/**
  * Order one subject's history oldest-first, deterministically.
  *
  * `occurredAt` is the business instant and decides the order. Two entries at
@@ -759,6 +1110,7 @@ export async function readConversationThread({ modules, moduleNames }, conversat
   }
   const found = await findConversationById(conversations, id);
   if (!found) return null;
+  const assignment = await readConversationAssignment({ modules, moduleNames }, id);
   const entries = sortEntries([
     ...(await messages.listWhere({ conversationId: id })).map((row) => Object.freeze({
       entry: 'message', id: row.id, direction: row.direction, channel: row.channel,
@@ -773,7 +1125,14 @@ export async function readConversationThread({ modules, moduleNames }, conversat
       occurredAt: row.occurredAt, createdAt: row.createdAt ?? null,
     })),
   ]);
-  return Object.freeze({ conversation: Object.freeze({ ...found }), entries: Object.freeze(entries) });
+  return Object.freeze({
+    conversation: Object.freeze({ ...found }),
+    // The thread carries its owner: readConversationAssignment answers null
+    // only for unknown conversations, and this one exists, so the trail is
+    // always present here — unavailable, never absent, on old compositions.
+    assignment: Object.freeze({ ...(assignment ?? { available: false }) }),
+    entries: Object.freeze(entries),
+  });
 }
 
 /**
@@ -792,10 +1151,10 @@ async function findConversationById(service, id) {
 
 /**
  * `interaction-log@1` — the only write path: open conversations, log messages
- * and calls. It is created with the caller's runtime handles and writes
- * through them; every write is one row, idempotent by source key, so a retry
- * replays rather than duplicates. It hands out no service, no table and no
- * query handle.
+ * and calls, hand threads to owners, move read watermarks. It is created with
+ * the caller's runtime handles and writes through them; every write is one
+ * row, idempotent by source key, so a retry replays rather than duplicates.
+ * It hands out no service, no table and no query handle.
  *
  * @param {Record<string, string>} [moduleNames]
  */
@@ -806,13 +1165,17 @@ export function createInteractionLogCapability(moduleNames) {
       get: (name) => context.modules.get(
         name === CONVERSATION_MODULE ? names.conversation
           : name === MESSAGE_MODULE ? names.message
-            : name === CALL_MODULE ? names.call : name,
+            : name === CALL_MODULE ? names.call
+              : name === ASSIGNMENT_MODULE ? names.assignment
+                : name === READ_MODULE ? names.read : name,
       ),
     },
     moduleNames: {
       [CONVERSATION_MODULE]: names.conversation,
       [MESSAGE_MODULE]: names.message,
       [CALL_MODULE]: names.call,
+      [ASSIGNMENT_MODULE]: names.assignment,
+      [READ_MODULE]: names.read,
     },
     actor: context.actor,
     now: context.now,
@@ -822,8 +1185,9 @@ export function createInteractionLogCapability(moduleNames) {
     name: 'interaction-log',
     version: 1,
     description:
-      'Append interaction evidence — open a conversation, log a message or a call — inside the caller\'s handles. '
-      + 'Every write is one row, idempotent by source key. Grants no read beyond the written row, no update and no delete.',
+      'Append interaction evidence — open a conversation, log a message or a call, assign its owner, mark it read — '
+      + 'inside the caller\'s handles. Every write is one row, idempotent by source key. '
+      + 'Grants no read beyond the written row, no update and no delete.',
     /** @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string}} context */
     create(context = {}) {
       const modules = context?.modules;
@@ -841,6 +1205,10 @@ export function createInteractionLogCapability(moduleNames) {
         logMessage: (request) => logMessage(scope, request),
         /** @param {unknown} request */
         logCall: (request) => logCall(scope, request),
+        /** @param {unknown} request */
+        assignConversation: (request) => assignConversation(scope, request),
+        /** @param {unknown} request */
+        markConversationRead: (request) => markConversationRead(scope, request),
       });
     },
   };
@@ -859,7 +1227,8 @@ export function createInteractionTimelineCapability(moduleNames) {
     version: 1,
     description:
       'Read one subject\'s interaction history — its messages and calls plus the work-activity entries on the same '
-      + 'subject, oldest first. Read-only: frozen rows, no storage handle, no write path.',
+      + 'subject, oldest first — one thread with its ownership trail, and one member\'s unread on a thread. '
+      + 'Read-only: frozen rows, no storage handle, no write path.',
     /** @param {{modules: any}} context */
     create(context = {}) {
       const modules = context?.modules;
@@ -874,6 +1243,8 @@ export function createInteractionTimelineCapability(moduleNames) {
           [CONVERSATION_MODULE]: names.conversation,
           [MESSAGE_MODULE]: names.message,
           [CALL_MODULE]: names.call,
+          [ASSIGNMENT_MODULE]: names.assignment,
+          [READ_MODULE]: names.read,
           [WORK_ACTIVITY_MODULE]: names.workActivity,
         },
       };
@@ -883,6 +1254,10 @@ export function createInteractionTimelineCapability(moduleNames) {
         timeline: (subject) => readTimeline(fullScope, subject),
         /** @param {string} conversationId */
         conversationThread: (conversationId) => readConversationThread(fullScope, conversationId),
+        /** @param {string} conversationId */
+        assignment: (conversationId) => readConversationAssignment(fullScope, conversationId),
+        /** @param {string} conversationId @param {string} memberId */
+        unread: (conversationId, memberId) => unreadCount(fullScope, conversationId, memberId),
       });
     },
   };
@@ -966,6 +1341,122 @@ export function buildCloseConversationAction(moduleNames) {
     async execute({ record, actor, managed, now }) {
       const message = await managed(record.id, { status: 'closed', closedAt: now() });
       return { conversation: message };
+    },
+  };
+}
+
+/**
+ * `assign` — hand one conversation to one team member, or clear it.
+ *
+ * A repeated handover to the member who already owns the thread replays
+ * instead of writing audit noise: the default source key names the
+ * conversation and the resulting owner, so the same decision retried is the
+ * same key with the same payload. A handover to someone else is a new row
+ * with the previous owner named on it. Clearing names no owner and keeps the
+ * previous one the same way.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function buildAssignConversationAction(moduleNames) {
+  const names = resolvedNames(moduleNames);
+  return {
+    module: names.conversation,
+    name: 'assign',
+    label: 'Assign conversation',
+    description: 'Hand this thread to one team member, or clear its owner. Every handover is kept as audit; repeating the current owner replays.',
+    actionContract: 1,
+    stateField: 'status',
+    fromStates: ['open', 'closed'],
+    input: [
+      { name: 'assigneeMemberId', type: 'string', required: false, hint: 'The team member who owns the thread now. Omit to clear the owner.' },
+      { name: 'note', type: 'string', required: false, hint: 'One line saying why the thread moves.' },
+      { name: 'sourceKey', type: 'string', required: false, hint: 'Idempotency key. Defaults to naming this conversation and its resulting owner.' },
+    ],
+    /** @param {any} ctx */
+    async execute({ record, input, actor, modules, now }) {
+      const assigneeMemberId = input.assigneeMemberId === undefined || input.assigneeMemberId === null
+        || String(input.assigneeMemberId).trim() === ''
+        ? null
+        : validateMemberId(input.assigneeMemberId, 'assigneeMemberId');
+      const note = input.note === undefined || input.note === null || String(input.note).trim() === ''
+        ? null
+        : optionalSafeText(input.note, 'note', MAX_NOTE);
+      const sourceKey = input.sourceKey === undefined || input.sourceKey === null
+      || String(input.sourceKey).trim() === ''
+        ? `assign:${record.id}:${assigneeMemberId ?? 'unassigned'}`
+        : validateSourceKey(input.sourceKey, 'sourceKey');
+      const scope = {
+        modules,
+        moduleNames: {
+          [CONVERSATION_MODULE]: names.conversation,
+          [ASSIGNMENT_MODULE]: names.assignment,
+        },
+        actor,
+        now,
+        consumer: INTERACTIONS_PACKAGE,
+      };
+      const written = await assignConversation(scope, {
+        sourceKey,
+        conversationId: record.id,
+        assigneeMemberId,
+        note,
+        source: { package: INTERACTIONS_PACKAGE, action: 'conversation.assign' },
+      });
+      return { assignment: written.assignment, replayed: written.replayed, previous: written.previous };
+    },
+  };
+}
+
+/**
+ * `mark-read` — move the acting member's watermark on this conversation to
+ * now. There is exactly one watermark row per conversation and member, so
+ * reading again updates the same row. The member is always the actor: the
+ * action takes no member input, so nobody marks another member read.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function buildMarkReadConversationAction(moduleNames) {
+  const names = resolvedNames(moduleNames);
+  return {
+    module: names.conversation,
+    name: 'mark-read',
+    label: 'Mark conversation read',
+    description: 'Move my read watermark on this thread to now. One row per member: reading again updates it.',
+    actionContract: 1,
+    stateField: 'status',
+    fromStates: ['open', 'closed'],
+    input: [],
+    /** @param {any} ctx */
+    async execute({ record, actor, modules, now }) {
+      const scope = {
+        modules,
+        moduleNames: {
+          [CONVERSATION_MODULE]: names.conversation,
+          [MESSAGE_MODULE]: names.message,
+          [READ_MODULE]: names.read,
+        },
+        actor,
+        now,
+        consumer: INTERACTIONS_PACKAGE,
+      };
+      const marked = await markConversationRead(scope, {
+        conversationId: record.id,
+        source: { package: INTERACTIONS_PACKAGE, action: 'conversation.mark-read' },
+      });
+      const who = requireActor(actor);
+      const unread = await unreadCount(
+        {
+          modules,
+          moduleNames: {
+            [CONVERSATION_MODULE]: names.conversation,
+            [MESSAGE_MODULE]: names.message,
+            [READ_MODULE]: names.read,
+          },
+        },
+        record.id,
+        who.id,
+      );
+      return { read: marked.read, created: marked.created, unread: unread.unread };
     },
   };
 }

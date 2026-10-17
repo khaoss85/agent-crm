@@ -1,0 +1,18 @@
+{
+  "manifestVersion": 1,
+  "name": "conversation-assignment",
+  "table": "conversation_assignments",
+  "description": "One assignment event on a conversation: which team member owns the thread now, who decided it, and when. Every row is immutable history, so the rows for one conversation ARE the audit trail: the latest row names the current owner, and reassigning writes a new row rather than rewriting one. An unassigned conversation is a row with no assignee, never a deleted row. Every field is managed: an assignment exists only through the interactions package's log capability or its assign action, and no client can create, forge or rewrite one. A member id is an opaque team string, the same shape as the team author on an outbound message: there is no roster table here and none is created.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "conversationId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "assigneeMemberId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "previousAssigneeMemberId", "type": "string", "writable": "managed" },
+    { "name": "note", "type": "string", "writable": "managed" },
+    { "name": "assignedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "assignedByType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "assignedById", "type": "string", "writable": "managed" },
+    { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
+    { "name": "sourceAction", "type": "string", "writable": "managed" }
+  ]
+}

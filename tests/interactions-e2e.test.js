@@ -16,7 +16,8 @@ const ACTOR = { type: 'user', id: 'e2e' };
 const SUBJECT = { resource: 'contact', id: 'c-presti', owner: 'host' };
 const SOURCE = { package: 'host', action: 'seed' };
 
-const INTERACTION_MANIFESTS = ['conversation.module.json', 'interaction-message.module.json', 'interaction-call.module.json'];
+const INTERACTION_MANIFESTS = ['conversation.module.json', 'interaction-message.module.json', 'interaction-call.module.json',
+  'conversation-assignment.module.json', 'conversation-read.module.json'];
 const WORK_MANIFESTS = ['work-task.module.json', 'work-activity.module.json'];
 
 function cli(root, args) {
@@ -399,7 +400,7 @@ test('the log and timeline capabilities open for a declared consumer, with prove
     consumer: 'timeline-probe', capability: 'interaction-log', version: 1,
     context: { modules: app.modules, actor: ACTOR },
   });
-  assert.deepEqual(Object.keys(log).sort(), ['capabilityContract', 'logCall', 'logMessage', 'openConversation']);
+  assert.deepEqual(Object.keys(log).sort(), ['assignConversation', 'capabilityContract', 'logCall', 'logMessage', 'markConversationRead', 'openConversation']);
   const opened = await log.openConversation({
     sourceKey: 'wa:thread:probe', subject: SUBJECT, channel: 'whatsapp',
     source: { package: 'timeline-probe', action: 'probe' },
@@ -446,7 +447,7 @@ test('interaction records are evidence: no public write path, and the schema pub
   });
 
   const schema = await client.schema();
-  for (const name of ['conversation', 'interaction-message', 'interaction-call']) {
+  for (const name of ['conversation', 'interaction-message', 'interaction-call', 'conversation-assignment', 'conversation-read']) {
     const meta = schema.generatedModules.find((m) => m.name === name);
     assert.deepEqual(meta.capabilities, ['get', 'list'], name);
     await assert.rejects(
@@ -545,8 +546,8 @@ test('interactions conforms to the domain-package contract it ships', () => {
     expected: {
       name: 'interactions',
       version: 1,
-      resources: ['conversation', 'interaction-message', 'interaction-call'],
-      actions: ['conversation.close', 'conversation.open-opportunity', 'interaction-message.advance'],
+      resources: ['conversation', 'interaction-message', 'interaction-call', 'conversation-assignment', 'conversation-read'],
+      actions: ['conversation.assign', 'conversation.close', 'conversation.mark-read', 'conversation.open-opportunity', 'interaction-message.advance'],
       requires: [],
       provides: ['interaction-log@1', 'interaction-timeline@1'],
     },
@@ -555,4 +556,254 @@ test('interactions conforms to the domain-package contract it ships', () => {
   for (const claim of ['message sending or delivery', 'scheduling', 'call recording or consent']) {
     assert.ok(metadata.notModeled.includes(claim), claim);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Assignment: one owner per conversation, every handover kept as audit
+// ---------------------------------------------------------------------------
+
+test('a conversation is assigned, reassigned and unassigned with a full audit trail', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'assign.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, assignConversation, readConversationThread } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:assign', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+
+  const scope = { modules: app.modules, moduleNames: {} };
+  const first = await assignConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'assign:1', conversationId: conversation.id, assigneeMemberId: 'guido', source: SOURCE,
+  });
+  assert.equal(first.replayed, false);
+  assert.equal(first.assignment.assigneeMemberId, 'guido');
+  assert.equal(first.assignment.previousAssigneeMemberId, null);
+  assert.equal(first.previous, null);
+
+  // Same key, same payload: replayed, never a second row.
+  const replay = await assignConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'assign:1', conversationId: conversation.id, assigneeMemberId: 'guido', source: SOURCE,
+  });
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.assignment.id, first.assignment.id);
+
+  // Same key, divergent payload: refused 409, never adopted.
+  await assert.rejects(
+    assignConversation({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'assign:1', conversationId: conversation.id, assigneeMemberId: 'maria', source: SOURCE,
+    }),
+    (error) => error.code === 'INTERACTIONS_LOG_CONFLICT' && error.status === 409,
+  );
+
+  // Reassign: a new row, the previous owner named on it.
+  const second = await assignConversation({ modules: app.modules, actor: { type: 'user', id: 'maria' } }, {
+    sourceKey: 'assign:2', conversationId: conversation.id, assigneeMemberId: 'maria',
+    note: 'passo a Maria per il preventivo', source: SOURCE,
+  });
+  assert.equal(second.assignment.assigneeMemberId, 'maria');
+  assert.equal(second.assignment.previousAssigneeMemberId, 'guido');
+  assert.equal(second.previous, 'guido');
+
+  // The thread carries the current owner and the whole history, oldest first.
+  const thread = await readConversationThread(scope, conversation.id);
+  assert.equal(thread.assignment.assignee, 'maria');
+  assert.equal(thread.assignment.assignedBy.id, 'maria');
+  assert.deepEqual(thread.assignment.history.map((entry) => entry.assignee), ['guido', 'maria']);
+
+  // Unassign: a row with no assignee, never a deleted row.
+  const cleared = await assignConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'assign:3', conversationId: conversation.id, assigneeMemberId: null, source: SOURCE,
+  });
+  assert.equal(cleared.assignment.assigneeMemberId, null);
+  assert.equal(cleared.previous, 'maria');
+  const reopened = await readConversationThread(scope, conversation.id);
+  assert.equal(reopened.assignment.assignee, null);
+  assert.equal(reopened.assignment.history.length, 3);
+
+  // Hostile and empty owners are refused, never stored.
+  await assert.rejects(
+    assignConversation({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'assign:bad', conversationId: conversation.id, assigneeMemberId: '  ', source: SOURCE,
+    }),
+    (error) => error.code === 'VALIDATION_ERROR' && error.status === 400,
+  );
+  await assert.rejects(
+    assignConversation({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'assign:bad2', conversationId: conversation.id, assigneeMemberId: '__proto__', source: SOURCE,
+    }),
+    (error) => error.code === 'VALIDATION_ERROR' && error.status === 400,
+  );
+  await assert.rejects(
+    assignConversation({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'assign:ghost', conversationId: 'no-such-conversation', assigneeMemberId: 'guido', source: SOURCE,
+    }),
+    (error) => error.code === 'NOT_FOUND' && error.status === 404,
+  );
+});
+
+test('the assign action replays a repeated handover instead of writing audit noise', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'assign-action.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:assign-action', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const first = await run(app, 'conversation', 'assign', conversation.id, { assigneeMemberId: 'guido' });
+  assert.equal(first.result.assignment.assigneeMemberId, 'guido');
+  assert.equal(first.result.replayed, false);
+  const again = await run(app, 'conversation', 'assign', conversation.id, { assigneeMemberId: 'guido' });
+  assert.equal(again.result.replayed, true);
+  assert.equal(
+    app.modules.get('conversation-assignment').service.countWhere({ conversationId: conversation.id }),
+    1,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Team read state: per-member unread, apart from channel delivery
+// ---------------------------------------------------------------------------
+
+test('team unread is per member, counts inbound only, and ignores channel delivery', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'read.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, markConversationRead, unreadCount } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:read', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const scope = { modules: app.modules, moduleNames: {} };
+  const at = (sourceKey, direction, extra = {}) => logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey, conversationId: conversation.id, direction,
+    channel: 'whatsapp', body: 'domanda sui pacchetti', remoteHandle: '+3902000001',
+    ...(direction === 'outbound' ? { teamAuthorId: 'guido' } : {}),
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:01.000Z', source: SOURCE, ...extra,
+  });
+  await at('wa:msg:r:1', 'inbound');
+  await at('wa:msg:r:2', 'inbound');
+
+  assert.equal((await unreadCount(scope, conversation.id, 'guido')).unread, 2);
+
+  // Guido reads: his count clears, Maria's does not.
+  let clock = Date.parse('2026-09-15T10:05:00.000Z');
+  const marked = await markConversationRead(
+    { modules: app.modules, actor: { type: 'user', id: 'guido' }, now: () => new Date(clock).toISOString() },
+    { conversationId: conversation.id, source: SOURCE },
+  );
+  assert.equal(marked.created, true);
+  assert.equal((await unreadCount(scope, conversation.id, 'guido')).unread, 0);
+  assert.equal((await unreadCount(scope, conversation.id, 'maria')).unread, 2);
+
+  // A new customer message unreads whoever has read; the team's own reply does not.
+  clock = Date.parse('2026-09-15T10:06:00.000Z');
+  await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:r:3', conversationId: conversation.id, direction: 'inbound',
+    channel: 'whatsapp', body: 'ci sono ancora?', remoteHandle: '+3902000001',
+    subject: SUBJECT, occurredAt: new Date(clock).toISOString(), source: SOURCE,
+  });
+  assert.equal((await unreadCount(scope, conversation.id, 'guido')).unread, 1);
+  assert.equal((await unreadCount(scope, conversation.id, 'maria')).unread, 3);
+  const outbound = await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:r:out', conversationId: conversation.id, direction: 'outbound',
+    channel: 'whatsapp', body: 'Si, dica pure.', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: new Date(clock + 1000).toISOString(), source: SOURCE,
+  });
+  assert.equal((await unreadCount(scope, conversation.id, 'guido')).unread, 1);
+
+  // A channel delivery confirmation is not a team read: advancing the team's
+  // own message to read moves nothing on any member's watermark.
+  await run(app, 'interaction-message', 'advance', outbound.message.id, { to: 'delivered' });
+  await run(app, 'interaction-message', 'advance', outbound.message.id, { to: 'read' });
+  assert.equal((await unreadCount(scope, conversation.id, 'guido')).unread, 1);
+  assert.equal((await unreadCount(scope, conversation.id, 'maria')).unread, 3);
+
+  // Reading again is an update of the same row, never a second row.
+  clock = Date.parse('2026-09-15T10:07:00.000Z');
+  const again = await markConversationRead(
+    { modules: app.modules, actor: { type: 'user', id: 'guido' }, now: () => new Date(clock).toISOString() },
+    { conversationId: conversation.id, source: SOURCE },
+  );
+  assert.equal(again.created, false);
+  assert.equal((await unreadCount(scope, conversation.id, 'guido')).unread, 0);
+  assert.equal(
+    app.modules.get('conversation-read').service.countWhere({ conversationId: conversation.id }),
+    1,
+  );
+
+  // The mark-read action marks the acting member through the record runtime.
+  clock = Date.parse('2026-09-15T10:08:00.000Z');
+  await run(app, 'conversation', 'mark-read', conversation.id, {}, { type: 'user', id: 'maria' });
+  assert.equal((await unreadCount(scope, conversation.id, 'maria')).unread, 0);
+});
+
+// ---------------------------------------------------------------------------
+// One conversation per customer: channels join the same thread in time order
+// ---------------------------------------------------------------------------
+
+test('one customer keeps one conversation across channels, oldest first', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'unified.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, readConversationThread } = await interactionsFrom(root);
+  const scope = { modules: app.modules, moduleNames: {} };
+
+  const first = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:uni', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  assert.equal(first.joined, false);
+
+  // The same customer on Instagram: no new conversation, the thread is joined.
+  const second = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'ig:thread:uni', subject: SUBJECT, channel: 'instagram', source: SOURCE,
+  });
+  assert.equal(second.conversation.id, first.conversation.id);
+  assert.equal(second.joined, true);
+  assert.equal(second.replayed, false);
+
+  // Same key, divergent channel: still refused 409, never adopted.
+  await assert.rejects(
+    openConversation({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'wa:thread:uni', subject: SUBJECT, channel: 'instagram', source: SOURCE,
+    }),
+    (error) => error.code === 'INTERACTIONS_LOG_CONFLICT' && error.status === 409,
+  );
+
+  // Messages from three channels land on the one thread, oldest first.
+  const body = (sourceKey, channel, direction, occurredAt, extra = {}) => logMessage(
+    { modules: app.modules, actor: ACTOR },
+    {
+      sourceKey, conversationId: first.conversation.id, direction, channel,
+      body: `${channel} ciao`, remoteHandle: '+3902000001',
+      ...(direction === 'outbound' ? { teamAuthorId: 'guido' } : {}),
+      subject: SUBJECT, occurredAt, source: SOURCE, ...extra,
+    },
+  );
+  await body('ig:msg:u:1', 'instagram', 'inbound', '2026-09-15T10:00:02.000Z');
+  await body('wa:msg:u:1', 'whatsapp', 'inbound', '2026-09-15T10:00:01.000Z');
+  await body('em:msg:u:1', 'email', 'outbound', '2026-09-15T10:00:03.000Z');
+  const thread = await readConversationThread(scope, first.conversation.id);
+  assert.deepEqual(thread.entries.map((entry) => entry.channel), ['whatsapp', 'instagram', 'email']);
+
+  // A different customer still gets their own conversation.
+  const other = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:other', subject: { resource: 'contact', id: 'c-altro', owner: 'host' },
+    channel: 'whatsapp', source: SOURCE,
+  });
+  assert.notEqual(other.conversation.id, first.conversation.id);
+  assert.equal(other.joined, false);
+
+  // A closed thread stays resolved: the next message opens a fresh one.
+  await run(app, 'conversation', 'close', first.conversation.id, {});
+  const fresh = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:uni:2', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  assert.notEqual(fresh.conversation.id, first.conversation.id);
+  assert.equal(fresh.joined, false);
 });
