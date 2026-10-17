@@ -24,13 +24,18 @@ import { verifyHmacWebhook } from './crypto.js';
  *   scheme. Accepted only when `config.testOnly` is true — a
  *   production adapter refuses it like any other malformed event.
  *
- * The reply window (Meta's rule, enforced before the provider): a
- * standard reply needs an inbound from the same user within the last
- * 24 hours; a `HUMAN_AGENT`-tagged reply within the last 7 days. The
- * adapter feeds that memory from every Graph inbound it normalizes, so
- * the rule reads what the provider actually delivered, never a second
- * clock. Sends to the bound page account itself are the kit/self-test
- * loopback and bypass the window only while `testOnly` is true.
+ * The reply window (Meta's rule, enforced at queue time before the
+ * provider): a standard reply needs an inbound from the same user within
+ * the last 24 hours; a `HUMAN_AGENT`-tagged reply within the last 7 days.
+ * The window reads what the provider actually delivered, per space and
+ * connection: operations resolves the latest applied inbox instant for the
+ * recipient's conversation and hands it to `normalizeOutbound` as
+ * `{ lastInboundAt }` — a caller-supplied instant is never trusted, and
+ * the adapter keeps no per-user memory of its own (one space can never
+ * send on another space's consent, one page never on another page's).
+ * Without an observed inbound the reply refuses with
+ * CHANNEL_WINDOW_CLOSED. Sends to the bound page itself are ordinary
+ * recipients: the old test-only loopback bypass is gone.
  *
  * Real credentials do not exist yet (owner decision MEM_ACC_DECISIONS):
  * delivery runs against the injected fake transport — the same
@@ -45,6 +50,8 @@ export const INSTAGRAM_HUMAN_AGENT_TAG = 'HUMAN_AGENT';
 export const INSTAGRAM_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Human-agent-tagged replies ride 7 days (the provider enforces the rest). */
 export const INSTAGRAM_TAG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** Provider timestamps past this skew are refused, never trusted. */
+export const INSTAGRAM_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
 const MAX_ID = 256;
 const MAX_TEXT = 4096;
 const HUB_SIGNATURE_HEADER = 'x-hub-signature-256';
@@ -93,7 +100,10 @@ export function instagramWebhookHeaders(rawBody, secret) {
 }
 
 /** Build one provider-native Graph webhook body (tests only). */
-export function instagramEventBody({ mid, sender = 'ig-user-1', recipient = 'ig-page-1', text = 'Ciao', timestampMs = null }) {
+export function instagramEventBody({
+  mid, sender = 'ig-user-1', recipient = 'ig-page-1', text = 'Ciao', timestampMs = null,
+  echo = false, extra = [],
+}) {
   return JSON.stringify({
     object: 'instagram',
     entry: [{
@@ -103,9 +113,17 @@ export function instagramEventBody({ mid, sender = 'ig-user-1', recipient = 'ig-
         sender: { id: sender },
         recipient: { id: recipient },
         timestamp: timestampMs ?? Date.now(),
+        ...(echo ? { is_echo: true } : {}),
         message: { mid, text },
-      }],
+      }, ...extra],
     }],
+  });
+}
+
+/** Outside the window the reply refuses fail-closed: no inbound, no send. */
+function windowClosed() {
+  throw new AppError('Instagram reply window is closed: reply within 24 hours of their message (7 days with the HUMAN_AGENT tag)', {
+    code: 'CHANNEL_WINDOW_CLOSED', status: 403,
   });
 }
 
@@ -128,15 +146,16 @@ export function createInstagramChannelAdapter(options = {}) {
   const pageId = options.pageId ?? 'ig-page-fake';
   const testOnly = options.testOnly ?? true;
   const nowMs = typeof options.nowMs === 'function' ? options.nowMs : () => Date.now();
-  /** Recipient user id -> ms of their latest inbound (the window memory). */
-  const lastInboundMs = new Map();
+  // The adapter keeps no per-user window memory: the reply window reads the
+  // persisted inbox per (space, connection) through the `outboundWindow`
+  // capability below, so one space can never send on another's consent.
   const state = {
     mode: 'ok',
     flakyRemaining: 0,
     /** @type {Map<string, {providerMessageId: string, message: any}>} */
     sentByKey: new Map(),
     sendCalls: 0,
-    lastInboundMs,
+    seedCounter: 0,
   };
 
   const api = {
@@ -151,16 +170,14 @@ export function createInstagramChannelAdapter(options = {}) {
       state.flakyRemaining = 0;
       state.sentByKey.clear();
       state.sendCalls = 0;
+      state.seedCounter = 0;
     },
     sentMessages() {
       return [...state.sentByKey.values()].map((entry) => entry.message);
     },
-    lastInboundOf(recipient) {
-      return state.lastInboundMs.get(recipient) ?? null;
-    },
   };
 
-  /** Normalize one Graph messaging event; feeds the window memory. */
+  /** Normalize one Graph messaging event (a single customer text message). */
   function normalizeGraphEvent(messaging) {
     const item = messaging && typeof messaging === 'object' ? messaging : null;
     const senderId = item?.sender?.id;
@@ -183,7 +200,12 @@ export function createInstagramChannelAdapter(options = {}) {
     if (!Number.isSafeInteger(stamp)) malformed('timestamp must be an integer');
     // Graph stamps messaging events in milliseconds; accept seconds too.
     const atMs = stamp < 1e12 ? stamp * 1000 : stamp;
-    state.lastInboundMs.set(senderId, atMs);
+    // Provider timestamps are trusted only within a bounded skew: a
+    // future-dated inbound would otherwise hold the reply window open
+    // indefinitely (a negative age never exceeds any bound).
+    if (atMs - nowMs() > INSTAGRAM_TIMESTAMP_SKEW_MS) {
+      malformed('timestamp is too far in the future');
+    }
     return {
       providerEventId: mid,
       subject: `${SUBJECT_PREFIX}${senderId}`,
@@ -250,22 +272,47 @@ export function createInstagramChannelAdapter(options = {}) {
           if (parsed.object !== undefined && parsed.object !== 'instagram') {
             malformed(`unexpected webhook object "${String(parsed.object).slice(0, 64)}"`);
           }
+          // One delivery carries at most one customer message into one
+          // inbox row: echoes off our own page, read receipts and
+          // non-text items are skipped first, and a batch of two or more
+          // texts is refused loudly instead of silently dropping every
+          // message but the first — the provider redelivers singly.
+          const candidates = [];
           for (const entry of parsed.entry) {
             const messaging = Array.isArray(entry?.messaging) ? entry.messaging : [];
             for (const item of messaging) {
-              if (item && typeof item === 'object' && item.message && typeof item.message === 'object'
-                && typeof item.message.text === 'string') {
-                return normalizeGraphEvent(item);
-              }
+              if (!item || typeof item !== 'object') continue;
+              if (item.is_echo === true) continue;
+              if (item.read && typeof item.read === 'object') continue;
+              const text = item.message && typeof item.message === 'object' ? item.message.text : undefined;
+              if (typeof text !== 'string') continue;
+              candidates.push(item);
             }
           }
+          if (candidates.length > 1) {
+            malformed(`batched deliveries carry ${candidates.length} text messages: this adapter ingests one delivery per webhook — split the batch`);
+          }
+          if (candidates.length === 1) return normalizeGraphEvent(candidates[0]);
           malformed('no text message in this webhook delivery (receipts, echoes and attachments stay out of the inbox)');
         }
         if (testOnly) return normalizeKitEvent(parsed);
         malformed('only Graph webhook deliveries are accepted');
       },
 
-      normalizeOutbound(message) {
+      /**
+       * Normalize one outbound reply and enforce the window policy. Free
+       * text needs the conversation inside the window; a HUMAN_AGENT tag
+       * rides 7 days instead of 24 hours.
+       *
+       * The window observation is never caller time:
+       * `message.lastInboundAt` is not read at all. On the real path
+       * operations resolves the last inbound server-side from the inbox
+       * and hands it in as `{ lastInboundAt }`; direct calls (unit tests)
+       * pass the observation the same way. An absent, non-canonical,
+       * future or stale observation refuses fail-closed with
+       * CHANNEL_WINDOW_CLOSED.
+       */
+      normalizeOutbound(message, windowCtx) {
         if (!message || typeof message !== 'object' || Array.isArray(message)) {
           malformedMessage('message must be an object');
         }
@@ -278,7 +325,52 @@ export function createInstagramChannelAdapter(options = {}) {
         if (tag !== undefined && tag !== INSTAGRAM_HUMAN_AGENT_TAG) {
           malformedMessage(`message tag must be "${INSTAGRAM_HUMAN_AGENT_TAG}" when present`);
         }
+        const bound = tag === INSTAGRAM_HUMAN_AGENT_TAG ? INSTAGRAM_TAG_WINDOW_MS : INSTAGRAM_REPLY_WINDOW_MS;
+        const observed = windowCtx && typeof windowCtx === 'object' ? windowCtx.lastInboundAt : undefined;
+        if (observed === undefined || observed === null) windowClosed();
+        if (typeof observed !== 'string' || !isCanonicalInstant(observed)) {
+          malformedMessage('"lastInboundAt" must be a canonical ISO-8601 instant');
+        }
+        const at = Date.parse(observed);
+        if (at > nowMs() || nowMs() - at > bound) windowClosed();
         return tag === undefined ? { to, text } : { to, text, tag };
+      },
+
+      /**
+       * The service-window capability the shared contract allows: the
+       * conversation subject for one recipient, a seedable windowed
+       * inbound for the kit, and the customer-message predicate that
+       * keeps non-customer rows out of the window observation.
+       */
+      outboundWindow: {
+        windowMs: INSTAGRAM_REPLY_WINDOW_MS,
+        subjectForRecipient(to) {
+          if (typeof to !== 'string' || to === '') {
+            throw new AppError('Instagram recipient must be non-empty text', {
+              code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
+            });
+          }
+          return `${SUBJECT_PREFIX}${to}`;
+        },
+        seedInbound({ from } = {}) {
+          if (typeof from !== 'string' || from === '') {
+            throw new AppError('Instagram seed needs a sender', {
+              code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
+            });
+          }
+          state.seedCounter += 1;
+          return instagramEventBody({
+            mid: `ig-window-seed-${state.seedCounter}`,
+            sender: from,
+            recipient: pageId,
+            text: 'kit window seed',
+            timestampMs: nowMs(),
+          });
+        },
+        isObservation(row) {
+          return typeof row?.providerEventId === 'string' && row.providerEventId !== ''
+            && typeof row?.subject === 'string' && row.subject.startsWith(SUBJECT_PREFIX);
+        },
       },
 
       async sendOutbound({ message, secret, idempotencyKey }) {
@@ -290,21 +382,9 @@ export function createInstagramChannelAdapter(options = {}) {
           await new Promise(() => {});
           throw new AppError('Unreachable', { code: 'CHANNEL_SEND_TRANSIENT', status: 503 });
         }
-        const to = message?.to;
-        const tagged = message?.tag === INSTAGRAM_HUMAN_AGENT_TAG;
-        const loopback = testOnly && to === pageId;
-        if (!loopback) {
-          const last = state.lastInboundMs.get(to) ?? null;
-          const bound = tagged ? INSTAGRAM_TAG_WINDOW_MS : INSTAGRAM_REPLY_WINDOW_MS;
-          if (last === null || nowMs() - last > bound) {
-            throw new AppError(
-              last === null
-                ? 'Instagram reply window is closed: no inbound from this user (reply only after they write, or tag HUMAN_AGENT)'
-                : 'Instagram reply window is closed: the last inbound is older than the reply window',
-              { code: 'CHANNEL_WINDOW_CLOSED', status: 403 },
-            );
-          }
-        }
+        // No window check here: the window is enforced at queue time in
+        // normalizeOutbound against the inbox observation. The transport
+        // only proves delivery, refusal and retry modes.
         if (state.mode === 'refuse') {
           throw new AppError('Instagram provider refuses this message', { code: 'CHANNEL_SEND_REFUSED', status: 422 });
         }

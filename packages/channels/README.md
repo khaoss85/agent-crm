@@ -59,7 +59,9 @@ createChannelsPackage({
   ships. The Instagram Graph adapter (`src/instagram.js`,
   `tests/channels-instagram.test.js`) is the first provider-shaped one:
   Graph webhook bodies with hub signatures, Graph replies, and the
-  24-hour reply window — against a fake transport, no credentials.
+  24-hour reply window read from the inbox per space and connection
+  (batched deliveries refuse, echoes stay out) — against a fake
+  transport, no credentials.
 - `npm run crm -- package validate packages/channels` and
   `npm run crm -- package test packages/channels` (DX4 conformance).
 
