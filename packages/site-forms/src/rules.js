@@ -224,6 +224,9 @@ export function buildSnippet(input) {
     throw new ValidationError('endpoint must be an https URL', { field: 'endpoint' });
   }
   const formId = optionalText(input.formId, 'formId', 64) ?? 'richiesta';
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(formId)) {
+    throw new ValidationError('formId must be a lowercase slug', { field: 'formId' });
+  }
   const action = `${endpoint.replace(/\/+$/, '')}/site/${spaceId}/submit`;
   const html = [
     `<form data-accordo-space="${spaceId}" data-accordo-form="${formId}" method="post" action="${action}">`,

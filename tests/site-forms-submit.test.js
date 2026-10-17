@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { assertPackageConforms } from './helpers/package-conformance.js';
+import { RATE_READ_CAP } from '../packages/site-forms/src/rules.js';
 import { createSiteFormsPackage } from '../packages/site-forms/src/index.js';
 
 /**
@@ -111,7 +112,7 @@ const FORM = Object.freeze({
   dwellMs: 8000,
 });
 
-/** The pilot's intake order: pre-check, resolve, open, submit. */
+/** The pilot's intake order: pre-check, open (mandatory gate), resolve, submit. */
 async function intake(app, fields, resolution) {
   try {
     await app.checkSiteForm({
@@ -126,6 +127,11 @@ async function intake(app, fields, resolution) {
     }
     throw error;
   }
+  // Open gates mandatorily before the sender is resolved: a refused request
+  // resolves nobody, so no contact or identity can leak from spam.
+  const { submission, replayed } = await app.openSiteFormSubmission({
+    ...fields, idempotencyKey: nextKey('form'),
+  });
   const resolved = resolution ?? await app.resolveChannelSender({
     channel: fields.phone ? 'phone' : 'email',
     handle: fields.phone ?? fields.email,
@@ -134,9 +140,6 @@ async function intake(app, fields, resolution) {
     lastName: fields.lastName ?? undefined,
     companyName: fields.companyName ?? undefined,
     actor: ACTOR,
-  });
-  const { submission, replayed } = await app.openSiteFormSubmission({
-    ...fields, idempotencyKey: nextKey('form'),
   });
   let outcome = null;
   if (!replayed && submission.status === 'pending') {
@@ -303,13 +306,49 @@ test('the pre-check refuses spam before anything is written', async (t) => {
   assert.equal(rows(app, 'external-identity', {}).length, 0, 'no contact, no identity');
 });
 
-test('the submit action re-gates when the pilot skips the pre-check', async (t) => {
+test('open refuses emailable spam when the pilot skips the pre-check', async (t) => {
   const { app } = await scene(t, 'site-form-regate');
-  const { submission } = await app.openSiteFormSubmission({
-    ...FORM, honeypotFilled: true, idempotencyKey: nextKey('regate'),
-  });
+  // Honeypot spam that carries an email would resolve to a contact — but the
+  // pilot opens before resolving, so the mandatory gate stops it first.
+  await assert.rejects(
+    app.openSiteFormSubmission({
+      ...FORM, honeypotFilled: true, body: 'Bot with an email.', idempotencyKey: nextKey('regate'),
+    }),
+    (error) => error.code === 'SPAM_HONEYPOT' && error.status === 422,
+  );
+  assert.equal(rows(app, 'site-form-submission', {}).length, 0, 'no row for spam');
+  assert.equal(app.modules.get('contact').service.list().length, 0, 'no contact: open refused before any resolution');
+  assert.equal(rows(app, 'external-identity', {}).length, 0, 'no identity');
+  assert.equal(rows(app, 'interaction-message', {}).length, 0, 'no message');
+});
+
+test('the submit action re-gates a row stored outside the open gate', async (t) => {
+  const { app } = await scene(t, 'site-form-regate-submit');
+  const stored = await app.modules.get('site-form-submission').service.createManaged({
+    sourceKey: `site-form:${SPACE}:direct-${Date.now()}`,
+    spaceId: SPACE,
+    status: 'pending',
+    firstName: 'Luca',
+    lastName: 'Rossi',
+    email: 'luca@prestigroup.example',
+    phone: '+393331234567',
+    companyName: 'Presti Group',
+    body: 'Bot trap.',
+    ipHash: 'h'.repeat(64),
+    honeypotFilled: true,
+    dwellMs: 8000,
+    subjectResource: null,
+    subjectId: null,
+    conversationId: null,
+    messageId: null,
+    replyWhatsapp: false,
+    replyEmail: false,
+    reasonCode: null,
+    occurredAt: new Date().toISOString(),
+    decidedAt: null,
+  }, { actor: ACTOR });
   const run = await app.runAction({
-    module: 'site-form-submission', action: 'submit', recordId: submission.id,
+    module: 'site-form-submission', action: 'submit', recordId: stored.id,
     input: { senderOutcome: 'unresolved', senderRule: 'none' },
     actor: ACTOR,
   });
@@ -318,33 +357,68 @@ test('the submit action re-gates when the pilot skips the pre-check', async (t) 
   assert.equal(rows(app, 'interaction-message', {}).length, 0);
 });
 
+test('the pre-check and open fail closed past the read cap', async (t) => {
+  const { app } = await scene(t, 'site-form-cap');
+  const service = app.modules.get('site-form-submission').service;
+  const ipHash = 'z'.repeat(64);
+  for (let index = 0; index < RATE_READ_CAP; index += 1) {
+    await service.createManaged({
+      sourceKey: `site-form:${SPACE}:cap-${index}`,
+      spaceId: SPACE,
+      status: 'pending',
+      firstName: 'Luca',
+      lastName: 'Rossi',
+      email: 'luca@prestigroup.example',
+      phone: '+393331234567',
+      companyName: 'Presti Group',
+      body: `Flood ${index}.`,
+      ipHash,
+      honeypotFilled: false,
+      dwellMs: 8000,
+      subjectResource: null,
+      subjectId: null,
+      conversationId: null,
+      messageId: null,
+      replyWhatsapp: false,
+      replyEmail: false,
+      reasonCode: null,
+      occurredAt: new Date().toISOString(),
+      decidedAt: null,
+    }, { actor: ACTOR });
+  }
+  // The capped window read is itself the flood: both gates refuse it.
+  await assert.rejects(
+    app.checkSiteForm({ spaceId: SPACE, ipHash, honeypotFilled: false, dwellMs: 9000 }),
+    (error) => error.code === 'SPAM_RATE_LIMITED' && error.status === 422,
+  );
+  await assert.rejects(
+    app.openSiteFormSubmission({
+      ...FORM, ipHash, body: 'Flood.', idempotencyKey: nextKey('cap'),
+    }),
+    (error) => error.code === 'SPAM_RATE_LIMITED' && error.status === 422,
+  );
+  assert.equal(app.modules.get('contact').service.list().length, 0, 'no contact from the flood');
+});
+
 test('the sixth rapid request from one submitter is rate-limited', async (t) => {
   const { app } = await scene(t, 'site-form-rate');
   const accepted = [];
-  let contact = null;
   for (let index = 0; index < 5; index += 1) {
-    const { resolved, outcome } = await intake(app, { ...FORM, body: `Richiesta ${index}.` });
+    const { outcome } = await intake(app, { ...FORM, body: `Richiesta ${index}.` });
     accepted.push(outcome.status);
-    contact = resolved.contact;
   }
   assert.deepEqual(accepted, ['accepted', 'accepted', 'accepted', 'accepted', 'accepted']);
   // The pre-check refuses the sixth before anything is written.
   const refused = await intake(app, { ...FORM, body: 'La sesta.' });
   assert.equal(refused.refused, 'SPAM_RATE_LIMITED');
-  // And the submit action re-gates the same way when the pilot skips the check.
-  const { submission } = await app.openSiteFormSubmission({
-    ...FORM, body: 'La sesta bis.', idempotencyKey: nextKey('sesta'),
-  });
-  const run = await app.runAction({
-    module: 'site-form-submission', action: 'submit', recordId: submission.id,
-    input: {
-      subjectResource: contact.resource, subjectId: contact.id,
-      senderOutcome: 'matched', senderRule: 'external-identity',
-    },
-    actor: ACTOR,
-  });
-  assert.equal(run.result.submission.status, 'rejected');
-  assert.equal(run.result.submission.reasonCode, 'SPAM_RATE_LIMITED');
+  // And open refuses the same way when the pilot skips the check: no row.
+  await assert.rejects(
+    app.openSiteFormSubmission({
+      ...FORM, body: 'La sesta bis.', idempotencyKey: nextKey('sesta'),
+    }),
+    (error) => error.code === 'SPAM_RATE_LIMITED' && error.status === 422,
+  );
+  assert.equal(rows(app, 'site-form-submission', {}).length, 5, 'the refused open stores nothing');
 });
 
 test('the same idempotency key replays the stored row', async (t) => {

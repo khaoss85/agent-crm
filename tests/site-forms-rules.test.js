@@ -118,4 +118,11 @@ test('the snippet posts to the per-space route with a trap field', () => {
   assert.ok(!snippet.html.toLowerCase().includes('google'), 'no third party');
   assert.throws(() => buildSnippet({ spaceId: 'Presti!', endpoint: 'https://app.accordo.dev' }), /lowercase slug/);
   assert.throws(() => buildSnippet({ spaceId: 'presti', endpoint: 'http://app.accordo.dev' }), /https URL/);
+  assert.throws(
+    () => buildSnippet({ spaceId: 'presti', endpoint: 'https://app.accordo.dev', formId: '" onmouseover="alert(1)' }),
+    /formId must be a lowercase slug/,
+    'a hostile formId never reaches the snippet HTML attribute',
+  );
+  const named = buildSnippet({ spaceId: 'presti', endpoint: 'https://app.accordo.dev', formId: 'richiesta-presti' });
+  assert.ok(named.html.includes('data-accordo-form="richiesta-presti"'));
 });

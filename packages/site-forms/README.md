@@ -2,10 +2,12 @@
 
 Website-form intake for one Accordo space (backlog:9d42035eca26).
 
-A visitor fills the snippet pasted into the site. The pilot resolves the
-sender through `customer-data` (`resolveChannelSender`), opens a
-`site-form-submission` row, and runs its `submit` action. The action gates
-base anti-spam, logs an inbound `website-form` message on the contact's
+A visitor fills the snippet pasted into the site. The pilot pre-checks the
+request (`checkSiteForm`), opens a `site-form-submission` row — open gates
+base anti-spam before anything is stored, so a refused request resolves
+nobody — then resolves the sender through `customer-data`
+(`resolveChannelSender`) and runs the row's `submit` action. The action
+re-gates spam, logs an inbound `website-form` message on the contact's
 conversation through `interactions/interaction-log@1`, and records the reply
 channels: WhatsApp when the request carries a phone number, email when it
 carries only an email address, both when it carries both.
@@ -25,10 +27,12 @@ carries only an email address, both when it carries both.
 ## What it needs
 
 - `interactions` with `interaction-log@1` (declared in `requires`).
-- The pilot calls, in order: `checkSiteForm` (spam pre-check, optional),
-  `resolveChannelSender` (customer-data), `openSiteFormSubmission`, then the
-  `submit` action. A sender the resolution leaves `unresolved` stays
-  `needs-review`: evidence for a human, never a message from nobody.
+- The pilot calls, in order: `checkSiteForm` (spam pre-check — stop when it
+  refuses), `openSiteFormSubmission` (mandatory spam gate before anything is
+  stored), `resolveChannelSender` (customer-data, only for a gated-clean
+  request), then the `submit` action. A sender the resolution leaves
+  `unresolved` stays `needs-review`: evidence for a human, never a message
+  from nobody.
 
 ## What it deliberately does not do
 

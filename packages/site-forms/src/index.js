@@ -27,9 +27,11 @@ import {
  * The Site Forms domain package (backlog:9d42035eca26).
  *
  * The website-form intake for one Accordo space: a visitor fills the snippet
- * pasted into the site, the pilot resolves the sender through customer-data,
- * and this package turns the request into an inbound `website-form` message
- * on the contact's conversation — the card update the team answers from.
+ * pasted into the site, the pilot pre-checks and opens the request through
+ * this package (base anti-spam gated before anything is stored), then
+ * resolves the sender through customer-data, and this package turns the
+ * request into an inbound `website-form` message on the contact's
+ * conversation — the card update the team answers from.
  *
  * It reuses and never duplicates: sender resolution and external-identity
  * provenance (`customer-data` operation `resolveChannelSender`, run by the
@@ -292,7 +294,8 @@ export function createSiteFormsPackage(options = {}) {
         appMethod: 'openSiteFormSubmission',
         description:
           'Validate one website-form request and open its pending evidence row. Idempotent by the caller-supplied '
-          + 'idempotency key: a retry replays the stored row. Spam is gated when the row is submitted, not here.',
+          + 'idempotency key: a retry replays the stored row. Base anti-spam is gated here, before the row is '
+          + 'stored and before the pilot resolves the sender; the submit action re-gates authoritatively.',
         input: [
           { name: 'spaceId', type: 'string', hint: 'The Accordo space slug — always explicit, never inferred.' },
           { name: 'idempotencyKey', type: 'string', hint: 'One form render, one key: a UUID the snippet generates per render.' },
@@ -305,6 +308,25 @@ export function createSiteFormsPackage(options = {}) {
             const submissions = trusted(runtime.modules, moduleNames.submission);
             const existing = await submissions.listWhere({ sourceKey });
             if (existing[0]) return { submission: existing[0], replayed: true };
+            // Mandatory spam gate before anything is stored — and before the
+            // pilot resolves the sender, which runs only after open accepts.
+            // A bot request throws here: no row, and the pilot resolves
+            // nobody. The submit action re-gates authoritatively.
+            const gate = await recentSubmitterRows(
+              submissions, { spaceId: fields.spaceId, ipHash: fields.ipHash },
+            );
+            const gateVerdict = gate.capped
+              ? { spam: true, reasonCode: REASON.RATE_LIMITED }
+              : evaluateSpam(
+                { honeypotFilled: fields.honeypotFilled === true, dwellMs: fields.dwellMs },
+                gate.atMs,
+                Date.parse(nowIso()),
+              );
+            if (gateVerdict.spam) {
+              throw new AppError('the form request looks automated and is refused', {
+                code: /** @type {string} */ (gateVerdict.reasonCode), status: 422,
+              });
+            }
             const occurredAt = nowIso();
             let submission;
             try {
@@ -347,8 +369,9 @@ export function createSiteFormsPackage(options = {}) {
         label: 'Pre-check a site-form request',
         appMethod: 'checkSiteForm',
         description:
-          'Run the base anti-spam rules over one request before the pilot resolves its sender, so an obvious bot '
-          + 'creates no contact. Reads only, writes nothing; the submit action re-gates authoritatively.',
+          'Run the base anti-spam rules over one request before the pilot opens its submission, so an obvious bot '
+          + 'is refused early. Reads only, writes nothing; the open operation gates mandatorily and the submit '
+          + 'action re-gates authoritatively.',
         input: [
           { name: 'spaceId', type: 'string', hint: 'The Accordo space slug.' },
           { name: 'ipHash', type: 'string', hint: 'The sha256 of the caller IP for this space — never the raw address.' },
@@ -360,9 +383,16 @@ export function createSiteFormsPackage(options = {}) {
           return async (request) => {
             const spaceId = typeof request.spaceId === 'string' ? request.spaceId : '';
             const ipHash = typeof request.ipHash === 'string' ? request.ipHash : '';
-            const { atMs } = await recentSubmitterRows(trusted(runtime.modules, moduleNames.submission), {
-              spaceId, ipHash,
-            });
+            const { capped, atMs } = await recentSubmitterRows(
+              trusted(runtime.modules, moduleNames.submission), { spaceId, ipHash },
+            );
+            // Fail closed past the read cap: the capped window read is itself
+            // the flood, so the pre-check refuses instead of accepting.
+            if (capped) {
+              throw new AppError('the form request rate is flooding and is refused', {
+                code: REASON.RATE_LIMITED, status: 422,
+              });
+            }
             const verdict = evaluateSpam({
               honeypotFilled: request.honeypotFilled === true,
               dwellMs: Number.isInteger(request.dwellMs) ? request.dwellMs : -1,
@@ -387,6 +417,7 @@ export function createSiteFormsPackage(options = {}) {
         input: [
           { name: 'spaceId', type: 'string', hint: 'The Accordo space slug.' },
           { name: 'endpoint', type: 'string', hint: 'The pilot base URL, e.g. https://app.accordo.dev.' },
+          { name: 'formId', type: 'string', required: false, hint: 'The form slug for the snippet attribute — lowercase slug, defaults to richiesta.' },
         ],
         create() {
           return async (request) => buildSnippet({
@@ -411,8 +442,10 @@ export function createSiteFormsPackage(options = {}) {
         replayScope: 'one idempotency key opens one submission; the same key replays the stored row, never a second one',
         pilotOwns: [
           'the per-space HTTP route (POST /site/:spaceId/submit), passing spaceId from the verified path',
-          'resolving the sender with customer-data resolveChannelSender before opening the submission',
-          'creating the submission and running its submit action in that order',
+          'running the check-site-form pre-check first and stopping when it refuses',
+          'opening the submission before resolving the sender, so a refused request resolves nobody',
+          'resolving the sender with customer-data resolveChannelSender only for a gated-clean request',
+          'running the submission submit action last',
         ],
         notModeled: [
           'real provider sends (WhatsApp/email delivery) — the team answers from the card',
