@@ -6,7 +6,12 @@ import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
 import { detectIssues } from './quality.js';
 import { canonicalClusterFor, profileFor } from './profile.js';
-import { optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted } from './store.js';
+import {
+  createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow,
+} from './sender.js';
+import {
+  optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
+} from './store.js';
 
 /**
  * **The application operations (ADR-032): import preview, import apply, bulk
@@ -44,24 +49,9 @@ export function createCustomerDataOperations({ database, modules, events, config
   /**
    * The read side the policy resolves against. It is built per call so a
    * resolution always sees current state — never a cached view captured when
-   * the operation was composed.
+   * the operation was composed. Shared with the channel sender resolution.
    */
-  const readerFor = () => ({
-    async externalIdentity(system, externalId) {
-      const rows = await trusted(modules, names.identity)
-        .listWhere({ sourceKey: `${system}:${externalId}` });
-      return rows.find((row) => row.status === 'active') ?? null;
-    },
-    async contactByEmail(email) {
-      // Delegated: core owns email uniqueness and its normalization.
-      if (!core || typeof core.findContactByEmail !== 'function') return null;
-      return await core.findContactByEmail(email);
-    },
-    async companiesByName(name) {
-      if (!core || typeof core.findCompaniesByNormalizedName !== 'function') return [];
-      return await core.findCompaniesByNormalizedName(name);
-    },
-  });
+  const readerFor = () => createPolicyReader({ modules, names, core });
 
   /** Shared summary shape for both preview and apply. */
   const summarize = (resolution, mode, runId = null) => ({
@@ -246,90 +236,28 @@ export function createCustomerDataOperations({ database, modules, events, config
     },
   };
 
-  /** Create the Company/Contact this row names, through the core adapters. */
+  /** Create the Company/Contact this row names, through the core adapters. Shared with the sender resolution. */
   async function createSubjectFor(row, actor) {
-    if (!core || typeof core.createCompany !== 'function') {
-      throw new AppError('customer-data cannot create records without the core adapters', {
-        code: 'CUSTOMER_DATA_CORE_UNAVAILABLE', status: 500,
-      });
-    }
-    if (row.email) {
-      // A contact needs a company: reuse the named one when it exists, else
-      // create it. Both go through the adapters, never through raw SQL.
-      const companies = row.companyName ? core.findCompaniesByNormalizedName(row.companyName) : [];
-      const company = companies.length === 1
-        ? companies[0]
-        : await core.createCompany({ name: row.companyName ?? deriveCompanyName(row), domain: row.domain ?? null }, { actor });
-      const contact = await core.createContact({
-        companyId: company.id,
-        firstName: row.firstName ?? 'Unknown',
-        lastName: row.lastName ?? 'Unknown',
-        email: row.email,
-      }, { actor });
-      return { resource: 'contact', id: contact.id, owner: 'host', ownerPackage: null, label: contact.email ?? row.email };
-    }
-    const company = await core.createCompany({ name: row.companyName, domain: row.domain ?? null }, { actor });
-    return { resource: 'company', id: company.id, owner: 'host', ownerPackage: null, label: company.name ?? row.companyName };
-  }
-
-  function deriveCompanyName(row) {
-    const domain = row.domain;
-    return domain ? domain : `Unknown (${row.email})`;
+    return createSubjectForRow(core, row, actor);
   }
 
   async function recordExternalIdentity(row, subject, runId, actor) {
-    const identities = trusted(modules, names.identity);
-    const sourceKey = `${row.system}:${row.externalId}`;
-    const existing = (await identities.listWhere({ sourceKey }))[0];
-    const now = new Date().toISOString();
-    if (existing) {
-      await identities.applyManaged(existing.id, { lastObservedRunId: runId, lastObservedAt: now }, { actor });
-      return;
-    }
-    await identities.createManaged({
-      sourceKey,
-      system: row.system,
-      externalId: row.externalId,
-      ...subjectFields(subject),
-      status: 'active',
-      firstObservedRunId: runId,
-      lastObservedRunId: runId,
-      firstObservedAt: now,
-      lastObservedAt: now,
-    }, { actor });
+    await recordExternalIdentityRow({
+      modules, names, system: row.system, externalId: row.externalId, subject, runId, actor,
+    });
   }
 
   async function recordCandidates(receipt, runId, actor) {
-    const candidates = trusted(modules, names.candidate);
-    let written = 0;
     const list = receipt.candidates ?? [];
+    const pairs = [];
     for (let i = 0; i < list.length; i += 1) {
       for (let j = i + 1; j < list.length; j += 1) {
-        const { left, right } = orderedPair(list[i], list[j]);
-        const sourceKey = `duplicate:${subjectKey(left)}|${subjectKey(right)}`;
-        if ((await candidates.listWhere({ sourceKey }))[0]) continue;
-        await candidates.createManaged({
-          sourceKey,
-          ...subjectFields(left, 'left'),
-          ...subjectFields(right, 'right'),
-          policy: policy.name,
-          policyVersion: policy.version,
-          policyFingerprint: policy.fingerprint,
-          rule: receipt.rule,
-          evidence: receipt.reason,
-          status: 'unresolved',
-          detectedByRunId: runId,
-          detectedAt: new Date().toISOString(),
-          decisionId: null,
-          decidedReason: null,
-          decidedByType: null,
-          decidedById: null,
-          decidedAt: null,
-        }, { actor });
-        written += 1;
+        pairs.push(orderedPair(list[i], list[j]));
       }
     }
-    return written;
+    return recordCandidatePairs({
+      modules, names, policy, pairs, rule: receipt.rule, evidence: receipt.reason, runId, actor,
+    });
   }
 
   async function recordIssues({ resolution, runId, actor }) {
@@ -364,6 +292,7 @@ export function createCustomerDataOperations({ database, modules, events, config
 export const LIMITATIONS = Object.freeze([
   'NO_FUZZY_MATCHING — every rule is exact; ambiguity is reported unresolved and never guessed',
   'NO_AUTOMATIC_MERGE — a duplicate candidate is never resolved without a human decision',
+  'NO_CONTACT_WITHOUT_EMAIL — a sender that matches nothing and carries no email creates no contact: a contact needs a globally-unique email and the sender resolution invents none',
   'NO_PHYSICAL_MERGE — canonical identity is a logical link; no record is deleted, rewritten or cascaded',
   'NO_REMOTE_PROVIDER — v1 accepts bounded rows only: no credential, no fetch, no file path',
   'NO_RAW_PAYLOAD — provenance is stored, the source payload is not',
