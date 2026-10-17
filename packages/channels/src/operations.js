@@ -2,14 +2,16 @@
 
 import {
   AppError,
+  SENSITIVE_KEY,
   ValidationError,
+  canonicalJobPayload,
   createDurableJobStore,
   normalizeError,
   nowIso,
   trustedSystemActor,
   withTimeout,
 } from '../../core/index.js';
-import { assertConnectionInput, assertSpaceId, channelSendIdempotencyKey } from './connection.js';
+import { assertConnectionInput, assertSpaceId, boundedKey, channelSendIdempotencyKey } from './connection.js';
 import { fingerprintPayload } from './crypto.js';
 
 /**
@@ -67,13 +69,17 @@ function isJsonSafe(value, depth = 0) {
   if (typeof value === 'number') return Number.isSafeInteger(value);
   if (Array.isArray(value)) return value.length <= 500 && value.every((entry) => isJsonSafe(entry, depth + 1));
   if (typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return false;
-  return Object.keys(value).every((key) => key.length <= 128 && isJsonSafe(value[key], depth + 1));
+  // Same hostile-key fence as the durable-jobs payload controls (MEM_ACC_REUSE):
+  // __proto__/constructor/prototype never pass, even before the secret scan.
+  return Object.keys(value).every((key) => key !== '__proto__' && key !== 'prototype' && key !== 'constructor'
+    && key.length <= 128 && isJsonSafe(value[key], depth + 1));
 }
 
-// The durable-jobs layer refuses these keys in any payload it stores
-// (`packages/core/src/durable-jobs.js` SENSITIVE_KEY). The package fails
-// fast with a field-tied reason instead of letting the enqueue refuse.
-const UNSAFE_MESSAGE_KEY = /(?:secret|password|passwd|credential|authorization|bearer|api[_-]?key|private[_-]?key)/i;
+// Fail-fast against the kernel denylist itself (MEM_ACC_REUSE): the same
+// SENSITIVE_KEY the durable-jobs layer enforces, so a secret-shaped key is
+// refused here with the channel code instead of surfacing as a generic
+// DURABLE_JOB_PAYLOAD_INVALID from the enqueue.
+const UNSAFE_MESSAGE_KEY = SENSITIVE_KEY;
 
 function malformedMessage(reason) {
   throw new AppError(`Channel message is not well-formed: ${reason}`, {
@@ -105,6 +111,18 @@ function assertOutboundMessage(message) {
   visit(message);
   if (bad.length > 0) {
     malformedMessage(`message carries a secret-shaped key ("${bad[0]}"): resolve secrets at send time, never place them in the message`);
+  }
+  // Reuse the kernel payload controls as the final fence (MEM_ACC_REUSE): any
+  // hostile shape the local scan does not model (symbols, exotic prototypes,
+  // array bounds) still refuses here with the channel code, never as a raw
+  // DURABLE_JOB_PAYLOAD_INVALID from the enqueue.
+  try {
+    canonicalJobPayload(message);
+  } catch (error) {
+    if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'DURABLE_JOB_PAYLOAD_INVALID') {
+      malformedMessage('message refused by the outbox payload controls');
+    }
+    throw error;
   }
   return message;
 }
@@ -315,7 +333,7 @@ export function createChannelOperations(deps) {
     const sequence = Number.isSafeInteger(event?.sequence) ? event.sequence : null;
     const occurredAt = isCanonicalInstant(event?.occurredAt) ? event.occurredAt : null;
     const payloadFingerprint = fingerprintPayload(rawBody);
-    const sourceKey = `ch-in:${spaceId}:${connection.sourceKey}:${providerEventId}`;
+    const sourceKey = boundedKey('ch-in', spaceId, connection.sourceKey, providerEventId);
     const service = inbox();
     const now = nowIso();
 
@@ -419,15 +437,25 @@ export function createChannelOperations(deps) {
       ? params.messageKey : null;
     const keyInput = messageKey ?? fingerprintPayload(JSON.stringify(message));
     const idempotencyKey = channelSendIdempotencyKey({ spaceId, connectionKey: connection.sourceKey, messageKey: keyInput });
-    const job = await jobs().enqueue({
-      kind: CHANNEL_SEND_KIND,
-      handler: { name: CHANNEL_SEND_HANDLER, contract: CHANNEL_SEND_CONTRACT, version: CHANNEL_SEND_VERSION },
-      payload: { spaceId, connectionKey: connection.sourceKey, idempotencyKey, message },
-      idempotencyRoot: idempotencyKey,
-      outcomeReference: idempotencyKey,
-      recoveryPolicy: 'reconcilable_at_least_once',
-      maxAttempts: maxSendAttempts,
-    }, { actor });
+    let job;
+    try {
+      job = await jobs().enqueue({
+        kind: CHANNEL_SEND_KIND,
+        handler: { name: CHANNEL_SEND_HANDLER, contract: CHANNEL_SEND_CONTRACT, version: CHANNEL_SEND_VERSION },
+        payload: { spaceId, connectionKey: connection.sourceKey, idempotencyKey, message },
+        idempotencyRoot: idempotencyKey,
+        outcomeReference: idempotencyKey,
+        recoveryPolicy: 'reconcilable_at_least_once',
+        maxAttempts: maxSendAttempts,
+      }, { actor });
+    } catch (error) {
+      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'DURABLE_JOB_PAYLOAD_INVALID') {
+        throw new AppError('Channel message is not well-formed: message refused by the outbox payload controls', {
+          code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
+        });
+      }
+      throw error;
+    }
     return { jobId: job.id, idempotencyKey, attempts: job.attempt, state: job.state };
   }
 
@@ -435,7 +463,7 @@ export function createChannelOperations(deps) {
   async function recordDeadLetter({ spaceId, connectionKey, idempotencyKey, jobId, errorCode, payloadFingerprint, attempts }) {
     const now = nowIso();
     const service = letters();
-    const sourceKey = `ch-dl:${idempotencyKey}`;
+    const sourceKey = boundedKey('ch-dl', idempotencyKey);
     const existing = service.listWhere({ sourceKey })[0];
     if (existing) {
       return existing;
@@ -544,7 +572,9 @@ export function createChannelOperations(deps) {
    * Requeue one open dead letter with a human-supplied message. The letter
    * carries no payload by design, so retrying means approving the content
    * again — a human actor owns it, and the new job gets a deterministic key
-   * derived from the letter, so a repeated requeue resolves identically.
+   * derived from the letter AND the new message (boundedKey, always within
+   * the 256-char outbox bound), so the same content dedups and different
+   * content keys differently. A settled (requeued) letter 404s on repeat.
    */
   async function requeueChannelLetter(params) {
     const actor = requireUser(params?.actor);
@@ -570,16 +600,27 @@ export function createChannelOperations(deps) {
       throw new AppError('Channel message is not well-formed', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
     }
     assertOutboundMessage(message);
-    const idempotencyKey = `${letter.idempotencyKey}:requeue:${letter.id.slice(0, 8)}`;
-    const job = await jobs().enqueue({
-      kind: CHANNEL_SEND_KIND,
-      handler: { name: CHANNEL_SEND_HANDLER, contract: CHANNEL_SEND_CONTRACT, version: CHANNEL_SEND_VERSION },
-      payload: { spaceId, connectionKey: connection.sourceKey, idempotencyKey, message },
-      idempotencyRoot: idempotencyKey,
-      outcomeReference: idempotencyKey,
-      recoveryPolicy: 'reconcilable_at_least_once',
-      maxAttempts: maxSendAttempts,
-    }, { actor });
+    const messageFingerprint = fingerprintPayload(JSON.stringify(message));
+    const idempotencyKey = boundedKey('ch-send', spaceId, connection.sourceKey, `requeue:${letter.id}`, messageFingerprint);
+    let job;
+    try {
+      job = await jobs().enqueue({
+        kind: CHANNEL_SEND_KIND,
+        handler: { name: CHANNEL_SEND_HANDLER, contract: CHANNEL_SEND_CONTRACT, version: CHANNEL_SEND_VERSION },
+        payload: { spaceId, connectionKey: connection.sourceKey, idempotencyKey, message },
+        idempotencyRoot: idempotencyKey,
+        outcomeReference: idempotencyKey,
+        recoveryPolicy: 'reconcilable_at_least_once',
+        maxAttempts: maxSendAttempts,
+      }, { actor });
+    } catch (error) {
+      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'DURABLE_JOB_PAYLOAD_INVALID') {
+        throw new AppError('Channel message is not well-formed: message refused by the outbox payload controls', {
+          code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
+        });
+      }
+      throw error;
+    }
     const updated = await letters().applyManaged(letter.id, { state: 'requeued', stateReason: `requeued as job ${job.id}` }, { actor });
     return { jobId: job.id, letterId: updated.id, idempotencyKey };
   }

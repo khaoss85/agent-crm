@@ -52,7 +52,9 @@ const MAX_PAYLOAD_DEPTH = 12;
 const MAX_PAYLOAD_ARRAY_ITEMS = Math.floor((MAX_PAYLOAD_BYTES - 1) / 2);
 const MAX_ATTEMPTS = 100;
 const MAX_LEASE_MS = 24 * 60 * 60 * 1000;
-const SENSITIVE_KEY = /(?:secret|password|passwd|credential|authorization|bearer|api[_-]?key|connection[_-]?(?:string|url)|database[_-]?url|private[_-]?key)/i;
+// Reused by packages (MEM_ACC_REUSE) for fail-fast secret-shaped checks so the
+// kernel denylist has one definition, not a narrower copy per package.
+export const SENSITIVE_KEY = /(?:secret|password|passwd|credential|authorization|bearer|api[_-]?key|connection[_-]?(?:string|url)|database[_-]?url|private[_-]?key)/i;
 
 function closedObject(value, allowed, required, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {

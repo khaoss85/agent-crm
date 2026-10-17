@@ -235,6 +235,41 @@ test('messages carrying secret-shaped keys are refused before the outbox', async
   assert.equal((await harness.jobs()).length, 0, 'refused messages never reach the outbox');
 });
 
+test('kernel-shaped secret keys and hostile keys are refused with the channel code', async (t) => {
+  // MEM_ACC_REUSE: the package fails fast on the kernel SENSITIVE_KEY itself
+  // (connectionString, databaseUrl) and on __proto__/constructor/prototype,
+  // so callers always see CHANNEL_MESSAGE_MALFORMED, never a raw
+  // DURABLE_JOB_PAYLOAD_INVALID from the enqueue.
+  const { definition, api } = createFixtureChannelAdapter({ secret: SECRET });
+  const passthrough = {
+    ...definition,
+    name: 'passthrough-channel',
+    normalizeOutbound: (message) => message,
+  };
+  const harness = createChannelsHarness({
+    adapterDefinition: passthrough, fixtureApi: api, secretRef: SECRET_REF, secretValue: SECRET,
+    tenantId: 'channel-kit-sensitive-reuse',
+  });
+  t.after(() => harness.close());
+  const reg = await harness.register(SPACE_A, {
+    channel: 'whatsapp', account: ACCOUNT_A,
+    adapter: 'passthrough-channel', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  await harness.activate(SPACE_A, reg.connection.sourceKey);
+  for (const [name, message] of [
+    ['connectionString', { to: ACCOUNT_A, text: 'hi', connectionString: 'postgres://user:pass@host/db' }],
+    ['databaseUrl', { to: ACCOUNT_A, text: 'hi', databaseUrl: 'postgres://user:pass@host/db' }],
+    ['proto', JSON.parse('{"to":"+390200000001","text":"hi","__proto__":{"polluted":true}}')],
+  ]) {
+    await assert.rejects(
+      harness.queue(SPACE_A, { connectionKey: reg.connection.sourceKey, message, messageKey: `m-${name}` }),
+      (e) => e.code === 'CHANNEL_MESSAGE_MALFORMED',
+      `${name} refuses with the channel code`,
+    );
+  }
+  assert.equal((await harness.jobs()).length, 0, 'refused messages never reach the outbox');
+});
+
 test('cross-space calls never touch another space', async (t) => {
   const { harness } = setup();
   t.after(() => harness.close());
@@ -415,4 +450,47 @@ test('a max-length account and message key still queue under the outbox bound', 
   assert.equal(first.jobId, second.jobId, 'the length-safe key still dedups');
   const settled = await harness.pump(first.jobId);
   assert.equal(settled.state, 'succeeded');
+});
+
+test('a requeue at max-length inputs fits the outbox bound and keys the new message', async (t) => {
+  // Review round 2 P1: the requeue key was unbounded and message-independent.
+  // It now goes through boundedKey with the new message fingerprint, so a
+  // boundary letter still retries and different content keys differently.
+  const { harness, api } = setup({ config: { maxSendAttempts: 2 } });
+  t.after(() => harness.close());
+  const account = 'a'.repeat(256);
+  const reg = await harness.register(SPACE_A, {
+    channel: 'whatsapp', account, adapter: 'fixture-channel', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  await harness.activate(SPACE_A, reg.connection.sourceKey);
+  assert.ok(reg.connection.sourceKey.length <= 256, `connection sourceKey fits, got ${reg.connection.sourceKey.length}`);
+  for (const part of reg.connection.sourceKey.split(':')) {
+    assert.ok(part.length <= 128, `connection sourceKey part fits 128, got ${part.length}`);
+  }
+  api.setMode('refuse');
+  const queued = await harness.queue(SPACE_A, {
+    connectionKey: reg.connection.sourceKey, message: { to: account, text: 'first try' }, messageKey: 'm'.repeat(256),
+  });
+  await harness.pump(queued.jobId);
+  const [letter] = harness.letters(SPACE_A, 'open');
+  api.setMode('ok');
+  const requeued = await harness.ops.requeueChannelLetter({
+    spaceId: SPACE_A, letterId: letter.id,
+    message: { to: account, text: 'second try' }, actor: harness.userActor,
+  });
+  assert.ok(requeued.idempotencyKey.length <= 256, `requeue key fits the outbox bound, got ${requeued.idempotencyKey.length}`);
+  for (const part of requeued.idempotencyKey.split(':')) {
+    assert.ok(part.length <= 128, `requeue key part fits 128, got ${part.length}`);
+  }
+  const settled = await harness.pump(requeued.jobId);
+  assert.equal(settled.state, 'succeeded');
+  // A different approved message on a fresh letter keys differently: the
+  // message fingerprint is part of the requeue key, not just the letter.
+  const { boundedKey } = await import('../packages/channels/src/connection.js');
+  const fpA = 'a'.repeat(64);
+  const fpB = 'b'.repeat(64);
+  assert.notEqual(
+    boundedKey('ch-send', SPACE_A, reg.connection.sourceKey, `requeue:${letter.id}`, fpA),
+    boundedKey('ch-send', SPACE_A, reg.connection.sourceKey, `requeue:${letter.id}`, fpB),
+  );
 });

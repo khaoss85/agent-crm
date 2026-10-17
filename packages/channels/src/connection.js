@@ -27,8 +27,40 @@ export const CONNECTION_TRANSITIONS = Object.freeze({
 const HOSTILE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 const MAX_ACCOUNT = 256;
 const MAX_SECRET_REF = 256;
-// The durable-jobs idempotencyRoot bound every send key must fit.
-const SEND_KEY_MAX = 256;
+// One bound for every key of the package (MEM_ACC_REUSE: one definition).
+// Each ':'-joined part stays at most 128 chars, the whole key at most 256
+// (the durable-jobs idempotencyRoot bound). Long parts are replaced by their
+// sha256 fingerprint, so short keys stay readable and long keys still dedup.
+const KEY_COMPONENT_MAX = 128;
+const KEY_TOTAL_MAX = 256;
+
+/**
+ * Join key parts with ':' keeping every part at most 128 chars and the whole
+ * key at most 256 chars. Parts longer than 128 become `sha256:<hex>`; when
+ * the joined form still exceeds 256, the tail is folded into one sha256 so
+ * the key always fits. Deterministic: the same parts always give the same
+ * key, and different parts give a different key.
+ */
+export function boundedKey(...parts) {
+  if (parts.length === 0) {
+    throw new ValidationError('boundedKey needs at least one part', { field: 'key' });
+  }
+  const texts = parts.map((part) => {
+    if (typeof part !== 'string' || part === '' || part.length > 1024 || CONTROL_RE.test(part)) {
+      throw new ValidationError('boundedKey parts must be bounded single-line text', { field: 'key' });
+    }
+    return part;
+  });
+  const safe = texts.map((text) => (
+    text.length <= KEY_COMPONENT_MAX
+      ? text
+      : `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`
+  ));
+  const joined = safe.join(':');
+  if (joined.length <= KEY_TOTAL_MAX) return joined;
+  const tailHash = createHash('sha256').update(safe.slice(1).join(':'), 'utf8').digest('hex');
+  return `${safe[0]}:${tailHash}`;
+}
 // The declared locator shape: a namespaced reference, never a value —
 // `vault://<space>/<name>` against the deployment's runtime-vault (or the
 // `secret://` scheme where a deployment names its own). Deliberately
@@ -104,7 +136,8 @@ export function assertConnectionInput(input, registries) {
     adapterFingerprint: fingerprint,
     secretRef,
     // DB-unique identity: one account bound once per space and channel.
-    sourceKey: `ch-conn:${spaceId}:${value.channel}:${account.toLowerCase()}`,
+    // Bounded through boundedKey so a max-length account still fits.
+    sourceKey: boundedKey('ch-conn', spaceId, value.channel, account.toLowerCase()),
   });
 }
 
@@ -122,12 +155,9 @@ export function assertConnectionInput(input, registries) {
  */
 export function channelSendIdempotencyKey({ spaceId, connectionKey, messageKey }) {
   const space = assertSpaceId(spaceId);
-  const connection = boundedLine(connectionKey, 'connectionKey', 512);
-  const message = boundedLine(messageKey, 'messageKey', 512);
-  const plain = `ch-send:${space}:${connection}:${message}`;
-  if (plain.length <= SEND_KEY_MAX) return plain;
-  const fingerprint = (value) => `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
-  return `ch-send:${space}:${fingerprint(connection)}:${fingerprint(message)}`;
+  const connection = boundedLine(connectionKey, 'connectionKey', 1024);
+  const message = boundedLine(messageKey, 'messageKey', 1024);
+  return boundedKey('ch-send', space, connection, message);
 }
 
 /** @param {string} from @param {string} to */

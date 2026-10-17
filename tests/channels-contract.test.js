@@ -13,6 +13,7 @@ import {
   assertConnectionTransition,
   assertSecretReference,
   assertSpaceId,
+  boundedKey,
   channelSendIdempotencyKey,
 } from '../packages/channels/src/connection.js';
 import {
@@ -130,6 +131,33 @@ test('send idempotency keys are deterministic per space, connection and message'
   assert.equal(key, 'ch-send:presti:ch-conn:presti:whatsapp:x:m1', 'short keys stay readable');
   assert.equal(key, channelSendIdempotencyKey({ spaceId: 'presti', connectionKey: 'ch-conn:presti:whatsapp:x', messageKey: 'm1' }));
   assert.notEqual(key, channelSendIdempotencyKey({ spaceId: 'arvo', connectionKey: 'ch-conn:presti:whatsapp:x', messageKey: 'm1' }));
+});
+
+test('boundedKey keeps every package key within 128 per part and 256 total', () => {
+  // One function for every key of the package (review round 2): send,
+  // requeue, connection/inbox/dead-letter source keys. Each shape is tried
+  // at its legal maximum, and every ':'-separated part stays within 128.
+  const shapes = [
+    ['ch-send', 'presti', `ch-conn:presti:whatsapp:${'a'.repeat(256)}`, 'm'.repeat(256)],
+    ['ch-send', 'presti', 'ch-conn:presti:whatsapp:x', `requeue:letter-id-1`, 'f'.repeat(64)],
+    ['ch-conn', 'presti', 'whatsapp', 'a'.repeat(256)],
+    ['ch-in', 'presti', `ch-conn:presti:whatsapp:${'a'.repeat(256)}`, 'e'.repeat(256)],
+    ['ch-dl', 'k'.repeat(256)],
+  ];
+  for (const parts of shapes) {
+    const key = boundedKey(...parts);
+    assert.ok(key.length <= 256, `bounded key fits 256, got ${key.length} for ${parts[0]}`);
+    for (const component of key.split(':')) {
+      assert.ok(component.length <= 128, `component fits 128, got ${component.length} in ${key}`);
+    }
+    assert.equal(key, boundedKey(...parts), 'the bounded form is deterministic, so redelivery dedups');
+  }
+  assert.equal(boundedKey('ch-send', 'presti', 'c', 'm'), 'ch-send:presti:c:m', 'short keys stay readable');
+  assert.notEqual(
+    boundedKey('ch-send', 'presti', 'c', 'f'.repeat(64)),
+    boundedKey('ch-send', 'presti', 'c', 'e'.repeat(64)),
+    'the message fingerprint is part of the key, so different content keys differently',
+  );
 });
 
 test('send idempotency keys stay within the outbox bound at max-length inputs', () => {
