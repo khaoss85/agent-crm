@@ -239,6 +239,25 @@ sentence.
 fresh generation, or `TRUTH_DOCUMENT_STALE`, with the facts that moved named in the
 message.
 
+Not every staleness fails. The drift is classified first
+(`classifyDocumentDrift` in `scripts/repo-truth.js`): a moved or dropped fact
+value is blocking, while added facts and metadata-only drift (a regenerated
+evidence pointer, a restated limitation, a `sourceSha` moved by an unrelated
+edit) are advisory. Under `--drift-advisory` — the `fast` PR gate and the
+`public-claims` agreement gate — advisory drift warns (a `::warning::`
+annotation on CI) instead of failing. That is the parallel-PR rule (S70): each
+PR is correct alone, and the merge moves the ground under the others without
+moving a value, so two PRs adding different packages both pass after the
+first merges, with no regen round-trip. A value the PR itself changed without
+regenerating still fails, advisory mode or not.
+
+On `main` the same drift is committed back by the job that found it
+(`scripts/realign-truth-main.js --push`, last step of `public-claims`): when
+the merge carried advisory-only drift, the regenerated document is pushed to
+`main` with `[skip ci]` — the run just verified that exact tree — so `main`
+returns aligned with no manual commit. A moved or dropped value refuses there
+too: that always needs a person.
+
 **3 — machine-code vocabulary.** Every `SCREAMING_SNAKE` identifier in a bound
 surface must exist in the source vocabulary harvested from `packages/`, `scripts/`,
 `apps/`, `examples/` and `benchmarks/`, or be a repository file's basename.

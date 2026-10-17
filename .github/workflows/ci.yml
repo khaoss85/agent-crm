@@ -89,11 +89,16 @@ jobs:
       - name: Public claims and packaging agree
         run: HEAVY_JOB_MAX_SEC=300 scripts/ci-heavy.sh gtm -- npm run gtm:check
       # Agreement only: the committed truth document must equal a fresh
-      # generation from the PR's own inputs (TRUTH_DOCUMENT_STALE otherwise).
-      # Freshness against a new measurement (`--require-current`) needs the
-      # full suite, so it runs only on `main` in `public-claims` below.
+      # generation from the PR's own inputs — with one exception (S70,
+      # backlog:6a3d0316): drift that moves no fact value and drops no fact
+      # (a regenerated evidence pointer, a fact the base merge brought in)
+      # only warns under `--drift-advisory`. Parallel PRs stay green after
+      # the first merges with no regen round-trip; a value this PR changed
+      # without regenerating still fails, and `main` realigns itself after
+      # merge (`public-claims` below). Freshness against a new measurement
+      # (`--require-current`) needs the full suite, so it runs only on `main`.
       - name: The committed truth document agrees with its authorities
-        run: HEAVY_JOB_MAX_SEC=300 scripts/ci-heavy.sh truth -- npm run repo:truth -- --check
+        run: HEAVY_JOB_MAX_SEC=300 scripts/ci-heavy.sh truth -- npm run repo:truth -- --check --drift-advisory
 
   # Left at the default fetch-depth: 1 deliberately. Nothing under `npm run verify` or
   # `npm run smoke` reads git history — the only git these run is `ls-files`, `status`
@@ -248,11 +253,15 @@ jobs:
       # `apply-ci-measurement.js` binds the record to this checkout (HEAD,
       # `HEAD:tests`, clean tree, green run) before writing anything.
       # Gate 1 on the committed document, before anything is regenerated: the
-      # document the PR commits must equal a fresh generation from the PR's own
-      # inputs (TRUTH_DOCUMENT_STALE otherwise). Only the measurement re-anchor
-      # below is CI's to do; every other fact stays the author's to regenerate.
+      # document the merge commits must equal a fresh generation from its own
+      # inputs — with the same one exception as on PRs (S70,
+      # backlog:6a3d0316): advisory-only drift warns instead of failing, and
+      # the realign step at the end of this job commits exactly that drift
+      # back to `main`. A moved or dropped value still fails here, and only
+      # the measurement re-anchor below is CI's to do; every other fact stays
+      # the author's to regenerate.
       - name: The committed truth document agrees with its authorities
-        run: npm run repo:truth -- --check
+        run: npm run repo:truth -- --check --drift-advisory
       - name: Take the measurement verify just produced on this tree
         uses: actions/download-artifact@v4
         continue-on-error: true
@@ -283,3 +292,15 @@ jobs:
       # tree) fails this job, exactly like a test would. A local `--check`
       # without the flag still guards agreement only.
       - run: npm run repo:truth -- --check --require-current
+      # Controlled regeneration (backlog:6a3d0316): when the merge carried
+      # advisory-only drift — parallel PRs, S70 — the regenerated document
+      # above is committed back to `main` here, so `main` returns aligned
+      # with no manual commit. The step refuses red when a fact value moved
+      # or dropped outside the CI-owned measurement facts: that always needs
+      # a person. `[skip ci]` on the commit: this run just verified this
+      # exact tree with `--require-current`, and the commit changes no
+      # authority source, no test and no surface — a new full `main` run
+      # would only re-measure an unchanged `tests/` tree while holding the
+      # shared machine lock.
+      - name: Realign the committed truth document when the merge drifted
+        run: node scripts/realign-truth-main.js --push
