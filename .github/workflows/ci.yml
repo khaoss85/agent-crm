@@ -40,6 +40,12 @@ jobs:
     env:
       ACCORDO_TEST_POSTGRES: '1'
       ACCORDO_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/accordo_test
+      # The shell-classifier oracle runs its complete 26,880-cell cross-product
+      # (plus the heredoc delimiter corpus) here; the default local run
+      # covers a documented 10,080-cell subset plus a 120-cell heredoc sample,
+      # so `npm test` finishes in minutes on a developer machine.
+      # See tests/agent-tool-selection-prompts.test.js.
+      ACCORDO_FULL_SHELL_ORACLE: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
