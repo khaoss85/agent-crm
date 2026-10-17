@@ -111,6 +111,21 @@ reached tier).
 fixture provider proves the contract offline, and full Stripe or Zuora support
 is not claimed.
 
+### Workspace price lists
+
+A workspace listino (lesson packs, memberships, trial sessions) is plain JSON
+configuration served by `createPriceListCatalogProvider`
+(`packages/commercial/src/price-list.js`): one price book, products with an
+optional `category`, offers with `one_time` / `recurring`, `flat_fee` /
+`per_unit` / `volume` / `graduated` components in integer cents. The sync
+materializes it into the SAME `product`, `price-book` and `offer` records —
+no new manifest, no parallel catalog (`tests/commercial-price-list.test.js`
+guards both). Source keys are namespaced per provider, the listino travels
+in the provider's declared `config` so its fingerprint covers every amount
+(a price change under a frozen version is drift and stops the next boot),
+and optional `externalId` / `externalOfferId` / `externalPriceId` fields
+carry the future payment mapping without claiming it.
+
 ### Unsupported models fail closed
 
 Metered usage, overage, proration, ramp deals, minimum commitments,
