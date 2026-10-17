@@ -110,6 +110,34 @@ the policy fingerprint — durable evidence for a person, never a decision.
 Changing a rule changes the fingerprint on every receipt and candidate it
 produced, so an old decision keeps naming the rules that actually made it.
 
+## Channel senders: one handle, one contact, no guessing
+
+`resolve-channel-sender` resolves one channel sender — a WhatsApp number, an
+Instagram, Facebook or TikTok id, an email address or a phone number — to its
+contact. It reuses the records and the rule above: the handle is looked up as
+the `external-identity` `${channel}:${handle}`, anything else resolves through
+`deterministic-customer-match@1`, and every resolved handle is recorded as an
+`external-identity` against its contact. A second sighting refreshes
+`lastObserved`, never a second row.
+
+```text
+sender  →  matched      the handle already names a contact, or the evidence matches one
+        →  created      unknown sender carrying an email: its contact is created, like an accepted import row
+        →  unresolved   ambiguous evidence, or nothing this resolution may create
+```
+
+- **Ambiguity becomes a candidate, never a merge.** A handle naming one
+  contact with an email naming another, or evidence reaching several records,
+  is recorded as an unresolved `duplicate-candidate` for a human. Nothing is
+  re-linked, nothing is fused.
+- **No email, no contact.** A sender that matches nothing and carries no
+  email creates nothing: a contact needs a globally-unique email and this
+  resolution invents none. A bare handle with no linkable evidence stays
+  `unresolved` for human triage.
+- **Senders are people.** Evidence that only reaches a company either creates
+  its contact (when it carries an email) or stays unresolved — a sender is
+  never matched to a company.
+
 ## Canonical identity: a human decision, and a logical link
 
 ```text
