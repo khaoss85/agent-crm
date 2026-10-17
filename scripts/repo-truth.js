@@ -5,9 +5,10 @@
  *
  *   node scripts/repo-truth.js              regenerate docs/repository-truth.json
  *   node scripts/repo-truth.js --check      fail when the repository and the facts disagree
- *   node scripts/repo-truth.js --check --drift-advisory
- *     advisory-only drift (added facts, metadata) warns instead of failing;
- *     a moved or dropped fact value still fails (parallel PRs, S70)
+ *   node scripts/repo-truth.js --check --drift-advisory [--base <ref>]
+ *     advisory-only drift warns instead of failing; with --base, an added
+ *     fact warns only when the base already carries it (the PR fast gate) —
+ *     a moved or dropped fact value still fails everywhere (parallel PRs, S70)
  *   node scripts/repo-truth.js --json       print the report rather than a human summary
  *
  * ## The failure this exists to close
@@ -3287,6 +3288,38 @@ export function checkFactFreshness(document) {
 }
 
 /**
+ * The fact ids the base ref's committed truth document carries, for the PR
+ * fast-gate semantics of {@link checkRepository}: an added fact warns only
+ * when it is in this list. Best effort over git — `null` when the ref cannot
+ * be read, and the caller fails closed (an unreadable base proves nothing, so
+ * added facts stay red). Reuses {@link gitIn}; one `fetch` retry for
+ * `origin/*` refs, because a checkout may not have the base locally yet.
+ *
+ * @param {string} rootDir
+ * @param {string} ref
+ * @returns {Array<string> | null}
+ */
+export function resolveBaseFactIds(rootDir, ref) {
+  const git = gitIn(rootDir);
+  const show = (revision) => git(['show', `${revision}:${TRUTH_DOCUMENT}`]);
+  let shown = show(ref);
+  if (shown.status !== 0 && ref.startsWith('origin/')) {
+    // Into its tracking ref, not just FETCH_HEAD: the retry below reads the
+    // same ref, and a bare `git fetch origin <branch>` would leave it unread.
+    const short = ref.slice('origin/'.length);
+    git(['fetch', '--no-tags', 'origin', `${short}:refs/remotes/origin/${short}`]);
+    shown = show(ref);
+  }
+  if (shown.status !== 0 || !shown.stdout) return null;
+  try {
+    const base = JSON.parse(shown.stdout);
+    return (base?.facts ?? []).map((fact) => String(fact?.id ?? '')).filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The whole check: regeneration, citations, code vocabulary, measurement.
  *
  * `requireCurrent` opts into the fourth gate: every fact must have status
@@ -3300,9 +3333,15 @@ export function checkFactFreshness(document) {
  * still fail. The `fast` CI job and the `public-claims` agreement gate pass
  * it; a local `--check` without it is unchanged.
  *
- * @param {{rootDir: string, requireCurrent?: boolean, driftAdvisory?: boolean}} options
+ * `baseFactIds` selects the PR fast-gate semantics (S70, backlog:6a3d0316):
+ * an added fact warns only when the base already carries it — a fact this
+ * branch added without regenerating stays red. Without it (the
+ * `public-claims` agreement gate, a local run) every non-blocking drift
+ * still warns: the realign PR shows the whole diff under the normal gate.
+ *
+ * @param {{rootDir: string, requireCurrent?: boolean, driftAdvisory?: boolean, baseFactIds?: Array<string> | null}} options
  */
-export async function checkRepository({ rootDir, requireCurrent = false, driftAdvisory = false }) {
+export async function checkRepository({ rootDir, requireCurrent = false, driftAdvisory = false, baseFactIds = undefined }) {
   /** @type {Array<{code: string, message: string}>} */
   const problems = [];
   /** @type {Array<{code: string, message: string, advisory: true}>} */
@@ -3332,11 +3371,17 @@ export async function checkRepository({ rootDir, requireCurrent = false, driftAd
   if (committed) {
     const stale = diffDocuments(committed, document);
     drift = classifyDocumentDrift(committed, document);
-    if (stale.length && driftAdvisory && !drift.blocking) {
+    // With a base (the PR fast gate) an added fact is advisory only when the
+    // base already carries it; `metadata-only` drift has no added facts, so
+    // `every` holds and it still warns. Without a base every non-blocking
+    // drift warns. A moved or dropped value fails either way.
+    const baseCoversAdded = baseFactIds === undefined
+      || drift.added.every((id) => (baseFactIds ?? []).includes(id));
+    if (stale.length && driftAdvisory && !drift.blocking && baseCoversAdded) {
       // Advisory-only drift: the document is behind, but no claim it carries
-      // went wrong — warn loudly, fail nothing. Main realigns itself after
-      // merge (scripts/realign-truth-main.js); a moved or dropped value below
-      // still fails, advisory mode or not.
+      // went wrong — warn loudly, fail nothing. Main realigns after merge
+      // through a normal-gated PR (scripts/realign-truth-main.js); a moved
+      // or dropped value below still fails, advisory mode or not.
       for (const problem of stale) warnings.push({ ...problem, advisory: true });
     } else {
       problems.push(...stale);
@@ -3439,11 +3484,22 @@ async function main() {
   const wantsRequireCurrent = argv.includes('--require-current');
   const wantsDriftAdvisory = argv.includes('--drift-advisory');
   const rootDir = process.cwd();
-
-  for (const flag of argv) {
-    if (flag !== '--check' && flag !== '--json' && flag !== '--require-current' && flag !== '--drift-advisory') {
+  let baseRef = null;
+  const known = new Set(['--check', '--json', '--require-current', '--drift-advisory', '--base']);
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (flag === '--base') {
+      const ref = argv[index + 1];
+      if (!ref || known.has(ref)) {
+        process.stderr.write('repo:truth: --base needs a ref: --base origin/main. '
+          + 'Usage: node scripts/repo-truth.js --check --drift-advisory --base <ref>\n');
+        process.exit(2);
+      }
+      baseRef = ref;
+      index += 1;
+    } else if (!known.has(flag)) {
       process.stderr.write('repo:truth: unknown flag '
-        + `${flag}. Usage: node scripts/repo-truth.js [--check [--require-current] [--drift-advisory]] [--json]\n`);
+        + `${flag}. Usage: node scripts/repo-truth.js [--check [--require-current] [--drift-advisory [--base <ref>]]] [--json]\n`);
       process.exit(2);
     }
   }
@@ -3455,6 +3511,11 @@ async function main() {
   if (wantsDriftAdvisory && !wantsCheck) {
     process.stderr.write('repo:truth: --drift-advisory applies to --check: advisory-only drift warns instead of failing. '
       + 'Usage: node scripts/repo-truth.js --check --drift-advisory\n');
+    process.exit(2);
+  }
+  if (baseRef && (!wantsCheck || !wantsDriftAdvisory)) {
+    process.stderr.write('repo:truth: --base applies to --check --drift-advisory: without advisory mode there is no warning to narrow. '
+      + 'Usage: node scripts/repo-truth.js --check --drift-advisory --base <ref>\n');
     process.exit(2);
   }
 
@@ -3474,8 +3535,19 @@ async function main() {
     return;
   }
 
+  // Fail closed: an unreadable base proves nothing about where an added fact
+  // came from, so added facts stay red rather than warning on a guess.
+  let baseFactIds;
+  if (baseRef) {
+    baseFactIds = resolveBaseFactIds(rootDir, baseRef);
+    if (baseFactIds === null) {
+      process.stderr.write(`repo:truth: the base ${baseRef} cannot be read here, so added facts fail closed. `
+        + `Fetch it first (git fetch --no-tags origin <branch>:refs/remotes/origin/<branch>).\n`);
+      baseFactIds = [];
+    }
+  }
   const report = await checkRepository({
-    rootDir, requireCurrent: wantsRequireCurrent, driftAdvisory: wantsDriftAdvisory,
+    rootDir, requireCurrent: wantsRequireCurrent, driftAdvisory: wantsDriftAdvisory, baseFactIds,
   });
   // Informational only, and deliberately not a problem: a truthful record of
   // an older tree is a stale status, not a failure (backlog:79405f9df589).
@@ -3504,7 +3576,7 @@ async function main() {
       fingerprint: report.document.fingerprint,
     }, null, 2)}\n`);
   } else {
-    const mode = `${wantsRequireCurrent ? ' --require-current' : ''}${wantsDriftAdvisory ? ' --drift-advisory' : ''}`;
+    const mode = `${wantsRequireCurrent ? ' --require-current' : ''}${wantsDriftAdvisory ? ' --drift-advisory' : ''}${baseRef ? ` --base ${baseRef}` : ''}`;
     process.stderr.write(`\n  repo:truth --check${mode} — ${report.counts.facts} facts `
       + `(${report.counts.currentFacts} current, ratio ${report.counts.factsCurrentRatio.toFixed(3)}), ${report.counts.citations} citations `
       + `across ${report.counts.surfaces} bound surfaces\n\n`);

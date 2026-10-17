@@ -58,7 +58,9 @@ jobs:
       - name: Fetch the PR base for touched-file selection
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: git fetch --no-tags origin "$BASE_REF"
+        # Into its tracking ref, not just FETCH_HEAD: the truth agreement
+        # check reads the base's committed document from it (`--base` below).
+        run: git fetch --no-tags origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
       - name: Start PostgreSQL 16 (self-hosted macOS)
         if: runner.os == 'macOS'
         run: |
@@ -91,14 +93,17 @@ jobs:
       # Agreement only: the committed truth document must equal a fresh
       # generation from the PR's own inputs — with one exception (S70,
       # backlog:6a3d0316): drift that moves no fact value and drops no fact
-      # (a regenerated evidence pointer, a fact the base merge brought in)
-      # only warns under `--drift-advisory`. Parallel PRs stay green after
-      # the first merges with no regen round-trip; a value this PR changed
-      # without regenerating still fails, and `main` realigns itself after
-      # merge (`public-claims` below). Freshness against a new measurement
-      # (`--require-current`) needs the full suite, so it runs only on `main`.
+      # only warns under `--drift-advisory`, and an added fact warns only
+      # when the base already carries it (`--base`). Parallel PRs stay green
+      # after the first merges with no regen round-trip; a value — or a fact
+      # — this PR itself changed without regenerating still fails, and `main`
+      # realigns after merge through a normal-gated PR (`public-claims`
+      # below). Freshness against a new measurement (`--require-current`)
+      # needs the full suite, so it runs only on `main`.
       - name: The committed truth document agrees with its authorities
-        run: HEAVY_JOB_MAX_SEC=300 scripts/ci-heavy.sh truth -- npm run repo:truth -- --check --drift-advisory
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: HEAVY_JOB_MAX_SEC=300 scripts/ci-heavy.sh truth -- npm run repo:truth -- --check --drift-advisory --base "origin/$BASE_REF"
 
   # Left at the default fetch-depth: 1 deliberately. Nothing under `npm run verify` or
   # `npm run smoke` reads git history — the only git these run is `ls-files`, `status`
@@ -254,10 +259,10 @@ jobs:
       # `HEAD:tests`, clean tree, green run) before writing anything.
       # Gate 1 on the committed document, before anything is regenerated: the
       # document the merge commits must equal a fresh generation from its own
-      # inputs — with the same one exception as on PRs (S70,
-      # backlog:6a3d0316): advisory-only drift warns instead of failing, and
-      # the realign step at the end of this job commits exactly that drift
-      # back to `main`. A moved or dropped value still fails here, and only
+      # inputs — with the same leniency as on PRs (S70, backlog:6a3d0316):
+      # advisory-only drift warns instead of failing (no `--base` here: the
+      # realign PR at the end of this job shows the whole diff under the
+      # normal gate). A moved or dropped value still fails here, and only
       # the measurement re-anchor below is CI's to do; every other fact stays
       # the author's to regenerate.
       - name: The committed truth document agrees with its authorities
@@ -293,14 +298,16 @@ jobs:
       # without the flag still guards agreement only.
       - run: npm run repo:truth -- --check --require-current
       # Controlled regeneration (backlog:6a3d0316): when the merge carried
-      # advisory-only drift — parallel PRs, S70 — the regenerated document
-      # above is committed back to `main` here, so `main` returns aligned
-      # with no manual commit. The step refuses red when a fact value moved
+      # advisory-only drift — parallel PRs, S70 — the regenerated files above
+      # go onto the fixed branch `chore/truth-realign-main` behind ONE PR
+      # titled `chore(truth): realign main`, which follows the normal gate,
+      # so `main` returns aligned with no manual commit and CI never pushes
+      # to `main` directly. The step refuses red when a fact value moved
       # or dropped outside the CI-owned measurement facts: that always needs
-      # a person. `[skip ci]` on the commit: this run just verified this
-      # exact tree with `--require-current`, and the commit changes no
-      # authority source, no test and no surface — a new full `main` run
-      # would only re-measure an unchanged `tests/` tree while holding the
-      # shared machine lock.
+      # a person. A lost race for the branch warns instead of failing red —
+      # the other run owns it and the next `main` run retries; any other
+      # push failure stays red.
       - name: Realign the committed truth document when the merge drifted
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/realign-truth-main.js --push

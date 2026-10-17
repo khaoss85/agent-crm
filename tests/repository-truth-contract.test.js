@@ -41,6 +41,7 @@ import {
   readMeasurement,
   measurementStatus,
   repositoryBasenames,
+  resolveBaseFactIds,
   resolveSurfacePath,
   serialize,
 } from '../scripts/repo-truth.js';
@@ -946,6 +947,55 @@ test('base drift warns under driftAdvisory and fails without it; a moved value f
   // fact is the same failure, not a second one to enumerate here.
   assert.ok(codes(control.problems).includes('TRUTH_DOCUMENT_STALE'));
   problemNaming(control.problems, 'spine.tenant.isolation.mode');
+});
+
+test('added facts warn only from the base; the branch’s own new fact stays red (S70)', async (t) => {
+  // The hole this exists to close: added facts were advisory on every fast
+  // gate, so a branch that added a package without regenerating passed green
+  // and main realigned what the author owed. Under `baseFactIds` — the PR
+  // fast gate, `repo:truth --check --drift-advisory --base origin/main` — an
+  // added fact warns only when the base already carries it.
+  const fixture = frameworkFixture(t);
+  fixture.seal();
+  const { document } = await buildTruthDocument({ rootDir: fixture.root });
+  const added = document.facts.find((fact) => !String(fact.id).startsWith('measurement.'));
+  assert.ok(added, 'the fixture document carries an author-owned fact to age out');
+  // The committed document predates the fact; the fresh generation has it.
+  fixture.write(TRUTH_DOCUMENT, serialize({ ...document, facts: document.facts.filter((fact) => fact.id !== added.id) }));
+
+  const authorAdded = await checkRepository({ rootDir: fixture.root, driftAdvisory: true, baseFactIds: [] });
+  assert.equal(authorAdded.ok, false, 'a fact this branch added without regenerating must stay red');
+  assert.deepEqual(codes(authorAdded.problems), ['TRUTH_DOCUMENT_STALE']);
+  assert.deepEqual(authorAdded.warnings, []);
+  assert.equal(authorAdded.drift?.kind, 'facts-added');
+  assert.deepEqual(authorAdded.drift?.added, [added.id]);
+
+  const baseAdded = await checkRepository({ rootDir: fixture.root, driftAdvisory: true, baseFactIds: [added.id] });
+  assert.equal(baseAdded.ok, true, 'a fact the base merge brought in warns instead of failing');
+  assert.deepEqual(codes(baseAdded.warnings), ['TRUTH_DOCUMENT_STALE']);
+  assert.deepEqual(baseAdded.problems, []);
+
+  // Without a base (the `public-claims` agreement gate, a local run) every
+  // non-blocking drift still warns: the realign PR shows the whole diff
+  // under the normal gate.
+  const lenient = await checkRepository({ rootDir: fixture.root, driftAdvisory: true });
+  assert.equal(lenient.ok, true);
+  assert.deepEqual(codes(lenient.warnings), ['TRUTH_DOCUMENT_STALE']);
+});
+
+test('resolveBaseFactIds reads the base document and fails closed on unknown refs (S70)', async (t) => {
+  const root = disposable(t, 'accordo-truth-base-');
+  git(root, ['init', '-q', '-b', 'main']);
+  mkdirSync(join(root, 'docs'), { recursive: true });
+  writeFileSync(join(root, 'docs/repository-truth.json'),
+    JSON.stringify({ facts: [{ id: 'probe.base_fact', value: 1 }] }));
+  git(root, ['add', '-A']);
+  git(root, ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', 'commit', '-q', '-m', 'base']);
+  assert.deepEqual(resolveBaseFactIds(root, 'main'), ['probe.base_fact']);
+  // No `origin` remote here, so the one fetch retry fails and the read with
+  // it: an unreadable base is null, and the caller fails added facts closed.
+  assert.equal(resolveBaseFactIds(root, 'origin/main'), null);
+  assert.equal(resolveBaseFactIds(root, 'no-such-ref'), null);
 });
 
 // ───────────────── negative: absence is never silently turned into a false fact

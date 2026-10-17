@@ -183,20 +183,23 @@ npm run repo:truth -- --check   # fail when the repository and the facts disagre
 | the measured commit is an ancestor of `HEAD` | `git merge-base --is-ancestor`; object existence is not provenance (ADR-027) | `TRUTH_MEASUREMENT_NOT_ANCESTOR` |
 | an authority that cannot be read stops the run | no fact is defaulted, and two authorities that disagree publish neither answer | `TRUTH_AUTHORITY_UNAVAILABLE`, `TRUTH_AUTHORITIES_CONTRADICT` |
 
-**In a feature PR.** `npm run repo:truth -- --check --drift-advisory` runs on
-every pull request, as its own step in the `fast` CI job (§7) — agreement
-only, without `--require-current`, which needs a fresh full-suite measurement
-and runs only on `main`. Advisory-only drift (added facts, metadata — the
-parallel-PR drift of S70) warns instead of failing, so a PR whose base moved
-underneath it stays green with no regen round-trip; a moved or dropped value
-still fails. Run it locally when the PR changes a product boundary, a rail, a
+**In a feature PR.** `npm run repo:truth -- --check --drift-advisory --base origin/main`
+runs on every pull request, as its own step in the `fast` CI job (§7) —
+agreement only, without `--require-current`, which needs a fresh full-suite
+measurement and runs only on `main`. Advisory-only drift (metadata, or added
+facts the base already carries — the parallel-PR drift of S70) warns instead
+of failing, so a PR whose base moved underneath it stays green with no regen
+round-trip; a moved or dropped value — or a fact the PR itself added without
+regenerating — still fails. Run it locally when the PR changes a product boundary, a rail, a
 package's contract, the spine, or any sentence in a bound document that states
 what the framework does or does not do. If a fact moved, run `npm run
 repo:truth` and commit the regenerated document in the same PR — a regenerated
 fact and a stale sentence citing it fail together, which is the point. On
-`main`, advisory-only drift a merge carried is committed back by the
-`public-claims` job itself (`scripts/realign-truth-main.js --push`), so `main`
-returns aligned with no manual commit.
+`main`, advisory-only drift a merge carried goes onto the fixed realign branch
+behind ONE PR (`chore(truth): realign main`, opened by the
+`public-claims` job itself via `scripts/realign-truth-main.js --push`), which
+follows the normal gate — so `main`
+returns aligned with no manual commit and CI never pushes to `main` directly.
 
 The boundaries, which are as much of the gate as the rules:
 
@@ -267,9 +270,9 @@ it runs only where a merge has already happened — never on a PR push.
 
 | Gate | Where | What |
 |---|---|---|
-| `fast` | every pull request | `npm run check`, the tests of the touched files (`scripts/ci-touched-tests.js`: transitive through every relative JS import in the repo — `tests/helpers` and `packages/` barrels incl. `export-from` — fail-closed refusal when no test reaches a changed source, selected run bounded to 270 s), the smoke demo, the published recipe replay, `npm run gtm:check`, `npm run repo:truth -- --check --drift-advisory` (agreement only; advisory drift warns) |
+| `fast` | every pull request | `npm run check`, the tests of the touched files (`scripts/ci-touched-tests.js`: transitive through every relative JS import in the repo — `tests/helpers` and `packages/` barrels incl. `export-from` — fail-closed refusal when no test reaches a changed source, selected run bounded to 270 s), the smoke demo, the published recipe replay, `npm run gtm:check`, `npm run repo:truth -- --check --drift-advisory --base origin/main` (agreement only; advisory drift warns, added warns only from base) |
 | `verify` | push to `main` only | full `npm run verify` via `scripts/measure-suite.js`, measured record kept as artifact and runner-local copy, smoke, recipe replay |
-| `public-claims` | push to `main` only | `gtm:check`, agreement `--check --drift-advisory` on the committed document, re-anchor from `verify`'s measurement, regenerate, `--require-current`, controlled realign of advisory-only drift back to `main` (`scripts/realign-truth-main.js --push`) |
+| `public-claims` | push to `main` only | `gtm:check`, agreement `--check --drift-advisory` on the committed document, re-anchor from `verify`'s measurement, regenerate, `--require-current`, controlled realign of advisory-only drift onto the fixed branch behind ONE PR (`scripts/realign-truth-main.js --push`, normal gate, never a push to `main`) |
 | nightly matrix | daily 01:17 UTC | the full worktree-heavy tool-selection product behind its opt-in variable (see the nightly workflow), skipped by default elsewhere |
 
 Budgets, which are as much of the gate as the steps: every `fast` step runs

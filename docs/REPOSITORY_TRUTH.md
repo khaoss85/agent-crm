@@ -249,14 +249,16 @@ annotation on CI) instead of failing. That is the parallel-PR rule (S70): each
 PR is correct alone, and the merge moves the ground under the others without
 moving a value, so two PRs adding different packages both pass after the
 first merges, with no regen round-trip. A value the PR itself changed without
-regenerating still fails, advisory mode or not.
+regenerating still fails, advisory mode or not — and so does a fact the PR
+itself added: on PRs the gate also passes `--base origin/main`, and an added
+fact warns only when the base already carries it.
 
-On `main` the same drift is committed back by the job that found it
-(`scripts/realign-truth-main.js --push`, last step of `public-claims`): when
-the merge carried advisory-only drift, the regenerated document is pushed to
-`main` with `[skip ci]` — the run just verified that exact tree — so `main`
-returns aligned with no manual commit. A moved or dropped value refuses there
-too: that always needs a person.
+On `main` the same drift goes onto ONE fixed branch (`chore/truth-realign-main`)
+behind ONE pull request titled `chore(truth): realign main`
+(`scripts/realign-truth-main.js --push`, last step of `public-claims`), which
+follows the normal merge gate — so `main` returns aligned with no manual
+commit, and CI never pushes to `main` directly. A moved or dropped value
+refuses there too: that always needs a person.
 
 **3 — machine-code vocabulary.** Every `SCREAMING_SNAKE` identifier in a bound
 surface must exist in the source vocabulary harvested from `packages/`, `scripts/`,
