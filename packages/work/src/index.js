@@ -342,7 +342,7 @@ export function createWorkPackage(options = {}) {
           kinds: [...ACTIVITY_KINDS],
           appendOnly: 'no action in this package updates or deletes an activity, and the module has no public write path',
           order:
-            'a timeline is read oldest-first by occurredAt, compared by code point and never by host locale collation, so the order does not depend on the machine, the ICU build or LANG. TIMELINE_ORDER_TIES_ARE_ARBITRARY — entries recorded at the same instant have no business order and are broken by created stamp then id, purely so two readers see the same list',
+            'a timeline is read oldest-first by occurredAt, compared by code point and never by host locale collation, so the order does not depend on the machine, the ICU build or LANG. TIMELINE_ORDER_SAME_INSTANT_IS_WRITE_ORDER — entries of one task recorded at the same instant come out in write order through the seq stored at write time. Same-instant entries of different tasks, and rows written before seq existed, are broken by created stamp then id, purely so two readers see the same list',
           versusAudit:
             'audit and trace stay the technical record of every write; this is the curated user-facing one with a closed vocabulary. Nothing projects one into the other, and there is no asynchronous projection engine',
           content:
