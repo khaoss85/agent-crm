@@ -83,6 +83,39 @@ test('a payment from an offer mints a checkout and the same intent never mints t
   assert.equal(api.state.createCalls, 1);
 });
 
+test('the same idempotency key with different terms conflicts instead of returning the original', async (t) => {
+  const { harness, api } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const first = await harness.request(SPACE_A, {
+    connectionKey: key, quoteId: 'quote-1', amount: 4900, currency: 'EUR', requestKey: 'req-terms',
+  });
+  assert.equal(first.duplicate, false);
+  // A retried key with a different amount is a conflict, never the original checkout.
+  await assert.rejects(
+    harness.request(SPACE_A, {
+      connectionKey: key, quoteId: 'quote-1', amount: 100, currency: 'EUR', requestKey: 'req-terms',
+    }),
+    (e) => e.code === 'PAYMENT_REQUEST_CONFLICT' && e.status === 409,
+  );
+  // Same for a different currency and for an offer swapped in for the quote.
+  await assert.rejects(
+    harness.request(SPACE_A, {
+      connectionKey: key, quoteId: 'quote-1', amount: 4900, currency: 'USD', requestKey: 'req-terms',
+    }),
+    (e) => e.code === 'PAYMENT_REQUEST_CONFLICT',
+  );
+  await assert.rejects(
+    harness.request(SPACE_A, {
+      connectionKey: key, offerId: 'offer-1', amount: 4900, currency: 'EUR', requestKey: 'req-terms',
+    }),
+    (e) => e.code === 'PAYMENT_REQUEST_CONFLICT',
+  );
+  // The original intent is untouched and the provider minted only once.
+  assert.equal(harness.status(SPACE_A, first.request.id).amount, 4900);
+  assert.equal(api.state.createCalls, 1);
+});
+
 test('a repeated webhook never creates a second payment', async (t) => {
   const { harness } = setup();
   t.after(() => harness.close());
@@ -109,6 +142,113 @@ test('a repeated webhook never creates a second payment', async (t) => {
   assert.equal(twin.alreadyFinal, true);
   assert.equal(harness.status(SPACE_A, request.id).status, 'paid');
   assert.equal(harness.list(SPACE_A, { status: 'paid' }).length, 1);
+});
+
+test('a raced duplicate delivery resolves as a replay, not a raw violation', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const { request } = await harness.request(SPACE_A, {
+    connectionKey: key, quoteId: 'quote-race', amount: 1000, currency: 'EUR', requestKey: 'req-race',
+  });
+  const rawBody = paidBody(request.providerRef, 'evt_race_1');
+  const headers = harness.faults.sign(rawBody);
+  // A concurrent delivery commits first under the same identity; the
+  // loser's insert then fails with a raw violation (channels race idiom).
+  const entry = harness.internals.modules.get('payment-event');
+  const real = entry.service;
+  const realCreate = real.createManaged.bind(real);
+  let armed = true;
+  const raced = Object.create(real);
+  raced.createManaged = async (row, opts) => {
+    if (armed) {
+      armed = false;
+      await realCreate(row, opts);
+      throw Object.assign(new Error('UNIQUE constraint failed: payment-event.sourceKey'), { code: 'CONFLICT' });
+    }
+    return realCreate(row, opts);
+  };
+  entry.service = raced;
+  try {
+    const ingested = await harness.ingest(SPACE_A, { connectionKey: key, rawBody, headers });
+    assert.equal(ingested.duplicate, true);
+    assert.equal(ingested.effect, 'applied');
+  } finally {
+    entry.service = real;
+  }
+  assert.equal(harness.status(SPACE_A, request.id).status, 'paid');
+  assert.equal(JSON.parse(harness.dumpStorage()).events.length, 1);
+});
+
+test('a delivery raced on the request transition follows the terminal contract', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const { request } = await harness.request(SPACE_A, {
+    connectionKey: key, quoteId: 'quote-race-t', amount: 1000, currency: 'EUR', requestKey: 'req-race-t',
+  });
+  const rawBody = paidBody(request.providerRef, 'evt_race_t_1');
+  const headers = harness.faults.sign(rawBody);
+  // A concurrent delivery finalizes the request first; this delivery's
+  // transition then throws on the stale state instead of winning.
+  const entry = harness.internals.modules.get('payment-request');
+  const real = entry.service;
+  const realApply = real.applyManaged.bind(real);
+  let armed = true;
+  const raced = Object.create(real);
+  raced.applyManaged = async (id, patch, opts) => {
+    if (armed) {
+      armed = false;
+      await realApply(id, { status: 'paid', paidAt: patch.paidAt, statusReason: patch.statusReason }, opts);
+      throw Object.assign(new Error('Payment request cannot "pay" from "paid"'), { code: 'PAYMENT_TRANSITION_INVALID' });
+    }
+    return realApply(id, patch, opts);
+  };
+  entry.service = raced;
+  try {
+    const ingested = await harness.ingest(SPACE_A, { connectionKey: key, rawBody, headers });
+    assert.equal(ingested.duplicate, true);
+    assert.equal(ingested.alreadyFinal, true);
+    assert.equal(ingested.effect, 'applied');
+  } finally {
+    entry.service = real;
+  }
+  assert.equal(harness.status(SPACE_A, request.id).status, 'paid');
+});
+
+test('a secret-shaped provider reference is refused and never stored', async (t) => {
+  const hostileRef = 'sk_live_51H7x8y9z0qwertyuiop';
+  const { definition } = createFixtureStripeAdapter({ secret: SECRET });
+  const hostile = {
+    ...definition,
+    createPayment: async () => ({ providerRef: hostileRef, url: 'https://checkout.fixture.stripe/pay/x' }),
+  };
+  const { harness } = setup({ adapterDefinition: hostile });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  await assert.rejects(
+    harness.request(SPACE_A, {
+      connectionKey: key, quoteId: 'quote-hostile', amount: 100, currency: 'EUR', requestKey: 'req-hostile',
+    }),
+    (e) => e.code === 'PAYMENT_PROVIDER_INVALID',
+  );
+  assert.ok(!harness.dumpStorage().includes(hostileRef), 'the secret-shaped value appears nowhere in stored rows or audit');
+});
+
+test('a webhook for another connection quarantines and never finalizes', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const keyA = await registeredActive(harness, SPACE_A, 'acct_a');
+  const keyB = await registeredActive(harness, SPACE_A, 'acct_b');
+  const { request } = await harness.request(SPACE_A, {
+    connectionKey: keyA, quoteId: 'quote-x', amount: 100, currency: 'EUR', requestKey: 'req-x',
+  });
+  const body = paidBody(request.providerRef, 'evt_cross_1');
+  const ingested = await harness.ingest(SPACE_A, {
+    connectionKey: keyB, rawBody: body, headers: harness.faults.sign(body),
+  });
+  assert.equal(ingested.quarantined, true);
+  assert.equal(harness.status(SPACE_A, request.id).status, 'pending');
 });
 
 test('a contradicting event against a paid request quarantines and the stored outcome wins', async (t) => {

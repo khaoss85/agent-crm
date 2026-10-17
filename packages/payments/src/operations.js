@@ -48,6 +48,12 @@ export const PAYMENT_MAX_BATCH_EVENTS = 100;
 export const PAYMENT_SECRET_PURPOSE_INBOUND = 'payment-inbound';
 export const PAYMENT_SECRET_PURPOSE_OUTBOUND = 'payment-outbound';
 
+/**
+ * Stripe-family secret prefixes the generic SENSITIVE_KEY denylist does not
+ * name: a minted checkout value carrying one is refused, never stored.
+ */
+const STRIPE_SECRET_SHAPE = /(?:sk_live_|sk_test_|rk_live_|rk_test_|whsec_)/;
+
 /** @param {Record<string, string>} [config] */
 function resolvedNames(config = {}) {
   return {
@@ -103,6 +109,21 @@ function boundedId(value, label, max = 256) {
     throw new ValidationError(`${label} must be bounded single-line text (at most ${max} characters)`, { field: label });
   }
   return value;
+}
+
+/**
+ * The idempotency contract: the same intent key with the same terms
+ * resolves to the same checkout; the same key with different terms is a
+ * conflict, never the original checkout (which would collect the wrong
+ * amount while the caller believes it asked for the new one).
+ */
+function assertSamePaymentTerms(existing, terms) {
+  if (existing.amount !== terms.amount || existing.currency !== terms.currency
+    || (existing.quoteId ?? '') !== terms.quoteId || (existing.offerId ?? '') !== terms.offerId) {
+    throw new AppError('Payment request already recorded with different terms: start a new intent with a new requestKey', {
+      code: 'PAYMENT_REQUEST_CONFLICT', status: 409, details: { status: existing.status },
+    });
+  }
 }
 
 /**
@@ -242,8 +263,10 @@ export function createPaymentOperations(deps) {
     const sourceKey = paymentIntentKey({ spaceId, connectionKey: connection.sourceKey, requestKey });
 
     const service = requests();
+    const newTerms = { amount, currency, quoteId, offerId };
     const existing = service.listWhere({ sourceKey })[0];
     if (existing) {
+      assertSamePaymentTerms(existing, newTerms);
       if (existing.status === 'open') {
         return mintExternal(existing);
       }
@@ -269,6 +292,7 @@ export function createPaymentOperations(deps) {
       // committed row instead of surfacing a raw unique violation.
       const raced = service.listWhere({ sourceKey })[0];
       if (raced) {
+        assertSamePaymentTerms(raced, newTerms);
         if (raced.status === 'open') return mintExternal(raced);
         if (raced.status === 'pending' || raced.status === 'paid') return { duplicate: true, request: raced };
         throw new AppError(`Payment request is ${raced.status}: start a new intent with a new requestKey`, {
@@ -312,8 +336,10 @@ export function createPaymentOperations(deps) {
       const providerRef = boundedId(created?.providerRef ?? '', 'providerRef');
       const providerUrl = boundedId(created?.url ?? '', 'providerUrl', 1024);
       // The checkout URL is provider output, never a secret: still, a minted
-      // value shaped like a secret is refused rather than stored.
-      if (SENSITIVE_KEY.test(providerRef) || SENSITIVE_KEY.test(providerUrl)) {
+      // value shaped like a secret — including Stripe-family prefixes the
+      // generic denylist does not name — is refused rather than stored.
+      if (SENSITIVE_KEY.test(providerRef) || SENSITIVE_KEY.test(providerUrl)
+        || STRIPE_SECRET_SHAPE.test(providerRef) || STRIPE_SECRET_SHAPE.test(providerUrl)) {
         throw new AppError('Payment provider returned a secret-shaped reference', {
           code: 'PAYMENT_PROVIDER_INVALID', status: 502,
         });
@@ -435,6 +461,51 @@ export function createPaymentOperations(deps) {
     }
     return rawEvents.length === 1 ? outcomes[0] : { batched: true, events: outcomes };
 
+    /**
+     * Insert one event row. A concurrent delivery of the same event that won
+     * the insert resolves against the committed row instead of surfacing a
+     * raw unique violation — the same contract as the pre-read branch above
+     * (MEM_ACC_REUSE: the channels inbox proves the same shape).
+     */
+    async function insertEvent(fields) {
+      try {
+        const row = await service.createManaged(fields, { actor });
+        return { row, raced: false };
+      } catch (error) {
+        const raced = service.listWhere({ sourceKey: fields.sourceKey })[0];
+        if (raced) {
+          if (raced.payloadFingerprint !== payloadFingerprint) {
+            throw new AppError('Provider event id was already recorded with a different payload', {
+              code: 'PAYMENT_EVENT_ID_CONFLICT', status: 409, details: { providerEventId: fields.providerEventId },
+            });
+          }
+          return { row: raced, raced: true };
+        }
+        throw error;
+      }
+    }
+
+    /**
+     * Record the event against an already-terminal request: an agreeing
+     * outcome resolves without moving the request, a contradicting one
+     * quarantines, and the stored outcome always wins.
+     */
+    async function storeTerminalEvent(terminalRequest, item, outcome) {
+      const agrees = (outcome === 'pay' && terminalRequest.status === 'paid')
+        || (outcome === 'fail' && terminalRequest.status === 'failed');
+      const stored = await insertEvent({
+        sourceKey: item.sourceKey, spaceId, connectionKey: connection.sourceKey,
+        providerEventId: item.providerEventId, paymentRequestId: terminalRequest.id,
+        eventType: item.eventType, payloadFingerprint,
+        occurredAt: item.occurredAt, receivedAt: now,
+        processed: true, effect: agrees ? 'applied' : 'quarantined',
+        effectReason: agrees
+          ? `request already ${terminalRequest.status}: no state change`
+          : `request already ${terminalRequest.status}: contradicting provider event held as evidence`,
+      });
+      return { duplicate: true, alreadyFinal: true, eventId: stored.row.id, effect: stored.row.effect };
+    }
+
     async function storeOne(item) {
       const already = service.listWhere({ sourceKey: item.sourceKey })[0];
       if (already) {
@@ -446,11 +517,16 @@ export function createPaymentOperations(deps) {
         return { duplicate: true, eventId: already.id, effect: already.effect };
       }
 
-      const request = requestService.listWhere({ spaceId, providerRef: item.paymentRef })[0] ?? null;
+      // The request must belong to the webhook connection: a checkout minted
+      // under one connection is never finalized through a sibling one, so a
+      // suspended or revoked binding cannot be bypassed cross-connection.
+      const request = requestService.listWhere({
+        spaceId, connectionKey: connection.sourceKey, providerRef: item.paymentRef,
+      })[0] ?? null;
       // Inactive connections keep no inbound state silently: the delivery is
       // preserved as quarantine evidence, and nothing is applied.
       if (connection.status !== 'active') {
-        const row = await service.createManaged({
+        const stored = await insertEvent({
           sourceKey: item.sourceKey, spaceId, connectionKey: connection.sourceKey,
           providerEventId: item.providerEventId,
           paymentRequestId: request?.id ?? '',
@@ -458,66 +534,74 @@ export function createPaymentOperations(deps) {
           occurredAt: item.occurredAt, receivedAt: now,
           processed: true, effect: 'quarantined',
           effectReason: `connection is ${connection.status}: verify the binding before applying provider state`,
-        }, { actor });
+        });
+        if (stored.raced) return { duplicate: true, eventId: stored.row.id, effect: stored.row.effect };
+        const row = stored.row;
         return { duplicate: false, quarantined: true, eventId: row.id, effect: row.effect };
       }
       if (!request) {
-        const row = await service.createManaged({
+        const sibling = requestService.listWhere({ spaceId, providerRef: item.paymentRef })[0] ?? null;
+        const stored = await insertEvent({
           sourceKey: item.sourceKey, spaceId, connectionKey: connection.sourceKey,
           providerEventId: item.providerEventId, paymentRequestId: '',
           eventType: item.eventType, payloadFingerprint,
           occurredAt: item.occurredAt, receivedAt: now,
           processed: true, effect: 'quarantined',
-          effectReason: 'unknown checkout: no payment request carries this provider reference',
-        }, { actor });
+          effectReason: sibling
+            ? 'provider reference belongs to another connection: verify the binding before applying provider state'
+            : 'unknown checkout: no payment request carries this provider reference',
+        });
+        if (stored.raced) return { duplicate: true, eventId: stored.row.id, effect: stored.row.effect };
+        const row = stored.row;
         return { duplicate: false, quarantined: true, eventId: row.id, effect: row.effect };
       }
       if (!STRIPE_FINAL_TYPES.includes(item.eventType)) {
-        const row = await service.createManaged({
+        const stored = await insertEvent({
           sourceKey: item.sourceKey, spaceId, connectionKey: connection.sourceKey,
           providerEventId: item.providerEventId, paymentRequestId: request.id,
           eventType: item.eventType, payloadFingerprint,
           occurredAt: item.occurredAt, receivedAt: now,
           processed: true, effect: 'quarantined',
           effectReason: `event type is not a payment outcome: ${item.eventType}`,
-        }, { actor });
+        });
+        if (stored.raced) return { duplicate: true, eventId: stored.row.id, effect: stored.row.effect };
+        const row = stored.row;
         return { duplicate: false, quarantined: true, eventId: row.id, effect: row.effect };
       }
       const outcome = item.eventType === 'checkout.session.completed' ? 'pay' : 'fail';
       if (REQUEST_TERMINAL.includes(request.status)) {
-        // A terminal request never regresses and never double-applies: an
-        // event that agrees with the stored outcome resolves as applied
-        // without writing the request; one that contradicts it quarantines
-        // and the stored outcome wins.
-        const agrees = (outcome === 'pay' && request.status === 'paid')
-          || (outcome === 'fail' && request.status === 'failed');
-        const row = await service.createManaged({
-          sourceKey: item.sourceKey, spaceId, connectionKey: connection.sourceKey,
-          providerEventId: item.providerEventId, paymentRequestId: request.id,
-          eventType: item.eventType, payloadFingerprint,
-          occurredAt: item.occurredAt, receivedAt: now,
-          processed: true, effect: agrees ? 'applied' : 'quarantined',
-          effectReason: agrees
-            ? `request already ${request.status}: no state change`
-            : `request already ${request.status}: contradicting provider event held as evidence`,
-        }, { actor });
-        return { duplicate: true, alreadyFinal: true, eventId: row.id, effect: row.effect };
+        return storeTerminalEvent(request, item, outcome);
       }
-      const finalized = await transitionRequest(requestService, request.id, {
-        event: outcome,
-        patch: outcome === 'pay'
-          ? { paidAt: now, statusReason: `provider webhook ${item.providerEventId}: checkout completed` }
-          : { statusReason: `provider webhook ${item.providerEventId}: ${item.eventType}` },
-        actor,
-      });
-      const row = await service.createManaged({
+      let finalized;
+      try {
+        finalized = await transitionRequest(requestService, request.id, {
+          event: outcome,
+          patch: outcome === 'pay'
+            ? { paidAt: now, statusReason: `provider webhook ${item.providerEventId}: checkout completed` }
+            : { statusReason: `provider webhook ${item.providerEventId}: ${item.eventType}` },
+          actor,
+        });
+      } catch (error) {
+        // A concurrent delivery finalized the request first: the redelivery
+        // follows the terminal contract instead of erroring the provider.
+        if (error && typeof error === 'object' && error.code === 'PAYMENT_TRANSITION_INVALID') {
+          const current = await requestService.get(request.id);
+          if (current && REQUEST_TERMINAL.includes(current.status)) {
+            return storeTerminalEvent(current, item, outcome);
+          }
+        }
+        throw error;
+      }
+      const stored = await insertEvent({
         sourceKey: item.sourceKey, spaceId, connectionKey: connection.sourceKey,
         providerEventId: item.providerEventId, paymentRequestId: request.id,
         eventType: item.eventType, payloadFingerprint,
         occurredAt: item.occurredAt, receivedAt: now,
         processed: true, effect: 'applied',
         effectReason: '',
-      }, { actor });
+      });
+      if (stored.raced) return { duplicate: true, eventId: stored.row.id, effect: stored.row.effect };
+      const row = stored.row;
       return { duplicate: false, eventId: row.id, effect: row.effect, status: finalized.status };
     }
   }
