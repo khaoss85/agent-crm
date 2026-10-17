@@ -33,8 +33,9 @@ jobs:
   # (`scripts/ci-touched-tests.js`), the smoke demo, the published recipe
   # replay and the agreement gates (`gtm:check`, `repo:truth -- --check`
   # without `--require-current`). Every suite step runs under the machine lock
-  # via `scripts/ci-heavy.sh`, each under five minutes, under ten minutes of
-  # lock held in total — the full `npm test` holds it ~20 minutes
+  # via `scripts/ci-heavy.sh`, each capped at five minutes by the wrapper
+  # (ten minutes of lock in total stays an objective, not an enforced gate)
+  # — the full `npm test` holds it ~20 minutes
   # (CI run 38983644969), so it runs only on `main` (job `verify`
   # below), not on every PR push.
   fast:

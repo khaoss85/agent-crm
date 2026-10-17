@@ -16,17 +16,21 @@
  * - a changed `*.test.js`/`*.test.mjs` under `tests/` runs itself;
  * - a changed file imported relatively by a test file runs its importers
  *   (specifiers are resolved against the importing file, extension-free),
- *   following imports transitively through `tests/helpers` and any other
- *   non-test file under `tests/`: a test that reaches the changed file only
- *   via a helper is still selected;
+ *   following imports transitively through every relative JS import in the
+ *   repository — `tests/helpers` and fixtures, `packages/` barrels,
+ *   `scripts/`, `apps/`, `examples/`: a test that reaches the changed file
+ *   only via a helper or a barrel re-export is still selected;
  * - `export ... from` re-exports count as imports for the mapping above;
  * - a changed file no test file reaches selects nothing only when no
  *   JavaScript source changed (docs, workflows, `package.json`, site
  *   content): the agreement gates of the same CI job (`gtm:check`,
  *   `repo:truth -- --check`) still run. A changed `.js`/`.cjs`/`.mjs` file
- *   with no reaching test fails closed instead: the step runs the default
- *   `npm test` suite (bounded by the same timeout) rather than exiting 0
- *   without running anything.
+ *   with no reaching test fails closed instead: the step refuses with
+ *   exit 1, naming the uncovered files, rather than exiting 0 without
+ *   running anything. It does not run the default `npm test` suite as a
+ *   fallback: the full suite holds the machine lock ~20 minutes and cannot
+ *   fit this step's five-minute budget, so a fallback run would time out
+ *   red on every PR that triggers it.
  *
  * Usage:
  *
@@ -41,7 +45,8 @@
  *
  * Exit codes: 0 the selected tests passed (or only non-source files
  * changed and there was nothing to run), 1 the selection failed, a test
- * failed, or the fail-closed fallback suite failed, 2 unusable input.
+ * failed, or the fail-closed refusal (a changed source file no test
+ * reaches), 2 unusable input.
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
@@ -130,14 +135,16 @@ export function hasCodeChange(
 /**
  * Map changed repository-relative paths to the test files that cover them:
  * changed test files themselves, plus every test file that reaches a changed
- * file through relative imports — directly, or transitively through non-test
- * files such as `tests/helpers/*` (a test booting the app through a helper
- * is the test that catches the regression). `testContents` maps
- * repository-relative test paths to their source; `fileImports` optionally
- * maps any other repository-relative file (helpers, fixtures) to the
- * relative imports it uses, resolved the way `relativeImportsOf` resolves
- * them. Files absent from both maps are leaves. Returns sorted
- * repository-relative test paths.
+ * file through relative imports — directly, or transitively through
+ * non-test files such as `tests/helpers/*` or `packages/` barrels (a test
+ * booting the app through a helper, or importing a barrel that re-exports
+ * the changed file, is the test that catches the regression).
+ * `testContents` maps repository-relative test paths to their source;
+ * `fileImports` optionally maps any other repository-relative file
+ * (helpers, fixtures, barrels, scripts) to the relative imports it uses,
+ * resolved the way `relativeImportsOf` resolves them — in production built
+ * by `buildFileImports` over the whole repository. Files absent from both
+ * maps are leaves. Returns sorted repository-relative test paths.
  */
 export function selectTouchedTests(
   /** @type {string[]} */ changedFiles,
@@ -190,7 +197,12 @@ export function selectTouchedTests(
   return [...selected].sort();
 }
 
-function parseArgs(argv) {
+/**
+ * Command-line options, exported so the unit test locks the documented
+ * usage (`--timeout-sec <n>` followed by other flags) instead of trusting
+ * it. Error paths exit the process and are not unit-tested.
+ */
+export function parseArgs(argv) {
   const options = { base: 'origin/main', list: false, timeoutSec: DEFAULT_TIMEOUT_SEC };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -218,6 +230,49 @@ function parseArgs(argv) {
     }
   }
   return options;
+}
+
+/**
+ * Every relative JS import in the repository, keyed by extension-free
+ * repository-relative path the way `relativeImportsOf` resolves them:
+ * `tests/` (helpers, fixtures), `packages/` (including barrel
+ * `export ... from` re-exports), `scripts/`, `apps/` and `examples/`. A
+ * test reaching the changed file only through a barrel or a helper is the
+ * test that catches the regression, so the selection must follow those
+ * edges — a graph walked from `tests/` alone never sees the barrel side
+ * (a barrel no test file imports directly has no recorded imports) and
+ * silently selects nothing for the file behind it.
+ */
+export function buildFileImports(
+  /** @type {string} */ repoRoot,
+) {
+  const graph = new Map();
+  const walk = (/** @type {string} */ directory) => {
+    for (const name of readdirSync(directory)) {
+      if (name === 'node_modules') continue;
+      const absolute = join(directory, name);
+      if (isDirectory(absolute)) {
+        walk(absolute);
+        continue;
+      }
+      if (!SOURCE_EXT.test(name) || TEST_FILE.test(name)) continue;
+      const relative = absolute.slice(repoRoot.length + 1).replace(/\\/g, '/');
+      try {
+        graph.set(
+          stripSourceExtension(relative),
+          relativeImportsOf(relative, readFileSync(absolute, 'utf8')),
+        );
+      } catch {
+        // Unreadable files are leaves; the run below fails loudly if one a
+        // selected test needs is really missing.
+      }
+    }
+  };
+  for (const top of ['tests', 'packages', 'scripts', 'apps', 'examples']) {
+    const directory = join(repoRoot, top);
+    if (isDirectory(directory)) walk(directory);
+  }
+  return graph;
 }
 
 async function main() {
@@ -250,36 +305,7 @@ async function main() {
     }
   }
 
-  // The transitive graph through non-test files under `tests/` (helpers,
-  // fixtures): a test reaching the changed file only via a helper is the
-  // test that catches the regression, so it must be selected. Keyed by
-  // extension-free repository-relative paths, the way `relativeImportsOf`
-  // resolves them.
-  const helperImports = new Map();
-  const walkHelpers = (/** @type {string} */ directory) => {
-    for (const name of readdirSync(directory)) {
-      if (name === 'node_modules') continue;
-      const absolute = join(directory, name);
-      if (isDirectory(absolute)) {
-        walkHelpers(absolute);
-        continue;
-      }
-      if (!SOURCE_EXT.test(name) || TEST_FILE.test(name)) continue;
-      const relative = absolute.slice(root.length + 1).replace(/\\/g, '/');
-      try {
-        helperImports.set(
-          stripSourceExtension(relative),
-          relativeImportsOf(relative, readFileSync(absolute, 'utf8')),
-        );
-      } catch {
-        // Unreadable helpers are leaves; the run below fails loudly if one
-        // a selected test needs is really missing.
-      }
-    }
-  };
-  if (isDirectory(join(root, 'tests'))) walkHelpers(join(root, 'tests'));
-
-  const selected = selectTouchedTests(changed, contents, helperImports);
+  const selected = selectTouchedTests(changed, contents, buildFileImports(root));
 
   if (options.list) {
     process.stdout.write(selected.length === 0 ? '' : `${selected.join('\n')}\n`);
@@ -289,10 +315,16 @@ async function main() {
   // Fail closed: JavaScript source changed but no test reaches it (a CLI
   // reached only via `spawnSync`, a helper nobody imports yet). Exiting 0
   // here would merge an untested change green and redden `main` after the
-  // merge, so the step runs the default `npm test` suite instead — bounded
-  // by the same timeout. Docs, workflows, manifests and site-only changes
-  // keep the exit-0 skip: their gates run in the same CI job.
-  let toRun = selected;
+  // merge, so the gate refuses with exit 1, naming the uncovered files:
+  // add a test that relatively imports them (directly or through
+  // `tests/helpers`) and the gate runs it. The step deliberately does not
+  // run the default `npm test` suite as a fallback: the full suite holds
+  // the machine lock ~20 minutes and cannot fit this step's five-minute
+  // budget, so a fallback run would time out red on every PR that triggers
+  // it — a refusal that says what to do instead of a timeout that cannot
+  // pass. The full suite still runs on `main` after the merge. Docs,
+  // workflows, manifests and site-only changes keep the exit-0 skip: their
+  // gates run in the same CI job.
   if (selected.length === 0) {
     if (!hasCodeChange(changed)) {
       process.stdout.write(
@@ -300,20 +332,23 @@ async function main() {
       );
       process.exit(0);
     }
+    const uncovered = changed.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
     process.stdout.write(
-      `ci-touched-tests: ${changed.length} changed file(s) with no reaching test — `
-        + 'running the default `npm test` suite instead of exiting green with nothing run.\n',
+      'ci-touched-tests: refusing — no test file relatively reaches these '
+      + `changed source file(s): ${uncovered.join(', ')}.\n`
+      + 'Add a test that relatively imports them (directly or through tests/helpers); '
+      + 'the default `npm test` suite cannot fit this step\'s five-minute budget, '
+      + 'so it runs only on `main`, not here.\n',
     );
-    toRun = [];
+    process.exit(1);
   }
 
   // Same flags as `npm test`: two files at a time keeps peak memory inside
   // what the shared 16 GB runner survived (ci.yml), at the price of wall time
-  // this step bounds with its timeout instead. An empty `toRun` is the
-  // fail-closed fallback above: no file filter, the default suite runs.
+  // this step bounds with its timeout instead.
   const run = spawnSync(
     process.execPath,
-    ['--no-warnings', '--test', '--test-concurrency=2', '--test-reporter=spec', ...toRun],
+    ['--no-warnings', '--test', '--test-concurrency=2', '--test-reporter=spec', ...selected],
     { cwd: root, stdio: 'inherit', timeout: options.timeoutSec * 1000, killSignal: 'SIGKILL' },
   );
   if (run.error) {

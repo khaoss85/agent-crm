@@ -17,7 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { hasCodeChange, relativeImportsOf, selectTouchedTests } from '../scripts/ci-touched-tests.js';
+import { buildFileImports, hasCodeChange, parseArgs, relativeImportsOf, selectTouchedTests } from '../scripts/ci-touched-tests.js';
 
 /** @param {Record<string, string>} entries */
 const contents = (entries) => new Map(Object.entries(entries));
@@ -178,6 +178,61 @@ test('hasCodeChange is true for source, false for docs-only changes', () => {
     false,
   );
   assert.equal(hasCodeChange([]), false);
+});
+
+test('the real graph builder follows a packages/ barrel to the importing test', () => {
+  // Regression test: the graph used to be walked from tests/ alone, so a
+  // file behind a packages/ barrel (index.js re-exporting create-app.js)
+  // never resolved and no test was selected for the file behind it. This
+  // calls main()'s real graph builder over a fixture instead of a
+  // hand-made map.
+  const directory = mkdtempSync(join(tmpdir(), 'touched-graph-'));
+  try {
+    const write = (/** @type {string} */ path, /** @type {string} */ body) => {
+      const full = join(directory, path);
+      mkdirSync(join(full, '..'), { recursive: true });
+      writeFileSync(full, body);
+    };
+    write('packages/app/src/create-app.js', 'export const createApp = () => 1;\n');
+    write('packages/app/src/index.js', "export * from './create-app.js';\n");
+    write('tests/gui.test.js', "import { createApp } from '../packages/app/src/index.js';\n");
+    write('tests/other.test.js', "import test from 'node:test';\n");
+
+    const graph = buildFileImports(directory);
+    // The barrel itself was walked: it is in the graph and points behind it.
+    assert.deepEqual(
+      [...(graph.get('packages/app/src/index') ?? [])],
+      ['packages/app/src/create-app'],
+    );
+    // And the changed file behind the barrel selects the importing test.
+    const testContents = new Map([
+      ['tests/gui.test.js', "import { createApp } from '../packages/app/src/index.js';\n"],
+      ['tests/other.test.js', "import test from 'node:test';\n"],
+    ]);
+    assert.deepEqual(
+      selectTouchedTests(['packages/app/src/create-app.js'], testContents, graph),
+      ['tests/gui.test.js'],
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('parseArgs defaults to origin/main with the 270 s step bound', () => {
+  assert.deepEqual(parseArgs([]), { base: 'origin/main', list: false, timeoutSec: 270 });
+});
+
+test('parseArgs consumes --base and --timeout-sec values instead of re-reading them', () => {
+  // The documented `--timeout-sec 60 --list` spelling: the value must be
+  // consumed as the flag's value, never re-read as an unknown argument.
+  assert.deepEqual(
+    parseArgs(['--timeout-sec', '60', '--list']),
+    { base: 'origin/main', list: true, timeoutSec: 60 },
+  );
+  assert.deepEqual(
+    parseArgs(['--base', 'FETCH_HEAD']),
+    { base: 'FETCH_HEAD', list: false, timeoutSec: 270 },
+  );
 });
 
 test('selection is end to end on a throwaway repository with real git', () => {

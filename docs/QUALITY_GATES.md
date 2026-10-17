@@ -261,19 +261,25 @@ it runs only where a merge has already happened — never on a PR push.
 
 | Gate | Where | What |
 |---|---|---|
-| `fast` | every pull request | `npm run check`, the tests of the touched files (`scripts/ci-touched-tests.js`: transitive through helpers incl. `export-from`, fail-closed to the default suite, bounded to 270 s), the smoke demo, the published recipe replay, `npm run gtm:check`, `npm run repo:truth -- --check` (agreement only) |
+| `fast` | every pull request | `npm run check`, the tests of the touched files (`scripts/ci-touched-tests.js`: transitive through every relative JS import in the repo — `tests/helpers` and `packages/` barrels incl. `export-from` — fail-closed refusal when no test reaches a changed source, selected run bounded to 270 s), the smoke demo, the published recipe replay, `npm run gtm:check`, `npm run repo:truth -- --check` (agreement only) |
 | `verify` | push to `main` only | full `npm run verify` via `scripts/measure-suite.js`, measured record kept as artifact and runner-local copy, smoke, recipe replay |
 | `public-claims` | push to `main` only | `gtm:check`, agreement `--check` on the committed document, re-anchor from `verify`'s measurement, regenerate, `--require-current` |
 | nightly matrix | daily 01:17 UTC | the full worktree-heavy tool-selection product behind its opt-in variable (see the nightly workflow), skipped by default elsewhere |
 
 Budgets, which are as much of the gate as the steps: every `fast` step runs
-under the machine lock via `scripts/ci-heavy.sh` with `HEAVY_JOB_MAX_SEC=300`,
-each under five minutes (the touched-tests selection enforces its own
-270-second bound and fails red rather than hanging the lock), and a PR holds
-the lock under ten minutes in total. A step that cannot fit its budget does
-not get a longer budget — it gets split, or moved to `main`. The touched
-selection itself fails closed: a changed JavaScript source no test reaches
-runs the default `npm test` suite instead of exiting green with nothing run.
+under the machine lock via `scripts/ci-heavy.sh` — a budget per passo di
+300 s, set at each step in `.github/workflows/ci.yml` and applied by the
+wrapper killing the step past it (the touched-tests selection additionally
+enforces its own 270-second bound and fails red rather than hanging the
+lock). No timer enforces a total
+across the steps: keeping a PR under ten minutes of lock in total stays an
+objective the step budgets make room for, not a gate that fails the build.
+A step that cannot fit its budget does not get a longer budget — it gets
+split, or moved to `main`. The touched selection itself fails closed: a
+changed JavaScript source no test reaches refuses red, naming the uncovered
+files, instead of exiting green with nothing run — and instead of running
+the default `npm test` suite, which holds the lock ~20 minutes and could
+never fit the step budget.
 
 The boundaries, which are as much of the gate as the budgets:
 
