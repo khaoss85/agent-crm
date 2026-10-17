@@ -884,6 +884,19 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
         ),
         /** @param {unknown} id */
         appointment: (id) => readAppointment({ appointments: storage() }, id),
+        /**
+         * Exact read of one appointment by source key — the identity
+         * sync writers join on. Only the expected miss becomes absence;
+         * a storage failure stays the caller's outage, never a quiet
+         * unknown appointment.
+         * @param {unknown} sourceKey
+         */
+        appointmentBySourceKey: async (sourceKey) => {
+          const key = safeText(sourceKey, 'sourceKey', MAX_SOURCE_KEY);
+          const rows = await storage().listWhere({ sourceKey: key });
+          const row = rows[0] ?? null;
+          return row ? Object.freeze({ ...row }) : null;
+        },
       });
     },
   };
