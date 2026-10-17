@@ -28,6 +28,7 @@ import {
   checkCitations,
   checkFactFreshness,
   checkRepository,
+  classifyDocumentDrift,
   describeProbeEnvironment,
   diffDocuments,
   findMalformedDirectives,
@@ -40,6 +41,7 @@ import {
   readMeasurement,
   measurementStatus,
   repositoryBasenames,
+  resolveBaseFactIds,
   resolveSurfacePath,
   serialize,
 } from '../scripts/repo-truth.js';
@@ -842,6 +844,158 @@ test('a sourceSha-only change says it was sourceSha, and does not blame the evid
   assert.deepEqual(codes(problems), ['TRUTH_DOCUMENT_STALE']);
   problemNaming(problems, 'only sourceSha did');
   assert.doesNotMatch(problems[0].message, /the evidence, the authority list or a limitation/);
+});
+
+// ───────────────────────────── parallel-PR drift is advisory, values block (S70)
+
+test('added facts with no moved value are advisory drift, and still stale when strict', async () => {
+  // Two PRs adding different packages: after the first merges, the second's
+  // merge tree carries facts its committed document never saw, with no value
+  // moved. That drift must warn, never fail — while the default check keeps
+  // reporting it stale, so nothing goes quiet.
+  const built = buildFacts(await bundle());
+  const committed = { facts: built.facts, sourceSha: 'a'.repeat(64) };
+  const fresh = {
+    facts: [...built.facts, { id: 'probe.added_package', value: 'package_native' }],
+    sourceSha: 'a'.repeat(64),
+  };
+  const drift = classifyDocumentDrift(committed, fresh);
+  assert.equal(drift.inSync, false);
+  assert.equal(drift.blocking, false);
+  assert.equal(drift.kind, 'facts-added');
+  assert.deepEqual(drift.added, ['probe.added_package']);
+  assert.deepEqual(drift.moved, []);
+  assert.deepEqual(drift.dropped, []);
+  assert.deepEqual(codes(diffDocuments(committed, fresh)), ['TRUTH_DOCUMENT_STALE']);
+});
+
+test('a moved value is blocking drift, and a dropped fact is too', async () => {
+  const built = buildFacts(await bundle());
+  const committed = { facts: built.facts, sourceSha: 'a'.repeat(64) };
+  const flipped = structuredClone(committed);
+  flipped.facts[0] = { ...flipped.facts[0], value: 'absent' };
+  const moved = classifyDocumentDrift(committed, flipped);
+  assert.equal(moved.blocking, true);
+  assert.equal(moved.kind, 'facts-changed');
+  assert.deepEqual(moved.moved, [committed.facts[0].id]);
+  const dropped = { facts: committed.facts.slice(1), sourceSha: 'a'.repeat(64) };
+  const gone = classifyDocumentDrift(committed, dropped);
+  assert.equal(gone.blocking, true);
+  assert.equal(gone.kind, 'facts-changed');
+  assert.deepEqual(gone.dropped, [committed.facts[0].id]);
+});
+
+test('metadata-only drift is advisory, and the same documents in sync stay silent', async () => {
+  const built = buildFacts(await bundle());
+  const committed = { facts: built.facts, authorities: built.authorities, sourceSha: 'a'.repeat(64) };
+  const touched = { ...structuredClone(committed), sourceSha: 'b'.repeat(64) };
+  const drift = classifyDocumentDrift(committed, touched);
+  assert.equal(drift.blocking, false);
+  assert.equal(drift.kind, 'metadata-only');
+  const same = classifyDocumentDrift(committed, structuredClone(committed));
+  assert.equal(same.inSync, true);
+  assert.equal(same.blocking, false);
+  assert.equal(same.kind, 'in-sync');
+  assert.deepEqual(diffDocuments(committed, structuredClone(committed)), []);
+});
+
+test('base drift warns under driftAdvisory and fails without it; a moved value fails either way (S70)', async (t) => {
+  // The parallel-PR regression end to end, in a fixture: a committed document
+  // regenerated on the branch, then the base moves underneath it with a
+  // comment-only edit to an authority source — the exact #215/#216 shape.
+  // The move is comment-only, so the per-process module cache cannot hide a
+  // value either way: the facts are identical cached or fresh. Strict
+  // `--check` fails; `--check --drift-advisory` passes with the stale
+  // document as a warning. The control flips a fact value without
+  // regenerating: advisory or not, that stays red.
+  const fixture = frameworkFixture(t);
+  fixture.seal();
+  const { document } = await buildTruthDocument({ rootDir: fixture.root });
+  assert.deepEqual(document.facts.length > 0, true);
+  fixture.write(TRUTH_DOCUMENT, serialize(document));
+  git(fixture.root, ['add', '-A']);
+  git(fixture.root, ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', 'commit', '-q', '-m', 'branch doc']);
+  fixture.patch('packages/core/src/identity.js', 'export const IDENTITY_CONTRACT = 1;',
+    'export const IDENTITY_CONTRACT = 1;\n// base moved under the branch: a comment-only edit to an authority source');
+  git(fixture.root, ['add', '-A']);
+  git(fixture.root, ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', 'commit', '-q', '-m', 'base moved']);
+
+  const strict = await checkRepository({ rootDir: fixture.root });
+  assert.equal(strict.ok, false);
+  assert.deepEqual(codes(strict.problems), ['TRUTH_DOCUMENT_STALE']);
+  problemNaming(strict.problems, 'only sourceSha did');
+
+  const advisory = await checkRepository({ rootDir: fixture.root, driftAdvisory: true });
+  assert.equal(advisory.ok, true);
+  assert.deepEqual(codes(advisory.warnings), ['TRUTH_DOCUMENT_STALE']);
+  assert.equal(advisory.drift?.kind, 'metadata-only');
+  assert.deepEqual(advisory.problems, []);
+
+  // Control in a second fixture the generator imports for the first time
+  // post-flip: modules are cached per process, so flipping the first fixture
+  // after reading it would exercise the cache, not the gate. The planted
+  // document is the same one the branch committed; only the code moved.
+  const flipped = frameworkFixture(t);
+  flipped.seal();
+  flipped.write(TRUTH_DOCUMENT, readFileSync(join(fixture.root, TRUTH_DOCUMENT), 'utf8'));
+  flipped.patch('packages/core/src/tenant-storage.js', "export const TENANT_STRATEGY = 'one-tenant-per-instance';",
+    "export const TENANT_STRATEGY = 'one-tenant-per-fixture';");
+  const control = await checkRepository({ rootDir: flipped.root, driftAdvisory: true });
+  assert.equal(control.ok, false);
+  // The stale document fails; the bound `// truth:` citation in the copied
+  // app-inspect.js fails too, as it should — a stale sentence citing a moved
+  // fact is the same failure, not a second one to enumerate here.
+  assert.ok(codes(control.problems).includes('TRUTH_DOCUMENT_STALE'));
+  problemNaming(control.problems, 'spine.tenant.isolation.mode');
+});
+
+test('added facts warn only from the base; the branch’s own new fact stays red (S70)', async (t) => {
+  // The hole this exists to close: added facts were advisory on every fast
+  // gate, so a branch that added a package without regenerating passed green
+  // and main realigned what the author owed. Under `baseFactIds` — the PR
+  // fast gate, `repo:truth --check --drift-advisory --base origin/main` — an
+  // added fact warns only when the base already carries it.
+  const fixture = frameworkFixture(t);
+  fixture.seal();
+  const { document } = await buildTruthDocument({ rootDir: fixture.root });
+  const added = document.facts.find((fact) => !String(fact.id).startsWith('measurement.'));
+  assert.ok(added, 'the fixture document carries an author-owned fact to age out');
+  // The committed document predates the fact; the fresh generation has it.
+  fixture.write(TRUTH_DOCUMENT, serialize({ ...document, facts: document.facts.filter((fact) => fact.id !== added.id) }));
+
+  const authorAdded = await checkRepository({ rootDir: fixture.root, driftAdvisory: true, baseFactIds: [] });
+  assert.equal(authorAdded.ok, false, 'a fact this branch added without regenerating must stay red');
+  assert.deepEqual(codes(authorAdded.problems), ['TRUTH_DOCUMENT_STALE']);
+  assert.deepEqual(authorAdded.warnings, []);
+  assert.equal(authorAdded.drift?.kind, 'facts-added');
+  assert.deepEqual(authorAdded.drift?.added, [added.id]);
+
+  const baseAdded = await checkRepository({ rootDir: fixture.root, driftAdvisory: true, baseFactIds: [added.id] });
+  assert.equal(baseAdded.ok, true, 'a fact the base merge brought in warns instead of failing');
+  assert.deepEqual(codes(baseAdded.warnings), ['TRUTH_DOCUMENT_STALE']);
+  assert.deepEqual(baseAdded.problems, []);
+
+  // Without a base (the `public-claims` agreement gate, a local run) every
+  // non-blocking drift still warns: the realign PR shows the whole diff
+  // under the normal gate.
+  const lenient = await checkRepository({ rootDir: fixture.root, driftAdvisory: true });
+  assert.equal(lenient.ok, true);
+  assert.deepEqual(codes(lenient.warnings), ['TRUTH_DOCUMENT_STALE']);
+});
+
+test('resolveBaseFactIds reads the base document and fails closed on unknown refs (S70)', async (t) => {
+  const root = disposable(t, 'accordo-truth-base-');
+  git(root, ['init', '-q', '-b', 'main']);
+  mkdirSync(join(root, 'docs'), { recursive: true });
+  writeFileSync(join(root, 'docs/repository-truth.json'),
+    JSON.stringify({ facts: [{ id: 'probe.base_fact', value: 1 }] }));
+  git(root, ['add', '-A']);
+  git(root, ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', 'commit', '-q', '-m', 'base']);
+  assert.deepEqual(resolveBaseFactIds(root, 'main'), ['probe.base_fact']);
+  // No `origin` remote here, so the one fetch retry fails and the read with
+  // it: an unreadable base is null, and the caller fails added facts closed.
+  assert.equal(resolveBaseFactIds(root, 'origin/main'), null);
+  assert.equal(resolveBaseFactIds(root, 'no-such-ref'), null);
 });
 
 // ───────────────── negative: absence is never silently turned into a false fact
