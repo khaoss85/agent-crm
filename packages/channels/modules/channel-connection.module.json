@@ -1,0 +1,19 @@
+{
+  "manifestVersion": 1,
+  "name": "channel-connection",
+  "description": "One channel account bound to one space (backlog:e5532d1c9146). Read-only publicly: every field is managed, so a connection exists only through the package's register operation and changes only through its audited actions. The secret itself is never stored here — only the reference the deployment's secret resolver understands.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "channel", "type": "enum", "values": ["whatsapp", "instagram", "facebook", "tiktok", "sms", "email", "voice", "site-form"], "writable": "managed", "classification": "non-personal" },
+    { "name": "account", "type": "string", "index": true, "writable": "managed", "classification": "identification" },
+    { "name": "adapter", "type": "string", "writable": "managed", "classification": "non-personal" },
+    { "name": "adapterVersion", "type": "integer", "writable": "managed", "classification": "non-personal" },
+    { "name": "adapterFingerprint", "type": "string", "writable": "managed", "classification": "non-personal" },
+    { "name": "status", "type": "enum", "values": ["pending", "active", "suspended", "revoked"], "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "statusReason", "type": "string", "writable": "managed", "classification": "non-personal" },
+    { "name": "secretRef", "type": "string", "writable": "managed", "classification": "non-personal" },
+    { "name": "secretRotatedAt", "type": "timestamp", "writable": "managed", "classification": "non-personal" },
+    { "name": "createdBy", "type": "string", "writable": "managed", "classification": "non-personal" }
+  ]
+}

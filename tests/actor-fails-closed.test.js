@@ -256,6 +256,11 @@ test('framework self-authority stays at its reviewed named outbox boundary', asy
     // carries, and the domain still refuses it every human action.
     "packages/core/src/domain-timers.js:<line>:const TIMER_ACTOR = trustedSystemActor('presenting a human-written scheduled ask at its instant');",
     "packages/core/src/transactional-outbox.js:<line>:const OUTBOX_ACTOR = trustedSystemActor('dispatching committed transactional outbox effects');",
+    // Channels. Provider-driven inbox writes and dead-letter rows are not a
+    // human decision: the caller-supplied actor is ignored and the package
+    // system actor attributes the write, while sends and connection changes
+    // still require a human user actor (requireUser).
+    "packages/channels/src/operations.js:<line>:const SYSTEM = () => trustedSystemActor('channel package internal write');",
   ],
     'a new trustedSystemActor call site is a new place the framework claims root — '
     + 'justify it here and update this expectation deliberately');

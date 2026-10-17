@@ -24,6 +24,8 @@
 // (`startWorkers()` and friends) belongs to the integration slice; nothing here
 // starts anything on its own.
 export {
+  SENSITIVE_KEY,
+  canonicalJobPayload,
   createDurableJobHandlerRegistry,
   createDurableJobStore,
   createDurableJobWorker,

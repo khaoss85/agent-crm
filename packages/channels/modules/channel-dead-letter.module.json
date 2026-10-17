@@ -1,0 +1,20 @@
+{
+  "manifestVersion": 1,
+  "name": "channel-dead-letter",
+  "description": "Failure inventory for channel sends that exhausted their bounded attempts (backlog:e5532d1c9146). Carries the phase, the normalized error code and the payload fingerprint — never the raw payload and never a secret. A human or an explicit requeue retries it; silent infinite retry is forbidden.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "connectionKey", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "idempotencyKey", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "jobId", "type": "string", "writable": "managed", "classification": "non-personal" },
+    { "name": "phase", "type": "enum", "values": ["send"], "writable": "managed", "classification": "non-personal" },
+    { "name": "errorCode", "type": "string", "writable": "managed", "classification": "non-personal" },
+    { "name": "payloadFingerprint", "type": "string", "writable": "managed", "classification": "non-personal" },
+    { "name": "attempts", "type": "integer", "writable": "managed", "classification": "non-personal" },
+    { "name": "firstFailedAt", "type": "timestamp", "writable": "managed", "classification": "non-personal" },
+    { "name": "lastFailedAt", "type": "timestamp", "writable": "managed", "classification": "non-personal" },
+    { "name": "state", "type": "enum", "values": ["open", "requeued", "resolved"], "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "stateReason", "type": "string", "writable": "managed", "classification": "non-personal" }
+  ]
+}
