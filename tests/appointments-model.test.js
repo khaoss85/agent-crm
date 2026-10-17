@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 
 import {
   APPOINTMENT_INITIAL,
@@ -17,8 +20,9 @@ import {
   validateAppointmentRequest,
 } from '../packages/appointments/src/index.js';
 import { createAppointmentsPackage } from '../packages/appointments/src/index.js';
-import { NotFoundError } from '../packages/core/index.js';
+import { NotFoundError, ValidationError } from '../packages/core/index.js';
 import { createDatabase } from '../packages/core/src/database.js';
+import { recordModuleMigrations } from '../packages/core/src/record-module-runtime.js';
 import { assertPackageConforms } from './helpers/package-conformance.js';
 
 /**
@@ -548,4 +552,154 @@ test('provenance is bound to the resolved consumer, not to caller text', async (
     bookAppointment(contextFor(service), booking({ source: { package: 'delivery', action: 'book' } })),
     (error) => error.code === 'APPOINTMENTS_SOURCE_PACKAGE_MISMATCH' && error.status === 403,
   );
+});
+
+test('an advance on a missing record is a typed refusal, never a TypeError', async () => {
+  const service = fakeAppointments();
+  const context = contextFor(service);
+  const { appointment } = await bookAppointment(context, booking());
+  // A null, undefined or id-less record — e.g. a missed exact lookup
+  // forwarded straight into the advance — names the field it is missing.
+  for (const record of [null, undefined, {}, { id: '' }, { id: '   ' }, { id: 42 }]) {
+    await assert.rejects(
+      advanceAppointment({ appointments: service, actor: ACTOR }, record, 'confirmed'),
+      (error) => {
+        assert.ok(error instanceof ValidationError, `typed, not a crash: ${String(error)}`);
+        assert.match(error.message, /id is required/);
+        return true;
+      },
+    );
+  }
+  // A well-formed id for a row that was deleted since it was read surfaces
+  // the storage's own miss rather than advancing a ghost.
+  await assert.rejects(
+    advanceAppointment({ appointments: service, actor: ACTOR }, { id: 'a-999' }, 'confirmed'),
+    (error) => error instanceof NotFoundError,
+  );
+  // The public capability refuses the same way: a missed lookup forwarded
+  // into the advance never leaves the framework error contract.
+  const capability = createAppointmentBookCapability({}).create({
+    modules: modulesFor(service),
+    actor: ACTOR,
+    now: () => NOW,
+    consumer: 'host',
+  });
+  await assert.rejects(
+    capability.advanceAppointment(await capability.appointment('missing-id'), 'confirmed'),
+    (error) => error instanceof ValidationError && /id is required/.test(error.message),
+  );
+  assert.equal(appointment.status, 'booked', 'the refused moves write nothing');
+  assert.equal(service.rows.length, 1);
+});
+
+test('a replay that names a reminder without the work handle fails like the fresh path', async (t) => {
+  const db = txDatabase(t);
+  const service = fakeAppointments([], db);
+  const calls = [];
+  const request = booking({ remindAt: '2026-10-19T17:00:00.000Z' });
+  const first = await db.transactionAsync(
+    () => bookAppointment(contextFor(service, { followUps: fakeFollowUps(calls) }), request),
+  );
+  assert.equal(first.replayed, false);
+  assert.equal(calls.length, 1);
+  // The identical request replayed where no follow-up handle is composed is
+  // refused with the fresh path's code — never an explicit null next to a
+  // stored reminderDueAt, which would report a missing reminder as success.
+  for (const followUps of [null, undefined, {}, { createFollowUp: 'not-a-function' }]) {
+    await assert.rejects(
+      db.transactionAsync(() => bookAppointment(contextFor(service, { followUps }), request)),
+      (error) => {
+        assert.equal(error.code, 'APPOINTMENTS_REMINDER_UNAVAILABLE');
+        assert.equal(error.status, 500);
+        return true;
+      },
+    );
+  }
+  assert.equal(calls.length, 1, 'the refused replays open no duplicate reminder');
+  assert.equal(service.rows.length, 1);
+});
+
+test('two connections racing overlapping bookings refuse the loser 409: exactly one row per round', async (t) => {
+  // Two worker isolates, each with its own connection to the same file: no
+  // process-local chain is shared, so only the handle transaction (SQLite
+  // BEGIN IMMEDIATE) can serialize the writers. Without it both reads see an
+  // empty slot and both inserts commit.
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-appointments-race-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dbPath = join(dir, 'race.sqlite');
+  const manifest = JSON.parse(readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'packages', 'appointments', 'modules', 'appointment.module.json'),
+    'utf8',
+  ));
+  // The table exists before any worker opens the file, so workers never race DDL.
+  const setup = createDatabase({
+    path: dbPath,
+    moduleMigrations: recordModuleMigrations([{ name: 'appointment', manifest }]),
+  });
+  t.after(() => setup.close());
+
+  const ROUNDS = 5;
+  const pad = (n) => String(n).padStart(2, '0');
+  const bookingFor = (worker, round) => ({
+    sourceKey: `gym:race:r${round}:${worker}`,
+    subject: SUBJECT,
+    teamMemberId: 'coach-guido',
+    serviceKey: 'pt-single',
+    priceCents: 4000,
+    currency: 'EUR',
+    startsAt: `2026-10-20T${pad(17 + round)}:00:00.000Z`,
+    endsAt: `2026-10-20T${pad(18 + round)}:00:00.000Z`,
+    source: SOURCE,
+  });
+  const shared = new SharedArrayBuffer(8);
+  const barrier = new Int32Array(shared);
+  const workerUrl = new URL('./helpers/appointments-race-worker.mjs', import.meta.url);
+  const failures = [];
+  const inboxes = [[], []];
+  const workers = [0, 1].map((index) => {
+    const worker = new Worker(workerUrl, {
+      workerData: {
+        dbPath,
+        shared,
+        rounds: Array.from({ length: ROUNDS }, (_, round) => bookingFor(index === 0 ? 'a' : 'b', round)),
+      },
+    });
+    worker.on('message', (receipt) => { inboxes[index][receipt.round] = receipt; });
+    worker.on('error', (error) => { failures.push(error); });
+    worker.on('exit', (code) => {
+      if (code !== 0) failures.push(new Error(`race worker ${index} exited with code ${code}`));
+    });
+    return worker;
+  });
+  t.after(() => Promise.all(workers.map((worker) => worker.terminate())));
+
+  const waitFor = async (what, ready) => {
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      if (ready()) return;
+      if (failures.length > 0) throw failures[0];
+      if (Date.now() > deadline) throw new Error(`${what} timed out`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  };
+  await waitFor('race workers to become ready', () => Atomics.load(barrier, 0) === 2);
+
+  for (let round = 0; round < ROUNDS; round++) {
+    Atomics.store(barrier, 1, round + 1);
+    Atomics.notify(barrier, 1);
+    await waitFor(`race round ${round}`, () => inboxes[0][round] !== undefined && inboxes[1][round] !== undefined);
+    const [a, b] = [inboxes[0][round], inboxes[1][round]];
+    assert.equal(
+      [a.ok, b.ok].filter(Boolean).length, 1,
+      `round ${round}: exactly one writer books (a=${JSON.stringify(a)}, b=${JSON.stringify(b)})`,
+    );
+    const winner = a.ok ? a : b;
+    const loser = a.ok ? b : a;
+    assert.equal(winner.replayed, false, `round ${round}: the winner books fresh, never replays`);
+    assert.ok(winner.id, `round ${round}: the winner names its row`);
+    assert.equal(loser.code, 'APPOINTMENTS_OVERLAP', `round ${round}: the loser names the overlap`);
+    assert.equal(loser.status, 409, `round ${round}: the loser is refused 409`);
+  }
+  const count = setup.raw.prepare('SELECT COUNT(*) AS n FROM appointments').get();
+  assert.equal(count.n, ROUNDS, 'exactly one row per round survives the race');
 });

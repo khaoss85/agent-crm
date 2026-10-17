@@ -425,11 +425,12 @@ export function findOverlap(candidate, held) {
  * contend. Entries are removed when their chain drains, so the map holds
  * only members with a booking in flight.
  *
- * This closes the same-process window. Across connections the outer
- * transaction below (`BEGIN IMMEDIATE`) serializes writers on real storage;
- * two writers on two connections without a serializing lock (e.g. Postgres
- * `READ COMMITTED` across processes) can still interleave — that residual is
- * named at the call site, not hidden.
+ * This closes the same-process window. Across connections the handle
+ * transaction below serializes writers on real storage: SQLite
+ * `BEGIN IMMEDIATE` makes the second connection wait for the winner's commit
+ * and re-read it, Postgres `SERIALIZABLE` refuses the loser with a retryable
+ * conflict whose retry re-reads the winner. The two-connection race test
+ * proves the SQLite leg on a real file database.
  */
 const memberBookingChains = new Map();
 
@@ -465,9 +466,12 @@ async function withMemberBooking(teamMemberId, critical) {
  * real database handle and no transaction is open, the critical section runs
  * inside that handle's own `transactionAsync` instead: on SQLite that is
  * `BEGIN IMMEDIATE`, so a second connection's `BEGIN` waits for the winner's
- * commit (or fails with a retryable busy conflict) and then re-reads the
- * winner — 409, never a silent double booking. Inside a caller transaction,
- * or without a storage handle, the section runs as it does today.
+ * commit and then re-reads the winner — 409, never a silent double booking
+ * (a busy timeout past the winner's commit surfaces a retryable conflict
+ * whose retry re-reads the winner); on Postgres that is `SERIALIZABLE`, so
+ * the loser gets a retryable serialization conflict with the same retry
+ * into the 409. Inside a caller transaction, or without a storage handle,
+ * the section runs as it does today.
  *
  * @param {any} appointments the resolved appointment module service
  */
@@ -621,14 +625,17 @@ export async function bookAppointment(context, request) {
     sourceAction: source.action,
   };
 
-  // The check-then-act below runs serialized per team member: the member
-  // chain above orders same-process bookings so the loser re-reads the
-  // winner's committed row (409, or a replay for the same key), and the
-  // outer transaction below serializes writers across connections on real
-  // storage. (Residual: two writers on two connections without a serializing
-  // lock — e.g. Postgres READ COMMITTED across processes — can still
-  // interleave; the loser of a source-key race still replays via the unique
-  // guard below.)
+  // The check-then-act below runs serialized per team member on every path:
+  // the member chain above orders same-process bookings so the loser re-reads
+  // the winner's committed row (409, or a replay for the same key), and the
+  // handle transaction below serializes writers across connections — SQLite
+  // BEGIN IMMEDIATE holds the second connection until the winner commits, so
+  // it re-reads the winner (409); the source-key unique guard below only
+  // replays same-key races and never meets different source keys, so this
+  // serialization — not the guard — is what refuses the cross-connection
+  // double booking, proven by the two-connection race test.
+  // (A busy timeout past the winner's commit, or a Postgres serialization
+  // abort, surfaces a retryable conflict whose retry re-reads the winner.)
   const runCritical = async () => {
     const existing = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0];
     if (existing) {
@@ -636,7 +643,8 @@ export async function bookAppointment(context, request) {
       // fresh booking does. With a reminder named, the reminder is re-issued
       // through work — which replays the identical reminder rather than
       // duplicating it, and heals a booking whose reminder was never created —
-      // or an explicit null when no reminder handle is composed.
+      // or fails APPOINTMENTS_REMINDER_UNAVAILABLE when no reminder handle is
+      // composed, exactly like the fresh path.
       return {
         appointment: replayOrConflict(existing, submitted),
         reminder: await replayReminder(context, { input, source }),
@@ -696,11 +704,13 @@ export async function bookAppointment(context, request) {
 }
 
 /**
- * Open the one reminder follow-up for a fresh booking, through the work
- * package's `follow-up@1` capability — never by writing the work tables
- * directly. The title fits the 200-character follow-up bound by construction.
+ * The opened work follow-up handle, or a named refusal: a booking that names
+ * a reminder cannot schedule it — fresh or replayed — without the handle. A
+ * replay that answers null next to a stored reminderDueAt would report a
+ * missing reminder as success, so the replay fails exactly like the fresh
+ * path; only a booking with no reminder named answers an explicit null.
  */
-async function createReminder(context, { input, source }) {
+function requireFollowUps(context) {
   const followUps = context.followUps;
   if (!followUps || typeof followUps.createFollowUp !== 'function') {
     throw new AppError(
@@ -708,6 +718,16 @@ async function createReminder(context, { input, source }) {
       { code: 'APPOINTMENTS_REMINDER_UNAVAILABLE', status: 500 },
     );
   }
+  return followUps;
+}
+
+/**
+ * Open the one reminder follow-up for a fresh booking, through the work
+ * package's `follow-up@1` capability — never by writing the work tables
+ * directly. The title fits the 200-character follow-up bound by construction.
+ */
+async function createReminder(context, { input, source }) {
+  const followUps = requireFollowUps(context);
   const { task, activity, replayed } = await followUps.createFollowUp(reminderRequest(input, source));
   return { task, activity, replayed: replayed ?? false };
 }
@@ -715,14 +735,13 @@ async function createReminder(context, { input, source }) {
 /**
  * The reminder half of a replay: with a reminder named, the identical reminder
  * is re-issued through work — which replays it rather than duplicating it,
- * and heals a booking whose reminder was never created — or an explicit null
- * when no reminder handle is composed. Without a reminder named there is
- * nothing to re-issue: an explicit null keeps the shape stable.
+ * and heals a booking whose reminder was never created. Without a reminder
+ * named there is nothing to re-issue: an explicit null keeps the shape
+ * stable.
  */
 async function replayReminder(context, { input, source }) {
   if (input.remindAt === null) return null;
-  const followUps = context.followUps;
-  if (!followUps || typeof followUps.createFollowUp !== 'function') return null;
+  const followUps = requireFollowUps(context);
   const { task, activity, replayed } = await followUps.createFollowUp(reminderRequest(input, source));
   return { task, activity, replayed: replayed ?? true };
 }
@@ -752,10 +771,14 @@ export async function advanceAppointment({ appointments, actor, now }, record, t
     });
   }
   const target = typeof to === 'string' ? to.trim() : to;
-  // The fresh row, not the caller's copy: the transition below is enforced
-  // against what is stored now. A row deleted since it was read surfaces the
-  // storage's own miss rather than advancing a ghost.
-  const current = await appointments.get(record.id);
+  // The record names its row before anything is read: a null, undefined or
+  // id-less record — e.g. a missed exact lookup forwarded straight into the
+  // advance — is a typed ValidationError naming the field, never a TypeError
+  // off an absent property. A well-formed id for a row deleted since it was
+  // read surfaces the storage's own NotFoundError rather than advancing a
+  // ghost.
+  const recordId = safeText(record?.id, 'id', MAX_ID);
+  const current = await appointments.get(recordId);
   const allowed = APPOINTMENT_TRANSITIONS[current.status] ?? [];
   if (!APPOINTMENT_STATES.includes(target) || !allowed.includes(target)) {
     throw new AppError(
