@@ -33,11 +33,23 @@ Composition, not a flag: a space whose project lists
 `readCustomerCard`; a space that does not list it has no card operation.
 
 The hub declares `requires: [{ package: 'customer-data', capability:
-'customer-profile', version: 1 }]` and reads the profile through that
-capability, so both packages share customer-data's name resolution. Compose
-both factories with the same config: `createCustomerDataPackage({ config })`
-and `createCustomerHubPackage({ config })` side by side. Without customer-data
-composed, the application refuses to start naming the unmet edge.
+'customer-profile', version: 1 }]` and reads the profile through the
+provider's own created handle, so there is exactly one name resolution: the
+provider's. Compose the hub with the provider definition, side by side in
+`packages/domains/generated/index.js`:
+
+```js
+const customerData = createCustomerDataPackage();
+export const generatedDomains = [
+  customerData,
+  createCustomerHubPackage({ customerData }),
+];
+```
+
+The hub imports no file from any other domain package — a remapped
+customer-data composition keeps serving the card with no change here. Without
+the provider composed, the application refuses to start naming the unmet edge;
+without the handle, the card operation fails closed at composition.
 
 ## Rendering
 

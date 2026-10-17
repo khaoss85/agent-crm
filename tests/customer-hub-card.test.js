@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { shapeCustomerCard } from '../packages/customer-hub/src/card.js';
 import { renderCustomerCardHtml } from '../packages/customer-hub/src/render.js';
 import { boot, project } from './helpers/customer-data-project.js';
@@ -39,7 +40,15 @@ function projectWithHub(t) {
       "import { createCustomerDataPackage } from '../../customer-data/src/index.js';",
       "import { createCustomerDataPackage } from '../../customer-data/src/index.js';\nimport { createCustomerHubPackage } from '../../customer-hub/src/index.js';",
     )
-    .replace('  createCustomerDataPackage(),', '  createCustomerDataPackage(),\n  createCustomerHubPackage(),'));
+    // One name resolution: the provider definition is built once, and the hub
+    // consumes its created customer-profile@1 handle — the hub never
+    // re-instantiates the provider factory from its own options.
+    .replace(
+      'export const generatedDomains = [\n  createCustomerDataPackage(),\n];',
+      'const customerData = createCustomerDataPackage();\nexport const generatedDomains = [\n  customerData,\n  createCustomerHubPackage({ customerData }),\n];',
+    ));
+  const after = readFileSync(path, 'utf8');
+  assert.ok(after.includes('createCustomerHubPackage({ customerData })'), 'the hub is composed with the provider definition');
   return root;
 }
 
@@ -337,4 +346,149 @@ test('a truncated page that holds an active record still shows it', () => {
   assert.equal(card.activePackage.available, true, 'an active record in hand is shown even when the page is truncated');
   assert.equal(card.activePackage.truncated, true);
   assert.deepEqual(card.activePackage.active.map((item) => item.id), ['s-active']);
+});
+
+test('the hub imports no file from another domain package', () => {
+  const hubSrc = dirname(fileURLToPath(new URL('../packages/customer-hub/src/card.js', import.meta.url)));
+  const repoPackages = dirname(dirname(hubSrc));
+  const violations = [];
+  for (const file of readdirSync(hubSrc).filter((name) => name.endsWith('.js')).sort()) {
+    const source = readFileSync(join(hubSrc, file), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|\s)\/\/.*$/gm, '$1');
+    for (const match of source.matchAll(/(?:\bimport\s[^'"]*|\bexport\s+[^'"]*\bfrom\s*|\bimport\s*\()\s*['"]([^'"]+)['"]/g)) {
+      const specifier = match[1];
+      if (!specifier.startsWith('.')) continue;
+      const resolved = resolve(hubSrc, specifier);
+      if (resolved.startsWith(join(hubSrc, '/')) || resolved === hubSrc) continue;
+      if (resolved === join(repoPackages, 'core/index.js')) continue;
+      violations.push(`${file} reaches ${specifier}`);
+    }
+  }
+  assert.deepEqual(violations, [], 'the profile arrives through the injected capability handle, never through a source import');
+});
+
+test('the hub opens the injected provider handle with the caller modules', async () => {
+  const { createCustomerHubPackage } = await import('../packages/customer-hub/src/index.js');
+  const seen = [];
+  const injected = {
+    name: 'customer-profile',
+    version: 1,
+    create: (context) => {
+      seen.push(context);
+      return { readProfile: async () => { throw new Error('no database in this unit proof'); } };
+    },
+  };
+  const definition = createCustomerHubPackage({ customerData: { capabilities: [injected] } });
+  const operation = definition.operations.find((entry) => entry.name === 'read-customer-card');
+  const modules = { get: () => { throw new Error('unused here'); } };
+  operation.create({ modules, core: {}, database: {}, events: {}, config: {} });
+  assert.equal(seen.length, 1, 'the hub opens exactly the injected handle, never a re-instantiated factory');
+  assert.equal(seen[0].modules, modules, 'the read runs inside the caller transaction');
+  assert.equal(seen[0].consumer, 'customer-hub');
+});
+
+test('the hub without the provider handle fails closed at composition naming the edge', async () => {
+  const { createCustomerHubPackage } = await import('../packages/customer-hub/src/index.js');
+  for (const options of [undefined, {}, { customerData: null }, { customerData: { capabilities: [] } }]) {
+    const operation = createCustomerHubPackage(options).operations.find((entry) => entry.name === 'read-customer-card');
+    assert.throws(
+      () => operation.create({ modules: { get() { return null; } }, core: {}, database: {}, events: {}, config: {} }),
+      /customer-data.*customer-profile@1/,
+      'no handle means no silent read of the wrong tables — the edge is named',
+    );
+  }
+});
+
+test('a newer non-dialable channel id never hides an older callable number', () => {
+  const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
+  const off = { available: false, count: 0, items: [] };
+  const card = shapeCustomerCard({
+    identity,
+    externalIdentities: [
+      { system: 'whatsapp', externalId: 'CRM-1' },
+      { system: 'whatsapp', externalId: '+39 333 1234567' },
+    ],
+    subscriptions: off, orders: off, contracts: off,
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(card.phone.available, true, 'the older callable number is surfaced despite the newer channel id');
+  assert.equal(card.phone.value, '+39 333 1234567');
+
+  const none = shapeCustomerCard({
+    identity,
+    externalIdentities: [{ system: 'sms', externalId: 'CRM-9' }],
+    subscriptions: off, orders: off, contracts: off,
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(none.phone.available, false);
+  assert.match(none.phone.reason, /CRM-9/, 'the reason names the newest held non-dialable id');
+});
+
+test('a complete 50-row timeline reads complete, a cut one reads truncated', () => {
+  const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
+  const off = { available: false, count: 0, items: [] };
+  const items = (prefix, count) => Array.from({ length: count },
+    (_, index) => ({ id: `${prefix}${index}`, name: `${prefix} ${index}`, status: 'open' }));
+  const complete = shapeCustomerCard({
+    identity, externalIdentities: [],
+    opportunities: { available: true, count: 30, items: items('o', 30) },
+    quotes: { available: true, count: 20, items: items('q', 20) },
+    orders: off, contracts: off, subscriptions: off,
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(complete.history.available, true);
+  assert.equal(complete.history.count, 50);
+  assert.equal(complete.history.truncated, false, 'exactly 50 rows with nothing beyond reads complete');
+
+  const cut = shapeCustomerCard({
+    identity, externalIdentities: [],
+    opportunities: { available: true, count: 30, items: items('o', 30) },
+    quotes: { available: true, count: 21, items: items('q', 21) },
+    orders: off, contracts: off, subscriptions: off,
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(cut.history.count, 50);
+  assert.equal(cut.history.truncated, true, 'the 51st row left out marks the timeline truncated');
+
+  const sectionCut = shapeCustomerCard({
+    identity, externalIdentities: [],
+    opportunities: { available: true, count: 60, truncated: true, items: items('o', 10) },
+    orders: off, contracts: off, subscriptions: off,
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(sectionCut.history.count, 10);
+  assert.equal(sectionCut.history.truncated, true, 'a consumed section that reports its own truncation marks the timeline truncated');
+});
+
+test('a remapped customer-data composition serves the card through the provider resolution', async (t) => {
+  // The P1 scenario: customer-data reads its identities from renamed modules
+  // while the hub holds no config of its own. The card must still read the
+  // same tables, because it consumes the provider's created handle.
+  const root = project(t, {});
+  const manifestPath = join(root, 'packages/customer-data/modules/external-identity.module.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  manifest.name = 'custom-ext-id';
+  const remappedPath = join(root, 'packages/customer-data/modules/custom-ext-id.module.json');
+  writeFileSync(remappedPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  const applied = spawnSync(process.execPath,
+    ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create', remappedPath, '--apply', '--root', root],
+    { encoding: 'utf8', cwd: root });
+  assert.equal(applied.status, 0, `apply remapped identity module: ${applied.stderr}`);
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
+    "import { createCustomerDataPackage } from '../../customer-data/src/index.js';",
+    "import { createCustomerHubPackage } from '../../customer-hub/src/index.js';",
+    'const customerData = createCustomerDataPackage({ config: { externalIdentityModule: \'custom-ext-id\' } });',
+    'export const generatedDomains = [',
+    '  customerData,',
+    '  createCustomerHubPackage({ customerData }),',
+    '];',
+    '',
+  ].join('\n'));
+
+  const context = await boot(root, join(root, 'data', 'hub-remapped.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+
+  await app.applyCustomerImport({ actor: ACTOR, system: 'whatsapp', rows: [row('+39 333 1234567')] });
+  const contacts = await app.services.contacts.list();
+  assert.equal(contacts.length, 1);
+  const card = await app.readCustomerCard({ resource: 'contact', id: contacts[0].id });
+  assert.equal(card.phone.available, true, 'the card reads the renamed identity table through the provider resolution');
+  assert.equal(card.phone.value, '+39 333 1234567');
 });

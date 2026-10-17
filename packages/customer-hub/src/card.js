@@ -113,14 +113,18 @@ export function shapeCustomerCard(profile, subject) {
   const email = contact?.email ?? null;
 
   const identities = Array.isArray(profile.externalIdentities) ? profile.externalIdentities : [];
-  const phoneIdentity = identities.find((row) => PHONE_SYSTEMS.includes(String(row.system).toLowerCase())) ?? null;
-  const dialable = phoneIdentity ? toDialablePhone(phoneIdentity.externalId) : null;
-  const phone = phoneIdentity && dialable
-    ? Object.freeze({ available: true, value: phoneIdentity.externalId, system: phoneIdentity.system, reason: null })
-    : phoneIdentity
+  // Newest first, like the profile: scan every phone-bearing identity and
+  // take the first dialable one, so one newer non-dialable channel id never
+  // hides an older callable number held beside the same record.
+  const phoneIdentities = identities.filter((row) => PHONE_SYSTEMS.includes(String(row.system).toLowerCase()));
+  const dialableIdentity = phoneIdentities.find((row) => toDialablePhone(row.externalId) !== null) ?? null;
+  const newestHeld = phoneIdentities[0] ?? null;
+  const phone = dialableIdentity
+    ? Object.freeze({ available: true, value: dialableIdentity.externalId, system: dialableIdentity.system, reason: null })
+    : newestHeld
       ? Object.freeze({
         available: false, value: null, system: null,
-        reason: `the held ${phoneIdentity.system} identity is not a dialable phone number (E.164 expected) — this is not a claim the customer has no phone`,
+        reason: `the held ${newestHeld.system} identity '${newestHeld.externalId}' is not a dialable phone number (E.164 expected) — this is not a claim the customer has no phone`,
       })
       : Object.freeze({
         available: false, value: null, system: null,
@@ -213,15 +217,25 @@ export function shapeCustomerCard(profile, subject) {
 
   const readable = HISTORY_SECTIONS.filter((key) => profile[key]?.available === true);
   const historyItems = [];
+  // Truncated means rows were actually left out: the cap stopped the loop
+  // with profile rows still unconsumed, or a section we drew from reports its
+  // own truncation. A complete timeline of exactly HISTORY_LIMIT rows reads
+  // complete — the flag mirrors the profile's strict `rows.length > 50`.
+  let capped = false;
+  const consumedSections = [];
   for (const key of readable) {
+    let took = 0;
     for (const item of profile[key]?.items ?? []) {
+      if (historyItems.length >= HISTORY_LIMIT) { capped = true; break; }
       historyItems.push(Object.freeze({
         section: key, id: item.id, name: item.name ?? null, status: item.status ?? null,
       }));
-      if (historyItems.length >= HISTORY_LIMIT) break;
+      took += 1;
     }
-    if (historyItems.length >= HISTORY_LIMIT) break;
+    if (took > 0) consumedSections.push(key);
+    if (capped) break;
   }
+  const historyTruncated = capped || consumedSections.some((key) => profile[key]?.truncated === true);
   const history = readable.length === 0
     ? Object.freeze({
       available: false, items: Object.freeze([]), count: 0, truncated: false, completeTimeline: false,
@@ -229,7 +243,7 @@ export function shapeCustomerCard(profile, subject) {
     })
     : Object.freeze({
       available: true, items: Object.freeze(historyItems), count: historyItems.length,
-      truncated: historyItems.length >= HISTORY_LIMIT, completeTimeline: false,
+      truncated: historyTruncated, completeTimeline: false,
       reason: 'Accordo-managed records only: marketing, analytics and external channels are not represented',
     });
 

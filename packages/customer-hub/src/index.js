@@ -1,12 +1,13 @@
 // @ts-check
 
-import { definePackage, selectPackageGraph } from '../../core/index.js';
-// The only reach into customer-data: its public package entry (the same file
-// a composition imports), never its private `src/` modules. What the card
-// reads — the consolidated profile — travels through the declared
-// `customer-profile@1` capability below, so both packages share the
-// provider's name resolution instead of the hub re-resolving its own.
-import { createCustomerProfileCapability } from '../../customer-data/src/index.js';
+import { AppError, definePackage, selectPackageGraph } from '../../core/index.js';
+// No import from any other domain package — not even customer-data's public
+// entry. What the card reads (the consolidated profile) arrives as the
+// provider's own created `customer-profile@1` capability object, handed to
+// this factory at the composition site. Re-instantiating the provider factory
+// here would resolve customer-data's module names a second time from this
+// package's options, and the two resolutions could diverge; consuming the
+// created handle means there is exactly one name resolution: the provider's.
 import { CUSTOMER_CARD_CONTRACT, readCustomerCard, shapeCustomerCard } from './card.js';
 import { renderCustomerCardHtml } from './render.js';
 
@@ -29,15 +30,21 @@ export const CUSTOMER_HUB_DOMAIN = 'customer-hub';
 export { CUSTOMER_CARD_CONTRACT, readCustomerCard, renderCustomerCardHtml, shapeCustomerCard };
 
 /**
- * @param {{ config?: Record<string, string> }} [options]
+ * @param {{ customerData?: { capabilities?: Array<any> } }} [options]
+ *   `customerData` is the composed customer-data package definition — the
+ *   same object the composition lists beside this package. The hub takes the
+ *   created `customer-profile@1` capability object from it, so the profile is
+ *   always read with the provider's own name resolution and never with a
+ *   second resolution from this package's options.
  */
 export function createCustomerHubPackage(options = {}) {
-  // The profile reader carries the provider's name resolution: the hub never
-  // resolves customer-data module names from its own options, so a remapped
-  // customer-data composition cannot leave the hub reading the wrong tables.
-  // Both factories are constructed side by side in one composition file, and
-  // both must receive the same config — see the README.
-  const profileCapability = createCustomerProfileCapability(options.config);
+  // The offered capability object, created once by the provider factory with
+  // the provider's config. Held here by reference — never re-instantiated, so
+  // a remapped customer-data composition cannot leave the hub reading the
+  // wrong tables while customer-data itself works.
+  const offered = Array.isArray(options.customerData?.capabilities)
+    ? options.customerData.capabilities.find((entry) => entry?.name === 'customer-profile' && entry?.version === 1) ?? null
+    : null;
 
   return selectPackageGraph(definePackage({
     packageContract: 1,
@@ -82,9 +89,19 @@ export function createCustomerHubPackage(options = {}) {
           // binding `domains.capability()` would hand an action, with the
           // provider's names and the caller's transaction. An operation cannot
           // reach the capability registry (the ADR-032 operation context is
-          // closed), so the provider's public factory is opened here instead;
-          // the declared `requires` edge above keeps that reach fail-closed.
-          const profile = profileCapability.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN });
+          // closed), so the created capability object handed to this factory
+          // is opened here instead; the declared `requires` edge above keeps a
+          // missing provider fail-closed at startup, and this check keeps a
+          // missing handle fail-closed at composition with the edge named.
+          if (!offered || typeof offered.create !== 'function') {
+            throw new AppError(
+              'The customer-hub package requires the customer-data package capability customer-profile@1: '
+              + 'compose it with the provider definition, e.g. createCustomerHubPackage({ customerData }) '
+              + 'beside createCustomerDataPackage()',
+              { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+            );
+          }
+          const profile = offered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN });
           return (request) => readCustomerCard({
             core: runtime.core,
             subject: { resource: request?.resource, id: request?.id },
