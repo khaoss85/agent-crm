@@ -56,14 +56,22 @@ createChannelsPackage({
   same seven checks the acceptance names (receive, send, replay, bad
   signature, out-of-order) plus no-secrets and space isolation. The
   fixture adapter passes it; every real adapter must pass it before it
-  ships.
+  ships. The WhatsApp adapter (`src/whatsapp.js`) passes it
+  (`tests/channels-whatsapp.test.js`).
+- The WhatsApp Business Cloud adapter (`src/whatsapp.js`, fake-backed
+  until the Meta decision): Meta inbound shapes (`messages[]`,
+  `statuses[]`) with one inbox row per delivery state, free text only
+  inside the 24-hour window, approved templates outside it, and the REST
+  mapping as a pure function the fake records per send.
 - `npm run crm -- package validate packages/channels` and
   `npm run crm -- package test packages/channels` (DX4 conformance).
 
 ## What it deliberately does not do
 
-- No real provider adapters (WhatsApp, Instagram, …): fixture only until
-  credentials exist. No credential is invented, requested or stored.
+- No real provider adapters beyond WhatsApp (Instagram, …): fixture
+  only until credentials exist. No credential is invented, requested or
+  stored. WhatsApp itself is fake-backed until the Meta decision: the
+  same modes as the fixture, the same HMAC scheme, no Meta edge.
 - No per-space HTTP route: the pilot owns it and passes `spaceId` from
   the verified path, never from the body.
 - No secret custody or rotation flow: the deployment resolves `secretRef`

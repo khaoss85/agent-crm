@@ -226,7 +226,7 @@ export function createChannelsPackage(options = {}) {
         humanApproval: 'register, status changes and sends require actor.type === "user"; provider-driven ingest runs under a system actor and ignores any caller-supplied actor',
         notModeled: [
           'dead-letter requeue (human retry of an open letter) — follow-up voice with its own state machine',
-          'real provider adapters (WhatsApp, Instagram, …) — fixture only until credentials exist',
+          'real provider adapters beyond WhatsApp (Instagram, …) — fixture only until credentials exist',
           'the per-space HTTP route — the pilot owns it and passes spaceId from the verified path',
           'secret custody and rotation flow — the deployment owns it via resolveSecret',
           'reconciliation against provider truth — redelivery resumes unprocessed rows',
@@ -254,4 +254,12 @@ export { validateChannelAdapter } from './adapter.js';
 export { createChannelOperations } from './operations.js';
 export { runChannelAdapterKit, CHANNEL_KIT_CHECKS } from './kit.js';
 export { createFixtureChannelAdapter, fixtureWebhookHeaders, fixtureEventBody } from './fixture.js';
+export {
+  WHATSAPP_ADAPTER_NAME,
+  WHATSAPP_ADAPTER_VERSION,
+  WHATSAPP_WINDOW_MS,
+  buildWhatsAppSendRequest,
+  canonicalWhatsAppNumber,
+  createWhatsAppChannelAdapter,
+} from './whatsapp.js';
 export { verifyHmacWebhook, fingerprintPayload, hmacWebhookHeaders } from './crypto.js';
