@@ -20,7 +20,7 @@
     "doctor": "node --no-warnings packages/cli/bin/accordo.js doctor",
     "check": "node scripts/check.js",
     "surface:check": "node scripts/surface-check.js",
-    "test": "node --no-warnings --test --test-reporter=spec",
+    "test": "node --no-warnings --test --test-concurrency=2 --test-reporter=spec",
     "verify": "npm run check && npm test",
     "smoke": "node --no-warnings scripts/smoke.js",
     "falsify": "node scripts/falsify.js",
