@@ -137,7 +137,9 @@ defaults its key to the handover itself — previous owner to next owner — so
 repeating the current owner replays instead of writing audit noise, while a
 return to a prior owner is a new row. Concurrent handovers on one thread run
 serialized, so the waiter names the winner as its previous owner and the
-trail never claims two predecessors. The thread read
+trail never claims two predecessors. Each row stamps itself past its
+predecessor, so bursts decided in the same instant still order
+deterministically instead of tying for latest. The thread read
 carries the current owner and the whole trail. A member id is an opaque team
 string with no roster behind it: there is no team table here and none is
 created.

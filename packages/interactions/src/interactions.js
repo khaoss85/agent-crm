@@ -898,7 +898,9 @@ export function validateAssignRequest(request) {
  * lock, one FIFO chain per thread. Acquisition attaches synchronously (no
  * `await` before the chain is extended), so two callers racing in the same
  * tick still order; the waiter re-reads after the winner commits and derives
- * the winner as its previous owner. Different conversations never contend.
+ * the winner as its previous owner. The re-read is exact because every row
+ * stamps itself past its predecessor (`nextHandoverStamp`), so same-tick
+ * bursts never tie for "latest". Different conversations never contend.
  * Entries are removed when their chain drains, so the map holds only threads
  * with a handover in flight. The shape is the appointments package's
  * per-member booking chain, keyed by thread instead of member.
@@ -944,6 +946,33 @@ function assignmentTransaction(assignments) {
   if (typeof transactionAsync !== 'function') return null;
   if (proveCallerTransaction([assignments]) !== TRANSACTION_PROOF.NO_TRANSACTION) return null;
   return (/** @type {() => Promise<any>} */ critical) => transactionAsync.call(assignments.database, critical);
+}
+
+/**
+ * The stamp the next handover carries: wall-clock time, never behind the row
+ * it follows. Five handovers decided in one tick share the same `now`, and
+ * two serialized inserts can share the same storage millisecond too, while
+ * row ids are random — so "latest by stamp" ties its way to a random row and
+ * a waiter derives a stale previous owner, permanently forking the immutable
+ * audit trail (two rows sharing one predecessor). Bumping past the previous
+ * row's stamp inside the serialized section below makes one thread's stamps
+ * strictly increasing in commit order by construction, so the latest read
+ * always names the true winner whatever the clock resolution is. A
+ * predecessor-scoped uniqueness guard cannot do this: returning the thread
+ * to a prior owner legitimately reuses a predecessor, and only the stamp
+ * order tells the second visit from the first. The bump applies only on a
+ * tie or backward clock — the common case keeps the true wall-clock time —
+ * and the stamp never enters the replay comparison, so retries still replay.
+ *
+ * @param {string} now the caller's instant
+ * @param {unknown} previousAssignedAt the previous row's stamp, if any
+ */
+function nextHandoverStamp(now, previousAssignedAt) {
+  const base = Date.parse(now);
+  if (Number.isNaN(base)) return now;
+  const prev = typeof previousAssignedAt === 'string' ? Date.parse(previousAssignedAt) : NaN;
+  if (Number.isNaN(prev) || prev < base) return now;
+  return new Date(prev + 1).toISOString();
 }
 
 /**
@@ -1045,12 +1074,17 @@ export async function assignConversation(context, request) {
       };
     }
 
+    // Strictly past the row this handover follows: same-tick bursts share
+    // `now` and serialized inserts can share a storage millisecond, so an
+    // unmoved stamp ties its way to a random "latest" and forks the trail.
+    const stamp = nextHandoverStamp(now, previousRow ? previousRow.assignedAt : null);
+
     let assignment;
     try {
       assignment = await assignments.createManaged({
         sourceKey,
         ...submitted,
-        assignedAt: now,
+        assignedAt: stamp,
         assignedByType: who.type,
         assignedById: who.id,
       }, { actor });

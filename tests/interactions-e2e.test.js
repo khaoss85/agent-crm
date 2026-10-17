@@ -943,18 +943,37 @@ test('concurrent handovers on one thread serialize: no two rows share a predeces
     sourceKey: 'wa:thread:race', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
   });
 
-  // Five handovers with distinct keys racing in the same tick: without
-  // serialization several would read the same current owner and commit with
-  // it, and whichever sorts last would claim the wrong predecessor.
-  const owners = ['guido', 'maria', 'luca', 'anna', 'sara'];
-  const results = await Promise.all(owners.map((owner, n) => assignConversation(
-    { modules: app.modules, actor: ACTOR },
-    { sourceKey: `assign:race:${n}`, conversationId: conversation.id, assigneeMemberId: owner, source: SOURCE },
-  )));
-  assert.ok(results.every((result) => result.replayed === false));
+  // Ten rounds of five handovers with distinct keys racing in the same tick,
+  // every handover decided at one frozen instant and every handover to a
+  // member never owned before, so each predecessor is claimed exactly once:
+  // without serialization several would read the same current owner and
+  // commit with it, and without a strictly increasing stamp every row would
+  // tie for "latest" whatever the clock resolution is. The frozen clock
+  // makes the tie certain rather than lucky, so this test fails on
+  // wall-clock ordering and passes only when each row stamps itself past
+  // its predecessor.
+  const frozenNow = () => '2026-09-15T10:08:00.000Z';
+  const rounds = 10;
+  const perRound = 5;
+  for (let round = 0; round < rounds; round += 1) {
+    const owners = Array.from({ length: perRound }, (_, n) => `member-${round}-${n}`);
+    const results = await Promise.all(owners.map((owner) => assignConversation(
+      { modules: app.modules, actor: ACTOR, now: frozenNow },
+      { sourceKey: `assign:race:${round}:${owner}`, conversationId: conversation.id, assigneeMemberId: owner, source: SOURCE },
+    )));
+    assert.ok(results.every((result) => result.replayed === false));
+  }
 
   const thread = await readConversationThread({ modules: app.modules, moduleNames: {} }, conversation.id);
-  assert.equal(thread.assignment.history.length, 5);
+  const total = rounds * perRound;
+  assert.equal(thread.assignment.history.length, total);
+  // Stamps increase in commit order even though every handover was decided
+  // at the same instant: the history lists oldest first, so each stamp tops
+  // the one before it.
+  const stamps = thread.assignment.history.map((entry) => entry.assignedAt);
+  for (let i = 1; i < stamps.length; i += 1) {
+    assert.ok(stamps[i] > stamps[i - 1], 'handover stamps increase in commit order');
+  }
   // An exact chain, read through the previous pointers rather than the list
   // order: rows committed in the same instant sort by id, not by handover
   // order, so the list order proves nothing. One row follows nobody, every
@@ -966,7 +985,7 @@ test('concurrent handovers on one thread serialize: no two rows share a predeces
     assert.ok(!byPrevious.has(row.previous), `two rows claim predecessor ${row.previous}`);
     byPrevious.set(row.previous, row);
   }
-  assert.equal(byPrevious.size, 5);
+  assert.equal(byPrevious.size, total);
   assert.ok(byPrevious.has(null), 'one row starts the chain');
   let current = byPrevious.get(null);
   let visited = 1;
@@ -974,7 +993,7 @@ test('concurrent handovers on one thread serialize: no two rows share a predeces
     current = byPrevious.get(current.assignee);
     visited += 1;
   }
-  assert.equal(visited, 5);
+  assert.equal(visited, total);
 });
 
 // ---------------------------------------------------------------------------
