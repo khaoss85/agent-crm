@@ -33,9 +33,12 @@ Two halves, two owners. Accordo owns **lifecycle**; Google owns
 **schedule**. The link row joins them.
 
 1. A Google slot change on an **open** local row (`booked`,
-   `confirmed`) cancels that row with reason «Rescheduled in Google
-   Calendar» and rebooks under a revisioned key (`gcal:<id>:r<n>`),
-   carrying a `confirmed` forward. The old row stays as evidence.
+   `confirmed`) moves the booking **atomically**: the old row is
+   cancelled with reason «Rescheduled in Google Calendar» only with
+   its rebook under a revisioned key (`gcal:<id>:r<n>`), carrying a
+   `confirmed` forward. A refused rebook (slot held) keeps the valid
+   row and is retried — never sacrificed to the retry. The old row
+   stays as evidence.
 2. A Google change on a **terminal** row (`done`, `no-show`,
    `cancelled`) is ignored: a happened visit is never rewritten. The
    sync acknowledges the token so it is not re-reported.
@@ -51,11 +54,16 @@ Two halves, two owners. Accordo owns **lifecycle**; Google owns
    never booked against a fabricated contact.
 7. An **expired sync token** never guesses: the sync reconciles fully
    (list, match by link, converge) and resumes from the new token.
-8. A remote change that **cannot apply yet is never lost**: a rebook
-   refused after its cancel, or an import refused with no link yet, is
-   kept as a pending snapshot on the link and retried on every pull —
-   the token moves on, the retry does not depend on it. The pending
-   conflict is reported until it converges.
+8. A remote change that **cannot apply yet is never lost**: a move
+   refused onto a held slot, or an import refused with no link yet,
+   keeps the valid local row and is kept as a pending snapshot on the
+   link and retried on every pull — the token moves on, the retry does
+   not depend on it. The pending conflict is reported until it
+   converges.
+9. A **full import reads tombstones**: a cancellation made on Google
+   between two imports applies locally before the token moves past
+   it — never skipped past. A tombstone for an event never imported
+   is ignored, never booked.
 
 ## How to prove it
 
@@ -64,4 +72,6 @@ import with no duplicates on re-run, Google-side edit visible locally,
 local cancellation visible on Google, two consecutive `syncOnce` runs
 changing nothing, the cancellation-wins convergence, push delivery
 applying remotely-made changes, token-expiry recovery, overlap refusal,
-and terminal-row immunity. No test dials Google.
+terminal-row immunity, tombstone-between-imports convergence, a refused
+move keeping the valid row (and converging once the slot frees), and a
+self-overlapping move applying atomically. No test dials Google.

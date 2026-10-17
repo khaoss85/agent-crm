@@ -76,7 +76,7 @@ function setup(options = {}) {
     summaryForAppointment: (row) => `Appointment ${row.serviceKey} ${row.startsAt}`,
   };
   const sync = createCalendarSyncOperations({
-    modules, appointmentBook, provider, mapping,
+    modules, appointmentBook, provider, mapping, database,
     actor: ACTOR, now: () => new Date(fakeNow).toISOString(),
   });
   const appointmentRows = () => [...modules.get('appointment').service.listWhere({})];
@@ -355,7 +355,56 @@ test('the engine awaits an asynchronous provider binding', async (t) => {
   assert.equal(pushed.status, 'exported');
 });
 
-test('a rebook refused after its cancel is kept pending and retried', async (t) => {
+test('a self-overlapping Google move applies atomically: no sacrifice, no double hold', async (t) => {
+  // The new slot overlaps the booking's own old slot with no other
+  // blocker: prove-before-cancel alone would refuse against itself, so
+  // this locks the storage-transaction path (cancel and rebook in one
+  // commit, rollback on refusal).
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '09:30', '10:30') } });
+  const pull = await ctx.sync.pullIncremental(CAL);
+  const applied = pull.entries.find((e) => e.eventId === 'evt1');
+  assert.equal(applied.status, 'applied');
+  assert.equal(applied.change, 'rescheduled');
+  assert.equal(pull.pendingConflicts.length, 0);
+  const rows = ctx.appointmentRows();
+  assert.equal(rows.length, 2);
+  assert.equal(rows.filter((r) => r.status === 'cancelled').length, 1);
+  const fresh = rows.find((r) => r.status === 'booked');
+  assert.equal(fresh.startsAt, '2026-10-21T09:30:00.000Z');
+  assert.match(fresh.sourceKey, /^gcal:presti-room-1:evt1:r1$/);
+  assert.equal(ctx.linkRows()[0].appointmentSourceKey, fresh.sourceKey);
+});
+
+test('a Google cancellation between two full imports is applied, never skipped past', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  const first = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  assert.equal(first.entries.filter((e) => e.status === 'imported').length, 1);
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.cancelEvent({ calendarId: CAL, eventId: 'evt1' });
+  // The operator re-runs the full import instead of the incremental pull:
+  // the tombstone between the two imports must converge locally before
+  // the token moves past it.
+  const second = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const converged = second.entries.find((e) => e.eventId === 'evt1');
+  assert.equal(converged?.status, 'applied');
+  assert.equal(converged?.change, 'cancelled');
+  const rows = ctx.appointmentRows();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'cancelled');
+  assert.equal(rows[0].cancelReason, 'Cancelled in Google Calendar');
+  // The token moved past the tombstone: a later pull sees nothing new.
+  const pull = await ctx.sync.pullIncremental(CAL);
+  assert.ok(pull.entries.every((e) => e.status === 'replayed' || e.status === 'acknowledged' || e.status === 'ignored'));
+});
+
+test('a Google move onto a held slot keeps the valid local booking', async (t) => {
   const ctx = setup();
   t.after(() => ctx.close());
   seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
@@ -377,21 +426,101 @@ test('a rebook refused after its cancel is kept pending and retried', async (t) 
   const conflicted = pull.entries.find((e) => e.eventId === 'evt1');
   assert.equal(conflicted.status, 'conflict');
   assert.equal(conflicted.pending, true);
-  // The active event is still represented: a pending link, not a loss.
   assert.equal(pull.pendingConflicts.length, 1);
+  // The refused move sacrifices nothing: the original row is still the
+  // confirmed booking on its old slot, and the link still points at it.
+  const rows = ctx.appointmentRows();
+  assert.equal(rows.filter((r) => r.status === 'confirmed').length, 1);
+  const kept = rows.find((r) => r.status === 'confirmed');
+  assert.equal(kept.startsAt, '2026-10-21T09:00:00.000Z');
+  assert.equal(rows.filter((r) => r.status === 'cancelled').length, 0);
   assert.equal(ctx.linkRows().length, 1);
-  assert.ok(ctx.linkRows()[0].pendingRemote);
-  // Free the slot in Accordo: the next pull retries and converges.
+  assert.equal(ctx.linkRows()[0].appointmentSourceKey, kept.sourceKey);
+  assert.equal(ctx.linkRows()[0].pendingRemote !== null, true);
+  // Free the slot in Accordo: the next pull retries and converges, carrying
+  // the confirmed forward like the fresh path.
   await handle.advanceAppointment(held.appointment, 'cancelled', 'Customer moved');
   const retry = await ctx.sync.pullIncremental(CAL);
   const settled = retry.entries.find((e) => e.eventId === 'evt1');
-  assert.equal(settled.status, 'imported');
+  assert.equal(settled.status, 'applied');
+  assert.equal(settled.change, 'rescheduled');
   assert.equal(settled.retried, true);
   assert.equal(retry.pendingConflicts.length, 0);
+  const after = ctx.appointmentRows();
+  assert.equal(after.filter((r) => r.status === 'confirmed').length, 1);
+  assert.equal(after.find((r) => r.status === 'confirmed').startsAt, '2026-10-21T14:00:00.000Z');
+});
+
+test('a refused self-overlapping move keeps the row: rollback, not sacrifice', async (t) => {
+  // The blocker sits back-to-back with the old slot but inside the
+  // moved one, which still overlaps the old slot: the cancel must roll
+  // back with the refused rebook, leaving the original booking intact
+  // and retryable.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  await handle.bookAppointment({
+    sourceKey: 'gym:held:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T10:00:00.000Z',
+    endsAt: '2026-10-21T10:30:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '09:15', '10:15') } });
+  const pull = await ctx.sync.pullIncremental(CAL);
+  const conflicted = pull.entries.find((e) => e.eventId === 'evt1');
+  assert.equal(conflicted.status, 'conflict');
+  assert.equal(conflicted.pending, true);
   const rows = ctx.appointmentRows();
-  // The retried move carries the confirmed forward, like the fresh path.
-  assert.equal(rows.filter((r) => r.status === 'confirmed').length, 1);
-  assert.equal(rows.find((r) => r.status === 'confirmed').startsAt, '2026-10-21T14:00:00.000Z');
+  assert.equal(rows.filter((r) => r.status === 'booked').length, 2);
+  const kept = rows.find((r) => r.sourceKey === `gcal:${CAL}:evt1`);
+  assert.equal(kept.startsAt, '2026-10-21T09:00:00.000Z');
+  assert.equal(rows.filter((r) => r.status === 'cancelled').length, 0);
+  assert.equal(rows.some((r) => r.sourceKey === `gcal:${CAL}:evt1:r1`), false);
+});
+
+test('a Google cancellation supersedes an outstanding pending move', async (t) => {
+  // The move was refused (blocker held) and kept pending; then Google
+  // cancels the event outright. The pull must cancel the local row and
+  // clear the snapshot — never book the dead event's slot, never leave
+  // the pending retrying forever.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  await handle.bookAppointment({
+    sourceKey: 'gym:held:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T14:00:00.000Z',
+    endsAt: '2026-10-21T15:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
+  const conflicted = await ctx.sync.pullIncremental(CAL);
+  assert.equal(conflicted.entries.find((e) => e.eventId === 'evt1').status, 'conflict');
+  assert.equal(ctx.linkRows()[0].pendingRemote !== null, true);
+  ctx.setNow(T0 + 120_000);
+  ctx.provider.cancelEvent({ calendarId: CAL, eventId: 'evt1' });
+  const pull = await ctx.sync.pullIncremental(CAL);
+  // The pull first retries the stale move (still blocked: conflict) and
+  // then the tombstone supersedes it — the entry that matters applies
+  // the cancellation and clears the snapshot.
+  const converged = pull.entries.filter((e) => e.eventId === 'evt1').find((e) => e.status === 'applied');
+  assert.equal(converged?.change, 'cancelled');
+  assert.equal(pull.pendingConflicts.length, 0);
+  const rows = ctx.appointmentRows();
+  assert.equal(rows.filter((r) => r.status === 'booked').length, 1);
+  assert.equal(rows.find((r) => r.sourceKey === `gcal:${CAL}:evt1`).status, 'cancelled');
+  assert.equal(ctx.linkRows()[0].pendingRemote, null);
 });
 
 test('export reconciles an already-inserted event instead of duplicating it', async (t) => {
