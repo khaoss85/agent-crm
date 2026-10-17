@@ -24,6 +24,17 @@ import { verifyHmacWebhook } from './crypto.js';
  *   scheme. Accepted only when `config.testOnly` is true — a
  *   production adapter refuses it like any other malformed event.
  *
+ * One delivery normalizes to a LIST of channel events — one per message
+ * of every entry, in document order — so a batched Graph webhook stores
+ * one inbox row per message and never drops one (the same list path the
+ * WhatsApp adapter uses; `operations.js` stores the rows in a single
+ * transaction with dedup per providerEventId). Echoes off our own account,
+ * read receipts and items without a message id stay out of the list.
+ * Provider time is never trusted here: a skewed or forged instant travels
+ * through as `occurredAt` and `operations.js` quarantines it centrally
+ * (receive time + anomaly note), so it never becomes the window
+ * observation nor the sequence.
+ *
  * The reply window (Meta's rule, enforced at queue time before the
  * provider): a standard reply needs an inbound from the same user within
  * the last 24 hours; a `HUMAN_AGENT`-tagged reply within the last 7 days.
@@ -34,7 +45,8 @@ import { verifyHmacWebhook } from './crypto.js';
  * the adapter keeps no per-user memory of its own (one space can never
  * send on another space's consent, one page never on another page's).
  * Without an observed inbound the reply refuses with
- * CHANNEL_WINDOW_CLOSED. Sends to the bound page itself are ordinary
+ * CHANNEL_TEMPLATE_REQUIRED, intact through the real queue path like the
+ * WhatsApp adapter. Sends to the bound page itself are ordinary
  * recipients: the old test-only loopback bypass is gone.
  *
  * Real credentials do not exist yet (owner decision MEM_ACC_DECISIONS):
@@ -50,8 +62,6 @@ export const INSTAGRAM_HUMAN_AGENT_TAG = 'HUMAN_AGENT';
 export const INSTAGRAM_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Human-agent-tagged replies ride 7 days (the provider enforces the rest). */
 export const INSTAGRAM_TAG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-/** Provider timestamps past this skew are refused, never trusted. */
-export const INSTAGRAM_TIMESTAMP_SKEW_MS = 5 * 60 * 1000;
 const MAX_ID = 256;
 const MAX_TEXT = 4096;
 const HUB_SIGNATURE_HEADER = 'x-hub-signature-256';
@@ -120,10 +130,15 @@ export function instagramEventBody({
   });
 }
 
-/** Outside the window the reply refuses fail-closed: no inbound, no send. */
-function windowClosed() {
-  throw new AppError('Instagram reply window is closed: reply within 24 hours of their message (7 days with the HUMAN_AGENT tag)', {
-    code: 'CHANNEL_WINDOW_CLOSED', status: 403,
+/**
+ * Outside the window the reply refuses fail-closed with the shared
+ * window code, intact through the queue path like the WhatsApp adapter:
+ * no inbound, no send. There is no template fallback on Instagram — the
+ * caller waits for the next customer message instead.
+ */
+function templateRequired() {
+  throw new AppError('Instagram reply is outside the window: reply within 24 hours of their message (7 days with the HUMAN_AGENT tag)', {
+    code: 'CHANNEL_TEMPLATE_REQUIRED', status: 422,
   });
 }
 
@@ -177,13 +192,13 @@ export function createInstagramChannelAdapter(options = {}) {
     },
   };
 
-  /** Normalize one Graph messaging event (a single customer text message). */
+  /** Normalize one Graph messaging item (a customer message, text or not). */
   function normalizeGraphEvent(messaging) {
     const item = messaging && typeof messaging === 'object' ? messaging : null;
     const senderId = item?.sender?.id;
     const recipientId = item?.recipient?.id;
     const mid = item?.message?.mid;
-    const text = item?.message?.text;
+    const rawText = item?.message?.text;
     const stamp = item?.timestamp;
     if (typeof senderId !== 'string' || senderId === '' || senderId.length > MAX_SENDER) {
       malformed(`sender id must be non-empty text (at most ${MAX_SENDER} characters, so the subject fits 256)`);
@@ -194,18 +209,17 @@ export function createInstagramChannelAdapter(options = {}) {
     if (typeof mid !== 'string' || mid === '' || mid.length > MAX_ID) {
       malformed('message id must be non-empty text (at most 256 characters)');
     }
-    if (typeof text !== 'string' || text === '' || text.length > MAX_TEXT) {
-      malformed('message text must be non-empty text (at most 4096 characters)');
+    const text = rawText === undefined ? '' : rawText;
+    if (typeof text !== 'string' || text.length > MAX_TEXT) {
+      malformed('message text must be text (at most 4096 characters)');
     }
     if (!Number.isSafeInteger(stamp)) malformed('timestamp must be an integer');
     // Graph stamps messaging events in milliseconds; accept seconds too.
     const atMs = stamp < 1e12 ? stamp * 1000 : stamp;
-    // Provider timestamps are trusted only within a bounded skew: a
-    // future-dated inbound would otherwise hold the reply window open
-    // indefinitely (a negative age never exceeds any bound).
-    if (atMs - nowMs() > INSTAGRAM_TIMESTAMP_SKEW_MS) {
-      malformed('timestamp is too far in the future');
-    }
+    // No skew check here on purpose: the provider instant travels through
+    // as `occurredAt` and `operations.js` quarantines a future-dated one
+    // centrally (receive time + anomaly note), so one forged delivery can
+    // never hold the window open nor poison the sequence.
     return {
       providerEventId: mid,
       subject: `${SUBJECT_PREFIX}${senderId}`,
@@ -258,6 +272,15 @@ export function createInstagramChannelAdapter(options = {}) {
         return { ok: false };
       },
 
+      /**
+       * Normalize one verified webhook body to a LIST of channel events,
+       * one per message of every entry in document order — the same list
+       * path the WhatsApp adapter uses. The ingest stores one inbox row
+       * per event in a single transaction, so a batched Graph delivery
+       * never loses a message. Echoes off our own account, read receipts
+       * and items without a message id stay out of the list; a delivery
+       * with nothing listable refuses as malformed and writes nothing.
+       */
       normalizeInbound(event) {
         let parsed;
         try {
@@ -272,11 +295,6 @@ export function createInstagramChannelAdapter(options = {}) {
           if (parsed.object !== undefined && parsed.object !== 'instagram') {
             malformed(`unexpected webhook object "${String(parsed.object).slice(0, 64)}"`);
           }
-          // One delivery carries at most one customer message into one
-          // inbox row: echoes off our own page, read receipts and
-          // non-text items are skipped first, and a batch of two or more
-          // texts is refused loudly instead of silently dropping every
-          // message but the first — the provider redelivers singly.
           const candidates = [];
           for (const entry of parsed.entry) {
             const messaging = Array.isArray(entry?.messaging) ? entry.messaging : [];
@@ -284,18 +302,17 @@ export function createInstagramChannelAdapter(options = {}) {
               if (!item || typeof item !== 'object') continue;
               if (item.is_echo === true) continue;
               if (item.read && typeof item.read === 'object') continue;
-              const text = item.message && typeof item.message === 'object' ? item.message.text : undefined;
-              if (typeof text !== 'string') continue;
+              const message = item.message && typeof item.message === 'object' ? item.message : null;
+              if (!message || typeof message.mid !== 'string' || message.mid === '') continue;
               candidates.push(item);
             }
           }
-          if (candidates.length > 1) {
-            malformed(`batched deliveries carry ${candidates.length} text messages: this adapter ingests one delivery per webhook — split the batch`);
+          if (candidates.length === 0) {
+            malformed('no message in this webhook delivery (receipts and echoes stay out of the inbox)');
           }
-          if (candidates.length === 1) return normalizeGraphEvent(candidates[0]);
-          malformed('no text message in this webhook delivery (receipts, echoes and attachments stay out of the inbox)');
+          return candidates.map((item) => normalizeGraphEvent(item));
         }
-        if (testOnly) return normalizeKitEvent(parsed);
+        if (testOnly) return [normalizeKitEvent(parsed)];
         malformed('only Graph webhook deliveries are accepted');
       },
 
@@ -309,8 +326,8 @@ export function createInstagramChannelAdapter(options = {}) {
        * operations resolves the last inbound server-side from the inbox
        * and hands it in as `{ lastInboundAt }`; direct calls (unit tests)
        * pass the observation the same way. An absent, non-canonical,
-       * future or stale observation refuses fail-closed with
-       * CHANNEL_WINDOW_CLOSED.
+       * future or stale observation refuses fail-closed with the shared
+       * CHANNEL_TEMPLATE_REQUIRED code.
        */
       normalizeOutbound(message, windowCtx) {
         if (!message || typeof message !== 'object' || Array.isArray(message)) {
@@ -327,12 +344,12 @@ export function createInstagramChannelAdapter(options = {}) {
         }
         const bound = tag === INSTAGRAM_HUMAN_AGENT_TAG ? INSTAGRAM_TAG_WINDOW_MS : INSTAGRAM_REPLY_WINDOW_MS;
         const observed = windowCtx && typeof windowCtx === 'object' ? windowCtx.lastInboundAt : undefined;
-        if (observed === undefined || observed === null) windowClosed();
+        if (observed === undefined || observed === null) templateRequired();
         if (typeof observed !== 'string' || !isCanonicalInstant(observed)) {
           malformedMessage('"lastInboundAt" must be a canonical ISO-8601 instant');
         }
         const at = Date.parse(observed);
-        if (at > nowMs() || nowMs() - at > bound) windowClosed();
+        if (at > nowMs() || nowMs() - at > bound) templateRequired();
         return tag === undefined ? { to, text } : { to, text, tag };
       },
 

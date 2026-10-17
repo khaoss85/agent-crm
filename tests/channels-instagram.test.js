@@ -123,8 +123,9 @@ test('a signed Graph webhook applies with the sender subject; forgeries write no
   assert.equal(rows[0].occurredAt, new Date(T0).toISOString());
 
   const normalized = definition.normalizeInbound(rawBody);
-  assert.equal(normalized.from, 'ig-user-7');
-  assert.equal(normalized.text, 'Avete posto sabato?');
+  assert.equal(normalized.length, 1);
+  assert.equal(normalized[0].from, 'ig-user-7');
+  assert.equal(normalized[0].text, 'Avete posto sabato?');
 
   const forged = graphBody({ mid: 'm_forged' });
   await assert.rejects(
@@ -204,7 +205,7 @@ test('window enforcement uses the injected clock: late replies refuse at queue t
   clock.set(T0 + 26 * HOUR_MS);
   await assert.rejects(
     harness.queue(SPACE_A, { connectionKey: key, message: { to: 'ig-user-11', text: 'Sei ancora lì?' }, messageKey: 'm-win-late' }),
-    (error) => error.code === 'CHANNEL_WINDOW_CLOSED',
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
 
   const tagged = await harness.queue(SPACE_A, {
@@ -222,13 +223,13 @@ test('window enforcement uses the injected clock: late replies refuse at queue t
       message: { to: 'ig-user-11', text: 'Ultimo tentativo', tag: INSTAGRAM_HUMAN_AGENT_TAG },
       messageKey: 'm-win-toolate',
     }),
-    (error) => error.code === 'CHANNEL_WINDOW_CLOSED',
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
 
   // A stranger with no inbound at all is closed too — never an open relay.
   await assert.rejects(
     harness.queue(SPACE_A, { connectionKey: key, message: { to: 'ig-stranger-1', text: 'Ciao' }, messageKey: 'm-win-stranger' }),
-    (error) => error.code === 'CHANNEL_WINDOW_CLOSED',
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
 
   // Unknown tags refuse at queue time, before the outbox.
@@ -256,7 +257,7 @@ test('production composition refuses the kit dialect and closes the window for t
   // with no inbound from it the window is closed at queue time.
   await assert.rejects(
     harness.queue(SPACE_A, { connectionKey: key, message: { to: PAGE_ID, text: 'self' }, messageKey: 'm-prod-loop' }),
-    (error) => error.code === 'CHANNEL_WINDOW_CLOSED',
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
 });
 
@@ -274,7 +275,7 @@ test('an Instagram message creates the right card, and the next one updates it',
   const rawBody = graphBody({ mid: 'm_card_1', sender: 'ig-giulia-verdi', text: 'Quanto costa il pacchetto?' });
   const applied = await harness.ingest(SPACE_A, { connectionKey: key, rawBody, headers: instagramWebhookHeaders(rawBody, SECRET) });
   assert.equal(applied.effect, 'applied');
-  const sender = definition.normalizeInbound(rawBody);
+  const sender = definition.normalizeInbound(rawBody)[0];
 
   const created = await app.resolveChannelSender({
     channel: 'instagram', handle: sender.from, email: 'giulia.verdi@example.com',
@@ -285,7 +286,7 @@ test('an Instagram message creates the right card, and the next one updates it',
   const secondBody = graphBody({ mid: 'm_card_2', sender: 'ig-giulia-verdi', text: 'E gli orari?' });
   const appliedAgain = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: secondBody, headers: instagramWebhookHeaders(secondBody, SECRET) });
   assert.equal(appliedAgain.effect, 'applied');
-  const again = definition.normalizeInbound(secondBody);
+  const again = definition.normalizeInbound(secondBody)[0];
   const matched = await app.resolveChannelSender({ channel: 'instagram', handle: again.from, actor: ACTOR });
   assert.equal(matched.outcome, 'matched');
   assert.equal(matched.contact.id, created.contact.id, 'the second Instagram message names the same card');
@@ -302,45 +303,53 @@ test('an Instagram message creates the right card, and the next one updates it',
   );
 });
 
-test('a batched delivery refuses loudly and writes nothing; echoes stay out', async (t) => {
+test('a batched Graph delivery stores one row per message; echoes stay out', async (t) => {
   const { harness } = setup();
   t.after(() => harness.close());
   const key = await registeredActive(harness);
   const sign = (body) => instagramWebhookHeaders(body, SECRET);
 
-  // Two texts in one delivery: refused, never half-ingested.
-  const batch = instagramEventBody({
-    mid: 'm_batch_1', sender: 'ig-user-7', text: 'one', timestampMs: T0,
-    extra: [{
-      sender: { id: 'ig-user-8' }, recipient: { id: PAGE_ID }, timestamp: T0,
-      message: { mid: 'm_batch_2', text: 'two' },
-    }],
-  });
-  await assert.rejects(
-    harness.ingest(SPACE_A, { connectionKey: key, rawBody: batch, headers: sign(batch) }),
-    (error) => error.code === 'CHANNEL_EVENT_MALFORMED',
-  );
-  assert.equal(harness.inbox(SPACE_A).length, 0);
-
-  // An echo next to a batch does not hide it: still two texts, still refused.
-  const batchEcho = instagramEventBody({
-    mid: 'm_batch_3', sender: 'ig-user-7', text: 'one', timestampMs: T0,
-    extra: [
+  // Three texts across two entries plus our own echo: three rows, the
+  // echo stays out — the same list path the WhatsApp adapter uses.
+  const batch = JSON.stringify({
+    object: 'instagram',
+    entry: [
       {
-        sender: { id: PAGE_ID }, recipient: { id: 'ig-user-7' }, timestamp: T0,
-        is_echo: true, message: { mid: 'm_echo_1', text: 'our own reply' },
+        id: PAGE_ID,
+        messaging: [
+          { sender: { id: 'ig-user-7' }, recipient: { id: PAGE_ID }, timestamp: T0, message: { mid: 'm_batch_1', text: 'one' } },
+          { sender: { id: PAGE_ID }, recipient: { id: 'ig-user-7' }, timestamp: T0, is_echo: true, message: { mid: 'm_echo_1', text: 'our own reply' } },
+        ],
       },
       {
-        sender: { id: 'ig-user-8' }, recipient: { id: PAGE_ID }, timestamp: T0,
-        message: { mid: 'm_batch_4', text: 'two' },
+        id: PAGE_ID,
+        messaging: [
+          { sender: { id: 'ig-user-8' }, recipient: { id: PAGE_ID }, timestamp: T0, message: { mid: 'm_batch_2', text: 'two' } },
+          { sender: { id: 'ig-user-9' }, recipient: { id: PAGE_ID }, timestamp: T0, message: { mid: 'm_batch_3', text: 'three' } },
+        ],
       },
     ],
   });
-  await assert.rejects(
-    harness.ingest(SPACE_A, { connectionKey: key, rawBody: batchEcho, headers: sign(batchEcho) }),
-    (error) => error.code === 'CHANNEL_EVENT_MALFORMED',
+  const out = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: batch, headers: sign(batch) });
+  assert.equal(out.batched, true);
+  assert.equal(out.events.length, 3);
+  for (const item of out.events) {
+    assert.equal(item.effect, 'applied', `every batch item applies, got ${JSON.stringify(item)}`);
+    assert.equal(item.duplicate, false);
+  }
+  assert.deepEqual(
+    harness.inbox(SPACE_A).map((row) => row.providerEventId).sort(),
+    ['m_batch_1', 'm_batch_2', 'm_batch_3'],
   );
-  assert.equal(harness.inbox(SPACE_A).length, 0);
+
+  // Redelivering the same batch resolves per item: duplicates, no new rows.
+  const replay = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: batch, headers: sign(batch) });
+  assert.equal(replay.batched, true);
+  assert.equal(replay.events.length, 3);
+  for (const item of replay.events) {
+    assert.equal(item.duplicate, true);
+  }
+  assert.equal(harness.inbox(SPACE_A).length, 3, 'a batch redelivery stores nothing twice');
 
   // One text next to an echo: the echo is skipped, the text applies alone.
   const singleEcho = instagramEventBody({
@@ -350,14 +359,14 @@ test('a batched delivery refuses loudly and writes nothing; echoes stay out', as
       is_echo: true, message: { mid: 'm_echo_2', text: 'our own reply' },
     }],
   });
-  const out = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: singleEcho, headers: sign(singleEcho) });
-  assert.equal(out.effect, 'applied');
+  const single = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: singleEcho, headers: sign(singleEcho) });
+  assert.equal(single.effect, 'applied');
   assert.deepEqual(
-    harness.inbox(SPACE_A).map((row) => row.providerEventId),
-    ['m_single_1'],
+    harness.inbox(SPACE_A).map((row) => row.providerEventId).sort(),
+    ['m_batch_1', 'm_batch_2', 'm_batch_3', 'm_single_1'],
   );
 
-  // An echo alone is not an inbound: nothing to apply.
+  // An echo alone is not an inbound: refuses, writes nothing.
   const echoOnly = instagramEventBody({
     mid: 'm_echo_3', sender: PAGE_ID, recipient: 'ig-user-7', text: 'our own reply',
     timestampMs: T0, echo: true,
@@ -366,7 +375,7 @@ test('a batched delivery refuses loudly and writes nothing; echoes stay out', as
     harness.ingest(SPACE_A, { connectionKey: key, rawBody: echoOnly, headers: sign(echoOnly) }),
     (error) => error.code === 'CHANNEL_EVENT_MALFORMED',
   );
-  assert.equal(harness.inbox(SPACE_A).length, 1);
+  assert.equal(harness.inbox(SPACE_A).length, 4);
 });
 
 test('the window is per space and connection: one space never sends on another consent', async (t) => {
@@ -382,7 +391,7 @@ test('the window is per space and connection: one space never sends on another c
   // Same user, but space B never heard from them: closed.
   await assert.rejects(
     harness.queue(SPACE_B, { connectionKey: keyB, message: { to: 'ig-user-7', text: 'Ciao' }, messageKey: 'm-xspace-b' }),
-    (error) => error.code === 'CHANNEL_WINDOW_CLOSED',
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
 
   // Space A, which holds the inbound, sends fine through the real queue path.
@@ -390,7 +399,7 @@ test('the window is per space and connection: one space never sends on another c
   assert.equal((await harness.pump(queued.jobId)).state, 'succeeded');
 });
 
-test('a forged caller instant never opens the window; a future provider stamp refuses', async (t) => {
+test('a forged caller instant never opens the window; a future provider stamp quarantines', async (t) => {
   const { harness, definition } = setup();
   t.after(() => harness.close());
   const key = await registeredActive(harness);
@@ -403,7 +412,7 @@ test('a forged caller instant never opens the window; a future provider stamp re
       message: { to: 'ig-user-7', text: 'Ciao', lastInboundAt: new Date(T0 + DAY_MS).toISOString() },
       messageKey: 'm-forge-1',
     }),
-    (error) => error.code === 'CHANNEL_WINDOW_CLOSED',
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
 
   // And a stale caller instant cannot close a window the inbox holds open.
@@ -416,23 +425,39 @@ test('a forged caller instant never opens the window; a future provider stamp re
   });
   assert.equal((await harness.pump(queued.jobId)).state, 'succeeded');
 
-  // A provider stamp a year in the future refuses at ingest: it would
-  // otherwise hold the window open indefinitely.
+  // A provider stamp a year in the future is kept as quarantine evidence
+  // at receive time: never a window observation, never a sequence — the
+  // same central rule the WhatsApp adapter shares.
   const future = graphBody({ mid: 'm_future_1', sender: 'ig-user-9', atMs: T0 + 366 * DAY_MS });
+  const skewed = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: future, headers: instagramWebhookHeaders(future, SECRET) });
+  assert.equal(skewed.effect, 'quarantined');
+  const skewedRows = harness.inbox(SPACE_A).filter((row) => row.providerEventId === 'm_future_1');
+  assert.equal(skewedRows.length, 1);
+  assert.equal(skewedRows[0].sequence, null);
+  assert.match(skewedRows[0].effectReason, /beyond \+5min skew/);
+
+  // The window stays closed: the skewed row is not an observation.
   await assert.rejects(
-    harness.ingest(SPACE_A, { connectionKey: key, rawBody: future, headers: instagramWebhookHeaders(future, SECRET) }),
-    (error) => error.code === 'CHANNEL_EVENT_MALFORMED',
+    harness.queue(SPACE_A, { connectionKey: key, message: { to: 'ig-user-9', text: 'Dal futuro' }, messageKey: 'm-skew-closed' }),
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
-  assert.equal(harness.inbox(SPACE_A).filter((row) => row.providerEventId === 'm_future_1').length, 0);
+
+  // A legitimate message after the skewed one still applies (never
+  // suppressed by it) and opens the window again.
+  const real = graphBody({ mid: 'm_future_2', sender: 'ig-user-9', atMs: T0 });
+  const appliedReal = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: real, headers: instagramWebhookHeaders(real, SECRET) });
+  assert.equal(appliedReal.effect, 'applied');
+  const reopened = await harness.queue(SPACE_A, { connectionKey: key, message: { to: 'ig-user-9', text: 'Di nuovo dentro' }, messageKey: 'm-skew-after' });
+  assert.equal((await harness.pump(reopened.jobId)).state, 'succeeded');
 
   // Direct calls prove the same fail-closed shape without the queue.
   assert.throws(
     () => definition.normalizeOutbound({ to: 'ig-user-7', text: 'x' }),
-    (error) => error.code === 'CHANNEL_WINDOW_CLOSED',
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
   assert.throws(
     () => definition.normalizeOutbound({ to: 'ig-user-7', text: 'x' }, { lastInboundAt: new Date(T0 + DAY_MS).toISOString() }),
-    (error) => error.code === 'CHANNEL_WINDOW_CLOSED',
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
 });
 
