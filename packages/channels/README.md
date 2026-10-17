@@ -56,10 +56,12 @@ createChannelsPackage({
   same seven checks the acceptance names (receive, send, replay, bad
   signature, out-of-order) plus no-secrets and space isolation. The
   fixture adapter passes it; every real adapter must pass it before it
-  ships. The WhatsApp adapter (`src/whatsapp.js`) passes it
-  (`tests/channels-whatsapp.test.js`); for adapters behind a service
-  window the kit seeds one windowed inbound before its send check, so
-  the send proves the seeded window rather than an absent one.
+  ships. The WhatsApp (`tests/channels-whatsapp.test.js`), Instagram
+  (`tests/channels-instagram.test.js`) and Gmail
+  (`tests/channels-gmail.test.js`) adapters pass it; for adapters
+  behind a service window the kit seeds one windowed inbound before
+  its send check, so the send proves the seeded window rather than an
+  absent one.
 - The WhatsApp Business Cloud adapter (`src/whatsapp.js`, fake-backed
   until the Meta decision): Meta inbound shapes (`messages[]`,
   `statuses[]`) normalized to a list with one inbox row per item in a
@@ -79,16 +81,25 @@ createChannelsPackage({
   with the 24-hour reply window (7 days with the `HUMAN_AGENT` tag)
   read from the inbox per space and connection — against a fake
   transport, no credentials.
+- The Gmail API adapter (`src/gmail.js`,
+  `tests/channels-gmail.test.js`): Gmail push notifications
+  (`message.data` with the message id and thread id) with the channel
+  HMAC scheme, normalized with the thread as the conversation subject
+  (`email:<threadId>`, so a card reply with that thread id stays in
+  the same thread); a sent copy looping back off the bound mailbox
+  quarantines; email has no service window, so replies send at any
+  time — against a fake transport, no credentials.
 - `npm run crm -- package validate packages/channels` and
   `npm run crm -- package test packages/channels` (DX4 conformance).
 
 ## What it deliberately does not do
 
-- No real provider adapters beyond WhatsApp and Instagram: fixture
-  only until credentials exist. No credential is invented, requested or
-  stored. Both are fake-backed until the Meta decision: the same modes
-  as the fixture, no Meta edge (WhatsApp shares the channel HMAC scheme,
-  Instagram verifies hub signatures).
+- No real provider adapters beyond WhatsApp, Instagram and Gmail:
+  fixture only until credentials exist. No credential is invented,
+  requested or stored. All three are fake-backed until the provider
+  decision: the same modes as the fixture, no provider edge (WhatsApp
+  and Gmail share the channel HMAC scheme, Instagram verifies hub
+  signatures).
 - No per-space HTTP route: the pilot owns it and passes `spaceId` from
   the verified path, never from the body.
 - No secret custody or rotation flow: the deployment resolves `secretRef`
