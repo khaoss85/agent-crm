@@ -584,16 +584,21 @@ function removeQuotes(spelling) {
  * corpus by twenty-two for nothing. Delimiter spelling × `<<` against `<<-` × the optional
  * gap × where the invocation sits relative to the terminator.
  */
-function heredocCrossProduct() {
+const HEREDOC_DELIMITER_SPELLINGS = [
+  'EOF', "'EOF'", '"EOF"', '\\EOF', "'E-OF'", 'EOF.txt', '1EOF', '_end_', 'E"OF"',
+  "END'S'", 'e\\ nd', '$X', "'$X'", '..', '-', '2', 'EOF\\;', 'a"b"c', "x'y'z", '\\-EOF',
+  'É', 'e#f', "''",
+];
+
+/**
+ * @param {string[]} [spellings] delimiter spellings to cross; the whole list by
+ * default, the local sample in the default oracle run.
+ */
+function heredocCrossProduct(spellings = HEREDOC_DELIMITER_SPELLINGS) {
   /** @type {Array<{ label: string, snippet: string, probe: string }>} */
   const cases = [];
   const run = ORACLE_INVOCATION;
-  const delimiters = [
-    'EOF', "'EOF'", '"EOF"', '\\EOF', "'E-OF'", 'EOF.txt', '1EOF', '_end_', 'E"OF"',
-    "END'S'", 'e\\ nd', '$X', "'$X'", '..', '-', '2', 'EOF\\;', 'a"b"c', "x'y'z", '\\-EOF',
-    'É', 'e#f', "''",
-  ];
-  for (const spelling of delimiters) {
+  for (const spelling of spellings) {
     const terminator = removeQuotes(spelling);
     for (const dash of ['', '-']) {
       for (const gap of ['', ' ']) {
@@ -610,7 +615,7 @@ function heredocCrossProduct() {
           unterminated: `${open}\nremember\n${run}\n`,
           spaceIndent: `${open}\nremember\n  ${terminator}\n${run}\n`,
         })) {
-          cases.push({ label: `heredoc/${spelling}/${dash || 'plain'}/${gap ? 'gap' : 'tight'}/${placement}`, snippet, probe: snippet });
+          cases.push({ label: `heredoc-delim/${spelling}/${dash || 'plain'}/${gap ? 'gap' : 'tight'}/${placement}`, snippet, probe: snippet });
         }
       }
     }
@@ -635,29 +640,78 @@ function heredocCrossProduct() {
  * ## How much of the corpus runs
  *
  * The full product below is 8 positions x 8 wrappers x 10 redirects x 7
- * branches x 6 groupings (26,880 cells) plus the heredoc delimiter min-corpus,
- * and the oracle forks a shell per cell: about 13 minutes on an idle machine,
- * 30-40 on a shared one, which is why `npm test` could not be green on any
- * Mac anyone actually works on. So the default run keeps every position,
- * every branch and every grouping — those are the questions the oracle asks —
- * and crosses them with the three wrappers and two redirects that move the
- * answer most: `none` (the baseline), `xargs` (it externalises builtins, so
- * it changes what runs) and `sudo` (it eats the next word, so it changes
- * where the command is), over `none` and `file` (the write boundary the
- * mutation witness is about). That is 2,016 cells, a few minutes anywhere.
+ * branches x 6 groupings (26,880 cells) plus the heredoc delimiter corpus,
+ * and the oracle forks a shell per cell: too slow for `npm test` on any Mac
+ * anyone actually works on. So the default run keeps every position, every
+ * branch and every grouping — those are the questions the oracle asks — and
+ * crosses them with one representative per wrapper-grammar path and per
+ * redirect clause, plus a heredoc-delimiter sample. That is 8 x 5 x 6 x 7 x 6
+ * (10,080 cells) plus 120 heredoc cells (6 spellings x 2 `<<` forms x 2 gaps
+ * x 5 placements): a few minutes anywhere.
  *
- * The complete product, including the delimiter-boundary min-corpus, runs
- * wherever `ACCORDO_FULL_SHELL_ORACLE=1` is set — CI sets it, so Linux
- * coverage is exactly what it was. A local full run is legitimate but slow:
- * give it its own timeout and never hold the shared machine lock for it.
+ * Wrapper representatives: `none` (the baseline), `timeout` (the only
+ * operands:1 wrapper — it eats a bare operand), `assignment` (the only
+ * non-program prefix), `xargs` (external, and the here-string rule keys off
+ * it) and `sudo` (a short option with a separate value, external). Left out:
+ * `time` (a bare transparent prefix, the same path as `none`), `env` (an
+ * assignment after an operands:0 wrapper behaves the same under every such
+ * wrapper, so `sudo` pins it) and `nice` (a short option with a value, the
+ * same path as `sudo`).
+ *
+ * Redirect representatives: `none` (the baseline), `file` (the `>` operator
+ * into a filename — the write boundary the witness is about), `devnull` (the
+ * non-persisting device), `errfile` (a descriptor prefix into a real file),
+ * `ampout` (the `&` descriptor prefix) and `arrowstring` (the `->`
+ * exclusion). Left out: `append` (the same operator clause as `file`),
+ * `errdevnull` (the descriptor-prefix and non-persisting clauses combined),
+ * `fdone` (the same digit-prefix alternative as `errfile`) and `varfile`
+ * (the same target-character class as `file`). Each of those runs in the full
+ * mode below; none of them is a documented past defect on its own.
+ *
+ * Heredoc sample: one spelling per delimiter-quoting path (bare,
+ * single-quoted, double-quoted, backslash-escaped, expansion-shaped bare and
+ * quoted), crossed with both `<<` forms, both gaps and every placement. The
+ * exotic spellings run in the full mode below.
+ *
+ * The complete product runs wherever `ACCORDO_FULL_SHELL_ORACLE=1` is set —
+ * CI sets it, so Linux coverage is exactly what it was. A local full run is
+ * legitimate but slow: give it its own timeout and never hold the shared
+ * machine lock for it.
  */
 const SHELL_ORACLE_FULL = process.env.ACCORDO_FULL_SHELL_ORACLE === '1';
+/** One representative per wrapper-grammar path; every name must be a key of ORACLE_WRAPPERS. */
+const SHELL_ORACLE_WRAPPER_SUBSET = ['none', 'timeout', 'assignment', 'xargs', 'sudo'];
+/** One representative per redirect clause; every name must be a key of ORACLE_REDIRECTS. */
+const SHELL_ORACLE_REDIRECT_SUBSET = ['none', 'file', 'devnull', 'errfile', 'ampout', 'arrowstring'];
+/** One spelling per delimiter-quoting path; every entry must be in HEREDOC_DELIMITER_SPELLINGS. */
+const SHELL_ORACLE_HEREDOC_SPELLINGS = ['EOF', "'EOF'", '"EOF"', '\\EOF', '$X', "'$X'"];
 const SHELL_ORACLE_WRAPPERS = SHELL_ORACLE_FULL
   ? Object.keys(ORACLE_WRAPPERS)
-  : ['none', 'xargs', 'sudo'];
+  : SHELL_ORACLE_WRAPPER_SUBSET;
 const SHELL_ORACLE_REDIRECTS = SHELL_ORACLE_FULL
   ? Object.keys(ORACLE_REDIRECTS)
-  : ['none', 'file'];
+  : SHELL_ORACLE_REDIRECT_SUBSET;
+for (const name of SHELL_ORACLE_WRAPPER_SUBSET) {
+  assert.ok(
+    Object.hasOwn(ORACLE_WRAPPERS, name),
+    `SHELL_ORACLE_WRAPPER_SUBSET names ${JSON.stringify(name)}, which is not a wrapper axis value: `
+    + 'a renamed value must fail here, not silently sample nothing',
+  );
+}
+for (const name of SHELL_ORACLE_REDIRECT_SUBSET) {
+  assert.ok(
+    Object.hasOwn(ORACLE_REDIRECTS, name),
+    `SHELL_ORACLE_REDIRECT_SUBSET names ${JSON.stringify(name)}, which is not a redirect axis value: `
+    + 'a renamed value must fail here, not silently sample nothing',
+  );
+}
+for (const spelling of SHELL_ORACLE_HEREDOC_SPELLINGS) {
+  assert.ok(
+    HEREDOC_DELIMITER_SPELLINGS.includes(spelling),
+    `SHELL_ORACLE_HEREDOC_SPELLINGS names ${JSON.stringify(spelling)}, which is not a full-corpus delimiter: `
+    + 'a renamed spelling must fail here, not silently sample nothing',
+  );
+}
 
 /** The whole corpus: one cross-product for command shape, one for heredoc shape. */
 function shellCorpus() {
@@ -684,7 +738,7 @@ function shellCorpus() {
       }
     }
   }
-  return SHELL_ORACLE_FULL ? [...cases, ...heredocCrossProduct()] : cases;
+  return [...cases, ...heredocCrossProduct(SHELL_ORACLE_FULL ? HEREDOC_DELIMITER_SPELLINGS : SHELL_ORACLE_HEREDOC_SPELLINGS)];
 }
 
 /**
@@ -847,7 +901,7 @@ function runThroughBash(snippets, root) {
   });
 }
 
-test('the shell classifier agrees with bash over the whole cross-product', () => {
+test('the shell classifier agrees with bash over the active oracle corpus', () => {
   const surface = readAccordoSurface(REPO_ROOT);
   assert.equal(
     spawnSync('bash', ['-c', 'echo ok'], { encoding: 'utf8' }).stdout?.trim(), 'ok',
@@ -870,6 +924,16 @@ test('the shell classifier agrees with bash over the whole cross-product', () =>
   assert.ok(
     corpus.length >= expectedCells,
     `the corpus generated ${corpus.length} texts and the axes alone are ${expectedCells}; an axis has been dropped`,
+  );
+  // The heredoc sample rides on top of the axis product, so the bound above cannot
+  // see it go missing: a dropped heredoc wiring still clears `>=`. The sample list
+  // is validated against the full list at load; this pins the carried count to the
+  // active list, so removing the sample fails here too.
+  const heredocCells = corpus.filter((entry) => entry.label.startsWith('heredoc-delim/')).length;
+  const minHeredocCells = (SHELL_ORACLE_FULL ? HEREDOC_DELIMITER_SPELLINGS : SHELL_ORACLE_HEREDOC_SPELLINGS).length;
+  assert.ok(
+    heredocCells >= minHeredocCells,
+    `the corpus carries ${heredocCells} heredoc cells against a ${minHeredocCells}-entry delimiter list; the heredoc wiring has been dropped`,
   );
 
   const root = mkdtempSync(join(tmpdir(), 'ts-shell-oracle-'));
