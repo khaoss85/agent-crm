@@ -16,10 +16,10 @@ no tables and creates nothing.
 | Card field      | Source                                                        |
 | --------------- | ------------------------------------------------------------- |
 | name, email     | host contact (or company) record                              |
-| phone           | channel identity on a phone-bearing system (WhatsApp, SMS…)   |
+| phone           | channel identity on a phone-bearing system (WhatsApp, SMS…) whose id dials as E.164; a non-dialable id reads as unavailable with a reason |
 | social profiles | channel identities on Instagram, Facebook, TikTok            |
-| status          | derived: `cliente` only on signed business (orders, contracts, subscriptions); otherwise `contatto`, evidence named |
-| active package  | subscriptions section of the profile                          |
+| status          | derived: `cliente` only on signed business (orders, contracts, subscriptions); otherwise `contatto` — a definitive "none" only when all three evidence packages are readable with complete zero counts, otherwise the reason names what was not readable |
+| active package  | subscriptions section of the profile, with its count qualifier (`countIsComplete`/`countNote`): a floor count reads as "at least N" |
 | notes           | unavailable: no notes record exists — reported with a reason   |
 | history         | profile sections flattened, newest first within each section  |
 

@@ -22,7 +22,9 @@ import { resolvedNames } from '../../customer-data/src/store.js';
  *   field of its own;
  * - social profiles: channel identities on the social systems;
  * - status: derived — `cliente` only on signed business (orders, contracts,
- *   subscriptions), otherwise `contatto`, with the evidence named;
+ *   subscriptions), otherwise `contatto`. The negative claim is definitive
+ *   only when all three evidence packages are readable with complete zero
+ *   counts; otherwise the reason names what was not readable, never "none";
  * - active package: the subscriptions section of the profile;
  * - notes: this application composes no notes record for customers, so the
  *   card reports the field as unavailable rather than inventing one;
@@ -34,6 +36,19 @@ export const CUSTOMER_CARD_CONTRACT = 1;
 
 /** Identity systems whose external id is a callable phone number. */
 export const PHONE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', 'tel', 'mobile']);
+
+/**
+ * A phone-bearing identity IS a phone number only when the held id dials as
+ * E.164 once display formatting (spaces, dashes, dots, parentheses) is
+ * stripped. A CRM identifier such as `CRM-1` is held, never callable.
+ *
+ * @param {unknown} value the held external id
+ * @returns {string|null} the normalized E.164 number, or null when not dialable
+ */
+export function toDialablePhone(value) {
+  const normalized = String(value ?? '').replace(/[\s\-().]/g, '');
+  return /^\+[1-9]\d{6,14}$/.test(normalized) ? normalized : null;
+}
 
 /** Identity systems shown as social profiles on the card. */
 export const SOCIAL_SYSTEMS = Object.freeze(['instagram', 'facebook', 'tiktok']);
@@ -95,34 +110,70 @@ export function shapeCustomerCard(profile, subject) {
 
   const identities = Array.isArray(profile.externalIdentities) ? profile.externalIdentities : [];
   const phoneIdentity = identities.find((row) => PHONE_SYSTEMS.includes(String(row.system).toLowerCase())) ?? null;
-  const phone = phoneIdentity
+  const dialable = phoneIdentity ? toDialablePhone(phoneIdentity.externalId) : null;
+  const phone = phoneIdentity && dialable
     ? Object.freeze({ available: true, value: phoneIdentity.externalId, system: phoneIdentity.system, reason: null })
-    : Object.freeze({
-      available: false, value: null, system: null,
-      reason: 'no phone-bearing channel identity (WhatsApp, SMS, voice) is held beside this record — this is not a claim the customer has no phone',
-    });
+    : phoneIdentity
+      ? Object.freeze({
+        available: false, value: null, system: null,
+        reason: `the held ${phoneIdentity.system} identity is not a dialable phone number (E.164 expected) — this is not a claim the customer has no phone`,
+      })
+      : Object.freeze({
+        available: false, value: null, system: null,
+        reason: 'no phone-bearing channel identity (WhatsApp, SMS, voice) is held beside this record — this is not a claim the customer has no phone',
+      });
 
   const socials = Object.freeze(identities
     .filter((row) => SOCIAL_SYSTEMS.includes(String(row.system).toLowerCase()))
     .map((row) => Object.freeze({ system: row.system, handle: row.externalId })));
 
+  // Signed business promotes; an absence claim needs proof, not silence: a
+  // section the application never composed (available:false) or read only
+  // partially (countIsComplete:false) refuses the claim that nothing exists.
   const evidence = CUSTOMER_EVIDENCE_SECTIONS
     .filter((key) => profile[key]?.available === true && (profile[key]?.count ?? 0) > 0);
+  const describeSection = (key) => {
+    const section = profile[key];
+    if (section?.available !== true) return `${key}: not readable here`;
+    if ((section.count ?? 0) > 0) return `${key}: ${section.count} on record`;
+    if (section.countIsComplete === false) return `${key}: partially readable`;
+    return `${key}: none on record`;
+  };
+  const absenceIsProven = CUSTOMER_EVIDENCE_SECTIONS.every(
+    (key) => profile[key]?.available === true
+      && (profile[key]?.count ?? 0) === 0
+      && profile[key]?.countIsComplete !== false,
+  );
   const status = evidence.length > 0
     ? Object.freeze({ value: 'cliente', reason: `signed business on record: ${evidence.join(', ')}` })
-    : Object.freeze({
-      value: 'contatto',
-      reason: 'no orders, contracts or subscriptions reference this customer — quotes and opportunities alone do not promote a contact',
-    });
+    : absenceIsProven
+      ? Object.freeze({
+        value: 'contatto',
+        reason: 'no orders, contracts or subscriptions reference this customer — quotes and opportunities alone do not promote a contact',
+      })
+      : Object.freeze({
+        value: 'contatto',
+        reason: `no signed business found in the composed packages (${CUSTOMER_EVIDENCE_SECTIONS.map(describeSection).join('; ')})`
+          + ' — the evidence packages are not all readable here, so this is not a claim none exist',
+      });
 
   const subscriptions = profile.subscriptions?.available === true ? profile.subscriptions : null;
+  // The profile count is a floor, not a total, when the owning module offers
+  // no exact query (countIsComplete:false with a countNote): carry that
+  // qualifier so the card never prints a bounded page as an exact total.
+  const packageCountIsComplete = subscriptions ? subscriptions.countIsComplete !== false : true;
   const activePackage = subscriptions
     ? Object.freeze({
       available: true,
       count: subscriptions.count,
+      countIsComplete: packageCountIsComplete,
+      countNote: subscriptions.countNote ?? null,
       active: Object.freeze((subscriptions.items ?? []).filter((item) => item.status === 'active')),
       items: subscriptions.items ?? Object.freeze([]),
-      reason: null,
+      reason: packageCountIsComplete
+        ? null
+        : (subscriptions.countNote
+          ?? 'the subscriptions count is a floor from a bounded page, not an exact total'),
     })
     : Object.freeze({
       available: false, count: null, active: Object.freeze([]), items: Object.freeze([]),

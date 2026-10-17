@@ -75,7 +75,8 @@ test('the card reads name, phone, email, socials and status from reused records'
   assert.equal(card.phone.system, 'whatsapp');
   assert.deepEqual(card.socials, [{ system: 'instagram', handle: 'guido.presti' }]);
   assert.equal(card.status.value, 'contatto');
-  assert.match(card.status.reason, /no orders, contracts or subscriptions/);
+  assert.match(card.status.reason, /not all readable here/,
+    'the evidence packages are not composed here, so the card refuses the definitive "none" claim');
   assert.equal(card.activePackage.available, false);
   assert.ok(card.activePackage.reason.length > 0, 'an absent package reads as a reason, never as empty');
   assert.equal(card.notes.available, false);
@@ -129,8 +130,11 @@ test('signed business promotes the card to cliente', () => {
     subscriptions: section(false, 0), orders: section(false, 0), contracts: section(false, 0),
     opportunities: section(true, 1), quotes: section(true, 2),
   };
-  assert.equal(shapeCustomerCard(base, { resource: 'contact', id: 'c1' }).status.value, 'contatto',
+  const uncomposed = shapeCustomerCard(base, { resource: 'contact', id: 'c1' });
+  assert.equal(uncomposed.status.value, 'contatto',
     'quotes and opportunities alone never promote a contact');
+  assert.match(uncomposed.status.reason, /not all readable here/,
+    'unread evidence sections refuse the definitive "none" claim');
   const signed = {
     ...base,
     subscriptions: { available: true, count: 1, items: [{ id: 's1', status: 'active', name: 'Pacchetto 10 ingressi' }] },
@@ -140,6 +144,28 @@ test('signed business promotes the card to cliente', () => {
   assert.match(card.status.reason, /subscriptions/);
   assert.equal(card.activePackage.available, true);
   assert.deepEqual(card.activePackage.active, [{ id: 's1', status: 'active', name: 'Pacchetto 10 ingressi' }]);
+});
+
+test('the definitive "no signed business" needs every evidence package readable and complete', () => {
+  const section = (available, count, extra = {}) => ({ available, count, items: [], ...extra });
+  const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
+  const proven = shapeCustomerCard({
+    identity, externalIdentities: [],
+    subscriptions: section(true, 0), orders: section(true, 0), contracts: section(true, 0),
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(proven.status.value, 'contatto');
+  assert.match(proven.status.reason, /no orders, contracts or subscriptions reference this customer/,
+    'all three evidence packages readable with complete zero counts: the negative claim is proven');
+  const partial = shapeCustomerCard({
+    identity, externalIdentities: [],
+    subscriptions: section(true, 0),
+    orders: section(true, 0),
+    contracts: section(true, 0, { countIsComplete: false, countNote: 'contracts were read from a bounded page' }),
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(partial.status.value, 'contatto');
+  assert.match(partial.status.reason, /not all readable here/,
+    'a partially read evidence package refuses the definitive "none" claim');
+  assert.match(partial.status.reason, /contracts: partially readable/);
 });
 
 test('the card renders as one self-contained phone page', async (t) => {
@@ -201,4 +227,55 @@ test('the package count is escaped like every other card field', () => {
   });
   assert.ok(!html.includes('<img src=x'), 'markup in the package count never lands verbatim in the page');
   assert.ok(html.includes('&lt;img'), 'the count is escaped like every other field');
+});
+
+test('a non-dialable channel id is held, never presented as a callable phone', () => {
+  const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
+  const off = { available: false, count: 0, items: [] };
+  const crmId = shapeCustomerCard({
+    identity,
+    externalIdentities: [{ system: 'whatsapp', externalId: 'CRM-1' }],
+    subscriptions: off, orders: off, contracts: off,
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(crmId.phone.available, false, 'a CRM identifier is not a phone number');
+  assert.match(crmId.phone.reason, /not a dialable phone number/,
+    'the reason names the held identity as non-dialable, never as "no phone"');
+  const html = renderCustomerCardHtml({ ...crmId, name: 'A B', email: 'a@b.it' });
+  assert.ok(!html.includes('tel:CRM-1'), 'no tap-to-call link points at a CRM identifier');
+
+  const dialable = shapeCustomerCard({
+    identity,
+    externalIdentities: [{ system: 'whatsapp', externalId: '+39 333 1234567' }],
+    subscriptions: off, orders: off, contracts: off,
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(dialable.phone.available, true);
+  assert.equal(dialable.phone.value, '+39 333 1234567');
+});
+
+test('a floor package count reads as "at least N", never as an exact total', () => {
+  const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
+  const off = { available: false, count: 0, items: [] };
+  const floor = shapeCustomerCard({
+    identity, externalIdentities: [],
+    subscriptions: {
+      available: true, count: 500, items: [],
+      countIsComplete: false, countNote: 'subscriptions were read from a bounded page',
+    },
+    orders: off, contracts: off,
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(floor.status.value, 'cliente');
+  assert.equal(floor.activePackage.countIsComplete, false);
+  assert.equal(floor.activePackage.countNote, 'subscriptions were read from a bounded page');
+  const floorHtml = renderCustomerCardHtml({ ...floor, name: 'A B', email: 'a@b.it' });
+  assert.ok(floorHtml.includes('(record: almeno 500)'), 'a floor count reads as a floor');
+
+  const exact = shapeCustomerCard({
+    identity, externalIdentities: [],
+    subscriptions: { available: true, count: 2, items: [], countIsComplete: true },
+    orders: { available: true, count: 0, items: [] }, contracts: { available: true, count: 0, items: [] },
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(exact.activePackage.countIsComplete, true);
+  const exactHtml = renderCustomerCardHtml({ ...exact, name: 'A B', email: 'a@b.it' });
+  assert.ok(exactHtml.includes('(record: 2)'), 'a complete count keeps its exact reading');
+  assert.ok(!exactHtml.includes('almeno'), 'no floor qualifier leaks into an exact count');
 });
