@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execGit } from '../helpers/isolated-git.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -135,7 +135,7 @@ export async function runArchitectureEvidence(record, rootDir = repoRoot) {
   // files is what makes the difference: the previous version asked `git grep`
   // for a substring, which counted a comment as a consumer and missed
   // `app['intelligence']` entirely. Both were demonstrated, not suspected.
-  const sourceFiles = execFileSync('git', ['ls-files', '--', '*.js', '*.mjs'], { cwd: rootDir, encoding: 'utf8' })
+  const sourceFiles = execGit(['ls-files', '--', '*.js', '*.mjs'], { cwd: rootDir })
     .split('\n').filter(Boolean)
     .filter((file) => !file.startsWith('tests/'));
   const read = (file) => readFileSync(join(rootDir, file), 'utf8');

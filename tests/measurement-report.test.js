@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { assertMeasurementUnchanged, parseMeasurementReport } from '../scripts/measurement-report.js';
+import { gitIn, isolatedGitEnv } from './helpers/isolated-git.js';
 
 const measurer = fileURLToPath(new URL('../scripts/measure-suite.js', import.meta.url));
 const counts = (passed = 2) => ({ tests: passed + 2, suites: 1, passed, failed: 0, cancelled: 0, skipped: 1, todo: 1 });
@@ -40,10 +41,11 @@ test('publishing refuses a changed head, dirty tree and failed git read', () => 
 function fixture(t, extra = '') {
   const root = mkdtempSync(join(tmpdir(), 'accordo-single-measure-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
+  const isolated = gitIn(root);
   const git = (...args) => {
-    const run = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-    assert.equal(run.status, 0, run.stderr);
-    return run.stdout.trim();
+    const run = isolated(args);
+    assert.equal(run.status, 0, `git ${args.join(' ')} failed in the fixture`);
+    return String(run.stdout).trim();
   };
   git('init', '--quiet', '--initial-branch=main');
   git('config', 'user.email', 'measurement@example.invalid');
@@ -68,7 +70,10 @@ ${extra}
   writeFileSync(join(root, 'tests/b.test.js'), "import test from 'node:test'; import { appendFileSync } from 'node:fs'; appendFileSync('calls.log', 'b\\n'); test('pass', () => {});\n");
   git('add', '-A'); git('commit', '--quiet', '-m', 'fixture');
   const sha = git('rev-parse', 'HEAD');
-  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+  // The measurer shells out to git inside the fixture (and the fixture's own
+  // test file commits a moved HEAD mid-run): it inherits the isolated
+  // environment so a hook's GIT_DIR cannot divert either of them.
+  const env = isolatedGitEnv(); delete env.NODE_TEST_CONTEXT;
   const run = () => spawnSync(process.execPath, [measurer, '--apply'], { cwd: root, encoding: 'utf8', env });
   return { root, git, sha, run };
 }

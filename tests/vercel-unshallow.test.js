@@ -1,7 +1,7 @@
 // @ts-check
 
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execGit, spawnGit } from './helpers/isolated-git.js';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -9,7 +9,7 @@ import test from 'node:test';
 
 import { restoreProvenance } from '../scripts/vercel-unshallow.js';
 
-const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+const git = (cwd, ...args) => String(execGit(args, { cwd })).trim();
 
 function fixture(commitCount = 4) {
   const root = mkdtempSync(join(tmpdir(), 'accordo-vercel-history-'));
@@ -48,7 +48,7 @@ test('already-full checkout needs no fetch and proves the ledger SHA', (t) => {
     cwd: value.source,
     runGit(args) {
       calls.push(args);
-      return spawnSync('git', args, { cwd: value.source, encoding: 'utf8' });
+      return spawnGit(args, { cwd: value.source, encoding: 'utf8' });
     },
     out() {}, error() {},
   });
@@ -119,7 +119,7 @@ test('the final fallback crosses a measured commit beyond 256 shallow commits', 
         fetches += 1;
         if (fetches < 3) return { status: 0, stdout: '' };
       }
-      return spawnSync('git', args, { cwd: clone, encoding: 'utf8' });
+      return spawnGit(args, { cwd: clone, encoding: 'utf8' });
     },
     out() {}, error() {},
   });
