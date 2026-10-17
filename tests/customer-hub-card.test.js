@@ -171,3 +171,34 @@ test('the card renders as one self-contained phone page', async (t) => {
   });
   assert.ok(!hostile.includes('<script>alert'), 'card text is escaped');
 });
+
+test('a card for a missing record says the customer does not exist, never a ghost contatto', () => {
+  const section = (available, count) => ({ available, count, items: [] });
+  const ghost = {
+    identity: {
+      contact: null,
+      company: null,
+      note: 'the canonical record for this subject could not be read from the host application',
+    },
+    externalIdentities: [],
+    subscriptions: section(false, 0), orders: section(false, 0), contracts: section(false, 0),
+    opportunities: section(false, 0), quotes: section(false, 0),
+  };
+  assert.throws(
+    () => shapeCustomerCard(ghost, { resource: 'contact', id: 'deleted-id' }),
+    (error) => error.code === 'NOT_FOUND' && error.status === 404,
+    'a deleted or mistyped id throws NOT_FOUND instead of a null-name contatto card',
+  );
+});
+
+test('the package count is escaped like every other card field', () => {
+  const html = renderCustomerCardHtml({
+    name: 'Guido Presti', status: { value: 'contatto', reason: '' }, email: null,
+    company: null, phone: { available: false, reason: '' }, socials: [],
+    activePackage: { available: true, count: '<img src=x onerror=alert(1)>', active: [], items: [], reason: null },
+    notes: { available: false, reason: '' },
+    history: { available: false, reason: '' },
+  });
+  assert.ok(!html.includes('<img src=x'), 'markup in the package count never lands verbatim in the page');
+  assert.ok(html.includes('&lt;img'), 'the count is escaped like every other field');
+});

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { ValidationError } from '../../core/index.js';
+import { NotFoundError, ValidationError } from '../../core/index.js';
 import { profileFor } from '../../customer-data/src/profile.js';
 import { resolvedNames } from '../../customer-data/src/store.js';
 
@@ -85,6 +85,9 @@ export function shapeCustomerCard(profile, subject) {
 
   const contact = profile.identity?.contact ?? null;
   const company = profile.identity?.company ?? null;
+  if (!contact && !company) {
+    throw new NotFoundError(String(resource ?? 'Customer'), String(id ?? 'unknown'));
+  }
   const name = contact
     ? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim() || contact.email
     : company?.name ?? null;

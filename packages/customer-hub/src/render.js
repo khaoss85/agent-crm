@@ -52,7 +52,7 @@ export function renderCustomerCardHtml(card) {
   const packageBlock = card?.activePackage?.available === true
     ? (card.activePackage.active.length > 0
       ? `<ul>${card.activePackage.active.map((item) => `<li><strong>${escapeHtml(item.name ?? item.id)}</strong> — ${escapeHtml(item.status ?? '')}</li>`).join('')}</ul>`
-      : `<p class="line">nessun pacchetto attivo (record: ${card.activePackage.count})</p>`)
+      : `<p class="line">nessun pacchetto attivo (record: ${escapeHtml(card.activePackage.count)})</p>`)
     : `<p class="line missing">${escapeHtml(card?.activePackage?.reason ?? 'pacchetti non disponibili')}</p>`;
 
   const notesBlock = `<p class="line missing">${escapeHtml(card?.notes?.reason ?? 'note non disponibili')}</p>`;
