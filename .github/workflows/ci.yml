@@ -55,7 +55,9 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - name: Fetch the PR base for touched-file selection
-        run: git fetch --no-tags origin ${{ github.base_ref }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch --no-tags origin "$BASE_REF"
       - name: Start PostgreSQL 16 (self-hosted macOS)
         if: runner.os == 'macOS'
         run: |
@@ -70,23 +72,27 @@ jobs:
           docker run -d --name accordo-pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 -U postgres && break; sleep 2; done
       - run: npm ci
+      # Every heavy PR step below enforces the §7 five-minute budget itself:
+      # HEAVY_JOB_MAX_SEC=300 fails the step red instead of holding the
+      # shared lock past the budget and queueing Arvo behind it. (`main`'s
+      # measure step keeps the wrapper default: the full suite needs it.)
       - name: Syntax check every JavaScript file
-        run: scripts/ci-heavy.sh check -- npm run check
+        run: HEAVY_JOB_MAX_SEC=300 scripts/ci-heavy.sh check -- npm run check
       - name: Tests of the touched files
-        run: scripts/ci-heavy.sh touched -- node scripts/ci-touched-tests.js --base FETCH_HEAD
+        run: HEAVY_JOB_MAX_SEC=300 scripts/ci-heavy.sh touched -- node scripts/ci-touched-tests.js --base FETCH_HEAD
       - name: Smoke demo
-        run: scripts/ci-heavy.sh smoke -- npm run smoke
+        run: HEAVY_JOB_MAX_SEC=300 scripts/ci-heavy.sh smoke -- npm run smoke
       - name: Replay the published quote approval recipe
         run: |
-          scripts/ci-heavy.sh recipe -- bash -c 'node --no-warnings examples/recipes/quote-approval/run.mjs "$RUNNER_TEMP/quote-approval-crm" && npm --prefix "$RUNNER_TEMP/quote-approval-crm" run verify'
+          HEAVY_JOB_MAX_SEC=300 scripts/ci-heavy.sh recipe -- bash -c 'node --no-warnings examples/recipes/quote-approval/run.mjs "$RUNNER_TEMP/quote-approval-crm" && npm --prefix "$RUNNER_TEMP/quote-approval-crm" run verify'
       - name: Public claims and packaging agree
-        run: scripts/ci-heavy.sh gtm -- npm run gtm:check
+        run: HEAVY_JOB_MAX_SEC=300 scripts/ci-heavy.sh gtm -- npm run gtm:check
       # Agreement only: the committed truth document must equal a fresh
       # generation from the PR's own inputs (TRUTH_DOCUMENT_STALE otherwise).
       # Freshness against a new measurement (`--require-current`) needs the
       # full suite, so it runs only on `main` in `public-claims` below.
       - name: The committed truth document agrees with its authorities
-        run: scripts/ci-heavy.sh truth -- npm run repo:truth -- --check
+        run: HEAVY_JOB_MAX_SEC=300 scripts/ci-heavy.sh truth -- npm run repo:truth -- --check
 
   # Left at the default fetch-depth: 1 deliberately. Nothing under `npm run verify` or
   # `npm run smoke` reads git history — the only git these run is `ls-files`, `status`

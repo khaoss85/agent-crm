@@ -15,10 +15,18 @@
  *
  * - a changed `*.test.js`/`*.test.mjs` under `tests/` runs itself;
  * - a changed file imported relatively by a test file runs its importers
- *   (specifiers are resolved against the importing file, extension-free);
- * - a changed file no test file imports (docs, workflows, `package.json`,
- *   site content) selects nothing: the agreement gates of the same CI job
- *   (`gtm:check`, `repo:truth -- --check`) still run.
+ *   (specifiers are resolved against the importing file, extension-free),
+ *   following imports transitively through `tests/helpers` and any other
+ *   non-test file under `tests/`: a test that reaches the changed file only
+ *   via a helper is still selected;
+ * - `export ... from` re-exports count as imports for the mapping above;
+ * - a changed file no test file reaches selects nothing only when no
+ *   JavaScript source changed (docs, workflows, `package.json`, site
+ *   content): the agreement gates of the same CI job (`gtm:check`,
+ *   `repo:truth -- --check`) still run. A changed `.js`/`.cjs`/`.mjs` file
+ *   with no reaching test fails closed instead: the step runs the default
+ *   `npm test` suite (bounded by the same timeout) rather than exiting 0
+ *   without running anything.
  *
  * Usage:
  *
@@ -31,8 +39,9 @@
  * the machine lock longer than that — a hanging selection fails red instead
  * of queueing every other factory behind it.
  *
- * Exit codes: 0 the selected tests passed (or there were none), 1 the
- * selection failed or a test failed, 2 unusable input.
+ * Exit codes: 0 the selected tests passed (or only non-source files
+ * changed and there was nothing to run), 1 the selection failed, a test
+ * failed, or the fail-closed fallback suite failed, 2 unusable input.
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
@@ -96,7 +105,7 @@ export function relativeImportsOf(
   /** @type {string} */ content,
 ) {
   const found = new Set();
-  const pattern = /(?:import\s+(?:[^'"]*?\s+from\s+)?|import\s*\(\s*|require\s*\(\s*)['"](\.[^'"]+)['"]/g;
+  const pattern = /(?:import\s+(?:[^'"]*?\s+from\s+)?|import\s*\(\s*|require\s*\(\s*|export\s+[^'"]*?\s+from\s+)['"](\.[^'"]+)['"]/g;
   let match = pattern.exec(content);
   while (match) {
     const resolved = normalize(join(dirname(testFile), match[1])).replace(/\\/g, '/');
@@ -107,27 +116,72 @@ export function relativeImportsOf(
 }
 
 /**
+ * Whether any changed repository-relative path is JavaScript source. Test
+ * files themselves count as source here: a changed test file is always
+ * selected below, so an empty selection together with a `true` here means a
+ * changed non-test source file no test reaches — the fail-closed case.
+ */
+export function hasCodeChange(
+  /** @type {string[]} */ changedFiles,
+) {
+  return changedFiles.some((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
+}
+
+/**
  * Map changed repository-relative paths to the test files that cover them:
- * changed test files themselves, plus every test file relatively importing a
- * changed file. `testContents` maps repository-relative test paths to their
- * source. Returns sorted repository-relative test paths.
+ * changed test files themselves, plus every test file that reaches a changed
+ * file through relative imports — directly, or transitively through non-test
+ * files such as `tests/helpers/*` (a test booting the app through a helper
+ * is the test that catches the regression). `testContents` maps
+ * repository-relative test paths to their source; `fileImports` optionally
+ * maps any other repository-relative file (helpers, fixtures) to the
+ * relative imports it uses, resolved the way `relativeImportsOf` resolves
+ * them. Files absent from both maps are leaves. Returns sorted
+ * repository-relative test paths.
  */
 export function selectTouchedTests(
   /** @type {string[]} */ changedFiles,
   /** @type {Map<string, string>} */ testContents,
+  /** @type {Map<string, Set<string>>} */ fileImports = new Map(),
 ) {
   const selected = new Set();
   const changed = new Set(
     changedFiles.map((file) => stripSourceExtension(normalize(file).replace(/\\/g, '/'))),
   );
-  for (const [testPath, content] of testContents) {
+  const importsOf = (/** @type {string} */ file) => {
+    const extra = fileImports.get(file);
+    if (extra) return extra;
+    const content = testContents.get(file);
+    if (content === undefined) return new Set();
+    return relativeImportsOf(file, content);
+  };
+  /** The files a test reaches: its own imports, then theirs, cycle-safe. */
+  const reachesOf = (/** @type {string} */ testPath) => {
+    const reached = new Set();
+    const queue = [...importsOf(testPath)];
+    while (queue.length > 0) {
+      const next = queue.pop();
+      if (!next || reached.has(next)) continue;
+      reached.add(next);
+      // Only non-test files are followed: a test importing another test
+      // does not run it, so the graph stops at test boundaries. Reached
+      // paths are extension-free, so the boundary is the trailing `.test`.
+      if (!/\.test$/.test(next)) {
+        for (const deeper of importsOf(next)) {
+          if (!reached.has(deeper)) queue.push(deeper);
+        }
+      }
+    }
+    return reached;
+  };
+  for (const [testPath] of testContents) {
     const stripped = stripSourceExtension(testPath);
     if (changed.has(stripped) || changed.has(testPath)) {
       selected.add(testPath);
       continue;
     }
-    for (const imported of relativeImportsOf(testPath, content)) {
-      if (changed.has(imported)) {
+    for (const reached of reachesOf(testPath)) {
+      if (changed.has(reached)) {
         selected.add(testPath);
         break;
       }
@@ -196,23 +250,70 @@ async function main() {
     }
   }
 
-  const selected = selectTouchedTests(changed, contents);
+  // The transitive graph through non-test files under `tests/` (helpers,
+  // fixtures): a test reaching the changed file only via a helper is the
+  // test that catches the regression, so it must be selected. Keyed by
+  // extension-free repository-relative paths, the way `relativeImportsOf`
+  // resolves them.
+  const helperImports = new Map();
+  const walkHelpers = (/** @type {string} */ directory) => {
+    for (const name of readdirSync(directory)) {
+      if (name === 'node_modules') continue;
+      const absolute = join(directory, name);
+      if (isDirectory(absolute)) {
+        walkHelpers(absolute);
+        continue;
+      }
+      if (!SOURCE_EXT.test(name) || TEST_FILE.test(name)) continue;
+      const relative = absolute.slice(root.length + 1).replace(/\\/g, '/');
+      try {
+        helperImports.set(
+          stripSourceExtension(relative),
+          relativeImportsOf(relative, readFileSync(absolute, 'utf8')),
+        );
+      } catch {
+        // Unreadable helpers are leaves; the run below fails loudly if one
+        // a selected test needs is really missing.
+      }
+    }
+  };
+  if (isDirectory(join(root, 'tests'))) walkHelpers(join(root, 'tests'));
 
-  if (options.list || selected.length === 0) {
-    process.stdout.write(
-      selected.length === 0
-        ? `ci-touched-tests: ${changed.length} changed file(s), no test file imports them — nothing to run.\n`
-        : `${selected.join('\n')}\n`,
-    );
+  const selected = selectTouchedTests(changed, contents, helperImports);
+
+  if (options.list) {
+    process.stdout.write(selected.length === 0 ? '' : `${selected.join('\n')}\n`);
     process.exit(0);
+  }
+
+  // Fail closed: JavaScript source changed but no test reaches it (a CLI
+  // reached only via `spawnSync`, a helper nobody imports yet). Exiting 0
+  // here would merge an untested change green and redden `main` after the
+  // merge, so the step runs the default `npm test` suite instead — bounded
+  // by the same timeout. Docs, workflows, manifests and site-only changes
+  // keep the exit-0 skip: their gates run in the same CI job.
+  let toRun = selected;
+  if (selected.length === 0) {
+    if (!hasCodeChange(changed)) {
+      process.stdout.write(
+        `ci-touched-tests: ${changed.length} changed file(s), no test file reaches them — nothing to run.\n`,
+      );
+      process.exit(0);
+    }
+    process.stdout.write(
+      `ci-touched-tests: ${changed.length} changed file(s) with no reaching test — `
+        + 'running the default `npm test` suite instead of exiting green with nothing run.\n',
+    );
+    toRun = [];
   }
 
   // Same flags as `npm test`: two files at a time keeps peak memory inside
   // what the shared 16 GB runner survived (ci.yml), at the price of wall time
-  // this step bounds with its timeout instead.
+  // this step bounds with its timeout instead. An empty `toRun` is the
+  // fail-closed fallback above: no file filter, the default suite runs.
   const run = spawnSync(
     process.execPath,
-    ['--no-warnings', '--test', '--test-concurrency=2', '--test-reporter=spec', ...selected],
+    ['--no-warnings', '--test', '--test-concurrency=2', '--test-reporter=spec', ...toRun],
     { cwd: root, stdio: 'inherit', timeout: options.timeoutSec * 1000, killSignal: 'SIGKILL' },
   );
   if (run.error) {

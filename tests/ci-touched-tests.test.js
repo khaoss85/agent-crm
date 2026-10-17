@@ -17,7 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { relativeImportsOf, selectTouchedTests } from '../scripts/ci-touched-tests.js';
+import { hasCodeChange, relativeImportsOf, selectTouchedTests } from '../scripts/ci-touched-tests.js';
 
 /** @param {Record<string, string>} entries */
 const contents = (entries) => new Map(Object.entries(entries));
@@ -89,6 +89,95 @@ test('relativeImportsOf resolves against the importing file', () => {
     "import { x } from '../../packages/app/src/index.js';\nimport { y } from '../helpers/fixture-db.js';\n",
   );
   assert.deepEqual([...found].sort(), ['packages/app/src/index', 'tests/helpers/fixture-db']);
+});
+
+test('relativeImportsOf parses export-from re-exports', () => {
+  const found = relativeImportsOf(
+    'tests/re-export.test.js',
+    "export { app } from '../packages/app/src/index.js';\nexport * from '../packages/core/src/errors.js';\nexport const local = 1;\n",
+  );
+  assert.deepEqual([...found].sort(), ['packages/app/src/index', 'packages/core/src/errors']);
+});
+
+test('a changed source reached only via a helper selects the helper importer', () => {
+  // tests/writer-lease-renewal-postgresql.test.js boots the app through
+  // tests/helpers/postgresql-application.js, which is the only file
+  // importing the changed source: direct-only mapping would select nothing.
+  const selected = selectTouchedTests(
+    ['packages/app/src/index.js'],
+    contents({
+      'tests/writer.test.js': "import { boot } from './helpers/postgresql-application.js';\n",
+      'tests/other.test.js': "import test from 'node:test';\n",
+    }),
+    new Map([
+      ['tests/helpers/postgresql-application', new Set(['packages/app/src/index', 'packages/core/src/errors'])],
+    ]),
+  );
+  assert.deepEqual(selected, ['tests/writer.test.js']);
+});
+
+test('selection follows two helper hops to the changed source', () => {
+  const selected = selectTouchedTests(
+    ['packages/core/src/errors.js'],
+    contents({
+      'tests/deep.test.js': "import { seed } from './helpers/a.js';\n",
+      'tests/other.test.js': "import test from 'node:test';\n",
+    }),
+    new Map([
+      ['tests/helpers/a', new Set(['tests/helpers/b'])],
+      ['tests/helpers/b', new Set(['packages/core/src/errors'])],
+    ]),
+  );
+  assert.deepEqual(selected, ['tests/deep.test.js']);
+});
+
+test('a helper cycle terminates and still selects the reaching test', () => {
+  const selected = selectTouchedTests(
+    ['packages/core/src/errors.js'],
+    contents({
+      'tests/cyclic.test.js': "import { seed } from './helpers/a.js';\n",
+    }),
+    new Map([
+      ['tests/helpers/a', new Set(['tests/helpers/b'])],
+      ['tests/helpers/b', new Set(['tests/helpers/a', 'packages/core/src/errors'])],
+    ]),
+  );
+  assert.deepEqual(selected, ['tests/cyclic.test.js']);
+});
+
+test('a test importing another test does not follow into it', () => {
+  const selected = selectTouchedTests(
+    ['packages/app/src/index.js'],
+    contents({
+      'tests/inner.test.js': "import { app } from '../packages/app/src/index.js';\n",
+      'tests/outer.test.js': "import './inner.test.js';\n",
+    }),
+  );
+  assert.deepEqual(selected, ['tests/inner.test.js']);
+});
+
+test('a re-exporting test is selected for its re-exported source', () => {
+  const selected = selectTouchedTests(
+    ['packages/app/src/index.js'],
+    contents({
+      'tests/re-export.test.js': "export { app } from '../packages/app/src/index.js';\n",
+      'tests/other.test.js': "import test from 'node:test';\n",
+    }),
+  );
+  assert.deepEqual(selected, ['tests/re-export.test.js']);
+});
+
+test('hasCodeChange is true for source, false for docs-only changes', () => {
+  // packages/cli/bin/accordo.js is reached by tests only via spawnSync, so
+  // an empty selection with this change is the fail-closed case, never a
+  // skip.
+  assert.equal(hasCodeChange(['packages/cli/bin/accordo.js']), true);
+  assert.equal(hasCodeChange(['tests/api.test.js']), true);
+  assert.equal(
+    hasCodeChange(['docs/QUALITY_GATES.md', '.github/workflows/ci.yml', 'package.json', 'site/index.html']),
+    false,
+  );
+  assert.equal(hasCodeChange([]), false);
 });
 
 test('selection is end to end on a throwaway repository with real git', () => {
