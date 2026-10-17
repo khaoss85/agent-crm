@@ -131,6 +131,31 @@ test('sender evidence reaching two companies becomes a candidate pair, never a c
   assert.equal(contactsCount(app), 0, 'no contact was created from company-only evidence');
 });
 
+test('a sender reaching only a company is never matched to it', async (t) => {
+  const { app } = await scene(t, 'sender-company-only');
+
+  const company = await app.services.companies.create({ name: 'Solo Srl', domain: 'solo.example' }, { actor: ACTOR });
+
+  // Company evidence alone, no email: no contact can be created or confirmed.
+  const companyOnly = await app.resolveChannelSender({
+    channel: 'phone', handle: '+3902000001', companyName: 'Solo Srl', domain: 'solo.example', actor: ACTOR,
+  });
+  assert.equal(companyOnly.outcome, 'unresolved');
+  assert.equal(companyOnly.contact, null);
+  assert.equal(contactsCount(app), 0, 'a sender is never matched to a company');
+
+  // The same evidence with an email creates the contact under that company.
+  const withEmail = await app.resolveChannelSender({
+    channel: 'phone', handle: '+3902000001', email: 'info@solo.example',
+    firstName: 'Solo', lastName: 'Referente', companyName: 'Solo Srl', domain: 'solo.example', actor: ACTOR,
+  });
+  assert.equal(withEmail.outcome, 'created');
+  assert.equal(withEmail.rule, 'company-name-domain');
+  const contact = app.database.raw.prepare('SELECT * FROM contacts WHERE id = ?').get(withEmail.contact.id);
+  assert.equal(contact.company_id, company.id, 'the contact is created under the matched company');
+  assert.equal(contactsCount(app), 1);
+});
+
 test('a sender with no linkable identity and no email stays unresolved with no writes', async (t) => {
   const { app } = await scene(t, 'sender-bare-handle');
 

@@ -405,12 +405,18 @@ export function createChannelSenderResolution({
       };
       const identity = await database.transactionAsync(async () => {
         const raced = await reader.externalIdentity(sender.system, sender.externalId);
+        // A concurrent resolution won: replay it. A non-contact winner is
+        // not a contact — the next call takes the known-identity path.
+        if (raced && raced.subjectResource !== 'contact') return 'non-contact';
         if (raced) return 'existing';
         return recordExternalIdentityRow({
           modules, names, system: sender.system, externalId: sender.externalId,
           subject, runId: SENDER_RUN_ID, actor,
         });
       });
+      if (identity === 'non-contact') {
+        return decide({ ...request, handle: sender.externalId });
+      }
       return Object.freeze({
         system: sender.system,
         outcome: 'matched',
@@ -439,8 +445,9 @@ export function createChannelSenderResolution({
       }
       const created = await database.transactionAsync(async () => {
         const raced = await reader.externalIdentity(sender.system, sender.externalId);
+        if (raced && raced.subjectResource !== 'contact') return { replayed: false, nonContact: true };
         if (raced) {
-          return { replayed: true, contactId: raced.subjectResource === 'contact' ? raced.subjectId : null };
+          return { replayed: true, contactId: raced.subjectId };
         }
         const contact = await core.createContact({
           companyId: result.subject.id,
@@ -458,6 +465,11 @@ export function createChannelSenderResolution({
         });
         return { replayed: false, contactId: contact.id };
       });
+      if (created.nonContact) {
+        // A concurrent write linked this handle to a non-contact: re-resolve
+        // through the known-identity path instead of creating beside it.
+        return decide({ ...request, handle: sender.externalId });
+      }
       if (created.replayed && created.contactId) {
         return Object.freeze({
           system: sender.system,
@@ -508,8 +520,9 @@ export function createChannelSenderResolution({
 
     const created = await database.transactionAsync(async () => {
       const raced = await reader.externalIdentity(sender.system, sender.externalId);
+      if (raced && raced.subjectResource !== 'contact') return { replayed: false, nonContact: true };
       if (raced) {
-        return { replayed: true, contactId: raced.subjectResource === 'contact' ? raced.subjectId : null };
+        return { replayed: true, contactId: raced.subjectId };
       }
       const subject = await createSubjectForRow(core, sender, actor);
       if (subject.resource !== 'contact') {
@@ -531,6 +544,11 @@ export function createChannelSenderResolution({
       });
       return { replayed: false, contactId: subject.id };
     });
+    if (created.nonContact) {
+      // A concurrent write linked this handle to a non-contact: re-resolve
+      // through the known-identity path instead of creating beside it.
+      return decide({ ...request, handle: sender.externalId });
+    }
     if (created.replayed && created.contactId) {
       return Object.freeze({
         system: sender.system,
