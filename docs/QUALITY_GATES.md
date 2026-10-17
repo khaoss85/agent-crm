@@ -138,8 +138,11 @@ rules:
   measurement, the gate *notes* that the recorded count describes an older commit
   and names the commits that touched `tests/` since — and does not fail. Failing
   there would block every PR that adds a test until it re-ran the suite, which is
-  a worse outcome than a note. Re-measure before publishing:
-  `node scripts/measure-suite.js --apply` on a clean tree, or
+  a worse outcome than a note. Re-measuring before publishing is the CI's job,
+  not the author's: the `public-claims` job re-anchors the ledger from the
+  `verify` job's measurement artifact on the same tree
+  (`scripts/apply-ci-measurement.js`), so a PR goes green with no local measure
+  commit. Locally, `node scripts/measure-suite.js --apply` on a clean tree, or
   `npm run measure:refresh` when only test files changed (it runs the changed
   files and carries the rest). Inputs outside `tests/` also refuse refresh;
   only a ledger update restricted to `measuredAgainst` is exempt. Full measurement
