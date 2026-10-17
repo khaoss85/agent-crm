@@ -373,7 +373,7 @@ test('adapter config validates fail-closed at composition', () => {
   );
 });
 
-test('a batched Meta delivery refuses loudly instead of dropping items', async (t) => {
+test('a batched Meta delivery stores one row per item', async (t) => {
   const { harness } = setup();
   t.after(() => harness.close());
   const key = await registeredActive(harness);
@@ -387,11 +387,27 @@ test('a batched Meta delivery refuses loudly instead of dropping items', async (
       { id: 'wamid.B', recipient_id: '390200000003', timestamp: String(TS + 1), status: 'sent' },
     ],
   });
-  await assert.rejects(
-    harness.ingest(SPACE, { connectionKey: key, rawBody, headers: signedHeaders(rawBody) }),
-    (error) => error.code === 'CHANNEL_EVENT_MALFORMED',
+  const out = await harness.ingest(SPACE, { connectionKey: key, rawBody, headers: signedHeaders(rawBody) });
+  assert.equal(out.batched, true);
+  assert.equal(out.events.length, 4);
+  for (const item of out.events) {
+    assert.equal(item.effect, 'applied', `every batch item applies, got ${JSON.stringify(item)}`);
+    assert.equal(item.duplicate, false);
+  }
+  const rows = harness.inbox(SPACE);
+  assert.equal(rows.length, 4);
+  assert.deepEqual(
+    rows.map((row) => row.providerEventId).sort(),
+    ['wamid.A', 'wamid.A:delivered', 'wamid.B', 'wamid.B:sent'],
   );
-  assert.equal(harness.inbox(SPACE).length, 0, 'nothing is stored from a refused batch');
+  // Redelivering the same batch resolves per item: duplicates, no new rows.
+  const replay = await harness.ingest(SPACE, { connectionKey: key, rawBody, headers: signedHeaders(rawBody) });
+  assert.equal(replay.batched, true);
+  assert.equal(replay.events.length, 4);
+  for (const item of replay.events) {
+    assert.equal(item.duplicate, true);
+  }
+  assert.equal(harness.inbox(SPACE).length, 4, 'a batch redelivery stores nothing twice');
 });
 
 test('the real queue path resolves the window server-side and keeps the template code', async (t) => {
@@ -458,6 +474,74 @@ test('a future-dated inbound never opens the window', async (t) => {
     }),
     (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
+});
+
+test('a provider timestamp beyond +5min skew quarantines and never poisons the window', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const realSec = Math.floor(Date.now() / 1000);
+  // A message dated an hour in the real future is kept as evidence at
+  // receive time: never a window observation, never a sequence.
+  const futureBody = metaBody({
+    messages: [{
+      id: 'wamid.SKEW1', from: '390200000001', timestamp: String(realSec + 3600),
+      type: 'text', text: { body: 'dal futuro' },
+    }],
+  });
+  const future = await harness.ingest(SPACE, { connectionKey: key, rawBody: futureBody, headers: signedHeaders(futureBody) });
+  assert.equal(future.effect, 'quarantined');
+  const futureRows = harness.inbox(SPACE).filter((row) => row.providerEventId === 'wamid.SKEW1');
+  assert.equal(futureRows.length, 1);
+  assert.equal(futureRows[0].sequence, null);
+  assert.match(futureRows[0].effectReason, /beyond \+5min skew/);
+  // The window stays closed: the skewed row is not an observation.
+  await assert.rejects(
+    harness.queue(SPACE, {
+      connectionKey: key, message: { to: ACCOUNT, text: 'Dal futuro' }, messageKey: 'wa-skew',
+    }),
+    (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
+  );
+  // Within the tolerance the delivery still applies.
+  const nearBody = metaBody({
+    messages: [{
+      id: 'wamid.SKEW2', from: '390200000002', timestamp: String(realSec + 60),
+      type: 'text', text: { body: 'quasi in orario' },
+    }],
+  });
+  const near = await harness.ingest(SPACE, { connectionKey: key, rawBody: nearBody, headers: signedHeaders(nearBody) });
+  assert.equal(near.effect, 'applied');
+  // A legitimate message after the skewed one still applies (never
+  // suppressed by it) and opens the window again.
+  await ingestMetaMessage(harness, key, { id: 'wamid.REAL1', from: '390200000001', at: Math.floor(NOW / 1000) - 60 });
+  const queued = await harness.queue(SPACE, {
+    connectionKey: key, message: { to: ACCOUNT, text: 'Di nuovo dentro' }, messageKey: 'wa-after-skew',
+  });
+  assert.equal((await harness.pump(queued.jobId)).state, 'succeeded');
+});
+
+test('the worker rechecks the window at execution time', async (t) => {
+  let now = NOW;
+  const { harness, api } = setup({ nowMs: () => now });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  await ingestMetaMessage(harness, key, { id: 'wamid.WIN2', from: '390200000001', at: Math.floor(NOW / 1000) - 60 });
+  const queued = await harness.queue(SPACE, {
+    connectionKey: key, message: { to: ACCOUNT, text: 'In tempo' }, messageKey: 'wa-expiry',
+  });
+  now += 25 * 3600 * 1000; // the job executes after the window closed
+  const settled = await harness.pump(queued.jobId);
+  assert.equal(settled.state, 'failed_terminal');
+  assert.equal(harness.letters(SPACE).length, 1);
+  assert.equal(harness.letters(SPACE)[0].errorCode, 'CHANNEL_TEMPLATE_REQUIRED');
+  assert.equal(api.state.sentByKey.size, 0, 'nothing was sent outside the window');
+  // A template queued after expiry still sends: the window never gates it.
+  const tpl = await harness.queue(SPACE, {
+    connectionKey: key,
+    message: { to: ACCOUNT, template: { name: 'presti_reminder', variables: ['Marco'] } },
+    messageKey: 'wa-expiry-tpl',
+  });
+  assert.equal((await harness.pump(tpl.jobId)).state, 'succeeded');
 });
 
 test('the fake retains the wire shape but never the secret', async (t) => {

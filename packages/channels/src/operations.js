@@ -3,11 +3,13 @@
 import {
   AppError,
   SENSITIVE_KEY,
+  TRANSACTION_PROOF,
   ValidationError,
   canonicalJobPayload,
   createDurableJobStore,
   normalizeError,
   nowIso,
+  proveCallerTransaction,
   trustedSystemActor,
   withTimeout,
 } from '../../core/index.js';
@@ -39,6 +41,18 @@ export const CHANNEL_SEND_MAX_ATTEMPTS = 5;
 export const CHANNEL_SEND_TIMEOUT_MS = 5000;
 export const CHANNEL_VERIFY_TIMEOUT_MS = 2000;
 export const CHANNEL_MAX_BODY_BYTES = 1024 * 1024;
+/**
+ * One delivery may carry several provider items (Meta routinely batches
+ * messages[] and statuses[] in one webhook): one inbox row per event, so
+ * the batch is bounded and a hostile adapter cannot loop forever.
+ */
+export const CHANNEL_MAX_BATCH_EVENTS = 500;
+/**
+ * Provider timestamps beyond receive time + skew are untrustworthy (skewed
+ * or forged clocks): they are kept as quarantine evidence at receive time
+ * and never become the window observation nor the out-of-order sequence.
+ */
+export const CHANNEL_INGEST_FUTURE_SKEW_MS = 5 * 60 * 1000;
 export const CHANNEL_SECRET_PURPOSE_INBOUND = 'channel-inbound';
 export const CHANNEL_SECRET_PURPOSE_OUTBOUND = 'channel-outbound';
 
@@ -277,6 +291,10 @@ export function createChannelOperations(deps) {
    * event id), so a replay is idempotent; a redelivery carrying a
    * different payload under the same id is a provider contract violation
    * (409), not a duplicate; an unknown subject is quarantined as evidence.
+   * When the adapter normalizes the delivery to a list of events (a batched
+   * provider webhook), one inbox row is stored per event in a single
+   * transaction, each with its own dedup — a single event keeps today's
+   * result shape, a batch returns `{ batched: true, events }`.
    * The identity is per connection on purpose: two accounts of one space
    * on the same adapter each own their events, even when the provider
    * reuses an event id across the two accounts.
@@ -331,33 +349,67 @@ export function createChannelOperations(deps) {
     if (!verified || verified.ok !== true) {
       throw new AppError('Channel event verification failed: invalid signature', { code: 'CHANNEL_SIGNATURE_INVALID', status: 401 });
     }
-    let event;
+    let normalized;
     try {
-      event = adapter.normalizeInbound(verified.event);
+      normalized = adapter.normalizeInbound(verified.event);
     } catch {
       throw new AppError('Channel event is not well-formed', { code: 'CHANNEL_EVENT_MALFORMED', status: 422 });
     }
-    const providerEventId = typeof event?.providerEventId === 'string' && event.providerEventId !== ''
-      && event.providerEventId.length <= 256 ? event.providerEventId : null;
-    if (!providerEventId) {
+    // One delivery may carry several provider items (a batched Meta webhook
+    // carries messages[] and statuses[] together): the adapter returns one
+    // event per item, and the ingest stores one inbox row per event. Any
+    // other adapter keeps returning its single event. Every event is
+    // validated before any row is written, so a malformed item refuses the
+    // whole delivery instead of storing half of it.
+    const rawEvents = Array.isArray(normalized) ? normalized : [normalized];
+    if (rawEvents.length === 0 || rawEvents.length > CHANNEL_MAX_BATCH_EVENTS) {
       throw new AppError('Channel event is not well-formed', { code: 'CHANNEL_EVENT_MALFORMED', status: 422 });
     }
-    const subject = typeof event?.subject === 'string' && event.subject !== '' && event.subject.length <= 256
-      ? event.subject : '';
-    const sequence = Number.isSafeInteger(event?.sequence) ? event.sequence : null;
-    const occurredAt = isCanonicalInstant(event?.occurredAt) ? event.occurredAt : null;
-    const payloadFingerprint = fingerprintPayload(rawBody);
-    const sourceKey = boundedKey('ch-in', spaceId, connection.sourceKey, providerEventId);
     const service = inbox();
     const now = nowIso();
+    const receiveMs = Date.parse(now);
+    const payloadFingerprint = fingerprintPayload(rawBody);
+    const items = rawEvents.map((event) => {
+      const providerEventId = typeof event?.providerEventId === 'string' && event.providerEventId !== ''
+        && event.providerEventId.length <= 256 ? event.providerEventId : null;
+      if (!providerEventId) {
+        throw new AppError('Channel event is not well-formed', { code: 'CHANNEL_EVENT_MALFORMED', status: 422 });
+      }
+      const subject = typeof event?.subject === 'string' && event.subject !== '' && event.subject.length <= 256
+        ? event.subject : '';
+      let sequence = Number.isSafeInteger(event?.sequence) ? event.sequence : null;
+      let occurredAt = isCanonicalInstant(event?.occurredAt) ? event.occurredAt : null;
+      // Fail-closed on provider time, here in the package so every adapter
+      // shares it: a provider instant beyond receive time + skew never
+      // becomes the window observation nor the out-of-order sequence — one
+      // skewed or forged delivery would otherwise close the service window
+      // and suppress every legitimate message after it. It is kept as
+      // quarantine evidence at receive time, with the anomaly annotated.
+      const futureSkew = occurredAt !== null && Date.parse(occurredAt) > receiveMs + CHANNEL_INGEST_FUTURE_SKEW_MS;
+      if (futureSkew) {
+        sequence = null;
+        occurredAt = now;
+      }
+      return {
+        providerEventId,
+        subject,
+        sequence,
+        occurredAt,
+        futureSkew,
+        sourceKey: boundedKey('ch-in', spaceId, connection.sourceKey, providerEventId),
+      };
+    });
 
-    const decideEffect = (siblingRows) => {
-      if (subject === '') {
+    const decideEffect = (item, siblingRows) => {
+      if (item.futureSkew) {
+        return { effect: 'quarantined', effectReason: 'provider timestamp beyond +5min skew: kept as evidence at receive time, never a window observation' };
+      }
+      if (item.subject === '') {
         return { effect: 'quarantined', effectReason: 'unknown subject: no local mapping for this provider subject' };
       }
-      if (sequence !== null) {
-        const newer = siblingRows.filter((row) => row.subject === subject
-          && row.effect === 'applied' && Number.isSafeInteger(row.sequence) && row.sequence > sequence);
+      if (item.sequence !== null) {
+        const newer = siblingRows.filter((row) => row.subject === item.subject
+          && row.effect === 'applied' && Number.isSafeInteger(row.sequence) && row.sequence > item.sequence);
         if (newer.length > 0) {
           return { effect: 'ignored', effectReason: `out-of-order delivery: newer sequence already applied for this subject` };
         }
@@ -365,77 +417,110 @@ export function createChannelOperations(deps) {
       return { effect: 'applied', effectReason: '' };
     };
 
-    const already = service.listWhere({ sourceKey })[0];
-    if (already) {
-      if (already.payloadFingerprint !== payloadFingerprint) {
-        throw new AppError('Provider event id was already recorded with a different payload', {
-          code: 'CHANNEL_EVENT_ID_CONFLICT', status: 409, details: { providerEventId },
-        });
-      }
-      if (already.processed === true) {
-        return { duplicate: true, eventId: already.id, effect: already.effect };
-      }
-      // A row whose processing never completed is evidence of an event that
-      // has not had its effect yet: a redelivery resumes it — but only while
-      // its connection is active. Against a pending, suspended or revoked
-      // binding the row stays quarantined: provider state is never applied
-      // to a binding that was never activated, or to a revoked one.
-      if (connection.status !== 'active') {
-        return { duplicate: true, quarantined: true, eventId: already.id, effect: already.effect };
-      }
-      const decision = decideEffect(service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
-      const event = decision.effect === 'applied' ? 'apply' : decision.effect === 'ignored' ? 'discard' : 'quarantine';
-      const resumed = await transitionInbox(service, already.id, {
-        event,
-        patch: { effectReason: decision.effectReason === '' ? 'redelivery resumed the received row' : decision.effectReason },
-        actor,
-      });
-      return { duplicate: false, resumed: true, eventId: resumed.id, effect: resumed.effect };
-    }
-
-    const baseRow = {
-      sourceKey, spaceId, connectionKey: connection.sourceKey,
-      adapter: adapter.name, adapterVersion: adapter.version,
-      providerEventId, subject, payloadFingerprint,
-      sequence, occurredAt, receivedAt: now,
-    };
-    // Inactive connections keep no inbound state silently: the delivery is
-    // preserved as quarantine evidence, and nothing is applied.
-    if (connection.status !== 'active') {
-      const row = await service.createManaged({
-        ...baseRow,
-        processed: false,
-        effect: 'quarantined',
-        effectReason: `connection is ${connection.status}: verify the binding before applying provider state`,
-      }, { actor });
-      return { duplicate: false, quarantined: true, eventId: row.id, effect: row.effect };
-    }
-
-    const decision = decideEffect(service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
-    try {
-      const row = await service.createManaged({
-        ...baseRow,
-        processed: true,
-        effect: decision.effect,
-        effectReason: decision.effectReason,
-      }, { actor });
-      return { duplicate: false, eventId: row.id, effect: row.effect };
-    } catch (error) {
-      // A concurrent delivery of the same event won the insert: resolve
-      // against the committed row instead of surfacing a raw violation —
-      // the same contract as the pre-read branch above, so a conflicting
-      // payload is CHANNEL_EVENT_ID_CONFLICT 409 on every path.
-      const raced = service.listWhere({ sourceKey })[0];
-      if (raced) {
-        if (raced.payloadFingerprint === payloadFingerprint) {
-          return { duplicate: true, eventId: raced.id, effect: raced.effect };
+    const storeOne = async (item) => {
+      const already = service.listWhere({ sourceKey: item.sourceKey })[0];
+      if (already) {
+        if (already.payloadFingerprint !== payloadFingerprint) {
+          throw new AppError('Provider event id was already recorded with a different payload', {
+            code: 'CHANNEL_EVENT_ID_CONFLICT', status: 409, details: { providerEventId: item.providerEventId },
+          });
         }
-        throw new AppError('Provider event id was already recorded with a different payload', {
-          code: 'CHANNEL_EVENT_ID_CONFLICT', status: 409, details: { providerEventId },
+        if (already.processed === true) {
+          return { duplicate: true, eventId: already.id, effect: already.effect };
+        }
+        // A row whose processing never completed is evidence of an event that
+        // has not had its effect yet: a redelivery resumes it — but only while
+        // its connection is active. Against a pending, suspended or revoked
+        // binding the row stays quarantined: provider state is never applied
+        // to a binding that was never activated, or to a revoked one.
+        if (connection.status !== 'active') {
+          return { duplicate: true, quarantined: true, eventId: already.id, effect: already.effect };
+        }
+        const decision = decideEffect(item, service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
+        const transition = decision.effect === 'applied' ? 'apply' : decision.effect === 'ignored' ? 'discard' : 'quarantine';
+        const resumed = await transitionInbox(service, already.id, {
+          event: transition,
+          patch: { effectReason: decision.effectReason === '' ? 'redelivery resumed the received row' : decision.effectReason },
+          actor,
         });
+        return { duplicate: false, resumed: true, eventId: resumed.id, effect: resumed.effect };
       }
-      throw error;
+
+      const baseRow = {
+        sourceKey: item.sourceKey, spaceId, connectionKey: connection.sourceKey,
+        adapter: adapter.name, adapterVersion: adapter.version,
+        providerEventId: item.providerEventId, subject: item.subject, payloadFingerprint,
+        sequence: item.sequence, occurredAt: item.occurredAt, receivedAt: now,
+      };
+      // Inactive connections keep no inbound state silently: the delivery is
+      // preserved as quarantine evidence, and nothing is applied.
+      if (connection.status !== 'active') {
+        const row = await service.createManaged({
+          ...baseRow,
+          processed: false,
+          effect: 'quarantined',
+          effectReason: `connection is ${connection.status}: verify the binding before applying provider state`,
+        }, { actor });
+        return { duplicate: false, quarantined: true, eventId: row.id, effect: row.effect };
+      }
+
+      const decision = decideEffect(item, service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
+      try {
+        const row = await service.createManaged({
+          ...baseRow,
+          processed: true,
+          effect: decision.effect,
+          effectReason: decision.effectReason,
+        }, { actor });
+        return { duplicate: false, eventId: row.id, effect: row.effect };
+      } catch (error) {
+        // A concurrent delivery of the same event won the insert: resolve
+        // against the committed row instead of surfacing a raw violation —
+        // the same contract as the pre-read branch above, so a conflicting
+        // payload is CHANNEL_EVENT_ID_CONFLICT 409 on every path.
+        const raced = service.listWhere({ sourceKey: item.sourceKey })[0];
+        if (raced) {
+          if (raced.payloadFingerprint === payloadFingerprint) {
+            return { duplicate: true, eventId: raced.id, effect: raced.effect };
+          }
+          throw new AppError('Provider event id was already recorded with a different payload', {
+            code: 'CHANNEL_EVENT_ID_CONFLICT', status: 409, details: { providerEventId: item.providerEventId },
+          });
+        }
+        throw error;
+      }
+    };
+
+    // A single event keeps today's result shape. A batch stores one row per
+    // item in a single transaction — siblings are re-read per item inside
+    // it, so an earlier item of the same delivery already orders a later
+    // one — and a conflicting item refuses the whole delivery instead of
+    // storing half of it. The transaction is ours only when no caller owns
+    // one on this handle already (MEM_ACC_REUSE: the same proof the sibling
+    // packages use): generated services nest on SAVEPOINT, a second outer
+    // transaction would not.
+    if (items.length === 1) {
+      return storeOne(items[0]);
     }
+    const storeBatch = async () => {
+      const results = [];
+      for (const item of items) results.push(await storeOne(item));
+      return results;
+    };
+    let batchTransaction = null;
+    if (database && typeof database.transactionAsync === 'function') {
+      let proof = null;
+      try {
+        proof = proveCallerTransaction([{ database }]);
+      } catch {
+        proof = null;
+      }
+      if (proof === TRANSACTION_PROOF.NO_TRANSACTION) {
+        batchTransaction = (critical) => database.transactionAsync(critical);
+      }
+    }
+    const events = batchTransaction ? await database.transactionAsync(storeBatch) : await storeBatch();
+    return { batched: true, events };
   }
 
   /**
@@ -454,6 +539,7 @@ export function createChannelOperations(deps) {
       return null;
     }
     if (typeof subject !== 'string' || subject === '') return null;
+    const nowMs = Date.now();
     let latest = null;
     for (const row of inbox().listWhere({ spaceId, connectionKey })) {
       if (row.subject !== subject || row.effect !== 'applied') continue;
@@ -466,6 +552,10 @@ export function createChannelOperations(deps) {
       if (typeof at !== 'string') continue;
       const ms = Date.parse(at);
       if (!Number.isFinite(ms)) continue;
+      // Belt and braces with the ingest skew quarantine above: an
+      // observation dated beyond now + skew (a row stored before the
+      // quarantine existed) never opens the window.
+      if (ms > nowMs + CHANNEL_INGEST_FUTURE_SKEW_MS) continue;
       if (latest === null || ms > latest) latest = ms;
     }
     return latest === null ? null : new Date(latest).toISOString();
@@ -614,6 +704,27 @@ export function createChannelOperations(deps) {
         if (typeof secret !== 'string' || secret === '') {
           if (job.attempt < job.maxAttempts) failRetryable('CHANNEL_SECRET_UNAVAILABLE');
           return failTerminal('CHANNEL_SECRET_UNAVAILABLE');
+        }
+        // Time-of-check equals time-of-use for windowed adapters (Meta's
+        // 24h): a job queued inside the window but executed after it —
+        // backoff, retry, worker delay — must not send free text outside
+        // it. The window is re-resolved server-side from the inbox, exactly
+        // like at queue time; an expired job lands in the dead letter with
+        // the template code (window closed, send a template instead).
+        // Templates bypass the window by contract, so only free text can
+        // refuse here. Adapters without the capability send as before.
+        if (adapter.outboundWindow) {
+          try {
+            await adapter.normalizeOutbound(message, {
+              lastInboundAt: resolveWindowObservation(spaceId, connectionKey, message, adapter.outboundWindow),
+            });
+          } catch (error) {
+            const code = error && typeof error === 'object'
+              && /** @type {any} */ (error).code === 'CHANNEL_TEMPLATE_REQUIRED'
+              ? 'CHANNEL_TEMPLATE_REQUIRED'
+              : 'CHANNEL_MESSAGE_MALFORMED';
+            return failTerminal(code);
+          }
         }
         try {
           const sent = await withTimeout(

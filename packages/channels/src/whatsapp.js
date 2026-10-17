@@ -25,10 +25,9 @@ import { verifyHmacWebhook } from './crypto.js';
  *
  * What the adapter owns (the WhatsApp policy, fail-closed):
  * - inbound: Meta Cloud API webhook shapes (`messages[]`, `statuses[]`)
- *   normalized to the channel event — exactly one item per delivery. A
- *   batched delivery (two or more messages/statuses in one webhook) is
- *   refused loudly instead of silently dropping every item but the first:
- *   batch ingest is a follow-up voice with its own inbox loop. Each
+ *   normalized to a list of channel events — one per item in document
+ *   order, so a batched delivery (two messages, a message plus its
+ *   statuses) stores one inbox row per item and never drops one. Each
  *   delivery/read state is its own inbox row (`<message-id>:<status>`),
  *   with no cross-message sequence (statuses of different messages never
  *   suppress each other), so the conversation timeline is the ordered
@@ -107,9 +106,8 @@ function unixToParts(timestamp) {
 
 /**
  * Every Meta item of one delivery, in document order. The ingest path
- * stores exactly one inbox row per normalized event, so a delivery that
- * carries more than one item cannot be normalized to one event without
- * losing customer messages — it is refused loudly at the call site.
+ * stores exactly one inbox row per normalized event, so every item of a
+ * batched delivery lands — nothing is truncated to the first item.
  */
 function collectMetaItems(payload) {
   const entries = payload?.entry;
@@ -134,9 +132,12 @@ function collectMetaItems(payload) {
 }
 
 /**
- * Normalize one verified webhook body to the channel event shape.
- * Accepts the Meta Cloud API shape and the kit's minimal envelope
- * (`{id, subject?, seq?, at?}`) the fake speaks on the kit path.
+ * Normalize one verified webhook body to a LIST of channel events, one per
+ * Meta item in document order. Accepts the Meta Cloud API shape and the
+ * kit's minimal envelope (`{id, subject?, seq?, at?}`) the fake speaks on
+ * the kit path (a single-element list). The ingest path stores one inbox
+ * row per event, so a batched delivery (two messages, a message plus its
+ * statuses) never loses an item.
  */
 function normalizeWhatsAppInbound(event, config) {
   let parsed;
@@ -149,22 +150,23 @@ function normalizeWhatsAppInbound(event, config) {
     malformedEvent('body is not an object');
   }
   const items = collectMetaItems(parsed);
-  if (items.length > 1) {
-    malformedEvent(`batched deliveries carry ${items.length} items: this adapter ingests one delivery per webhook — split the batch`);
-  }
-  const meta = items.length === 1 ? items[0] : null;
-  if (!meta) {
+  if (items.length === 0) {
     // The kit/fake minimal envelope: the provider id and subject directly.
     const providerEventId = typeof parsed.id === 'string' && parsed.id !== '' && parsed.id.length <= 256
       ? parsed.id : null;
     if (!providerEventId) malformedEvent('envelope needs a bounded "id"');
-    return {
+    return [{
       providerEventId,
       subject: typeof parsed.subject === 'string' ? parsed.subject : '',
       sequence: Number.isSafeInteger(parsed.seq) ? parsed.seq : null,
       occurredAt: typeof parsed.at === 'string' ? parsed.at : null,
-    };
+    }];
   }
+  return items.map((meta) => normalizeMetaItem(meta, config));
+}
+
+/** Normalize one Meta item (one message or one status) to the channel event shape. */
+function normalizeMetaItem(meta, config) {
   if (meta.kind === 'message') {
     const { item } = meta;
     if (typeof item.id !== 'string' || item.id === '' || item.id.length > 256) {

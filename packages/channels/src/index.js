@@ -185,7 +185,7 @@ export function createChannelsPackage(options = {}) {
         name: 'ingest-channel-event',
         label: 'Ingest channel event',
         appMethod: 'ingestChannelEvent',
-        description: 'Verify one channel webhook delivery as the exact bytes the provider signed, record it in the append-only replay-proof inbox, and apply it unless it is a replay, out-of-order or quarantined.',
+        description: 'Verify one channel webhook delivery as the exact bytes the provider signed, record it in the append-only replay-proof inbox — one row per provider item in the delivery — and apply it unless it is a replay, out-of-order or quarantined.',
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug, from the verified route — never from the body.' },
           { name: 'connectionKey', type: 'string', required: true, hint: 'The connection source key bound to that space.' },
