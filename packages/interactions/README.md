@@ -1,13 +1,13 @@
 # `interactions` — customer messages and calls
 
-Three records, two actions and two declared capabilities.
+Three records, three actions and two declared capabilities.
 
 | | |
 |---|---|
 | Owns | `conversation`, `interaction-message`, `interaction-call` |
 | Requires | **nothing** |
 | Offers | `interaction-log@1`, `interaction-timeline@1` |
-| Actions | `interaction-message.advance`, `conversation.close` |
+| Actions | `interaction-message.advance`, `conversation.close`, `conversation.open-opportunity` |
 | Policies | none |
 | ADR | ADR-030 (the subject envelope) |
 
