@@ -4,6 +4,7 @@ import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { buildCustomerDataActions } from './actions.js';
 import { BULK_ACTIONS, MAX_BULK_ITEMS } from './bulk.js';
 import { createCustomerIdentityCapability } from './capability.js';
+import { createCustomerProfileCapability } from './capability-profile.js';
 import { EXPORT_MAX_ROWS } from './export.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
 import { createCustomerDataOperations, LIMITATIONS } from './operations.js';
@@ -86,7 +87,7 @@ export function createCustomerDataPackage(options = {}) {
     // which is why an absent package reads "not available" rather than empty.
     requires: [],
 
-    capabilities: [createCustomerIdentityCapability(config)],
+    capabilities: [createCustomerIdentityCapability(config), createCustomerProfileCapability(config)],
     actions: buildCustomerDataActions(config),
 
     // The match policy is a declared, fingerprinted definition (ADR-015), so a
@@ -322,3 +323,4 @@ export function createCustomerDataPackageV2(options = {}) {
 }
 
 export { defineCustomerMatchPolicy, MATCH_POLICY_KIND, MATCH_RULES, LIMITATIONS };
+export { createCustomerProfileCapability };
