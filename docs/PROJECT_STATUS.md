@@ -11,7 +11,9 @@ vision and links to this file.
 **This file measures nothing of its own, and states no test count.** The count
 is measured, never typed: it lives in `site/claims.json` under `measuredAgainst`,
 written by `node scripts/measure-suite.js --apply` from a real green run on a
-clean tree (ADR-027, `scripts/measure-suite.js`). The `Measured at` row below
+clean tree (ADR-027, `scripts/measure-suite.js`) — in CI, by the `verify` job,
+whose artifact the `public-claims` job re-anchors into the ledger, so no local
+measure commit is needed for a PR to go green. The `Measured at` row below
 *cites* that record's commit, and `npm run gtm:check` fails when the two
 disagree. That binding exists because they did disagree, silently: a branch
 re-measured the ledger, a merge resolved the conflict in favour of the older
