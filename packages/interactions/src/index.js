@@ -18,6 +18,7 @@ import {
   MESSAGE_TERMINAL,
   MESSAGE_TRANSITIONS,
   READ_MODULE,
+  THREAD_KEY_MODULE,
   advanceMessage,
   assignConversation,
   buildAdvanceMessageAction,
@@ -74,9 +75,9 @@ export const INTERACTIONS_DOMAIN = INTERACTIONS_PACKAGE;
 
 /**
  * The records this package owns. None of them duplicates a business record:
- * no other package holds conversations, messages, calls, thread ownership or
- * thread read watermarks, and the subject envelope points at host records
- * rather than copying them.
+ * no other package holds conversations, messages, calls, thread ownership,
+ * thread read watermarks or thread-key joins, and the subject envelope points
+ * at host records rather than copying them.
  */
 export const INTERACTIONS_RESOURCES = Object.freeze([
   CONVERSATION_MODULE,
@@ -84,6 +85,7 @@ export const INTERACTIONS_RESOURCES = Object.freeze([
   CALL_MODULE,
   ASSIGNMENT_MODULE,
   READ_MODULE,
+  THREAD_KEY_MODULE,
 ]);
 
 export {
@@ -99,6 +101,7 @@ export {
   MESSAGE_TERMINAL,
   MESSAGE_TRANSITIONS,
   READ_MODULE,
+  THREAD_KEY_MODULE,
   advanceMessage,
   assignConversation,
   logCall,

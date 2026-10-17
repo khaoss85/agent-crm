@@ -1,24 +1,27 @@
 // @ts-check
 
 import {
-  AppError, ConflictError, NotFoundError, ValidationError, isCalendarDate, requireActor,
-  optionalIsoDate,
+  AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
+  requireActor, optionalIsoDate,
 } from '../../core/index.js';
 
 /**
  * **Interactions — the native message and call records.**
  *
- * Three evidence records, one ownership trail and one read watermark per
- * member: a **Conversation** — one message thread with a customer across
- * channels — an **Interaction message** — one inbound or outbound message with
- * its delivery state — an **Interaction call** — one inbound or outbound call
- * with its outcome and duration — a **Conversation assignment** — one
- * immutable handover event per row, whose rows for one conversation are the
- * audit trail of who owned the thread — and a **Conversation read** — one
- * watermark row per conversation and member, from which each member's unread
- * count is derived. Every row is fully managed: there is no public create or
- * update path to any of them, so a client cannot forge a message, rewrite a
- * delivery state, invent a call, steal a thread or fake having read one.
+ * Three evidence records, one ownership trail, one read watermark per
+ * member and one thread key per joining channel key: a **Conversation** — one
+ * message thread with a customer across channels — an **Interaction message**
+ * — one inbound or outbound message with its delivery state — an **Interaction
+ * call** — one inbound or outbound call with its outcome and duration — a
+ * **Conversation assignment** — one immutable handover event per row, whose
+ * rows for one conversation are the audit trail of who owned the thread — a
+ * **Conversation read** — one watermark row per conversation and member, from
+ * which each member's unread count is derived — and a **Conversation thread
+ * key** — one row per channel key that opened or joined the thread, so a
+ * retried open under a joined key replays the joined thread instead of
+ * opening a duplicate. Every row is fully managed: there is no public create
+ * or update path to any of them, so a client cannot forge a message, rewrite
+ * a delivery state, invent a call, steal a thread or fake having read one.
  *
  * **Reuse, not duplication (the packet's first acceptance bullet).**
  *
@@ -43,6 +46,7 @@ export const MESSAGE_MODULE = 'interaction-message';
 export const CALL_MODULE = 'interaction-call';
 export const ASSIGNMENT_MODULE = 'conversation-assignment';
 export const READ_MODULE = 'conversation-read';
+export const THREAD_KEY_MODULE = 'conversation-thread-key';
 export const WORK_ACTIVITY_MODULE = 'work-activity';
 
 export const INTERACTIONS_PACKAGE = 'interactions';
@@ -313,7 +317,28 @@ function resolvedNames(moduleNames = {}) {
     call: moduleNames[CALL_MODULE] ?? CALL_MODULE,
     assignment: moduleNames[ASSIGNMENT_MODULE] ?? ASSIGNMENT_MODULE,
     read: moduleNames[READ_MODULE] ?? READ_MODULE,
+    threadKey: moduleNames[THREAD_KEY_MODULE] ?? THREAD_KEY_MODULE,
     workActivity: moduleNames[WORK_ACTIVITY_MODULE] ?? WORK_ACTIVITY_MODULE,
+  };
+}
+
+/**
+ * The complete record mapping every write path resolves through — the same
+ * map the capabilities hand out, so a package composed with renamed modules
+ * opens, assigns and marks read through the renamed records instead of
+ * looking for their canonical names. Forwarded whole, never per action, so a
+ * new record cannot be added here and missed there.
+ *
+ * @param {{conversation: string, message: string, call: string, assignment: string, read: string, threadKey: string}} names
+ */
+function fullModuleNames(names) {
+  return {
+    [CONVERSATION_MODULE]: names.conversation,
+    [MESSAGE_MODULE]: names.message,
+    [CALL_MODULE]: names.call,
+    [ASSIGNMENT_MODULE]: names.assignment,
+    [READ_MODULE]: names.read,
+    [THREAD_KEY_MODULE]: names.threadKey,
   };
 }
 
@@ -348,11 +373,31 @@ function inboxServices(context) {
   if (!assignments?.createManaged || !reads?.createManaged) {
     throw new AppError(
       'The interactions package is installed without its "conversation-assignment" and "conversation-read" records. '
-        + 'Apply all five manifests with `crm module create` before composing it.',
+        + 'Apply all six manifests with `crm module create` before composing it.',
       { code: 'INTERACTIONS_STORAGE_INVALID', status: 500 },
     );
   }
   return { assignments, reads };
+}
+
+/**
+ * The thread-key record a join leaves behind. Required on the open path that
+ * writes it, like every other record on the write that keeps it: an open
+ * without it could not replay a joined key after the thread closed.
+ *
+ * @param {{modules: any, names: {threadKey: string}}} context
+ */
+function threadKeyServices(context) {
+  const { names } = context;
+  const threadKeys = resolveModule(context.modules, names.threadKey)?.service;
+  if (!threadKeys?.createManaged || !threadKeys?.listWhere) {
+    throw new AppError(
+      'The interactions package is installed without its "conversation-thread-key" record. '
+        + 'Apply all six manifests with `crm module create` before composing it.',
+      { code: 'INTERACTIONS_STORAGE_INVALID', status: 500 },
+    );
+  }
+  return { threadKeys };
 }
 
 /**
@@ -394,22 +439,51 @@ export function validateConversationRequest(request) {
 }
 
 /**
+ * Record one channel key joined to one thread: the row that makes a join
+ * idempotent. Two joins under the same key race on the key's UNIQUE guard,
+ * exactly like every other write in this package: the loser replays the
+ * winner's thread when it names the same conversation and is refused 409
+ * when the same key claims another one.
+ */
+async function recordThreadKey(threadKeys, { sourceKey, conversationId, now, who, source, actor }) {
+  try {
+    return await threadKeys.createManaged({
+      sourceKey,
+      conversationId,
+      joinedAt: now,
+      joinedByType: who.type,
+      joinedById: who.id,
+      sourcePackage: source.package,
+      sourceAction: source.action,
+    }, { actor });
+  } catch (error) {
+    if (!isUniqueConflict(error)) throw error;
+    const raced = (await threadKeys.listWhere({ sourceKey }))[0];
+    if (!raced) throw error;
+    return replayOrConflict(raced, { conversationId }, 'thread key');
+  }
+}
+
+/**
  * Open one conversation: one thread with one customer across channels.
  * Idempotent by source key: the key is the adapter's business identity for the
  * thread (provider + remote thread id), stable under every retry. A new key
  * for a customer that already has an open thread joins that thread — the
  * channel on the request names where this message arrived, and the thread
  * keeps messages from every channel in time order — so WhatsApp, Instagram
- * and email with one customer stay one conversation. Only an `open` thread
- * joins: a closed thread stays resolved, and the next message opens a fresh
- * one. When two opens for one customer race, both rows exist and the earliest
- * one is the thread every read joins; the check-then-create window between
- * the lookup and the insert is the documented residual, exactly like the
- * advance-action window this package already names.
+ * and email with one customer stay one conversation — and the join leaves one
+ * thread-key row behind, so a retry under the joined key replays the joined
+ * thread instead of opening a duplicate, even after the thread closed. Only
+ * an `open` thread joins: a closed thread stays resolved, and a new key opens
+ * a fresh one. When two opens for one customer race, both rows exist and the
+ * earliest one is the thread every read joins; the check-then-create window
+ * between the lookup and the insert is the documented residual, exactly like
+ * the advance-action window this package already names.
  */
 export async function openConversation(context, request) {
   const names = resolvedNames(context.moduleNames);
   const { conversations } = interactionServices({ modules: context.modules, names });
+  const { threadKeys } = threadKeyServices({ modules: context.modules, names });
   const actor = context.actor;
   // Evidence names its author: an anonymous log would store words the business
   // sent with nobody accountable for them, so a missing actor is refused.
@@ -434,8 +508,40 @@ export async function openConversation(context, request) {
     return { conversation: replayOrConflict(existing, submitted, 'conversation'), replayed: true, joined: false };
   }
 
+  // A key that joined a thread before names that thread still: without this
+  // row a retry that arrives after the thread closed would miss every lookup
+  // and open a second conversation behind the same key, breaking the
+  // idempotency this function advertises. The replay compares the thread's
+  // identity — the subject envelope and the provenance — but never the
+  // channel or the remote handle: those name where this message arrived, not
+  // the thread, and a joined key never recorded them.
+  const alias = (await threadKeys.listWhere({ sourceKey: input.sourceKey }))[0];
+  if (alias) {
+    const target = await findConversationById(conversations, alias.conversationId);
+    if (!target) {
+      throw new AppError(
+        `A thread key names conversation "${alias.conversationId}" and that conversation is gone: records are evidence and are never deleted, so this is corrupt storage, never an unknown thread`,
+        { code: 'INTERACTIONS_STORAGE_INVALID', status: 500, details: { conversationId: alias.conversationId } },
+      );
+    }
+    const claimed = {
+      subjectResource: input.subject.resource,
+      subjectId: input.subject.id,
+      subjectOwner: input.subject.owner,
+      subjectOwnerPackage: input.subject.ownerPackage,
+      sourcePackage: source.package,
+      sourceAction: source.action,
+    };
+    return { conversation: replayOrConflict(target, claimed, 'conversation'), replayed: true, joined: true };
+  }
+
   const joined = await findOpenConversation(conversations, input.subject);
-  if (joined) return { conversation: joined, replayed: false, joined: true };
+  if (joined) {
+    await recordThreadKey(threadKeys, {
+      sourceKey: input.sourceKey, conversationId: joined.id, now, who, source, actor,
+    });
+    return { conversation: joined, replayed: false, joined: true };
+  }
 
   let conversation;
   try {
@@ -742,9 +848,15 @@ export async function logCall(context, request) {
  * audit trail, the latest row names the current owner, and reassigning writes
  * a new row rather than rewriting one. Idempotent by source key, like every
  * other write in this package: same key with the same payload replays the
- * stored row, a divergent payload behind the same key is refused 409. The
- * compared payload carries the handover but not its stamp — `assignedAt` is
- * when the row was written, not what the handover claims, exactly like
+ * stored row, a divergent payload behind the same key is refused 409 — and
+ * without a key the handover names itself from the move it records, so a
+ * return to a prior owner is a new row rather than a conflict behind the old
+ * one, while repeating the current owner replays instead of writing noise. A
+ * default-key retry that arrives after the thread moved on names the move
+ * that beat it as its previous owner: the default names a handover, not a
+ * stable identity, and only an explicit key promises strict replay-or-refusal.
+ * The compared payload carries the handover but not its stamp — `assignedAt`
+ * is when the row was written, not what the handover claims, exactly like
  * `subjectLabel` on a conversation — so a retry that arrives later still
  * replays instead of conflicting with its own stamp.
  *
@@ -759,13 +871,101 @@ export function validateAssignRequest(request) {
   const assigneeMemberId = rawAssignee === undefined || rawAssignee === null
     ? null
     : validateMemberId(rawAssignee, 'assigneeMemberId');
+  // The key is optional: without one the handover names itself from the move
+  // it records (previous owner to next owner), inside the serialized section
+  // below, so the default never names two different handovers with one key.
+  const rawKey = value.sourceKey;
+  const sourceKey = rawKey === undefined || rawKey === null || String(rawKey).trim() === ''
+    ? null
+    : validateSourceKey(rawKey, 'sourceKey');
   return {
-    sourceKey: validateSourceKey(value.sourceKey, 'sourceKey'),
+    sourceKey,
     conversationId: safeText(value.conversationId, 'conversationId', MAX_ID),
     assigneeMemberId,
     note: optionalSafeText(value.note, 'note', MAX_NOTE),
     source: validateSource(value.source),
   };
+}
+
+/**
+ * **One conversation, one handover writer at a time — in this process.**
+ *
+ * Deriving the previous owner is a read-then-write: two handovers on one
+ * thread interleaved in one process both read the same current owner and both
+ * commit with it, so whichever sorts last claims the wrong immediate
+ * predecessor and permanently corrupts the immutable audit trail. The chain
+ * below serializes handovers per conversation — a process-local advisory
+ * lock, one FIFO chain per thread. Acquisition attaches synchronously (no
+ * `await` before the chain is extended), so two callers racing in the same
+ * tick still order; the waiter re-reads after the winner commits and derives
+ * the winner as its previous owner. Different conversations never contend.
+ * Entries are removed when their chain drains, so the map holds only threads
+ * with a handover in flight. The shape is the appointments package's
+ * per-member booking chain, keyed by thread instead of member.
+ *
+ * This closes the same-process window. Across connections the handle
+ * transaction below serializes writers on real storage, exactly like the
+ * booking pair: SQLite `BEGIN IMMEDIATE` makes the second connection wait
+ * for the winner's commit and re-read it, Postgres `SERIALIZABLE` refuses the
+ * loser with a retryable conflict whose retry re-reads the winner.
+ */
+const conversationAssignmentChains = new Map();
+
+/** @param {string} conversationId @param {() => Promise<any>} critical */
+async function withConversationAssignment(conversationId, critical) {
+  const previous = conversationAssignmentChains.get(conversationId) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise((resolve) => { release = resolve; });
+  // Tails never reject (the second handler joins even after a refusal), so a
+  // refused handover never wedges the thread's chain — but the join is kept
+  // explicit rather than assumed.
+  const tail = previous.then(() => current, () => current);
+  conversationAssignmentChains.set(conversationId, tail);
+  // Synchronous until here: two callers racing in the same tick still order.
+  await previous;
+  try {
+    return await critical();
+  } finally {
+    // Remove only our own tail: a waiter queued behind us owns the slot now.
+    if (conversationAssignmentChains.get(conversationId) === tail) conversationAssignmentChains.delete(conversationId);
+    release();
+  }
+}
+
+/**
+ * The outer transaction the previous-owner re-read and the insert commit in,
+ * when the service exposes one and the caller is not already inside it —
+ * the appointments booking-transaction shape on the assignment service.
+ *
+ * @param {any} assignments the resolved assignment module service
+ */
+function assignmentTransaction(assignments) {
+  const transactionAsync = assignments?.database?.transactionAsync;
+  if (typeof transactionAsync !== 'function') return null;
+  if (proveCallerTransaction([assignments]) !== TRANSACTION_PROOF.NO_TRANSACTION) return null;
+  return (/** @type {() => Promise<any>} */ critical) => transactionAsync.call(assignments.database, critical);
+}
+
+/**
+ * The default identity of a handover: who the thread moves from, to who. A
+ * key that names only the resulting owner cannot tell a return to a prior
+ * owner from the first handover to them, and refuses the return 409 behind
+ * its own key; a key that names the move replays the same move and writes
+ * every different one. Member ids fit the source-key alphabet by
+ * construction, so only an over-long conversation id can overflow the bound
+ * — refused naming the bound, like the appointment reminder key, with the
+ * way out (pass an explicit source key), never a silent truncation that
+ * would hand two threads the same handover identity.
+ */
+function defaultAssignSourceKey(conversationId, previous, assignee) {
+  const key = `assign:${conversationId}:${previous ?? 'unassigned'}:${assignee ?? 'unassigned'}`;
+  if (key.length > MAX_SOURCE_KEY || !SOURCE_KEY_RE.test(key)) {
+    throw new ValidationError(
+      'a handover on this conversation needs an explicit sourceKey: the default handover identity does not fit the source-key bound',
+      { field: 'sourceKey' },
+    );
+  }
+  return key;
 }
 
 /**
@@ -803,43 +1003,71 @@ export async function assignConversation(context, request) {
   const conversation = await findConversationById(conversations, input.conversationId);
   if (!conversation) throw new NotFoundError('conversation', input.conversationId);
 
-  const previousRow = await currentAssignmentRow(assignments, input.conversationId, input.sourceKey);
-  const previous = previousRow ? previousRow.assigneeMemberId ?? null : null;
+  // The derive-and-insert below runs serialized per conversation: the
+  // previous-owner read and the insert commit as one critical section, so a
+  // waiter re-reads the winner and names it as its previous owner instead of
+  // corrupting the audit trail with the same predecessor twice.
+  const runCritical = async () => {
+    const excludeKey = input.sourceKey;
+    const previousRow = await currentAssignmentRow(assignments, input.conversationId, excludeKey);
+    const previous = previousRow ? previousRow.assigneeMemberId ?? null : null;
 
-  const submitted = {
-    conversationId: input.conversationId,
-    assigneeMemberId: input.assigneeMemberId,
-    previousAssigneeMemberId: previous,
-    note: input.note,
-    sourcePackage: source.package,
-    sourceAction: source.action,
+    // Repeating the member who already owns the thread replays the row that
+    // established them instead of writing audit noise. An explicit key keeps
+    // its strict replay-or-refusal below; the default names each handover,
+    // so the no-op is answered here, before any key is derived.
+    if (previousRow && previous === input.assigneeMemberId) {
+      return {
+        assignment: previousRow,
+        replayed: true,
+        previous: previousRow.previousAssigneeMemberId ?? null,
+      };
+    }
+
+    const sourceKey = excludeKey
+      ?? defaultAssignSourceKey(input.conversationId, previous, input.assigneeMemberId);
+
+    const submitted = {
+      conversationId: input.conversationId,
+      assigneeMemberId: input.assigneeMemberId,
+      previousAssigneeMemberId: previous,
+      note: input.note,
+      sourcePackage: source.package,
+      sourceAction: source.action,
+    };
+
+    const existing = (await assignments.listWhere({ sourceKey }))[0];
+    if (existing) {
+      return {
+        assignment: replayOrConflict(existing, submitted, 'assignment'),
+        replayed: true,
+        previous,
+      };
+    }
+
+    let assignment;
+    try {
+      assignment = await assignments.createManaged({
+        sourceKey,
+        ...submitted,
+        assignedAt: now,
+        assignedByType: who.type,
+        assignedById: who.id,
+      }, { actor });
+    } catch (error) {
+      if (!isUniqueConflict(error)) throw error;
+      const raced = (await assignments.listWhere({ sourceKey }))[0];
+      if (!raced) throw error;
+      return { assignment: replayOrConflict(raced, submitted, 'assignment'), replayed: true, previous };
+    }
+    return { assignment, replayed: false, previous };
   };
 
-  const existing = (await assignments.listWhere({ sourceKey: input.sourceKey }))[0];
-  if (existing) {
-    return {
-      assignment: replayOrConflict(existing, submitted, 'assignment'),
-      replayed: true,
-      previous,
-    };
-  }
-
-  let assignment;
-  try {
-    assignment = await assignments.createManaged({
-      sourceKey: input.sourceKey,
-      ...submitted,
-      assignedAt: now,
-      assignedByType: who.type,
-      assignedById: who.id,
-    }, { actor });
-  } catch (error) {
-    if (!isUniqueConflict(error)) throw error;
-    const raced = (await assignments.listWhere({ sourceKey: input.sourceKey }))[0];
-    if (!raced) throw error;
-    return { assignment: replayOrConflict(raced, submitted, 'assignment'), replayed: true, previous };
-  }
-  return { assignment, replayed: false, previous };
+  const runInTransaction = assignmentTransaction(assignments);
+  return withConversationAssignment(
+    input.conversationId,
+    runInTransaction ? () => runInTransaction(runCritical) : runCritical,
+  );
 }
 
 /**
@@ -1174,16 +1402,11 @@ export function createInteractionLogCapability(moduleNames) {
           : name === MESSAGE_MODULE ? names.message
             : name === CALL_MODULE ? names.call
               : name === ASSIGNMENT_MODULE ? names.assignment
-                : name === READ_MODULE ? names.read : name,
+                : name === READ_MODULE ? names.read
+                  : name === THREAD_KEY_MODULE ? names.threadKey : name,
       ),
     },
-    moduleNames: {
-      [CONVERSATION_MODULE]: names.conversation,
-      [MESSAGE_MODULE]: names.message,
-      [CALL_MODULE]: names.call,
-      [ASSIGNMENT_MODULE]: names.assignment,
-      [READ_MODULE]: names.read,
-    },
+    moduleNames: fullModuleNames(names),
     actor: context.actor,
     now: context.now,
     consumer: context.consumer,
@@ -1356,11 +1579,12 @@ export function buildCloseConversationAction(moduleNames) {
  * `assign` — hand one conversation to one team member, or clear it.
  *
  * A repeated handover to the member who already owns the thread replays
- * instead of writing audit noise: the default source key names the
- * conversation and the resulting owner, so the same decision retried is the
- * same key with the same payload. A handover to someone else is a new row
- * with the previous owner named on it. Clearing names no owner and keeps the
- * previous one the same way.
+ * instead of writing audit noise: without a source key the handover names
+ * itself from the move it records (previous owner to next owner), so the same
+ * move retried is the same key with the same payload while a return to a
+ * prior owner is a new row. A handover to someone else is a new row with the
+ * previous owner named on it. Clearing names no owner and keeps the previous
+ * one the same way.
  *
  * @param {Record<string, string>} [moduleNames]
  */
@@ -1377,7 +1601,7 @@ export function buildAssignConversationAction(moduleNames) {
     input: [
       { name: 'assigneeMemberId', type: 'string', required: false, hint: 'The team member who owns the thread now. Omit to clear the owner.' },
       { name: 'note', type: 'string', required: false, hint: 'One line saying why the thread moves.' },
-      { name: 'sourceKey', type: 'string', required: false, hint: 'Idempotency key. Defaults to naming this conversation and its resulting owner.' },
+      { name: 'sourceKey', type: 'string', required: false, hint: 'Idempotency key. Defaults to naming the handover itself, from the previous owner to the next.' },
     ],
     /** @param {any} ctx */
     async execute({ record, input, actor, modules, now }) {
@@ -1388,16 +1612,13 @@ export function buildAssignConversationAction(moduleNames) {
       const note = input.note === undefined || input.note === null || String(input.note).trim() === ''
         ? null
         : optionalSafeText(input.note, 'note', MAX_NOTE);
-      const sourceKey = input.sourceKey === undefined || input.sourceKey === null
-      || String(input.sourceKey).trim() === ''
-        ? `assign:${record.id}:${assigneeMemberId ?? 'unassigned'}`
-        : validateSourceKey(input.sourceKey, 'sourceKey');
+      const rawKey = input.sourceKey;
+      const sourceKey = rawKey === undefined || rawKey === null || String(rawKey).trim() === ''
+        ? undefined
+        : validateSourceKey(rawKey, 'sourceKey');
       const scope = {
         modules,
-        moduleNames: {
-          [CONVERSATION_MODULE]: names.conversation,
-          [ASSIGNMENT_MODULE]: names.assignment,
-        },
+        moduleNames: fullModuleNames(names),
         actor,
         now,
         consumer: INTERACTIONS_PACKAGE,
@@ -1437,11 +1658,7 @@ export function buildMarkReadConversationAction(moduleNames) {
     async execute({ record, actor, modules, now }) {
       const scope = {
         modules,
-        moduleNames: {
-          [CONVERSATION_MODULE]: names.conversation,
-          [MESSAGE_MODULE]: names.message,
-          [READ_MODULE]: names.read,
-        },
+        moduleNames: fullModuleNames(names),
         actor,
         now,
         consumer: INTERACTIONS_PACKAGE,
@@ -1454,11 +1671,7 @@ export function buildMarkReadConversationAction(moduleNames) {
       const unread = await unreadCount(
         {
           modules,
-          moduleNames: {
-            [CONVERSATION_MODULE]: names.conversation,
-            [MESSAGE_MODULE]: names.message,
-            [READ_MODULE]: names.read,
-          },
+          moduleNames: fullModuleNames(names),
         },
         record.id,
         who.id,

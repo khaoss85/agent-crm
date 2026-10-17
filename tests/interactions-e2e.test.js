@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { boot } from './helpers/contracts-project.js';
 import { assertPackageConforms } from './helpers/package-conformance.js';
 import { createInteractionsPackage } from '../packages/interactions/src/index.js';
+import { NotFoundError } from '../packages/core/index.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -17,7 +18,7 @@ const SUBJECT = { resource: 'contact', id: 'c-presti', owner: 'host' };
 const SOURCE = { package: 'host', action: 'seed' };
 
 const INTERACTION_MANIFESTS = ['conversation.module.json', 'interaction-message.module.json', 'interaction-call.module.json',
-  'conversation-assignment.module.json', 'conversation-read.module.json'];
+  'conversation-assignment.module.json', 'conversation-read.module.json', 'conversation-thread-key.module.json'];
 const WORK_MANIFESTS = ['work-task.module.json', 'work-activity.module.json'];
 
 function cli(root, args) {
@@ -546,7 +547,7 @@ test('interactions conforms to the domain-package contract it ships', () => {
     expected: {
       name: 'interactions',
       version: 1,
-      resources: ['conversation', 'interaction-message', 'interaction-call', 'conversation-assignment', 'conversation-read'],
+      resources: ['conversation', 'interaction-message', 'interaction-call', 'conversation-assignment', 'conversation-read', 'conversation-thread-key'],
       actions: ['conversation.assign', 'conversation.close', 'conversation.mark-read', 'conversation.open-opportunity', 'interaction-message.advance'],
       requires: [],
       provides: ['interaction-log@1', 'interaction-timeline@1'],
@@ -810,4 +811,221 @@ test('one customer keeps one conversation across channels, oldest first', async 
   });
   assert.notEqual(fresh.conversation.id, first.conversation.id);
   assert.equal(fresh.joined, false);
+});
+
+// ---------------------------------------------------------------------------
+// Thread keys: a joined key replays its thread, even after the thread closed
+// ---------------------------------------------------------------------------
+
+test('a joined key retried after close replays the joined thread, never a duplicate', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'joinkey.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation } = await interactionsFrom(root);
+
+  const first = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:jk', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const second = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'ig:thread:jk', subject: SUBJECT, channel: 'instagram', source: SOURCE,
+  });
+  assert.equal(second.joined, true);
+  assert.equal(second.conversation.id, first.conversation.id);
+
+  // The join left exactly one thread-key row behind.
+  const keys = app.modules.get('conversation-thread-key').service;
+  assert.equal(keys.countWhere({ sourceKey: 'ig:thread:jk' }), 1);
+
+  // Retry while open: replays the join, writes nothing new.
+  const retry = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'ig:thread:jk', subject: SUBJECT, channel: 'instagram', source: SOURCE,
+  });
+  assert.equal(retry.replayed, true);
+  assert.equal(retry.joined, true);
+  assert.equal(retry.conversation.id, first.conversation.id);
+  assert.equal(keys.countWhere({ sourceKey: 'ig:thread:jk' }), 1);
+
+  // Close the thread, then retry the joined key: the closed thread replays,
+  // and no second conversation opens behind the same key.
+  await run(app, 'conversation', 'close', first.conversation.id, {});
+  const afterClose = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'ig:thread:jk', subject: SUBJECT, channel: 'instagram', source: SOURCE,
+  });
+  assert.equal(afterClose.replayed, true);
+  assert.equal(afterClose.conversation.id, first.conversation.id);
+  assert.equal(afterClose.conversation.status, 'closed');
+  assert.equal(
+    app.modules.get('conversation').service.countWhere({ subjectResource: 'contact', subjectId: 'c-presti' }),
+    1,
+  );
+
+  // The channel on the retry is where the message arrived, not a new claim:
+  // the same key on another channel still replays the joined thread.
+  const arrived = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'ig:thread:jk', subject: SUBJECT, channel: 'email', source: SOURCE,
+  });
+  assert.equal(arrived.replayed, true);
+  assert.equal(arrived.conversation.id, first.conversation.id);
+
+  // Same joined key naming another customer: refused 409, never adopted.
+  await assert.rejects(
+    openConversation({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'ig:thread:jk',
+      subject: { resource: 'contact', id: 'c-altro', owner: 'host' },
+      channel: 'instagram', source: SOURCE,
+    }),
+    (error) => error.code === 'INTERACTIONS_LOG_CONFLICT' && error.status === 409,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Default handover keys: returns to a prior owner, repeats replay
+// ---------------------------------------------------------------------------
+
+test('the assign action cycles owners on default keys: a return is a new row, a repeat replays', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'assign-cycle.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, readConversationThread } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:cycle', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const count = () => app.modules.get('conversation-assignment')
+    .service.countWhere({ conversationId: conversation.id });
+
+  const toGuido = await run(app, 'conversation', 'assign', conversation.id, { assigneeMemberId: 'guido' });
+  assert.equal(toGuido.result.replayed, false);
+  const toMaria = await run(app, 'conversation', 'assign', conversation.id, { assigneeMemberId: 'maria' });
+  assert.equal(toMaria.result.replayed, false);
+  assert.equal(toMaria.result.previous, 'guido');
+  // A return to a prior owner is a new row naming Maria as previous, never a 409.
+  const backToGuido = await run(app, 'conversation', 'assign', conversation.id, { assigneeMemberId: 'guido' });
+  assert.equal(backToGuido.result.replayed, false);
+  assert.equal(backToGuido.result.assignment.assigneeMemberId, 'guido');
+  assert.equal(backToGuido.result.previous, 'maria');
+  assert.equal(count(), 3);
+
+  // Repeating the current owner replays the establishing row, writes nothing.
+  const again = await run(app, 'conversation', 'assign', conversation.id, { assigneeMemberId: 'guido' });
+  assert.equal(again.result.replayed, true);
+  assert.equal(again.result.assignment.id, backToGuido.result.assignment.id);
+  assert.equal(count(), 3);
+
+  // Clearing twice: the first clear writes, the second replays it.
+  const cleared = await run(app, 'conversation', 'assign', conversation.id, {});
+  assert.equal(cleared.result.replayed, false);
+  assert.equal(cleared.result.assignment.assigneeMemberId, null);
+  const clearedAgain = await run(app, 'conversation', 'assign', conversation.id, {});
+  assert.equal(clearedAgain.result.replayed, true);
+  assert.equal(clearedAgain.result.assignment.id, cleared.result.assignment.id);
+  assert.equal(count(), 4);
+
+  const thread = await readConversationThread({ modules: app.modules, moduleNames: {} }, conversation.id);
+  assert.deepEqual(thread.assignment.history.map((entry) => entry.assignee), ['guido', 'maria', 'guido', null]);
+  assert.deepEqual(thread.assignment.history.map((entry) => entry.previous), [null, 'guido', 'maria', 'guido']);
+});
+
+// ---------------------------------------------------------------------------
+// Assignment races: serialized per thread, every row names its true predecessor
+// ---------------------------------------------------------------------------
+
+test('concurrent handovers on one thread serialize: no two rows share a predecessor', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'assign-race.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, assignConversation, readConversationThread } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:race', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+
+  // Five handovers with distinct keys racing in the same tick: without
+  // serialization several would read the same current owner and commit with
+  // it, and whichever sorts last would claim the wrong predecessor.
+  const owners = ['guido', 'maria', 'luca', 'anna', 'sara'];
+  const results = await Promise.all(owners.map((owner, n) => assignConversation(
+    { modules: app.modules, actor: ACTOR },
+    { sourceKey: `assign:race:${n}`, conversationId: conversation.id, assigneeMemberId: owner, source: SOURCE },
+  )));
+  assert.ok(results.every((result) => result.replayed === false));
+
+  const thread = await readConversationThread({ modules: app.modules, moduleNames: {} }, conversation.id);
+  assert.equal(thread.assignment.history.length, 5);
+  // An exact chain, read through the previous pointers rather than the list
+  // order: rows committed in the same instant sort by id, not by handover
+  // order, so the list order proves nothing. One row follows nobody, every
+  // other row follows exactly one predecessor, and walking the predecessors
+  // visits every row exactly once — no two rows share a predecessor.
+  const chain = thread.assignment.history;
+  const byPrevious = new Map();
+  for (const row of chain) {
+    assert.ok(!byPrevious.has(row.previous), `two rows claim predecessor ${row.previous}`);
+    byPrevious.set(row.previous, row);
+  }
+  assert.equal(byPrevious.size, 5);
+  assert.ok(byPrevious.has(null), 'one row starts the chain');
+  let current = byPrevious.get(null);
+  let visited = 1;
+  while (byPrevious.has(current.assignee)) {
+    current = byPrevious.get(current.assignee);
+    visited += 1;
+  }
+  assert.equal(visited, 5);
+});
+
+// ---------------------------------------------------------------------------
+// Renamed records: the actions forward the complete mapping, never a subset
+// ---------------------------------------------------------------------------
+
+test('assign and mark-read run on renamed records: the full mapping is forwarded', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'renamed.sqlite'), {
+    clock: () => '2026-09-15T10:08:00.000Z',
+  });
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, unreadCount } = await interactionsFrom(root);
+  const { buildAssignConversationAction, buildMarkReadConversationAction } = await import(
+    pathToFileURL(join(root, 'packages/interactions/src/interactions.js')).href
+  );
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:renamed', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+
+  // The package composed with every record renamed: only the renamed names
+  // resolve, and the canonical ones read as absent — exactly what a renamed
+  // composition looks like to the actions.
+  const renamed = {
+    conversation: 'conv2',
+    'interaction-message': 'msg2',
+    'interaction-call': 'call2',
+    'conversation-assignment': 'assign2',
+    'conversation-read': 'read2',
+  };
+  const reverse = Object.fromEntries(Object.entries(renamed).map(([from, to]) => [to, from]));
+  const modules = {
+    get: (name) => {
+      const canonical = reverse[name];
+      if (!canonical) throw new NotFoundError('Module', String(name));
+      return app.modules.get(canonical);
+    },
+  };
+  const now = () => '2026-09-15T10:08:00.000Z';
+
+  const handed = await buildAssignConversationAction(renamed).execute({
+    record: conversation, input: { assigneeMemberId: 'guido' }, actor: ACTOR, modules, now,
+  });
+  assert.equal(handed.assignment.assigneeMemberId, 'guido');
+  assert.equal(handed.replayed, false);
+
+  const marked = await buildMarkReadConversationAction(renamed).execute({
+    record: conversation, input: {}, actor: { type: 'user', id: 'guido' }, modules, now,
+  });
+  assert.equal(marked.created, true);
+  assert.equal((await unreadCount({ modules: app.modules, moduleNames: {} }, conversation.id, 'guido')).unread, 0);
 });
