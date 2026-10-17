@@ -86,6 +86,23 @@ function normalizeComponent(component, label) {
   if (!PRICING_MODELS.includes(pricingModel)) {
     throw new ValidationError(`${label}: model must be one of: ${PRICING_MODELS.join(', ')}`);
   }
+  // Model-incoherent extras must fail closed here, in workspace field names:
+  // the shared gate below only sees the model-appropriate field, so anything
+  // else would be silently dropped and the listino would sync a price its
+  // author never declared.
+  /** @param {unknown} value */
+  const hasExtraAmount = (value) => value !== undefined && value !== null && value !== 0;
+  if (pricingModel === 'flat_fee') {
+    if (hasExtraAmount(component.unitAmountCents)) {
+      throw new ValidationError(`${label}: flat_fee components price by amountCents; unitAmountCents is not supported`);
+    }
+  } else if (pricingModel === 'per_unit') {
+    if (hasExtraAmount(component.amountCents)) {
+      throw new ValidationError(`${label}: per_unit components price by unitAmountCents; amountCents is not supported`);
+    }
+  } else if (hasExtraAmount(component.amountCents) || hasExtraAmount(component.unitAmountCents)) {
+    throw new ValidationError(`${label}: volume and graduated components carry their amounts in tiers, not amountCents/unitAmountCents`);
+  }
   const candidate = {
     chargeType,
     pricingModel,

@@ -121,6 +121,10 @@ test('misconfigured listini fail closed with the field path', () => {
     [(() => { const next = structuredClone(GYM_PRICE_LIST); next.offers[0].components[0].amountCents = 99.99; return next; })(), /non-negative safe integer/],
     [(() => { const next = structuredClone(GYM_PRICE_LIST); next.offers[1].components[0].interval = 'week'; return next; })(), /interval/],
     [(() => { const next = structuredClone(GYM_PRICE_LIST); next.offers[0].components[0].interval = 'month'; return next; })(), /must not declare interval/],
+    [(() => { const next = structuredClone(GYM_PRICE_LIST); next.offers[0].components[0].unitAmountCents = 99999; return next; })(), /unitAmountCents is not supported/],
+    [(() => { const next = structuredClone(GYM_PRICE_LIST); next.offers[3].components[0].amountCents = 500; return next; })(), /amountCents is not supported/],
+    [(() => { const next = structuredClone(GYM_PRICE_LIST); next.offers[0].components[0] = { key: 'soglie', label: 'Soglie', charge: 'one_time', model: 'volume', amountCents: 9900, tiers: [{ upTo: 10, unitAmountCents: 1200 }, { upTo: null, unitAmountCents: 900 }] }; return next; })(), /amounts in tiers/],
+    [(() => { const next = structuredClone(GYM_PRICE_LIST); next.offers[0].components[0] = { key: 'soglie', label: 'Soglie', charge: 'one_time', model: 'graduated', unitAmountCents: 1200, tiers: [{ upTo: 10, unitAmountCents: 1200 }, { upTo: null, unitAmountCents: 900 }] }; return next; })(), /amounts in tiers/],
     [(() => { const next = structuredClone(GYM_PRICE_LIST); next.products[0].active = 1; return next; })(), /boolean/],
   ];
   for (const [input, pattern] of cases) {
