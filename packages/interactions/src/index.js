@@ -19,6 +19,7 @@ import {
   advanceMessage,
   buildAdvanceMessageAction,
   buildCloseConversationAction,
+  buildOpenOpportunityAction,
   createInteractionLogCapability,
   createInteractionTimelineCapability,
   logCall,
@@ -116,7 +117,7 @@ export function createInteractionsPackage(options = {}) {
     requires: [],
 
     capabilities: [createInteractionLogCapability(config), createInteractionTimelineCapability(config)],
-    actions: [buildAdvanceMessageAction(config), buildCloseConversationAction(config)],
+    actions: [buildAdvanceMessageAction(config), buildCloseConversationAction(config), buildOpenOpportunityAction(config)],
 
     // None. A versioned policy earns its fingerprint when two consumers share
     // a rule; the channel vocabulary and the transition tables are published
