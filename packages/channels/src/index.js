@@ -255,6 +255,16 @@ export { createChannelOperations } from './operations.js';
 export { runChannelAdapterKit, CHANNEL_KIT_CHECKS } from './kit.js';
 export { createFixtureChannelAdapter, fixtureWebhookHeaders, fixtureEventBody } from './fixture.js';
 export {
+  createInstagramChannelAdapter,
+  instagramEventBody,
+  instagramWebhookHeaders,
+  INSTAGRAM_ADAPTER_NAME,
+  INSTAGRAM_ADAPTER_VERSION,
+  INSTAGRAM_HUMAN_AGENT_TAG,
+  INSTAGRAM_REPLY_WINDOW_MS,
+  INSTAGRAM_TAG_WINDOW_MS,
+} from './instagram.js';
+export {
   WHATSAPP_ADAPTER_NAME,
   WHATSAPP_ADAPTER_VERSION,
   WHATSAPP_WINDOW_MS,
