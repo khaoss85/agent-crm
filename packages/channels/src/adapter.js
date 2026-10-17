@@ -16,6 +16,13 @@ import { AppError, ValidationError, computeDefinitionFingerprint, createDefiniti
  * in `kit.js` with a fixture secret. A real adapter implements the same
  * five functions against its provider's scheme.
  *
+ * `normalizeInbound` returns one channel event per provider item: a single
+ * object for a single delivery, or a list of event objects when the
+ * provider batches several items in one webhook (Meta's messages[] plus
+ * statuses[]). `operations.js` stores one inbox row per event, atomically,
+ * with dedup per providerEventId — an adapter never truncates a batch to
+ * its first item.
+ *
  * An adapter whose provider restricts free text to a service window (Meta's
  * 24-hour customer-service window) additionally declares the optional
  * `outboundWindow` capability: `{ windowMs, subjectForRecipient,

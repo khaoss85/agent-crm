@@ -185,7 +185,7 @@ export function createChannelsPackage(options = {}) {
         name: 'ingest-channel-event',
         label: 'Ingest channel event',
         appMethod: 'ingestChannelEvent',
-        description: 'Verify one channel webhook delivery as the exact bytes the provider signed, record it in the append-only replay-proof inbox, and apply it unless it is a replay, out-of-order or quarantined.',
+        description: 'Verify one channel webhook delivery as the exact bytes the provider signed, record it in the append-only replay-proof inbox — one row per provider item in the delivery — and apply it unless it is a replay, out-of-order or quarantined.',
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug, from the verified route — never from the body.' },
           { name: 'connectionKey', type: 'string', required: true, hint: 'The connection source key bound to that space.' },
@@ -226,7 +226,7 @@ export function createChannelsPackage(options = {}) {
         humanApproval: 'register, status changes and sends require actor.type === "user"; provider-driven ingest runs under a system actor and ignores any caller-supplied actor',
         notModeled: [
           'dead-letter requeue (human retry of an open letter) — follow-up voice with its own state machine',
-          'real provider adapters (WhatsApp, Instagram, …) — fixture only until credentials exist',
+          'real provider adapters beyond WhatsApp (Instagram, …) — fixture only until credentials exist',
           'the per-space HTTP route — the pilot owns it and passes spaceId from the verified path',
           'secret custody and rotation flow — the deployment owns it via resolveSecret',
           'reconciliation against provider truth — redelivery resumes unprocessed rows',
@@ -264,4 +264,12 @@ export {
   INSTAGRAM_REPLY_WINDOW_MS,
   INSTAGRAM_TAG_WINDOW_MS,
 } from './instagram.js';
+export {
+  WHATSAPP_ADAPTER_NAME,
+  WHATSAPP_ADAPTER_VERSION,
+  WHATSAPP_WINDOW_MS,
+  buildWhatsAppSendRequest,
+  canonicalWhatsAppNumber,
+  createWhatsAppChannelAdapter,
+} from './whatsapp.js';
 export { verifyHmacWebhook, fingerprintPayload, hmacWebhookHeaders } from './crypto.js';
