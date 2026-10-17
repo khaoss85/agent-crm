@@ -546,7 +546,7 @@ test('interactions conforms to the domain-package contract it ships', () => {
       name: 'interactions',
       version: 1,
       resources: ['conversation', 'interaction-message', 'interaction-call'],
-      actions: ['conversation.close', 'interaction-message.advance'],
+      actions: ['conversation.close', 'conversation.open-opportunity', 'interaction-message.advance'],
       requires: [],
       provides: ['interaction-log@1', 'interaction-timeline@1'],
     },
