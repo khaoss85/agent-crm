@@ -1,5 +1,6 @@
 // @ts-check
 
+import { createHash } from 'node:crypto';
 import { ValidationError, assertTenantId } from '../../core/index.js';
 import { CHANNELS } from './adapter.js';
 
@@ -26,12 +27,18 @@ export const CONNECTION_TRANSITIONS = Object.freeze({
 const HOSTILE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 const MAX_ACCOUNT = 256;
 const MAX_SECRET_REF = 256;
-// Same shape as the framework's own secret references
-// (`packages/core/src/secret-provider.js` SECRET_REFERENCE): a reference is
-// a bounded locator, never a value. Re-stated here because the secret
-// provider is not on the public kernel surface; the deployment's resolver
-// validates again at resolve time.
-const SECRET_REF_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/;
+// The durable-jobs idempotencyRoot bound every send key must fit.
+const SEND_KEY_MAX = 256;
+// The declared locator shape: a namespaced reference, never a value —
+// `vault://<space>/<name>` against the deployment's runtime-vault (or the
+// `secret://` scheme where a deployment names its own). Deliberately
+// stricter than the framework's own `packages/core/src/secret-provider.js`
+// SECRET_REFERENCE: that pattern also matches a bare token, so a raw value
+// pasted in place of its locator would pass validation and land in the row
+// and the audit trail. Re-stated here because the secret provider is not on
+// the public kernel surface; the deployment's resolver validates again at
+// resolve time.
+const SECRET_REF_PATTERN = /^(?:vault|secret):\/\/[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/;
 const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
 function boundedLine(value, label, max) {
@@ -50,11 +57,11 @@ export function assertSpaceId(value) {
   }
 }
 
-/** A secret reference is a bounded locator. Anything else is refused before storage. */
+/** A secret reference is a namespaced locator. Anything else is refused before storage. */
 export function assertSecretReference(value) {
   if (typeof value !== 'string' || value.length > MAX_SECRET_REF
     || !SECRET_REF_PATTERN.test(value) || HOSTILE_KEYS.includes(value)) {
-    throw new ValidationError('secretRef must be a bounded reference locator (letters, digits, ., _, :, /, -), never a secret value', { field: 'secretRef' });
+    throw new ValidationError('secretRef must be a bounded reference locator ("vault://<space>/<name>"), never a secret value', { field: 'secretRef' });
   }
   return value;
 }
@@ -104,12 +111,23 @@ export function assertConnectionInput(input, registries) {
 /**
  * The deterministic idempotency key for one outbound message (the M11
  * pattern: derived from the local record it belongs to).
+ *
+ * Short keys stay readable (`ch-send:<space>:<connection>:<message>`). A
+ * registered connection may legally carry a 256-char account, which alone
+ * already overflows the old 128-char component bound — and a long pair
+ * overflows the durable-jobs 256-char idempotencyRoot bound — so when the
+ * readable form would exceed 256 chars the long components are replaced by
+ * their sha256 fingerprints. Either form is deterministic, so redelivery
+ * still dedups; the hashed form is at most 215 chars and always fits.
  */
 export function channelSendIdempotencyKey({ spaceId, connectionKey, messageKey }) {
   const space = assertSpaceId(spaceId);
-  const connection = boundedLine(connectionKey, 'connectionKey', 128);
-  const message = boundedLine(messageKey, 'messageKey', 256);
-  return `ch-send:${space}:${connection}:${message}`;
+  const connection = boundedLine(connectionKey, 'connectionKey', 512);
+  const message = boundedLine(messageKey, 'messageKey', 512);
+  const plain = `ch-send:${space}:${connection}:${message}`;
+  if (plain.length <= SEND_KEY_MAX) return plain;
+  const fingerprint = (value) => `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
+  return `ch-send:${space}:${fingerprint(connection)}:${fingerprint(message)}`;
 }
 
 /** @param {string} from @param {string} to */

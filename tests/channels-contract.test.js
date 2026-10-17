@@ -93,7 +93,12 @@ test('space ids are slugs, never inferred', () => {
 
 test('secret references are locators, never values', () => {
   assert.equal(assertSecretReference('vault://presti/whatsapp-a'), 'vault://presti/whatsapp-a');
-  for (const bad of ['', 'has space', 'emoji-🔑', 'a'.repeat(257), '__proto__', 'constructor', 'line\nbreak', 'sk-live-abc def']) {
+  assert.equal(assertSecretReference('secret://presti/whatsapp-a'), 'secret://presti/whatsapp-a');
+  for (const bad of ['', 'has space', 'emoji-🔑', 'a'.repeat(257), '__proto__', 'constructor', 'line\nbreak', 'sk-live-abc def',
+    // A bare token — however bounded — is not a locator: the fixture secret
+    // VALUE itself must be refused, so a rotated value pasted in place of
+    // its reference can never land in a row or an audit trail.
+    'kit-secret-value-1', 'simplereference123', 'vault://', 'vault:// with space']) {
     assert.throws(() => assertSecretReference(bad), /secretRef must be a bounded reference locator/);
   }
 });
@@ -122,8 +127,25 @@ test('connection status moves on an explicit table; revoked never regresses', ()
 
 test('send idempotency keys are deterministic per space, connection and message', () => {
   const key = channelSendIdempotencyKey({ spaceId: 'presti', connectionKey: 'ch-conn:presti:whatsapp:x', messageKey: 'm1' });
+  assert.equal(key, 'ch-send:presti:ch-conn:presti:whatsapp:x:m1', 'short keys stay readable');
   assert.equal(key, channelSendIdempotencyKey({ spaceId: 'presti', connectionKey: 'ch-conn:presti:whatsapp:x', messageKey: 'm1' }));
   assert.notEqual(key, channelSendIdempotencyKey({ spaceId: 'arvo', connectionKey: 'ch-conn:presti:whatsapp:x', messageKey: 'm1' }));
+});
+
+test('send idempotency keys stay within the outbox bound at max-length inputs', () => {
+  // A 256-char account is legal at registration, so its connection key is
+  // ~280 chars: the readable form would overflow both the old 128-char
+  // component bound and the durable-jobs 256-char idempotencyRoot bound.
+  const connectionKey = `ch-conn:presti:whatsapp:${'a'.repeat(256)}`;
+  const messageKey = 'm'.repeat(256);
+  const key = channelSendIdempotencyKey({ spaceId: 'presti', connectionKey, messageKey });
+  assert.ok(key.length <= 256, `hashed form fits the outbox bound, got ${key.length}`);
+  assert.equal(key, channelSendIdempotencyKey({ spaceId: 'presti', connectionKey, messageKey }), 'the long form is deterministic, so redelivery dedups');
+  assert.notEqual(
+    key,
+    channelSendIdempotencyKey({ spaceId: 'presti', connectionKey, messageKey: `${'m'.repeat(255)}n` }),
+    'a different message still keys differently',
+  );
 });
 
 test('HMAC webhook verification sees the exact bytes and echoes nothing', () => {

@@ -232,7 +232,7 @@ export function createChannelsPackage(options = {}) {
         channelsContract: 1,
         channels: [...CHANNELS],
         connectionStatuses: [...CONNECTION_STATUSES],
-        replayScope: 'space + adapter + providerEventId; the payload fingerprint must match or the reuse is refused 409 CHANNEL_EVENT_ID_CONFLICT',
+        replayScope: 'space + connection + providerEventId; the payload fingerprint must match or the reuse is refused 409 CHANNEL_EVENT_ID_CONFLICT',
         sendRetry: 'bounded attempts on the durable job (default 5); transient failures ride the worker backoff; exhaustion writes a dead-letter row with phase, error code and payload fingerprint',
         secretDiscipline: 'connections store secretRef, never the secret; the deployment resolves it at call time; outbox payloads carry no secret-shaped keys',
         humanApproval: 'register, status changes, sends and requeues require actor.type === "user"; provider-driven ingest runs under a system actor',

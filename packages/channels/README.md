@@ -10,7 +10,7 @@ The shared, space-scoped foundation every messaging channel builds on
   Every field is managed: registration is the only writer and every later
   change (activate, suspend, revoke, secret rotation) is an audited action.
 - `channel-inbox-event` — append-only inbox of verified webhook
-  deliveries: DB-unique per (space, adapter, provider event id), payload
+  deliveries: DB-unique per (space, connection, provider event id), payload
   fingerprint, explicit `effect` (`applied | ignored | quarantined |
   duplicate`), quarantine for unknown subjects and inactive connections.
 - `channel-dead-letter` — failure inventory for sends that exhausted

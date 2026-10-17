@@ -251,10 +251,13 @@ export function createChannelOperations(deps) {
   /**
    * Ingest one provider webhook delivery for one space and connection.
    * Verification sees the exact bytes the provider signed, before any
-   * mutation; the inbox row is DB-unique per (space, adapter, provider
+   * mutation; the inbox row is DB-unique per (space, connection, provider
    * event id), so a replay is idempotent; a redelivery carrying a
    * different payload under the same id is a provider contract violation
    * (409), not a duplicate; an unknown subject is quarantined as evidence.
+   * The identity is per connection on purpose: two accounts of one space
+   * on the same adapter each own their events, even when the provider
+   * reuses an event id across the two accounts.
    */
   async function ingestChannelEvent(params) {
     const spaceId = assertSpaceId(params?.spaceId);
@@ -312,7 +315,7 @@ export function createChannelOperations(deps) {
     const sequence = Number.isSafeInteger(event?.sequence) ? event.sequence : null;
     const occurredAt = isCanonicalInstant(event?.occurredAt) ? event.occurredAt : null;
     const payloadFingerprint = fingerprintPayload(rawBody);
-    const sourceKey = `ch-in:${spaceId}:${adapter.name}:${providerEventId}`;
+    const sourceKey = `ch-in:${spaceId}:${connection.sourceKey}:${providerEventId}`;
     const service = inbox();
     const now = nowIso();
 
@@ -378,10 +381,17 @@ export function createChannelOperations(deps) {
       return { duplicate: false, eventId: row.id, effect: row.effect };
     } catch (error) {
       // A concurrent delivery of the same event won the insert: resolve
-      // against the committed row instead of surfacing a raw violation.
+      // against the committed row instead of surfacing a raw violation —
+      // the same contract as the pre-read branch above, so a conflicting
+      // payload is CHANNEL_EVENT_ID_CONFLICT 409 on every path.
       const raced = service.listWhere({ sourceKey })[0];
-      if (raced && raced.payloadFingerprint === payloadFingerprint) {
-        return { duplicate: true, eventId: raced.id, effect: raced.effect };
+      if (raced) {
+        if (raced.payloadFingerprint === payloadFingerprint) {
+          return { duplicate: true, eventId: raced.id, effect: raced.effect };
+        }
+        throw new AppError('Provider event id was already recorded with a different payload', {
+          code: 'CHANNEL_EVENT_ID_CONFLICT', status: 409, details: { providerEventId },
+        });
       }
       throw error;
     }

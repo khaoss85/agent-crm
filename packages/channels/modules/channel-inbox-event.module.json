@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "channel-inbox-event",
-  "description": "Append-only inbox of provider-verified channel webhook deliveries, one row per (space, adapter, provider event id) (backlog:e5532d1c9146). Generalizes the M11 signature inbox to any channel adapter: verification before any write, DB-unique event identity plus payload fingerprint, quarantine for unknown subjects, an explicit effect per row, and a stable refusal that echoes nothing.",
+  "description": "Append-only inbox of provider-verified channel webhook deliveries, one row per (space, connection, provider event id) (backlog:e5532d1c9146). Generalizes the M11 signature inbox to any channel adapter: verification before any write, DB-unique event identity plus payload fingerprint, quarantine for unknown subjects, an explicit effect per row, and a stable refusal that echoes nothing.",
   "fields": [
     { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
     { "name": "spaceId", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },

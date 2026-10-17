@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { runChannelAdapterKit } from '../packages/channels/src/kit.js';
+import { buildChannelConnectionActions } from '../packages/channels/src/index.js';
 import { createChannelOperations } from '../packages/channels/src/operations.js';
 import {
   createFixtureChannelAdapter,
@@ -310,4 +311,108 @@ test('the fixture adapter passes the channel kit (receive, send, replay, bad sig
   assert.deepEqual(results.map((row) => row.name), [
     'receive', 'send', 'replay', 'bad-signature', 'out-of-order', 'no-secrets', 'space-isolation',
   ]);
+});
+
+test('two connections in one space keep separate inbox identities', async (t) => {
+  // The provider may reuse an event id across two accounts of one space:
+  // each connection owns its event, never a single row for the space.
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const keyA = await registeredActive(harness, SPACE_A, '+390200000001');
+  const keyB = await registeredActive(harness, SPACE_A, '+390200000002');
+  assert.notEqual(keyA, keyB);
+  const rawBody = fixtureEventBody({ id: 'evt-shared-1', subject: 'chat-shared', seq: 1 });
+  const headers = harness.faults.sign(rawBody);
+  const first = await harness.ingest(SPACE_A, { connectionKey: keyA, rawBody, headers });
+  const second = await harness.ingest(SPACE_A, { connectionKey: keyB, rawBody, headers });
+  assert.equal(first.duplicate ?? false, false);
+  assert.equal(second.duplicate ?? false, false);
+  const rows = harness.inbox(SPACE_A).filter((row) => row.providerEventId === 'evt-shared-1');
+  assert.equal(rows.length, 2, 'one row per connection, never one row for the space');
+  assert.deepEqual(rows.map((row) => row.connectionKey).sort(), [keyA, keyB].sort());
+});
+
+test('registration and rotation refuse a raw secret value as secretRef', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  await assert.rejects(
+    harness.register(SPACE_A, {
+      channel: 'whatsapp', account: ACCOUNT_A,
+      adapter: 'fixture-channel', adapterVersion: 1, secretRef: SECRET,
+    }),
+    /secretRef must be a bounded reference locator/,
+  );
+  assert.equal(harness.connections(SPACE_A).length, 0, 'a refused registration stores nothing');
+  const rotate = buildChannelConnectionActions().find((action) => action.name === 'rotate-connection-secret');
+  await assert.rejects(
+    rotate.execute({
+      record: { id: 'conn-1', status: 'active' },
+      input: { secretRef: SECRET },
+      actor: harness.userActor,
+      managed: async () => { throw new Error('a refused reference must never write'); },
+      now: () => new Date().toISOString(),
+    }),
+    /secretRef must be a bounded reference locator/,
+  );
+  let written = null;
+  const rotated = await rotate.execute({
+    record: { id: 'conn-1', status: 'active' },
+    input: { secretRef: 'vault://kit/rotated' },
+    actor: harness.userActor,
+    managed: async (id, patch) => { written = patch; return { id, ...patch }; },
+    now: () => '2026-10-17T00:00:00.000Z',
+  });
+  assert.equal(rotated.connection.secretRef, 'vault://kit/rotated');
+  assert.equal(written.secretRef, 'vault://kit/rotated');
+  assert.ok(!harness.dumpStorage().includes(SECRET), 'the refused value appears nowhere in stored rows or audit');
+});
+
+test('a raced conflicting delivery reports CHANNEL_EVENT_ID_CONFLICT, not the raw violation', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const rawBody = fixtureEventBody({ id: 'evt-race-1', subject: 'chat-race', seq: 1 });
+  const headers = harness.faults.sign(rawBody);
+  // A concurrent delivery commits first under the same identity with
+  // different bytes; the loser's insert then fails with a raw violation.
+  const entry = harness.internals.modules.get('channel-inbox-event');
+  const real = entry.service;
+  const realCreate = real.createManaged.bind(real);
+  let armed = true;
+  const raced = Object.create(real);
+  raced.createManaged = async (row, opts) => {
+    if (armed) {
+      armed = false;
+      await realCreate({ ...row, payloadFingerprint: '0'.repeat(64), subject: 'chat-race-other' }, opts);
+      throw Object.assign(new Error('UNIQUE constraint failed: channel-inbox-event.sourceKey'), { code: 'CONFLICT' });
+    }
+    return realCreate(row, opts);
+  };
+  entry.service = raced;
+  try {
+    await assert.rejects(
+      harness.ingest(SPACE_A, { connectionKey: key, rawBody, headers }),
+      (error) => error.code === 'CHANNEL_EVENT_ID_CONFLICT' && error.status === 409,
+    );
+  } finally {
+    entry.service = real;
+  }
+});
+
+test('a max-length account and message key still queue under the outbox bound', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const account = 'a'.repeat(256);
+  const messageKey = 'm'.repeat(256);
+  const reg = await harness.register(SPACE_A, {
+    channel: 'whatsapp', account, adapter: 'fixture-channel', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  await harness.activate(SPACE_A, reg.connection.sourceKey);
+  const message = { to: account, text: 'boundary' };
+  const first = await harness.queue(SPACE_A, { connectionKey: reg.connection.sourceKey, message, messageKey });
+  assert.ok(first.idempotencyKey.length <= 256, `the key fits the outbox bound, got ${first.idempotencyKey.length}`);
+  const second = await harness.queue(SPACE_A, { connectionKey: reg.connection.sourceKey, message, messageKey });
+  assert.equal(first.jobId, second.jobId, 'the length-safe key still dedups');
+  const settled = await harness.pump(first.jobId);
+  assert.equal(settled.state, 'succeeded');
 });
