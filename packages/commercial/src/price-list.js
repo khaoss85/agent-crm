@@ -32,6 +32,22 @@ const WORKSPACE_KEY_RE = /^[a-z][a-z0-9-]{0,47}$/;
 const MAX_TEXT = 500;
 const MAX_COMPONENTS = 25;
 
+/**
+ * Freeze a normalized value in depth: the fingerprinted config must stay
+ * immutable after registration, so nested products, offers, components and
+ * tiers are frozen too, not just the top-level arrays.
+ * @param {any} value
+ */
+function deepFreeze(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) {
+      deepFreeze(child);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
 /** @param {unknown} value @param {string} field @param {number} [max] */
 function requireText(value, field, max = MAX_TEXT) {
   if (typeof value !== 'string' || value.trim() === '' || value.length > max) {
@@ -157,6 +173,10 @@ export function validatePriceListConfig(input) {
     throw new ValidationError('price list needs a non-empty products array');
   }
   const productKeys = new Set();
+  // Catalog sync rejects duplicate product externalIds at persist time
+  // (catalog-sync.js): the builder mirrors that invariant at composition, so
+  // a listino the builder accepts is a listino the sync accepts.
+  const productExternalIds = new Map();
   const products = config.products.map((product, index) => {
     const label = `products[${index}]`;
     if (!product || typeof product !== 'object' || Array.isArray(product)) {
@@ -167,6 +187,15 @@ export function validatePriceListConfig(input) {
       throw new ValidationError(`duplicate product key "${key}"`);
     }
     productKeys.add(key);
+    const externalId = optionalText(product.externalId, `${label}.externalId`, 200);
+    if (externalId !== null) {
+      if (productExternalIds.has(externalId)) {
+        throw new ValidationError(
+          `${label}.externalId duplicates the externalId of products[${productExternalIds.get(externalId)}]`,
+        );
+      }
+      productExternalIds.set(externalId, index);
+    }
     return {
       key,
       sku: (() => {
@@ -176,7 +205,7 @@ export function validatePriceListConfig(input) {
       name: requireText(product.name, `${label}.name`, 200),
       description: optionalText(product.description, `${label}.description`),
       category: optionalText(product.category, `${label}.category`, 100),
-      externalId: optionalText(product.externalId, `${label}.externalId`, 200),
+      externalId,
       active: requireActive(product.active, `${label}.active`),
     };
   });
@@ -226,7 +255,9 @@ export function validatePriceListConfig(input) {
     };
   });
 
-  return Object.freeze({ priceBook, products: Object.freeze(products), offers: Object.freeze(offers) });
+  // The fingerprinted config must be immutable in depth: a shallow freeze
+  // would let nested amounts drift under an unchanged version.
+  return deepFreeze({ priceBook, products, offers });
 }
 
 /**

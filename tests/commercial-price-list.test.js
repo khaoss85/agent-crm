@@ -115,6 +115,7 @@ test('misconfigured listini fail closed with the field path', () => {
     [{ ...GYM_PRICE_LIST, offers: [] }, /non-empty offers/],
     [(() => { const next = structuredClone(GYM_PRICE_LIST); next.products[0].key = '__proto__'; return next; })(), /slug/],
     [(() => { const next = structuredClone(GYM_PRICE_LIST); next.products.push({ ...next.products[0] }); return next; })(), /duplicate product key/],
+    [(() => { const next = structuredClone(GYM_PRICE_LIST); next.products[0].externalId = 'stripe-prod-1'; next.products[2].externalId = 'stripe-prod-1'; return next; })(), /products\[2\]\.externalId duplicates/],
     [(() => { const next = structuredClone(GYM_PRICE_LIST); next.offers.push({ ...next.offers[0] }); return next; })(), /duplicate offer key/],
     [(() => { const next = structuredClone(GYM_PRICE_LIST); next.offers[0].product = 'inesistente'; return next; })(), /unknown product/],
     [(() => { const next = structuredClone(GYM_PRICE_LIST); next.offers[0].components = []; return next; })(), /at least one price component/],
@@ -132,6 +133,28 @@ test('misconfigured listini fail closed with the field path', () => {
   }
   assert.throws(() => provider(GYM_PRICE_LIST, { name: 'NOT-A-NAME!' }), /name must match/);
   assert.throws(() => provider(GYM_PRICE_LIST, { version: 0 }), /positive integer/);
+});
+
+test('the normalized listino is frozen in depth: nested amounts cannot drift', async () => {
+  const normalized = validatePriceListConfig(GYM_PRICE_LIST);
+  assert.ok(Object.isFrozen(normalized.priceBook), 'price book is frozen');
+  for (const product of normalized.products) {
+    assert.ok(Object.isFrozen(product), `product ${product.key} is frozen`);
+  }
+  for (const offer of normalized.offers) {
+    assert.ok(Object.isFrozen(offer.components), `components of ${offer.key} are frozen`);
+    for (const component of offer.components) {
+      assert.ok(Object.isFrozen(component), `component ${component.key} is frozen`);
+    }
+  }
+  // Modules are strict: mutating the fingerprinted config throws instead of
+  // silently changing the next sync's prices.
+  assert.throws(() => { normalized.products[0].name = 'mutated'; }, TypeError);
+  assert.throws(() => { normalized.offers[0].components.push({ key: 'extra' }); }, TypeError);
+  assert.throws(() => { normalized.offers[1].components[0].flatAmountCents = 1; }, TypeError);
+  const built = provider();
+  const catalog = normalizeCatalog(await built.fetchCatalog({}));
+  assert.equal(catalog.offers[1].components[0].flatAmountCents, 4900, 'amounts survive unchanged');
 });
 
 test('no parallel catalog: the listino reuses product, price-book and offer', () => {
