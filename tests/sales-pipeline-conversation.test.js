@@ -19,10 +19,11 @@ function cli(root, args) {
 }
 
 /**
- * A throwaway project composing the interactions package against the
- * repository's own composition: the Accordo sales pipeline and the
- * conversation `open-opportunity` action arrive with it, exactly as the
- * pilot's space composes them from the pinned framework.
+ * A throwaway project composing the interactions package against an explicit
+ * opt-in: the space registers the Accordo sales pipeline in its own
+ * composition (exactly as the pilot's space does), while the framework
+ * default stays empty. The conversation `open-opportunity` action arrives
+ * with the interactions package itself.
  */
 function project(t) {
   const root = mkdtempSync(join(tmpdir(), 'accordo-sales-'));
@@ -47,6 +48,17 @@ function project(t) {
     [
       "import { createInteractionsPackage } from '../../interactions/src/index.js';",
       'export const generatedDomains = [createInteractionsPackage(),];',
+      '',
+    ].join('\n'),
+  );
+  // The space opts into the Accordo sales pipeline explicitly: without this
+  // registration the framework default is empty and opportunities keep the
+  // null-pipeline behavior of main.
+  writeFileSync(
+    join(root, 'packages/pipelines/generated/index.js'),
+    [
+      "import { accordoSalesPipeline } from '../accordo-sales.js';",
+      'export const generatedPipelines = [accordoSalesPipeline];',
       '',
     ].join('\n'),
   );
@@ -201,7 +213,17 @@ test('one conversation opens one opportunity; the trigger must be its own inboun
   );
   await assert.rejects(
     () => app.runAction({ module: 'conversation', action: 'open-opportunity', recordId: conversation.id, input: input(second.message.id), actor: ACTOR }),
-    (error) => error.status === 409,
+    (error) => error.status === 409
+      && error.code === 'CONFLICT'
+      && error.details?.sourceKey === `conversation-opportunity:${conversation.id}`,
+  );
+  assert.equal(
+    app.services.opportunities.list().length, 1,
+    'the second message in the same thread opened no second sale',
+  );
+  assert.equal(
+    app.services.opportunities.get(first.result.opportunity.id).sourceKey,
+    `conversation-opportunity:${conversation.id}`,
   );
 
   // The team's own outbound message never opens a sale.

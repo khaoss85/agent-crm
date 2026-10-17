@@ -4,20 +4,19 @@
 // version, canonical names, unique stage keys/orders, one open default stage,
 // bounded labels, a staged-eligible target module.
 //
-// This repository ships the Accordo sales pipeline
-// (../accordo-sales.js): every space composed from this framework — including
-// the Arvo pilot, which consumes this repository pinned and has no apply step
-// of its own — works the same stages (richiesta info, prova, proposta, pagato
-// o perso). The B2B Lead starter (examples/starters/b2b-lead-qualification)
-// keeps its own definition for throwaway projects and never registers here,
-// because the registry holds at most one pipeline per module and startup
-// refuses a second one fail-closed.
-
-import { accordoSalesPipeline } from '../accordo-sales.js';
+// This repository ships no pipelines of its own; the B2B Lead starter
+// (examples/starters/b2b-lead-qualification) registers its sales pipeline here
+// when applied into a project. An empty registry keeps all pre-pipeline
+// behavior unchanged: opportunities simply carry null pipeline state.
+//
+// The Accordo sales pipeline (../accordo-sales.js) is opt-in per space or
+// project: a composition registers it here explicitly (exactly one pipeline
+// per module — startup refuses a second one fail-closed), so spaces without
+// that configuration keep the null-pipeline behavior above unchanged.
 
 /**
  * @typedef {import('../../core/src/pipeline-registry.js').PipelineDefinition} PipelineDefinition
  */
 
 /** @type {PipelineDefinition[]} */
-export const generatedPipelines = [accordoSalesPipeline];
+export const generatedPipelines = [];

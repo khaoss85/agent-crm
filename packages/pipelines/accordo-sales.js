@@ -2,11 +2,12 @@
 
 /**
  * The Accordo sales pipeline (ADR-014): a checked-in, code-first definition —
- * reviewable source, never runtime-mutable configuration. Registered in
- * `packages/pipelines/generated/index.js`, so every space composed from this
- * framework (including the Arvo pilot, which pins this repository) works the
- * same five stages: a request for information, a trial, a proposal, and the
- * two terminal outcomes, paid or lost.
+ * reviewable source, never runtime-mutable configuration. Opt-in per space or
+ * project: a composition registers it in `packages/pipelines/generated/index.js`
+ * explicitly, so a space that wants these five stages — a request for
+ * information, a trial, a proposal, and the two terminal outcomes, paid or
+ * lost — declares it, while spaces without that configuration keep the
+ * framework's null-pipeline behavior unchanged.
  *
  * A new Opportunity opened from a conversation enters `richiesta-info` (the
  * declared default); `move-stage` walks it through the open stages to `pagato`
