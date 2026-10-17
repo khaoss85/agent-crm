@@ -40,6 +40,14 @@ refused 409. Back-to-back slots share an endpoint and do not overlap. A
 cancelled booking holds nothing — cancelling frees the slot. Every other
 state holds its slot even after it ends, because the slot was real.
 
+The check-then-act is serialized per team member: same-process bookings for
+one member queue, so the loser re-reads the winner's committed row (409, or
+a replay for the same source key). The re-read and the insert commit inside
+one outer transaction — the caller's for a booking with `remindAt`, the
+handle's own otherwise — so writers serialize across connections too. A held
+row whose slot cannot be proven (unparseable or inverted) fails the booking
+closed instead of reading as a free slot.
+
 ## Enablement per space
 
 Composition, not a flag: a space whose project lists

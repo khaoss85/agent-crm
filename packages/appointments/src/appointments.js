@@ -393,10 +393,89 @@ export function findOverlap(candidate, held) {
     if (!row || row.status === CANCELLED_STATE) continue;
     const startMs = Date.parse(row.startsAt);
     const endMs = Date.parse(row.endsAt);
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue;
+    // A held row whose slot cannot be proven is a corrupt witness, never a
+    // free slot: ignoring it would silently switch the no-double-booking
+    // invariant off, so the booking is refused instead of booked over it.
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      throw new AppError(
+        `The held appointment "${typeof row.id === 'string' && row.id !== '' ? row.id : 'unknown'}" carries a slot this package cannot prove `
+        + `(startsAt "${String(row.startsAt)}", endsAt "${String(row.endsAt)}"): a booking overlapping an unprovable slot is refused, never booked over it.`,
+        {
+          code: 'APPOINTMENTS_STORAGE_INVALID',
+          status: 500,
+          details: { rowId: typeof row.id === 'string' ? row.id : null, status: row.status ?? null },
+        },
+      );
+    }
     if (startMs < candidate.endMs && candidate.startMs < endMs) return row;
   }
   return null;
+}
+
+/**
+ * **One member, one writer at a time — in this process.**
+ *
+ * The overlap check is a read-then-write: two bookings for the same member
+ * interleaved on one process both read an empty slot and both commit. The
+ * chain below serializes them per team member — a process-local advisory
+ * lock, one FIFO chain per member identity. Acquisition attaches
+ * synchronously (no `await` before the chain is extended), so two callers
+ * racing in the same tick still order; the waiter re-reads after the winner
+ * commits and gets the 409 the invariant promises. Different members never
+ * contend. Entries are removed when their chain drains, so the map holds
+ * only members with a booking in flight.
+ *
+ * This closes the same-process window. Across connections the outer
+ * transaction below (`BEGIN IMMEDIATE`) serializes writers on real storage;
+ * two writers on two connections without a serializing lock (e.g. Postgres
+ * `READ COMMITTED` across processes) can still interleave — that residual is
+ * named at the call site, not hidden.
+ */
+const memberBookingChains = new Map();
+
+/** @param {string} teamMemberId @param {() => Promise<any>} critical */
+async function withMemberBooking(teamMemberId, critical) {
+  const previous = memberBookingChains.get(teamMemberId) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise((resolve) => { release = resolve; });
+  // Tails never reject (the second handler joins even after a refusal), so a
+  // refused booking never wedges the member's chain — but the join is kept
+  // explicit rather than assumed.
+  const tail = previous.then(() => current, () => current);
+  memberBookingChains.set(teamMemberId, tail);
+  // Synchronous until here: two callers racing in the same tick still order.
+  await previous;
+  try {
+    return await critical();
+  } finally {
+    // Remove only our own tail: a waiter queued behind us owns the slot now.
+    if (memberBookingChains.get(teamMemberId) === tail) memberBookingChains.delete(teamMemberId);
+    release();
+  }
+}
+
+/**
+ * The outer transaction the overlap re-read and the insert commit in, when
+ * the service exposes one and the caller is not already inside it.
+ *
+ * A booking with `remindAt` always runs inside the caller's transaction (the
+ * pair promise, proven above). A booking without one is a single row today,
+ * so its re-read and its insert are two separate commits — the window the
+ * chain above cannot close across connections. When the service carries a
+ * real database handle and no transaction is open, the critical section runs
+ * inside that handle's own `transactionAsync` instead: on SQLite that is
+ * `BEGIN IMMEDIATE`, so a second connection's `BEGIN` waits for the winner's
+ * commit (or fails with a retryable busy conflict) and then re-reads the
+ * winner — 409, never a silent double booking. Inside a caller transaction,
+ * or without a storage handle, the section runs as it does today.
+ *
+ * @param {any} appointments the resolved appointment module service
+ */
+function bookingTransaction(appointments) {
+  const transactionAsync = appointments?.database?.transactionAsync;
+  if (typeof transactionAsync !== 'function') return null;
+  if (proveCallerTransaction([appointments]) !== TRANSACTION_PROOF.NO_TRANSACTION) return null;
+  return (/** @type {() => Promise<any>} */ critical) => transactionAsync.call(appointments.database, critical);
 }
 
 /**
@@ -542,65 +621,78 @@ export async function bookAppointment(context, request) {
     sourceAction: source.action,
   };
 
-  const existing = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0];
-  if (existing) {
-    // A stable shape on every path: the replay answers with the same keys the
-    // fresh booking does. With a reminder named, the reminder is re-issued
-    // through work — which replays the identical reminder rather than
-    // duplicating it, and heals a booking whose reminder was never created —
-    // or an explicit null when no reminder handle is composed.
-    return {
-      appointment: replayOrConflict(existing, submitted),
-      reminder: await replayReminder(context, { input, source }),
-      replayed: true,
-    };
-  }
+  // The check-then-act below runs serialized per team member: the member
+  // chain above orders same-process bookings so the loser re-reads the
+  // winner's committed row (409, or a replay for the same key), and the
+  // outer transaction below serializes writers across connections on real
+  // storage. (Residual: two writers on two connections without a serializing
+  // lock — e.g. Postgres READ COMMITTED across processes — can still
+  // interleave; the loser of a source-key race still replays via the unique
+  // guard below.)
+  const runCritical = async () => {
+    const existing = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0];
+    if (existing) {
+      // A stable shape on every path: the replay answers with the same keys the
+      // fresh booking does. With a reminder named, the reminder is re-issued
+      // through work — which replays the identical reminder rather than
+      // duplicating it, and heals a booking whose reminder was never created —
+      // or an explicit null when no reminder handle is composed.
+      return {
+        appointment: replayOrConflict(existing, submitted),
+        reminder: await replayReminder(context, { input, source }),
+        replayed: true,
+      };
+    }
 
-  // (Residual: two concurrent bookings can both read an empty slot and both
-  // commit; a conditional write or slot lock in core would close the window.
-  // The loser of a source-key race still replays.)
-  const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
-  const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs }, held);
-  if (conflict) {
-    throw new AppError(
-      `The team member "${input.teamMemberId}" already holds an appointment overlapping this slot `
-        + `(${conflict.startsAt} to ${conflict.endsAt}, status "${conflict.status}"): one member holds one slot at a time. `
-        + 'Cancel the held booking to free the slot, or book another member.',
-      { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
-    );
-  }
+    const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
+    const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs }, held);
+    if (conflict) {
+      throw new AppError(
+        `The team member "${input.teamMemberId}" already holds an appointment overlapping this slot `
+          + `(${conflict.startsAt} to ${conflict.endsAt}, status "${conflict.status}"): one member holds one slot at a time. `
+          + 'Cancel the held booking to free the slot, or book another member.',
+        { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
+      );
+    }
 
-  let appointment;
-  try {
-    appointment = await appointments.createManaged({
-      sourceKey: input.sourceKey,
-      ...submitted,
-      subjectLabel: input.subject.label,
-      status: APPOINTMENT_INITIAL,
-      reminderSourceKey: reminderKey,
-      reminderDueAt: input.remindAt,
-      bookedAt: now,
-      decidedAt: null,
-      cancelReason: null,
-      actorType: who.type,
-      actorId: who.id,
-    }, { actor });
-  } catch (error) {
-    if (!isUniqueConflict(error)) throw error;
-    const raced = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0];
-    if (!raced) throw error;
-    return {
-      appointment: replayOrConflict(raced, submitted),
-      reminder: await replayReminder(context, { input, source }),
-      replayed: true,
-    };
-  }
+    let appointment;
+    try {
+      appointment = await appointments.createManaged({
+        sourceKey: input.sourceKey,
+        ...submitted,
+        subjectLabel: input.subject.label,
+        status: APPOINTMENT_INITIAL,
+        reminderSourceKey: reminderKey,
+        reminderDueAt: input.remindAt,
+        bookedAt: now,
+        decidedAt: null,
+        cancelReason: null,
+        actorType: who.type,
+        actorId: who.id,
+      }, { actor });
+    } catch (error) {
+      if (!isUniqueConflict(error)) throw error;
+      const raced = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0];
+      if (!raced) throw error;
+      return {
+        appointment: replayOrConflict(raced, submitted),
+        reminder: await replayReminder(context, { input, source }),
+        replayed: true,
+      };
+    }
 
-  let reminder = null;
-  if (input.remindAt !== null) {
-    reminder = await createReminder(context, { input, source });
-  }
-  return { appointment, reminder, replayed: false };
+    let reminder = null;
+    if (input.remindAt !== null) {
+      reminder = await createReminder(context, { input, source });
+    }
+    return { appointment, reminder, replayed: false };
+  };
+
+  const runInTransaction = bookingTransaction(appointments);
+  return withMemberBooking(
+    input.teamMemberId,
+    runInTransaction ? () => runInTransaction(runCritical) : runCritical,
+  );
 }
 
 /**

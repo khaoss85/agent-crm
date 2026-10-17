@@ -266,6 +266,87 @@ test('an overlapping booking for the same member is refused 409 naming the held 
   );
 });
 
+test('two interleaved bookings for the same member do not double-book: the loser gets 409', async () => {
+  const service = fakeAppointments();
+  // Force the interleaving the mutex exists to close: every storage step
+  // yields, so without serialization both reads would see an empty slot and
+  // both writes would commit.
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  const rawList = service.listWhere.bind(service);
+  service.listWhere = async (where) => { await tick(); const rows = await rawList(where); await tick(); return rows; };
+  const rawCreate = service.createManaged.bind(service);
+  service.createManaged = async (row, options) => { await tick(); return rawCreate(row, options); };
+  const context = contextFor(service);
+  const first = booking({ sourceKey: 'gym:race:1' });
+  const second = booking({
+    sourceKey: 'gym:race:2',
+    startsAt: '2026-10-20T17:30:00.000Z',
+    endsAt: '2026-10-20T18:30:00.000Z',
+  });
+  const [winner, loser] = await Promise.all([
+    bookAppointment(context, first).then((result) => ({ ok: result }), (error) => ({ error })),
+    bookAppointment(context, second).then((result) => ({ ok: result }), (error) => ({ error })),
+  ]);
+  // Acquisition attaches synchronously, so the first caller in the tick wins.
+  assert.ok(winner.ok && winner.ok.replayed === false, 'the winner books');
+  assert.ok(loser.error, 'the loser is refused, never booked over the winner');
+  assert.equal(loser.error.code, 'APPOINTMENTS_OVERLAP');
+  assert.equal(loser.error.status, 409);
+  assert.equal(service.rows.length, 1, 'exactly one row survives the race');
+});
+
+test('interleaved bookings for different members do not block each other', async () => {
+  const service = fakeAppointments();
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  const rawList = service.listWhere.bind(service);
+  service.listWhere = async (where) => { await tick(); return rawList(where); };
+  const context = contextFor(service);
+  // Same slot, two calendars: both book.
+  const [guido, marta] = await Promise.all([
+    bookAppointment(context, booking({ sourceKey: 'gym:parallel:1' })),
+    bookAppointment(context, booking({
+      sourceKey: 'gym:parallel:2',
+      teamMemberId: 'coach-marta',
+    })),
+  ]);
+  assert.equal(guido.replayed, false);
+  assert.equal(marta.replayed, false);
+  assert.equal(service.rows.length, 2);
+});
+
+test('a held row whose slot cannot be proven fails closed: refused, never booked over', async () => {
+  const corrupt = (slot) => fakeAppointments([{
+    sourceKey: 'gym:held:corrupt',
+    status: 'booked',
+    teamMemberId: 'coach-guido',
+    ...slot,
+  }]);
+  for (const slot of [
+    { startsAt: 'not-a-date', endsAt: '2026-10-20T18:00:00.000Z' },
+    { startsAt: '2026-10-20T18:00:00.000Z', endsAt: '2026-10-20T17:00:00.000Z' },
+  ]) {
+    const service = corrupt(slot);
+    await assert.rejects(
+      bookAppointment(contextFor(service), booking({ sourceKey: 'gym:booking:9' })),
+      (error) => {
+        assert.equal(error.code, 'APPOINTMENTS_STORAGE_INVALID');
+        assert.equal(error.status, 500);
+        assert.equal(error.details?.rowId, 'a-1', 'the refusal names the corrupt row');
+        return true;
+      },
+    );
+    assert.equal(service.rows.length, 1, 'the refused booking stores nothing');
+  }
+  // The pure function fails the same way, without touching storage.
+  assert.throws(
+    () => findOverlap(
+      { teamMemberId: 'coach-guido', startMs: Date.parse('2026-10-20T17:30:00.000Z'), endMs: Date.parse('2026-10-20T18:30:00.000Z') },
+      [{ id: 'a-9', status: 'booked', startsAt: 'garbage', endsAt: '2026-10-20T18:00:00.000Z' }],
+    ),
+    (error) => error.code === 'APPOINTMENTS_STORAGE_INVALID' && error.details?.rowId === 'a-9',
+  );
+});
+
 test('back-to-back slots share an endpoint and do not overlap; another member is another calendar', async () => {
   const service = fakeAppointments();
   const context = contextFor(service);
