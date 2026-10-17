@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process';
 import { spawnSync } from 'node:child_process';
+import { execGit } from '../helpers/isolated-git.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -227,7 +227,7 @@ export async function runPricingTableCases(record) {
  */
 export async function runArchitectureEvidence(record, rootDir = repoRoot) {
   const { readsProperty, importsFrom } = await import('./source-scan.mjs');
-  const sourceFiles = execFileSync('git', ['ls-files', '--', '*.js', '*.mjs'], { cwd: rootDir, encoding: 'utf8' })
+  const sourceFiles = execGit(['ls-files', '--', '*.js', '*.mjs'], { cwd: rootDir })
     .split('\n').filter(Boolean)
     .filter((file) => !file.startsWith('tests/'));
   const read = (file) => readFileSync(join(rootDir, file), 'utf8');

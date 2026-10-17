@@ -586,6 +586,16 @@ export const closingKey = (taskId, state) => `work-activity:task-${state}:${task
  * package updates or deletes one, and the module has no public write path at
  * all.
  *
+ * `seq` is the write order inside one task's timeline: one more than the
+ * highest `seq` already stored for the task, starting at 1. `occurredAt` and
+ * `createdAt` both have millisecond precision, so two writes in the same
+ * millisecond tie on both and the tie used to fall through to the random row
+ * id — which is why a note written after a close sometimes sorted before it.
+ * The sequence is read inside the caller's transaction, so it sees the writes
+ * this transaction already made. Two writers racing in the same millisecond on
+ * the same task can still store the same `seq`; that pair degrades to the old
+ * `createdAt`-then-`id` fallback, never to a wrong order claimed as right.
+ *
  * @param {{activities: any, actor?: unknown}} deps
  * @param {{sourceKey: string|null, kind: string, subject: {resource: string, id: string},
  *   taskId: string|null, body: string|null, occurredAt: string,
@@ -596,6 +606,11 @@ export async function recordActivity({ activities, actor }, entry) {
     throw new ValidationError(`kind must be one of ${ACTIVITY_KINDS.join(', ')}`, { field: 'kind' });
   }
   const who = normalizeWorkActor(actor);
+  const siblings = await activities.listWhere({ taskId: entry.taskId });
+  let seq = 1;
+  for (const sibling of siblings) {
+    if (Number.isInteger(sibling.seq) && sibling.seq >= seq) seq = sibling.seq + 1;
+  }
   return activities.createManaged({
     sourceKey: entry.sourceKey,
     kind: entry.kind,
@@ -608,19 +623,23 @@ export async function recordActivity({ activities, actor }, entry) {
     actorId: who.id,
     sourcePackage: entry.source.package,
     sourceAction: entry.source.action,
+    seq,
   }, { actor });
 }
 
 /**
  * Order a subject's timeline oldest-first, deterministically.
  *
- * `occurredAt` is the business instant and decides the order. Two entries
- * recorded at the *same* instant — which an injected, stepped clock makes
- * routine — have no business order at all, so the row's own creation stamp and
- * then its id decide, purely so that two readers of the same data see the same
- * list. That is determinism, not chronology, and it is published as
- * `TIMELINE_ORDER_TIES_ARE_ARBITRARY` rather than presented as a sequence
- * somebody could reason about.
+ * `occurredAt` is the business instant and decides the order. Two entries of
+ * the same task recorded at the *same* instant — routine whenever two writes
+ * land in one millisecond, since both stamps have millisecond precision — come
+ * out in write order through the `seq` the write path stored: the position of
+ * each entry in its task's append sequence. That is chronology, and it is
+ * published as `TIMELINE_ORDER_SAME_INSTANT_IS_WRITE_ORDER`. What stays
+ * arbitrary is narrower than before: same-instant entries of *different* tasks
+ * (whose sequences are not comparable) and rows written before `seq` existed
+ * still fall back to the creation stamp and then the id, purely so that two
+ * readers of the same data see the same list.
  *
  * **Lexical, never `localeCompare`.** The first cut compared with
  * `localeCompare` and no locale argument, which asks the host's ICU collation
@@ -643,8 +662,15 @@ export function sortTimeline(rows) {
     if (left < right) return -1;
     return left > right ? 1 : 0;
   };
+  /** Write order, but only inside one task's own append sequence. */
+  const byWriteOrder = (a, b) => {
+    if (!Number.isInteger(a.seq) || !Number.isInteger(b.seq)) return 0;
+    if (a.taskId !== b.taskId) return 0;
+    return a.seq - b.seq;
+  };
   return [...rows].sort((a, b) => (
     lexical(a.occurredAt, b.occurredAt)
+    || byWriteOrder(a, b)
     || lexical(a.createdAt, b.createdAt)
     || lexical(a.id, b.id)
   ));

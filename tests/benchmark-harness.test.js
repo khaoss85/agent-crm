@@ -19,6 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { isolatedGitEnv, spawnGit } from './helpers/isolated-git.js';
 import { prepareRun, parseArgs, frameworkRevision, RUN_RECORD_CONTRACT } from '../benchmarks/harness/prepare.js';
 import { appendEntry, readRecord, summarise, REASON_MAX } from '../benchmarks/harness/record.js';
 import { scoreRun } from '../benchmarks/harness/score.js';
@@ -31,7 +32,7 @@ function makeRepo() {
   const root = mkdtempSync(join(tmpdir(), 'accordo-bench-repo-'));
   const runs = mkdtempSync(join(tmpdir(), 'accordo-bench-runs-'));
   const git = (/** @type {string[]} */ args) => {
-    const result = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+    const result = spawnGit(['-C', root, ...args], { encoding: 'utf8' });
     assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
   };
   git(['init', '--quiet']);
@@ -254,7 +255,7 @@ test('the CLIs refuse from the command line with a non-zero exit, not a stack tr
   const missingIdentity = spawnSync(
     process.execPath,
     ['--no-warnings', join(process.cwd(), 'benchmarks/harness/prepare.js'), 'P02', runDir, '--repo', repo.root],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', env: isolatedGitEnv() },
   );
   assert.equal(missingIdentity.status, 2);
   assert.match(missingIdentity.stderr, /--agent and --model are required/);
@@ -265,7 +266,7 @@ test('the CLIs refuse from the command line with a non-zero exit, not a stack tr
     process.execPath,
     ['--no-warnings', join(process.cwd(), 'benchmarks/harness/prepare.js'), 'P02', runDir,
       '--agent', 'cli-agent', '--model', 'cli-model', '--repo', repo.root],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', env: isolatedGitEnv() },
   );
   assert.equal(prepared.status, 0, prepared.stderr);
   assert.match(prepared.stderr, /Paste brief\.md verbatim/);
@@ -273,7 +274,7 @@ test('the CLIs refuse from the command line with a non-zero exit, not a stack tr
   const recorded = spawnSync(
     process.execPath,
     ['--no-warnings', join(process.cwd(), 'benchmarks/harness/record.js'), runDir, 'intervention', 'edited a file by hand'],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', env: isolatedGitEnv() },
   );
   assert.equal(recorded.status, 0, recorded.stderr);
   assert.match(recorded.stderr, /G1 is now failed/, 'the cost is stated when it is paid, not at scoring time');
@@ -281,7 +282,7 @@ test('the CLIs refuse from the command line with a non-zero exit, not a stack tr
   const rejected = spawnSync(
     process.execPath,
     ['--no-warnings', join(process.cwd(), 'benchmarks/harness/record.js'), runDir, 'oops', 'anything'],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', env: isolatedGitEnv() },
   );
   assert.equal(rejected.status, 2);
   assert.match(rejected.stderr, /unknown kind "oops"/);
