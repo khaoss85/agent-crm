@@ -1,5 +1,6 @@
 {
   "manifestVersion": 1,
+  "revision": 2,
   "name": "work-activity",
   "table": "work_activities",
   "description": "An append-only, user-facing entry on a subject's work timeline. Its vocabulary is closed -- task_created, task_completed, task_cancelled, note -- and it is written only inside the transaction of the action that caused it. It is NOT a projection of the audit log: audit and trace stay the technical record of every write, and this is the curated semantic one. It stores no provider payload, no attachment, no email body and no chat message; the only free text is a bounded, control-character-free note body. taskId is a plain indexed string rather than a reference field because managed fields cannot be references, and because a timeline entry must survive being read beside a subject the database cannot join to.",
@@ -14,6 +15,7 @@
     { "name": "actorType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
     { "name": "actorId", "type": "string", "writable": "managed" },
     { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
-    { "name": "sourceAction", "type": "string", "writable": "managed" }
+    { "name": "sourceAction", "type": "string", "writable": "managed" },
+    { "name": "seq", "type": "integer", "writable": "managed" }
   ]
 }

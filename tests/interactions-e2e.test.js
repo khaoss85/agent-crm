@@ -1,0 +1,558 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { boot } from './helpers/contracts-project.js';
+import { assertPackageConforms } from './helpers/package-conformance.js';
+import { createInteractionsPackage } from '../packages/interactions/src/index.js';
+
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+
+const ACTOR = { type: 'user', id: 'e2e' };
+const SUBJECT = { resource: 'contact', id: 'c-presti', owner: 'host' };
+const SOURCE = { package: 'host', action: 'seed' };
+
+const INTERACTION_MANIFESTS = ['conversation.module.json', 'interaction-message.module.json', 'interaction-call.module.json'];
+const WORK_MANIFESTS = ['work-task.module.json', 'work-activity.module.json'];
+
+function cli(root, args) {
+  return spawnSync(process.execPath,
+    ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), ...args, '--root', root],
+    { encoding: 'utf8', cwd: root });
+}
+
+/**
+ * A throwaway project composing interactions, with the work package when the
+ * timeline has work-activity to read across. `withProbe` adds a consumer that
+ * declares both interaction capabilities, so they open exactly as a real
+ * consumer opens them — through `app.domains.capability`.
+ */
+function project(t, { withWork = true, withProbe = false } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-interactions-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
+    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
+  }
+  for (const manifest of INTERACTION_MANIFESTS) {
+    const applied = cli(root, ['module', 'create', join(root, 'packages/interactions/modules', manifest), '--apply']);
+    assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
+  }
+  if (withWork) {
+    for (const manifest of WORK_MANIFESTS) {
+      const applied = cli(root, ['module', 'create', join(root, 'packages/work/modules', manifest), '--apply']);
+      assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
+    }
+  }
+  writeFileSync(join(root, 'packages/actions/generated/index.js'), 'export const generatedActions = [];\n');
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
+    "import { createInteractionsPackage } from '../../interactions/src/index.js';",
+    ...(withWork ? ["import { createWorkPackage } from '../../work/src/index.js';"] : []),
+    ...(withProbe ? ["import { definePackage } from '../../core/index.js';"] : []),
+    ...(withProbe ? [
+      'const timelineProbe = definePackage({',
+      "  packageContract: 1, name: 'timeline-probe', version: 1, label: 'Timeline probe',",
+      "  description: 'A do-nothing consumer that declares the interaction capabilities so a test can open them through the registry.',",
+      '  resources: [], actions: [], policies: [], capabilities: [],',
+      '  requires: [',
+      "    { package: 'interactions', capability: 'interaction-log', version: 1 },",
+      "    { package: 'interactions', capability: 'interaction-timeline', version: 1 },",
+      '  ],',
+      '});',
+    ] : []),
+    'export const generatedDomains = [',
+    '  createInteractionsPackage(),',
+    ...(withWork ? ['  createWorkPackage(),'] : []),
+    ...(withProbe ? ['  timelineProbe,'] : []),
+    '];',
+    '',
+  ].join('\n'));
+  return root;
+}
+
+const interactionsFrom = (root) => import(pathToFileURL(join(root, 'packages/interactions/src/index.js')).href);
+const workFrom = (root) => import(pathToFileURL(join(root, 'packages/work/src/follow-up.js')).href);
+
+const run = (app, module, action, recordId, input, actor = ACTOR) =>
+  app.runAction({ module, action, recordId, input, actor });
+
+// ---------------------------------------------------------------------------
+// Conversations: open, replay, conflict, close
+// ---------------------------------------------------------------------------
+
+test('a conversation opens once per source key, replays identically, and closes once', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'conv.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation } = await interactionsFrom(root);
+
+  const request = {
+    sourceKey: 'wa:thread:3902000001',
+    subject: SUBJECT,
+    channel: 'whatsapp',
+    remoteHandle: '+3902000001',
+    source: SOURCE,
+  };
+  const first = await openConversation({ modules: app.modules, actor: ACTOR }, request);
+  assert.equal(first.replayed, false);
+  assert.equal(first.conversation.status, 'open');
+
+  const replay = await openConversation({ modules: app.modules, actor: ACTOR }, request);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.conversation.id, first.conversation.id);
+
+  // Same key, different channel: refused 409, never adopted.
+  await assert.rejects(
+    openConversation({ modules: app.modules, actor: ACTOR }, { ...request, channel: 'instagram' }),
+    (error) => error.code === 'INTERACTIONS_LOG_CONFLICT' && error.status === 409,
+  );
+
+  const closed = await run(app, 'conversation', 'close', first.conversation.id, {});
+  assert.equal(closed.result.conversation.status, 'closed');
+  await assert.rejects(
+    run(app, 'conversation', 'close', first.conversation.id, {}),
+    (error) => error.code === 'INVALID_STATE' && error.status === 409,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Messages: inbound is terminal, outbound walks the lifecycle through actions
+// ---------------------------------------------------------------------------
+
+test('messages walk the delivery lifecycle through record actions, never rewrites', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'msg.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, readConversationThread } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:life', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+
+  const inbound = await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:in:1', conversationId: conversation.id, direction: 'inbound',
+    channel: 'whatsapp', body: 'Avete posto sabato?', remoteHandle: '+3902000001',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:01.000Z', source: SOURCE,
+  });
+  assert.equal(inbound.message.status, 'received');
+  // A received message advances nowhere, through the action runtime too.
+  await assert.rejects(
+    run(app, 'interaction-message', 'advance', inbound.message.id, { to: 'delivered' }),
+    (error) => error.code === 'INVALID_STATE' && error.status === 409,
+  );
+
+  const outbound = await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:out:1', conversationId: conversation.id, direction: 'outbound',
+    channel: 'whatsapp', body: 'Si, alle 18.', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:02.000Z', source: SOURCE,
+  });
+  assert.equal(outbound.message.status, 'sent');
+
+  const delivered = await run(app, 'interaction-message', 'advance', outbound.message.id, { to: 'delivered' });
+  assert.equal(delivered.result.message.status, 'delivered');
+  const read = await run(app, 'interaction-message', 'advance', outbound.message.id, { to: 'read' });
+  assert.equal(read.result.message.status, 'read');
+  await assert.rejects(
+    run(app, 'interaction-message', 'advance', outbound.message.id, { to: 'failed', errorCode: 'X' }),
+    (error) => error.code === 'INVALID_STATE' && error.status === 409,
+  );
+
+  // The failed path carries its reason code on the row.
+  const doomed = await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:out:2', conversationId: conversation.id, direction: 'outbound',
+    channel: 'whatsapp', body: 'Ci vediamo!', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:03.000Z', source: SOURCE,
+  });
+  await assert.rejects(
+    run(app, 'interaction-message', 'advance', doomed.message.id, { to: 'failed' }),
+    (error) => /errorCode is required/.test(error.message),
+  );
+  const failed = await run(app, 'interaction-message', 'advance', doomed.message.id, { to: 'failed', errorCode: 'PROVIDER_500' });
+  assert.equal(failed.result.message.status, 'failed');
+  assert.equal(failed.result.message.errorCode, 'PROVIDER_500');
+
+  // The thread reads the conversation with its messages oldest-first.
+  const thread = await readConversationThread(
+    { modules: app.modules, moduleNames: {} }, conversation.id,
+  );
+  assert.equal(thread.conversation.id, conversation.id);
+  assert.deepEqual(thread.entries.map((entry) => entry.status), ['received', 'read', 'failed']);
+  assert.equal(await readConversationThread({ modules: app.modules, moduleNames: {} }, 'no-such-id'), null);
+});
+
+// ---------------------------------------------------------------------------
+// Replay identity: the whole subject envelope, including who owns it
+// ---------------------------------------------------------------------------
+
+test('replay identity carries the whole subject envelope: a moved owner is refused', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'owner.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, logCall } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:owner', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const base = {
+    sourceKey: 'wa:msg:own:1', conversationId: conversation.id, direction: 'outbound',
+    channel: 'whatsapp', body: 'Ti mando il preventivo in serata.', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:01.000Z', source: SOURCE,
+  };
+  const first = await logMessage({ modules: app.modules, actor: ACTOR }, base);
+  assert.equal(first.message.subjectOwner, 'host');
+  assert.equal(first.message.subjectOwnerPackage, null);
+
+  const replay = await logMessage({ modules: app.modules, actor: ACTOR }, base);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.message.id, first.message.id);
+
+  // Same key, same contact, moved from host-owned to package-owned: a
+  // different claim behind the same key — refused 409, never replayed.
+  await assert.rejects(
+    logMessage({ modules: app.modules, actor: ACTOR }, {
+      ...base,
+      subject: { resource: 'contact', id: 'c-presti', owner: 'package', ownerPackage: 'work' },
+    }),
+    (error) => error.code === 'INTERACTIONS_LOG_CONFLICT' && error.status === 409,
+  );
+
+  const completed = await logCall({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'tel:call:own:1', direction: 'outbound', channel: 'phone', outcome: 'completed',
+    durationSec: 60, teamAuthorId: 'guido', subject: SUBJECT,
+    occurredAt: '2026-09-15T10:00:02.000Z', source: SOURCE,
+  });
+  assert.equal(completed.call.subjectOwner, 'host');
+  await assert.rejects(
+    logCall({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'tel:call:own:1', direction: 'outbound', channel: 'phone', outcome: 'completed',
+      durationSec: 60, teamAuthorId: 'guido',
+      subject: { resource: 'contact', id: 'c-presti', owner: 'package', ownerPackage: 'work' },
+      occurredAt: '2026-09-15T10:00:02.000Z', source: SOURCE,
+    }),
+    (error) => error.code === 'INTERACTIONS_LOG_CONFLICT' && error.status === 409,
+  );
+});
+
+test('a concurrent move beats a stale advance: the loser names the winner', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'stale.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage } = await interactionsFrom(root);
+  const { buildAdvanceMessageAction } = await import(
+    pathToFileURL(join(root, 'packages/interactions/src/interactions.js')).href
+  );
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:stale', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const { message } = await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:stale:1', conversationId: conversation.id, direction: 'outbound',
+    channel: 'whatsapp', body: 'Ci vediamo domani.', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:01.000Z', source: SOURCE,
+  });
+  const stale = { ...message };
+  assert.equal(stale.status, 'sent');
+
+  // The concurrent branch commits first, through the action runtime.
+  await run(app, 'interaction-message', 'advance', message.id, { to: 'delivered' });
+  await run(app, 'interaction-message', 'advance', message.id, { to: 'read' });
+
+  // The stale branch re-reads before writing: without the re-read, sent ->
+  // delivered would still be a legal move on the stale record and would
+  // silently drag a read message back to delivered.
+  const advance = buildAdvanceMessageAction();
+  await assert.rejects(
+    advance.execute({ record: stale, input: { to: 'delivered' }, actor: ACTOR, modules: app.modules }),
+    (error) => error.code === 'INTERACTIONS_INVALID_STATE'
+      && error.status === 409
+      && /moved while this action ran/.test(error.message),
+  );
+  const messages = app.modules.get('interaction-message').service;
+  assert.equal((await messages.get(message.id)).status, 'read');
+});
+
+// ---------------------------------------------------------------------------
+// Calls: outcome and duration logged once, with the team author on outbound
+// ---------------------------------------------------------------------------
+
+test('calls log outcome and duration once, and never transition', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'call.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { logCall } = await interactionsFrom(root);
+
+  const completed = await logCall({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'tel:call:187', direction: 'outbound', channel: 'phone', outcome: 'completed',
+    durationSec: 187, teamAuthorId: 'guido', remoteHandle: '+3902000001',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:05:00.000Z', source: SOURCE,
+  });
+  assert.equal(completed.call.durationSec, 187);
+  const replay = await logCall({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'tel:call:187', direction: 'outbound', channel: 'phone', outcome: 'completed',
+    durationSec: 187, teamAuthorId: 'guido', remoteHandle: '+3902000001',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:05:00.000Z', source: SOURCE,
+  });
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.call.id, completed.call.id);
+
+  const missed = await logCall({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'tel:call:missed', direction: 'inbound', channel: 'phone', outcome: 'missed',
+    durationSec: 0, remoteHandle: '+3902000001',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:06:00.000Z', source: SOURCE,
+  });
+  assert.equal(missed.call.durationSec, 0);
+  // No transition exists on any call: the record has no status to move.
+  const schema = await context.client.schema();
+  const callModule = schema.generatedModules.find((m) => m.name === 'interaction-call');
+  assert.deepEqual(callModule.capabilities, ['get', 'list']);
+});
+
+// ---------------------------------------------------------------------------
+// Timeline: messages and calls with work-activity, oldest first
+// ---------------------------------------------------------------------------
+
+test('the customer history merges messages, calls and work-activity in time order', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'timeline.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, logCall, readTimeline } = await interactionsFrom(root);
+  const { createFollowUp } = await workFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:history', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:h:1', conversationId: conversation.id, direction: 'inbound',
+    channel: 'whatsapp', body: 'Quanto costa il pacchetto da 10 ingressi?',
+    remoteHandle: '+3902000001', subject: SUBJECT, occurredAt: '2026-09-15T10:00:01.000Z', source: SOURCE,
+  });
+  await logCall({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'tel:call:h:1', conversationId: conversation.id, direction: 'outbound',
+    channel: 'phone', outcome: 'completed', durationSec: 187, teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:02.000Z', source: SOURCE,
+  });
+  // The work entry arrives through work's own front door, inside a transaction,
+  // exactly as a consuming domain writes it — never as a direct row insert.
+  await app.database.transactionAsync(() => createFollowUp(
+    { modules: app.modules, actor: ACTOR, now: () => '2026-09-15T10:00:03.000Z' },
+    {
+      sourceKey: 'quote-sent:c-presti',
+      title: 'Send the 10-entry pack quote',
+      subject: SUBJECT,
+      source: { package: 'host', action: 'seed' },
+    },
+  ));
+  await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:h:2', conversationId: conversation.id, direction: 'outbound',
+    channel: 'whatsapp', body: 'Ti mando il preventivo in serata.', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:04.000Z', source: SOURCE,
+  });
+
+  const history = await readTimeline({ modules: app.modules, moduleNames: {} }, SUBJECT);
+  assert.deepEqual(history.entries.map((entry) => entry.entry), ['message', 'call', 'work-note', 'message']);
+  assert.deepEqual(history.sources.interactions, { available: true, messageCount: 2, callCount: 1 });
+  assert.deepEqual(history.sources.workActivity, { available: true, count: 1 });
+  const [first, second] = history.entries;
+  assert.equal(first.body, 'Quanto costa il pacchetto da 10 ingressi?');
+  assert.equal(second.durationSec, 187);
+  assert.ok(Object.isFrozen(history) && Object.isFrozen(history.entries));
+});
+
+test('without the work package the timeline says so, instead of reporting no work', async (t) => {
+  const root = project(t, { withWork: false });
+  const context = await boot(root, join(root, 'data', 'no-work.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { logMessage, readTimeline } = await interactionsFrom(root);
+
+  await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'ig:msg:1', conversationId: 'conv-ig', direction: 'inbound',
+    channel: 'instagram', body: 'Fate lezioni la domenica?',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:01.000Z', source: SOURCE,
+  });
+  const history = await readTimeline({ modules: app.modules, moduleNames: {} }, SUBJECT);
+  assert.equal(history.entries.length, 1);
+  assert.equal(history.sources.workActivity.available, false);
+  assert.match(history.sources.workActivity.reason, /not composed/);
+});
+
+// ---------------------------------------------------------------------------
+// Capabilities: declared consumers log and read through the registry
+// ---------------------------------------------------------------------------
+
+test('the log and timeline capabilities open for a declared consumer, with provenance bound', async (t) => {
+  const root = project(t, { withProbe: true });
+  const context = await boot(root, join(root, 'data', 'caps.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+
+  const log = app.domains.capability({
+    consumer: 'timeline-probe', capability: 'interaction-log', version: 1,
+    context: { modules: app.modules, actor: ACTOR },
+  });
+  assert.deepEqual(Object.keys(log).sort(), ['capabilityContract', 'logCall', 'logMessage', 'openConversation']);
+  const opened = await log.openConversation({
+    sourceKey: 'wa:thread:probe', subject: SUBJECT, channel: 'whatsapp',
+    source: { package: 'timeline-probe', action: 'probe' },
+  });
+  assert.equal(opened.conversation.sourcePackage, 'timeline-probe');
+
+  // A declared consumer cannot stamp another package's name on its rows.
+  await assert.rejects(
+    log.openConversation({
+      sourceKey: 'wa:thread:spoof', subject: SUBJECT, channel: 'whatsapp',
+      source: { package: 'interactions', action: 'probe' },
+    }),
+    (error) => error.code === 'INTERACTIONS_SOURCE_PACKAGE_MISMATCH' && error.status === 403,
+  );
+  // An undeclared consumer never opens either capability.
+  assert.throws(
+    () => app.domains.capability({
+      consumer: 'nobody', capability: 'interaction-timeline', version: 1,
+      context: { modules: app.modules },
+    }),
+  );
+
+  const timeline = app.domains.capability({
+    consumer: 'timeline-probe', capability: 'interaction-timeline', version: 1,
+    context: { modules: app.modules },
+  });
+  const history = await timeline.timeline(SUBJECT);
+  assert.equal(history.entries.length, 0);
+  assert.equal(history.sources.interactions.messageCount, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Evidence boundaries: no public create or update, on any route
+// ---------------------------------------------------------------------------
+
+test('interaction records are evidence: no public write path, and the schema publishes the contract', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'bounds.sqlite'));
+  t.after(() => context.close());
+  const { app, client } = context;
+  const { openConversation } = await interactionsFrom(root);
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:bounds', subject: SUBJECT, channel: 'email', source: SOURCE,
+  });
+
+  const schema = await client.schema();
+  for (const name of ['conversation', 'interaction-message', 'interaction-call']) {
+    const meta = schema.generatedModules.find((m) => m.name === name);
+    assert.deepEqual(meta.capabilities, ['get', 'list'], name);
+    await assert.rejects(
+      () => client.request(`/api/modules/${name}/records`, { method: 'POST', body: JSON.stringify({}) }),
+      (error) => error.status === 404 || error.status === 405,
+    );
+    await assert.rejects(
+      () => client.request(`/api/modules/${name}/records/${conversation.id}`, { method: 'PATCH', body: JSON.stringify({}) }),
+      (error) => error.status === 404 || error.status === 405,
+    );
+  }
+  assert.equal(schema.domains.interactions.interactionsContract, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Exact reads past the display bound, and audit exactness of a transition
+// ---------------------------------------------------------------------------
+
+test('the timeline is complete past 500 rows, and an advance writes exactly one audit entry', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'bound.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, readTimeline } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:crowded', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  for (let n = 0; n < 600; n += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await logMessage({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: `wa:msg:crowd:${n}`, conversationId: conversation.id, direction: 'inbound',
+      channel: 'whatsapp', body: `message ${n}`, remoteHandle: '+3902000001',
+      subject: SUBJECT, occurredAt: '2026-09-15T10:00:01.000Z', source: SOURCE,
+    });
+  }
+  const history = await readTimeline({ modules: app.modules, moduleNames: {} }, SUBJECT);
+  assert.equal(history.entries.length, 600);
+  assert.deepEqual(history.sources.interactions, { available: true, messageCount: 600, callCount: 0 });
+
+  const outbound = await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:crowd:out', conversationId: conversation.id, direction: 'outbound',
+    channel: 'whatsapp', body: 'Riassumiamo.', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:02.000Z', source: SOURCE,
+  });
+  await run(app, 'interaction-message', 'advance', outbound.message.id, { to: 'delivered' });
+  // Every row is present, and the advanced message carries exactly its create
+  // audit plus its transition audit — counts, not presence.
+  assert.equal(
+    app.modules.get('interaction-message').service.countWhere({ subjectResource: 'contact', subjectId: 'c-presti' }),
+    601,
+  );
+  const messageAudits = app.audit.list({ entityType: 'interaction-message', entityId: outbound.message.id });
+  assert.equal(messageAudits.length, 2);
+  assert.deepEqual(messageAudits.map((entry) => entry.action).sort(), ['interaction-message.created', 'interaction-message.updated']);
+});
+
+// ---------------------------------------------------------------------------
+// Absence: without the package nothing is registered and rows are untouched
+// ---------------------------------------------------------------------------
+
+test('without the interactions package the application boots and the records stay quiet', async (t) => {
+  const root = project(t, { withWork: true });
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
+    "import { createWorkPackage } from '../../work/src/index.js';",
+    'export const generatedDomains = [',
+    '  createWorkPackage(),',
+    '];',
+    '',
+  ].join('\n'));
+  const context = await boot(root, join(root, 'data', 'absent.sqlite'));
+  t.after(() => context.close());
+  const { app, client } = context;
+
+  const schema = await client.schema();
+  assert.equal(schema.domains.interactions, undefined);
+  // The applied records survive the detach — like work's rows — but the
+  // package's actions go with it: removing the import removes the behavior
+  // and leaves the data alone.
+  const meta = schema.generatedModules.find((m) => m.name === 'interaction-message');
+  assert.deepEqual(meta.actions, []);
+  await assert.rejects(
+    run(app, 'interaction-message', 'advance', 'no-such-id', { to: 'delivered' }),
+    (error) => error.status === 404,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Conformance: the package answers the same questions every package answers
+// ---------------------------------------------------------------------------
+
+test('interactions conforms to the domain-package contract it ships', () => {
+  assertPackageConforms({
+    definition: createInteractionsPackage(),
+    dir: join(repoRoot, 'packages/interactions'),
+    expected: {
+      name: 'interactions',
+      version: 1,
+      resources: ['conversation', 'interaction-message', 'interaction-call'],
+      actions: ['conversation.close', 'interaction-message.advance'],
+      requires: [],
+      provides: ['interaction-log@1', 'interaction-timeline@1'],
+    },
+  });
+  const metadata = createInteractionsPackage().metadata();
+  for (const claim of ['message sending or delivery', 'scheduling', 'call recording or consent']) {
+    assert.ok(metadata.notModeled.includes(claim), claim);
+  }
+});

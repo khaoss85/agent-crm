@@ -157,3 +157,40 @@ answer these in the PR. Canonical rule and full rationale:
 - Flag domain-specific business behavior added to `packages/core` without the ADR-018 justification.
 - Flag a JTBD row promoted without linked evidence, or a document claiming a capability the tests do not prove.
 - Flag a new agent-facing command, tool or contract that does not clear the DX Simplicity Gate above.
+
+## Review guidelines
+
+These rules set the priority of every PR review finding, for Codex and for any
+other reviewer. The merge gate blocks on P0-P2 and does not block on P3. Rule:
+a fix must never make today's product worse, and a gap that the product
+already has today does not stop a fix that improves something else.
+
+- **Blocking (P0-P2)**, only for:
+  - a correctness bug in the changed code;
+  - a security, privacy or data-loss risk;
+  - a **regression**: something that works on `main` today and would stop
+    working, or get worse, after this PR;
+  - a broken contract (API, schema, ledger or receipt shape, tool arguments);
+  - a cure that does not fix the defect it claims to fix;
+  - a measurement that cannot fail, for example one that re-runs the fixed code
+    instead of reading what production produced.
+- **Not blocking, report as P3 and start the title with `follow-up:`**:
+  - a gap that already exists on `main` and that this PR does not make worse;
+  - coverage of more phrasings or more cases than the PR's stated scope;
+  - refinements of a measurement that already can fail;
+  - naming, normalization, style and documentation.
+- **Before calling something a regression, compare it with `main`.** If `main`
+  behaves the same way, it is a `follow-up:` P3, not a regression.
+- **Each finding says in its first line** whether it is a `regression`, a
+  `bug in the new code` or a `pre-existing gap`.
+- **Owner facts.** When the project declares an owner facts file, a fact the
+  PR cites from it with its source (date, who said it) is the owner's word:
+  questioning it is not a P0-P2. A fact the PR states without a source is
+  reviewed like any other claim.
+- **Change classes.** When the executor declares a `changeClass` the project
+  defines (for example `knowledge`: facts in the text an assistant reads),
+  review only inside the diff, against the owner facts; do not ask for live
+  tests or new measures the class does not need; after the class's review
+  cap, P2 and P3 become `follow-up:` items, P0-P1 always block. A diff that
+  breaks the class's guard (files, size, money/quota/access surfaces) is
+  reviewed on the full path, and the review says so.

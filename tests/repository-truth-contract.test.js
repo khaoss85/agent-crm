@@ -7,6 +7,7 @@ import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describeResidual, disposable, removeForProbe, scratchClass, scratchRoot } from './helpers/scratch.js';
+import { isolatedGitEnv, spawnGit } from './helpers/isolated-git.js';
 import { runConcurrencyProbe } from './helpers/scratch-concurrency-probe.js';
 
 import {
@@ -97,7 +98,7 @@ function problemNaming(problems, needle) {
  * A gate whose own suite is red half the time is a gate people re-run instead
  * of read, which is the habit this whole contract exists to break.
  */
-const git = (cwd, args) => spawnSync('git', ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...args], { cwd, encoding: 'utf8' });
+const git = (cwd, args) => spawnGit(['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...args], { cwd, encoding: 'utf8' });
 
 /**
  * A temporary directory that removes itself, warns rather than failing when it
@@ -235,8 +236,7 @@ test('a generated authority clock that cannot advance fails explicitly without w
  * the only honest way to do that. Skipping would leave the strongest test in the
  * file silently absent from the job that runs on every push.
  */
-const fullHistory = spawnSync('git', ['rev-parse', '--is-shallow-repository'], { cwd: repoRoot, encoding: 'utf8' })
-  .stdout?.trim() === 'false';
+const fullHistory = String(spawnGit(['rev-parse', '--is-shallow-repository'], { cwd: repoRoot, encoding: 'utf8' }).stdout ?? '').trim() === 'false';
 
 test('the committed truth document is a fresh generation of its own authorities', async () => {
   const report = await checkRepository({ rootDir: repoRoot });
@@ -871,7 +871,7 @@ test('the generator refuses to write when it could not derive the document', asy
   const fixture = frameworkFixture(t);
   fixture.seal();
   rmSync(join(fixture.root, 'packages/core/src/tenant-storage.js'));
-  const run = spawnSync(process.execPath, [join(repoRoot, 'scripts/repo-truth.js')], { cwd: fixture.root, encoding: 'utf8' });
+  const run = spawnSync(process.execPath, [join(repoRoot, 'scripts/repo-truth.js')], { cwd: fixture.root, encoding: 'utf8', env: isolatedGitEnv() });
   assert.equal(run.status, 1);
   assert.match(run.stderr, /TRUTH_AUTHORITY_UNAVAILABLE/);
   assert.match(run.stderr, /refused to write a document it could not derive/);
@@ -1306,6 +1306,7 @@ test('--check exits non-zero and --json reports the problems machine-readably', 
   const run = spawnSync(process.execPath, [join(repoRoot, 'scripts/repo-truth.js'), '--check', '--json'], {
     cwd: fixture.root,
     encoding: 'utf8',
+    env: isolatedGitEnv(),
   });
   assert.equal(run.status, 1);
   const report = JSON.parse(run.stdout);
@@ -1316,7 +1317,7 @@ test('--check exits non-zero and --json reports the problems machine-readably', 
 });
 
 test('an unknown flag is refused rather than silently ignored', () => {
-  const run = spawnSync(process.execPath, [join(repoRoot, 'scripts/repo-truth.js'), '--apply'], { cwd: repoRoot, encoding: 'utf8' });
+  const run = spawnSync(process.execPath, [join(repoRoot, 'scripts/repo-truth.js'), '--apply'], { cwd: repoRoot, encoding: 'utf8', env: isolatedGitEnv() });
   assert.equal(run.status, 2);
   assert.match(run.stderr, /unknown flag --apply/);
 });

@@ -2565,7 +2565,7 @@
     "packages/intelligence/src/index.js": "d00cec84a9d9b0bad9cb437f814c91e47423f31d9ac70efffd080d0ed4d41736",
     "packages/intelligence/src/registry.js": "da1f64931cb551917314bd05eede6f3519ac9ae571a58252399054b67b450463",
     "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325",
-    "packages/work/modules/work-activity.module.json": "e24fc9a08da7d176fb09d512f188b161e0d8482981c9ebd32fbc58b7e549bfb2",
+    "packages/work/modules/work-activity.module.json": "eb0f70649d6663e643982be254c5b2bffcbfa7cdae292a9151c7b0ff2fb1f76d",
     "packages/work/modules/work-task.module.json": "cef3aa5be1d6654be6c49eba594b30059dfb6702eea9c861b7cbcd0d9714c2be"
   }
 }

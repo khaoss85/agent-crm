@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { execFileSync } from 'node:child_process';
+import { execGit } from './helpers/isolated-git.js';
 import {
   DECLARED_PLAN, DENY, FIXTURES, LEAK_MARKERS, RUBRIC_MARKERS, SOFT_MARKERS, fingerprintTree, fixtureById,
   materializeFixture, trackedFiles, verifyIsolation,
@@ -50,13 +50,13 @@ const GUARDED = { name: 'guarded', ...PERMISSION_PROFILES.guarded };
 const FROZEN = (() => {
   const parent = mkdtempSync(join(tmpdir(), 'ts-agg-head-'));
   const root = join(parent, 'checkout');
-  execFileSync('git', ['-C', REPO_ROOT, 'worktree', 'add', '--detach', '--quiet', root, 'HEAD'], { encoding: 'utf8' });
+  execGit(['-C', REPO_ROOT, 'worktree', 'add', '--detach', '--quiet', root, 'HEAD'], { encoding: 'utf8' });
   try {
     // `skipFixtures` because these tests never materialise one, and seven fixtures is a
     // minute of work for a value they do not read.
     return computeFreeze(root, { skipFixtures: true });
   } finally {
-    try { execFileSync('git', ['-C', REPO_ROOT, 'worktree', 'remove', '--force', root], { encoding: 'utf8' }); } catch { /* fallback below */ }
+    try { execGit(['-C', REPO_ROOT, 'worktree', 'remove', '--force', root], { encoding: 'utf8' }); } catch { /* fallback below */ }
     rmSync(parent, { recursive: true, force: true });
   }
 })();
@@ -1008,7 +1008,7 @@ test('a fixture is built from the checkout, not from whatever the last command l
   // which commands somebody happened to run is not a deterministic function of anything.
   const repo = scratch();
   try {
-    const run = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+    const run = (...args) => execGit(['-C', repo, ...args], { encoding: 'utf8' });
     run('init', '-q');
     run('config', 'user.email', 'benchmark@example.invalid');
     run('config', 'user.name', 'benchmark');
@@ -1046,7 +1046,7 @@ test('a fixture is built from the checkout, not from whatever the last command l
 function cleanCheckout() {
   const parent = mkdtempSync(join(tmpdir(), 'ts-head-'));
   const root = join(parent, 'checkout');
-  execFileSync('git', ['-C', REPO_ROOT, 'worktree', 'add', '--detach', '--quiet', root, 'HEAD'], { encoding: 'utf8' });
+  execGit(['-C', REPO_ROOT, 'worktree', 'add', '--detach', '--quiet', root, 'HEAD'], { encoding: 'utf8' });
   return {
     root,
     dispose: () => {
@@ -1055,7 +1055,7 @@ function cleanCheckout() {
       // call sites never disposed at all. Every one of them does now.
       let removed = true;
       try {
-        execFileSync('git', ['-C', REPO_ROOT, 'worktree', 'remove', '--force', root], { encoding: 'utf8' });
+        execGit(['-C', REPO_ROOT, 'worktree', 'remove', '--force', root], { encoding: 'utf8' });
       } catch { removed = false; }
       rmSync(parent, { recursive: true, force: true });
       // Only when `remove` failed, because the registration then outlives its directory.
@@ -1063,7 +1063,7 @@ function cleanCheckout() {
       // registering a worktree is a race nobody needs on the common path.
       if (!removed) {
         try {
-          execFileSync('git', ['-C', REPO_ROOT, 'worktree', 'prune'], { encoding: 'utf8' });
+          execGit(['-C', REPO_ROOT, 'worktree', 'prune'], { encoding: 'utf8' });
         } catch { /* nothing further to do */ }
       }
     },
@@ -1345,7 +1345,7 @@ test('a redaction that stops matching is a refusal, not a silent no-op', HEAVY_C
     // The identity is supplied here rather than inherited: a runner has no global git
     // config, and a test that depends on the developer's is the same mistake as a test
     // that depends on the developer's tree being clean.
-    execFileSync('git', [
+    execGit([
       '-C', head.root,
       '-c', 'user.email=benchmark@example.invalid',
       '-c', 'user.name=tool-selection benchmark test',
@@ -1719,9 +1719,11 @@ test('a committed edit to a file a fixture carries refuses the cell, and the ref
     // six hundred files a fixture carries. Nothing in the instrument, the corpora or the
     // prompt set moves with it, which is exactly why the fixture fingerprints exist.
     writeFileSync(join(head.root, 'README.md'), `${readFileSync(join(head.root, 'README.md'), 'utf8')}\n<!-- moved -->\n`);
-    execFileSync('git', ['-C', head.root, 'commit', '-qam', 'move a file a fixture carries'], {
+    // The author identity travels as `-c` flags rather than `GIT_AUTHOR_*`: the
+    // isolated git drops every `GIT_*` variable, so an env-carried identity
+    // would silently fall back to the developer's global git config.
+    execGit(['-C', head.root, '-c', 'user.name=test', '-c', 'user.email=test@example.invalid', 'commit', '-qam', 'move a file a fixture carries'], {
       encoding: 'utf8',
-      env: { ...process.env, GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid' },
     });
     // The commit moved HEAD too, so the freeze's own commit binding refuses first — which
     // is the earlier and stricter of the two refusals. Re-point the freeze at the new
@@ -1761,9 +1763,9 @@ test('a fixture that cannot be built is a receipt, not an exception', HEAVY_CELL
     // different refusal, and one that already produced a receipt. The freeze is re-pointed
     // at the new commit so the commit binding is not what refuses either.
     writeFileSync(join(head.root, DECLARED_PLAN), '{ not json at all');
-    execFileSync('git', ['-C', head.root, 'commit', '-qam', 'break the declared plan'], {
+    // Same `-c` identity as above: `GIT_AUTHOR_*` would not survive isolation.
+    execGit(['-C', head.root, '-c', 'user.name=test', '-c', 'user.email=test@example.invalid', 'commit', '-qam', 'break the declared plan'], {
       encoding: 'utf8',
-      env: { ...process.env, GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid' },
     });
     const moved = join(root, 'rebased.json');
     writeFileSync(moved, `${JSON.stringify({ ...JSON.parse(readFileSync(freezePath, 'utf8')), baseSha: headSha(head.root) }, null, 2)}\n`);

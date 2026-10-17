@@ -30,7 +30,8 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { inspectProvenance, findLooseTestCounts, PROVENANCE, gitIn, listSupersedingCommits } from '../scripts/measurement.js';
+import { inspectProvenance, findLooseTestCounts, PROVENANCE, listSupersedingCommits } from '../scripts/measurement.js';
+import { gitIn, spawnGit } from './helpers/isolated-git.js';
 
 const repo = process.cwd();
 
@@ -353,7 +354,7 @@ test('a shallow clone refuses to answer instead of reporting a real commit as mi
   const fixture = buildFixtureRepo({ cwd: origin });
 
   const shallow = join(root, 'shallow');
-  const cloned = spawnSync('git', ['clone', '--quiet', '--depth', '1', '--branch', 'main', `file://${origin}`, shallow], { encoding: 'utf8' });
+  const cloned = spawnGit(['clone', '--quiet', '--depth', '1', '--branch', 'main', `file://${origin}`, shallow]);
   assert.equal(cloned.status, 0, cloned.stderr);
   assert.equal(gitIn(shallow)(['rev-parse', '--is-shallow-repository']).stdout, 'true');
   assert.equal(
@@ -381,11 +382,11 @@ test('the same clone with full history restored accepts the measurement', (t) =>
   const fixture = buildFixtureRepo({ cwd: origin });
 
   const clone = join(root, 'clone');
-  assert.equal(spawnSync('git', ['clone', '--quiet', '--depth', '1', '--branch', 'main', `file://${origin}`, clone], { encoding: 'utf8' }).status, 0);
+  assert.equal(spawnGit(['clone', '--quiet', '--depth', '1', '--branch', 'main', `file://${origin}`, clone]).status, 0);
   assert.equal(inspectProvenance(fixture.record, { cwd: clone }).outcome, PROVENANCE.HISTORY_UNAVAILABLE);
 
   // `fetch --unshallow` is what `fetch-depth: 0` does for the workflow.
-  const deepened = spawnSync('git', ['fetch', '--unshallow', '--quiet'], { cwd: clone, encoding: 'utf8' });
+  const deepened = spawnGit(['fetch', '--unshallow', '--quiet'], { cwd: clone });
   assert.equal(deepened.status, 0, deepened.stderr);
 
   const report = inspectProvenance(fixture.record, { cwd: clone });

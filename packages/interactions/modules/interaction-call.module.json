@@ -1,0 +1,26 @@
+{
+  "manifestVersion": 1,
+  "name": "interaction-call",
+  "table": "interaction_calls",
+  "description": "One inbound or outbound phone call with a customer: the direction, the outcome and the duration in seconds. Every field is managed: a call exists only through the interactions package's log capability, and no client can create, forge or rewrite one. The outcome is recorded once, at log time, and never transitions: a call that happened with its outcome is immutable evidence, not a lifecycle. durationSec is evidence only and may be 0 for a missed call. The subject envelope is denormalized onto the row so the timeline reads one table per source instead of joining through the conversation.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "conversationId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "direction", "type": "enum", "values": ["inbound", "outbound"], "index": true, "writable": "managed" },
+    { "name": "channel", "type": "enum", "values": ["whatsapp", "instagram", "facebook", "tiktok", "website-form", "email", "phone"], "index": true, "writable": "managed" },
+    { "name": "outcome", "type": "enum", "values": ["completed", "missed", "no-answer", "failed"], "index": true, "writable": "managed" },
+    { "name": "durationSec", "type": "integer", "writable": "managed" },
+    { "name": "teamAuthorId", "type": "string", "writable": "managed" },
+    { "name": "remoteHandle", "type": "string", "writable": "managed" },
+    { "name": "errorCode", "type": "string", "writable": "managed" },
+    { "name": "subjectResource", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectOwner", "type": "enum", "values": ["host", "package"], "writable": "managed" },
+    { "name": "subjectOwnerPackage", "type": "string", "writable": "managed" },
+    { "name": "occurredAt", "type": "timestamp", "writable": "managed" },
+    { "name": "actorType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "actorId", "type": "string", "writable": "managed" },
+    { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
+    { "name": "sourceAction", "type": "string", "writable": "managed" }
+  ]
+}
