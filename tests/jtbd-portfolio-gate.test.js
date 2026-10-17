@@ -9,7 +9,7 @@
 
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { execFileSync } from 'node:child_process';
+import { spawnGit } from './helpers/isolated-git.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -609,7 +609,7 @@ test('the summary facts in docs/repository-truth.json are the generated ones', (
 });
 
 test('every JTBD artefact has an explicit public/private disposition', () => {
-  const tracked = execFileSync('git', ['ls-files', 'docs/jtbd'], { cwd: ROOT, encoding: 'utf8' }).trim().split('\n');
+  const tracked = String(spawnGit(['ls-files', 'docs/jtbd'], { cwd: ROOT }).stdout ?? '').trim().split('\n');
   for (const rel of tracked) assert.ok(world.classification.artefacts[rel], `${rel} is unclassified`);
 });
 

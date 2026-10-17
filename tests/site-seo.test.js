@@ -22,6 +22,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { STRATEGIC_PAGES, inspectStrategicSurfaces, markdownPath } from '../scripts/site-strategic-pages.js';
+import { isolatedGitEnv, spawnGit } from './helpers/isolated-git.js';
 import { checkoutSha } from '../scripts/site-provenance.js';
 
 const repo = process.cwd();
@@ -71,7 +72,7 @@ function build(options = {}) {
   const run = spawnSync(process.execPath, ['--no-warnings', builder], {
     cwd: root,
     encoding: 'utf8',
-    env: { ...process.env, NODE_ENV: 'test', ACCORDO_SITE_TEST_CHECKOUT_SHA: '1111111111111111111111111111111111111111' },
+    env: { ...isolatedGitEnv(), NODE_ENV: 'test', ACCORDO_SITE_TEST_CHECKOUT_SHA: '1111111111111111111111111111111111111111' },
   });
   assert.equal(run.status, 0, `site-build failed in the fixture root: ${run.stderr}`);
 
@@ -115,7 +116,7 @@ const canonicalOf = (html) => {
 test('deployment provenance trusts the checkout rather than inherited SHA variables', () => {
   assert.equal(
     checkoutSha({ cwd: repo, env: { ...process.env, SOURCE_SHA: 'wrong', VERCEL_GIT_COMMIT_SHA: 'also-wrong' } }),
-    spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim(),
+    String(spawnGit(['rev-parse', 'HEAD'], { cwd: repo }).stdout ?? '').trim(),
   );
 });
 
