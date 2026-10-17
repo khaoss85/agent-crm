@@ -12,6 +12,7 @@ import {
   recordModuleMigrations,
 } from '../packages/core/src/record-module-runtime.js';
 import { createAppointmentBookCapability } from '../packages/appointments/src/appointments.js';
+import { assertPackageConforms } from './helpers/package-conformance.js';
 import { createCalendarSyncOperations } from '../packages/calendar-sync/src/sync.js';
 import { createCalendarSyncPackage } from '../packages/calendar-sync/src/index.js';
 import { createFakeGoogleCalendar } from '../packages/calendar-sync/src/google-fake.js';
@@ -59,6 +60,14 @@ function setup(options = {}) {
   }
   let fakeNow = options.nowMs ?? T0;
   const provider = createFakeGoogleCalendar({ nowMs: () => fakeNow });
+  if (options.asyncProvider) {
+    // A real adapter does network I/O: prove the engine awaits every
+    // provider call by serving the same fake asynchronously.
+    for (const key of ['listEvents', 'insertEvent', 'patchEvent', 'cancelEvent', 'findByAccordoSourceKey']) {
+      const fn = provider[key].bind(provider);
+      provider[key] = async (...args) => fn(...args);
+    }
+  }
   const appointmentBook = createAppointmentBookCapability({});
   const mapping = {
     subjectForEvent: options.subjectForEvent ?? (() => ({ ...SUBJECT })),
@@ -115,7 +124,7 @@ test('a Google-side edit is visible locally after one pull', async (t) => {
   assert.equal(rows.filter((r) => r.status === 'cancelled').length, 1);
   const fresh = rows.find((r) => r.status === 'booked');
   assert.equal(fresh.startsAt, '2026-10-21T14:00:00.000Z');
-  assert.match(fresh.sourceKey, /^gcal:evt1:r1$/);
+  assert.match(fresh.sourceKey, /^gcal:presti-room-1:evt1:r1$/);
 });
 
 test('a local cancellation is visible on Google after one push', async (t) => {
@@ -242,7 +251,9 @@ test('an import overlapping a held slot is refused, never booked over', async (t
   assert.equal(entry.status, 'conflict');
   assert.match(entry.reason, /APPOINTMENTS_OVERLAP/);
   assert.equal(ctx.appointmentRows().length, 1);
-  assert.equal(ctx.linkRows().length, 0);
+  // Refused, not lost: an orphan pending link retries on every pull.
+  assert.equal(ctx.linkRows().length, 1);
+  assert.ok(ctx.linkRows()[0].pendingRemote);
 });
 
 test('a Google change on a terminal row is ignored: the past is evidence', async (t) => {
@@ -288,7 +299,24 @@ test('stored rows hold no secret material: only the channel token hash', async (
   assert.equal(state.channelTokenHash.length, 64);
 });
 
-test('the package factory refuses an unwired composition fail-closed', () => {
+test('the package conforms: identity, two owned records, one declared reach', () => {
+  const definition = createCalendarSyncPackage({});
+  assertPackageConforms({
+    definition,
+    dir: join(here, '..', 'packages', 'calendar-sync'),
+    expected: {
+      name: 'calendar-sync',
+      version: 1,
+      resources: ['calendar-link', 'calendar-sync-state'],
+      requires: ['appointments/appointment-book@1'],
+      provides: [],
+    },
+    forbiddenImports: [/from\s+['"]node:(https?|net|dgram|tls|dns)['"]/, /\bfetch\s*\(/, /child_process/],
+  });
+  assert.equal(typeof definition.metadata().conflictRule.cancellationWins, 'string');
+});
+
+test('bindings fail at operation creation, never at definition read', () => {
   const book = createAppointmentBookCapability({});
   const provider = createFakeGoogleCalendar({});
   const mapping = {
@@ -297,11 +325,100 @@ test('the package factory refuses an unwired composition fail-closed', () => {
     serviceForEvent: () => ({ ...SERVICE }),
     summaryForAppointment: () => 'x',
   };
-  assert.throws(() => createCalendarSyncPackage({ provider, mapping }), /appointment-book/);
-  assert.throws(() => createCalendarSyncPackage({ appointmentBook: book, mapping }), /provider/);
-  assert.throws(() => createCalendarSyncPackage({ appointmentBook: book, provider }), /mapping/);
-  const pkg = createCalendarSyncPackage({ appointmentBook: book, provider, mapping });
-  assert.equal(pkg.name, 'calendar-sync');
-  assert.deepEqual(pkg.requires, [{ package: 'appointments', capability: 'appointment-book', version: 1 }]);
-  assert.equal(typeof pkg.metadata().conflictRule.cancellationWins, 'string');
+  const modules = new Map();
+  assert.throws(() => createCalendarSyncOperations({ modules, provider, mapping }), /appointment-book/);
+  assert.throws(() => createCalendarSyncOperations({ modules, appointmentBook: book, mapping }), /provider/);
+  assert.throws(() => createCalendarSyncOperations({ modules, appointmentBook: book, provider }), /mapping/);
+});
+
+test('the engine awaits an asynchronous provider binding', async (t) => {
+  const ctx = setup({ asyncProvider: true });
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  const imported = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  assert.equal(imported.entries.filter((e) => e.status === 'imported').length, 1);
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
+  const pull = await ctx.sync.pullIncremental(CAL);
+  assert.equal(pull.entries.filter((e) => e.status === 'applied').length, 1);
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:async:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-22T09:00:00.000Z',
+    endsAt: '2026-10-22T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  const pushed = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(pushed.status, 'exported');
+});
+
+test('a rebook refused after its cancel is kept pending and retried', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  await handle.advanceAppointment(ctx.appointmentRows()[0], 'confirmed');
+  const held = await handle.bookAppointment({
+    sourceKey: 'gym:held:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T14:00:00.000Z',
+    endsAt: '2026-10-21T15:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
+  const pull = await ctx.sync.pullIncremental(CAL);
+  const conflicted = pull.entries.find((e) => e.eventId === 'evt1');
+  assert.equal(conflicted.status, 'conflict');
+  assert.equal(conflicted.pending, true);
+  // The active event is still represented: a pending link, not a loss.
+  assert.equal(pull.pendingConflicts.length, 1);
+  assert.equal(ctx.linkRows().length, 1);
+  assert.ok(ctx.linkRows()[0].pendingRemote);
+  // Free the slot in Accordo: the next pull retries and converges.
+  await handle.advanceAppointment(held.appointment, 'cancelled', 'Customer moved');
+  const retry = await ctx.sync.pullIncremental(CAL);
+  const settled = retry.entries.find((e) => e.eventId === 'evt1');
+  assert.equal(settled.status, 'imported');
+  assert.equal(settled.retried, true);
+  assert.equal(retry.pendingConflicts.length, 0);
+  const rows = ctx.appointmentRows();
+  // The retried move carries the confirmed forward, like the fresh path.
+  assert.equal(rows.filter((r) => r.status === 'confirmed').length, 1);
+  assert.equal(rows.find((r) => r.status === 'confirmed').startsAt, '2026-10-21T14:00:00.000Z');
+});
+
+test('export reconciles an already-inserted event instead of duplicating it', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: `gcal:${CAL}:evt-lost`,
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  // A previous export inserted the event but its link never landed.
+  ctx.provider.insertEvent({
+    calendarId: CAL,
+    summary: 'Appointment pt-single',
+    start: { dateTime: appointment.startsAt },
+    end: { dateTime: appointment.endsAt },
+    extendedProperties: { accordoSourceKey: appointment.sourceKey },
+  });
+  const countBefore = ctx.provider.eventCount(CAL);
+  const out = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(out.status, 'linked');
+  assert.equal(out.healed, true);
+  assert.equal(ctx.provider.eventCount(CAL), countBefore);
+  assert.equal(ctx.linkRows().length, 1);
 });

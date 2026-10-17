@@ -51,6 +51,11 @@ Two halves, two owners. Accordo owns **lifecycle**; Google owns
    never booked against a fabricated contact.
 7. An **expired sync token** never guesses: the sync reconciles fully
    (list, match by link, converge) and resumes from the new token.
+8. A remote change that **cannot apply yet is never lost**: a rebook
+   refused after its cancel, or an import refused with no link yet, is
+   kept as a pending snapshot on the link and retried on every pull —
+   the token moves on, the retry does not depend on it. The pending
+   conflict is reported until it converges.
 
 ## How to prove it
 

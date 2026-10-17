@@ -12,6 +12,7 @@
     { "name": "googleUpdated", "type": "string", "writable": "managed" },
     { "name": "localFingerprint", "type": "string", "writable": "managed" },
     { "name": "revision", "type": "integer", "writable": "managed" },
-    { "name": "conflictNote", "type": "string", "writable": "managed" }
+    { "name": "conflictNote", "type": "string", "writable": "managed" },
+    { "name": "pendingRemote", "type": "string", "writable": "managed" }
   ]
 }

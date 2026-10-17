@@ -10,10 +10,12 @@ import { AppError, ConflictError, NotFoundError, ValidationError } from '../../c
  *
  * What it reuses, never duplicates:
  * - appointment rows and their invariants (overlap, idempotency, lifecycle)
- *   stay in `packages/appointments`, written only through its
+ *   stay in `packages/appointments`, written and read only through its
  *   `appointment-book@1` capability, opened here per call with this
  *   package as the consumer — so `source.package` on imported rows is
  *   `calendar-sync`, the identity the registry proved, never caller text.
+ *   The capability's module-name remap is forwarded, so a composition
+ *   that renamed the appointment module still resolves.
  * - no customer master table: the customer of an imported event is the
  *   deployment-owned mapping (`mapping.subjectForEvent`), the same opaque
  *   envelope appointments already store. No roster, no catalog, no pricing:
@@ -23,6 +25,19 @@ import { AppError, ConflictError, NotFoundError, ValidationError } from '../../c
  * row, the per-calendar sync token, the push-channel registry (token hashes
  * only), and the written conflict rule — Accordo owns lifecycle, Google
  * owns schedule — applied in `applyRemoteChange` and proven by the tests.
+ *
+ * Provider contract (fake-backed until credentials exist — owner decision
+ * MEM_ACC_DECISIONS): every call is awaited, so a real adapter may return
+ * promises; the fake answers synchronously and the engine cannot tell.
+ * Required: `listEvents`, `insertEvent`, `cancelEvent`,
+ * `findByAccordoSourceKey` (export reconciliation — a retry after a lost
+ * link finds the already-inserted event instead of inserting a second).
+ *
+ * No remote change is ever silently dropped: a rebook that fails after
+ * its cancel, or an import that fails with no link yet, is kept as a
+ * `pendingRemote` snapshot on the link (an orphan link when no row exists
+ * yet) and retried on every pull until it applies — the token moves on,
+ * the retry does not depend on it.
  */
 
 export const CALENDAR_SYNC_PACKAGE = 'calendar-sync';
@@ -42,6 +57,7 @@ function resolvedNames(moduleNames = {}) {
   return {
     link: moduleNames[CALENDAR_LINK_MODULE] ?? CALENDAR_LINK_MODULE,
     state: moduleNames[CALENDAR_SYNC_STATE_MODULE] ?? CALENDAR_SYNC_STATE_MODULE,
+    appointment: moduleNames.appointment ?? 'appointment',
   };
 }
 
@@ -94,7 +110,12 @@ export function appointmentFingerprint(row) {
   return JSON.stringify([row?.startsAt ?? null, row?.endsAt ?? null, row?.notes ?? null, row?.status ?? null]);
 }
 
-const sourceKeyFor = (eventId, revision) => (revision > 0 ? `gcal:${eventId}:r${revision}` : `gcal:${eventId}`);
+// Google event ids are calendar-scoped, but the appointment source key is
+// global: the calendar joins the key, so the same event id on two synced
+// calendars books two rows instead of colliding on the unique guard.
+const sourceKeyFor = (calendarId, eventId, revision) => (revision > 0
+  ? `gcal:${calendarId}:${eventId}:r${revision}`
+  : `gcal:${calendarId}:${eventId}`);
 const linkKeyFor = (calendarId, eventId) => `${calendarId}:${eventId}`;
 const stateKeyFor = (calendarId) => `calendar:${calendarId}`;
 
@@ -124,7 +145,7 @@ export function createCalendarSyncOperations(options = {}) {
       'calendar-sync is composed without an opened appointment-book@1 capability, so it cannot write appointment rows');
   }
   const provider = options.provider;
-  for (const key of ['listEvents', 'insertEvent', 'patchEvent', 'cancelEvent']) {
+  for (const key of ['listEvents', 'insertEvent', 'cancelEvent', 'findByAccordoSourceKey']) {
     if (typeof provider?.[key] !== 'function') {
       throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500, `calendar-sync provider needs "${key}"`);
     }
@@ -135,7 +156,11 @@ export function createCalendarSyncOperations(options = {}) {
   const context = { modules, names };
 
   const bookHandle = (actor) => appointmentBook.create({
-    modules, actor: actor ?? defaultActor, now, consumer: CALENDAR_SYNC_CONSUMER,
+    modules,
+    moduleNames: { appointment: names.appointment },
+    actor: actor ?? defaultActor,
+    now,
+    consumer: CALENDAR_SYNC_CONSUMER,
   });
 
   async function findLinkByEvent(calendarId, eventId) {
@@ -148,18 +173,10 @@ export function createCalendarSyncOperations(options = {}) {
     return rows[0] ?? null;
   }
 
+  /** Read through the capability, never around it — the module name in force is the capability's own. */
   async function readLocal(handle, link) {
-    const rows = await handleStorage().listWhere({ sourceKey: link.appointmentSourceKey });
-    return rows[0] ?? null;
-  }
-
-  function handleStorage() {
-    const service = resolveModule(modules, 'appointment')?.service;
-    if (!service || typeof service.listWhere !== 'function') {
-      throw syncError('CALENDAR_SYNC_STORAGE_INVALID', 500,
-        'calendar-sync cannot read appointment rows: the "appointment" module is not composed');
-    }
-    return service;
+    if (!link || link.appointmentId === '') return null;
+    return handle.appointmentBySourceKey(link.appointmentSourceKey);
   }
 
   async function storeLink(link, actor) {
@@ -222,11 +239,12 @@ export function createCalendarSyncOperations(options = {}) {
    * entry: an overlap or a divergent replay is the operator's conflict to
    * resolve in Accordo, never a row booked over a held slot and never a
    * half-written link. Anything else (a 500, a mapping bug) throws.
+   * A success clears any pending remote the link carried: it applied.
    */
-  async function importSingle(handle, actor, calendarId, event, revision, priorLink) {
+  async function importSingle(handle, actor, calendarId, event, revision, priorLink, prebuilt = null) {
     const eventId = event?.id;
-    const sourceKey = sourceKeyFor(eventId, revision);
-    const request = mapEventToBooking(event, calendarId, sourceKey);
+    const sourceKey = sourceKeyFor(calendarId, eventId, revision);
+    const request = prebuilt ?? mapEventToBooking(event, calendarId, sourceKey);
     if (request === null) {
       return { status: 'skipped', eventId, reason: 'no customer mapping for this event (mapping.subjectForEvent returned null)' };
     }
@@ -250,6 +268,7 @@ export function createCalendarSyncOperations(options = {}) {
       localFingerprint: appointmentFingerprint(row),
       revision,
       conflictNote: null,
+      pendingRemote: null,
     };
     if (priorLink) {
       await linkService(context).applyManaged(priorLink.id, { ...link, linkKey: priorLink.linkKey }, { actor });
@@ -257,6 +276,91 @@ export function createCalendarSyncOperations(options = {}) {
       await storeLink(link, actor);
     }
     return { status: 'imported', eventId, appointmentId: row.id, replayed: booked.replayed ?? false };
+  }
+
+  /**
+   * Keep a remote change that did not apply as a pending snapshot on the
+   * link (an orphan link when no row exists yet), so the next pull retries
+   * it instead of losing it with the consumed token.
+   */
+  async function keepPending(actor, calendarId, event, priorLink, reason, preStatus = null) {
+    const patch = {
+      conflictNote: String(reason).slice(0, 300),
+      pendingRemote: JSON.stringify({ event, preStatus }),
+    };
+    if (priorLink) {
+      await linkService(context).applyManaged(priorLink.id, patch, { actor });
+      return { status: 'conflict', eventId: event?.id, reason: patch.conflictNote, pending: true };
+    }
+    await storeLink({
+      linkKey: linkKeyFor(calendarId, event?.id),
+      calendarId,
+      googleEventId: linkKeyFor(calendarId, event?.id),
+      appointmentSourceKey: `pending:${linkKeyFor(calendarId, event?.id)}`,
+      appointmentId: '',
+      googleUpdated: '',
+      localFingerprint: appointmentFingerprint(null),
+      revision: 0,
+      ...patch,
+    }, actor);
+    return { status: 'conflict', eventId: event?.id, reason: patch.conflictNote, pending: true };
+  }
+
+  /**
+   * Finish a reschedule after its rebook committed: carry a `confirmed`
+   * forward (the only lifecycle a moved booking keeps) and point the link
+   * at the new row. Shared by the fresh path and the pending retry, so a
+   * retried move keeps exactly what the first attempt would have kept.
+   */
+  async function finishReschedule(handle, actor, calendarId, event, link, revision, preStatus, entry) {
+    if (preStatus === 'confirmed') {
+      const fresh = await readLocal(handle, { appointmentSourceKey: sourceKeyFor(calendarId, event.id, revision), appointmentId: entry.appointmentId });
+      await handle.advanceAppointment(fresh, 'confirmed');
+    }
+    const final = await readLocal(handle, { appointmentSourceKey: sourceKeyFor(calendarId, event.id, revision), appointmentId: entry.appointmentId });
+    await linkService(context).applyManaged(link.id, {
+      appointmentSourceKey: final.sourceKey,
+      appointmentId: final.id,
+      googleUpdated: event.updated,
+      localFingerprint: appointmentFingerprint(final),
+      revision,
+      conflictNote: null,
+      pendingRemote: null,
+    }, { actor });
+  }
+
+  /**
+   * Retry one pending snapshot: an orphan replays the import, a failed
+   * rebook replays only the booking half (its cancel already committed)
+   * and finishes like the fresh path, confirmed-forward included.
+   */
+  async function retryPending(handle, actor, calendarId, link) {
+    let event;
+    try {
+      event = JSON.parse(link.pendingRemote);
+    } catch {
+      await linkService(context).applyManaged(link.id, { pendingRemote: null, conflictNote: 'pending snapshot unreadable: dropped by operator decision' }, { actor });
+      return { status: 'conflict', eventId: link.googleEventId, reason: 'pending snapshot unreadable' };
+    }
+    const orphan = link.appointmentId === '';
+    // The envelope carries the pre-cancel status the failed attempt saw:
+    // the cancel moved the row, so the link alone no longer knows it.
+    // Older pendings predate the envelope — those fall back to the
+    // fingerprint, which still holds the pre-cancel row for the same
+    // reason (the cancel moved the row, never the link).
+    const preStatus = orphan
+      ? null
+      : (typeof event?.preStatus === 'string' ? event.preStatus : JSON.parse(link.localFingerprint)[3]);
+    event = event?.event ?? event;
+    const entry = await importSingle(handle, actor, calendarId, event, orphan ? (link.revision ?? 0) : (link.revision ?? 0) + 1, link);
+    if (entry.status !== 'imported') {
+      await linkService(context).applyManaged(link.id, { conflictNote: String(entry.reason ?? entry.status).slice(0, 300) }, { actor });
+      return { ...entry, pending: true };
+    }
+    if (!orphan) {
+      await finishReschedule(handle, actor, calendarId, event, link, (link.revision ?? 0) + 1, preStatus, entry);
+    }
+    return { ...entry, retried: true };
   }
 
   /**
@@ -268,6 +372,8 @@ export function createCalendarSyncOperations(options = {}) {
    * a happened visit is evidence, never rewritten. A local cancellation
    * always wins over a concurrent Google change: the sync pushes the
    * cancellation to Google so both sides converge on the freed slot.
+   * A rebook that fails after its cancel is kept pending and retried —
+   * the active event is never silently unrepresented.
    */
   async function applyRemoteChange(handle, actor, calendarId, event) {
     const eventId = event?.id;
@@ -276,15 +382,26 @@ export function createCalendarSyncOperations(options = {}) {
 
     if (!link) {
       if (cancelled) return { status: 'ignored', eventId, reason: 'tombstone for an event never imported' };
-      return importSingle(handle, actor, calendarId, event, 0, null);
+      const entry = await importSingle(handle, actor, calendarId, event, 0, null);
+      if (entry.status !== 'imported') return keepPending(actor, calendarId, event, null, entry.reason);
+      return entry;
+    }
+    if (link.pendingRemote) {
+      const retried = await retryPending(handle, actor, calendarId, link);
+      if (retried.status !== 'imported') return retried;
+      // The retry settled the snapshot; the event in hand may be newer
+      // than it (the token moved on), so it still goes through the normal
+      // path — now pending-free, so this recurses exactly once.
+      return applyRemoteChange(handle, actor, calendarId, event);
     }
 
     const row = await readLocal(handle, link);
     if (!row) {
-      await linkService(context).applyManaged(link.id, {
-        conflictNote: 'the linked appointment row is gone; booked evidence must not be re-created by the sync',
-      }, { actor });
-      return { status: 'conflict', eventId, reason: 'CALENDAR_SYNC_ORPHAN_LINK: the linked appointment row is gone' };
+      const entry = await importSingle(handle, actor, calendarId, event, link.revision ?? 0, link);
+      if (entry.status !== 'imported') {
+        return keepPending(actor, calendarId, event, link, entry.reason ?? 'linked row gone and re-import refused');
+      }
+      return { ...entry, healed: true };
     }
     const localStatus = JSON.parse(link.localFingerprint)[3];
     const locallyCancelled = row.status === 'cancelled' && localStatus !== 'cancelled';
@@ -314,7 +431,7 @@ export function createCalendarSyncOperations(options = {}) {
     }
     if (locallyCancelled) {
       // Cancellation wins: converge Google onto the freed slot.
-      const pushed = provider.cancelEvent({ calendarId, eventId });
+      const pushed = await provider.cancelEvent({ calendarId, eventId });
       await linkService(context).applyManaged(link.id, {
         googleUpdated: pushed.updated, localFingerprint: appointmentFingerprint(row), conflictNote: null,
       }, { actor });
@@ -334,30 +451,26 @@ export function createCalendarSyncOperations(options = {}) {
       await linkService(context).applyManaged(link.id, { googleUpdated: event.updated }, { actor });
       return { status: 'ignored', eventId, reason: `local row is terminal ("${row.status}"): a happened visit is never rewritten` };
     }
-    // Reschedule: cancel naming Google, rebook revisioned, carry a
-    // `confirmed` forward (the only lifecycle a moved booking can keep).
-    await handle.advanceAppointment(row, 'cancelled', 'Rescheduled in Google Calendar');
+    // Reschedule: validate the move BEFORE cancelling, so an unmapped
+    // event never sacrifices its local row. The cancel then frees the
+    // slot; a rebook that still fails (overlap with another held row) is
+    // kept pending and retried, and the token is acknowledged either way.
     const revision = (link.revision ?? 0) + 1;
-    const entry = await importSingle(handle, actor, calendarId, event, revision, link);
-    if (entry.status !== 'imported') return { ...entry, eventId };
-    if (row.status === 'confirmed') {
-      const fresh = await readLocal(handle, { appointmentSourceKey: sourceKeyFor(eventId, revision) });
-      await handle.advanceAppointment(fresh, 'confirmed');
+    const request = mapEventToBooking(event, calendarId, sourceKeyFor(calendarId, eventId, revision));
+    if (request === null) {
+      return { status: 'skipped', eventId, reason: 'no customer mapping for this event (mapping.subjectForEvent returned null)' };
     }
-    const final = await readLocal(handle, { appointmentSourceKey: sourceKeyFor(eventId, revision) });
-    await linkService(context).applyManaged(link.id, {
-      appointmentSourceKey: final.sourceKey,
-      appointmentId: final.id,
-      googleUpdated: event.updated,
-      localFingerprint: appointmentFingerprint(final),
-      revision,
-      conflictNote: null,
-    }, { actor });
+    await handle.advanceAppointment(row, 'cancelled', 'Rescheduled in Google Calendar');
+    const entry = await importSingle(handle, actor, calendarId, event, revision, link, request);
+    if (entry.status !== 'imported') {
+      return keepPending(actor, calendarId, event, link, entry.reason, row.status);
+    }
+    await finishReschedule(handle, actor, calendarId, event, link, revision, row.status, entry);
     return { status: 'applied', eventId, direction: 'google-to-local', change: 'rescheduled', revision };
   }
 
   async function reconcileFull(handle, actor, calendarId, timeMin) {
-    const page = provider.listEvents({ calendarId, timeMin: timeMin ?? now(), showDeleted: true });
+    const page = await provider.listEvents({ calendarId, timeMin: timeMin ?? now(), showDeleted: true });
     const entries = [];
     for (const event of page.items) {
       entries.push(await applyRemoteChange(handle, actor, calendarId, event));
@@ -366,26 +479,55 @@ export function createCalendarSyncOperations(options = {}) {
     return { recovered: true, entries, nextSyncToken: page.nextSyncToken };
   }
 
-  async function pendingConflicts() {
-    const rows = await linkService(context).listWhere({});
-    return rows.filter((row) => row.conflictNote).map((row) => ({ eventId: row.googleEventId, reason: row.conflictNote }));
+  async function pendingConflicts(calendarId) {
+    const rows = await linkService(context).listWhere({ calendarId });
+    return rows
+      .filter((row) => row.conflictNote)
+      .map((row) => ({ eventId: row.googleEventId, reason: row.conflictNote }));
   }
 
-  return {
+  async function retryPendings(handle, actor, calendarId) {
+    const rows = await linkService(context).listWhere({ calendarId });
+    const entries = [];
+    for (const link of rows.filter((row) => row.pendingRemote)) {
+      entries.push(await retryPending(handle, actor, calendarId, link));
+    }
+    return entries;
+  }
+
+  const api = {
     /** Full import of future events (the first sync ever on a calendar). */
     async importFuture(calendarId, { timeMin, actor } = {}) {
       const who = actor ?? defaultActor;
       const handle = bookHandle(who);
-      const page = provider.listEvents({ calendarId, timeMin: timeMin ?? now(), showDeleted: false });
+      const page = await provider.listEvents({ calendarId, timeMin: timeMin ?? now(), showDeleted: false });
       const entries = [];
       for (const event of page.items) {
         if (event?.status === 'cancelled') continue;
         const known = await findLinkByEvent(calendarId, event.id);
         if (known) {
-          entries.push({ status: 'already-tracked', eventId: event.id });
+          if (known.pendingRemote) {
+            const retried = await retryPending(handle, who, calendarId, known);
+            if (retried.status !== 'imported') {
+              entries.push(retried);
+              continue;
+            }
+          }
+          const fresh = await findLinkByEvent(calendarId, event.id);
+          if (fresh && event.updated === fresh.googleUpdated && !fresh.pendingRemote) {
+            entries.push({ status: 'already-tracked', eventId: event.id });
+          } else {
+            entries.push(await applyRemoteChange(handle, who, calendarId, event));
+          }
           continue;
         }
-        entries.push(await importSingle(handle, who, calendarId, event, 0, null));
+        const entry = await importSingle(handle, who, calendarId, event, 0, null);
+        // A refusal (overlap) is kept pending and retried; a skip
+        // (unmapped customer) is reported as-is — retrying it would heal
+        // nothing, the mapping is still absent.
+        entries.push(entry.status === 'conflict'
+          ? await keepPending(who, calendarId, event, null, entry.reason)
+          : entry);
       }
       await writeState(calendarId, { syncToken: page.nextSyncToken }, who);
       return { calendarId, entries, nextSyncToken: page.nextSyncToken };
@@ -400,49 +542,66 @@ export function createCalendarSyncOperations(options = {}) {
         throw syncError('CALENDAR_SYNC_NEVER_IMPORTED', 500,
           `calendar "${calendarId}" was never imported: run importFuture before the first incremental pull`);
       }
+      const retried = await retryPendings(handle, who, calendarId);
       let page;
       try {
-        page = provider.listEvents({ calendarId, syncToken: state.syncToken });
+        page = await provider.listEvents({ calendarId, syncToken: state.syncToken });
       } catch (error) {
         if (error?.code === 'GOOGLE_SYNC_TOKEN_INVALID') {
           const recovered = await reconcileFull(handle, who, calendarId);
-          return { calendarId, ...recovered, pendingConflicts: await pendingConflicts() };
+          return { calendarId, retried, ...recovered, pendingConflicts: await pendingConflicts(calendarId) };
         }
         throw error;
       }
-      const entries = [];
+      const entries = [...retried];
       for (const event of page.items) {
         entries.push(await applyRemoteChange(handle, who, calendarId, event));
       }
       await writeState(calendarId, { syncToken: page.nextSyncToken }, who);
-      return { calendarId, entries, nextSyncToken: page.nextSyncToken, pendingConflicts: await pendingConflicts() };
+      return { calendarId, entries, nextSyncToken: page.nextSyncToken, pendingConflicts: await pendingConflicts(calendarId) };
     },
 
     /**
-     * Push one local appointment to Google by source key: first export
-     * inserts the event (with the round-trip properties the import reads
-     * back), later pushes converge a local cancellation. Any other
-     * lifecycle advance is Accordo-owned and acknowledged without a
-     * provider write. A repeated push with nothing changed is a no-op —
-     * the second of two syncs in a row writes nothing anywhere.
+     * Push one local appointment to Google by source key: first reconcile
+     * with the provider (an event the export already inserted but never
+     * linked is linked, not inserted twice), then insert, then converge
+     * local cancellations. Any other lifecycle advance is Accordo-owned
+     * and acknowledged without a provider write. A repeated push with
+     * nothing changed is a no-op — the second of two syncs in a row
+     * writes nothing anywhere.
      */
     async pushAppointment(calendarId, sourceKey, { actor } = {}) {
       const who = actor ?? defaultActor;
       const handle = bookHandle(who);
-      const rows = await handleStorage().listWhere({ sourceKey });
-      const row = rows[0] ?? null;
+      const row = await handle.appointmentBySourceKey(sourceKey);
       if (!row) {
         throw syncError('CALENDAR_SYNC_UNKNOWN_APPOINTMENT', 404, `no appointment with sourceKey "${sourceKey}"`);
       }
       const link = await findLinkBySource(sourceKey);
       if (!link) {
+        const reconciled = await provider.findByAccordoSourceKey(calendarId, row.sourceKey);
+        if (reconciled) {
+          await storeLink({
+            linkKey: linkKeyFor(calendarId, reconciled.id),
+            calendarId,
+            googleEventId: linkKeyFor(calendarId, reconciled.id),
+            appointmentSourceKey: row.sourceKey,
+            appointmentId: row.id,
+            googleUpdated: reconciled.updated,
+            localFingerprint: appointmentFingerprint(row),
+            revision: 0,
+            conflictNote: null,
+            pendingRemote: null,
+          }, who);
+          return { status: 'linked', eventId: reconciled.id, sourceKey: row.sourceKey, healed: true };
+        }
         const summary = mapping.summaryForAppointment(row, calendarId);
         if (typeof summary !== 'string' || summary.trim() === '') {
           throw new ValidationError('calendar-sync mapping.summaryForAppointment must return non-empty text', {
             field: 'mapping.summaryForAppointment',
           });
         }
-        const created = provider.insertEvent({
+        const created = await provider.insertEvent({
           calendarId,
           summary: summary.slice(0, 200),
           description: row.notes ?? '',
@@ -460,6 +619,7 @@ export function createCalendarSyncOperations(options = {}) {
           localFingerprint: appointmentFingerprint(row),
           revision: 0,
           conflictNote: null,
+          pendingRemote: null,
         }, who);
         return { status: 'exported', eventId: created.id, sourceKey: row.sourceKey };
       }
@@ -468,7 +628,7 @@ export function createCalendarSyncOperations(options = {}) {
         return { status: 'noop', sourceKey, reason: 'nothing changed since the last push' };
       }
       if (row.status === 'cancelled' && JSON.parse(link.localFingerprint)[3] !== 'cancelled') {
-        const pushed = provider.cancelEvent({ calendarId, eventId: rowLinkEventId(link, calendarId) });
+        const pushed = await provider.cancelEvent({ calendarId, eventId: rowLinkEventId(link, calendarId) });
         await linkService(context).applyManaged(link.id, {
           googleUpdated: pushed.updated, localFingerprint: fingerprint, conflictNote: null,
         }, { actor: who });
@@ -482,16 +642,16 @@ export function createCalendarSyncOperations(options = {}) {
     async pushLocalChanges(calendarId, { actor } = {}) {
       const links = await linkService(context).listWhere({ calendarId });
       const entries = [];
-      for (const link of links) {
-        entries.push(await this.pushAppointment(calendarId, link.appointmentSourceKey, { actor }));
+      for (const link of links.filter((row) => row.appointmentId !== '')) {
+        entries.push(await api.pushAppointment(calendarId, link.appointmentSourceKey, { actor }));
       }
       return { calendarId, entries };
     },
 
     /** One pull plus one push: the second consecutive run changes nothing. */
     async syncOnce(calendarId, options = {}) {
-      const pull = await this.pullIncremental(calendarId, options);
-      const push = await this.pushLocalChanges(calendarId, options);
+      const pull = await api.pullIncremental(calendarId, options);
+      const push = await api.pushLocalChanges(calendarId, options);
       return { calendarId, pull, push };
     },
 
@@ -514,7 +674,7 @@ export function createCalendarSyncOperations(options = {}) {
         throw syncError('CALENDAR_PUSH_FORBIDDEN', 403, 'push channel token mismatch: the signal is not Google\'s');
       }
       if (resourceState === 'sync') return { effect: 'ack', calendarId: state.calendarId };
-      const pull = await this.pullIncremental(state.calendarId);
+      const pull = await api.pullIncremental(state.calendarId);
       return { effect: 'pulled', calendarId: state.calendarId, pull };
     },
 
@@ -533,6 +693,8 @@ export function createCalendarSyncOperations(options = {}) {
       return { channelId, calendarId };
     },
   };
+
+  return api;
 
   function rowLinkEventId(link, calendarId) {
     // The stored Google id is scoped as `<calendarId>:<eventId>`: strip the

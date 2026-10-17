@@ -162,6 +162,21 @@ export function createFakeGoogleCalendar(options = {}) {
       return Object.freeze({ items: Object.freeze(items), nextSyncToken: tokenFor(cal) });
     },
 
+    /**
+     * Find a live event by the round-trip property the export writes
+     * (`extendedProperties.accordoSourceKey`). The sync reconciles with
+     * this before inserting, so a retry after a lost link never inserts
+     * a second event — the provider-side half of export idempotency.
+     */
+    findByAccordoSourceKey(calendarId, sourceKey) {
+      for (const event of calendar(calendarId).events.values()) {
+        if (event.status !== 'cancelled' && event.extendedProperties?.accordoSourceKey === sourceKey) {
+          return snapshot(event);
+        }
+      }
+      return null;
+    },
+
     /** Provider-side insert (the push direction lands here). */
     insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id }) {
       const cal = calendar(calendarId);

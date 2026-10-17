@@ -29,8 +29,26 @@ export const CALENDAR_SYNC_PACKAGE = 'calendar-sync';
 /** The record modules this package owns; declaring them makes a collision detectable. */
 export const CALENDAR_SYNC_RESOURCES = Object.freeze(['calendar-link', 'calendar-sync-state']);
 
+const CALENDAR_INPUT = {
+  name: 'calendarId',
+  type: 'string',
+  required: true,
+  hint: 'The Google calendar id this space syncs (the deployment maps it to one team member).',
+};
+const SPACE_INPUT = {
+  name: 'spaceId',
+  type: 'string',
+  required: true,
+  hint: 'The Accordo space slug — always explicit, never inferred.',
+};
+
 /**
  * Build the package definition the application composes.
+ *
+ * The factory builds with no bindings at all — package tooling
+ * (`crm package validate`, conformance) constructs every factory with
+ * `{}` — and the runtime bindings are checked when the operations are
+ * created for a runtime, not when the definition is read.
  *
  * @param {{
  *   appointmentBook?: any, provider?: any, mapping?: any,
@@ -41,21 +59,15 @@ export const CALENDAR_SYNC_RESOURCES = Object.freeze(['calendar-link', 'calendar
  * the provider. `provider` is the Google Calendar binding (fake-backed
  * until credentials exist — owner decision MEM_ACC_DECISIONS) and
  * `mapping` names the deployment's customer/member/service bindings.
- * All three are required because a sync that books without them would
- * invent identities.
+ * All three are required before any operation runs, because a sync that
+ * books without them would invent identities.
  */
 export function createCalendarSyncPackage(options = {}) {
-  const { appointmentBook, provider, mapping } = options;
-  if (!appointmentBook || typeof appointmentBook.create !== 'function') {
-    throw new ValidationError('calendar-sync needs the created appointment-book@1 capability object', {
-      field: 'appointmentBook',
-    });
-  }
-  if (!provider || typeof provider.listEvents !== 'function') {
-    throw new ValidationError('calendar-sync needs the Google Calendar provider binding', { field: 'provider' });
-  }
-  if (!mapping || typeof mapping.subjectForEvent !== 'function') {
-    throw new ValidationError('calendar-sync needs the deployment identity mapping', { field: 'mapping' });
+  for (const key of ['appointmentBook', 'provider', 'mapping']) {
+    const value = options[key];
+    if (value !== undefined && (typeof value !== 'object' || value === null)) {
+      throw new ValidationError(`calendar-sync ${key} must be an object when provided`, { field: key });
+    }
   }
 
   const composedByRuntime = new WeakMap();
@@ -65,9 +77,9 @@ export function createCalendarSyncPackage(options = {}) {
       composed = createCalendarSyncOperations({
         modules: runtime.modules,
         moduleNames: options.modules,
-        appointmentBook,
-        provider,
-        mapping,
+        appointmentBook: options.appointmentBook,
+        provider: options.provider,
+        mapping: options.mapping,
         actor: options.actor,
         now: options.now,
       });
@@ -101,9 +113,7 @@ export function createCalendarSyncPackage(options = {}) {
         label: 'Import future events',
         appMethod: 'importFutureCalendarEvents',
         description: 'Book one appointment per future Google event of a calendar (human decision). Idempotent by event id; overlaps and unmapped events are reported, never force-booked.',
-        input: [
-          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug — always explicit, never inferred.' },
-        ],
+        input: [{ ...SPACE_INPUT }, { ...CALENDAR_INPUT }],
         create(runtime) {
           const ops = operations(runtime);
           return (params) => ops.importFuture(params.calendarId, params);
@@ -115,9 +125,7 @@ export function createCalendarSyncPackage(options = {}) {
         label: 'Pull calendar changes',
         appMethod: 'pullCalendarChanges',
         description: 'Apply Google-side creates, reschedules and cancellations since the stored sync token (an expired token reconciles fully instead of guessing).',
-        input: [
-          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
-        ],
+        input: [{ ...SPACE_INPUT }, { ...CALENDAR_INPUT }],
         create(runtime) {
           const ops = operations(runtime);
           return (params) => ops.pullIncremental(params.calendarId, params);
@@ -130,7 +138,14 @@ export function createCalendarSyncPackage(options = {}) {
         appMethod: 'pushAppointmentToCalendar',
         description: 'Export one local appointment to Google, or converge a local cancellation there (human decision). A repeated push with nothing changed is a no-op.',
         input: [
-          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+          { ...SPACE_INPUT },
+          { ...CALENDAR_INPUT },
+          {
+            name: 'sourceKey',
+            type: 'string',
+            required: true,
+            hint: 'The appointment source key to export (calendar-scoped gcal key for imports, the booking key for local rows).',
+          },
         ],
         create(runtime) {
           const ops = operations(runtime);
@@ -143,12 +158,33 @@ export function createCalendarSyncPackage(options = {}) {
         label: 'Sync calendar both ways',
         appMethod: 'syncCalendar',
         description: 'One incremental pull plus one push of moved local rows. The second consecutive run changes nothing.',
-        input: [
-          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
-        ],
+        input: [{ ...SPACE_INPUT }, { ...CALENDAR_INPUT }],
         create(runtime) {
           const ops = operations(runtime);
           return (params) => ops.syncOnce(params.calendarId, params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'register-calendar-push',
+        label: 'Register calendar push channel',
+        appMethod: 'registerCalendarPush',
+        description: 'Record the push channel the deployment opened with the provider (human decision): the channel id and the bearer token hash — the token itself never lands in a row. Without this, push deliveries refuse as unknown channels.',
+        input: [
+          { ...SPACE_INPUT },
+          { ...CALENDAR_INPUT },
+          { name: 'channelId', type: 'string', required: true, hint: 'The provider channel id from watch.' },
+          { name: 'resourceId', type: 'string', required: false, hint: 'The provider resource id from watch.' },
+          {
+            name: 'channelToken',
+            type: 'string',
+            required: true,
+            hint: 'The bearer token the deployment set on watch: handled like a credential (hashed at rest, never logged).',
+          },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.watchCalendar(params.calendarId, params);
         },
       },
       {
@@ -158,7 +194,10 @@ export function createCalendarSyncPackage(options = {}) {
         appMethod: 'handleCalendarPush',
         description: 'Verify one Google push delivery (known channel, matching bearer token) and pull what changed. Unknown or forged signals are refused before anything is read.',
         input: [
-          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug, from the verified route — never from the body.' },
+          { ...SPACE_INPUT },
+          { name: 'channelId', type: 'string', required: true, hint: 'The provider channel id, from the verified route.' },
+          { name: 'channelToken', type: 'string', required: true, hint: 'The bearer token Google echoed for the channel.' },
+          { name: 'resourceState', type: 'string', required: true, hint: 'The provider resource state (sync for the watch handshake, exists when something changed).' },
         ],
         create(runtime) {
           const ops = operations(runtime);
@@ -174,11 +213,12 @@ export function createCalendarSyncPackage(options = {}) {
           lifecycle: 'Accordo owns lifecycle: a Google change never advances or reverts an appointment state; only the sync\'s own cancel-with-reason moves it, and a terminal row (done, no-show) is never rewritten — a happened visit is evidence.',
           schedule: 'Google owns schedule: a Google slot change on an open row cancels that row (reason "Rescheduled in Google Calendar") and rebooks under a revisioned key, carrying a `confirmed` forward; notes/summary-only edits are acknowledged without a local write (rows are evidence-immutable outside lifecycle).',
           cancellationWins: 'a local cancellation beats any concurrent Google change: the sync pushes the cancellation to Google so both sides converge on the freed slot, and the pending conflict clears.',
+          noSilentLoss: 'a remote change that cannot apply yet (rebook refused after its cancel, import refused with no link) is kept as a pending snapshot on the link and retried on every pull — the token moves on, the retry does not depend on it.',
           importRefusals: 'an event overlapping a held slot is refused 409 and reported (the no-double-booking invariant is never booked over); an event with no customer mapping is skipped and reported, never booked against a fabricated contact.',
         },
-        idempotency: 'sync tokens resume pulls; link rows dedup at storage level (unique event and source keys); a repeated push with an unchanged fingerprint is a no-op — the second of two syncs in a row writes nothing anywhere',
+        idempotency: 'sync tokens resume pulls; link rows dedup at storage level (unique event and source keys); export reconciles with the provider before inserting; a repeated push with an unchanged fingerprint is a no-op — the second of two syncs in a row writes nothing anywhere',
         pushDiscipline: 'a push notification carries no event data, only "something changed": unknown channels and token mismatches refuse before any read; the channel token is stored as a hash, never the bearer',
-        humanApproval: 'import and export are human decisions (actor required on every booking); provider-driven pulls run under a system actor',
+        humanApproval: 'import, export and push-channel registration are human decisions (actor required on every booking); provider-driven pulls run under a system actor',
         notModeled: [
           'recurrence or series expansion — each synced event is one timed occurrence; all-day events are refused by slot validation',
           'reminders for imported bookings (remindAt stays null — Google keeps notifying on its side)',
