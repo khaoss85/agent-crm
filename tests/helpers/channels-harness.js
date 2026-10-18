@@ -49,8 +49,11 @@ export const CHANNEL_MANIFEST_NAMES = Object.freeze([
  *   secretRef?: string, secretValue?: string,
  *   tenantId?: string, config?: Record<string, any>,
  *   resolveSender?: ((request: any) => Promise<any>) | null,
- *   dbPath?: string,
- * }} options `resolveSender` stands in for the composed `channel-sender@1`
+ *   dbPath?: string, nowMs?: () => number,
+ * }} options `nowMs` is the single clock the harness hands to both the
+ *   package operations and (via the caller) the adapter, so ingest receive
+ *   time and window checks never mix a frozen clock with the wall clock.
+ *   `resolveSender` stands in for the composed `channel-sender@1`
  *   capability where the test proves the engine rather than the
  *   reconciliation itself. `dbPath` opens a file database instead of
  *   `:memory:` so two harnesses can share one store like two processes.
@@ -85,6 +88,7 @@ export function createChannelsHarness(options) {
   const ops = createChannelOperations({
     database, modules, registries, resolveSecret, tenantId, config: options.config,
     resolveSender: options.resolveSender ?? null,
+    ...(typeof options.nowMs === 'function' ? { nowMs: options.nowMs } : {}),
   });
 
   const jobRegistry = createDurableJobHandlerRegistry();

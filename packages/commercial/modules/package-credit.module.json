@@ -1,0 +1,23 @@
+{
+  "manifestVersion": 1,
+  "name": "package-credit",
+  "table": "package_credits",
+  "description": "One paid package of entries (ingressi): after a payment the customer holds N entries, and every appointment that happened scales one off the balance the commercial package-credits capability reads from the appointment rows. One row per grant, immutable except for nothing: a grant exists only through the commercial package-credits capability, idempotent by source key, and no client can create, forge or rewrite one. The customer is an opaque subject envelope pointing at the host contact or company record — no customer table is created here. The entry count bought is resolved by the selling path from the commercial listino product and stored as agreed, so a later listino change never rewrites a granted package.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "subjectResource", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectOwner", "type": "enum", "values": ["host", "package"], "writable": "managed" },
+    { "name": "subjectOwnerPackage", "type": "string", "writable": "managed" },
+    { "name": "subjectLabel", "type": "string", "writable": "managed" },
+    { "name": "productKey", "type": "string", "index": true, "writable": "managed" },
+    { "name": "totalEntries", "type": "integer", "writable": "managed" },
+    { "name": "allowNegative", "type": "boolean", "writable": "managed" },
+    { "name": "noShowConsumes", "type": "boolean", "writable": "managed" },
+    { "name": "grantedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "actorType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "actorId", "type": "string", "writable": "managed" },
+    { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
+    { "name": "sourceAction", "type": "string", "writable": "managed" }
+  ]
+}

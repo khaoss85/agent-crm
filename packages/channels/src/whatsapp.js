@@ -2,6 +2,10 @@
 
 import { AppError, ValidationError } from '../../core/index.js';
 import { verifyHmacWebhook } from './crypto.js';
+// The single future-tolerance rule lives in the package (operations.js):
+// the adapter never carries its own margin, so a message the ingest path
+// accepts as in-window evidence always opens the window here too.
+import { CHANNEL_INGEST_FUTURE_SKEW_MS } from './operations.js';
 
 /**
  * WhatsApp Business Cloud adapter (backlog:ecbd24753610).
@@ -39,8 +43,8 @@ import { verifyHmacWebhook } from './crypto.js';
  *   operations from the conversation rows, never from caller time. A
  *   `message.lastInboundAt` is never read: the observation arrives as the
  *   second argument (`{ lastInboundAt }`), which operations always
- *   provides on the real path. Absent, future or stale observations
- *   refuse with CHANNEL_TEMPLATE_REQUIRED; outside the window only an
+ *   provides on the real path. Absent, beyond-skew future, or stale
+ *   observations refuse with CHANNEL_TEMPLATE_REQUIRED; outside the window only an
  *   approved template from the adapter config sends, and that code
  *   reaches the caller intact through the real queue path.
  */
@@ -260,8 +264,9 @@ function assertApprovedTemplate(template, approved) {
  * not read at all. On the real path operations resolves the last inbound
  * server-side from the inbox and hands it in as `{ lastInboundAt }`;
  * direct calls (unit tests) pass the observation the same way. An absent,
- * future or stale observation refuses fail-closed with
- * CHANNEL_TEMPLATE_REQUIRED — the caller sends a template instead.
+ * beyond-skew future, or stale observation refuses fail-closed with
+ * CHANNEL_TEMPLATE_REQUIRED — the caller sends a template instead. Within
+ * the package skew (a few minutes of clock drift) the observation stands.
  */
 function normalizeWhatsAppOutbound(message, config, nowMs, windowCtx) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
@@ -288,7 +293,10 @@ function normalizeWhatsAppOutbound(message, config, nowMs, windowCtx) {
   if (!Number.isFinite(at) || new Date(observed).toISOString() !== observed) {
     malformedMessage('"lastInboundAt" must be an ISO-8601 instant');
   }
-  if (at > nowMs()) templateRequired();
+  // The package skew rule, not a second margin: an observation the ingest
+  // path kept as in-window evidence (up to now + skew) opens the window
+  // here too — only beyond the same skew does free text refuse.
+  if (at > nowMs() + CHANNEL_INGEST_FUTURE_SKEW_MS) templateRequired();
   if (nowMs() - at > WHATSAPP_WINDOW_MS) templateRequired();
   return { to, kind: 'text', text };
 }

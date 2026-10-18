@@ -1,0 +1,44 @@
+{
+  "module": "calendar-sync-state",
+  "previousManifests": [
+    {
+      "manifestVersion": 1,
+      "name": "calendar-sync-state",
+      "description": "One row per synced calendar: the incremental sync token the next pull resumes from, and the push channel registration (channel id plus the bearer token hash — the token itself never lands in a row). Every field is managed: state exists only through the calendar-sync package, and no client can create, forge or rewrite it.",
+      "fields": [
+        {
+          "name": "stateKey",
+          "type": "string",
+          "unique": true,
+          "writable": "managed"
+        },
+        {
+          "name": "calendarId",
+          "type": "string",
+          "index": true,
+          "writable": "managed"
+        },
+        {
+          "name": "syncToken",
+          "type": "string",
+          "writable": "managed"
+        },
+        {
+          "name": "channelId",
+          "type": "string",
+          "writable": "managed"
+        },
+        {
+          "name": "channelTokenHash",
+          "type": "string",
+          "writable": "managed"
+        },
+        {
+          "name": "resourceId",
+          "type": "string",
+          "writable": "managed"
+        }
+      ]
+    }
+  ]
+}

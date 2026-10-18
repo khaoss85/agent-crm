@@ -427,6 +427,54 @@ test('a raced conflicting delivery reports CHANNEL_EVENT_ID_CONFLICT, not the ra
   }
 });
 
+test('concurrent redeliveries of one unprocessed row resolve idempotently, never CHANNEL_TRANSITION_INVALID', async (t) => {
+  // Follow-up 8b8f6d1a42ad: two redeliveries racing the same received row
+  // both read it as unprocessed; the winner moves it and the loser's
+  // transition lands on the committed state. The loser adopts the winner's
+  // row instead of 409ing.
+  const { harness } = setup();
+  t.after(() => harness.close());
+  // Store the row while the connection is inactive: processed stays false.
+  const reg = await harness.register(SPACE_A, {
+    channel: 'whatsapp', account: ACCOUNT_A, adapter: 'fixture-channel', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  const key = reg.connection.sourceKey;
+  const rawBody = fixtureEventBody({ id: 'evt-resume-race', subject: 'chat-1', seq: 1 });
+  const headers = harness.faults.sign(rawBody);
+  const parked = await harness.ingest(SPACE_A, { connectionKey: key, rawBody, headers });
+  assert.equal(parked.quarantined, true);
+  await harness.activate(SPACE_A, key);
+  // Script the interleave a second process would produce: between this
+  // delivery's pre-read (still received) and its transition, a concurrent
+  // winner commits the move, so the transition re-read lands on applied.
+  const entry = harness.internals.modules.get('channel-inbox-event');
+  const real = entry.service;
+  const realGet = real.get.bind(real);
+  const realApply = real.applyManaged.bind(real);
+  let winnerCommitted = false;
+  const raced = Object.create(real);
+  raced.get = async (id) => {
+    if (!winnerCommitted) {
+      winnerCommitted = true;
+      await realApply(id, { processed: true, effect: 'applied', effectReason: 'concurrent winner' }, { actor: harness.userActor });
+    }
+    return realGet(id);
+  };
+  entry.service = raced;
+  let out;
+  try {
+    out = await harness.ingest(SPACE_A, { connectionKey: key, rawBody, headers });
+  } finally {
+    entry.service = real;
+  }
+  assert.equal(out.duplicate, true, 'the loser adopts the winner instead of conflicting');
+  assert.equal(out.effect, 'applied');
+  const rows = harness.inbox(SPACE_A).filter((row) => row.providerEventId === 'evt-resume-race');
+  assert.equal(rows.length, 1, 'one event, one row');
+  assert.equal(rows[0].processed, true);
+  assert.equal(rows[0].effect, 'applied');
+});
+
 test('a max-length account and message key still queue under the outbox bound', async (t) => {
   const { harness } = setup();
   t.after(() => harness.close());
@@ -537,6 +585,53 @@ test('a verification timeout is retryable 503 and writes nothing; redelivery app
   const redelivered = await harness.ops.ingestChannelEvent({
     spaceId: SPACE_A, connectionKey: reg.connection.sourceKey,
     rawBody, headers: harness.faults.sign(rawBody),
+  });
+  assert.equal(redelivered.effect, 'applied', 'the redelivery the 503 asked for lands');
+});
+
+test('an adapter verification failure is retryable 503; only a bad signature is 401', async (t) => {
+  // Follow-up 8b8f6d1a42ad: any verifyInbound throw used to report 401
+  // invalid-signature, telling the provider to drop a delivery that was
+  // never recorded. Only an explicit `{ ok: false }` is a forgery now;
+  // anything the adapter raises is a server-side stall the provider must
+  // redeliver, and the redelivery lands.
+  const { definition, api } = createFixtureChannelAdapter({ secret: SECRET });
+  let failVerify = true;
+  const flaky = {
+    ...definition,
+    name: 'flaky-verify-channel',
+    verifyInbound: (...args) => {
+      if (failVerify) throw Object.assign(new Error('verify downstream exploded'), { code: 'VERIFY_BOOM' });
+      return definition.verifyInbound(...args);
+    },
+  };
+  const harness = createChannelsHarness({
+    adapterDefinition: flaky, fixtureApi: api, secretRef: SECRET_REF, secretValue: SECRET,
+    tenantId: 'channel-kit-verify-failure',
+  });
+  t.after(() => harness.close());
+  const reg = await harness.register(SPACE_A, {
+    channel: 'whatsapp', account: ACCOUNT_A, adapter: 'flaky-verify-channel', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  await harness.activate(SPACE_A, reg.connection.sourceKey);
+  const rawBody = fixtureEventBody({ id: 'evt-boom-1', subject: 'chat-1', seq: 1 });
+  await assert.rejects(
+    harness.ops.ingestChannelEvent({
+      spaceId: SPACE_A, connectionKey: reg.connection.sourceKey, rawBody, headers: harness.faults.sign(rawBody),
+    }),
+    (error) => error.code === 'CHANNEL_VERIFY_UNAVAILABLE' && error.status === 503,
+  );
+  assert.equal(harness.inbox(SPACE_A).length, 0, 'a failed verification writes nothing');
+  failVerify = false;
+  const tampered = { ...harness.faults.sign(rawBody), 'x-channel-signature-256': '0'.repeat(64) };
+  await assert.rejects(
+    harness.ops.ingestChannelEvent({
+      spaceId: SPACE_A, connectionKey: reg.connection.sourceKey, rawBody, headers: tampered,
+    }),
+    (error) => error.code === 'CHANNEL_SIGNATURE_INVALID' && error.status === 401,
+  );
+  const redelivered = await harness.ops.ingestChannelEvent({
+    spaceId: SPACE_A, connectionKey: reg.connection.sourceKey, rawBody, headers: harness.faults.sign(rawBody),
   });
   assert.equal(redelivered.effect, 'applied', 'the redelivery the 503 asked for lands');
 });

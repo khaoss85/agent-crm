@@ -129,6 +129,21 @@ test('connection input binds one account per space and channel', () => {
   assert.throws(() => assertConnectionInput(connectionInput({ secretRef: 'plain-secret-value with space' }), registries()), /secretRef/);
 });
 
+test('single-line keys refuse newline, carriage return and tab', () => {
+  // Follow-up 8b8f6d1a42ad: the control fence left \t, \n and \r open, so a
+  // smuggled line break passed key validation. Single-line text is the whole
+  // C0 range plus DEL now, on accounts and on every boundedKey part.
+  for (const bad of ['line\nbreak', 'line\rbreak', 'line\tbreak']) {
+    assert.throws(() => assertConnectionInput(connectionInput({ account: bad }), registries()), /bounded single-line text/);
+    assert.throws(() => boundedKey('ch-in', 'presti', 'c', bad), /bounded single-line text/);
+    assert.throws(
+      () => channelSendIdempotencyKey({ spaceId: 'presti', connectionKey: 'c', messageKey: bad }),
+      /bounded single-line text/,
+    );
+  }
+  assert.doesNotThrow(() => assertConnectionInput(connectionInput(), registries()));
+});
+
 test('connection status moves on an explicit table; revoked never regresses', () => {
   assert.deepEqual([...CONNECTION_STATUSES], ['pending', 'active', 'suspended', 'revoked']);
   assert.doesNotThrow(() => assertConnectionTransition('pending', 'active'));

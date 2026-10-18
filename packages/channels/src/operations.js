@@ -309,6 +309,17 @@ export function createChannelOperations(deps) {
   if (tenantId !== null && (typeof tenantId !== 'string' || tenantId.trim() === '' || tenantId.length > 256)) {
     throw new ValidationError('channel tenant id must be bounded text for the jobs-table namespace');
   }
+  // The single clock the package reads for receive time and window
+  // resolution: one injected clock drives ingest, the queue-time window
+  // check and the worker recheck together, so tests never mix a frozen
+  // adapter clock with the real receive clock. Production composes without
+  // it and reads the wall clock, exactly as before.
+  if (deps.nowMs !== undefined && typeof deps.nowMs !== 'function') {
+    throw new ValidationError('channel nowMs must be a clock function returning milliseconds', {
+      field: 'nowMs',
+    });
+  }
+  const nowMs = typeof deps.nowMs === 'function' ? deps.nowMs : () => Date.now();
   const names = resolvedNames(deps.config ?? {});
   // The opened `channel-sender@1` resolve function the composition hands
   // over (or a test double with the same shape). Absent is fine until an
@@ -538,11 +549,25 @@ export function createChannelOperations(deps) {
       }
       const decision = decideEffect(item, service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
       const transition = decision.effect === 'applied' ? 'apply' : decision.effect === 'ignored' ? 'discard' : 'quarantine';
-      const resumed = await transitionInbox(service, already.id, {
-        event: transition,
-        patch: { effectReason: decision.effectReason === '' ? 'redelivery resumed the received row' : decision.effectReason },
-        actor,
-      });
+      // Two redeliveries racing the same unprocessed row both read it as
+      // received: the winner moves it, the loser's transition then lands on
+      // the committed state and refuses CHANNEL_TRANSITION_INVALID. The loss
+      // is not a conflict — the same bytes already earned their effect — so
+      // the loser adopts the winner's row instead of 409ing (the same
+      // loser-adopts-winner contract as the insert races in this function).
+      let resumed;
+      try {
+        resumed = await transitionInbox(service, already.id, {
+          event: transition,
+          patch: { effectReason: decision.effectReason === '' ? 'redelivery resumed the received row' : decision.effectReason },
+          actor,
+        });
+      } catch (error) {
+        if (!error || typeof error !== 'object' || /** @type {any} */ (error).code !== 'CHANNEL_TRANSITION_INVALID') throw error;
+        const winner = await service.get(already.id);
+        if (!winner || winner.processed !== true) throw error;
+        return { duplicate: true, eventId: winner.id, effect: winner.effect };
+      }
       return { duplicate: false, resumed: true, eventId: resumed.id, effect: resumed.effect };
     }
 
@@ -707,13 +732,18 @@ export function createChannelOperations(deps) {
       // A verification timeout is a retryable provider-side stall, never a
       // bad signature: reporting 401 would tell the provider to drop a
       // delivery that was never recorded. The 503 keeps the redelivery coming.
+      // The same holds for any other adapter throw (a downstream outage, a
+      // malformed header, a crypto failure): only an explicit invalid
+      // signature — the adapter returning `{ ok: false }` below — is a 401.
+      // Anything the adapter raises is a server-side stall the provider must
+      // redeliver, never a forgery verdict.
       if (normalized.code === 'PROVIDER_TIMEOUT') {
         throw new AppError('Channel event verification timed out: retry the delivery', {
           code: 'CHANNEL_VERIFY_UNAVAILABLE', status: 503,
         });
       }
-      throw new AppError('Channel event verification failed: invalid signature', {
-        code: 'CHANNEL_SIGNATURE_INVALID', status: 401,
+      throw new AppError('Channel event verification failed: retry the delivery', {
+        code: 'CHANNEL_VERIFY_UNAVAILABLE', status: 503,
       });
     }
     if (!verified || verified.ok !== true) {
@@ -736,8 +766,8 @@ export function createChannelOperations(deps) {
       throw new AppError('Channel event is not well-formed', { code: 'CHANNEL_EVENT_MALFORMED', status: 422 });
     }
     const service = inbox();
-    const now = nowIso();
-    const receiveMs = Date.parse(now);
+    const receiveMs = nowMs();
+    const now = new Date(receiveMs).toISOString();
     const payloadFingerprint = fingerprintPayload(rawBody);
     const storeParams = {
       spaceId, connection, adapter, payloadFingerprint, actor, now,
@@ -1123,8 +1153,8 @@ export function createChannelOperations(deps) {
 
     const service = inbox();
     const outcomeService = importOutcomes();
-    const now = nowIso();
-    const receiveMs = Date.parse(now);
+    const receiveMs = nowMs();
+    const now = new Date(receiveMs).toISOString();
     const done = checked.nextPageToken === null;
     const commitKey = importSourceKey(spaceId, connection.sourceKey);
     const importKey = row.sourceKey;
@@ -1371,7 +1401,7 @@ export function createChannelOperations(deps) {
       return null;
     }
     if (typeof subject !== 'string' || subject === '') return null;
-    const nowMs = Date.now();
+    const referenceMs = nowMs();
     let latest = null;
     for (const row of inbox().listWhere({ spaceId, connectionKey })) {
       if (row.subject !== subject || row.effect !== 'applied') continue;
@@ -1387,7 +1417,7 @@ export function createChannelOperations(deps) {
       // Belt and braces with the ingest skew quarantine above: an
       // observation dated beyond now + skew (a row stored before the
       // quarantine existed) never opens the window.
-      if (ms > nowMs + CHANNEL_INGEST_FUTURE_SKEW_MS) continue;
+      if (ms > referenceMs + CHANNEL_INGEST_FUTURE_SKEW_MS) continue;
       if (latest === null || ms > latest) latest = ms;
     }
     return latest === null ? null : new Date(latest).toISOString();
