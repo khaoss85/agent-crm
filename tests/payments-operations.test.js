@@ -669,6 +669,145 @@ test('operations honor a renamed request module, and cancel moves through the si
   assert.equal(ops.getPaymentStatus(SPACE_A, request.id).status, 'canceled');
 });
 
+test('a revoked account rebinds through the explicit action and serves again', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const { connection } = await harness.register(SPACE_A, {
+    provider: 'stripe', account: ACCOUNT_A, adapter: 'fixture-stripe', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  await harness.activate(SPACE_A, connection.sourceKey);
+  await directAction(harness, 'payment-connection', 'revoke-connection', connectionRow(harness, SPACE_A, connection.sourceKey), { reason: 'kit revokes by mistake' });
+  assert.equal(connectionRow(harness, SPACE_A, connection.sourceKey).status, 'revoked');
+  // An identical re-registration over the revoked row resolves identically.
+  const identical = await harness.register(SPACE_A, {
+    provider: 'stripe', account: ACCOUNT_A, adapter: 'fixture-stripe', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  assert.equal(identical.duplicate, true);
+  assert.equal(identical.connection.status, 'revoked');
+  // A different binding over the revoked row is refused and names the
+  // explicit path — never a revoke that could not unblock it.
+  await assert.rejects(
+    harness.register(SPACE_A, {
+      provider: 'stripe', account: ACCOUNT_A, adapter: 'fixture-stripe', adapterVersion: 1, secretRef: 'vault://kit/stripe-b',
+    }),
+    (e) => e.code === 'PAYMENT_CONNECTION_CONFLICT' && /rebind-connection/.test(e.message),
+  );
+  // The explicit action returns the binding to pending with a new secret.
+  const rebound = await directAction(
+    harness, 'payment-connection', 'rebind-connection',
+    connectionRow(harness, SPACE_A, connection.sourceKey),
+    { secretRef: SECRET_REF, reason: 'kit recovers the incident' },
+  );
+  assert.equal(rebound.connection.status, 'pending');
+  const reboundRow = connectionRow(harness, SPACE_A, connection.sourceKey);
+  assert.equal(reboundRow.status, 'pending');
+  assert.ok(typeof reboundRow.secretRotatedAt === 'string');
+  // Traffic resumes only after activation, and rebinding a live binding
+  // is refused on the spot.
+  await assert.rejects(
+    harness.request(SPACE_A, {
+      connectionKey: connection.sourceKey, quoteId: 'quote-early', amount: 100, currency: 'EUR', requestKey: 'req-rebind-early',
+    }),
+    (e) => e.code === 'PAYMENT_CONNECTION_NOT_ACTIVE',
+  );
+  await harness.activate(SPACE_A, connection.sourceKey);
+  await assert.rejects(
+    directAction(harness, 'payment-connection', 'rebind-connection', connectionRow(harness, SPACE_A, connection.sourceKey), { secretRef: SECRET_REF, reason: 'kit rebinds a live binding' }),
+    (e) => e.code === 'VALIDATION_ERROR',
+  );
+  const { request } = await harness.request(SPACE_A, {
+    connectionKey: connection.sourceKey, quoteId: 'quote-rebind', amount: 100, currency: 'EUR', requestKey: 'req-rebind',
+  });
+  assert.equal(request.status, 'pending');
+  const body = paidBody(request.providerRef, 'evt_rebind_1');
+  const ingested = await harness.ingest(SPACE_A, {
+    connectionKey: connection.sourceKey, rawBody: body, headers: harness.faults.sign(body),
+  });
+  assert.equal(ingested.status, 'paid');
+  assert.equal(harness.status(SPACE_A, request.id).status, 'paid');
+});
+
+test('rotate-connection-secret stamps a new reference and refuses revoked bindings', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const rotated = await directAction(
+    harness, 'payment-connection', 'rotate-connection-secret',
+    connectionRow(harness, SPACE_A, key), { secretRef: SECRET_REF },
+  );
+  assert.equal(rotated.connection.secretRef, SECRET_REF);
+  assert.ok(typeof connectionRow(harness, SPACE_A, key).secretRotatedAt === 'string');
+  // A raw value in place of its locator is refused and stored nowhere.
+  await assert.rejects(
+    directAction(harness, 'payment-connection', 'rotate-connection-secret', connectionRow(harness, SPACE_A, key), { secretRef: 'sk_live_rawvalue' }),
+    (e) => e.code === 'VALIDATION_ERROR',
+  );
+  assert.ok(!harness.dumpStorage().includes('sk_live_rawvalue'));
+  await directAction(harness, 'payment-connection', 'revoke-connection', connectionRow(harness, SPACE_A, key), { reason: 'kit revokes before the rotate' });
+  await assert.rejects(
+    directAction(harness, 'payment-connection', 'rotate-connection-secret', connectionRow(harness, SPACE_A, key), { secretRef: SECRET_REF }),
+    (e) => e.code === 'PAYMENT_ROTATE_INVALID' && e.status === 409,
+  );
+  assert.equal(connectionRow(harness, SPACE_A, key).status, 'revoked');
+});
+
+test('a suspend during checkout mint holds the session: no orphan, same session resumed', async (t) => {
+  const { definition, api } = createFixtureStripeAdapter({ secret: SECRET });
+  let suspendMidMint = null;
+  const gated = {
+    ...definition,
+    createPayment: async (args) => {
+      const created = await definition.createPayment(args);
+      if (suspendMidMint) await suspendMidMint();
+      return created;
+    },
+  };
+  const { harness } = setup({ adapterDefinition: gated });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  suspendMidMint = () => directAction(
+    harness, 'payment-connection', 'suspend-connection',
+    connectionRow(harness, SPACE_A, key), { reason: 'kit suspends mid-mint' },
+  );
+  await assert.rejects(
+    harness.request(SPACE_A, {
+      connectionKey: key, quoteId: 'quote-hold', amount: 100, currency: 'EUR', requestKey: 'req-hold',
+    }),
+    (e) => e.code === 'PAYMENT_CONNECTION_NOT_ACTIVE' && e.status === 409,
+  );
+  // Exactly one provider session exists, and the intent holds its
+  // reference instead of dropping it: the session is linked, never orphan.
+  assert.equal(api.state.createCalls, 1);
+  const mintedRef = [...api.state.createdByKey.values()][0].providerRef;
+  const rows = harness.internals.modules.get('payment-request').service.listWhere({ spaceId: SPACE_A });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'open');
+  assert.equal(rows[0].providerRef, mintedRef);
+  // After reactivation the same key resumes the held checkout: the
+  // provider sees no second call, and the webhook finalizes it to paid.
+  await harness.activate(SPACE_A, key);
+  const retry = await harness.request(SPACE_A, {
+    connectionKey: key, quoteId: 'quote-hold', amount: 100, currency: 'EUR', requestKey: 'req-hold',
+  });
+  assert.equal(retry.request.status, 'pending');
+  assert.equal(retry.request.providerRef, mintedRef);
+  assert.equal(api.state.createCalls, 1, 'the retry resumes the held checkout instead of minting again');
+  const body = paidBody(mintedRef, 'evt_hold_1');
+  const ingested = await harness.ingest(SPACE_A, {
+    connectionKey: key, rawBody: body, headers: harness.faults.sign(body),
+  });
+  assert.equal(ingested.status, 'paid');
+  assert.equal(harness.status(SPACE_A, retry.request.id).status, 'paid');
+});
+
+test('ops.listPayments refuses an unknown status filter directly, never an empty list', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  await registeredActive(harness);
+  assert.throws(() => harness.list(SPACE_A, { status: 'pendnig' }), (e) => e.code === 'VALIDATION_ERROR');
+  assert.equal(harness.list(SPACE_A, { status: 'pending' }).length, 0);
+});
+
 test('unwired composition refuses instead of inventing custody', async (t) => {
   const { harness } = setup();
   t.after(() => harness.close());

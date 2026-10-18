@@ -4,7 +4,7 @@ import { AppError, ValidationError, definePackage, selectPackageGraph } from '..
 import { PAYMENT_PROVIDERS, PaymentRegistries } from './adapter.js';
 import { CONNECTION_STATUSES, assertConnectionTransition, assertSecretReference } from './connection.js';
 import { createPaymentOperations } from './operations.js';
-import { REQUEST_STATUSES, advancePaymentRequest } from './transitions.js';
+import { advancePaymentRequest } from './transitions.js';
 
 /**
  * The Payments domain package (backlog:1972e16d33f2).
@@ -190,11 +190,11 @@ export function buildPaymentConnectionActions(names = {}) {
     statusAction(
       connectionModule,
       'revoke-connection', 'Revoke connection',
-      'Revoke a payment connection permanently. Terminal: a revoked binding never reactivates — register a new one.',
+      'Revoke a payment connection: requests refuse and inbound deliveries quarantine. A revoked binding returns only through the explicit rebind-connection action — registering the same account again is refused.',
       ['pending', 'active', 'suspended'], 'revoked', { confirm: true },
     ),
     {
-      module: 'payment-connection',
+      module: connectionModule,
       name: 'rotate-connection-secret',
       label: 'Rotate connection secret',
       description: 'Point a connection at a new secret reference and stamp the rotation time. The value is never stored — rotation replaces the referenced value without touching CRM data.',
@@ -207,9 +207,46 @@ export function buildPaymentConnectionActions(names = {}) {
       /** @param {any} ctx */
       async execute({ record, input, actor, managed, now }) {
         requireUserActor(actor, 'Rotate connection secret');
+        // fromStates is a framework routing hint, not an enforcement: a
+        // direct execute on a revoked binding is refused here, like the
+        // table-guarded status moves above. A revoked binding rebinds
+        // instead of rotating.
+        if (!['pending', 'active', 'suspended'].includes(record.status)) {
+          throw new AppError('Rotate connection secret needs a live connection: a revoked binding rebinds instead', {
+            code: 'PAYMENT_ROTATE_INVALID', status: 409,
+          });
+        }
         const secretRef = assertSecretReference(typeof input?.secretRef === 'string' ? input.secretRef.trim() : '');
         const updated = await managed(record.id, { secretRef, secretRotatedAt: now() });
         return { connection: { id: updated.id, secretRef: updated.secretRef, secretRotatedAt: updated.secretRotatedAt } };
+      },
+    },
+    {
+      module: connectionModule,
+      name: 'rebind-connection',
+      label: 'Rebind connection',
+      description: 'Rebind a revoked connection to a new secret reference and return it to pending: the explicit incident-recovery path for a revoked account. The binding serves traffic only after activate-connection runs.',
+      actionContract: 1,
+      stateField: 'status',
+      fromStates: ['revoked'],
+      input: [
+        { name: 'secretRef', type: 'string', required: true, hint: 'The new secret reference locator — never a secret value.' },
+        { name: 'reason', type: 'string', required: true, hint: 'Why this revoked binding is rebound.' },
+      ],
+      /** @param {any} ctx */
+      async execute({ record, input, actor, managed, now }) {
+        const who = requireUserActor(actor, 'Rebind connection');
+        void who;
+        const reason = boundedReason(input, 'rebind-connection');
+        const secretRef = assertSecretReference(typeof input?.secretRef === 'string' ? input.secretRef.trim() : '');
+        // The single documented exception to revoked-terminal: the table
+        // owns the move, so a direct execute on a live binding is refused
+        // here exactly like the status moves above.
+        assertConnectionTransition(record.status, 'pending');
+        const updated = await managed(record.id, {
+          status: 'pending', statusReason: reason, secretRef, secretRotatedAt: now(),
+        });
+        return { connection: { id: updated.id, status: updated.status, secretRef: updated.secretRef } };
       },
     },
     {
@@ -373,15 +410,10 @@ export function createPaymentsPackage(options = {}) {
         ],
         create(runtime) {
           const ops = operations(runtime);
-          // Async so a refused filter rejects the returned promise like
-          // every other operation outcome, never throws synchronously.
-          return async (params) => {
-            const status = params?.status ?? null;
-            if (status !== null && status !== undefined && !REQUEST_STATUSES.includes(status)) {
-              throw new ValidationError(`payment status filter must be one of: ${REQUEST_STATUSES.join(', ')}`, { field: 'status' });
-            }
-            return ops.listPayments(params?.spaceId, { status: status ?? null });
-          };
+          // Thin pass-through: the filter refusal lives in ops.listPayments
+          // itself. Async so it rejects the returned promise like every
+          // other operation outcome, never throws synchronously.
+          return async (params) => ops.listPayments(params?.spaceId, { status: params?.status ?? null });
         },
       },
     ],

@@ -103,9 +103,12 @@ test('connection input binds one account per space and refuses raw secrets', () 
   assert.throws(() => assertConnectionInput(connectionInput({ adapter: 'nope' }), registries()), /Unknown payment adapter/);
 });
 
-test('connection transitions never regress terminal states', () => {
+test('connection transitions gate every move, with rebind the single revoked exit', () => {
   assert.equal(assertConnectionTransition('pending', 'active'), 'active');
+  assert.equal(assertConnectionTransition('revoked', 'pending'), 'pending');
   assert.throws(() => assertConnectionTransition('revoked', 'active'), /cannot move/);
+  assert.throws(() => assertConnectionTransition('revoked', 'suspended'), /cannot move/);
+  assert.throws(() => assertConnectionTransition('revoked', 'revoked'), /cannot move/);
   assert.throws(() => assertConnectionTransition('active', 'pending'), /cannot move/);
 });
 
@@ -188,6 +191,28 @@ test('module renames are honored by actions and config, and unknown names are re
   const actions = buildPaymentConnectionActions(renamed);
   assert.equal(actions.find((entry) => entry.name === 'cancel-request').module, 'shop-payment-request');
   assert.equal(actions.find((entry) => entry.name === 'suspend-connection').module, 'payment-connection');
+  // Every action declares its renamed module — including rotate, which
+  // once hardcoded the canonical connection name, and the rebind action.
+  const allRenamed = resolvePaymentModuleNames({
+    modules: {
+      'payment-connection': 'shop-payment-connection',
+      'payment-request': 'shop-payment-request',
+      'payment-event': 'shop-payment-event',
+    },
+  });
+  assert.deepEqual(
+    Object.fromEntries(
+      buildPaymentConnectionActions(allRenamed).map((entry) => [entry.name, entry.module]),
+    ),
+    {
+      'activate-connection': 'shop-payment-connection',
+      'suspend-connection': 'shop-payment-connection',
+      'revoke-connection': 'shop-payment-connection',
+      'rotate-connection-secret': 'shop-payment-connection',
+      'rebind-connection': 'shop-payment-connection',
+      'cancel-request': 'shop-payment-request',
+    },
+  );
   const fromConfig = resolvePaymentModuleNames({ config: { requestModule: 'shop-payment-request' } });
   assert.equal(fromConfig['payment-request'], 'shop-payment-request');
   // A modules entry wins over the config key saying the same thing.

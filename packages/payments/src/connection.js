@@ -18,12 +18,17 @@ import { PAYMENT_PROVIDERS } from './adapter.js';
 
 export const CONNECTION_STATUSES = Object.freeze(['pending', 'active', 'suspended', 'revoked']);
 
-/** Explicit allowed-transition table, not a rank. Terminal states never regress. */
+/**
+ * Explicit allowed-transition table, not a rank. `revoked` leaves only
+ * through the explicit rebind-connection action (incident recovery back to
+ * pending with a new secret reference): no status move targets pending, so
+ * every other path from revoked still refuses.
+ */
 export const CONNECTION_TRANSITIONS = Object.freeze({
   pending: Object.freeze(['active', 'suspended', 'revoked']),
   active: Object.freeze(['suspended', 'revoked']),
   suspended: Object.freeze(['active', 'revoked']),
-  revoked: Object.freeze([]),
+  revoked: Object.freeze(['pending']),
 });
 
 const HOSTILE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);

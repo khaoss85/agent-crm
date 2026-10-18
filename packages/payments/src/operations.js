@@ -19,7 +19,7 @@ import {
 } from './connection.js';
 import { fingerprintPayload } from './crypto.js';
 import { STRIPE_FINAL_TYPES } from './stripe.js';
-import { REQUEST_TERMINAL, advancePaymentRequest, withPaymentWrite } from './transitions.js';
+import { REQUEST_STATUSES, REQUEST_TERMINAL, advancePaymentRequest, withPaymentWrite } from './transitions.js';
 
 /**
  * Payment operations (backlog:1972e16d33f2).
@@ -215,7 +215,13 @@ export function createPaymentOperations(deps) {
         && existing.secretRef === normalized.secretRef) {
         return { duplicate: true, connection: existing };
       }
-      throw new AppError('A connection already binds this account differently — revoke it before rebinding', {
+      // A revoked-then-reregistered account is refused here on purpose:
+      // the explicit rebind-connection action is the only way back, so the
+      // refusal names it instead of a revoke that could never unblock this.
+      const guidance = existing.status === 'revoked'
+        ? 'rebind it with the rebind-connection action'
+        : 'rotate its secret with rotate-connection-secret, or revoke it and rebind it with rebind-connection';
+      throw new AppError(`A connection already binds this account differently — ${guidance}`, {
         code: 'PAYMENT_CONNECTION_CONFLICT', status: 409,
         details: { connectionKey: existing.sourceKey, status: existing.status },
       });
@@ -320,6 +326,24 @@ export function createPaymentOperations(deps) {
     return mintExternal(intent);
 
     async function mintExternal(row) {
+      // A held checkout from a suspended mint is never minted twice: an
+      // open row already carrying a provider reference resumes it below,
+      // so a retry after reactivation moves the same session to pending
+      // instead of minting a second one. Only the hold path below ever
+      // sets a reference on an open row, so a non-empty reference here
+      // always means a held checkout for this same intent.
+      if (typeof row.providerRef === 'string' && row.providerRef !== '') {
+        const resumed = await advancePaymentRequest(requestStores(), row.id, {
+          event: 'mint',
+          patch: {
+            providerRef: row.providerRef, providerUrl: row.providerUrl ?? '',
+            statusReason: 'held provider checkout resumed after suspension',
+          },
+          actor: SYSTEM(),
+          requireActiveConnection: true,
+        });
+        return { duplicate: false, request: resumed.request };
+      }
       let secret;
       try {
         secret = await resolveSecret(connection.secretRef, { spaceId, purpose: PAYMENT_SECRET_PURPOSE_OUTBOUND });
@@ -375,6 +399,24 @@ export function createPaymentOperations(deps) {
           requireActiveConnection: true,
         });
       } catch (error) {
+        // A suspend landed after the provider minted but before the move
+        // committed: the live session is held on the intent instead of
+        // dropped, so its later webhook still matches this row and a retry
+        // with the same key resumes it (see above) instead of minting a
+        // second session. The refusal still surfaces, so the caller knows
+        // to retry after reactivation. First holder wins: the conditional
+        // write never overwrites a reference another mint already held.
+        if (error && typeof error === 'object' && error.code === 'PAYMENT_CONNECTION_NOT_ACTIVE') {
+          await withPaymentWrite(async () => {
+            const current = await service.get(row.id);
+            if (!current) throw error;
+            if (typeof current.providerRef === 'string' && current.providerRef !== '') return;
+            await service.applyManaged(row.id, {
+              providerRef, providerUrl,
+              statusReason: 'provider checkout minted while the connection suspended: held for resume, never dropped',
+            }, { actor: SYSTEM() });
+          });
+        }
         // A concurrent mint won the same open intent while this call was at
         // the provider: the single path read the winner, so this call
         // resolves against the winner instead of erroring the retry — the
@@ -779,9 +821,16 @@ export function createPaymentOperations(deps) {
     });
   }
 
-  /** Every request of one space, newest intent first (insertion order). */
+  /**
+   * Every request of one space, newest intent first (insertion order). An
+   * unknown status filter is refused here — where every caller lands, not
+   * only the composed wrapper — never answered with a silent empty list.
+   */
   function listPayments(spaceId, { status = null } = {}) {
     const space = assertSpaceId(spaceId);
+    if (status !== null && status !== undefined && !REQUEST_STATUSES.includes(status)) {
+      throw new ValidationError(`payment status filter must be one of: ${REQUEST_STATUSES.join(', ')}`, { field: 'status' });
+    }
     const rows = requests().listWhere({ spaceId: space });
     const filtered = status === null ? rows : rows.filter((row) => row.status === status);
     return Object.freeze(filtered.map((row) => getPaymentStatus(space, row.id)));
