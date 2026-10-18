@@ -42,7 +42,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnGit } from './git-env.js';
 import { tmpdir } from 'node:os';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -762,7 +762,7 @@ function walk(directory, out = [], rootDir = directory) {
 /** Runs git in a directory; exposed so a test can drive the rules with a stub. */
 export function gitIn(cwd) {
   return (args) => {
-    const run = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const run = spawnGit(args, { cwd });
     return { status: run.status ?? 1, stdout: String(run.stdout ?? '').trim() };
   };
 }

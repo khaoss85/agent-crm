@@ -30,7 +30,7 @@
  * provenance fails with "history unavailable" rather than passing quietly.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawnGit } from './git-env.js';
 
 /**
  * What a provenance check concluded. Every value except `head` and `ancestor`
@@ -73,7 +73,7 @@ const HOW_TO_GET_HISTORY = 'Give the job full history — `actions/checkout` wit
  */
 export function gitIn(cwd) {
   return (args) => {
-    const run = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const run = spawnGit(args, { cwd });
     return { status: run.status ?? 1, stdout: String(run.stdout ?? '').trim() };
   };
 }
