@@ -1631,14 +1631,18 @@ export function createChannelOperations(deps) {
     if (!letter || letter.spaceId !== spaceId) {
       throw new AppError('Unknown or settled dead letter', { code: 'CHANNEL_LETTER_UNKNOWN', status: 404 });
     }
+    // A settled letter is not found (404), never a transition refusal: the
+    // API contract reports unknown-or-settled, and the machine below keeps
+    // the same answer for a race that settles between this read and the
+    // claim.
+    if (letter.state !== 'open') {
+      throw new AppError('Unknown or settled dead letter', { code: 'CHANNEL_LETTER_UNKNOWN', status: 404 });
+    }
     // The job-side edge of the same move: an open letter IS a send in
     // `dead-letter`, and only `requeue` leaves it. Both tables gate this
     // path, so a future row shape that drifts from the machine breaks loudly
     // here instead of sending from a state the machine forbids.
     assertJobTransition(jobSendState({ letterState: letter.state }), 'requeue');
-    if (letter.state !== 'open') {
-      throw new AppError('Unknown or settled dead letter', { code: 'CHANNEL_LETTER_UNKNOWN', status: 404 });
-    }
     const connection = requireActiveConnection(spaceId, letter.connectionKey);
     const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
     const message = normalizeOutboundMessage(adapter, spaceId, connection, params?.message);
