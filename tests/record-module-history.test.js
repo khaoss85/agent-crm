@@ -477,3 +477,84 @@ test('drifted SQL on a bridged database still refuses instead of being treated a
     /create_data_quality_issues.*already applied with different SQL.*immutable/s,
   );
 });
+
+/**
+ * calendar-sync-state revision 2 (accordo df7f5052b045): the space-grant
+ * change shipped three columns without raising the revision, so the manifest
+ * guard failed on every PR. The manifest is now revision 2 with its
+ * revision 1 checked in as calendar-sync-state.history.json: the framework
+ * renders the recorded bootstrap byte-identical plus one additive evolution.
+ */
+const currentCssManifest = () => loadJson('../packages/calendar-sync/modules/calendar-sync-state.module.json');
+const cssHistoryFile = () => loadJson('../packages/calendar-sync/modules/calendar-sync-state.history.json');
+const cssHistoryEntry = () => ({
+  name: 'calendar-sync-state',
+  manifest: currentCssManifest(),
+  previousManifests: cssHistoryFile().previousManifests,
+});
+// What revision-1 databases recorded (the guard's RECORDED entry before the
+// revision 2 bump): the history file must reproduce them byte for byte.
+const RECORDED_CSS_SQLITE_CHECKSUM = '445c69ba3ea8e2f6aacc9f4b668759bd903893624ba15c33f86d04a93e40af3d';
+const RECORDED_CSS_PG_CHECKSUM = '79d069e33fff760a52f42b69863d66b43ba13d1205a2c671abfd522a8e57b281';
+
+test('calendar-sync-state revision 2 keeps the original SQLite migration identical and adds one evolution', () => {
+  const migrations = recordModuleMigrations([cssHistoryEntry()]);
+  assert.deepEqual(
+    migrations.map((migration) => migration.name),
+    ['create_calendar_sync_states', 'evolve_calendar_sync_states_r2'],
+  );
+  assert.equal(migrations[0].sql, generateModuleMigration(cssHistoryFile().previousManifests[0]).sql);
+  assert.equal(sha(migrations[0].sql), RECORDED_CSS_SQLITE_CHECKSUM);
+  assert.match(migrations[1].sql, /ADD COLUMN space_id TEXT/);
+  assert.match(migrations[1].sql, /ADD COLUMN secret_ref TEXT/);
+  assert.match(migrations[1].sql, /ADD COLUMN grant_status TEXT/);
+});
+
+test('calendar-sync-state revision 2 keeps the original Postgres bootstrap identical and adds one evolution', () => {
+  const migrations = postgresRecordModuleMigrations([cssHistoryEntry()]);
+  assert.deepEqual(
+    migrations.map((migration) => migration.name),
+    ['pg_bootstrap_calendar_sync_states', 'pg_evolve_calendar_sync_states_r2'],
+  );
+  assert.equal(migrations[0].sql, generatePostgresModuleBootstrap(cssHistoryFile().previousManifests[0]).sql);
+  assert.equal(sha(migrations[0].sql), RECORDED_CSS_PG_CHECKSUM);
+  assert.match(migrations[1].sql, /ADD COLUMN "space_id" TEXT/);
+  assert.match(migrations[1].sql, /ADD COLUMN "secret_ref" TEXT/);
+  assert.match(migrations[1].sql, /ADD COLUMN "grant_status" TEXT/);
+});
+
+test('a manifest-only calendar-sync-state entry composes the checked-in history without caller help', () => {
+  // The production path: no `previousManifests` on the entry — the framework
+  // supplies the checked-in history itself.
+  const entry = { name: 'calendar-sync-state', manifest: currentCssManifest() };
+  const sqlite = recordModuleMigrations([entry]);
+  assert.deepEqual(
+    sqlite.map((migration) => migration.name),
+    ['create_calendar_sync_states', 'evolve_calendar_sync_states_r2'],
+  );
+  assert.equal(sha(sqlite[0].sql), RECORDED_CSS_SQLITE_CHECKSUM);
+  const postgres = postgresRecordModuleMigrations([entry]);
+  assert.deepEqual(
+    postgres.map((migration) => migration.name),
+    ['pg_bootstrap_calendar_sync_states', 'pg_evolve_calendar_sync_states_r2'],
+  );
+  assert.equal(sha(postgres[0].sql), RECORDED_CSS_PG_CHECKSUM);
+});
+
+test('a revision-1 calendar-sync-state sqlite database upgrades with its rows intact', () => {
+  const db = new DatabaseSync(':memory:');
+  const migrations = recordModuleMigrations([cssHistoryEntry()]);
+  db.exec(migrations[0].sql);
+  db.prepare(
+    'INSERT INTO calendar_sync_states (id, state_key, calendar_id, created_at, updated_at) VALUES (?,?,?,?,?)',
+  ).run('c1', 'legacy:1', 'cal-1', 'then', 'then');
+  db.exec(migrations[1].sql);
+  const row = db.prepare(
+    'SELECT id, state_key, space_id, secret_ref, grant_status FROM calendar_sync_states WHERE id = ?',
+  ).get('c1');
+  assert.equal(row.state_key, 'legacy:1');
+  assert.equal(row.space_id, null);
+  assert.equal(row.secret_ref, null);
+  assert.equal(row.grant_status, null);
+  db.close();
+});

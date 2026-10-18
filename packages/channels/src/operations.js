@@ -549,11 +549,25 @@ export function createChannelOperations(deps) {
       }
       const decision = decideEffect(item, service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
       const transition = decision.effect === 'applied' ? 'apply' : decision.effect === 'ignored' ? 'discard' : 'quarantine';
-      const resumed = await transitionInbox(service, already.id, {
-        event: transition,
-        patch: { effectReason: decision.effectReason === '' ? 'redelivery resumed the received row' : decision.effectReason },
-        actor,
-      });
+      // Two redeliveries racing the same unprocessed row both read it as
+      // received: the winner moves it, the loser's transition then lands on
+      // the committed state and refuses CHANNEL_TRANSITION_INVALID. The loss
+      // is not a conflict — the same bytes already earned their effect — so
+      // the loser adopts the winner's row instead of 409ing (the same
+      // loser-adopts-winner contract as the insert races in this function).
+      let resumed;
+      try {
+        resumed = await transitionInbox(service, already.id, {
+          event: transition,
+          patch: { effectReason: decision.effectReason === '' ? 'redelivery resumed the received row' : decision.effectReason },
+          actor,
+        });
+      } catch (error) {
+        if (!error || typeof error !== 'object' || /** @type {any} */ (error).code !== 'CHANNEL_TRANSITION_INVALID') throw error;
+        const winner = await service.get(already.id);
+        if (!winner || winner.processed !== true) throw error;
+        return { duplicate: true, eventId: winner.id, effect: winner.effect };
+      }
       return { duplicate: false, resumed: true, eventId: resumed.id, effect: resumed.effect };
     }
 
@@ -718,13 +732,18 @@ export function createChannelOperations(deps) {
       // A verification timeout is a retryable provider-side stall, never a
       // bad signature: reporting 401 would tell the provider to drop a
       // delivery that was never recorded. The 503 keeps the redelivery coming.
+      // The same holds for any other adapter throw (a downstream outage, a
+      // malformed header, a crypto failure): only an explicit invalid
+      // signature — the adapter returning `{ ok: false }` below — is a 401.
+      // Anything the adapter raises is a server-side stall the provider must
+      // redeliver, never a forgery verdict.
       if (normalized.code === 'PROVIDER_TIMEOUT') {
         throw new AppError('Channel event verification timed out: retry the delivery', {
           code: 'CHANNEL_VERIFY_UNAVAILABLE', status: 503,
         });
       }
-      throw new AppError('Channel event verification failed: invalid signature', {
-        code: 'CHANNEL_SIGNATURE_INVALID', status: 401,
+      throw new AppError('Channel event verification failed: retry the delivery', {
+        code: 'CHANNEL_VERIFY_UNAVAILABLE', status: 503,
       });
     }
     if (!verified || verified.ok !== true) {

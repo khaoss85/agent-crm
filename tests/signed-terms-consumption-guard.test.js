@@ -86,6 +86,9 @@ const EXEMPT = new Map([
     'passes the contract row\'s term columns into the handover policy context; it reads no term record'],
   ['packages/lifecycle/src/index.js',
     'reads term provenance through contract-lifecycle-source@2, which reports the already-verified contract projection'],
+  ['packages/commercial/src/package-credits.js',
+    'reads only its own package-credit rows and the appointment rows; the quote-version-term name appears once in a comment '
+    + 'about the optional-read shape, never as a term row read, and the file calls no term accessor'],
 ]);
 
 /** Files that must contain a verifier call. */
