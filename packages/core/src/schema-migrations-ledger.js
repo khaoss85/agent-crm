@@ -19,6 +19,54 @@ export const PINNED_CORE_MIGRATION_CHECKSUMS = Object.freeze({
   '7:spine_cross_plane_audit_intents': '399b3f4aa70dd8aeea00a0d37bef21f952e3b32f84828ed1f6c13721b741c94b',
 });
 
+/**
+ * Released bootstrap checksums a module migration name recorded under a
+ * different rendering than the one current source produces. Commit b8266ea
+ * (2026-09-20) widened the data-quality-issue `kind` enum with
+ * `identity_conflict_windowed_scope` without raising the manifest revision,
+ * so revision 1 shipped two released bootstrap identities: the original
+ * (`6d601a00…` on PostgreSQL, recorded by presti-group) and the widened one
+ * (`44aec90d…`, recorded by every database bootstrapped from b8266ea until
+ * the revision-2 fix). The revision-2 history renders the original bootstrap
+ * plus `pg_evolve_data_quality_issues_r2`, whose `DROP CONSTRAINT IF EXISTS`
+ * + `ADD CONSTRAINT` converges both generations to the same schema — but the
+ * immutable-once-applied ledger would refuse the widened generation before
+ * that evolution runs. A recorded checksum listed here is accepted as the
+ * same migration — but only while the rendered checksum is still the pinned
+ * `rendered` identity: a future drifted rendering is refused even on a
+ * bridged database, so the bridge can never silence new drift. The recorded
+ * row is never rewritten — later revisions still apply on top.
+ * Listed by migration name, never by module: migration names are already
+ * unique across modules (duplicates refuse at apply time).
+ */
+export const PINNED_MODULE_BOOTSTRAP_PREDECESSORS = Object.freeze({
+  'pg_bootstrap_data_quality_issues': Object.freeze({
+    rendered: '6d601a00c1bd40d3c3618f0a204cf9c16c35e024b051828c7739b63dad2c3b63',
+    predecessors: Object.freeze([
+      '44aec90d03eb7f00803870bf7b18201100e008d6be97ef8153918100c6a565cf',
+    ]),
+  }),
+  'create_data_quality_issues': Object.freeze({
+    rendered: 'c686673b293b8df6e29104514a7be7dd578901d72e25039e44c7210e93c3c192',
+    predecessors: Object.freeze([
+      'b08c6b8c1e2182fc432cdb77417541416a44b7301e3c01f01a88a99b230de656',
+    ]),
+  }),
+});
+
+/**
+ * @param {string} migrationName
+ * @param {string} recordedChecksum
+ * @param {string} renderedChecksum
+ */
+export function isPinnedModuleBootstrapPredecessor(migrationName, recordedChecksum, renderedChecksum) {
+  const entry = PINNED_MODULE_BOOTSTRAP_PREDECESSORS[migrationName];
+  return !!entry
+    && entry.rendered === renderedChecksum
+    && Array.isArray(entry.predecessors)
+    && entry.predecessors.includes(recordedChecksum);
+}
+
 export const SCHEMA_MIGRATIONS_CHECKSUM_VERSION = 8;
 export const SCHEMA_MIGRATIONS_CHECKSUM_NAME = 'schema_migrations_checksum';
 

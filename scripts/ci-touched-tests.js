@@ -191,6 +191,11 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // scan. Fast twin of the same check inside the slow prompts matrix
   // (doubled until that file is split — see REPO_WIDE_GUARD_EXCLUSIONS).
   'tests/agent-tool-selection-docs-ids.test.js',
+  // Recursive walk of packages holding every manifest-selected module's
+  // rendered migration SQL at its recorded revision: a manifest edit that
+  // changes SQL without raising the revision fails here on every PR
+  // (seed on presti-group failed after b8266ea widened an enum unbumped).
+  'tests/module-manifest-revision-guard.test.js',
   // This gate's own audit (the unlisted-guard test walks tests/ itself):
   // a PR adding a guard-shaped file anywhere must run the audit that
   // requires it listed.
