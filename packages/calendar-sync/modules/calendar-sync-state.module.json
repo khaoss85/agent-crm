@@ -1,5 +1,6 @@
 {
   "manifestVersion": 1,
+  "revision": 2,
   "name": "calendar-sync-state",
   "table": "calendar_sync_states",
   "description": "One row per synced calendar: the incremental sync token the next pull resumes from, the space grant binding (the vault secretRef plus the space it belongs to — the grant value itself never lands in a row), and the push channel registration (channel id plus the bearer token hash — the token itself never lands in a row). Every field is managed: state exists only through the calendar-sync package, and no client can create, forge or rewrite it.",
