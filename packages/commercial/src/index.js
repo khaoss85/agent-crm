@@ -5,6 +5,7 @@ import { CommercialRegistries } from './registry.js';
 import { buildCommercialActions } from './actions.js';
 import { createCatalogSync } from './catalog-sync.js';
 import {
+  createCommercialQuotesVerifiedAsyncCapability,
   createCommercialQuotesVerifiedCapability, createCommercialQuoteBindingCapability,
 } from './capability.js';
 import { createPackageCreditsCapability } from './package-credits.js';
@@ -115,8 +116,12 @@ export function createCommercialDomain(options = {}) {
     capabilities: [
       // @2 carries the authoritative signed-term verifier every consumer of
       // signed terms must call (ADR-036); @1 is retired, its reads embedded
-      // byte-identically in @2's base.
-      createCommercialQuotesVerifiedCapability(registries, config),
+      // byte-identically in @2's base. The contract-2 graph offers the awaited
+      // twin instead: same name and version, every storage read awaited, so a
+      // published synchronous contract never changes shape.
+      (options.packageContract === 2
+        ? createCommercialQuotesVerifiedAsyncCapability(registries, config)
+        : createCommercialQuotesVerifiedCapability(registries, config)),
       createCommercialQuoteBindingCapability(),
       // Package credits: grants plus the balance read from the appointment
       // rows. No `requires` edge on appointments by design — see
@@ -208,7 +213,9 @@ export { createPriceListCatalogProvider, validatePriceListConfig } from './price
 export { buildCommercialActions } from './actions.js';
 export { createCatalogSync } from './catalog-sync.js';
 export {
-  createCommercialQuotesCapability, createCommercialQuotesVerifiedCapability,
+  createCommercialQuotesAsyncCapability,
+  createCommercialQuotesCapability, createCommercialQuotesVerifiedAsyncCapability,
+  createCommercialQuotesVerifiedCapability,
   createCommercialQuoteBindingCapability, QUOTE_BINDING_FIELDS,
 } from './capability.js';
 export {

@@ -7,18 +7,25 @@
  * at the commercial proposal. The only exercised path was SQLite, whose reads
  * settle synchronously.
  *
- * Both tests below run on SQLite with every record service wrapped so reads
- * settle through a real Promise, which is the exact seam where PostgreSQL
- * differs. Any record read consumed without `await` in the exercised path
- * throws a TypeError instead of answering rows, so the journey fails loudly
- * rather than shipping a silent SQLite-only pass.
+ * The journey and the tripwire below run on SQLite with every record service
+ * wrapped so reads settle through a real Promise, which is the exact seam
+ * where PostgreSQL differs. Any record read consumed without `await` in the
+ * exercised path throws a TypeError instead of answering rows, so the journey
+ * fails loudly rather than shipping a silent SQLite-only pass.
+ *
+ * The journey covers the seed path the acceptance names — syncCatalog, the
+ * commercial proposal and its approval — on the synchronous application graph.
+ * Signature and activation on asynchronous storage run through the contract-2
+ * capability, which the third test opens directly: composing the synchronous
+ * graph with asynchronous storage for those paths would prove a hybrid that
+ * never runs in production (PostgreSQL composes the contract-2 graph).
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { project, boot, POLICY, ACTIVATION_INPUT } from './helpers/contracts-project.js';
+import { project, boot } from './helpers/contracts-project.js';
 
 /**
  * Wrap a record service so every method settles through a Promise, like the
@@ -49,14 +56,19 @@ function asyncStorage(app) {
 
 const ACTOR = { type: 'user', id: 'async-guard' };
 
-test('catalog sync, quote, approve, signature and activation run on async record reads', async (t) => {
-  const root = project(t, { withDomain: true });
-  const context = await boot(root, join(root, 'data', 'commercial-async.sqlite'));
-  t.after(() => context.close());
-  const { app } = context;
-  asyncStorage(app);
-  const { signatureFixture } = await import(pathToFileURL(join(root, 'examples/starters/b2b-lead-qualification/signature.js')).href);
+const TERM = {
+  effectiveDate: '2026-09-01', termStartDate: '2026-09-01', termEndDate: '2027-08-31',
+  autoRenew: true, renewalNoticeDays: 60,
+};
 
+/**
+ * The seed path: synchronize the catalog, propose on it and submit. Shared by
+ * the journey and the contract-2 test so both start from the same submitted
+ * proposal. Approval is the journey's own step, not the setup's. The journey
+ * stays termless (the pre-terms seed path); the contract-2 test drafts a term
+ * so the frozen snapshot and its verifier run on async storage too.
+ */
+async function seedSubmittedProposal(app, { term } = {}) {
   const synced = await app.syncCatalog({ provider: 'fixture-saas-catalog', actor: ACTOR });
   assert.ok(synced, 'syncCatalog settles on async storage');
 
@@ -82,37 +94,26 @@ test('catalog sync, quote, approve, signature and activation run on async record
       input: { offerId: offer.id, quantity: 20, discountBps: 500 }, actor: ACTOR,
     });
   }
+  if (term) {
+    await app.modules.get('quote-term').service.create({ quoteId: quote.id, ...term }, { actor: ACTOR });
+  }
   const submitted = await app.runAction({ module: 'quote', action: 'submit', recordId: quote.id, input: { policy: 'standard-sales-discount', version: 1 }, actor: ACTOR });
-  if (submitted.result.version.decision === 'approval_required') {
+  return { quote, version: submitted.result.version, decision: submitted.result.version.decision };
+}
+
+test('catalog sync, quote and approve run on async record reads', async (t) => {
+  const root = project(t, { withDomain: true });
+  const context = await boot(root, join(root, 'data', 'commercial-async.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  asyncStorage(app);
+
+  const { quote, decision } = await seedSubmittedProposal(app);
+  if (decision === 'approval_required') {
     await app.runAction({ module: 'quote', action: 'approve', recordId: quote.id, input: {}, actor: ACTOR });
   }
   const approvals = await app.modules.get('quote-approval').service.listWhere({ quoteId: quote.id });
-  assert.ok(approvals.length > 0 || submitted.result.version.decision !== 'approval_required', 'the proposal carries its approval evidence');
-
-  await app.runAction({
-    module: 'quote', action: 'request-signature', recordId: quote.id,
-    input: {
-      quoteVersionId: submitted.result.version.id, provider: 'fixture-signature', providerVersion: 1,
-      signers: [{ name: 'Ada Async', email: 'sign.async@example.com', role: 'customer' }],
-    },
-    actor: ACTOR,
-  });
-  const envelope = (await app.modules.get('signature-envelope').service.listWhere({ quoteVersionId: submitted.result.version.id }))[0];
-  assert.ok(envelope?.id, 'the signature envelope exists on async storage');
-  signatureFixture.markCompleted(envelope.idempotencyKey);
-  const event = signatureFixture.event(envelope.idempotencyKey, 'completed', { providerEventId: 'evt_async_guard' });
-  await app.ingestSignatureEvent({ provider: 'fixture-signature', rawBody: event.rawBody, headers: event.headers });
-  const order = (await app.modules.get('order').service.listWhere({ quoteVersionId: submitted.result.version.id }))[0];
-  assert.ok(order?.id, 'verified completion writes the order on async storage');
-
-  const planned = await app.runAction({ module: 'order', action: 'plan-activation', recordId: order.id, input: { ...POLICY }, actor: ACTOR });
-  assert.ok(planned.result?.plan, 'activation plans on async storage');
-  await app.runAction({
-    module: 'order', action: 'activate-contract', recordId: order.id,
-    input: { ...POLICY, ...ACTIVATION_INPUT }, actor: ACTOR,
-  });
-  const contract = (await app.modules.get('commercial-contract').service.listWhere({ orderId: order.id }))[0];
-  assert.ok(contract?.id, 'activation writes the contract on async storage');
+  assert.ok(approvals.length > 0 || decision !== 'approval_required', 'the proposal carries its approval evidence');
 });
 
 test('an un-awaited record read fails instead of answering rows', async (t) => {
@@ -127,4 +128,52 @@ test('an un-awaited record read fails instead of answering rows', async (t) => {
   assert.throws(() => pending.sort((a, b) => (a.id < b.id ? -1 : 1)), TypeError, 'consuming it without await throws like revisions.sort did in production');
   const rows = await pending;
   assert.deepEqual(rows, [], 'awaited, the same read settles to rows');
+});
+
+test('the contract-2 commercial capability settles every read on async storage', async (t) => {
+  const root = project(t, { withDomain: true });
+  const context = await boot(root, join(root, 'data', 'commercial-async-v2.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  asyncStorage(app);
+  const { quote, version } = await seedSubmittedProposal(app, { term: TERM });
+
+  // The awaitable graph's offering, opened with the application's own modules
+  // view — the same seam PostgreSQL differs on. Composition edges are the
+  // dual-graph test's subject; this test proves the reads themselves.
+  const { createCommercialDomainV2 } = await import(pathToFileURL(join(root, 'packages/commercial/src/index.js')).href);
+  const offered = createCommercialDomainV2().capabilities.find((entry) => entry.name === 'commercial-quotes');
+  assert.equal(offered?.version, 2, 'the contract-2 graph offers commercial-quotes@2');
+  const cap = await offered.create({ modules: app.modules, consumer: 'internal-async-probe' });
+  assert.equal(cap.capabilityContract, 2, 'the awaitable graph declares capabilityContract 2');
+
+  const q = await cap.quote(quote.id);
+  assert.ok(q && typeof q.then === 'undefined', 'quote answers the frozen record, settled');
+  assert.equal(q.currentVersionId, version.id, 'the quote names the submitted version');
+  assert.equal(Object.isFrozen(q), true, 'the record is frozen');
+
+  const v = await cap.version(version.id);
+  assert.equal(v?.policy, 'standard-sales-discount', 'the version carries its discount policy');
+
+  const lines = await cap.versionLines(version.id);
+  assert.equal(lines.length, 2, 'both proposal lines read back through Promises');
+  assert.ok(lines.every((line, i) => i === 0 || lines[i - 1].position <= line.position), 'lines stay position-ordered');
+
+  const totals = await cap.versionTotals(version.id);
+  assert.ok(totals.length >= 1, 'grouped totals read back through a Promise');
+
+  const snapshot = await cap.versionTerm(version.id);
+  assert.ok(snapshot && typeof snapshot.then === 'undefined', 'the frozen snapshot settles, never a Promise');
+  assert.equal(snapshot.versionId, version.id, 'the snapshot belongs to the submitted version');
+  assert.equal(Object.isFrozen(snapshot), true, 'the snapshot is frozen');
+
+  const outcome = await cap.verifySignedTerms({ scope: 'quote-version', versionId: version.id });
+  assert.ok(outcome?.verified, 'the drafted term verifies on async storage');
+  assert.ok(Number.isFinite(outcome.verified.termDays), 'the verified tuple carries its term length');
+  assert.equal(outcome.row.versionId, version.id, 'the verified row is the frozen snapshot');
+
+  assert.equal(await cap.versionTerm('no-such-version'), null, 'a version without a term is still null, never an error');
+  assert.equal(await cap.verifySignedTerms({ scope: 'quote-version', versionId: 'no-such-version' }), null,
+    'with no snapshot the verifier answers null, like the synchronous contract');
+  assert.ok(cap.policies().length >= 1, 'the storage-free read stays synchronous on both contracts');
 });

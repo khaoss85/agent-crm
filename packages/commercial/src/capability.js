@@ -2,7 +2,7 @@
 
 import { AppError } from '../../core/index.js';
 import {
-  TERMS_SNAPSHOT_AMBIGUOUS, verifyOrderTermRows, verifySelfConsistent,
+  TERMS_SNAPSHOT_AMBIGUOUS, verifyOrderTermRows, verifyOrderTermRowsAsync, verifySelfConsistent,
 } from './verify-terms.js';
 
 /**
@@ -46,8 +46,22 @@ function service(modules, name) {
   return module.service;
 }
 
-/** Exact primary-key read that answers null instead of throwing. Awaited: on async storage the read settles through a Promise. */
-async function safeGet(recordService, id) {
+/** Exact primary-key read that answers null instead of throwing. */
+function safeGet(recordService, id) {
+  try {
+    return recordService.get(id);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The awaited twin, for the contract-2 graph only: on asynchronous storage
+ * (PostgreSQL) the read settles through a Promise. Never used behind a
+ * contract-1 interface — a published synchronous contract does not change
+ * shape.
+ */
+async function safeGetAsync(recordService, id) {
   try {
     return await recordService.get(id);
   } catch {
@@ -102,14 +116,104 @@ export function createCommercialQuotesCapability(registries, config) {
         capabilityContract: 1,
 
         /** The quote record, or null — the lifecycle facts live on it. @param {string} quoteId */
+        quote(quoteId) {
+          const record = typeof quoteId === 'string' && quoteId !== '' ? safeGet(service(modules, names.quote), quoteId) : null;
+          return record ? Object.freeze({ ...record }) : null;
+        },
+
+        /** One immutable Quote Version row, or null. @param {string} versionId */
+        version(versionId) {
+          const record = typeof versionId === 'string' && versionId !== '' ? safeGet(service(modules, names.version), versionId) : null;
+          return record ? Object.freeze({ ...record }) : null;
+        },
+
+        /** Every version line, exact indexed read, position-ordered. @param {string} versionId */
+        versionLines(versionId) {
+          return Object.freeze(service(modules, names.versionLine).listWhere({ versionId })
+            .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position))
+            .map((row) => Object.freeze({ ...row })));
+        },
+
+        /** Every version component, exact indexed read. @param {string} versionId */
+        versionComponents(versionId) {
+          return Object.freeze(service(modules, names.versionComponent).listWhere({ versionId })
+            .map((row) => Object.freeze({ ...row })));
+        },
+
+        /** Every grouped total; unlike periods are never summed. @param {string} versionId */
+        versionTotals(versionId) {
+          return Object.freeze(service(modules, names.versionTotal).listWhere({ versionId })
+            .map((row) => Object.freeze({ ...row })));
+        },
+
+        /**
+         * The version's immutable signed-term snapshot, or null — most
+         * versions predate terms and have none, and null is that historical
+         * fact, never an error. Additive on capability version 1: every
+         * pre-existing answer is byte-identical (the M16a precedent bumped a
+         * capability version because existing answers changed shape; a new
+         * read the next consumer opts into is the case its map-based design
+         * explicitly reserved for staying put). A project that never applied
+         * the quote-version-term manifest also answers null.
+         * @param {string} versionId
+         */
+        versionTerm(versionId) {
+          let terms = null;
+          try {
+            terms = modules.get(names.versionTerm)?.service ?? null;
+          } catch {
+            terms = null;
+          }
+          if (!terms || typeof versionId !== 'string' || versionId === '') return null;
+          const record = terms.listWhere({ versionId })[0] ?? null;
+          return record ? Object.freeze({ ...record }) : null;
+        },
+
+        /** Declared discount-policy identities with fingerprints, function-free. */
+        policies() {
+          return registries.metadata().discountPolicies;
+        },
+      };
+    },
+  };
+}
+
+/**
+ * `commercial-quotes@1` reads for the contract-2 graph — the awaited twin of
+ * `createCommercialQuotesCapability`, method for method.
+ *
+ * Offered only by the `packageContract: 2` commercial domain (which selects it
+ * instead of the synchronous factory), so the two graphs can never share it:
+ * the synchronous graph keeps the published synchronous shape, and every
+ * `await` here settles an asynchronous-storage read. `policies` reads no
+ * storage and stays synchronous in both graphs.
+ *
+ * @param {any} registries the package's CommercialRegistries instance
+ * @param {Record<string, string>} [config] module renames
+ */
+export function createCommercialQuotesAsyncCapability(registries, config) {
+  const names = resolvedNames(config);
+  return {
+    name: 'commercial-quotes',
+    version: 1,
+    capabilityContract: 2,
+    description:
+      'Read a quote and its immutable quote-version evidence (version, lines, components, totals) plus the declared discount-policy identities and fingerprints. Grants no catalog write, no policy evaluation, no registration and no storage handle.',
+    /** @param {{modules?: any, consumer?: string}} context */
+    async create(context = {}) {
+      const modules = requireModules(context, 'commercial-quotes@1');
+      return {
+        capabilityContract: 2,
+
+        /** The quote record, or null — the lifecycle facts live on it. @param {string} quoteId */
         async quote(quoteId) {
-          const record = typeof quoteId === 'string' && quoteId !== '' ? await safeGet(service(modules, names.quote), quoteId) : null;
+          const record = typeof quoteId === 'string' && quoteId !== '' ? await safeGetAsync(service(modules, names.quote), quoteId) : null;
           return record ? Object.freeze({ ...record }) : null;
         },
 
         /** One immutable Quote Version row, or null. @param {string} versionId */
         async version(versionId) {
-          const record = typeof versionId === 'string' && versionId !== '' ? await safeGet(service(modules, names.version), versionId) : null;
+          const record = typeof versionId === 'string' && versionId !== '' ? await safeGetAsync(service(modules, names.version), versionId) : null;
           return record ? Object.freeze({ ...record }) : null;
         },
 
@@ -135,12 +239,8 @@ export function createCommercialQuotesCapability(registries, config) {
         /**
          * The version's immutable signed-term snapshot, or null — most
          * versions predate terms and have none, and null is that historical
-         * fact, never an error. Additive on capability version 1: every
-         * pre-existing answer is byte-identical (the M16a precedent bumped a
-         * capability version because existing answers changed shape; a new
-         * read the next consumer opts into is the case its map-based design
-         * explicitly reserved for staying put). A project that never applied
-         * the quote-version-term manifest also answers null.
+         * fact, never an error. A project that never applied the
+         * quote-version-term manifest also answers null.
          * @param {string} versionId
          */
         async versionTerm(versionId) {
@@ -194,6 +294,104 @@ export function createCommercialQuotesVerifiedCapability(registries, config) {
     create(context = {}) {
       const modules = requireModules(context, 'commercial-quotes@2');
       const inner = base.create(context);
+      const versionTermRows = (versionId) => {
+        let terms = null;
+        try {
+          terms = modules.get(names.versionTerm)?.service ?? null;
+        } catch {
+          terms = null;
+        }
+        if (!terms || typeof versionId !== 'string' || versionId === '') return [];
+        return terms.listWhere({ versionId });
+      };
+
+      return Object.freeze({
+        ...inner,
+        capabilityContract: 1,
+
+        /**
+         * Verify a signed-term snapshot. Read-only: it loads evidence, checks
+         * it and answers — it never repairs, rewrites or creates a row, and it
+         * hands back no storage handle and no fingerprint function.
+         *
+         * `scope: 'quote-version'` verifies Commercial's own authoritative
+         * snapshot for a version. `scope: 'order'` verifies a copied
+         * `order-term` **row the caller already holds** — Signature owns that
+         * record, so the caller passes the rows and this decides — against its
+         * own fingerprint *and* against the authoritative version snapshot.
+         *
+         * Answers `null` when there is no snapshot at all: absence is the
+         * ordinary historical case (ADR-033 backfills nothing, ever), and a
+         * consumer must present it as unsigned, never as a verified term.
+         *
+         * For `scope: 'order'` the caller must also pass `documentTerms`: the
+         * `terms` section of the signed document (or `null` when the signed
+         * document carried none). Row-to-row linkage alone cannot survive a
+         * writer that rewrites both rows, so the signed bytes are the anchor.
+         *
+         * @param {{scope: 'quote-version'|'order', versionId?: string, orderId?: string, rows?: any[], documentTerms?: any}} request
+         */
+        verifySignedTerms(request = /** @type {any} */ ({})) {
+          if (request?.scope === 'quote-version') {
+            const rows = versionTermRows(request.versionId ?? '');
+            if (rows.length === 0) return null;
+            if (rows.length > 1) {
+              throw new AppError(
+                'This quote version carries more than one signed-term snapshot, so which term was frozen cannot be decided from the evidence',
+                { code: TERMS_SNAPSHOT_AMBIGUOUS, status: 409, details: Object.freeze({ quoteVersionId: request.versionId ?? null, count: rows.length }) },
+              );
+            }
+            const verified = verifySelfConsistent(rows[0], { kind: 'quoteVersion', id: String(request.versionId ?? '') });
+            return Object.freeze({ verified, row: Object.freeze({ ...rows[0] }) });
+          }
+          if (request?.scope === 'order') {
+            const outcome = verifyOrderTermRows({
+              rows: Array.isArray(request.rows) ? request.rows : [],
+              authoritativeFor: (versionId) => versionTermRows(versionId)[0] ?? null,
+              orderId: String(request.orderId ?? ''),
+              // Absent on the request object means the caller never produced
+              // the signed document: that is refused, never downgraded.
+              documentTerms: Object.hasOwn(request, 'documentTerms') ? request.documentTerms : undefined,
+            });
+            return outcome ? Object.freeze({ verified: outcome.verified, row: Object.freeze({ ...outcome.row }) }) : null;
+          }
+          throw new AppError('verifySignedTerms needs an explicit scope of "quote-version" or "order"', {
+            code: 'CAPABILITY_REQUEST_INVALID', status: 400,
+          });
+        },
+      });
+    },
+  };
+}
+
+/**
+ * `commercial-quotes@2` for the contract-2 graph — the awaited twin of
+ * `createCommercialQuotesVerifiedCapability`: the same reads over
+ * `createCommercialQuotesAsyncCapability`, plus the same authoritative
+ * verifier with every storage read awaited.
+ *
+ * Offered only by the `packageContract: 2` commercial domain. Internal
+ * consumers (Signature, Contracts) already `await` every read, so the same
+ * call sites run unchanged on both graphs; a contract-1 consumer keeps the
+ * synchronous shape above.
+ *
+ * @param {any} registries the package's CommercialRegistries instance
+ * @param {Record<string, string>} [config] module renames
+ */
+export function createCommercialQuotesVerifiedAsyncCapability(registries, config) {
+  const base = createCommercialQuotesAsyncCapability(registries, config);
+  const names = resolvedNames(config);
+  return {
+    name: 'commercial-quotes',
+    version: 2,
+    capabilityContract: 2,
+    description:
+      'Everything commercial-quotes@1 reads, plus verifySignedTerms: the authoritative check that a signed-term snapshot still matches '
+      + 'its own canonical fingerprint and the quote version it was copied from. A consumer that describes terms as signed calls it first.',
+    /** @param {{modules?: any, consumer?: string}} context */
+    async create(context = {}) {
+      const modules = requireModules(context, 'commercial-quotes@2');
+      const inner = await base.create(context);
       const versionTermRows = async (versionId) => {
         let terms = null;
         try {
@@ -207,7 +405,7 @@ export function createCommercialQuotesVerifiedCapability(registries, config) {
 
       return Object.freeze({
         ...inner,
-        capabilityContract: 1,
+        capabilityContract: 2,
 
         /**
          * Verify a signed-term snapshot. Read-only: it loads evidence, checks
@@ -245,7 +443,7 @@ export function createCommercialQuotesVerifiedCapability(registries, config) {
             return Object.freeze({ verified, row: Object.freeze({ ...rows[0] }) });
           }
           if (request?.scope === 'order') {
-            const outcome = await verifyOrderTermRows({
+            const outcome = await verifyOrderTermRowsAsync({
               rows: Array.isArray(request.rows) ? request.rows : [],
               authoritativeFor: async (versionId) => (await versionTermRows(versionId))[0] ?? null,
               orderId: String(request.orderId ?? ''),
