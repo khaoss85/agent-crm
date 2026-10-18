@@ -73,6 +73,14 @@ export const CHANNEL_IMPORT_STATES = Object.freeze(['running', 'done']);
  * normalized fields can, and only for rows this import wrote.
  */
 export const CHANNEL_IMPORT_ROW_REASON = 'initial history import';
+/**
+ * The only failure notes the import row ever carries. An adapter throw may
+ * echo secrets, tokens, or PII from the provider request, so the row keeps
+ * the failure code plus one of these fixed notes — never adapter-controlled
+ * text — and the progress surface exposes only codes, notes, and counts.
+ */
+export const CHANNEL_IMPORT_READ_FAILED_NOTE = 'provider history read failed: retry the advance';
+export const CHANNEL_IMPORT_PAGE_FAILED_NOTE = 'import page failed before completion: retry the advance';
 
 /**
  * Same-process serialization for import progress commits, one FIFO chain
@@ -103,6 +111,70 @@ function withImportCommit(key, critical) {
       release();
     }
   })();
+}
+
+/**
+ * The failure code an import abort stamps: the adapter's own when it names
+ * one, else the normalized wrapper's, else the unavailable fallback. The
+ * message is never read here — it may carry provider-controlled text.
+ */
+function importFailureCode(error, fallback) {
+  if (error !== null && typeof error === 'object' && 'code' in error
+    && typeof error.code === 'string' && error.code !== '') {
+    return error.code;
+  }
+  return normalizeError(error).code ?? fallback;
+}
+
+/**
+ * Sender outcomes the import ledger records. `pending` means the row is
+ * stored (and counted when new) but its sender is not resolved yet — the
+ * retry resolves and counts only the sender. Every other value means the
+ * event's outcome is fully counted and the retry must skip it.
+ */
+const IMPORT_SENDER_OUTCOMES = new Set(['created', 'matched', 'unresolved', 'none', 'pending']);
+
+/**
+ * Decode the import row's recovery ledger to provider id → outcome. Unknown
+ * or malformed content decodes as empty and is overwritten by the next
+ * commit: the ledger is written only by this package, so anything
+ * unreadable is operator surgery, and refusing the import over it would
+ * brick the run with no writer left to heal it.
+ * @param {unknown} value
+ * @returns {Map<string, {row: 'imported'|'duplicate', sender: string}>}
+ */
+function decodeImportLedger(value) {
+  const ledger = new Map();
+  if (typeof value !== 'string' || value === '') return ledger;
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return ledger;
+  }
+  if (!Array.isArray(parsed)) return ledger;
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const { id, row, sender } = /** @type {{id?: unknown, row?: unknown, sender?: unknown}} */ (entry);
+    if (typeof id !== 'string' || id === '' || id.length > 256) continue;
+    if (row !== 'imported' && row !== 'duplicate') continue;
+    if (typeof sender !== 'string' || !IMPORT_SENDER_OUTCOMES.has(sender)) continue;
+    if (!ledger.has(id)) ledger.set(id, { row, sender });
+  }
+  return ledger;
+}
+
+/**
+ * Merge this attempt's outcomes over the freshly re-read ledger: entries
+ * this attempt processed replace older ones, entries it skipped (already
+ * counted by an earlier attempt) survive. Null when empty, so a clean page
+ * leaves no recovery state behind.
+ */
+function encodeImportLedger(previous, outcomes) {
+  const merged = new Map(previous);
+  for (const entry of outcomes) merged.set(entry.id, { row: entry.row, sender: entry.sender });
+  if (merged.size === 0) return null;
+  return JSON.stringify([...merged.entries()].map(([id, outcome]) => ({ id, row: outcome.row, sender: outcome.sender })));
 }
 
 /** @param {Record<string, string>} [config] */
@@ -757,6 +829,7 @@ export function createChannelOperations(deps) {
       finishedAt: null,
       lastErrorCode: null,
       lastErrorReason: null,
+      processedEvents: null,
     }, { actor });
     return { resumed: false, started: true, state: importStateSummary(row) };
   }
@@ -767,15 +840,27 @@ export function createChannelOperations(deps) {
    * actor: a caller-supplied actor is ignored, never trusted for audit
    * attribution — the same discipline as provider-driven ingest.
    *
-   * Crash-safe by idempotency, not by one big transaction: every event
-   * validates before any row is written, inbox rows dedup on the same
-   * source key webhooks use, and sender resolution replays the winner —
-   * so an interrupted page replays to the same rows and the same counts.
+   * Crash-safe by per-event outcomes, not by one big transaction: every
+   * processed event records its outcome (row stored or duplicate, sender
+   * created/matched/unresolved, none, or pending) in the import row's
+   * ledger next to the running counters. A page that aborts commits what
+   * its completed events earned and keeps the cursor, so the retry skips
+   * already-counted events and replays to the same rows and the same
+   * counts as a clean run. Sender resolution itself stays autonomous —
+   * its own transactions, never nested in the page's: the ledger records
+   * which outcomes are already counted, so the retry skips those events
+   * and finishes only what the failed attempt left pending.
    * The state cursor moves only after the whole page reconciled.
    */
   async function advanceInitialImport(params) {
     const actor = SYSTEM();
     const spaceId = assertSpaceId(params?.spaceId);
+    // Pure-input bounds fail identically regardless of import state: a
+    // malformed limit must never oracle whether an import row exists.
+    const limit = params?.limit === undefined ? CHANNEL_HISTORY_DEFAULT_PAGE : params.limit;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > CHANNEL_HISTORY_PAGE_MAX) {
+      throw new ValidationError(`history page limit must be an integer 1-${CHANNEL_HISTORY_PAGE_MAX}`, { field: 'limit' });
+    }
     const connectionKey = typeof params?.connectionKey === 'string' ? params.connectionKey : '';
     const connection = requireActiveConnection(spaceId, connectionKey);
     const row = findImportState(spaceId, connection.sourceKey);
@@ -789,10 +874,6 @@ export function createChannelOperations(deps) {
     }
     const adapter = requireHistoryAdapter(connection);
     const resolve = requireSenderResolution();
-    const limit = params?.limit === undefined ? CHANNEL_HISTORY_DEFAULT_PAGE : params.limit;
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > CHANNEL_HISTORY_PAGE_MAX) {
-      throw new ValidationError(`history page limit must be an integer 1-${CHANNEL_HISTORY_PAGE_MAX}`, { field: 'limit' });
-    }
     let secret;
     try {
       secret = await resolveSecret(connection.secretRef, { spaceId, purpose: CHANNEL_SECRET_PURPOSE_HISTORY });
@@ -833,12 +914,15 @@ export function createChannelOperations(deps) {
           code: 'CHANNEL_HISTORY_TRANSIENT', status: 503,
         });
       }
-      // The stamped code is the adapter's own when it names one: the
-      // progress surface reports what the provider said, not the wrapper.
-      const originalCode = error !== null && typeof error === 'object' && 'code' in error
-        && typeof error.code === 'string' && error.code !== '' ? error.code : null;
-      await stampFailure(originalCode ?? normalized.code ?? 'CHANNEL_HISTORY_UNAVAILABLE', String(normalized.message ?? normalized));
-      throw error;
+      // The row keeps the failure code plus a static note only. An adapter
+      // throw may echo secrets, tokens, or PII from the provider request,
+      // so its message is never persisted and never rethrown: the caller
+      // gets the same code with a fixed message instead.
+      const code = importFailureCode(error, 'CHANNEL_HISTORY_UNAVAILABLE');
+      await stampFailure(code, CHANNEL_IMPORT_READ_FAILED_NOTE);
+      throw new AppError('Channel history read failed: retry the advance', {
+        code, status: normalized instanceof AppError ? normalized.status : 500,
+      });
     }
     let checked;
     try {
@@ -853,93 +937,105 @@ export function createChannelOperations(deps) {
     const service = inbox();
     const now = nowIso();
     const receiveMs = Date.parse(now);
+    const done = checked.nextPageToken === null;
+    const commitKey = importSourceKey(spaceId, connection.sourceKey);
     const counts = {
       imported: 0, duplicates: 0, matched: 0, created: 0, unresolved: 0, withoutSender: 0,
     };
-    for (const event of checked.events) {
-      const item = toInboxItem(event, {
-        spaceId, connectionKey: connection.sourceKey, now, receiveMs,
-      });
-      const stored = await storeInboxItem(service, {
-        spaceId,
-        connection,
-        adapter,
-        item,
-        payloadFingerprint: fingerprintPayload(JSON.stringify(event)),
-        actor,
-        now,
-        imported: true,
-      });
-      if (stored.duplicate) {
-        counts.duplicates += 1;
+    /** @type {Array<{id: string, row: 'imported'|'duplicate', sender: string}>} */
+    const outcomes = [];
+
+    const tallySenderOutcome = (answer) => {
+      if (answer.outcome === 'matched') { counts.matched += 1; return 'matched'; }
+      if (answer.outcome === 'created') { counts.created += 1; return 'created'; }
+      counts.unresolved += 1;
+      return 'unresolved';
+    };
+
+    const processPage = async (recovered) => {
+      for (const event of checked.events) {
+        const covered = recovered.get(event.providerEventId);
+        if (covered && covered.sender !== 'pending') {
+          // An earlier attempt of this page already stored this row and
+          // counted its outcome: replaying it must not tally again. Rows are
+          // never deleted by any package path, so the row is still there.
+          continue;
+        }
+        // A pending replay finishes an event the failed attempt stored but
+        // never resolved: its row is already counted, so only a genuinely
+        // new store tallies a row below — the sender resolution always does.
+        const pendingOnly = covered?.sender === 'pending';
+        const item = toInboxItem(event, {
+          spaceId, connectionKey: connection.sourceKey, now, receiveMs,
+        });
+        const stored = await storeInboxItem(service, {
+          spaceId,
+          connection,
+          adapter,
+          item,
+          payloadFingerprint: fingerprintPayload(JSON.stringify(event)),
+          actor,
+          now,
+          imported: true,
+        });
+        const rowOutcome = stored.duplicate ? (covered?.row ?? 'duplicate') : 'imported';
+        if (!pendingOnly || !stored.duplicate) {
+          if (stored.duplicate) counts.duplicates += 1;
+          else counts.imported += 1;
+        }
         // A replayed row keeps its evidence, but an applied row's sender is
         // still reconciled: the first store may have been a webhook — which
         // never resolves senders — or a crash may have landed between the
         // inbox write and the resolution. Resolution is idempotent, so the
         // replay converges instead of doubling.
-        if (stored.effect !== 'applied' || !event.sender) continue;
-      } else {
-        counts.imported += 1;
         // Quarantined or set-aside items stay evidence: no contact is ever
         // invented from a row the package refused to apply.
         if (stored.effect !== 'applied' || !event.sender) {
           if (stored.effect === 'applied') counts.withoutSender += 1;
+          outcomes.push({ id: event.providerEventId, row: rowOutcome, sender: 'none' });
           continue;
         }
-      }
-      let answer;
-      try {
-        answer = await resolve({
-          channel: adapter.channel,
-          handle: event.sender.handle,
-          ...(event.sender.email === undefined ? {} : { email: event.sender.email }),
-          ...(event.sender.firstName === undefined ? {} : { firstName: event.sender.firstName }),
-          ...(event.sender.lastName === undefined ? {} : { lastName: event.sender.lastName }),
-          actor,
-        });
-      } catch (error) {
-        // Malformed sender evidence names nobody: the message is kept, the
-        // contact is not invented, and the count says so. Anything else is
-        // genuine — the page fails, the cursor stays, the retry replays.
-        if (error instanceof ValidationError) {
-          counts.withoutSender += 1;
-          continue;
+        let answer;
+        try {
+          answer = await resolve({
+            channel: adapter.channel,
+            handle: event.sender.handle,
+            ...(event.sender.email === undefined ? {} : { email: event.sender.email }),
+            ...(event.sender.firstName === undefined ? {} : { firstName: event.sender.firstName }),
+            ...(event.sender.lastName === undefined ? {} : { lastName: event.sender.lastName }),
+            actor,
+          });
+        } catch (error) {
+          // Malformed sender evidence names nobody: the message is kept, the
+          // contact is not invented, and the count says so. Anything else is
+          // genuine — the outcome stays pending so the retry resolves (and
+          // counts) only the sender, and the abort below carries no error
+          // text: it may echo provider-controlled secrets or PII.
+          if (error instanceof ValidationError) {
+            counts.withoutSender += 1;
+            outcomes.push({ id: event.providerEventId, row: rowOutcome, sender: 'none' });
+            continue;
+          }
+          outcomes.push({ id: event.providerEventId, row: rowOutcome, sender: 'pending' });
+          throw error;
         }
-        const failed = normalizeError(error);
-        const failedCode = error !== null && typeof error === 'object' && 'code' in error
-          && typeof error.code === 'string' && error.code !== '' ? error.code : null;
-        await stampFailure(failedCode ?? failed.code ?? 'CHANNEL_HISTORY_UNAVAILABLE', String(failed.message ?? failed));
-        throw error;
+        outcomes.push({ id: event.providerEventId, row: rowOutcome, sender: tallySenderOutcome(answer) });
       }
-      if (answer.outcome === 'matched') counts.matched += 1;
-      else if (answer.outcome === 'created') counts.created += 1;
-      else counts.unresolved += 1;
-    }
-
-    const done = checked.nextPageToken === null;
-    // The commit re-reads the row inside its own serialized slot: an
-    // advance racing this one's page window commits first, and this one
-    // adds to the winner's counters instead of overwriting them with the
-    // snapshot read before the provider call. The single managed write is
-    // already atomic on one connection; the transaction below keeps two
-    // processes from interleaving a re-read between them (the loser then
-    // retries its page, which dedups to the same rows and the same
-    // counts). Same proof idiom as the ingest batch above.
-    const commitProgress = async () => {
-      const fresh = findImportState(spaceId, connection.sourceKey) ?? row;
-      return importStates().applyManaged(row.id, {
-        nextPageToken: checked.nextPageToken,
-        importedEvents: fresh.importedEvents + counts.imported,
-        duplicateEvents: fresh.duplicateEvents + counts.duplicates,
-        matchedContacts: fresh.matchedContacts + counts.matched,
-        createdContacts: fresh.createdContacts + counts.created,
-        unresolvedContacts: fresh.unresolvedContacts + counts.unresolved,
-        eventsWithoutSender: fresh.eventsWithoutSender + counts.withoutSender,
-        ...(done ? { status: 'done', finishedAt: now } : {}),
-        lastErrorCode: null,
-        lastErrorReason: null,
-      }, { actor });
     };
+
+    // One managed write carries a commit's counters, cursor move, failure
+    // stamp, and ledger together, so tallies and the ledger can never drift
+    // apart: the retry replays exactly what the last commit recorded.
+    const commitTallies = (fresh, patch) => importStates().applyManaged(row.id, {
+      importedEvents: fresh.importedEvents + counts.imported,
+      duplicateEvents: fresh.duplicateEvents + counts.duplicates,
+      matchedContacts: fresh.matchedContacts + counts.matched,
+      createdContacts: fresh.createdContacts + counts.created,
+      unresolvedContacts: fresh.unresolvedContacts + counts.unresolved,
+      eventsWithoutSender: fresh.eventsWithoutSender + counts.withoutSender,
+      ...patch,
+    }, { actor });
+
     let commitTransaction = null;
     if (database && typeof database.transactionAsync === 'function') {
       let proof = null;
@@ -952,8 +1048,63 @@ export function createChannelOperations(deps) {
         commitTransaction = (critical) => database.transactionAsync(critical);
       }
     }
-    const commit = () => (commitTransaction ? commitTransaction(commitProgress) : commitProgress());
-    const updated = await withImportCommit(importSourceKey(spaceId, connection.sourceKey), commit);
+    // The single managed write is already atomic on one connection; the
+    // transaction below keeps two processes from interleaving a re-read
+    // between them. Same proof idiom as the ingest batch above.
+    const transact = commitTransaction ?? ((critical) => critical());
+    // Processing and both commits run in one serialized slot per import: an
+    // advance racing this one's page window commits first, and this one adds
+    // to the winner's counters instead of overwriting them with the snapshot
+    // read before the provider call. A page that aborts commits only what
+    // its completed events earned — the cursor never moves on failure — so
+    // the retry replays the same page from the ledger.
+    const updated = await withImportCommit(commitKey, async () => {
+      // Re-read inside the slot: a racing advance may have committed a
+      // partial page (ledger plus counters) while this one fetched its
+      // page from the provider. Replaying from the live ledger keeps the
+      // loser from tallying the winner's events twice or wiping them.
+      const live = findImportState(spaceId, connection.sourceKey) ?? row;
+      // Outcomes a failed attempt of this same page already counted: the
+      // retry replays those events to the same rows but never tallies them
+      // twice, so it converges to the same counts as a clean run.
+      const recovered = decodeImportLedger(live.processedEvents);
+      try {
+        await processPage(recovered);
+      } catch (error) {
+        // Package-own aborts keep their code and travel unchanged (their
+        // messages are static); anything provider-adjacent is rethrown with
+        // the same code and a fixed message, never the original text.
+        const owned = error instanceof AppError
+          && (error.code === 'CHANNEL_EVENT_ID_CONFLICT' || error.code === 'CHANNEL_EVENT_MALFORMED');
+        const code = owned ? error.code : importFailureCode(error, 'CHANNEL_HISTORY_UNAVAILABLE');
+        const fresh = findImportState(spaceId, connection.sourceKey) ?? row;
+        try {
+          await transact(() => commitTallies(fresh, {
+            lastErrorCode: code,
+            lastErrorReason: CHANNEL_IMPORT_PAGE_FAILED_NOTE,
+            processedEvents: encodeImportLedger(decodeImportLedger(fresh.processedEvents), outcomes),
+          }));
+        } catch {
+          // The page already failed: a storage outage while committing the
+          // partial counts must not replace the failure the caller retries
+          // on. The next advance replays from the last committed ledger,
+          // which is still consistent with its counters.
+        }
+        if (owned) throw error;
+        const normalized = normalizeError(error);
+        throw new AppError('Import page failed before completion: retry the advance', {
+          code, status: normalized instanceof AppError ? normalized.status : 500,
+        });
+      }
+      const fresh = findImportState(spaceId, connection.sourceKey) ?? row;
+      return transact(() => commitTallies(fresh, {
+        nextPageToken: checked.nextPageToken,
+        ...(done ? { status: 'done', finishedAt: now } : {}),
+        lastErrorCode: null,
+        lastErrorReason: null,
+        processedEvents: null,
+      }));
+    });
     return {
       done,
       state: importStateSummary(updated),

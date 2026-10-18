@@ -74,6 +74,31 @@ function setup(options = {}) {
       listHistory: () => new Promise(() => {}),
     };
   }
+  if (options.throwingHistory) {
+    adapterDefinition.historyImport = {
+      ...adapterDefinition.historyImport,
+      async listHistory() {
+        const error = new Error(options.throwingHistory.message);
+        error.code = options.throwingHistory.code;
+        throw error;
+      },
+    };
+  }
+  if (options.senderThrows || options.senderThrowsOnce) {
+    const inner = sender.resolveSender;
+    const spec = options.senderThrows ?? options.senderThrowsOnce;
+    const once = Boolean(options.senderThrowsOnce);
+    let armed = true;
+    sender.resolveSender = async (request) => {
+      if (request.handle === spec.handle && (!once || armed)) {
+        armed = false;
+        const error = new Error(spec.message);
+        error.code = spec.code;
+        throw error;
+      }
+      return inner(request);
+    };
+  }
   const harness = createChannelsHarness({
     adapterDefinition,
     fixtureApi: api,
@@ -342,9 +367,11 @@ test('starting refuses without readable past, without a sender path, and off an 
     idle.harness.startImport(SPACE, { connectionKey: key3, actor: { type: 'agent', id: 'bot' } }),
     (error) => error.code === 'HUMAN_APPROVAL_REQUIRED',
   );
+  // Pure-input bounds fail before any storage lookup: a malformed limit never
+  // oracles whether an import row exists for the connection.
   await assert.rejects(
     idle.harness.advanceImport(SPACE, { connectionKey: key3, limit: 101 }),
-    (error) => error.code === 'CHANNEL_IMPORT_UNKNOWN',
+    (error) => error.code === 'VALIDATION_ERROR',
   );
 });
 
@@ -387,3 +414,202 @@ test('a provider stall stays retryable and writes nothing', async (t) => {
   assert.equal(state.importedEvents, 0);
   assert.equal(harness.inbox(SPACE).length, 0);
 }, { timeout: 30000 });
+
+/**
+ * Import failure hygiene (review on #242): a provider or sender throw may
+ * echo secrets or PII from the request, so the import row keeps the failure
+ * code plus a static note only, the caller gets a fixed message, and no
+ * provider-controlled text lands anywhere durable — rows, progress surface,
+ * or audit.
+ */
+const LEAK_PROBE = 'leak-probe-token-7f3a9c2e41';
+
+function scanDurable(harness, space) {
+  return JSON.stringify([
+    [...harness.internals.modules.get('channel-import-state').service.listWhere({})],
+    harness.inbox(space),
+    harness.auditRows(),
+  ]);
+}
+
+test('a provider error carrying a secret never lands in the import row or the progress surface', async (t) => {
+  const { harness, api } = setup({
+    tenantId: 'channel-import-secret',
+    throwingHistory: { message: `history refused for token ${LEAK_PROBE}`, code: 'CHANNEL_HISTORY_UNAVAILABLE' },
+  });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  api.seedHistory(historySeed(1, nowIso()));
+
+  await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  const failure = await harness.advanceImport(SPACE, { connectionKey: key }).then(
+    () => { throw new Error('advance should have failed'); },
+    (error) => error,
+  );
+  assert.equal(failure.code, 'CHANNEL_HISTORY_UNAVAILABLE');
+  assert.ok(!String(failure.message).includes(LEAK_PROBE), 'the caller gets a fixed message, not the adapter text');
+  const state = harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(state.status, 'running');
+  assert.equal(state.lastErrorCode, 'CHANNEL_HISTORY_UNAVAILABLE');
+  assert.ok(state.lastErrorReason !== null && !state.lastErrorReason.includes(LEAK_PROBE));
+  assert.ok(!scanDurable(harness, SPACE).includes(LEAK_PROBE), 'no provider text at rest in rows or audit');
+});
+
+test('a sender error carrying a secret never lands in the import row or the progress surface', async (t) => {
+  const handle = '+390200006101';
+  const { harness, api } = setup({
+    tenantId: 'channel-import-sender-secret',
+    senderThrows: { handle, message: `sender store refused token ${LEAK_PROBE}`, code: 'CHANNEL_SENDER_TRANSIENT' },
+  });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const at = nowIso();
+  api.seedHistory([
+    { id: 'evt-x-1', subject: 'chat-x', seq: 1, at, sender: { handle: '+390200006100' } },
+    { id: 'evt-x-2', subject: 'chat-x', seq: 2, at, sender: { handle } },
+  ]);
+
+  await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  const failure = await harness.advanceImport(SPACE, { connectionKey: key }).then(
+    () => { throw new Error('advance should have failed'); },
+    (error) => error,
+  );
+  assert.equal(failure.code, 'CHANNEL_SENDER_TRANSIENT');
+  assert.ok(!String(failure.message).includes(LEAK_PROBE), 'the caller gets a fixed message, not the sender text');
+  const state = harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(state.status, 'running');
+  assert.equal(state.lastErrorCode, 'CHANNEL_SENDER_TRANSIENT');
+  assert.ok(state.lastErrorReason !== null && !state.lastErrorReason.includes(LEAK_PROBE));
+  // The completed event's outcome is still committed: the abort keeps what
+  // the page earned instead of discarding it.
+  assert.equal(state.importedEvents, 2, 'both rows landed before the sender failed');
+  assert.equal(state.createdContacts, 1);
+  assert.ok(!scanDurable(harness, SPACE).includes(LEAK_PROBE), 'no provider text at rest in rows or audit');
+});
+
+/**
+ * Mid-page abort convergence (review on #242): a page that fails after
+ * partial writes commits what its completed events earned and keeps the
+ * cursor, so the retry replays to the same rows and the same counts as a
+ * clean run — never a permanent drift.
+ */
+const CONVERGE_FIELDS = [
+  'importedEvents', 'duplicateEvents', 'matchedContacts',
+  'createdContacts', 'unresolvedContacts', 'eventsWithoutSender',
+];
+
+function convergeSeed(at) {
+  return [
+    { id: 'evt-cv-1', subject: 'chat-cv', seq: 1, at, sender: { handle: '+390200005101' } },
+    { id: 'evt-cv-2', subject: 'chat-cv', seq: 2, at, sender: { handle: '+390200005102' } },
+  ];
+}
+
+async function cleanRun(t, tag) {
+  const scene = setup({ tenantId: `channel-import-${tag}-clean` });
+  t.after(() => scene.harness.close());
+  const key = await registeredActive(scene.harness);
+  scene.api.seedHistory(convergeSeed(nowIso()));
+  await scene.harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  const run = await scene.harness.advanceImport(SPACE, { connectionKey: key });
+  assert.equal(run.done, true);
+  return { ...scene, key };
+}
+
+test('a mid-page sender failure replays to the same rows and the same counts as a clean run', async (t) => {
+  const clean = await cleanRun(t, 'sender');
+
+  const flaky = setup({
+    tenantId: 'channel-import-sender-converge',
+    senderThrowsOnce: { handle: '+390200005102', message: 'sender store transiently unavailable', code: 'CHANNEL_SENDER_TRANSIENT' },
+  });
+  t.after(() => flaky.harness.close());
+  const key = await registeredActive(flaky.harness);
+  flaky.api.seedHistory(convergeSeed(nowIso()));
+  await flaky.harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+
+  const failure = await flaky.harness.advanceImport(SPACE, { connectionKey: key }).then(
+    () => { throw new Error('advance should have failed'); },
+    (error) => error,
+  );
+  assert.equal(failure.code, 'CHANNEL_SENDER_TRANSIENT');
+  const partial = flaky.harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(partial.status, 'running');
+  assert.equal(partial.importedEvents, 2, 'both rows landed before the sender failed');
+  assert.equal(partial.createdContacts, 1);
+  assert.equal(partial.lastErrorCode, 'CHANNEL_SENDER_TRANSIENT');
+
+  const retried = await flaky.harness.advanceImport(SPACE, { connectionKey: key });
+  assert.equal(retried.done, true);
+  assert.deepEqual(retried.page, {
+    imported: 0, duplicates: 0, matched: 0, created: 1, unresolved: 0, withoutSender: 0,
+  }, 'the retry finishes only the pending sender: nothing already counted is tallied again');
+  const cleanState = clean.harness.readImport(SPACE, { connectionKey: clean.key });
+  for (const field of CONVERGE_FIELDS) {
+    assert.equal(retried.state[field], cleanState[field], `${field} converges to the clean run`);
+  }
+  assert.deepEqual(
+    flaky.harness.inbox(SPACE).map((row) => row.sourceKey).sort(),
+    clean.harness.inbox(SPACE).map((row) => row.sourceKey).sort(),
+    'the retry stores the same rows as the clean run',
+  );
+  assert.equal(flaky.harness.readImport(SPACE, { connectionKey: key }).lastErrorCode, null);
+});
+
+test('a mid-page row-store failure replays to the same rows and the same counts as a clean run', async (t) => {
+  const clean = await cleanRun(t, 'store');
+
+  const stumb = setup({ tenantId: 'channel-import-store-converge' });
+  t.after(() => stumb.harness.close());
+  // A transient outage on the second row write: the first event is fully
+  // earned and ledgered, the second leaves no trace, and the abort carries
+  // no provider text.
+  const inboxEntry = stumb.harness.internals.modules.get('channel-inbox-event');
+  const innerService = inboxEntry.service;
+  let writes = 0;
+  const throwingService = Object.create(innerService, {
+    createManaged: {
+      value: async (...args) => {
+        writes += 1;
+        if (writes === 2) {
+          const error = new Error('inbox store transiently unavailable');
+          error.code = 'CHANNEL_STORE_TRANSIENT';
+          throw error;
+        }
+        return innerService.createManaged(...args);
+      },
+    },
+  });
+  stumb.harness.internals.modules.set('channel-inbox-event', { service: throwingService });
+
+  const key = await registeredActive(stumb.harness);
+  stumb.api.seedHistory(convergeSeed(nowIso()));
+  await stumb.harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+
+  const failure = await stumb.harness.advanceImport(SPACE, { connectionKey: key }).then(
+    () => { throw new Error('advance should have failed'); },
+    (error) => error,
+  );
+  assert.equal(failure.code, 'CHANNEL_STORE_TRANSIENT');
+  const partial = stumb.harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(partial.status, 'running');
+  assert.equal(partial.importedEvents, 1);
+  assert.equal(partial.createdContacts, 1);
+  assert.equal(partial.lastErrorCode, 'CHANNEL_STORE_TRANSIENT');
+
+  const retried = await stumb.harness.advanceImport(SPACE, { connectionKey: key });
+  assert.equal(retried.done, true);
+  assert.deepEqual(retried.page, {
+    imported: 1, duplicates: 0, matched: 0, created: 1, unresolved: 0, withoutSender: 0,
+  }, 'the retry skips the ledgered event and processes only the missing one');
+  const cleanState = clean.harness.readImport(SPACE, { connectionKey: clean.key });
+  for (const field of CONVERGE_FIELDS) {
+    assert.equal(retried.state[field], cleanState[field], `${field} converges to the clean run`);
+  }
+  assert.deepEqual(
+    stumb.harness.inbox(SPACE).map((row) => row.sourceKey).sort(),
+    clean.harness.inbox(SPACE).map((row) => row.sourceKey).sort(),
+    'the retry stores the same rows as the clean run',
+  );
+  assert.equal(stumb.harness.readImport(SPACE, { connectionKey: key }).lastErrorCode, null);
+});
