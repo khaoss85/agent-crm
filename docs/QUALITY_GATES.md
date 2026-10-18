@@ -139,10 +139,11 @@ rules:
   and names the commits that touched `tests/` since — and does not fail. Failing
   there would block every PR that adds a test until it re-ran the suite, which is
   a worse outcome than a note. Re-measuring before publishing is the CI's job,
-  not the author's: on `main` the `public-claims` job re-anchors the ledger
-  from the `verify` job's measurement artifact on the same tree
+  not the author's: on `main` the scheduled `verify` flow re-anchors the ledger
+  at the measurement it just took on the same tree
   (`scripts/apply-ci-measurement.js`), so a PR goes green with no local measure
-  commit and the merged tree is re-measured at merge time (§7). Locally, `node
+  commit and the merged tree is re-measured on schedule, at most once per
+  window and only when the head moved (§7). Locally, `node
   scripts/measure-suite.js --apply` on a clean tree, or
   `npm run measure:refresh` when only test files changed (it runs the changed
   files and carries the rest). Inputs outside `tests/` also refuse refresh;
@@ -271,8 +272,8 @@ it runs only where a merge has already happened — never on a PR push.
 | Gate | Where | What |
 |---|---|---|
 | `fast` | every pull request | `npm run check`, the tests of the touched files (`scripts/ci-touched-tests.js`: transitive through every relative JS import in the repo — `tests/helpers` and `packages/` barrels incl. `export-from` — warned best-effort when no test reaches a changed source (a `::warning::` annotation plus a summary line naming the uncovered files, then the guards still run; deleted files never run and never count as uncovered, but their paths still seed the reachability search so a deleted module selects the tests that still import it), plus the declared repo-wide guards (`REPO_WIDE_GUARDS`: tests that scan `packages/`/`apps/`/`tests/`/`scripts/` wholesale and run on every non-empty diff, through the unfiltered diff, so deleting a listed guard without updating the list still fails red), selection bounded to 60 s, selected run bounded to 270 s, warned fallback to the PR's own changed test files past either bound), the smoke demo, the published recipe replay, `npm run gtm:check`, `npm run repo:truth -- --check --drift-advisory --base origin/main` (agreement only; advisory drift warns, added warns only from base) |
-| `verify` | push to `main` only | full `npm run verify` via `scripts/measure-suite.js`, measured record kept as artifact and runner-local copy, smoke, recipe replay |
-| `public-claims` | push to `main` only | `gtm:check`, agreement `--check --drift-advisory` on the committed document, re-anchor from `verify`'s measurement, regenerate, `--require-current`, controlled realign of advisory-only drift onto the fixed branch behind ONE PR (`scripts/realign-truth-main.js --push`, normal gate, never a push to `main`) |
+| `verify` | on schedule every 6 h (`23 */6 * * *`) plus manual dispatch of `main` only, and only when the head moved since the last successful measurement (the committed ledger or the runner-local record `~/.accordo-ci/main-last-measurement.json` the run itself maintains; a head that moved only in the measurement-flow files `site/claims.json` and `docs/repository-truth.json` counts as unmoved; `scripts/ci-measure-guard.js` skips the rest) | full `npm run verify` via `scripts/measure-suite.js` — never on `push`, so merge bursts queue no measurements (backlog:911355123044) — measured record kept as artifact and runner-local copy, smoke, recipe replay, then agreement `--check --drift-advisory` on the committed document, re-anchor at this run's measurement (`scripts/apply-ci-measurement.js`), regenerate, `--require-current`, controlled realign of advisory-only drift onto the fixed branch behind ONE PR (`scripts/realign-truth-main.js --push`, normal gate, never a push to `main`) |
+| `public-claims` | push to `main` only | `gtm:check`, agreement `--check --drift-advisory` on the committed document, and the measurement-age signal (`scripts/ci-measurement-age.js --window-hours 6`: a `::notice::` inside the window, a `::warning::` past it, always exit 0). Stays green between a merge and the next scheduled measurement; staleness never fails here — freshness is `verify`'s job |
 | nightly matrix | daily 01:17 UTC | the full worktree-heavy tool-selection product behind its opt-in variable (see the nightly workflow), skipped by default elsewhere |
 
 Budgets, which are as much of the gate as the steps: the whole `fast` gate
@@ -302,14 +303,19 @@ and the full suite on `main` stays the safety net.
 
 The boundaries, which are as much of the gate as the budgets:
 
-- **A PR proves agreement, `main` proves freshness.** A PR whose `tests/`
+- **A PR proves agreement, `main` proves freshness on schedule.** A PR whose `tests/`
   moved does not re-measure: the moved-corpus note of §6 stays advisory, and
-  the merged tree is re-measured at merge time by `verify`/`public-claims`.
-  `--require-current` therefore runs only on `main`.
+  the merged tree is re-measured by the scheduled `verify` flow, at most once
+  per 6-hour window and only when the head moved — never at merge time, so a
+  push to `main` starts no `measure-suite.js` run.
+  `--require-current` therefore runs only in the scheduled `verify` flow on `main`.
 - **`main` stays protected.** The measure step has no `continue-on-error`,
-  and `public-claims` refuses a missing measurement instead of going quiet —
-  a failed measurement on `main` is a red job, exactly like a failed test.
+  and the scheduled re-anchor refuses a missing measurement instead of going
+  quiet — a failed measurement on `main` is a red job, exactly like a failed
+  test. The push-time `public-claims` job stays green on a stale-but-agreeing
+  ledger by design, and says how old the measurement is instead.
 - **The nightly matrix is coverage, not a gate.** It runs the cells the
   default suite skips; it does not re-measure `main` and does not replace
-  `verify`. A scheduled full re-measurement stays an option, not a job: with
-  no pushes there is nothing new to measure.
+  `verify`. The scheduled re-measurement is `verify` itself — at most once
+  per window, and skipped when the head is already recorded or moved past
+  the recording only in the measurement-flow files.

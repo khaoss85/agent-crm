@@ -1,0 +1,174 @@
+// @ts-check
+
+/**
+ * Measurement-age signal for the push-triggered `public-claims` job
+ * (backlog:911355123044).
+ *
+ * Between a merge and the next scheduled measurement the ledger still names
+ * the older tree, and that must stay green: a push to `main` proves agreement
+ * (`repo:truth -- --check`) but not freshness. Silence there would hide how
+ * far behind the numbers are, so this step reports the measurement's age
+ * where the run is already looking — as a `::notice::` while fresh, as a
+ * `::warning::` once it outlives the configured measure window.
+ *
+ * Signal, never gate: the exit code is always 0, including when the ledger
+ * is missing or unparsable (that prints a warning, not a failure). A stale
+ * number is information for the next scheduled run, not a red push.
+ *
+ *   node scripts/ci-measurement-age.js [--root <dir>] [--window-hours <n>] [--state-file <path>]
+ */
+
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+/** The scheduled-measure window in `.github/workflows/ci.yml`. Keep the two equal. */
+export const MEASURE_WINDOW_HOURS = 6;
+
+/**
+ * Where the scheduled run records its successful measurements (written by
+ * `scripts/ci-measure-guard.js --record`). The same single runner serves the
+ * push-time `public-claims` job, so the run timestamp is visible here.
+ */
+export const DEFAULT_STATE_FILE = join(homedir(), '.accordo-ci', 'main-last-measurement.json');
+
+/**
+ * A duration in milliseconds as a short human span: `42m`, `5h 12m`, `19d 4h`.
+ * Pure, so the annotation and its test cannot disagree.
+ *
+ * @param {number} ms non-negative duration
+ * @returns {string} the span, or `unknown` when the input is unusable
+ */
+export function formatAge(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return 'unknown';
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h ${minutes % 60}m`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
+/**
+ * The annotation line for one ledger reading. Pure: no filesystem, no clock.
+ *
+ * @param {{ sha?: unknown, tests?: unknown, atMs?: unknown }} record what names the measurement
+ * @param {{ nowMs?: unknown, windowHours?: unknown }} options
+ * @returns {{ annotation: 'notice' | 'warning', line: string }}
+ */
+export function describeMeasurementAge(record, options = {}) {
+  const nowMs = typeof options.nowMs === 'number' ? options.nowMs : Date.now();
+  const windowHours = Number(options.windowHours ?? MEASURE_WINDOW_HOURS);
+  const windowMs = Number.isFinite(windowHours) && windowHours > 0
+    ? windowHours * 3600000
+    : MEASURE_WINDOW_HOURS * 3600000;
+  const sha = typeof record.sha === 'string' && record.sha ? record.sha.slice(0, 7) : 'unknown';
+  const tests = Number.isInteger(record.tests) ? `, ${record.tests} tests` : '';
+  if (typeof record.atMs !== 'number' || !Number.isFinite(record.atMs)) {
+    return {
+      annotation: 'warning',
+      line: `no dated measurement: ledger names ${sha}${tests}, age unknown`,
+    };
+  }
+  const ageMs = nowMs - record.atMs;
+  const age = formatAge(ageMs);
+  if (ageMs > windowMs) {
+    return {
+      annotation: 'warning',
+      line: `measurement ${sha}${tests} is ${age} old, past the ${windowHours}h measure window: the next scheduled run re-measures`,
+    };
+  }
+  return {
+    annotation: 'notice',
+    line: `measurement ${sha}${tests} is ${age} old, inside the ${windowHours}h measure window`,
+  };
+}
+
+/**
+ * Whether the runner-local run record names the ledger's tree. The record
+ * carries the full 40-hex checkout head while the ledger carries a short
+ * prefix, so either direction of the prefix relation counts — the same
+ * tolerance the schedule guard uses, and nothing looser.
+ *
+ * @param {unknown} runSha the state file's `sha`
+ * @param {unknown} ledgerSha the ledger's `measuredAgainst.sha`
+ * @returns {boolean} true only when the two provably name the same tree
+ */
+export function runRecordNamesLedger(runSha, ledgerSha) {
+  const run = String(runSha ?? '').trim().toLowerCase();
+  const ledger = String(ledgerSha ?? '').trim().toLowerCase();
+  if (!/^[0-9a-f]{7,40}$/.test(run) || !/^[0-9a-f]{7,40}$/.test(ledger)) return false;
+  return run.startsWith(ledger) || ledger.startsWith(run);
+}
+
+/**
+ * When the recorded measurement was taken: the run timestamp the scheduled
+ * measurement recorded for this exact tree, and nothing else. The measured
+ * commit's date is deliberately NOT a fallback — under the scheduled model
+ * a commit can already be nearly a window old when its first measurement
+ * starts, so dating the age from it would warn on a freshly taken
+ * measurement, and the ledger date (UTC midnight of the measurement day)
+ * has the same flaw at day granularity. No run record for this tree means
+ * the age is unknown until the next scheduled run records one; the caller
+ * reports that as a warning, never as a failure. Pure: no filesystem, no
+ * clock, no git.
+ *
+ * @param {unknown} recordedSha the ledger's measuredAgainst.sha
+ * @param {{ sha?: unknown, measuredAt?: unknown }} [runRecord] the state file's record
+ * @returns {number | null} epoch milliseconds, or null when unknowable
+ */
+export function resolveMeasuredAtMs(recordedSha, runRecord = {}) {
+  const measuredAt = Number(runRecord?.measuredAt);
+  if (runRecordNamesLedger(runRecord?.sha, recordedSha) && Number.isFinite(measuredAt) && measuredAt > 0) {
+    return measuredAt;
+  }
+  return null;
+}
+
+/**
+ * Read the runner-local run record the scheduled measurement maintains.
+ * Never throws: a missing or malformed file resolves to "no record", and the
+ * caller reports the age as unknown (a warning, never a failure) — there is
+ * no commit-date or ledger-date fallback.
+ *
+ * @param {string} stateFile runner-local state file path
+ * @returns {{ sha?: unknown, measuredAt?: unknown }} the record, when usable
+ */
+export function readRunRecord(stateFile) {
+  try {
+    const record = JSON.parse(readFileSync(stateFile, 'utf8'));
+    if (record !== null && typeof record === 'object') return { sha: record.sha, measuredAt: record.measuredAt };
+  } catch {
+    // Fall through: no record means the age is unknown.
+  }
+  return {};
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  const argv = process.argv.slice(2);
+  const flag = (/** @type {string} */ name) => {
+    const i = argv.indexOf(name);
+    return i === -1 ? undefined : argv[i + 1];
+  };
+  const root = String(flag('--root') ?? join(fileURLToPath(import.meta.url), '..', '..'));
+  const windowArg = Number(flag('--window-hours') ?? MEASURE_WINDOW_HOURS);
+  const stateFile = String(flag('--state-file') ?? DEFAULT_STATE_FILE);
+  const runRecord = readRunRecord(stateFile);
+  /** @type {{ sha?: unknown, tests?: unknown, atMs?: unknown }} */
+  let record = {};
+  try {
+    const ledger = JSON.parse(readFileSync(join(root, 'site', 'claims.json'), 'utf8'));
+    const measured = ledger?.measuredAgainst ?? {};
+    record = {
+      sha: measured.sha,
+      tests: measured.tests,
+      atMs: resolveMeasuredAtMs(measured.sha, runRecord),
+    };
+  } catch {
+    record = {};
+  }
+  const windowHours = Number.isFinite(windowArg) && windowArg > 0 ? windowArg : MEASURE_WINDOW_HOURS;
+  const { annotation, line } = describeMeasurementAge(record, { windowHours });
+  process.stdout.write(`::${annotation}::${line}\n`);
+}

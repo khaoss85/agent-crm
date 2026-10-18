@@ -7,7 +7,7 @@
  *   node scripts/realign-truth-main.js           dry run: print the decision, change nothing
  *   node scripts/realign-truth-main.js --push    open or update the realign PR (CI only)
  *
- * The `public-claims` CI job runs this as its last step, after the agreement
+ * The scheduled `verify` flow runs this as its last step, after the agreement
  * gate, the measurement re-anchor, the regeneration and `--require-current`.
  * When the merge carried advisory-only drift — added facts, regenerated
  * evidence, a restated limitation, a `sourceSha` moved by an unrelated edit,
@@ -92,7 +92,7 @@ export function forRealignComparison(document) {
  *
  * - `none`: the author-owned facts agree; the merge carried no drift. Leave
  *   the re-anchored ledger and the regenerated document uncommitted, exactly
- *   as `public-claims` always did.
+ *   as the `main` flow always did.
  * - `commit`: advisory-only drift (`facts-added` or `metadata-only`); the
  *   regenerated files belong on the realign PR, which follows the normal gate.
  * - `refuse`: a moved or dropped value; a person regenerates deliberately.
@@ -228,7 +228,7 @@ function main() {
     process.exit(1);
   }
   const subject = 'chore(truth): realign repository truth after merge';
-  const body = `${decision.reason}\n\nCommitted by the public-claims run that verified this exact tree\nwith --require-current (backlog:6a3d0316). Merges through the normal gate.`;
+  const body = `${decision.reason}\n\nCommitted by the scheduled verify run that verified this exact tree\nwith --require-current (backlog:6a3d0316). Merges through the normal gate.`;
   const commit = git(['-c', `user.name=${BOT_NAME}`,
     '-c', `user.email=${BOT_EMAIL}`,
     'commit', '-q', '-m', subject, '-m', body, '--', ...REALIGN_FILES], root);
@@ -284,7 +284,7 @@ function main() {
     process.exit(1);
   }
   if (open === 0) {
-    const prBody = `${decision.reason}\n\nOpened by the public-claims run that verified this exact tree `
+    const prBody = `${decision.reason}\n\nOpened by the scheduled verify run that verified this exact tree `
       + 'with --require-current. This PR follows the normal merge gate; merging it realigns main '
       + '(backlog:6a3d0316).';
     const created = gh(['pr', 'create', '--base', 'main', '--head', REALIGN_BRANCH,

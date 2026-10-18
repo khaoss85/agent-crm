@@ -21,7 +21,7 @@
  * Anything else refuses with the reason, and `site/claims.json` is left
  * untouched. The deeper fact checks (command plausibility, per-file map
  * reconciliation, citations) stay where they belong: `repo:truth --check
- * --require-current` runs right after this in the `public-claims` job, on a
+ * --require-current` runs right after this in the scheduled `verify` flow, on a
  * freshly regenerated `docs/repository-truth.json`. A missing or failed CI
  * measurement therefore fails the job red instead of passing quietly.
  *
