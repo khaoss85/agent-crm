@@ -113,9 +113,9 @@ function requireHuman(actor, what) {
  *
  * @param {{domains: any, modules: any, actor?: unknown, now?: () => string}} ctx
  */
-export function successorActivation({ domains, modules, actor, now }) {
+export async function successorActivation({ domains, modules, actor, now }) {
   try {
-    return domains.capability({
+    return await domains.capability({
       consumer: 'lifecycle',
       capability: SUCCESSOR_CAPABILITY.capability,
       version: SUCCESSOR_CAPABILITY.version,
@@ -151,8 +151,8 @@ function runService(modules, names) {
  * An exact indexed read (`listWhere`, no page bound): the round number and the
  * open-run guard must both be complete, not the first 500 rows.
  */
-function runsOf(runs, contractId) {
-  return runs.listWhere({ sourceContractId: contractId })
+async function runsOf(runs, contractId) {
+  return (await runs.listWhere({ sourceContractId: contractId }))
     .sort((a, b) => a.round - b.round);
 }
 
@@ -236,10 +236,10 @@ export function buildPlanAmendmentAction(moduleNames) {
     ],
     async execute({ record, input, actor, modules, domains, now }) {
       const runs = runService(modules, names);
-      const history = runsOf(runs, record.id);
+      const history = await runsOf(runs, record.id);
       const open = openRun(history);
       const candidate = optionalId(input.successorOrderId, 'successorOrderId') ?? open?.successorOrderId ?? null;
-      const capability = successorActivation({ domains, modules, actor, now });
+      const capability = await successorActivation({ domains, modules, actor, now });
 
       const plan = candidate
         ? await capability.planSuccession({
@@ -310,8 +310,8 @@ export function buildOpenAmendmentRunAction(moduleNames) {
       const followupId = optionalId(input.followupId, 'followupId');
       if (input.asOf !== undefined && input.asOf !== null) requireCalendarDate(input.asOf, 'asOf');
 
-      const capability = successorActivation({ domains, modules, actor, now });
-      const existing = capability.succession(record.id);
+      const capability = await successorActivation({ domains, modules, actor, now });
+      const existing = await capability.succession(record.id);
       if (existing) {
         throw new AppError(
           'This contract already has a successor agreement; a contract is succeeded exactly once, and the next round belongs to its successor',
@@ -320,17 +320,17 @@ export function buildOpenAmendmentRunAction(moduleNames) {
       }
       if (decisionId) {
         const decisions = modules.get(names.decision)?.service;
-        const found = decisions?.listWhere({ contractId: record.id }).find((row) => row.id === decisionId);
+        const found = (await decisions?.listWhere({ contractId: record.id }))?.find((row) => row.id === decisionId);
         if (!found) throw new ValidationError('decisionId does not name a decision recorded on this contract', { field: 'decisionId' });
       }
       if (followupId) {
         const followups = modules.get(names.followup)?.service;
-        const found = followups?.listWhere({ contractId: record.id }).find((row) => row.id === followupId);
+        const found = (await followups?.listWhere({ contractId: record.id }))?.find((row) => row.id === followupId);
         if (!found) throw new ValidationError('followupId does not name a follow-up recorded on this contract', { field: 'followupId' });
       }
 
       const runs = runService(modules, names);
-      const history = runsOf(runs, record.id);
+      const history = await runsOf(runs, record.id);
       const open = openRun(history);
       const submitted = { reason, decisionId, followupId };
       if (open) {
@@ -377,7 +377,7 @@ export function buildOpenAmendmentRunAction(moduleNames) {
         // picked the winner. The loser answers from the winner's row rather
         // than from a driver error.
         if (!isUniqueConflict(error)) throw error;
-        const raced = runs.listWhere({ sourceKey })[0];
+        const raced = (await runs.listWhere({ sourceKey }))[0];
         if (!raced) throw error;
         return replayOrConflict(raced, submitted, {
           code: 'AMENDMENT_RUN_ALREADY_OPEN',
@@ -421,7 +421,7 @@ export function buildAttachSuccessorOrderAction(moduleNames) {
       const successorOrderId = requireText(input.successorOrderId, 'successorOrderId', MAX_ID);
       requireMovable(record);
 
-      const capability = successorActivation({ domains, modules, actor, now });
+      const capability = await successorActivation({ domains, modules, actor, now });
       const plan = await capability.planSuccession({
         sourceContractId: record.sourceContractId,
         successorOrderId,
@@ -486,7 +486,7 @@ export function buildExecuteAmendmentAction(moduleNames) {
     async execute({ record, input, actor, modules, domains, managed, now, step }) {
       const executedBy = requireHuman(actor, 'Executing a renewal or amendment');
       const asked = optionalId(input.successorOrderId, 'successorOrderId');
-      const capability = successorActivation({ domains, modules, actor, now });
+      const capability = await successorActivation({ domains, modules, actor, now });
 
       if (record.state === 'executed') {
         // The retry that used to be punished. A client whose response was lost
@@ -498,7 +498,7 @@ export function buildExecuteAmendmentAction(moduleNames) {
             { code: 'AMENDMENT_RUN_TERMINAL', status: 409, details: { recordedSuccessorOrderId: record.successorOrderId, requested: asked } },
           );
         }
-        const recorded = capability.succession(record.sourceContractId);
+        const recorded = await capability.succession(record.sourceContractId);
         return {
           replay: true,
           runId: record.id,

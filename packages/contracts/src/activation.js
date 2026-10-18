@@ -119,8 +119,8 @@ export async function loadActivationSource(modules, names, order, domains = null
   const componentService = trusted(modules, names.orderComponent);
   const components = [];
   for (const line of lines) {
-    const forLine = componentService
-      .listWhere({ orderLineId: line.id })
+    const forLine = (await componentService
+      .listWhere({ orderLineId: line.id }))
       .sort((a, b) => (a.componentKey < b.componentKey ? -1 : a.componentKey > b.componentKey ? 1 : a.id < b.id ? -1 : 1));
     if (forLine.length !== line.componentCount) {
       throw new AppError('An order line is missing price components', {
@@ -129,7 +129,7 @@ export async function loadActivationSource(modules, names, order, domains = null
     }
     for (const component of forLine) components.push({ line, component });
   }
-  const totals = trusted(modules, names.orderTotal).listWhere({ orderId: order.id });
+  const totals = await trusted(modules, names.orderTotal).listWhere({ orderId: order.id });
   if (totals.length === 0) {
     throw new AppError('The order snapshot carries no grouped totals', { code: 'SOURCE_INCOMPLETE', status: 409 });
   }
@@ -143,7 +143,7 @@ export async function loadActivationSource(modules, names, order, domains = null
   let signedTermRows = [];
   try {
     const service = modules.get(names.orderTerm)?.service ?? null;
-    signedTermRows = service ? service.listWhere({ orderId: order.id }) : [];
+    signedTermRows = service ? await service.listWhere({ orderId: order.id }) : [];
   } catch {
     signedTermRows = [];
   }
@@ -167,7 +167,7 @@ export async function loadActivationSource(modules, names, order, domains = null
         { code: 'TERMS_VERIFIER_UNAVAILABLE', status: 500 },
       );
     }
-    const quotes = domains.capability({
+    const quotes = await domains.capability({
       consumer: 'contracts', capability: 'commercial-quotes', version: 2, context: { modules },
     });
     // The signed bytes are the anchor: this package already holds the
@@ -175,7 +175,7 @@ export async function loadActivationSource(modules, names, order, domains = null
     // agree on `documentHash`, so the `terms` section of those exact bytes is
     // what a snapshot must match. Commercial owns the comparison; Contracts
     // only supplies the evidence it legitimately holds.
-    const outcome = quotes.verifySignedTerms({
+    const outcome = await quotes.verifySignedTerms({
       scope: 'order', orderId: order.id, rows: signedTermRows,
       documentTerms: signedDocumentTerms(envelope),
     });
@@ -377,13 +377,13 @@ export function buildPlanActivationAction(config) {
     /** @param {any} ctx */
     async execute({ record: order, input, modules, domains, step }) {
       const { definition: policy, fingerprint } = domains.getPolicy('contracts', POLICY_KIND, input.policy, input.policyVersion);
-      const source = loadActivationSource(modules, names, order, domains);
+      const source = await loadActivationSource(modules, names, order, domains);
       const overrides = normalizeOverrides(
         input.classificationOverrides,
         new Set(source.components.map(({ component }) => component.id)),
       );
       const decisions = classifyComponents({ policy, fingerprint, order, components: source.components, overrides });
-      const existingContract = trusted(modules, names.contract).listWhere({ orderId: order.id })[0] ?? null;
+      const existingContract = (await trusted(modules, names.contract).listWhere({ orderId: order.id }))[0] ?? null;
       step('activation.planned', { orderId: order.id, ...summarize(decisions) });
       return {
         plan: planPayload({ order, envelope: source.envelope, artifact: source.artifact, decisions, totals: source.totals, existingContract, policy, fingerprint, signedTerm: source.signedTerm }),
@@ -438,7 +438,7 @@ export function buildActivateContractAction(config) {
       // a plan the caller computed earlier is never trusted. It is loaded
       // before the term is resolved, because which provenance applies is the
       // Order's fact, not the caller's choice.
-      const source = loadActivationSource(modules, names, order, domains);
+      const source = await loadActivationSource(modules, names, order, domains);
 
       /** @type {ReturnType<typeof requireTerm> | ReturnType<typeof signedTermFromSnapshot>} */
       let term;
@@ -464,7 +464,7 @@ export function buildActivateContractAction(config) {
       // a retry deserves the same stable refusal whether or not it repeats the
       // overrides the first call carried.
       const contracts = trusted(modules, names.contract);
-      const existing = contracts.listWhere({ orderId: order.id })[0];
+      const existing = (await contracts.listWhere({ orderId: order.id }))[0];
       if (existing) {
         throw new AppError('This order is already activated', {
           code: 'ORDER_ALREADY_ACTIVATED', status: 409, details: { contractId: existing.id },

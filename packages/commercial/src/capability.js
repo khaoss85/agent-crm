@@ -202,7 +202,7 @@ export function createCommercialQuotesVerifiedCapability(registries, config) {
           terms = null;
         }
         if (!terms || typeof versionId !== 'string' || versionId === '') return [];
-        return terms.listWhere({ versionId });
+        return await terms.listWhere({ versionId });
       };
 
       return Object.freeze({

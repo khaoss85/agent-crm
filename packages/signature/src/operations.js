@@ -152,11 +152,11 @@ function pascalName(moduleName) {
  */
 function moduleQuotesReader(modules, names) {
   return {
-    quote: async (id) => trusted(modules, names.quote).get(id),
-    version: async (id) => trusted(modules, names.version).get(id),
-    versionLines: async (id) => trusted(modules, names.versionLine).listWhere({ versionId: id }),
-    versionComponents: async (id) => trusted(modules, names.versionComponent).listWhere({ versionId: id }),
-    versionTotals: async (id) => trusted(modules, names.versionTotal).listWhere({ versionId: id }),
+    quote: async (id) => await trusted(modules, names.quote).get(id),
+    version: async (id) => await trusted(modules, names.version).get(id),
+    versionLines: async (id) => await trusted(modules, names.versionLine).listWhere({ versionId: id }),
+    versionComponents: async (id) => await trusted(modules, names.versionComponent).listWhere({ versionId: id }),
+    versionTotals: async (id) => await trusted(modules, names.versionTotal).listWhere({ versionId: id }),
     // The version's signed-term snapshot, or null. Null is the ordinary case:
     // every version submitted before terms existed, every project that never
     // applied the quote-version-term manifest. The document builder adds a
@@ -182,11 +182,11 @@ function moduleQuotesReader(modules, names) {
  * null for an unknown id; the generated services throw — the wrapper restores
  * the exact refusal the callers have always produced.
  */
-function openCommercialQuotes(domains, modules, names) {
+async function openCommercialQuotes(domains, modules, names) {
   /** @type {any} */
   let iface;
   try {
-    iface = domains.capability({
+    iface = await domains.capability({
       consumer: 'signature', capability: 'commercial-quotes', version: 2, context: { modules },
     });
   } catch (error) {
@@ -218,9 +218,9 @@ function openCommercialQuotes(domains, modules, names) {
 }
 
 /** Open `commercial-quote-binding@1` — the declared edge for the one bounded write. */
-function openCommercialBinding(domains) {
+async function openCommercialBinding(domains) {
   try {
-    return domains.capability({
+    return await domains.capability({
       consumer: 'signature', capability: 'commercial-quote-binding', version: 1, context: {},
     });
   } catch (error) {
@@ -510,7 +510,7 @@ export function buildRequestSignatureAction(config, registries) {
       const { definition: provider, fingerprint } = registries.getSignatureProvider(input.provider, input.providerVersion);
       // Every quote/version read below goes through commercial-quotes@2 — the
       // declared, registry-proven edge onto the commercial package.
-      const reader = openCommercialQuotes(domains, modules, names);
+      const reader = await openCommercialQuotes(domains, modules, names);
       const { version } = await requireApprovedVersion(reader, quote, input.quoteVersionId);
       const signers = normalizeSigners(input.signers);
 
@@ -634,7 +634,7 @@ export function buildRequestSignatureAction(config, registries) {
       // commercial-quote-binding@1 names the fields, and the write itself
       // stays the quote record's own managed path — exactly the capability's
       // written contract, never a second write mechanism.
-      const binding = openCommercialBinding(domains);
+      const binding = await openCommercialBinding(domains);
       const linkage = { signatureEnvelopeId: envelope.id, signatureStatus: envelope.status };
       for (const field of Object.keys(linkage)) {
         if (!binding.fields.includes(field)) {

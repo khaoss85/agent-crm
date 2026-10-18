@@ -932,21 +932,21 @@ export function createSuccessorActivationCapability(moduleNames) {
         },
 
         /** The lineage recorded for one source agreement, or null. */
-        succession(sourceContractId) {
+        async succession(sourceContractId) {
           if (typeof sourceContractId !== 'string' || sourceContractId === '') return null;
-          return freezeSuccession(trusted(modules, names.succession).listWhere({ sourceContractId })[0] ?? null);
+          return freezeSuccession((await trusted(modules, names.succession).listWhere({ sourceContractId }))[0] ?? null);
         },
 
         /** The lineage that produced one successor agreement, or null. */
-        successionBySuccessor(successorContractId) {
+        async successionBySuccessor(successorContractId) {
           if (typeof successorContractId !== 'string' || successorContractId === '') return null;
-          return freezeSuccession(trusted(modules, names.succession).listWhere({ successorContractId })[0] ?? null);
+          return freezeSuccession((await trusted(modules, names.succession).listWhere({ successorContractId }))[0] ?? null);
         },
 
         /** The lineage that consumed one signed order, or null. */
-        successionByOrder(successorOrderId) {
+        async successionByOrder(successorOrderId) {
           if (typeof successorOrderId !== 'string' || successorOrderId === '') return null;
-          return freezeSuccession(trusted(modules, names.succession).listWhere({ successorOrderId })[0] ?? null);
+          return freezeSuccession((await trusted(modules, names.succession).listWhere({ successorOrderId }))[0] ?? null);
         },
       });
     },
