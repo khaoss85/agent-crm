@@ -655,6 +655,41 @@ test('concurrent requeues with different messages still send once and cancel not
   assert.equal(api.state.sentByKey.size, 1, 'one letter causes one provider send');
 });
 
+test('the claim and its send commit together: a failed follow-up leaves the letter open', async (t) => {
+  // Review round 1 P1 on #250: the claim and the enqueue are one durable
+  // unit. When the follow-up fails, the claim rolls back with it — the
+  // letter stays open and retryable, never claimed without its send.
+  const { harness, api } = setup({ config: { maxSendAttempts: 2 } });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  api.setMode('refuse');
+  const queued = await harness.queue(SPACE_A, { connectionKey: key, message: { to: ACCOUNT_A, text: 'first try' }, messageKey: 'm-unit' });
+  await harness.pump(queued.jobId);
+  const [letter] = harness.letters(SPACE_A, 'open');
+  const { advanceLetter } = await import('../packages/channels/src/transitions.js');
+  const service = harness.internals.modules.get('channel-dead-letter').service;
+  await assert.rejects(
+    advanceLetter({ letters: service, database: harness.internals.database }, letter.id, {
+      event: 'requeue',
+      patch: { stateReason: 'probe claim' },
+      actor: harness.userActor,
+      write: async () => { throw new Error('follow-up failed'); },
+    }),
+    (error) => error.message === 'follow-up failed',
+  );
+  assert.equal(harness.letters(SPACE_A, 'open').length, 1, 'the claim rolls back with its follow-up');
+  assert.equal((await harness.jobs()).length, 1, 'no follow-up job was created');
+  // The letter is still retryable afterwards.
+  api.setMode('ok');
+  const requeued = await harness.ops.requeueChannelLetter({
+    spaceId: SPACE_A, letterId: letter.id,
+    message: { to: ACCOUNT_A, text: 'retry after rollback' }, actor: harness.userActor,
+  });
+  const settled = await harness.pump(requeued.jobId);
+  assert.equal(settled.state, 'succeeded');
+  assert.equal(harness.letters(SPACE_A, 'requeued').length, 1);
+});
+
 test('a settled letter refuses requeue without enqueueing another job', async (t) => {
   // The winner's path, seen sequentially: once the letter is requeued, a
   // second requeue with a different approved message 404s before touching

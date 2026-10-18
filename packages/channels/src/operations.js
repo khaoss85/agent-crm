@@ -1608,13 +1608,15 @@ export function createChannelOperations(deps) {
    * 404s on repeat: one letter, one provider send.
    *
    * Claim-first, never enqueue-first: the letter moves `open` -> `requeued`
-   * through advanceLetter (one chain slot, one transaction, one fresh
+   * through advanceLetter (one chain slot, one durable unit, one fresh
    * re-read — conditioned on the state read, never on a stale copy) BEFORE
    * any job exists, and the new job is enqueued only for the winner, in the
-   * same chain slot. A concurrent requeue reads the winner's state and is
-   * refused with CHANNEL_LETTER_UNKNOWN before creating anything: the
-   * winner's job is never touched — no cancel path exists anywhere here,
-   * because an idempotent enqueue can hand the loser the winner's own job.
+   * SAME unit as the claim: the two commit together or roll back together,
+   * so no failure between them leaves a claimed letter without its send. A
+   * concurrent requeue reads the winner's state and is refused with
+   * CHANNEL_LETTER_UNKNOWN before creating anything: the winner's job is
+   * never touched — no cancel path exists anywhere here, because an
+   * idempotent enqueue can hand the loser the winner's own job.
    */
   async function requeueChannelLetter(params) {
     const actor = requireUser(params?.actor);
@@ -1648,10 +1650,10 @@ export function createChannelOperations(deps) {
     const message = normalizeOutboundMessage(adapter, spaceId, connection, params?.message);
     const messageFingerprint = fingerprintPayload(JSON.stringify(message));
     const idempotencyKey = boundedKey('ch-send', spaceId, connection.sourceKey, `requeue:${letter.id}`, messageFingerprint);
-    // The claim carries the intended send identity: the enqueue below runs
-    // after the claim commits (a cross-store write cannot join the record
-    // transaction on one connection), so a failure between the two stays
-    // observable and repairable — the root names the job that should exist.
+    // The claim carries the intended send identity either way: where the
+    // store opens no durable unit, the follow-up still runs in the same
+    // chain slot right after the move, and the root names the job that
+    // should exist so the gap stays observable.
     const stateReason = `human retry by ${actorId(actor)} as ${idempotencyKey}`;
     const letterService = letters();
     let moved;
@@ -1660,7 +1662,7 @@ export function createChannelOperations(deps) {
         event: 'requeue',
         patch: { stateReason },
         actor,
-        write: async () => {
+        write: async ({ transaction }) => {
           try {
             const job = await jobs().enqueue({
               kind: CHANNEL_SEND_KIND,
@@ -1670,7 +1672,7 @@ export function createChannelOperations(deps) {
               outcomeReference: idempotencyKey,
               recoveryPolicy: 'reconcilable_at_least_once',
               maxAttempts: maxSendAttempts,
-            }, { actor });
+            }, transaction ? { transaction, actor } : { actor });
             return { jobId: job.id, idempotencyKey };
           } catch (error) {
             if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'DURABLE_JOB_PAYLOAD_INVALID') {

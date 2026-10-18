@@ -174,30 +174,6 @@ export async function transitionLetter(service, id, { event, patch = {}, actor }
 }
 
 /**
- * Open the transaction the single letter move runs in, or null when the
- * move must run unwrapped: no storage handle, no witness API, or a
- * transaction already open (a nested BEGIN would roll back the outer
- * unit — record actions already run inside one). Same shape as the
- * payments package's `paymentTransact`: a package imports only core, so
- * the helper lives here rather than crossing the boundary.
- *
- * @param {{ letters: any, database?: any }} stores
- */
-export function letterTransact(stores) {
-  const letters = stores?.letters;
-  const database = stores?.database ?? letters?.database ?? null;
-  if (!database || typeof database.transactionAsync !== 'function') return null;
-  let proof;
-  try {
-    proof = proveCallerTransaction([letters]);
-  } catch {
-    return null;
-  }
-  if (proof !== TRANSACTION_PROOF.NO_TRANSACTION) return null;
-  return (/** @type {() => Promise<any>} */ critical) => database.transactionAsync(critical);
-}
-
-/**
  * Same-process serialization for every letter move, one global FIFO chain:
  * two requeues racing the same letter commit in order, so the loser
  * re-reads the winner's state instead of deciding on its stale snapshot.
@@ -227,21 +203,23 @@ export async function withLetterWrite(critical) {
 
 /**
  * The single choke point for EVERY dead-letter state change. One chain
- * slot, one transaction, one fresh read of the letter row, one move derived
- * from LETTER_TRANSITIONS, one managed write. A move racing the winner
- * reads the winner's state and gets CHANNEL_TRANSITION_INVALID, which each
- * caller maps onto its own contract — never a raw error, never a second
- * send. `patch` carries reason fields only.
+ * slot, one durable unit, one fresh read of the letter row, one move
+ * derived from LETTER_TRANSITIONS, one managed write. A move racing the
+ * winner reads the winner's state and gets CHANNEL_TRANSITION_INVALID,
+ * which each caller maps onto its own contract — never a raw error, never
+ * a second send. `patch` carries reason fields only.
  *
- * `write`, when given, runs inside the same chain slot right after the move
- * commits — the claim and its follow-up write order together, so a
- * concurrent loser can never slip between them. It receives the moved
- * letter and its return value surfaces as `wrote`. Only storage work
- * belongs there: never a provider call, never another chained section. The
- * follow-up write runs after the move commits because a cross-store write
- * cannot join the record transaction on one connection; the move's
- * `stateReason` carries the intended follow-up identity, so a failure after
- * the claim stays observable and repairable instead of silent.
+ * `write`, when given, runs inside the SAME durable unit as the move — the
+ * claim and its follow-up commit together or roll back together, so a
+ * failure between them never leaves a claimed letter without its send (and
+ * a process death loses both, never one). It receives the moved letter plus
+ * the unit's transaction handle, and its return value surfaces as `wrote`.
+ * Only storage work belongs there: never a provider call, never another
+ * chained section. Where the store opens no unit, the follow-up still runs
+ * in the same chain slot right after the move, and the move's `stateReason`
+ * carries the intended follow-up identity so the gap stays observable.
+ * A call already inside a unit joins it instead of opening a nested one (a
+ * nested BEGIN would roll back the outer unit).
  *
  * @param {{ letters: any, database?: any }} stores
  * @returns {Promise<{ letter: any, wrote: any }>} `wrote` is the `write`
@@ -249,19 +227,29 @@ export async function withLetterWrite(critical) {
  */
 export async function advanceLetter(stores, id, { event, patch = {}, actor, write = null } = {}) {
   return withLetterWrite(async () => {
-    const transact = letterTransact(stores);
-    const move = async () => {
+    const storage = stores?.database?.storage;
+    const openUnit = storage && typeof storage.transaction === 'function'
+      ? (/** @type {() => Promise<any>} */ critical) => storage.transaction(critical)
+      : null;
+    let proof = null;
+    try {
+      proof = proveCallerTransaction([stores?.letters]);
+    } catch {
+      proof = null;
+    }
+    const run = async (transaction) => {
       const current = await stores.letters.get(id);
       const from = typeof current?.state === 'string' ? current.state : '';
       const to = assertLetterTransition(from, event);
       const { state: _s, ...reasons } = patch ?? {};
       void _s;
-      return stores.letters.applyManaged(id, { state: to, ...reasons }, { actor });
+      const letter = await stores.letters.applyManaged(id, { state: to, ...reasons }, { actor });
+      const wrote = typeof write === 'function' ? await write({ letter, transaction }) : null;
+      return { letter, wrote };
     };
-    const letter = transact ? await transact(move) : await move();
-    if (typeof write === 'function') {
-      return { letter, wrote: await write({ letter }) };
+    if (proof === TRANSACTION_PROOF.NO_TRANSACTION && openUnit) {
+      return openUnit(run);
     }
-    return { letter, wrote: null };
+    return run(null);
   });
 }
