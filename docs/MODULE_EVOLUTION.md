@@ -232,11 +232,32 @@ mismatch, from a plain `{name, manifest}` entry — no caller attaches
 anything, so `startPortablePostgresqlApp`, `createAccordoAppAsync` and the
 pilot writer composition all render the same migrations.
 
+`packages/customer-data/modules/data-quality-issue.history.json` is the
+second: revision 1 of data-quality-issue, after revision 2 widened the `kind`
+enum with `identity_conflict_windowed_scope`. Without it, the seed on a
+database migrated before that widening failed with
+`MODULE_MIGRATION_CHECKSUM_MISMATCH` on `pg_bootstrap_data_quality_issues`.
+
+That widening (b8266ea) shipped without a revision bump, so revision 1 has
+two released bootstrap identities: the original and the widened one recorded
+by databases bootstrapped in between. The ledger bridge in
+`packages/core/src/schema-migrations-ledger.js`
+(`PINNED_MODULE_BOOTSTRAP_PREDECESSORS`) accepts the widened recording as
+the same migration — only while the rendered checksum is still the pinned
+original, so new drift is still refused — and the r2 evolution converges
+both generations. The recorded row is never rewritten.
+
 An entry may still carry `previousManifests`, oldest first, but only as an
 assertion: it must match the checked-in history exactly, otherwise the
 composition refuses rather than silently re-applying a changed migration —
 and so does history for a module that ships none. When a revision ships a new
 `<name>.history.json`, register it in the registry in the same PR.
+
+`tests/module-manifest-revision-guard.test.js` pins the rendered migration
+SQL of every manifest-selected module at its recorded revision, and runs on
+every PR as a repo-wide guard: a manifest edit that changes SQL without
+raising the revision fails there before any database records the old
+checksum.
 
 ## Related
 
