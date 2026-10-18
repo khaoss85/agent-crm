@@ -1,0 +1,14 @@
+{
+  "manifestVersion": 1,
+  "name": "conversation-read",
+  "table": "conversation_reads",
+  "description": "One team member's read watermark on one conversation: everything up to this instant has been seen by this member. There is exactly one row per conversation and member, keyed deterministically, so marking read twice updates the same row rather than writing history. The unread count is derived, never stored: inbound messages on the conversation later than the watermark. Outbound messages never count: the team does not unread its own words, and a channel delivery confirmation (a message advanced to read) never moves a team watermark — the two read meanings stay separate. Every field is managed: a watermark exists only through the interactions package's log capability or its mark-read action, and no client can create, forge or rewrite one. A member id is an opaque team string, the same shape as the team author on an outbound message: there is no roster table here and none is created.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "conversationId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "memberId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "lastReadAt", "type": "timestamp", "writable": "managed" },
+    { "name": "updatedByType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "updatedById", "type": "string", "writable": "managed" }
+  ]
+}
