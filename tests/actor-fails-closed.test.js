@@ -254,6 +254,11 @@ test('framework self-authority stays at its reviewed named outbox boundary', asy
     // instant they chose. It opens an ask and cannot decide one — the timer
     // reaches a domain solely through the capability identity the record
     // carries, and the domain still refuses it every human action.
+    // Payments. Only provider-driven writes use it: recording the checkout the
+    // provider minted and applying a webhook whose signature was verified with
+    // the space's secret. The caller-supplied actor is ignored there; creating,
+    // cancelling and every connection change still require a human user actor.
+    "packages/payments/src/operations.js:<line>:const SYSTEM = () => trustedSystemActor('payment package internal write');",
     "packages/core/src/domain-timers.js:<line>:const TIMER_ACTOR = trustedSystemActor('presenting a human-written scheduled ask at its instant');",
     "packages/core/src/transactional-outbox.js:<line>:const OUTBOX_ACTOR = trustedSystemActor('dispatching committed transactional outbox effects');",
     // Channels. Provider-driven inbox writes and dead-letter rows are not a
