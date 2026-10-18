@@ -8,7 +8,7 @@
     "pre_extraction_evidence": 8
   },
   "domain": "commercial-operations",
-  "fingerprint": "82c1f02fa3545f9c72abbc89121b26cb5562b3d792755f414275732310f3fcf2",
+  "fingerprint": "67ed21dbc982c7ee74c0523505af5ea274dbb35916139d555a3a642ee6aa2914",
   "legacyCharacterizationContract": 1,
   "limitations": [
     {
@@ -722,6 +722,23 @@
           "sourceKey",
           "unsupportedReason"
         ],
+        "package-credit": [
+          "actorId",
+          "actorType",
+          "allowNegative",
+          "grantedAt",
+          "noShowConsumes",
+          "productKey",
+          "sourceAction",
+          "sourceKey",
+          "sourcePackage",
+          "subjectId",
+          "subjectLabel",
+          "subjectOwner",
+          "subjectOwnerPackage",
+          "subjectResource",
+          "totalEntries"
+        ],
         "price-book": [
           "active",
           "currency",
@@ -919,6 +936,10 @@
           "list"
         ],
         "offer": [
+          "get",
+          "list"
+        ],
+        "package-credit": [
           "get",
           "list"
         ],
@@ -4230,6 +4251,7 @@
     "packages/app/src/create-app.js": "39d5984c0e302de3838646ddc2b0b76d6ba7f27478b0f21255f999a186d350bf",
     "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",
     "packages/commercial/modules/offer.module.json": "3eb3c85338d22f8a8962ed0c0c0fe79da0007e8c4e66a44aad14d9b8bbca22c4",
+    "packages/commercial/modules/package-credit.module.json": "9b3d088225aa4fdbe10ee704ea7971ec851de0eea30c631d880f779bf51667e2",
     "packages/commercial/modules/price-book.module.json": "35793cdd5dca999c30760f055622b607d1e68b215b4f9ceaf8fac63ce1b0a670",
     "packages/commercial/modules/price-component.module.json": "8b0200de0daba4e7a0df10766ee9d4bfe59bd9caddb9ae00752a4dd5e7a1e4c6",
     "packages/commercial/modules/price-tier.module.json": "586e5ec5bc06a6e1c95e97eefcac830806fdfd6351733adc0f981fe36d936519",
@@ -4247,8 +4269,9 @@
     "packages/commercial/src/actions.js": "d256803ff214681f88c5fe74b1991c0d6c0da7c0dbb1bd04a1daff9c3f7f5cbb",
     "packages/commercial/src/capability.js": "46a561e9021b601b12f4467e2c7facead61d459391e307d004c00e704cadbf98",
     "packages/commercial/src/catalog-sync.js": "f9ac765ce30ebde27e35aa9f441f417dd1da640a70a98dbb7a013b900489bdb4",
-    "packages/commercial/src/index.js": "e9eaf14c47ee205720a6e2e38c9d321e1e694926ab957e4f4639866ecd826b64",
+    "packages/commercial/src/index.js": "5c223047b1b952ced7a045817b31b8cf87ec032b1a08f84863479d7750bdf2fb",
     "packages/commercial/src/money.js": "5a2716542ebac08388b75d425c0c8c7b91b3dbc8ec756e42927d6d9b203d5a86",
+    "packages/commercial/src/package-credits.js": "74fd94e7d521278ffd0a9fda1e57dc967bbc63e93dcb7dc2754af1d38a2e76a9",
     "packages/commercial/src/price-list.js": "3502fb8a4c950726652a96c83e5d59ca29b1e69c6b3f8bbab60a68062dd7d711",
     "packages/commercial/src/registry.js": "60d7ceff3de3bf88363288cb2c0a9386a335f6c1b10bf6a935306695a75b40af",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",
