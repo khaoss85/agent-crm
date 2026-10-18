@@ -435,7 +435,7 @@ export function allocateConsumption(grants, consuming) {
  * that happened, allocated oldest grant first. Never stored — the grants and
  * the appointment rows are the truth, and this is their projection.
  *
- * @param {{modules: any, moduleNames?: Record<string, string>}} context
+ * @param {{modules: any, moduleNames?: {credit?: string, appointment?: string}}} context
  * @param {unknown} subject the ADR-030 envelope
  */
 export async function readPackageBalance(context, subject) {
@@ -556,7 +556,7 @@ export function createPackageCreditsCapability({ moduleNames } = {}) {
       'Grant one paid package of entries per call, idempotent by the payment source key, and read one customer\'s '
       + 'balance from the stored appointment rows: done consumes one entry, no-show only where the grant\'s rule says so, '
       + 'and the floor holds at zero without the explicit allow-negative choice. No update and no delete.',
-    /** @param {{modules: any, actor?: unknown, now?: () => string}} context */
+    /** @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string}} context */
     create(context = {}) {
       const modules = context?.modules;
       if (!modules || typeof modules.get !== 'function') {
