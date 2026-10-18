@@ -211,6 +211,9 @@ export const SIGNATURE_MANIFESTS = Object.freeze([
     'quote-version.module.json', 'quote-version-line.module.json',
     'quote-version-component.module.json', 'quote-version-total.module.json',
     'quote-approval.module.json',
+    // Package credits (#248): the credit rows feed commercial totals, so the
+    // baseline owns this manifest like every other commercial manifest.
+    'package-credit.module.json',
   ].map((name) => Object.freeze(['packages/commercial/modules', name])),
   ...[
     'signature-envelope.module.json', 'signature-signer.module.json',
