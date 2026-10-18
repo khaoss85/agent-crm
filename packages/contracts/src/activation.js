@@ -84,21 +84,21 @@ export function toJson(value, label) {
  * refusal — an Order whose signature evidence is missing or incoherent is
  * never activated on the assumption that it is probably fine.
  */
-export function loadActivationSource(modules, names, order, domains = null) {
+export async function loadActivationSource(modules, names, order, domains = null) {
   if (order.status !== 'accepted') {
     throw new AppError(`The order is ${order.status}, not accepted`, { code: 'ORDER_NOT_ACTIVATABLE', status: 409 });
   }
   if (!order.envelopeId || !order.signedArtifactId) {
     throw new AppError('The order carries no signature evidence', { code: 'ORDER_NOT_SIGNED', status: 409 });
   }
-  const envelope = trusted(modules, names.envelope).get(order.envelopeId);
+  const envelope = await trusted(modules, names.envelope).get(order.envelopeId);
   if (envelope.status !== 'completed') {
     throw new AppError(`The signature envelope is ${envelope.status}, not completed`, { code: 'ORDER_NOT_SIGNED', status: 409 });
   }
   if (envelope.quoteVersionId !== order.quoteVersionId) {
     throw new AppError('The signature envelope belongs to another quote version', { code: 'SOURCE_INCOHERENT', status: 409 });
   }
-  const artifact = trusted(modules, names.artifact).get(order.signedArtifactId);
+  const artifact = await trusted(modules, names.artifact).get(order.signedArtifactId);
   if (artifact.envelopeId !== envelope.id) {
     throw new AppError('The signed artifact belongs to another envelope', { code: 'SOURCE_INCOHERENT', status: 409 });
   }
@@ -110,8 +110,8 @@ export function loadActivationSource(modules, names, order, domains = null) {
     });
   }
 
-  const lines = trusted(modules, names.orderLine)
-    .listWhere({ orderId: order.id })
+  const lines = (await trusted(modules, names.orderLine)
+    .listWhere({ orderId: order.id }))
     .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
   if (lines.length === 0 || lines.length !== order.lineCount) {
     throw new AppError('The order snapshot is incomplete', { code: 'SOURCE_INCOMPLETE', status: 409, details: { expected: order.lineCount, found: lines.length } });

@@ -385,8 +385,8 @@ export function termContinuity(source, successor) {
 
 /* ------------------------------------------------------------------------ */
 
-function safeGet(service, id) {
-  try { return service.get(id); } catch { return null; }
+async function safeGet(service, id) {
+  try { return await service.get(id); } catch { return null; }
 }
 
 /** Frozen public shape of one lineage row. */
@@ -507,13 +507,13 @@ export function createSuccessorActivationCapability(moduleNames) {
       }
 
       /** Everything both entry points need, derived once. */
-      function derive({ sourceContractId, successorOrderId, policy, policyVersion, overrides }) {
+      async function derive({ sourceContractId, successorOrderId, policy, policyVersion, overrides }) {
         /** @type {any[]} */
         const refusals = [];
         const successions = trusted(modules, names.succession);
 
         const contract = typeof sourceContractId === 'string' && sourceContractId !== ''
-          ? safeGet(trusted(modules, names.contract), sourceContractId) : null;
+          ? await safeGet(trusted(modules, names.contract), sourceContractId) : null;
         if (!contract) {
           refusals.push(refusal('SOURCE_CONTRACT_NOT_FOUND', 'The source commercial contract does not exist', 404,
             { sourceContractId: String(sourceContractId ?? '') }));
@@ -532,17 +532,17 @@ export function createSuccessorActivationCapability(moduleNames) {
 
         // Exact indexed reads, never a paged scan: both guards must be
         // complete, not the first 500 rows.
-        const sourceLines = trusted(modules, names.contractLine)
-          .listWhere({ contractId: contract.id })
+        const sourceLines = (await trusted(modules, names.contractLine)
+          .listWhere({ contractId: contract.id }))
           .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
-        const sourceSubscription = trusted(modules, names.subscription).listWhere({ contractId: contract.id })[0] ?? null;
+        const sourceSubscription = (await trusted(modules, names.subscription).listWhere({ contractId: contract.id }))[0] ?? null;
         if (sourceLines.length === 0) {
           refusals.push(refusal('SOURCE_CONTRACT_INCOHERENT', 'The source contract carries no contract lines', 409,
             { sourceContractId: contract.id }));
         }
         if (sourceSubscription) {
-          const strayLine = trusted(modules, names.subscriptionLine)
-            .listWhere({ subscriptionId: sourceSubscription.id })
+          const strayLine = (await trusted(modules, names.subscriptionLine)
+            .listWhere({ subscriptionId: sourceSubscription.id }))
             .find((row) => row.contractId !== contract.id);
           if (strayLine) {
             refusals.push(refusal('SOURCE_CONTRACT_INCOHERENT',
@@ -551,7 +551,7 @@ export function createSuccessorActivationCapability(moduleNames) {
           }
         }
 
-        const existing = freezeSuccession(successions.listWhere({ sourceContractId: contract.id })[0] ?? null);
+        const existing = freezeSuccession((await successions.listWhere({ sourceContractId: contract.id }))[0] ?? null);
         if (existing) {
           refusals.push(refusal('CONFLICTING_SUCCESSOR',
             'This contract already has a successor agreement; a contract is succeeded exactly once', 409,
@@ -576,7 +576,7 @@ export function createSuccessorActivationCapability(moduleNames) {
 
         const orders = trusted(modules, names.order);
         const order = typeof successorOrderId === 'string' && successorOrderId !== ''
-          ? safeGet(orders, successorOrderId) : null;
+          ? await safeGet(orders, successorOrderId) : null;
         if (!order) {
           refusals.push(refusal('SUCCESSOR_ORDER_NOT_FOUND', 'The successor order does not exist', 404,
             { successorOrderId: String(successorOrderId ?? '') }));
@@ -593,7 +593,7 @@ export function createSuccessorActivationCapability(moduleNames) {
         try {
           // Verified through `commercial-quotes@2` inside this read, so a plan
           // and an execution both refuse a corrupted snapshot (M-1).
-          evidence = loadActivationSource(modules, names, order, domains);
+          evidence = await loadActivationSource(modules, names, order, domains);
         } catch (error) {
           if (!(error instanceof AppError)) throw error;
           refusals.push(refusal(error.code ?? 'SOURCE_INCOHERENT', error.message, error.status ?? 409,
@@ -622,12 +622,12 @@ export function createSuccessorActivationCapability(moduleNames) {
                 successorCompanyId: order.companyId ?? null,
               }));
           }
-          const alreadyActivated = trusted(modules, names.contract).listWhere({ orderId: order.id })[0] ?? null;
+          const alreadyActivated = (await trusted(modules, names.contract).listWhere({ orderId: order.id }))[0] ?? null;
           if (alreadyActivated) {
             refusals.push(refusal('ORDER_ALREADY_ACTIVATED', 'This order is already activated', 409,
               { contractId: alreadyActivated.id }));
           }
-          const consumed = successions.listWhere({ successorOrderId: order.id })[0] ?? null;
+          const consumed = (await successions.listWhere({ successorOrderId: order.id }))[0] ?? null;
           if (consumed) {
             refusals.push(refusal('SUCCESSOR_ORDER_ALREADY_CONSUMED',
               'This order is already the successor of another agreement', 409, { successionId: consumed.id }));
@@ -740,8 +740,8 @@ export function createSuccessorActivationCapability(moduleNames) {
          * domain event. A plan is never an authorisation; `executeSuccession`
          * recomputes all of it inside its own transaction.
          */
-        planSuccession(request = {}) {
-          const derived = derive({
+        async planSuccession(request = {}) {
+          const derived = await derive({
             sourceContractId: request.sourceContractId,
             successorOrderId: request.successorOrderId,
             policy: request.policy ?? null,
@@ -798,7 +798,7 @@ export function createSuccessorActivationCapability(moduleNames) {
             throw new AppError('An execution reference is required', { code: 'EXECUTION_REF_REQUIRED', status: 400 });
           }
 
-          const derived = derive({
+          const derived = await derive({
             sourceContractId: request.sourceContractId,
             successorOrderId: request.successorOrderId,
             policy: request.policy,

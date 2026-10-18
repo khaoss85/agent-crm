@@ -242,7 +242,7 @@ export function buildPlanAmendmentAction(moduleNames) {
       const capability = successorActivation({ domains, modules, actor, now });
 
       const plan = candidate
-        ? capability.planSuccession({
+        ? await capability.planSuccession({
           sourceContractId: record.id,
           successorOrderId: candidate,
           policy: typeof input.policy === 'string' && input.policy !== '' ? input.policy : null,
@@ -422,7 +422,7 @@ export function buildAttachSuccessorOrderAction(moduleNames) {
       requireMovable(record);
 
       const capability = successorActivation({ domains, modules, actor, now });
-      const plan = capability.planSuccession({
+      const plan = await capability.planSuccession({
         sourceContractId: record.sourceContractId,
         successorOrderId,
         policy: typeof input.policy === 'string' && input.policy !== '' ? input.policy : null,
