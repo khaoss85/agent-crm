@@ -411,6 +411,11 @@ export function createPaymentOperations(deps) {
             const current = await service.get(row.id);
             if (!current) throw error;
             if (typeof current.providerRef === 'string' && current.providerRef !== '') return;
+            // A concurrent cancel moved the row terminal while this call
+            // was at the provider: terminal rows are never mutated outside
+            // the single state path, so the hold is skipped and the refusal
+            // surfaces for a retry that now reads the terminal row.
+            if (current.status !== 'open') throw error;
             await service.applyManaged(row.id, {
               providerRef, providerUrl,
               statusReason: 'provider checkout minted while the connection suspended: held for resume, never dropped',
@@ -664,7 +669,19 @@ export function createPaymentOperations(deps) {
       if (REQUEST_TERMINAL.includes(request.status)) {
         return storeTerminalEvent(request, item, outcome, stored);
       }
-      const minted = await promoteHeldIntent(request, item);
+      // The promotion runs under the same inactive-connection mapping as
+      // the finalize below: a suspend that landed between reactivation and
+      // the promotion move leaves the stored quarantine standing — and the
+      // request untouched — instead of throwing at the provider.
+      let minted;
+      try {
+        minted = await promoteHeldIntent(request, item);
+      } catch (error) {
+        if (error && typeof error === 'object' && error.code === 'PAYMENT_CONNECTION_NOT_ACTIVE') {
+          return { duplicate: true, eventId: stored.id, effect: stored.effect };
+        }
+        throw error;
+      }
       if (REQUEST_TERMINAL.includes(minted.status)) {
         return storeTerminalEvent(minted, item, outcome, stored);
       }
@@ -794,8 +811,20 @@ export function createPaymentOperations(deps) {
       }
       // A held intent (open with a held checkout) is promoted through mint
       // first: a webhook that beats the outbound retry finalizes the held
-      // session instead of refusing open → paid.
-      const minted = await promoteHeldIntent(request, item);
+      // session instead of refusing open → paid. The promotion runs under
+      // the same inactive-connection mapping as the finalize below: a
+      // suspend that landed between the live-connection read and the
+      // promotion move quarantines the delivery instead of throwing at
+      // the provider, and the redelivery resumes after reactivation.
+      let minted;
+      try {
+        minted = await promoteHeldIntent(request, item);
+      } catch (error) {
+        if (error && typeof error === 'object' && error.code === 'PAYMENT_CONNECTION_NOT_ACTIVE') {
+          return quarantineInactive(item, request.id);
+        }
+        throw error;
+      }
       if (REQUEST_TERMINAL.includes(minted.status)) {
         return storeTerminalEvent(minted, item, outcome);
       }

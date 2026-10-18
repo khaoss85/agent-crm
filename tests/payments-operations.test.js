@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { createPaymentsHarness } from './helpers/payments-harness.js';
 import { createPaymentOperations } from '../packages/payments/src/operations.js';
+import { transitionRequest } from '../packages/payments/src/transitions.js';
 import {
   buildPaymentConnectionActions,
   createPaymentsPackage,
@@ -912,4 +913,158 @@ test('unwired composition refuses instead of inventing custody', async (t) => {
     bare.ingestPaymentEvent({ spaceId: SPACE_A, connectionKey: key, rawBody: body, headers: harness.faults.sign(body) }),
     (e) => e.code === 'PAYMENT_SECRET_UNAVAILABLE',
   );
+});
+
+test('a suspend between the live read and the held promotion quarantines, then resumes (backlog:2dd2ebd998af)', async (t) => {
+  const { definition, api } = createFixtureStripeAdapter({ secret: SECRET });
+  let suspendMidMint = null;
+  const gated = {
+    ...definition,
+    createPayment: async (args) => {
+      const created = await definition.createPayment(args);
+      if (suspendMidMint) await suspendMidMint();
+      return created;
+    },
+  };
+  const { harness } = setup({ adapterDefinition: gated });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  // Park a held intent: the mint suspends mid-provider-call, so the row
+  // stays open carrying the live checkout reference.
+  suspendMidMint = () => directAction(
+    harness, 'payment-connection', 'suspend-connection',
+    connectionRow(harness, SPACE_A, key), { reason: 'kit suspends mid-mint' },
+  );
+  await assert.rejects(
+    harness.request(SPACE_A, {
+      connectionKey: key, quoteId: 'quote-promo-race', amount: 100, currency: 'EUR', requestKey: 'req-promo-race',
+    }),
+    (e) => e.code === 'PAYMENT_CONNECTION_NOT_ACTIVE',
+  );
+  const mintedRef = [...api.state.createdByKey.values()][0].providerRef;
+  suspendMidMint = null;
+  await harness.activate(SPACE_A, key);
+  // A suspend landing between the live-connection read and the promotion
+  // move: from the code's view the binding is active at the branch and
+  // suspended at the move. The wrapper replays exactly that observed
+  // sequence — later reads see the suspension — without inventing a
+  // second binding or touching the stored rows.
+  const connEntry = harness.internals.modules.get('payment-connection');
+  const realConnService = connEntry.service;
+  const realListWhere = realConnService.listWhere.bind(realConnService);
+  let connectionReads = 0;
+  let doctorSuspended = true;
+  const wrappedConns = Object.create(realConnService);
+  wrappedConns.listWhere = (filter) => {
+    const rows = realListWhere(filter);
+    if (!doctorSuspended) return rows;
+    connectionReads += 1;
+    if (connectionReads <= 2) return rows;
+    return rows.map((row) => ({ ...row, status: 'suspended' }));
+  };
+  connEntry.service = wrappedConns;
+  const body = paidBody(mintedRef, 'evt_promo_race_1');
+  const headers = harness.faults.sign(body);
+  let held;
+  try {
+    // No throw: the delivery quarantines like a finalize that lost its
+    // binding, and the provider keeps its 2xx.
+    held = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: body, headers });
+  } finally {
+    doctorSuspended = false;
+    connEntry.service = realConnService;
+  }
+  assert.equal(held.quarantined, true);
+  // The request is untouched: still open with the held reference.
+  const rows = harness.internals.modules.get('payment-request').service.listWhere({ spaceId: SPACE_A });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'open');
+  assert.equal(rows[0].providerRef, mintedRef);
+  // A real suspend/reactivate cycle, then the identical retry bytes resume
+  // the held checkout to paid on the same event row.
+  await directAction(harness, 'payment-connection', 'suspend-connection', connectionRow(harness, SPACE_A, key), { reason: 'kit suspends before the resume' });
+  await harness.activate(SPACE_A, key);
+  const resumed = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: body, headers });
+  assert.equal(resumed.duplicate, true);
+  assert.equal(resumed.effect, 'applied');
+  assert.equal(resumed.status, 'paid');
+  assert.equal(harness.status(SPACE_A, rows[0].id).status, 'paid');
+  assert.equal(JSON.parse(harness.dumpStorage()).events.length, 1);
+  assert.equal(api.state.createCalls, 1, 'no second mint on the promotion path either');
+});
+
+test('a cancel racing the suspend-mint hold leaves the canceled row without references (backlog:2dd2ebd998af)', async (t) => {
+  const { definition, api } = createFixtureStripeAdapter({ secret: SECRET });
+  let releaseMint = null;
+  let parkedInMint = false;
+  const mintGate = new Promise((resolve) => { releaseMint = resolve; });
+  const gated = {
+    ...definition,
+    createPayment: async (args) => {
+      const created = await definition.createPayment(args);
+      parkedInMint = true;
+      await mintGate;
+      return created;
+    },
+  };
+  const { harness } = setup({ adapterDefinition: gated });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  // The cancel below must commit after the mint advance's refusal and
+  // before the hold write's re-read: the second request read for this row
+  // in the post-provider phase. The channels race idiom (a wrapped service
+  // method) places it there deterministically. The cancel moves through the
+  // transition table directly instead of the cancel-request action: the
+  // action serializes on the same payment-write chain the hold slot holds,
+  // so driving it from inside the slot would deadlock the test.
+  const reqEntry = harness.internals.modules.get('payment-request');
+  const realReqService = reqEntry.service;
+  const realGet = realReqService.get.bind(realReqService);
+  let armed = false;
+  let postArmGets = 0;
+  let intentId = null;
+  let cancelDone = false;
+  const wrappedReqs = Object.create(realReqService);
+  wrappedReqs.get = async (id) => {
+    if (armed && id === intentId) {
+      postArmGets += 1;
+      if (postArmGets === 2) {
+        armed = false;
+        const record = realReqService.listWhere({ spaceId: SPACE_A }).find((row) => row.id === intentId);
+        assert.equal(record.status, 'open', 'the cancel lands while the intent is still open');
+        await transitionRequest(realReqService, intentId, {
+          event: 'cancel',
+          patch: { statusReason: 'kit cancels mid-hold' },
+          actor: harness.userActor,
+        });
+        cancelDone = true;
+      }
+    }
+    return realGet(id);
+  };
+  reqEntry.service = wrappedReqs;
+  const flight = harness.request(SPACE_A, {
+    connectionKey: key, quoteId: 'quote-cancel-race', amount: 100, currency: 'EUR', requestKey: 'req-cancel-race',
+  });
+  let spins = 0;
+  while (!parkedInMint && spins < 1000) {
+    spins += 1;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(parkedInMint, 'the mint parked inside the provider call');
+  intentId = realReqService.listWhere({ spaceId: SPACE_A })[0].id;
+  armed = true;
+  try {
+    await directAction(harness, 'payment-connection', 'suspend-connection', connectionRow(harness, SPACE_A, key), { reason: 'kit suspends mid-mint' });
+    releaseMint();
+    await assert.rejects(flight, (e) => e.code === 'PAYMENT_CONNECTION_NOT_ACTIVE' && e.status === 409);
+  } finally {
+    reqEntry.service = realReqService;
+  }
+  assert.equal(cancelDone, true, 'the cancel committed between the refusal and the hold re-read');
+  const final = realReqService.listWhere({ spaceId: SPACE_A })[0];
+  assert.equal(final.status, 'canceled');
+  assert.ok(final.providerRef === '' || final.providerRef === null,
+    'the hold never wrote references onto the terminal row');
+  assert.equal(api.state.createCalls, 1);
 });
