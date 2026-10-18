@@ -309,6 +309,17 @@ export function createChannelOperations(deps) {
   if (tenantId !== null && (typeof tenantId !== 'string' || tenantId.trim() === '' || tenantId.length > 256)) {
     throw new ValidationError('channel tenant id must be bounded text for the jobs-table namespace');
   }
+  // The single clock the package reads for receive time and window
+  // resolution: one injected clock drives ingest, the queue-time window
+  // check and the worker recheck together, so tests never mix a frozen
+  // adapter clock with the real receive clock. Production composes without
+  // it and reads the wall clock, exactly as before.
+  if (deps.nowMs !== undefined && typeof deps.nowMs !== 'function') {
+    throw new ValidationError('channel nowMs must be a clock function returning milliseconds', {
+      field: 'nowMs',
+    });
+  }
+  const nowMs = typeof deps.nowMs === 'function' ? deps.nowMs : () => Date.now();
   const names = resolvedNames(deps.config ?? {});
   // The opened `channel-sender@1` resolve function the composition hands
   // over (or a test double with the same shape). Absent is fine until an
@@ -736,8 +747,8 @@ export function createChannelOperations(deps) {
       throw new AppError('Channel event is not well-formed', { code: 'CHANNEL_EVENT_MALFORMED', status: 422 });
     }
     const service = inbox();
-    const now = nowIso();
-    const receiveMs = Date.parse(now);
+    const receiveMs = nowMs();
+    const now = new Date(receiveMs).toISOString();
     const payloadFingerprint = fingerprintPayload(rawBody);
     const storeParams = {
       spaceId, connection, adapter, payloadFingerprint, actor, now,
@@ -1123,8 +1134,8 @@ export function createChannelOperations(deps) {
 
     const service = inbox();
     const outcomeService = importOutcomes();
-    const now = nowIso();
-    const receiveMs = Date.parse(now);
+    const receiveMs = nowMs();
+    const now = new Date(receiveMs).toISOString();
     const done = checked.nextPageToken === null;
     const commitKey = importSourceKey(spaceId, connection.sourceKey);
     const importKey = row.sourceKey;
@@ -1371,7 +1382,7 @@ export function createChannelOperations(deps) {
       return null;
     }
     if (typeof subject !== 'string' || subject === '') return null;
-    const nowMs = Date.now();
+    const referenceMs = nowMs();
     let latest = null;
     for (const row of inbox().listWhere({ spaceId, connectionKey })) {
       if (row.subject !== subject || row.effect !== 'applied') continue;
@@ -1387,7 +1398,7 @@ export function createChannelOperations(deps) {
       // Belt and braces with the ingest skew quarantine above: an
       // observation dated beyond now + skew (a row stored before the
       // quarantine existed) never opens the window.
-      if (ms > nowMs + CHANNEL_INGEST_FUTURE_SKEW_MS) continue;
+      if (ms > referenceMs + CHANNEL_INGEST_FUTURE_SKEW_MS) continue;
       if (latest === null || ms > latest) latest = ms;
     }
     return latest === null ? null : new Date(latest).toISOString();
