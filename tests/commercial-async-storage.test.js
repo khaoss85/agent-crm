@@ -142,7 +142,8 @@ test('the contract-2 commercial capability settles every read on async storage',
   // view — the same seam PostgreSQL differs on. Composition edges are the
   // dual-graph test's subject; this test proves the reads themselves.
   const { createCommercialDomainV2 } = await import(pathToFileURL(join(root, 'packages/commercial/src/index.js')).href);
-  const offered = createCommercialDomainV2().capabilities.find((entry) => entry.name === 'commercial-quotes');
+  const { standardSalesDiscountV1 } = await import(pathToFileURL(join(root, 'examples/starters/b2b-lead-qualification/commercial.js')).href);
+  const offered = createCommercialDomainV2({ discountPolicies: [standardSalesDiscountV1] }).capabilities.find((entry) => entry.name === 'commercial-quotes');
   assert.equal(offered?.version, 2, 'the contract-2 graph offers commercial-quotes@2');
   const cap = await offered.create({ modules: app.modules, consumer: 'internal-async-probe' });
   assert.equal(cap.capabilityContract, 2, 'the awaitable graph declares capabilityContract 2');
