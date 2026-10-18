@@ -33,13 +33,13 @@ function cli(root, args) {
  * declares both interaction capabilities, so they open exactly as a real
  * consumer opens them — through `app.domains.capability`.
  */
-function project(t, { withWork = true, withProbe = false } = {}) {
+function project(t, { withWork = true, withProbe = false, interactionManifests = INTERACTION_MANIFESTS } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'accordo-interactions-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
-  for (const manifest of INTERACTION_MANIFESTS) {
+  for (const manifest of interactionManifests) {
     const applied = cli(root, ['module', 'create', join(root, 'packages/interactions/modules', manifest), '--apply']);
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }
@@ -1047,4 +1047,164 @@ test('assign and mark-read run on renamed records: the full mapping is forwarded
   });
   assert.equal(marked.created, true);
   assert.equal((await unreadCount({ modules: app.modules, moduleNames: {} }, conversation.id, 'guido')).unread, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Explicit assign keys: stored even when the owner does not change
+// ---------------------------------------------------------------------------
+
+test('an explicit assign key is stored even when the owner does not change', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'assign-key.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, assignConversation } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:key1', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const count = () => app.modules.get('conversation-assignment')
+    .service.countWhere({ conversationId: conversation.id });
+
+  // The thread is owned by maria through the default key.
+  const first = await assignConversation({ modules: app.modules, actor: ACTOR }, {
+    conversationId: conversation.id, assigneeMemberId: 'maria', source: SOURCE,
+  });
+  assert.equal(first.replayed, false);
+
+  // The same owner under a fresh explicit key is stored under that key — not
+  // a silent no-op — so the key keeps its replay-or-refusal promise.
+  const keyed = await assignConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'assign:k1', conversationId: conversation.id, assigneeMemberId: 'maria',
+    note: 'conferma per il preventivo', source: SOURCE,
+  });
+  assert.equal(keyed.replayed, false);
+  assert.notEqual(keyed.assignment.id, first.assignment.id);
+  assert.equal(keyed.assignment.sourceKey, 'assign:k1');
+  assert.equal(count(), 2);
+
+  // The same key with the same payload replays the stored row.
+  const replay = await assignConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'assign:k1', conversationId: conversation.id, assigneeMemberId: 'maria',
+    note: 'conferma per il preventivo', source: SOURCE,
+  });
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.assignment.id, keyed.assignment.id);
+  assert.equal(count(), 2);
+
+  // The same key with another owner — or another note — is refused 409.
+  await assert.rejects(
+    assignConversation({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'assign:k1', conversationId: conversation.id, assigneeMemberId: 'guido', source: SOURCE,
+    }),
+    (error) => error.code === 'INTERACTIONS_LOG_CONFLICT' && error.status === 409,
+  );
+  await assert.rejects(
+    assignConversation({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'assign:k1', conversationId: conversation.id, assigneeMemberId: 'maria',
+      note: 'un altra nota', source: SOURCE,
+    }),
+    (error) => error.code === 'INTERACTIONS_LOG_CONFLICT' && error.status === 409,
+  );
+  assert.equal(count(), 2);
+});
+
+// ---------------------------------------------------------------------------
+// Older compositions: threads open without the newer records, and each
+// single-record write needs only its own record
+// ---------------------------------------------------------------------------
+
+const CORE_MANIFESTS = ['conversation.module.json', 'interaction-message.module.json', 'interaction-call.module.json'];
+
+test('threads open and join without the newer records: single-record writes name their own', async (t) => {
+  const root = project(t, { interactionManifests: CORE_MANIFESTS });
+  const context = await boot(root, join(root, 'data', 'legacy.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, assignConversation, markConversationRead, readConversationThread } = await interactionsFrom(root);
+
+  const first = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:legacy', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  assert.equal(first.joined, false);
+
+  // No thread-key record is applied, yet the channel still joins the thread:
+  // the join leaves no alias row behind instead of refusing the open.
+  const second = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'ig:thread:legacy', subject: SUBJECT, channel: 'instagram', source: SOURCE,
+  });
+  assert.equal(second.joined, true);
+  assert.equal(second.conversation.id, first.conversation.id);
+
+  // Each single-record write names the record it needs, not all of them.
+  await assert.rejects(
+    assignConversation({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'assign:legacy', conversationId: first.conversation.id, assigneeMemberId: 'guido', source: SOURCE,
+    }),
+    (error) => error.code === 'INTERACTIONS_STORAGE_INVALID' && /conversation-assignment/.test(error.message),
+  );
+  await assert.rejects(
+    markConversationRead({ modules: app.modules, actor: ACTOR }, {
+      conversationId: first.conversation.id, source: SOURCE,
+    }),
+    (error) => error.code === 'INTERACTIONS_STORAGE_INVALID' && /conversation-read/.test(error.message),
+  );
+
+  // The thread says the ownership trail is unavailable, never that nobody
+  // owns it.
+  const thread = await readConversationThread({ modules: app.modules, moduleNames: {} }, first.conversation.id);
+  assert.equal(thread.assignment.available, false);
+});
+
+test('assign needs only the assignment record', async (t) => {
+  const root = project(t, {
+    interactionManifests: [...CORE_MANIFESTS, 'conversation-assignment.module.json'],
+  });
+  const context = await boot(root, join(root, 'data', 'assign-only.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, assignConversation, markConversationRead } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:assign-only', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const handed = await assignConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'assign:only:1', conversationId: conversation.id, assigneeMemberId: 'guido', source: SOURCE,
+  });
+  assert.equal(handed.replayed, false);
+  assert.equal(handed.assignment.assigneeMemberId, 'guido');
+
+  await assert.rejects(
+    markConversationRead({ modules: app.modules, actor: ACTOR }, {
+      conversationId: conversation.id, source: SOURCE,
+    }),
+    (error) => error.code === 'INTERACTIONS_STORAGE_INVALID' && /conversation-read/.test(error.message),
+  );
+});
+
+test('mark-read needs only the read record', async (t) => {
+  const root = project(t, {
+    interactionManifests: [...CORE_MANIFESTS, 'conversation-read.module.json'],
+  });
+  const context = await boot(root, join(root, 'data', 'read-only.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, assignConversation, markConversationRead, unreadCount } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:read-only', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const marked = await markConversationRead(
+    { modules: app.modules, actor: { type: 'user', id: 'guido' } },
+    { conversationId: conversation.id, source: SOURCE },
+  );
+  assert.equal(marked.created, true);
+  assert.equal((await unreadCount({ modules: app.modules, moduleNames: {} }, conversation.id, 'guido')).unread, 0);
+
+  await assert.rejects(
+    assignConversation({ modules: app.modules, actor: ACTOR }, {
+      sourceKey: 'assign:read-only', conversationId: conversation.id, assigneeMemberId: 'guido', source: SOURCE,
+    }),
+    (error) => error.code === 'INTERACTIONS_STORAGE_INVALID' && /conversation-assignment/.test(error.message),
+  );
 });

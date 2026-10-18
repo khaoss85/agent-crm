@@ -225,6 +225,66 @@ test('evidence names its author: log writes without an actor are refused', async
   await assert.rejects(logCall({ modules, actor: {} }, call()), isActorRefusal);
 });
 
+test('a thread-key race loser replays only the same joiner and provenance', async () => {
+  const joined = {
+    id: 'conv-join', sourceKey: 'wa:thread:jk', subjectResource: 'contact', subjectId: 'c-1',
+    subjectOwner: 'host', subjectOwnerPackage: null, channel: 'whatsapp', remoteHandle: null,
+    sourcePackage: 'host', sourceAction: 'seed', status: 'open',
+  };
+  // Two joins under one key race: the winner's insert commits first, the
+  // loser's insert hits the key's UNIQUE guard, and the loser re-reads the
+  // winner's row. The first alias lookup (before the join) sees nothing.
+  const joinUnder = (stored) => {
+    let aliasReads = 0;
+    const threadKeys = {
+      listWhere: async () => (aliasReads++ === 0 ? [] : [stored]),
+      createManaged: async () => { throw new ConflictError('already exists', { transient: false }); },
+    };
+    const conversations = {
+      listWhere: async (where) => ('sourceKey' in where ? [] : [joined]),
+      get: async () => joined,
+      createManaged: async () => { throw new Error('unreached: the join path never creates'); },
+    };
+    const messages = { createManaged: async () => { throw new Error('unreached'); } };
+    const calls = { createManaged: async () => { throw new Error('unreached'); } };
+    // Route the thread-key name to the threadKeys stub, everything else to
+    // its own stub.
+    const modules = {
+      get: (name) => (name === 'conversation-thread-key'
+        ? { service: threadKeys }
+        : { service: { conversation: conversations, 'interaction-message': messages, 'interaction-call': calls }[name] }),
+    };
+    return openConversation(
+      { modules, actor: { type: 'user', id: 'e2e' }, now: () => '2026-09-15T10:08:00.000Z' },
+      { sourceKey: 'ig:thread:race', subject: SUBJECT, channel: 'instagram', source: SOURCE },
+    );
+  };
+  const winner = (overrides = {}) => ({
+    sourceKey: 'ig:thread:race', conversationId: 'conv-join', joinedAt: '2026-09-15T10:08:00.000Z',
+    joinedByType: 'user', joinedById: 'e2e', sourcePackage: 'host', sourceAction: 'seed',
+    ...overrides,
+  });
+
+  // The same joiner with the same provenance replays the winner's thread.
+  const replayed = await joinUnder(winner());
+  assert.equal(replayed.joined, true);
+  assert.equal(replayed.conversation.id, 'conv-join');
+
+  // The same key through another joiner, another provenance, or naming
+  // another conversation is refused 409 — never replayed as the same join.
+  for (const [name, stored] of [
+    ['another joiner', winner({ joinedById: 'mallory' })],
+    ['another provenance', winner({ sourceAction: 'other' })],
+    ['another conversation', winner({ conversationId: 'conv-other' })],
+  ]) {
+    await assert.rejects(
+      joinUnder(stored),
+      (error) => error.code === 'INTERACTIONS_LOG_CONFLICT' && error.status === 409,
+      name,
+    );
+  }
+});
+
 test('only the expected registry miss reads as absent: other failures propagate', () => {
   assert.equal(resolveModule({ get: () => { throw new NotFoundError('Module', 'work-activity'); } }, 'work-activity'), null);
   assert.throws(

@@ -359,44 +359,61 @@ function interactionServices(context) {
 }
 
 /**
- * The ownership and read-state records. Required by the writes that keep
- * them, optional on the reads: an application composed before these records
- * existed still opens threads, and the thread says the ownership trail is
- * unavailable rather than reporting no owner.
+ * The ownership record, for the write that keeps it — and for nothing else.
+ * Assigning needs only the assignment record: an application composed with
+ * the read-state record but without this one still marks threads read, and
+ * one composed with neither still opens them. Each single-record write names
+ * the record it needs, so a missing sibling never breaks it.
  *
- * @param {{modules: any, names: {assignment: string, read: string}}} context
+ * @param {{modules: any, names: {assignment: string}}} context
  */
-function inboxServices(context) {
+function assignmentServices(context) {
   const { names } = context;
   const assignments = resolveModule(context.modules, names.assignment)?.service;
-  const reads = resolveModule(context.modules, names.read)?.service;
-  if (!assignments?.createManaged || !reads?.createManaged) {
+  if (!assignments?.createManaged) {
     throw new AppError(
-      'The interactions package is installed without its "conversation-assignment" and "conversation-read" records. '
-        + 'Apply all six manifests with `crm module create` before composing it.',
+      'The interactions package is installed without its "conversation-assignment" record. '
+        + 'Apply the conversation-assignment manifest with `crm module create` before assigning threads.',
       { code: 'INTERACTIONS_STORAGE_INVALID', status: 500 },
     );
   }
-  return { assignments, reads };
+  return { assignments };
 }
 
 /**
- * The thread-key record a join leaves behind. Required on the open path that
- * writes it, like every other record on the write that keeps it: an open
- * without it could not replay a joined key after the thread closed.
+ * The read-state record, for the write that keeps it — and for nothing else.
+ * Marking read needs only the read record, mirroring the assignment record
+ * above.
  *
- * @param {{modules: any, names: {threadKey: string}}} context
+ * @param {{modules: any, names: {read: string}}} context
  */
-function threadKeyServices(context) {
+function readStateServices(context) {
   const { names } = context;
-  const threadKeys = resolveModule(context.modules, names.threadKey)?.service;
-  if (!threadKeys?.createManaged || !threadKeys?.listWhere) {
+  const reads = resolveModule(context.modules, names.read)?.service;
+  if (!reads?.createManaged) {
     throw new AppError(
-      'The interactions package is installed without its "conversation-thread-key" record. '
-        + 'Apply all six manifests with `crm module create` before composing it.',
+      'The interactions package is installed without its "conversation-read" record. '
+        + 'Apply the conversation-read manifest with `crm module create` before marking threads read.',
       { code: 'INTERACTIONS_STORAGE_INVALID', status: 500 },
     );
   }
+  return { reads };
+}
+
+/**
+ * The thread-key record a join leaves behind, when it is applied. Optional
+ * on the open path: an application composed before this record existed still
+ * opens threads and joins channels to them — the join simply leaves no alias
+ * row behind, so a retry under a joined key re-joins the open thread instead
+ * of replaying the alias. Only applications with the record applied get the
+ * retry-after-close replay the record exists for.
+ *
+ * @param {{modules: any, names: {threadKey: string}}} context
+ */
+function optionalThreadKeyServices(context) {
+  const { names } = context;
+  const threadKeys = resolveModule(context.modules, names.threadKey)?.service;
+  if (!threadKeys?.createManaged || !threadKeys?.listWhere) return { threadKeys: null };
   return { threadKeys };
 }
 
@@ -442,8 +459,13 @@ export function validateConversationRequest(request) {
  * Record one channel key joined to one thread: the row that makes a join
  * idempotent. Two joins under the same key race on the key's UNIQUE guard,
  * exactly like every other write in this package: the loser replays the
- * winner's thread when it names the same conversation and is refused 409
- * when the same key claims another one.
+ * winner's thread when it names the same conversation through the same
+ * joiner and provenance, and is refused 409 when the same key claims another
+ * conversation — or the same conversation through another joiner or
+ * provenance, exactly like the alias path replays-or-refuses below.
+ * `joinedAt` is not identity: it is when the row was written, not what the
+ * join claims, so a retry that arrives later still replays instead of
+ * conflicting with its own stamp.
  */
 async function recordThreadKey(threadKeys, { sourceKey, conversationId, now, who, source, actor }) {
   try {
@@ -460,7 +482,13 @@ async function recordThreadKey(threadKeys, { sourceKey, conversationId, now, who
     if (!isUniqueConflict(error)) throw error;
     const raced = (await threadKeys.listWhere({ sourceKey }))[0];
     if (!raced) throw error;
-    return replayOrConflict(raced, { conversationId }, 'thread key');
+    return replayOrConflict(raced, {
+      conversationId,
+      joinedByType: who.type,
+      joinedById: who.id,
+      sourcePackage: source.package,
+      sourceAction: source.action,
+    }, 'thread key');
   }
 }
 
@@ -483,7 +511,7 @@ async function recordThreadKey(threadKeys, { sourceKey, conversationId, now, who
 export async function openConversation(context, request) {
   const names = resolvedNames(context.moduleNames);
   const { conversations } = interactionServices({ modules: context.modules, names });
-  const { threadKeys } = threadKeyServices({ modules: context.modules, names });
+  const { threadKeys } = optionalThreadKeyServices({ modules: context.modules, names });
   const actor = context.actor;
   // Evidence names its author: an anonymous log would store words the business
   // sent with nobody accountable for them, so a missing actor is refused.
@@ -515,7 +543,7 @@ export async function openConversation(context, request) {
   // identity — the subject envelope and the provenance — but never the
   // channel or the remote handle: those name where this message arrived, not
   // the thread, and a joined key never recorded them.
-  const alias = (await threadKeys.listWhere({ sourceKey: input.sourceKey }))[0];
+  const alias = threadKeys ? (await threadKeys.listWhere({ sourceKey: input.sourceKey }))[0] : null;
   if (alias) {
     const target = await findConversationById(conversations, alias.conversationId);
     if (!target) {
@@ -537,9 +565,11 @@ export async function openConversation(context, request) {
 
   const joined = await findOpenConversation(conversations, input.subject);
   if (joined) {
-    await recordThreadKey(threadKeys, {
-      sourceKey: input.sourceKey, conversationId: joined.id, now, who, source, actor,
-    });
+    if (threadKeys) {
+      await recordThreadKey(threadKeys, {
+        sourceKey: input.sourceKey, conversationId: joined.id, now, who, source, actor,
+      });
+    }
     return { conversation: joined, replayed: false, joined: true };
   }
 
@@ -1020,7 +1050,7 @@ async function currentAssignmentRow(assignments, conversationId, excludeSourceKe
 export async function assignConversation(context, request) {
   const names = resolvedNames(context.moduleNames);
   const { conversations } = interactionServices({ modules: context.modules, names });
-  const { assignments } = inboxServices({ modules: context.modules, names });
+  const { assignments } = assignmentServices({ modules: context.modules, names });
   const actor = context.actor;
   // Ownership names who decided it: an anonymous handover would move a
   // customer's thread with nobody accountable for the move.
@@ -1042,10 +1072,13 @@ export async function assignConversation(context, request) {
     const previous = previousRow ? previousRow.assigneeMemberId ?? null : null;
 
     // Repeating the member who already owns the thread replays the row that
-    // established them instead of writing audit noise. An explicit key keeps
-    // its strict replay-or-refusal below; the default names each handover,
-    // so the no-op is answered here, before any key is derived.
-    if (previousRow && previous === input.assigneeMemberId) {
+    // established them instead of writing audit noise — but only when no
+    // explicit key was supplied. The default key names each handover, so the
+    // no-op is answered here, before any key is derived; an explicit key is
+    // a strict replay-or-refusal promise, so it always falls through to the
+    // listWhere + replayOrConflict path below, which persists the key on
+    // first use and refuses a divergent reuse 409.
+    if (excludeKey === null && previousRow && previous === input.assigneeMemberId) {
       return {
         assignment: previousRow,
         replayed: true,
@@ -1160,7 +1193,7 @@ export async function readConversationAssignment({ modules, moduleNames }, conve
 export async function markConversationRead(context, request) {
   const names = resolvedNames(context.moduleNames);
   const { conversations } = interactionServices({ modules: context.modules, names });
-  const { reads } = inboxServices({ modules: context.modules, names });
+  const { reads } = readStateServices({ modules: context.modules, names });
   const actor = context.actor;
   // A read watermark without a reader would store that somebody saw the
   // customer's words with nobody saying who.

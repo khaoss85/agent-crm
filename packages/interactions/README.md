@@ -115,9 +115,11 @@ code; any other outcome with one is refused.
 `openConversation` joins the customer's open thread when there is one: the
 same ADR-030 subject with a new source key returns the open conversation
 (`joined: true`) instead of opening a second one, whatever channel the new
-key arrived on — and the join leaves one `conversation-thread-key` row
-behind, so retrying the joined key replays the joined thread instead of
-opening a duplicate, even after the thread closed. The channel on the
+key arrived on — and, when the `conversation-thread-key` record is applied,
+the join leaves one row behind, so retrying the joined key replays the
+joined thread instead of opening a duplicate, even after the thread closed.
+Applications composed before that record existed still open and join threads;
+the join simply leaves no alias row behind. The channel on the
 conversation is where the thread started; every message keeps its own
 channel, and the thread reads them all oldest first. A closed thread stays
 resolved — a new key opens a fresh thread — and a different subject always
@@ -132,6 +134,8 @@ member is null. Every handover is one immutable row naming the new owner, the
 previous owner, who decided it and when — the latest row is the current owner
 and the rows together are the audit trail. The same source key with the same
 handover replays; a divergent handover behind the same key is refused `409`.
+An explicit key is stored even when the owner does not change, so reusing it
+with another handover is refused instead of silently replaying the old row.
 The `conversation.assign` action does the same through the record runtime and
 defaults its key to the handover itself — previous owner to next owner — so
 repeating the current owner replays instead of writing audit noise, while a
