@@ -176,13 +176,16 @@ jobs:
       # measurement-flow files as unmoved. Runs on
       # plain setup-node, before `npm ci`: the guard imports only node
       # builtins and local scripts without npm dependencies.
+      # Fail-closed: only the literal guard output "false" skips, mapped by
+      # scripts/ci-measure-guard-decide.sh; a crash or any unexpected output
+      # measures instead of ending the run green without measuring.
       - name: Skip when HEAD is already measured
         id: guard
         run: |
-          if [ "$(node scripts/ci-measure-guard.js --state-file "$HOME/.accordo-ci/main-last-measurement.json")" = "true" ]; then
-            echo "measure_needed=true" >> "$GITHUB_OUTPUT"
+          if out="$(node scripts/ci-measure-guard.js --state-file "$HOME/.accordo-ci/main-last-measurement.json")"; then
+            bash scripts/ci-measure-guard-decide.sh "$out"
           else
-            echo "measure_needed=false" >> "$GITHUB_OUTPUT"
+            bash scripts/ci-measure-guard-decide.sh "guard-crashed"
           fi
       - name: Start PostgreSQL 16 (self-hosted macOS)
         if: runner.os == 'macOS' && steps.guard.outputs.measure_needed == 'true'

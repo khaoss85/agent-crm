@@ -9,9 +9,11 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { gitIn } from './helpers/isolated-git.js';
 
@@ -129,4 +131,37 @@ test('only the measurement flow writing since the record skips, real code measur
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+const DECIDE_SH = fileURLToPath(new URL('../scripts/ci-measure-guard-decide.sh', import.meta.url));
+
+/** Run the workflow's guard-output mapping as the step does, fail-closed. */
+function decideOutput(guardStdout) {
+  const dir = mkdtempSync(join(tmpdir(), 'ci-guard-decide-'));
+  try {
+    const outFile = join(dir, 'github-output');
+    execFileSync('bash', [DECIDE_SH, guardStdout], { env: { ...process.env, GITHUB_OUTPUT: outFile } });
+    return readFileSync(outFile, 'utf8');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('only the literal guard output "false" skips the measurement', () => {
+  assert.equal(decideOutput('false'), 'measure_needed=false\n');
+});
+
+test('anything but "false" measures: true, empty, garbage and crash markers', () => {
+  for (const guardStdout of ['true', '', 'False', ' false', 'false ', 'skip: window elapsed', 'guard-crashed', 'true\nfalse']) {
+    assert.equal(decideOutput(guardStdout), 'measure_needed=true\n', JSON.stringify(guardStdout));
+  }
+});
+
+test('the workflow routes the guard step through the fail-closed mapping', () => {
+  const workflow = readFileSync(
+    fileURLToPath(new URL('../.github/workflows/ci.yml', import.meta.url)),
+    'utf8',
+  );
+  assert.ok(workflow.includes('scripts/ci-measure-guard-decide.sh'));
+  assert.ok(workflow.includes('guard-crashed'));
 });

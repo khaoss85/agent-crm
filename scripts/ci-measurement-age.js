@@ -15,7 +15,7 @@
  * is missing or unparsable (that prints a warning, not a failure). A stale
  * number is information for the next scheduled run, not a red push.
  *
- *   node scripts/ci-measurement-age.js [--root <dir>] [--window-hours <n>]
+ *   node scripts/ci-measurement-age.js [--root <dir>] [--window-hours <n>] [--state-file <path>]
  */
 
 import { readFileSync } from 'node:fs';
@@ -129,7 +129,8 @@ export function resolveMeasuredAtMs(recordedSha, runRecord = {}) {
 /**
  * Read the runner-local run record the scheduled measurement maintains.
  * Never throws: a missing or malformed file resolves to "no record", and the
- * caller falls back to the commit and ledger dates.
+ * caller reports the age as unknown (a warning, never a failure) — there is
+ * no commit-date or ledger-date fallback.
  *
  * @param {string} stateFile runner-local state file path
  * @returns {{ sha?: unknown, measuredAt?: unknown }} the record, when usable
@@ -139,7 +140,7 @@ export function readRunRecord(stateFile) {
     const record = JSON.parse(readFileSync(stateFile, 'utf8'));
     if (record !== null && typeof record === 'object') return { sha: record.sha, measuredAt: record.measuredAt };
   } catch {
-    // Fall through: no record means the older datings below.
+    // Fall through: no record means the age is unknown.
   }
   return {};
 }
