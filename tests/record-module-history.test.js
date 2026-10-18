@@ -21,6 +21,7 @@ import {
   recordModuleMigrations,
 } from '../packages/core/src/record-module-runtime.js';
 import {
+  MODULE_BORN_AT_REVISION,
   assertCallerHistoryMatchesRegistry,
   recordModuleHistoryFor,
   recordModuleHistoryPath,
@@ -557,4 +558,44 @@ test('a revision-1 calendar-sync-state sqlite database upgrades with its rows in
   assert.equal(row.secret_ref, null);
   assert.equal(row.grant_status, null);
   db.close();
+});
+
+/**
+ * Born-at-revision declarations (accordo 61c450a2a1b1) excuse exactly the
+ * declared revision of a module with no checked-in history. This keeps the
+ * declaration honest by itself: shipping history for a listed module, or
+ * moving it past its declared revision, fails here until the entry is
+ * removed — and the manifest guard refuses the bump without that history.
+ */
+const BORN_AT_MANIFEST_PATHS = {
+  'commercial-contract': '../packages/contracts/modules/commercial-contract.module.json',
+  'contract-activation': '../packages/contracts/modules/contract-activation.module.json',
+  'contract-version': '../packages/contracts/modules/contract-version.module.json',
+  'service-obligation': '../packages/contracts/modules/service-obligation.module.json',
+  'delivery-milestone': '../packages/delivery/modules/delivery-milestone.module.json',
+  'delivery-project': '../packages/delivery/modules/delivery-project.module.json',
+  'delivery-work-package': '../packages/delivery/modules/delivery-work-package.module.json',
+};
+
+test('born-at-revision declarations name real modules at exactly that revision with no history', () => {
+  assert.deepEqual(Object.keys(BORN_AT_MANIFEST_PATHS).sort(), Object.keys(MODULE_BORN_AT_REVISION).sort());
+  for (const [name, relative] of Object.entries(BORN_AT_MANIFEST_PATHS)) {
+    const manifest = loadJson(relative);
+    assert.equal(manifest.name, name);
+    assert.equal(
+      manifest.revision,
+      MODULE_BORN_AT_REVISION[name],
+      `${name} moved past its declared born-at revision: ship its history and remove the declaration`,
+    );
+    assert.equal(
+      recordModuleHistoryFor(name),
+      undefined,
+      `${name} now ships history: remove its born-at declaration`,
+    );
+    assert.equal(
+      recordModuleHistoryPath(name),
+      undefined,
+      `${name} now ships history: remove its born-at declaration`,
+    );
+  }
 });
