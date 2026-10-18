@@ -27,22 +27,27 @@
  * - a changed file no test file reaches selects nothing only when no
  *   JavaScript source changed (docs, workflows, `package.json`, site
  *   content): the agreement gates of the same CI job (`gtm:check`,
- *   `repo:truth -- --check`) still run. A changed `.js`/`.cjs`/`.mjs` file
- *   with no reaching test fails closed instead: the step refuses with
- *   exit 1, naming the uncovered files, rather than exiting 0 without
- *   running anything.
+ *   `repo:truth -- --check`) still run. A changed `.js`/`.cjs`/`.mjs`
+ *   file with no reaching test does NOT block: the gate warns (a
+ *   `::warning::` annotation plus a summary line naming the uncovered
+ *   files) and still runs the repo-wide guards below. The fast gate
+ *   chooses best-effort — the full suite on `main` stays the safety net
+ *   behind it — so an unlinked source file is a warning, never a refusal.
+ *   The refusal stays only for an empty fallback suite (see `fallbackPlan`).
+ *   Deleted files never count as uncovered: the diff excludes them with
+ *   `--diff-filter=d` (a deleted file needs no test run), while the
+ *   unfiltered diff still drives the guard check below, so deleting a
+ *   listed guard without updating the list still fails the step red.
  *
  * - the repo-wide guards (`REPO_WIDE_GUARDS` below) always run on top of
  *   the selection, on every non-empty diff. They are the test files whose
  *   verdict depends on files they never relatively import — repo-wide
  *   `grep` scans and recursive walks of `packages/`, `apps/`, `tests/`
- *   or `scripts/` — so the import mapping above never selects them, and
- *   the fail-closed refusal never fires for them either (it fires only
- *   when NO test is selected at all, while a normal PR always selects
- *   some). Twice `main` turned red after green-alone PRs for exactly
+ *   or `scripts/` — so the import mapping above never selects them.
+ *   Twice `main` turned red after green-alone PRs for exactly
  *   this: #222 against #221 (`tests/isolated-git.test.js`) and #234
  *   (`tests/actor-fails-closed.test.js:251`). The guards never substitute
- *   for missing coverage: the fail-closed refusal is decided on the
+ *   for missing coverage: the warned fallback is decided on the
  *   mapped selection alone, before the guards join it.
  *
  * Two budgets bound the step so a big PR cannot wedge it (CI run
@@ -79,10 +84,12 @@
  *
  * Exit codes: 0 the tests that ran passed (the selection plus the
  * repo-wide guards, or the fallback suite plus the guards after a warned
- * fallback; an empty diff runs nothing), 1 the selection failed, a test
- * failed, the fallback run failed, a listed guard is missing from `tests/`,
- * or the fail-closed refusal (a changed source file no test reaches,
- * decided before the guards join), 2 unusable input.
+ * fallback; an empty diff runs nothing — and a warned fallback runs the
+ * guards, so an uncovered source file never exits 0 with nothing run),
+ * 1 the selection failed, a test failed, the fallback run failed, a listed
+ * guard is missing from `tests/`, or the refusal (an oversized selection
+ * the PR carries no test file of its own for — the only fail-closed case
+ * left), 2 unusable input.
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
@@ -264,7 +271,7 @@ export function relativeImportsOf(
  * Whether any changed repository-relative path is JavaScript source. Test
  * files themselves count as source here: a changed test file is always
  * selected below, so an empty selection together with a `true` here means a
- * changed non-test source file no test reaches — the fail-closed case.
+ * changed non-test source file no test reaches — the warned-fallback case.
  */
 export function hasCodeChange(
   /** @type {string[]} */ changedFiles,
@@ -368,11 +375,12 @@ export function changedTestFiles(
 
 /**
  * What the gate does with a finished selection: skip (no code changed),
- * refuse (code changed, nothing reaches it — the fail-closed case), run
- * the selection, or fall back to the PR's own changed test files when the
- * selection outgrew the run budget. An oversized selection with no changed
- * test file of its own refuses, fail-closed: there is no evidence to run.
- * Pure: unit-tested without git or timers.
+ * warn-and-run-the-guards (code changed, nothing reaches it — best-effort,
+ * never a refusal), run the selection, or fall back to the PR's own
+ * changed test files when the selection outgrew the run budget. An
+ * oversized selection with no changed test file of its own refuses,
+ * fail-closed: there is no evidence to run, and it is the only refusal
+ * left. Pure: unit-tested without git or timers.
  */
 export function planGate(
   /** @type {string[]} */ changedFiles,
@@ -391,8 +399,12 @@ export function planGate(
 /**
  * The warned fallback for an unusable selection (empty, oversized, or
  * expired): the default fast suite when the PR carries its own tests, the
- * fail-closed refusal when JavaScript changed without any, the skip when
- * only non-source files changed.
+ * skip when only non-source files changed, the fail-closed refusal when an
+ * oversized selection has no test file of its own — and, for every other
+ * case of JavaScript changed without reaching tests, a warned fallback with
+ * no tests of its own: `main()` still joins the repo-wide guards and runs
+ * them, and warns naming the uncovered files. A changed source file no
+ * test reaches never blocks the PR; the full suite on `main` is the net.
  */
 export function fallbackPlan(
   /** @type {string[]} */ changedFiles,
@@ -405,8 +417,11 @@ export function fallbackPlan(
   if (!hasCodeChange(changedFiles)) {
     return { kind: 'skip', tests: [], reason };
   }
-  const uncovered = changedFiles.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
-  return { kind: 'refuse', tests: [], reason, uncovered };
+  if (reason === 'oversized-selection') {
+    const uncovered = changedFiles.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
+    return { kind: 'refuse', tests: [], reason, uncovered };
+  }
+  return { kind: 'fallback', tests: [], reason };
 }
 
 /**
@@ -551,6 +566,34 @@ export function buildFileImports(
   return graph;
 }
 
+/**
+ * The PR's changed files against `base`, split in two: `changed` drives the
+ * selection (deleted files excluded via `--diff-filter=d` — a deleted file
+ * needs no test run and no test can reach it anymore), `allChanged` drives
+ * the guard check (a PR deleting a listed guard without updating the list
+ * still fails red). Throws on git failure; `main()` reports it as
+ * unusable input. The git runner is injected so the end-to-end test drives
+ * these exact commands against a throwaway repository with real git.
+ * @param {(args: string[]) => { status: number | null, stdout: string }} runGit
+ */
+export function listChangedFiles(runGit, /** @type {string} */ base) {
+  const range = `${base}...HEAD`;
+  const all = runGit(['diff', '--name-only', range]);
+  if (all.status !== 0) {
+    throw new Error(`ci-touched-tests: \`git diff --name-only ${range}\` failed.`);
+  }
+  const gone = runGit(['diff', '--name-only', '--diff-filter=D', range]);
+  if (gone.status !== 0) {
+    throw new Error(`ci-touched-tests: \`git diff --name-only --diff-filter=D ${range}\` failed.`);
+  }
+  const paths = (/** @type {string} */ output) => (output
+    ? output.split('\n').map((line) => line.trim()).filter(Boolean)
+    : []);
+  const deleted = new Set(paths(gone.stdout));
+  const allChanged = paths(all.stdout);
+  return { changed: allChanged.filter((file) => !deleted.has(file)), allChanged };
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
 
@@ -563,12 +606,14 @@ async function main() {
     process.exit(2);
   }
 
-  const diff = git(['diff', '--name-only', `${options.base}...HEAD`]);
-  if (diff.status !== 0) {
-    process.stderr.write('ci-touched-tests: `git diff --name-only <base>...HEAD` failed.\n');
+  let changed;
+  let allChanged;
+  try {
+    ({ changed, allChanged } = listChangedFiles(git, options.base));
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : error}\n`);
     process.exit(2);
   }
-  const changed = diff.stdout ? diff.stdout.split('\n').map((line) => line.trim()).filter(Boolean) : [];
 
   // The selection phase is synchronous file reads, so its budget is
   // enforced after the fact: past it the gate runs the default fast suite
@@ -598,14 +643,16 @@ async function main() {
     ? `selection took ${selectionElapsedSec.toFixed(1)}s, past the ${options.selectTimeoutSec}s budget`
     : null;
 
-  // Fail closed BEFORE the guards join: the refusal is decided on the
-  // mapped selection alone, so the always-run guards can never mask a
-  // changed source file no test reaches (see the header).
+  // The warned fallback is decided on the mapped selection alone, before
+  // the guards join, so the always-run guards can never mask a changed
+  // source file no test reaches (see the header). The guards see the
+  // unfiltered diff: a PR deleting a listed guard without updating the list
+  // still fails red.
   const plan = base;
   const preGuardTests = plan.kind === 'skip' || plan.kind === 'refuse' ? [] : plan.tests;
   if (plan.kind !== 'refuse') {
     try {
-      plan.tests = withRepoWideGuards(preGuardTests, contents, changed);
+      plan.tests = withRepoWideGuards(preGuardTests, contents, allChanged);
     } catch (error) {
       process.stderr.write(`ci-touched-tests: ${error instanceof Error ? error.message : error}\n`);
       process.exit(1);
@@ -617,27 +664,21 @@ async function main() {
 
   if (options.list) {
     if (plan.reason && plan.kind === 'fallback') {
-      process.stderr.write(`ci-touched-tests: warning: ${selectNote ?? 'oversized selection'} — listing the fallback suite plus the repo-wide guards.\n`);
+      process.stderr.write(`ci-touched-tests: warning: ${selectNote ?? plan.reason} — listing the fallback suite plus the repo-wide guards.\n`);
     }
     process.stdout.write(plan.tests.length === 0 ? '' : `${plan.tests.join('\n')}\n`);
     process.exit(0);
   }
 
-  // Fail closed: JavaScript source changed but no test reaches it (a CLI
-  // reached only via `spawnSync`, a helper nobody imports yet). Exiting 0
-  // here would merge an untested change green and redden `main` after the
-  // merge, so the gate refuses with exit 1, naming the uncovered files:
-  // add a test that relatively imports them (directly or through
-  // `tests/helpers`) and the gate runs it. The full `npm test` suite holds
-  // the machine lock ~20 minutes and cannot fit this step's five-minute
-  // budget, so it still runs only on `main` after the merge, never here —
-  // including as a fallback. Docs, workflows, manifests and site-only
-  // changes keep the exit-0 skip: their gates run in the same CI job.
+  // The only refusal left: an oversized selection the PR carries no test
+  // file of its own for, so there is no evidence this step can run. Every
+  // other unusable selection warns and runs the guards instead (below).
   if (plan.kind === 'refuse') {
     const uncovered = plan.uncovered ?? changed.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
     process.stdout.write(
-      'ci-touched-tests: refusing — no test file relatively reaches these '
-      + `changed source file(s): ${uncovered.join(', ')}.\n`
+      'ci-touched-tests: refusing — the selection outgrew this step\'s budget '
+      + 'and the PR carries no test file of its own, so there is nothing to run: '
+      + `${uncovered.join(', ')}.\n`
       + 'Add a test that relatively imports them (directly or through tests/helpers); '
       + 'the default `npm test` suite cannot fit this step\'s five-minute budget, '
       + 'so it runs only on `main`, not here.\n',
@@ -646,10 +687,10 @@ async function main() {
   }
   if (plan.tests.length === 0) {
     // Only an empty diff reaches here with nothing to run: any real
-    // change — code or not — runs at least the repo-wide guards (a
-    // docs-only change can still flip tests/scenario-document.test.js).
+    // change — code or not, deleted or not — runs at least the repo-wide
+    // guards (a docs-only change can still flip tests/scenario-document.test.js).
     process.stdout.write(
-      `ci-touched-tests: ${changed.length} changed file(s), no test file reaches them — nothing to run.\n`,
+      `ci-touched-tests: ${allChanged.length} changed file(s), no test file reaches them — nothing to run.\n`,
     );
     process.exit(0);
   }
@@ -660,9 +701,16 @@ async function main() {
   }
 
   if (plan.kind === 'fallback') {
+    // A changed source file no test reaches warns here — the ::warning::
+    // annotation for the job plus this summary line naming the uncovered
+    // files — instead of blocking: the guards above still run, and the full
+    // suite on `main` stays the safety net.
+    const uncovered = changed.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
     const why = plan.reason === 'selection-timeout' && selectNote !== null
       ? selectNote
-      : `selected ${mapped.length} test file(s), past the ${options.maxSelected} this step can run`;
+      : plan.reason === 'empty-selection' && preGuardTests.length === 0
+        ? `no test file relatively reaches these changed source file(s): ${uncovered.join(', ')} — best-effort guards only, the full suite on \`main\` stays the safety net`
+        : `selected ${mapped.length} test file(s), past the ${options.maxSelected} this step can run`;
     process.stdout.write(
       `ci-touched-tests: warning: ${why} — running the fallback suite instead `
       + `(${preGuardTests.length} changed test file(s) plus ${addedGuards.length} repo-wide guard(s)): ${plan.tests.join(', ')}.\n`,

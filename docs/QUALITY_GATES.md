@@ -270,7 +270,7 @@ it runs only where a merge has already happened — never on a PR push.
 
 | Gate | Where | What |
 |---|---|---|
-| `fast` | every pull request | `npm run check`, the tests of the touched files (`scripts/ci-touched-tests.js`: transitive through every relative JS import in the repo — `tests/helpers` and `packages/` barrels incl. `export-from` — fail-closed refusal when no test reaches a changed source, plus the declared repo-wide guards (`REPO_WIDE_GUARDS`: tests that scan `packages/`/`apps/`/`tests/`/`scripts/` wholesale and run on every non-empty diff), selection bounded to 60 s, selected run bounded to 270 s, warned fallback to the PR's own changed test files past either bound), the smoke demo, the published recipe replay, `npm run gtm:check`, `npm run repo:truth -- --check --drift-advisory --base origin/main` (agreement only; advisory drift warns, added warns only from base) |
+| `fast` | every pull request | `npm run check`, the tests of the touched files (`scripts/ci-touched-tests.js`: transitive through every relative JS import in the repo — `tests/helpers` and `packages/` barrels incl. `export-from` — warned best-effort when no test reaches a changed source (a `::warning::` annotation plus a summary line naming the uncovered files, then the guards still run; deleted files are excluded from the selection with `--diff-filter=d`), plus the declared repo-wide guards (`REPO_WIDE_GUARDS`: tests that scan `packages/`/`apps/`/`tests/`/`scripts/` wholesale and run on every non-empty diff, through the unfiltered diff, so deleting a listed guard without updating the list still fails red), selection bounded to 60 s, selected run bounded to 270 s, warned fallback to the PR's own changed test files past either bound), the smoke demo, the published recipe replay, `npm run gtm:check`, `npm run repo:truth -- --check --drift-advisory --base origin/main` (agreement only; advisory drift warns, added warns only from base) |
 | `verify` | push to `main` only | full `npm run verify` via `scripts/measure-suite.js`, measured record kept as artifact and runner-local copy, smoke, recipe replay |
 | `public-claims` | push to `main` only | `gtm:check`, agreement `--check --drift-advisory` on the committed document, re-anchor from `verify`'s measurement, regenerate, `--require-current`, controlled realign of advisory-only drift onto the fixed branch behind ONE PR (`scripts/realign-truth-main.js --push`, normal gate, never a push to `main`) |
 | nightly matrix | daily 01:17 UTC | the full worktree-heavy tool-selection product behind its opt-in variable (see the nightly workflow), skipped by default elsewhere |
@@ -285,14 +285,17 @@ step). No timer enforces a total
 across the steps: keeping a PR under ten minutes of lock in total stays an
 objective the step budgets make room for, not a gate that fails the build.
 A step that cannot fit its budget does not get a longer budget — it gets
-split, or moved to `main`. The touched selection itself fails closed: a
-changed JavaScript source no test reaches refuses red, naming the uncovered
-files, instead of exiting green with nothing run — and instead of running
-the default `npm test` suite, which holds the lock ~20 minutes and could
-never fit the step budget. Past either bound the gate warns and runs the
-default fast suite — the PR's own changed test files — instead of failing
-for the timeout: the fast gate chooses best-effort, and the full suite on
-`main` stays the safety net.
+split, or moved to `main`. The touched selection itself is best-effort: a
+changed JavaScript source no test reaches warns — a `::warning::`
+annotation in the job plus a summary line naming the uncovered files —
+and still runs the repo-wide guards, instead of refusing red and instead
+of running the default `npm test` suite, which holds the lock ~20 minutes
+and could never fit the step budget. The refusal stays only for an empty
+fallback suite (an oversized selection the PR carries no test file of its
+own for — no evidence the step can run). Past either bound the gate warns
+and runs the default fast suite — the PR's own changed test files —
+instead of failing for the timeout: the fast gate chooses best-effort,
+and the full suite on `main` stays the safety net.
 
 The boundaries, which are as much of the gate as the budgets:
 
