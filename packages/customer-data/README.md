@@ -249,8 +249,9 @@ back door around that.
 ## `channel-sender@1`
 
 ```js
-// The created capability object, e.g. beside createCustomerDataPackage()
-channelSender,
+// The composed customer-data definition, e.g. beside createCustomerDataPackage()
+requires: [{ package: 'customer-data', capability: 'channel-sender', version: 1 }],
+customerData,
 ```
 
 One write: `resolveSender`. The channels initial history import

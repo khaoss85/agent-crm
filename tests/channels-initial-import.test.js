@@ -201,7 +201,7 @@ test('an interrupted import resumes from its stored cursor and stores nothing tw
 });
 
 test('a webhook stored first is adopted by the later import, never doubled', async (t) => {
-  const { harness, api } = setup({ tenantId: 'channel-import-adopt' });
+  const { harness, api, sender } = setup({ tenantId: 'channel-import-adopt' });
   t.after(() => harness.close());
   const key = await registeredActive(harness);
   const at = nowIso();
@@ -218,10 +218,55 @@ test('a webhook stored first is adopted by the later import, never doubled', asy
   await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
   const advanced = await harness.advanceImport(SPACE, { connectionKey: key });
   assert.equal(advanced.done, true);
+  // The row stays one, but the applied row's sender is still reconciled:
+  // the first store was a webhook, and webhooks never resolve senders —
+  // without this replay the common webhook-before-backfill flow would
+  // leave the sender with no external identity and no contact.
   assert.deepEqual(advanced.page, {
-    imported: 0, duplicates: 1, matched: 0, created: 0, unresolved: 0, withoutSender: 0,
+    imported: 0, duplicates: 1, matched: 0, created: 1, unresolved: 0, withoutSender: 0,
   });
+  assert.ok(
+    sender.calls.some((request) => request.handle === '+390200007001'),
+    'the duplicate replays the idempotent sender resolution',
+  );
+  const state = harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(state.createdContacts, 1);
   assert.equal(harness.inbox(SPACE).length, 1, 'one message, one row, whichever path saw it first');
+});
+
+test('two advances racing one import keep exact cumulative counts', async (t) => {
+  const { harness, api } = setup({ tenantId: 'channel-import-race' });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const at = nowIso();
+  api.seedHistory(historySeed(2, at));
+
+  await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  // Two schedulers advance the same import before either finishes: both
+  // read the same row and the same page token, so both process the same
+  // page. The commits serialize on the fresh row, so the loser adds to
+  // the winner's counters instead of overwriting them with its stale
+  // snapshot — importedEvents never reverts to zero and no processed
+  // event goes uncounted.
+  const [first, second] = await Promise.all([
+    harness.advanceImport(SPACE, { connectionKey: key }),
+    harness.advanceImport(SPACE, { connectionKey: key }),
+  ]);
+  assert.equal(first.done, true);
+  assert.equal(second.done, true);
+  assert.equal(first.page.imported + first.page.duplicates, 2);
+  assert.equal(second.page.imported + second.page.duplicates, 2);
+  const state = harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(state.status, 'done');
+  assert.equal(state.importedEvents, 2, 'every event stored exactly once across both racers');
+  assert.equal(state.duplicateEvents, 2, 'the replayed page counts as duplicates, never as new imports');
+  assert.equal(
+    state.importedEvents + state.duplicateEvents, 4,
+    'no processed event goes uncounted: two racers times a two-event page',
+  );
+  assert.equal(state.createdContacts, 2);
+  assert.equal(state.matchedContacts, 2);
+  assert.equal(harness.inbox(SPACE).length, 2, 'two events, two rows — the race doubled nothing');
 });
 
 test('a sender seen twice reconciles to one contact; ambiguity stays unresolved', async (t) => {

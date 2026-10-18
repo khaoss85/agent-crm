@@ -26,14 +26,25 @@ The shared, space-scoped foundation every messaging channel builds on
 - Composition with adapters, a secret resolver and the bound tenant id:
 
 ```js
+import { createCustomerDataPackage } from './packages/customer-data/src/index.js';
 import { createChannelsPackage } from './packages/channels/src/index.js';
+
+const customerData = createCustomerDataPackage();
 
 createChannelsPackage({
   channelAdapters: [fixtureChannelAdapterDefinition],
   resolveSecret: async (ref, { spaceId, purpose }) => vault.resolve(ref, spaceId),
   tenantId: boundTenantId,
+  customerData,
 });
 ```
+
+The `customerData` definition is the declared `customer-data /
+channel-sender@1` edge: channels takes the created capability from its
+published capabilities (the same handover appointments uses for work's
+`follow-up@1`). Composing channels without customer-data refuses at boot
+naming the edge; without the edge the history import refuses while
+webhooks and sends keep working standalone.
 
 - Registration is one static import in the project's composition file
   (this repository's `packages/domains/generated/index.js` stays empty —

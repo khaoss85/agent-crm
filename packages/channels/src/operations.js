@@ -74,6 +74,37 @@ export const CHANNEL_IMPORT_STATES = Object.freeze(['running', 'done']);
  */
 export const CHANNEL_IMPORT_ROW_REASON = 'initial history import';
 
+/**
+ * Same-process serialization for import progress commits, one FIFO chain
+ * per import: two advances racing the same connection commit in order, so
+ * the loser re-reads the winner's counters instead of overwriting them
+ * with its stale snapshot. Cross-process writers still serialize on the
+ * storage transaction below. (MEM_ACC_REUSE: the same tail pattern the
+ * payments package uses for its request moves — a package imports only
+ * core, so the helper lives here rather than crossing the boundary.)
+ */
+const importCommitChains = new Map();
+
+/** @param {string} key @param {() => Promise<any>} critical */
+function withImportCommit(key, critical) {
+  const previous = importCommitChains.get(key) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise((resolve) => { release = resolve; });
+  const tail = previous.then(() => current, () => current);
+  importCommitChains.set(key, tail);
+  // Synchronous until here: two callers racing in the same tick still
+  // order. Tails never reject, so a refused commit never wedges the chain.
+  return (async () => {
+    await previous;
+    try {
+      return await critical();
+    } finally {
+      if (importCommitChains.get(key) === tail) importCommitChains.delete(key);
+      release();
+    }
+  })();
+}
+
 /** @param {Record<string, string>} [config] */
 function resolvedNames(config = {}) {
   return {
@@ -674,7 +705,7 @@ export function createChannelOperations(deps) {
 
   function requireSenderResolution() {
     if (!resolveSender) {
-      throw new AppError('Channel initial import needs the composed channel-sender@1 capability: compose the package with the created capability', {
+      throw new AppError('Channel initial import needs the composed channel-sender@1 capability: compose the package with the customer-data definition', {
         code: 'CHANNEL_SENDER_UNAVAILABLE', status: 409,
       });
     }
@@ -841,14 +872,20 @@ export function createChannelOperations(deps) {
       });
       if (stored.duplicate) {
         counts.duplicates += 1;
-        continue;
-      }
-      counts.imported += 1;
-      // Quarantined or set-aside items stay evidence: no contact is ever
-      // invented from a row the package refused to apply.
-      if (stored.effect !== 'applied' || !event.sender) {
-        if (stored.effect === 'applied') counts.withoutSender += 1;
-        continue;
+        // A replayed row keeps its evidence, but an applied row's sender is
+        // still reconciled: the first store may have been a webhook — which
+        // never resolves senders — or a crash may have landed between the
+        // inbox write and the resolution. Resolution is idempotent, so the
+        // replay converges instead of doubling.
+        if (stored.effect !== 'applied' || !event.sender) continue;
+      } else {
+        counts.imported += 1;
+        // Quarantined or set-aside items stay evidence: no contact is ever
+        // invented from a row the package refused to apply.
+        if (stored.effect !== 'applied' || !event.sender) {
+          if (stored.effect === 'applied') counts.withoutSender += 1;
+          continue;
+        }
       }
       let answer;
       try {
@@ -880,18 +917,43 @@ export function createChannelOperations(deps) {
     }
 
     const done = checked.nextPageToken === null;
-    const updated = await importStates().applyManaged(row.id, {
-      nextPageToken: checked.nextPageToken,
-      importedEvents: row.importedEvents + counts.imported,
-      duplicateEvents: row.duplicateEvents + counts.duplicates,
-      matchedContacts: row.matchedContacts + counts.matched,
-      createdContacts: row.createdContacts + counts.created,
-      unresolvedContacts: row.unresolvedContacts + counts.unresolved,
-      eventsWithoutSender: row.eventsWithoutSender + counts.withoutSender,
-      ...(done ? { status: 'done', finishedAt: now } : {}),
-      lastErrorCode: null,
-      lastErrorReason: null,
-    }, { actor });
+    // The commit re-reads the row inside its own serialized slot: an
+    // advance racing this one's page window commits first, and this one
+    // adds to the winner's counters instead of overwriting them with the
+    // snapshot read before the provider call. The single managed write is
+    // already atomic on one connection; the transaction below keeps two
+    // processes from interleaving a re-read between them (the loser then
+    // retries its page, which dedups to the same rows and the same
+    // counts). Same proof idiom as the ingest batch above.
+    const commitProgress = async () => {
+      const fresh = findImportState(spaceId, connection.sourceKey) ?? row;
+      return importStates().applyManaged(row.id, {
+        nextPageToken: checked.nextPageToken,
+        importedEvents: fresh.importedEvents + counts.imported,
+        duplicateEvents: fresh.duplicateEvents + counts.duplicates,
+        matchedContacts: fresh.matchedContacts + counts.matched,
+        createdContacts: fresh.createdContacts + counts.created,
+        unresolvedContacts: fresh.unresolvedContacts + counts.unresolved,
+        eventsWithoutSender: fresh.eventsWithoutSender + counts.withoutSender,
+        ...(done ? { status: 'done', finishedAt: now } : {}),
+        lastErrorCode: null,
+        lastErrorReason: null,
+      }, { actor });
+    };
+    let commitTransaction = null;
+    if (database && typeof database.transactionAsync === 'function') {
+      let proof = null;
+      try {
+        proof = proveCallerTransaction([{ database }]);
+      } catch {
+        proof = null;
+      }
+      if (proof === TRANSACTION_PROOF.NO_TRANSACTION) {
+        commitTransaction = (critical) => database.transactionAsync(critical);
+      }
+    }
+    const commit = () => (commitTransaction ? commitTransaction(commitProgress) : commitProgress());
+    const updated = await withImportCommit(importSourceKey(spaceId, connection.sourceKey), commit);
     return {
       done,
       state: importStateSummary(updated),

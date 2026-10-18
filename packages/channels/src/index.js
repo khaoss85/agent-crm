@@ -70,19 +70,19 @@ function statusAction(name, label, description, fromStates, toState, extra = {})
 
 /**
  * Open the sender reconciliation for one runtime from the composed
- * `channel-sender@1` capability, or null when the composition runs
- * standalone. Opened once per runtime with the caller's modules — the
- * same binding `domains.capability()` would hand an operation, with the
- * provider's names and the caller's transaction. Webhook ingest and sends
- * never resolve senders, so a null here changes nothing until an import
- * starts, which then refuses naming the edge.
+ * `channel-sender@1` capability published by the customer-data
+ * definition, or null when the composition runs standalone. Opened once
+ * per runtime with the caller's modules — the provider's names and the
+ * caller's transaction. Webhook ingest and sends never resolve senders,
+ * so a null here changes nothing until an import starts, which then
+ * refuses naming the edge.
  */
 function openSenderResolution(channelSender, runtime) {
   if (channelSender === undefined || channelSender === null) return null;
   if (typeof channelSender.create !== 'function') {
     throw new AppError(
       'The channels package needs the customer-data package capability channel-sender@1: '
-      + 'compose it with the provider definition, e.g. createChannelsPackage({ channelSender }) '
+      + 'compose it with the provider definition, e.g. createChannelsPackage({ customerData }) '
       + 'beside createCustomerDataPackage()',
       { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
     );
@@ -154,13 +154,17 @@ export function buildChannelConnectionActions(config = {}) {
  *   tenantId?: string,
  *   config?: Record<string, any>,
  *   modules?: Record<string, string>,
- *   channelSender?: any,
+ *   customerData?: { capabilities?: Array<any> },
  * }} [options] `resolveSecret` is the deployment's custody edge; `tenantId`
  *   namespaces the jobs table inside the bound instance. Both are required
  *   because a package that sends without them would invent custody.
- *   `channelSender` is the created `channel-sender@1` capability from the
- *   composed customer-data package: without it the initial history import
- *   refuses, while webhooks and sends work standalone as before.
+ *   `customerData` is the composed customer-data package definition — the
+ *   same object the composition lists beside this package. The channels
+ *   package takes the created `channel-sender@1` capability object from it,
+ *   so sender reconciliation always runs with the provider's own name
+ *   resolution and never with a second resolution from this package's
+ *   options. Without it the initial history import refuses, while webhooks
+ *   and sends work standalone as before.
  */
 export function createChannelsPackage(options = {}) {
   const registries = new ChannelRegistries({ channelAdapters: options.channelAdapters ?? [] });
@@ -175,6 +179,15 @@ export function createChannelsPackage(options = {}) {
     throw new ValidationError('channel tenantId must be bounded text', { field: 'tenantId' });
   }
   const config = options.config ?? {};
+
+  // The offered capability object, created once by the provider factory
+  // with the provider's config. Held here by reference — never
+  // re-instantiated, so a remapped customer-data composition cannot leave
+  // the import writing the wrong tables while customer-data itself works.
+  // The same handover shape appointments uses for work's `follow-up@1`.
+  const offered = Array.isArray(options.customerData?.capabilities)
+    ? options.customerData.capabilities.find((entry) => entry?.name === 'channel-sender' && entry?.version === 1) ?? null
+    : null;
 
   // One composed instance PER APPLICATION runtime: operations close over
   // the registries and custody edge, and over the runtime's own database
@@ -191,7 +204,7 @@ export function createChannelsPackage(options = {}) {
         resolveSecret,
         tenantId,
         config,
-        resolveSender: openSenderResolution(options.channelSender, runtime),
+        resolveSender: openSenderResolution(offered, runtime),
       });
       composedByRuntime.set(runtime, composed);
     }
@@ -205,6 +218,14 @@ export function createChannelsPackage(options = {}) {
     label: 'Channels',
     description: 'Space-scoped messaging-channel bindings: one connection record per space, verified replay-proof inbound webhooks with quarantine, outbound sends through the durable-jobs outbox with retries and a dead-letter queue, the progressive initial history import for adapters with readable past, and the adapter contract-test kit.',
     resources: [...CHANNELS_RESOURCES],
+
+    // The one declared reach into another package: the sender
+    // reconciliation the import writes through. Without customer-data
+    // composed, the application refuses to start naming this edge — never
+    // a missing-module stack trace at import time. Everything else (inbox,
+    // outbox, connections) stays inside this package.
+    requires: [{ package: 'customer-data', capability: 'channel-sender', version: 1 }],
+
     actions: buildChannelConnectionActions(options.modules),
     operations: [
       {

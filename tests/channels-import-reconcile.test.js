@@ -10,10 +10,12 @@ import { boot, project } from './helpers/customer-data-project.js';
 /**
  * Initial history import against the real reconciliation path
  * (backlog:66282d13d81c): the composed application wires the channels
- * package beside customer-data with the created `channel-sender@1`
- * capability, a Gmail past imports page by page, and every sender becomes
- * or names its contact through `external-identity` — no second identity
- * store, no duplicate on resume or restart.
+ * package beside customer-data, handing it the composed customer-data
+ * definition — channels takes the created `channel-sender@1` capability
+ * from its published capabilities, through the declared package edge. A
+ * Gmail past imports page by page, and every sender becomes or names its
+ * contact through `external-identity` — no second identity store, no
+ * duplicate on resume or restart.
  *
  * The acceptance's own shape: Gmail threads of the last 90 days, paged and
  * resumable, contacts reconciled by normalized email, progress readable,
@@ -51,8 +53,6 @@ async function scene(t, tag) {
     "import { createGmailChannelAdapter } from '../../channels/src/gmail.js';",
     'const customerData = createCustomerDataPackage();',
     `const gmail = createGmailChannelAdapter({ mailbox: '${MAILBOX}', secret: '${SECRET}' });`,
-    'const channelSender = customerData.capabilities.find((entry) => entry?.name === \'channel-sender\' && entry?.version === 1);',
-    'if (!channelSender) throw new Error(\'customer-data offers no channel-sender@1\');',
     'export const gmailApi = gmail.api;',
     'export const generatedDomains = [',
     '  customerData,',
@@ -60,7 +60,7 @@ async function scene(t, tag) {
     '    channelAdapters: [gmail.definition],',
     `    resolveSecret: async () => '${SECRET}',`,
     "    tenantId: 'import-e2e',",
-    '    channelSender,',
+    '    customerData,',
     '  }),',
     '];',
     '',
