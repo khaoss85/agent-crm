@@ -53,6 +53,7 @@ const SPACE_INPUT = {
  * @param {{
  *   appointmentBook?: any, provider?: any, mapping?: any,
  *   actor?: unknown, now?: () => string, modules?: Record<string, string>,
+ *   database?: any,
  * }} [options] `appointmentBook` is the created `appointment-book@1`
  * capability object — the same handover shape appointments uses for work's
  * `follow-up@1`, so the reminder-style name resolution happens once, at
@@ -60,7 +61,13 @@ const SPACE_INPUT = {
  * until credentials exist — owner decision MEM_ACC_DECISIONS) and
  * `mapping` names the deployment's customer/member/service bindings.
  * All three are required before any operation runs, because a sync that
- * books without them would invent identities.
+ * books without them would invent identities. `database` is optional and
+ * never replaces those bindings: it only names the storage handle whose
+ * transaction commits a reschedule's cancel with its rebook. An explicit
+ * `database` wins over the runtime's; without either, the link records'
+ * own handle is tried. A storage without transactions refuses creation
+ * with CALENDAR_SYNC_TRANSACTIONS_REQUIRED: there is no
+ * transaction-less fallback.
  */
 export function createCalendarSyncPackage(options = {}) {
   for (const key of ['appointmentBook', 'provider', 'mapping']) {
@@ -68,6 +75,9 @@ export function createCalendarSyncPackage(options = {}) {
     if (value !== undefined && (typeof value !== 'object' || value === null)) {
       throw new ValidationError(`calendar-sync ${key} must be an object when provided`, { field: key });
     }
+  }
+  if (options.database !== undefined && options.database !== null && typeof options.database !== 'object') {
+    throw new ValidationError('calendar-sync database must be an object when provided', { field: 'database' });
   }
 
   const composedByRuntime = new WeakMap();
@@ -82,6 +92,7 @@ export function createCalendarSyncPackage(options = {}) {
         mapping: options.mapping,
         actor: options.actor,
         now: options.now,
+        database: options.database ?? runtime.database,
       });
       composedByRuntime.set(runtime, composed);
     }
@@ -211,9 +222,9 @@ export function createCalendarSyncPackage(options = {}) {
         calendarSyncContract: 1,
         conflictRule: {
           lifecycle: 'Accordo owns lifecycle: a Google change never advances or reverts an appointment state; only the sync\'s own cancel-with-reason moves it, and a terminal row (done, no-show) is never rewritten — a happened visit is evidence.',
-          schedule: 'Google owns schedule: a Google slot change on an open row cancels that row (reason "Rescheduled in Google Calendar") and rebooks under a revisioned key, carrying a `confirmed` forward; notes/summary-only edits are acknowledged without a local write (rows are evidence-immutable outside lifecycle).',
+          schedule: 'Google owns schedule: a Google slot change on an open row moves the booking atomically — the old row is cancelled (reason "Rescheduled in Google Calendar") only with its rebook under a revisioned key, carrying a `confirmed` forward, so a refused rebook keeps the valid row; notes/summary-only edits are acknowledged without a local write (rows are evidence-immutable outside lifecycle).',
           cancellationWins: 'a local cancellation beats any concurrent Google change: the sync pushes the cancellation to Google so both sides converge on the freed slot, and the pending conflict clears.',
-          noSilentLoss: 'a remote change that cannot apply yet (rebook refused after its cancel, import refused with no link) is kept as a pending snapshot on the link and retried on every pull — the token moves on, the retry does not depend on it.',
+          noSilentLoss: 'a remote change that cannot apply yet (move refused onto a held slot, import refused with no link) keeps the valid local row and is kept as a pending snapshot on the link and retried on every pull — the token moves on, the retry does not depend on it; a tombstone between two full imports applies before the token moves past it.',
           importRefusals: 'an event overlapping a held slot is refused 409 and reported (the no-double-booking invariant is never booked over); an event with no customer mapping is skipped and reported, never booked against a fabricated contact.',
         },
         idempotency: 'sync tokens resume pulls; link rows dedup at storage level (unique event and source keys); export reconciles with the provider before inserting; a repeated push with an unchanged fingerprint is a no-op — the second of two syncs in a row writes nothing anywhere',
