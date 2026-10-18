@@ -1,5 +1,7 @@
 // @ts-check
 
+import { assertHistoryPage } from './adapter.js';
+
 /**
  * The channel adapter contract-test kit (backlog:e5532d1c9146,
  * INTEGRATION_RUNTIME.md §Provider contract-test kit).
@@ -42,6 +44,7 @@ const CHECKS = Object.freeze([
   'out-of-order',
   'no-secrets',
   'space-isolation',
+  'history',
 ]);
 
 /**
@@ -198,6 +201,39 @@ export async function runChannelAdapterKit(options) {
     const serialized = JSON.stringify(connections);
     if (serialized.includes(secretValue)) fail('secret value present in the connection row');
     return 'reference stored, value nowhere';
+  });
+
+  await check('history', async () => {
+    // Adapters without readable past skip with their reason: starting
+    // their import refuses CHANNEL_HISTORY_UNAVAILABLE, so there is no
+    // paging to prove here.
+    const history = adapter.historyImport;
+    if (!history || typeof history.listHistory !== 'function') {
+      return 'adapter declares no readable past: import refuses CHANNEL_HISTORY_UNAVAILABLE';
+    }
+    const since = new Date(Date.now() - 3600 * 1000).toISOString();
+    const call = (pageToken) => history.listHistory({
+      secret: secretValue, account: accountA, since, pageToken, limit: 2,
+    });
+    const first = await call(null);
+    const checked = assertHistoryPage(first, 2);
+    const replayed = await call(null);
+    if (JSON.stringify(replayed) !== JSON.stringify(first)) fail('the same page token must replay the same page');
+    let pages = 1;
+    let events = checked.events.length;
+    let token = checked.nextPageToken;
+    if (token !== null) {
+      const second = await call(token);
+      const following = assertHistoryPage(second, 2);
+      const seen = new Set(checked.events.map((event) => event.providerEventId));
+      for (const event of following.events) {
+        if (seen.has(event.providerEventId)) fail('history pages overlap');
+      }
+      pages = 2;
+      events += following.events.length;
+      token = following.nextPageToken;
+    }
+    return `${events} event(s) across ${pages} page(s)${token === null ? ', past exhausted' : ', past continues'}`;
   });
 
   await check('space-isolation', async () => {

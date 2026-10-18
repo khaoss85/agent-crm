@@ -39,7 +39,7 @@ function loadManifest(name) {
 }
 
 export const CHANNEL_MANIFEST_NAMES = Object.freeze([
-  'channel-connection', 'channel-inbox-event', 'channel-dead-letter',
+  'channel-connection', 'channel-inbox-event', 'channel-dead-letter', 'channel-import-state',
 ]);
 
 /**
@@ -47,7 +47,10 @@ export const CHANNEL_MANIFEST_NAMES = Object.freeze([
  *   adapterDefinition: any, fixtureApi: any,
  *   secretRef?: string, secretValue?: string,
  *   tenantId?: string, config?: Record<string, any>,
- * }} options
+ *   resolveSender?: ((request: any) => Promise<any>) | null,
+ * }} options `resolveSender` stands in for the composed `channel-sender@1`
+ *   capability where the test proves the engine rather than the
+ *   reconciliation itself.
  */
 export function createChannelsHarness(options) {
   const secretRef = options.secretRef ?? 'vault://kit/channel-a';
@@ -78,6 +81,7 @@ export function createChannelsHarness(options) {
   };
   const ops = createChannelOperations({
     database, modules, registries, resolveSecret, tenantId, config: options.config,
+    resolveSender: options.resolveSender ?? null,
   });
 
   const jobRegistry = createDurableJobHandlerRegistry();
@@ -150,6 +154,9 @@ export function createChannelsHarness(options) {
     connections: (spaceId) => ops.listConnections(spaceId),
     inbox: (spaceId) => ops.listInbox(spaceId),
     letters: (spaceId, state = null) => ops.listDeadLetters(spaceId, state),
+    startImport: (spaceId, args) => ops.startInitialImport({ spaceId, ...args, actor: args?.actor ?? userActor }),
+    advanceImport: (spaceId, args) => ops.advanceInitialImport({ spaceId, ...args }),
+    readImport: (spaceId, args) => ops.readInitialImport({ spaceId, ...args }),
     jobs: () => jobStore.list(500),
     auditRows: () => audit.list({ limit: 500 }),
     async dumpStorage() {

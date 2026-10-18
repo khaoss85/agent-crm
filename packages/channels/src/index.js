@@ -25,7 +25,7 @@ export const CHANNELS_PACKAGE = 'channels';
 
 /** The record modules this package owns; declaring them makes a collision detectable. */
 export const CHANNELS_RESOURCES = Object.freeze([
-  'channel-connection', 'channel-inbox-event', 'channel-dead-letter',
+  'channel-connection', 'channel-inbox-event', 'channel-dead-letter', 'channel-import-state',
 ]);
 
 function boundedReason(input, action) {
@@ -66,6 +66,42 @@ function statusAction(name, label, description, fromStates, toState, extra = {})
       return { connection: { id: updated.id, status: updated.status } };
     },
   };
+}
+
+/**
+ * Open the sender reconciliation for one runtime from the composed
+ * `channel-sender@1` capability, or null when the composition runs
+ * standalone. Opened once per runtime with the caller's modules — the
+ * same binding `domains.capability()` would hand an operation, with the
+ * provider's names and the caller's transaction. Webhook ingest and sends
+ * never resolve senders, so a null here changes nothing until an import
+ * starts, which then refuses naming the edge.
+ */
+function openSenderResolution(channelSender, runtime) {
+  if (channelSender === undefined || channelSender === null) return null;
+  if (typeof channelSender.create !== 'function') {
+    throw new AppError(
+      'The channels package needs the customer-data package capability channel-sender@1: '
+      + 'compose it with the provider definition, e.g. createChannelsPackage({ channelSender }) '
+      + 'beside createCustomerDataPackage()',
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+  const opened = channelSender.create({
+    modules: runtime.modules,
+    core: runtime.core,
+    database: runtime.database,
+    events: runtime.events,
+    consumer: CHANNELS_PACKAGE,
+  });
+  if (!opened || typeof opened.resolveSender !== 'function') {
+    throw new AppError(
+      'The channels package needs the customer-data package capability channel-sender@1: '
+      + 'the created capability opens no resolveSender',
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+  return opened.resolveSender;
 }
 
 /** @param {Record<string, string>} [config] */
@@ -118,9 +154,13 @@ export function buildChannelConnectionActions(config = {}) {
  *   tenantId?: string,
  *   config?: Record<string, any>,
  *   modules?: Record<string, string>,
+ *   channelSender?: any,
  * }} [options] `resolveSecret` is the deployment's custody edge; `tenantId`
  *   namespaces the jobs table inside the bound instance. Both are required
  *   because a package that sends without them would invent custody.
+ *   `channelSender` is the created `channel-sender@1` capability from the
+ *   composed customer-data package: without it the initial history import
+ *   refuses, while webhooks and sends work standalone as before.
  */
 export function createChannelsPackage(options = {}) {
   const registries = new ChannelRegistries({ channelAdapters: options.channelAdapters ?? [] });
@@ -151,6 +191,7 @@ export function createChannelsPackage(options = {}) {
         resolveSecret,
         tenantId,
         config,
+        resolveSender: openSenderResolution(options.channelSender, runtime),
       });
       composedByRuntime.set(runtime, composed);
     }
@@ -162,7 +203,7 @@ export function createChannelsPackage(options = {}) {
     name: CHANNELS_PACKAGE,
     version: 1,
     label: 'Channels',
-    description: 'Space-scoped messaging-channel bindings: one connection record per space (channel, account, status, secret reference), verified replay-proof inbound webhooks with quarantine, outbound sends through the durable-jobs outbox with bounded retries and a dead-letter queue, and the adapter contract-test kit.',
+    description: 'Space-scoped messaging-channel bindings: one connection record per space, verified replay-proof inbound webhooks with quarantine, outbound sends through the durable-jobs outbox with retries and a dead-letter queue, the progressive initial history import for adapters with readable past, and the adapter contract-test kit.',
     resources: [...CHANNELS_RESOURCES],
     actions: buildChannelConnectionActions(options.modules),
     operations: [
@@ -210,6 +251,51 @@ export function createChannelsPackage(options = {}) {
           return (params) => ops.queueChannelSend(params);
         },
       },
+      {
+        operationContract: 1,
+        name: 'start-initial-import',
+        label: 'Start initial history import',
+        appMethod: 'startInitialImport',
+        description: 'Start the progressive initial import of one connection\'s provider past (a human decision). Records the window and the resume cursor; pulling starts with the first advance call.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+          { name: 'connectionKey', type: 'string', required: true, hint: 'The active connection source key in that space.' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.startInitialImport(params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'advance-initial-import',
+        label: 'Advance initial history import',
+        appMethod: 'advanceInitialImport',
+        description: 'Pull one bounded history page, store one inbox row per event through the deduped webhook path, and reconcile every imported sender to its contact. Repeat until done.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+          { name: 'connectionKey', type: 'string', required: true, hint: 'The active connection source key in that space.' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.advanceInitialImport(params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'read-initial-import',
+        label: 'Read initial history import progress',
+        appMethod: 'readInitialImport',
+        description: 'Read the import progress of one connection: status and counts. Null when no import ever started.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+          { name: 'connectionKey', type: 'string', required: true, hint: 'The connection source key in that space.' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.readInitialImport(params);
+        },
+      },
       // Dead-letter requeue is deferred to a follow-up voice with its own
       // state machine: this PR ships register / ingest / queue / dead-letter
       // inventory only.
@@ -223,6 +309,8 @@ export function createChannelsPackage(options = {}) {
         replayScope: 'space + connection + providerEventId; the payload fingerprint must match or the reuse is refused 409 CHANNEL_EVENT_ID_CONFLICT',
         sendRetry: 'bounded attempts on the durable job (default 5); transient failures ride the worker backoff; exhaustion writes a dead-letter row with phase, error code and payload fingerprint',
         secretDiscipline: 'connections store secretRef, never the secret; the deployment resolves it at call time; outbox payloads carry no secret-shaped keys',
+        initialImport: 'one bounded history page per advance call through the deduped inbox path; sender reconciliation arrives through the composed channel-sender@1 capability; the cursor moves only after the whole page reconciled',
+        reuses: ['channel-sender@1'],
         humanApproval: 'register, status changes and sends require actor.type === "user"; provider-driven ingest runs under a system actor and ignores any caller-supplied actor',
         notModeled: [
           'dead-letter requeue (human retry of an open letter) — follow-up voice with its own state machine',
@@ -250,7 +338,13 @@ export function createChannelsPackage(options = {}) {
 }
 
 export { ChannelRegistries } from './adapter.js';
-export { validateChannelAdapter } from './adapter.js';
+export {
+  assertHistoryPage,
+  CHANNEL_HISTORY_PAGE_MAX,
+  CHANNEL_HISTORY_TOKEN_MAX,
+  CHANNEL_HISTORY_WINDOW_MAX_MS,
+  validateChannelAdapter,
+} from './adapter.js';
 export { createChannelOperations } from './operations.js';
 export { runChannelAdapterKit, CHANNEL_KIT_CHECKS } from './kit.js';
 export { createFixtureChannelAdapter, fixtureWebhookHeaders, fixtureEventBody } from './fixture.js';
@@ -275,6 +369,7 @@ export {
 export {
   GMAIL_ADAPTER_NAME,
   GMAIL_ADAPTER_VERSION,
+  GMAIL_HISTORY_WINDOW_MS,
   GMAIL_MAX_TEXT,
   GMAIL_SUBJECT_PREFIX,
   buildGmailSendRequest,

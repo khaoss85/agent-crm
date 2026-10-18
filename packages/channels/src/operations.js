@@ -13,6 +13,7 @@ import {
   trustedSystemActor,
   withTimeout,
 } from '../../core/index.js';
+import { assertHistoryPage, CHANNEL_HISTORY_PAGE_MAX } from './adapter.js';
 import { assertConnectionInput, assertSpaceId, boundedKey, channelSendIdempotencyKey } from './connection.js';
 import { fingerprintPayload } from './crypto.js';
 import { transitionInbox } from './transitions.js';
@@ -22,12 +23,15 @@ import { transitionInbox } from './transitions.js';
  *
  * The application-scoped entry points a deployment (and the kit) drives:
  * register a connection, ingest a verified webhook, queue a send through
- * the durable-jobs outbox, and work the dead-letter queue. Reads are plain
- * functions over the same module services.
+ * the durable-jobs outbox, work the dead-letter queue, and run the
+ * progressive initial history import (start one bounded page at a time,
+ * read its progress) for adapters that declare readable past. Reads are
+ * plain functions over the same module services.
  *
  * What is deliberately NOT here: the per-space HTTP route (the pilot owns
- * it), secret custody (the deployment injects `resolveSecret`), and
- * reconciliation (follow-up — redelivery resumes unprocessed rows).
+ * it), secret custody (the deployment injects `resolveSecret`), and the
+ * sender reconciliation itself (the composed `channel-sender@1`
+ * capability resolves; this package only hands it the imported senders).
  */
 
 export const CHANNEL_SEND_KIND = 'channel-send';
@@ -55,6 +59,20 @@ export const CHANNEL_MAX_BATCH_EVENTS = 500;
 export const CHANNEL_INGEST_FUTURE_SKEW_MS = 5 * 60 * 1000;
 export const CHANNEL_SECRET_PURPOSE_INBOUND = 'channel-inbound';
 export const CHANNEL_SECRET_PURPOSE_OUTBOUND = 'channel-outbound';
+export const CHANNEL_SECRET_PURPOSE_HISTORY = 'channel-history';
+/** One history page per advance call: bounded work per call, so a large past never holds a worker. */
+export const CHANNEL_HISTORY_DEFAULT_PAGE = 50;
+/** A history page is provider I/O plus up to a hundred row writes: slower than a webhook verify. */
+export const CHANNEL_HISTORY_TIMEOUT_MS = 10000;
+export const CHANNEL_IMPORT_STATES = Object.freeze(['running', 'done']);
+/**
+ * The effect reason import-stored applied rows carry. It is provenance for
+ * humans and the marker the webhook path trusts: the same provider message
+ * arrives in a different envelope on each path (push bytes vs history
+ * payload), so fingerprints can never match across paths — the stored
+ * normalized fields can, and only for rows this import wrote.
+ */
+export const CHANNEL_IMPORT_ROW_REASON = 'initial history import';
 
 /** @param {Record<string, string>} [config] */
 function resolvedNames(config = {}) {
@@ -62,6 +80,7 @@ function resolvedNames(config = {}) {
     connection: config.connectionModule ?? 'channel-connection',
     inbox: config.inboxModule ?? 'channel-inbox-event',
     letter: config.letterModule ?? 'channel-dead-letter',
+    importState: config.importStateModule ?? 'channel-import-state',
   };
 }
 
@@ -190,6 +209,16 @@ export function createChannelOperations(deps) {
     throw new ValidationError('channel tenant id must be bounded text for the jobs-table namespace');
   }
   const names = resolvedNames(deps.config ?? {});
+  // The opened `channel-sender@1` resolve function the composition hands
+  // over (or a test double with the same shape). Absent is fine until an
+  // import starts: webhook ingest and sends never resolve senders, so
+  // standalone compositions keep working exactly as before.
+  const resolveSender = deps.resolveSender ?? null;
+  if (resolveSender !== null && typeof resolveSender !== 'function') {
+    throw new ValidationError('channel resolveSender must be a function opening the composed channel-sender@1 capability', {
+      field: 'resolveSender',
+    });
+  }
   const sendTimeoutMs = Number.isSafeInteger(deps.config?.sendTimeoutMs) ? deps.config.sendTimeoutMs : CHANNEL_SEND_TIMEOUT_MS;
   const verifyTimeoutMs = Number.isSafeInteger(deps.config?.verifyTimeoutMs) ? deps.config.verifyTimeoutMs : CHANNEL_VERIFY_TIMEOUT_MS;
   const maxSendAttempts = Number.isSafeInteger(deps.config?.maxSendAttempts)
@@ -209,6 +238,7 @@ export function createChannelOperations(deps) {
   const connections = () => trusted(modules, names.connection, 'CHANNEL_STORAGE_INVALID');
   const inbox = () => trusted(modules, names.inbox, 'CHANNEL_STORAGE_INVALID');
   const letters = () => trusted(modules, names.letter, 'CHANNEL_STORAGE_INVALID');
+  const importStates = () => trusted(modules, names.importState, 'CHANNEL_STORAGE_INVALID');
 
   /**
    * Load one connection, scoped to its space. A key from another space is
@@ -235,6 +265,183 @@ export function createChannelOperations(deps) {
       throw new AppError(`Channel connection is ${row.status}`, { code: 'CHANNEL_CONNECTION_NOT_ACTIVE', status: 409 });
     }
     return row;
+  }
+
+  /**
+   * Normalize one channel event to its inbox item. Webhook deliveries and
+   * history pages share these four fields, so both paths dedup on the same
+   * source key and earn the same effect — a replayed past never becomes a
+   * second row, on either path.
+   */
+  function toInboxItem(event, { spaceId, connectionKey, now, receiveMs }) {
+    const providerEventId = typeof event?.providerEventId === 'string' && event.providerEventId !== ''
+      && event.providerEventId.length <= 256 ? event.providerEventId : null;
+    if (!providerEventId) {
+      throw new AppError('Channel event is not well-formed', { code: 'CHANNEL_EVENT_MALFORMED', status: 422 });
+    }
+    const subject = typeof event?.subject === 'string' && event.subject !== '' && event.subject.length <= 256
+      ? event.subject : '';
+    let sequence = Number.isSafeInteger(event?.sequence) ? event.sequence : null;
+    let occurredAt = isCanonicalInstant(event?.occurredAt) ? event.occurredAt : null;
+    // Fail-closed on provider time, here in the package so every adapter
+    // shares it: a provider instant beyond receive time + skew never
+    // becomes the window observation nor the out-of-order sequence — one
+    // skewed or forged delivery would otherwise close the service window
+    // and suppress every legitimate message after it. It is kept as
+    // quarantine evidence at receive time, with the anomaly annotated.
+    const futureSkew = occurredAt !== null && Date.parse(occurredAt) > receiveMs + CHANNEL_INGEST_FUTURE_SKEW_MS;
+    if (futureSkew) {
+      sequence = null;
+      occurredAt = now;
+    }
+    return {
+      providerEventId,
+      subject,
+      sequence,
+      occurredAt,
+      futureSkew,
+      sourceKey: boundedKey('ch-in', spaceId, connectionKey, providerEventId),
+    };
+  }
+
+  /**
+   * The effect one item earns against its already-stored siblings: skewed
+   * or subject-less items quarantine as evidence, an out-of-order item is
+   * set aside, everything else applies.
+   */
+  function decideEffect(item, siblingRows) {
+    if (item.futureSkew) {
+      return { effect: 'quarantined', effectReason: 'provider timestamp beyond +5min skew: kept as evidence at receive time, never a window observation' };
+    }
+    if (item.subject === '') {
+      return { effect: 'quarantined', effectReason: 'unknown subject: no local mapping for this provider subject' };
+    }
+    if (item.sequence !== null) {
+      const newer = siblingRows.filter((row) => row.subject === item.subject
+        && row.effect === 'applied' && Number.isSafeInteger(row.sequence) && row.sequence > item.sequence);
+      if (newer.length > 0) {
+        return { effect: 'ignored', effectReason: `out-of-order delivery: newer sequence already applied for this subject` };
+      }
+    }
+    return { effect: 'applied', effectReason: '' };
+  }
+
+  /**
+   * The same provider message in the other path's envelope: normalized
+   * identity agrees, and either this call imports (it knows the envelope
+   * differs) or the stored row does (it carries the import marker).
+   * Anything else with different bytes stays a 409 — the webhook contract
+   * does not move.
+   */
+  function sameImportEvent(already, item, imported) {
+    if (!imported && already.effectReason !== CHANNEL_IMPORT_ROW_REASON) return false;
+    return already.providerEventId === item.providerEventId
+      && already.subject === item.subject
+      && already.sequence === item.sequence
+      && already.occurredAt === item.occurredAt;
+  }
+
+  function eventIdConflict(item) {
+    throw new AppError('Provider event id was already recorded with a different payload', {
+      code: 'CHANNEL_EVENT_ID_CONFLICT', status: 409, details: { providerEventId: item.providerEventId },
+    });
+  }
+
+  /**
+   * Store one inbox item with the webhook contract both paths share:
+   * the DB-unique source key makes a replay idempotent and a conflicting
+   * payload a 409, a redelivery resumes an unprocessed row, and an
+   * inactive connection quarantines instead of applying.
+   *
+   * `imported` marks history-path calls: the same message listed from the
+   * provider past never shares the webhook bytes, so an import adopts the
+   * stored row when the normalized identity agrees instead of 409ing on
+   * the envelope — and import-stored applied rows earn the same adoption
+   * from later webhooks through their marker.
+   */
+  async function storeInboxItem(service, {
+    spaceId, connection, adapter, item, payloadFingerprint, actor, now, imported = false,
+  }) {
+    const already = service.listWhere({ sourceKey: item.sourceKey })[0];
+    if (already) {
+      if (already.payloadFingerprint !== payloadFingerprint) {
+        if (sameImportEvent(already, item, imported)) {
+          return { duplicate: true, eventId: already.id, effect: already.effect };
+        }
+        eventIdConflict(item);
+      }
+      if (already.processed === true) {
+        return { duplicate: true, eventId: already.id, effect: already.effect };
+      }
+      // A row whose processing never completed is evidence of an event that
+      // has not had its effect yet: a redelivery resumes it — but only while
+      // its connection is active. Against a pending, suspended or revoked
+      // binding the row stays quarantined: provider state is never applied
+      // to a binding that was never activated, or to a revoked one.
+      if (connection.status !== 'active') {
+        return { duplicate: true, quarantined: true, eventId: already.id, effect: already.effect };
+      }
+      const decision = decideEffect(item, service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
+      const transition = decision.effect === 'applied' ? 'apply' : decision.effect === 'ignored' ? 'discard' : 'quarantine';
+      const resumed = await transitionInbox(service, already.id, {
+        event: transition,
+        patch: { effectReason: decision.effectReason === '' ? 'redelivery resumed the received row' : decision.effectReason },
+        actor,
+      });
+      return { duplicate: false, resumed: true, eventId: resumed.id, effect: resumed.effect };
+    }
+
+    const baseRow = {
+      sourceKey: item.sourceKey, spaceId, connectionKey: connection.sourceKey,
+      adapter: adapter.name, adapterVersion: adapter.version,
+      providerEventId: item.providerEventId, subject: item.subject, payloadFingerprint,
+      sequence: item.sequence, occurredAt: item.occurredAt, receivedAt: now,
+    };
+    // Inactive connections keep no inbound state silently: the delivery is
+    // preserved as quarantine evidence, and nothing is applied.
+    if (connection.status !== 'active') {
+      const row = await service.createManaged({
+        ...baseRow,
+        processed: false,
+        effect: 'quarantined',
+        effectReason: `connection is ${connection.status}: verify the binding before applying provider state`,
+      }, { actor });
+      return { duplicate: false, quarantined: true, eventId: row.id, effect: row.effect };
+    }
+
+    const decision = decideEffect(item, service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
+    // An applied import row carries the import marker instead of the empty
+    // reason: later webhooks of the same message adopt it through the
+    // marker rather than 409ing on the envelope. Quarantine and ignore
+    // reasons stay exactly as decided — evidence keeps its explanation.
+    const reason = imported && decision.effect === 'applied' && decision.effectReason === ''
+      ? CHANNEL_IMPORT_ROW_REASON
+      : decision.effectReason;
+    try {
+      const row = await service.createManaged({
+        ...baseRow,
+        processed: true,
+        effect: decision.effect,
+        effectReason: reason,
+      }, { actor });
+      return { duplicate: false, eventId: row.id, effect: row.effect };
+    } catch (error) {
+      // A concurrent delivery of the same event won the insert: resolve
+      // against the committed row instead of surfacing a raw violation —
+      // the same contract as the pre-read branch above, so a conflicting
+      // payload is CHANNEL_EVENT_ID_CONFLICT 409 on every path.
+      const raced = service.listWhere({ sourceKey: item.sourceKey })[0];
+      if (raced) {
+        if (raced.payloadFingerprint === payloadFingerprint) {
+          return { duplicate: true, eventId: raced.id, effect: raced.effect };
+        }
+        if (sameImportEvent(raced, item, imported)) {
+          return { duplicate: true, eventId: raced.id, effect: raced.effect };
+        }
+        eventIdConflict(item);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -369,127 +576,12 @@ export function createChannelOperations(deps) {
     const now = nowIso();
     const receiveMs = Date.parse(now);
     const payloadFingerprint = fingerprintPayload(rawBody);
-    const items = rawEvents.map((event) => {
-      const providerEventId = typeof event?.providerEventId === 'string' && event.providerEventId !== ''
-        && event.providerEventId.length <= 256 ? event.providerEventId : null;
-      if (!providerEventId) {
-        throw new AppError('Channel event is not well-formed', { code: 'CHANNEL_EVENT_MALFORMED', status: 422 });
-      }
-      const subject = typeof event?.subject === 'string' && event.subject !== '' && event.subject.length <= 256
-        ? event.subject : '';
-      let sequence = Number.isSafeInteger(event?.sequence) ? event.sequence : null;
-      let occurredAt = isCanonicalInstant(event?.occurredAt) ? event.occurredAt : null;
-      // Fail-closed on provider time, here in the package so every adapter
-      // shares it: a provider instant beyond receive time + skew never
-      // becomes the window observation nor the out-of-order sequence — one
-      // skewed or forged delivery would otherwise close the service window
-      // and suppress every legitimate message after it. It is kept as
-      // quarantine evidence at receive time, with the anomaly annotated.
-      const futureSkew = occurredAt !== null && Date.parse(occurredAt) > receiveMs + CHANNEL_INGEST_FUTURE_SKEW_MS;
-      if (futureSkew) {
-        sequence = null;
-        occurredAt = now;
-      }
-      return {
-        providerEventId,
-        subject,
-        sequence,
-        occurredAt,
-        futureSkew,
-        sourceKey: boundedKey('ch-in', spaceId, connection.sourceKey, providerEventId),
-      };
-    });
-
-    const decideEffect = (item, siblingRows) => {
-      if (item.futureSkew) {
-        return { effect: 'quarantined', effectReason: 'provider timestamp beyond +5min skew: kept as evidence at receive time, never a window observation' };
-      }
-      if (item.subject === '') {
-        return { effect: 'quarantined', effectReason: 'unknown subject: no local mapping for this provider subject' };
-      }
-      if (item.sequence !== null) {
-        const newer = siblingRows.filter((row) => row.subject === item.subject
-          && row.effect === 'applied' && Number.isSafeInteger(row.sequence) && row.sequence > item.sequence);
-        if (newer.length > 0) {
-          return { effect: 'ignored', effectReason: `out-of-order delivery: newer sequence already applied for this subject` };
-        }
-      }
-      return { effect: 'applied', effectReason: '' };
+    const storeParams = {
+      spaceId, connection, adapter, payloadFingerprint, actor, now,
     };
-
-    const storeOne = async (item) => {
-      const already = service.listWhere({ sourceKey: item.sourceKey })[0];
-      if (already) {
-        if (already.payloadFingerprint !== payloadFingerprint) {
-          throw new AppError('Provider event id was already recorded with a different payload', {
-            code: 'CHANNEL_EVENT_ID_CONFLICT', status: 409, details: { providerEventId: item.providerEventId },
-          });
-        }
-        if (already.processed === true) {
-          return { duplicate: true, eventId: already.id, effect: already.effect };
-        }
-        // A row whose processing never completed is evidence of an event that
-        // has not had its effect yet: a redelivery resumes it — but only while
-        // its connection is active. Against a pending, suspended or revoked
-        // binding the row stays quarantined: provider state is never applied
-        // to a binding that was never activated, or to a revoked one.
-        if (connection.status !== 'active') {
-          return { duplicate: true, quarantined: true, eventId: already.id, effect: already.effect };
-        }
-        const decision = decideEffect(item, service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
-        const transition = decision.effect === 'applied' ? 'apply' : decision.effect === 'ignored' ? 'discard' : 'quarantine';
-        const resumed = await transitionInbox(service, already.id, {
-          event: transition,
-          patch: { effectReason: decision.effectReason === '' ? 'redelivery resumed the received row' : decision.effectReason },
-          actor,
-        });
-        return { duplicate: false, resumed: true, eventId: resumed.id, effect: resumed.effect };
-      }
-
-      const baseRow = {
-        sourceKey: item.sourceKey, spaceId, connectionKey: connection.sourceKey,
-        adapter: adapter.name, adapterVersion: adapter.version,
-        providerEventId: item.providerEventId, subject: item.subject, payloadFingerprint,
-        sequence: item.sequence, occurredAt: item.occurredAt, receivedAt: now,
-      };
-      // Inactive connections keep no inbound state silently: the delivery is
-      // preserved as quarantine evidence, and nothing is applied.
-      if (connection.status !== 'active') {
-        const row = await service.createManaged({
-          ...baseRow,
-          processed: false,
-          effect: 'quarantined',
-          effectReason: `connection is ${connection.status}: verify the binding before applying provider state`,
-        }, { actor });
-        return { duplicate: false, quarantined: true, eventId: row.id, effect: row.effect };
-      }
-
-      const decision = decideEffect(item, service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
-      try {
-        const row = await service.createManaged({
-          ...baseRow,
-          processed: true,
-          effect: decision.effect,
-          effectReason: decision.effectReason,
-        }, { actor });
-        return { duplicate: false, eventId: row.id, effect: row.effect };
-      } catch (error) {
-        // A concurrent delivery of the same event won the insert: resolve
-        // against the committed row instead of surfacing a raw violation —
-        // the same contract as the pre-read branch above, so a conflicting
-        // payload is CHANNEL_EVENT_ID_CONFLICT 409 on every path.
-        const raced = service.listWhere({ sourceKey: item.sourceKey })[0];
-        if (raced) {
-          if (raced.payloadFingerprint === payloadFingerprint) {
-            return { duplicate: true, eventId: raced.id, effect: raced.effect };
-          }
-          throw new AppError('Provider event id was already recorded with a different payload', {
-            code: 'CHANNEL_EVENT_ID_CONFLICT', status: 409, details: { providerEventId: item.providerEventId },
-          });
-        }
-        throw error;
-      }
-    };
+    const items = rawEvents.map((event) => toInboxItem(event, {
+      spaceId, connectionKey: connection.sourceKey, now, receiveMs,
+    }));
 
     // A single event keeps today's result shape. A batch stores one row per
     // item in a single transaction — siblings are re-read per item inside
@@ -500,11 +592,11 @@ export function createChannelOperations(deps) {
     // packages use): generated services nest on SAVEPOINT, a second outer
     // transaction would not.
     if (items.length === 1) {
-      return storeOne(items[0]);
+      return storeInboxItem(service, { ...storeParams, item: items[0] });
     }
     const storeBatch = async () => {
       const results = [];
-      for (const item of items) results.push(await storeOne(item));
+      for (const item of items) results.push(await storeInboxItem(service, { ...storeParams, item }));
       return results;
     };
     let batchTransaction = null;
@@ -521,6 +613,290 @@ export function createChannelOperations(deps) {
     }
     const events = batchTransaction ? await database.transactionAsync(storeBatch) : await storeBatch();
     return { batched: true, events };
+  }
+
+  /**
+   * The progress surface the pilot reads: counts only, never the provider
+   * cursor (opaque, server-side) and never sender addresses (they live in
+   * the customer-data identity rows, not in a progress report).
+   */
+  function importStateSummary(row) {
+    return Object.freeze({
+      spaceId: row.spaceId,
+      connectionKey: row.connectionKey,
+      adapter: row.adapter,
+      adapterVersion: row.adapterVersion,
+      status: row.status,
+      windowStart: row.windowStart,
+      importedEvents: row.importedEvents,
+      duplicateEvents: row.duplicateEvents,
+      matchedContacts: row.matchedContacts,
+      createdContacts: row.createdContacts,
+      unresolvedContacts: row.unresolvedContacts,
+      eventsWithoutSender: row.eventsWithoutSender,
+      startedAt: row.startedAt,
+      finishedAt: row.finishedAt,
+      lastErrorCode: row.lastErrorCode,
+      lastErrorReason: row.lastErrorReason,
+    });
+  }
+
+  function importSourceKey(spaceId, connectionKey) {
+    return boundedKey('ch-imp', spaceId, connectionKey);
+  }
+
+  function findImportState(spaceId, connectionKey) {
+    return importStates().listWhere({ sourceKey: importSourceKey(spaceId, connectionKey) })[0] ?? null;
+  }
+
+  function requireHistoryAdapter(connection) {
+    const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
+    if (!adapter.historyImport) {
+      throw new AppError(`Channel adapter "${connection.adapter}" keeps no readable history: initial import is unavailable`, {
+        code: 'CHANNEL_HISTORY_UNAVAILABLE', status: 409,
+      });
+    }
+    return adapter;
+  }
+
+  function requireSenderResolution() {
+    if (!resolveSender) {
+      throw new AppError('Channel initial import needs the composed channel-sender@1 capability: compose the package with the created capability', {
+        code: 'CHANNEL_SENDER_UNAVAILABLE', status: 409,
+      });
+    }
+    return resolveSender;
+  }
+
+  /**
+   * Start the progressive initial import of one connection's provider past.
+   * A human decision (connecting the channel): the actor is required, like
+   * registration. Records the window the adapter declares and the cursor to
+   * resume from; pulling starts with the first advance call. Restarting a
+   * running import resumes it; a completed one refuses — a refresh is a new
+   * voice, not a silent re-import.
+   */
+  async function startInitialImport(params) {
+    const actor = requireUser(params?.actor);
+    const spaceId = assertSpaceId(params?.spaceId);
+    const connectionKey = typeof params?.connectionKey === 'string' ? params.connectionKey : '';
+    const connection = requireActiveConnection(spaceId, connectionKey);
+    const adapter = requireHistoryAdapter(connection);
+    requireSenderResolution();
+    const sourceKey = importSourceKey(spaceId, connection.sourceKey);
+    const existing = importStates().listWhere({ sourceKey })[0];
+    if (existing) {
+      if (existing.status === 'done') {
+        throw new AppError('Initial import already completed for this connection', {
+          code: 'CHANNEL_IMPORT_COMPLETE', status: 409,
+        });
+      }
+      return { resumed: true, started: false, state: importStateSummary(existing) };
+    }
+    const now = nowIso();
+    const row = await importStates().createManaged({
+      sourceKey,
+      spaceId,
+      connectionKey: connection.sourceKey,
+      adapter: adapter.name,
+      adapterVersion: adapter.version,
+      status: 'running',
+      windowStart: new Date(Date.parse(now) - adapter.historyImport.windowMs).toISOString(),
+      nextPageToken: null,
+      importedEvents: 0,
+      duplicateEvents: 0,
+      matchedContacts: 0,
+      createdContacts: 0,
+      unresolvedContacts: 0,
+      eventsWithoutSender: 0,
+      startedAt: now,
+      finishedAt: null,
+      lastErrorCode: null,
+      lastErrorReason: null,
+    }, { actor });
+    return { resumed: false, started: true, state: importStateSummary(row) };
+  }
+
+  /**
+   * Pull one bounded history page and reconcile it. Mechanical work the
+   * scheduler repeats until done, so it runs under the package system
+   * actor: a caller-supplied actor is ignored, never trusted for audit
+   * attribution — the same discipline as provider-driven ingest.
+   *
+   * Crash-safe by idempotency, not by one big transaction: every event
+   * validates before any row is written, inbox rows dedup on the same
+   * source key webhooks use, and sender resolution replays the winner —
+   * so an interrupted page replays to the same rows and the same counts.
+   * The state cursor moves only after the whole page reconciled.
+   */
+  async function advanceInitialImport(params) {
+    const actor = SYSTEM();
+    const spaceId = assertSpaceId(params?.spaceId);
+    const connectionKey = typeof params?.connectionKey === 'string' ? params.connectionKey : '';
+    const connection = requireActiveConnection(spaceId, connectionKey);
+    const row = findImportState(spaceId, connection.sourceKey);
+    if (!row) {
+      throw new AppError('No initial import started for this connection', {
+        code: 'CHANNEL_IMPORT_UNKNOWN', status: 404,
+      });
+    }
+    if (row.status === 'done') {
+      return { done: true, state: importStateSummary(row), page: null };
+    }
+    const adapter = requireHistoryAdapter(connection);
+    const resolve = requireSenderResolution();
+    const limit = params?.limit === undefined ? CHANNEL_HISTORY_DEFAULT_PAGE : params.limit;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > CHANNEL_HISTORY_PAGE_MAX) {
+      throw new ValidationError(`history page limit must be an integer 1-${CHANNEL_HISTORY_PAGE_MAX}`, { field: 'limit' });
+    }
+    let secret;
+    try {
+      secret = await resolveSecret(connection.secretRef, { spaceId, purpose: CHANNEL_SECRET_PURPOSE_HISTORY });
+    } catch {
+      throw new AppError('Channel secret is unavailable', { code: 'CHANNEL_SECRET_UNAVAILABLE', status: 500 });
+    }
+    if (typeof secret !== 'string' || secret === '') {
+      throw new AppError('Channel secret is unavailable', { code: 'CHANNEL_SECRET_UNAVAILABLE', status: 500 });
+    }
+
+    const stampFailure = async (code, reason) => {
+      try {
+        await importStates().applyManaged(row.id, { lastErrorCode: code, lastErrorReason: reason }, { actor });
+      } catch {
+        // The page already failed: a storage outage while stamping it must
+        // not replace the failure the caller retries on.
+      }
+    };
+
+    let page;
+    try {
+      page = await withTimeout(
+        Promise.resolve(adapter.historyImport.listHistory({
+          secret,
+          account: connection.account,
+          since: row.windowStart,
+          pageToken: row.nextPageToken,
+          limit,
+        })),
+        CHANNEL_HISTORY_TIMEOUT_MS,
+        `channel adapter "${adapter.name}" listHistory`,
+      );
+    } catch (error) {
+      const normalized = normalizeError(error);
+      if (normalized.code === 'PROVIDER_TIMEOUT') {
+        await stampFailure('CHANNEL_HISTORY_TRANSIENT', 'provider history read timed out: retry the advance');
+        throw new AppError('Channel history read timed out: retry the advance', {
+          code: 'CHANNEL_HISTORY_TRANSIENT', status: 503,
+        });
+      }
+      // The stamped code is the adapter's own when it names one: the
+      // progress surface reports what the provider said, not the wrapper.
+      const originalCode = error !== null && typeof error === 'object' && 'code' in error
+        && typeof error.code === 'string' && error.code !== '' ? error.code : null;
+      await stampFailure(originalCode ?? normalized.code ?? 'CHANNEL_HISTORY_UNAVAILABLE', String(normalized.message ?? normalized));
+      throw error;
+    }
+    let checked;
+    try {
+      checked = assertHistoryPage(page, limit);
+    } catch (error) {
+      await stampFailure('CHANNEL_HISTORY_MALFORMED', 'provider history page failed validation: retry the advance');
+      throw new AppError('Channel history page is not well-formed', {
+        code: 'CHANNEL_HISTORY_MALFORMED', status: 422,
+      });
+    }
+
+    const service = inbox();
+    const now = nowIso();
+    const receiveMs = Date.parse(now);
+    const counts = {
+      imported: 0, duplicates: 0, matched: 0, created: 0, unresolved: 0, withoutSender: 0,
+    };
+    for (const event of checked.events) {
+      const item = toInboxItem(event, {
+        spaceId, connectionKey: connection.sourceKey, now, receiveMs,
+      });
+      const stored = await storeInboxItem(service, {
+        spaceId,
+        connection,
+        adapter,
+        item,
+        payloadFingerprint: fingerprintPayload(JSON.stringify(event)),
+        actor,
+        now,
+        imported: true,
+      });
+      if (stored.duplicate) {
+        counts.duplicates += 1;
+        continue;
+      }
+      counts.imported += 1;
+      // Quarantined or set-aside items stay evidence: no contact is ever
+      // invented from a row the package refused to apply.
+      if (stored.effect !== 'applied' || !event.sender) {
+        if (stored.effect === 'applied') counts.withoutSender += 1;
+        continue;
+      }
+      let answer;
+      try {
+        answer = await resolve({
+          channel: adapter.channel,
+          handle: event.sender.handle,
+          ...(event.sender.email === undefined ? {} : { email: event.sender.email }),
+          ...(event.sender.firstName === undefined ? {} : { firstName: event.sender.firstName }),
+          ...(event.sender.lastName === undefined ? {} : { lastName: event.sender.lastName }),
+          actor,
+        });
+      } catch (error) {
+        // Malformed sender evidence names nobody: the message is kept, the
+        // contact is not invented, and the count says so. Anything else is
+        // genuine — the page fails, the cursor stays, the retry replays.
+        if (error instanceof ValidationError) {
+          counts.withoutSender += 1;
+          continue;
+        }
+        const failed = normalizeError(error);
+        const failedCode = error !== null && typeof error === 'object' && 'code' in error
+          && typeof error.code === 'string' && error.code !== '' ? error.code : null;
+        await stampFailure(failedCode ?? failed.code ?? 'CHANNEL_HISTORY_UNAVAILABLE', String(failed.message ?? failed));
+        throw error;
+      }
+      if (answer.outcome === 'matched') counts.matched += 1;
+      else if (answer.outcome === 'created') counts.created += 1;
+      else counts.unresolved += 1;
+    }
+
+    const done = checked.nextPageToken === null;
+    const updated = await importStates().applyManaged(row.id, {
+      nextPageToken: checked.nextPageToken,
+      importedEvents: row.importedEvents + counts.imported,
+      duplicateEvents: row.duplicateEvents + counts.duplicates,
+      matchedContacts: row.matchedContacts + counts.matched,
+      createdContacts: row.createdContacts + counts.created,
+      unresolvedContacts: row.unresolvedContacts + counts.unresolved,
+      eventsWithoutSender: row.eventsWithoutSender + counts.withoutSender,
+      ...(done ? { status: 'done', finishedAt: now } : {}),
+      lastErrorCode: null,
+      lastErrorReason: null,
+    }, { actor });
+    return {
+      done,
+      state: importStateSummary(updated),
+      page: Object.freeze({ ...counts }),
+    };
+  }
+
+  /**
+   * Read the import progress of one connection: status and counts. Null
+   * when no import ever started — an honest absence, not an empty report.
+   */
+  function readInitialImport(params) {
+    const spaceId = assertSpaceId(params?.spaceId);
+    const connectionKey = typeof params?.connectionKey === 'string' ? params.connectionKey : '';
+    const connection = requireConnection(spaceId, connectionKey);
+    if (!connection) return null;
+    const row = findImportState(spaceId, connection.sourceKey);
+    return row ? importStateSummary(row) : null;
   }
 
   /**
@@ -789,5 +1165,8 @@ export function createChannelOperations(deps) {
     ingestChannelEvent,
     queueChannelSend,
     registerChannelSendHandlers,
+    startInitialImport,
+    advanceInitialImport,
+    readInitialImport,
   });
 }

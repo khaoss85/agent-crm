@@ -300,9 +300,16 @@ test('unwired composition refuses instead of inventing custody or tenancy', asyn
   );
 });
 
-test('the fixture adapter passes the channel kit (receive, send, replay, bad signature, out-of-order)', async (t) => {
+test('the fixture adapter passes the channel kit (receive, send, replay, bad signature, out-of-order, history)', async (t) => {
   const { harness, api, definition } = setup({ tenantId: 'channel-kit-acceptance' });
   t.after(() => harness.close());
+  // Two recent items, so the history check pages a real past (limit 2:
+  // one full page, then the exhausted tail) instead of an empty double.
+  const at = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  api.seedHistory([
+    { id: 'evt-hist-1', subject: 'chat-kit-hist', seq: 1, at, sender: { handle: '+390200000011' } },
+    { id: 'evt-hist-2', subject: 'chat-kit-hist', seq: 2, at, sender: { handle: '+390200000022' } },
+  ]);
   const results = await runChannelAdapterKit({
     adapter: definition,
     secrets: { ref: SECRET_REF, value: SECRET },
@@ -328,7 +335,7 @@ test('the fixture adapter passes the channel kit (receive, send, replay, bad sig
   const failed = results.filter((row) => !row.pass);
   assert.deepEqual(failed, [], `kit failures: ${JSON.stringify(failed)}`);
   assert.deepEqual(results.map((row) => row.name), [
-    'receive', 'send', 'replay', 'bad-signature', 'out-of-order', 'no-secrets', 'space-isolation',
+    'receive', 'send', 'replay', 'bad-signature', 'out-of-order', 'no-secrets', 'space-isolation', 'history',
   ]);
 });
 

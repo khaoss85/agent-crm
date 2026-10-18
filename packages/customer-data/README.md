@@ -1,13 +1,13 @@
 # `customer-data` — governed customer identity, import provenance and data quality
 
-Eight records, three human actions, five application operations and one declared
-capability. It **requires nothing**.
+Eight records, three human actions, five application operations and three declared
+capabilities. It **requires nothing**.
 
 | | |
 |---|---|
 | Owns | `customer-import-run`, `customer-import-row`, `external-identity`, `duplicate-candidate`, `canonical-link`, `data-quality-issue`, `customer-bulk-run`, `customer-bulk-item` |
 | Requires | **nothing** |
-| Offers | `customer-identity@1` |
+| Offers | `customer-identity@1`, `customer-profile@1`, `channel-sender@1` |
 | Actions | `duplicate-candidate.link-canonical-identity`, `duplicate-candidate.dismiss-duplicate-candidate`, `data-quality-issue.govern-data-quality-issue` |
 | Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile` (ADR-032) |
 | Policies | `deterministic-customer-match@1` |
@@ -245,6 +245,22 @@ and `openDuplicateCandidates`. A consumer asks who a record *is* without
 importing this package's source, and gets no way to decide identity — deciding
 is a human action on a record, and a capability that could decide would be a
 back door around that.
+
+## `channel-sender@1`
+
+```js
+// The created capability object, e.g. beside createCustomerDataPackage()
+channelSender,
+```
+
+One write: `resolveSender`. The channels initial history import
+(backlog:66282d13d81c) reconciles every imported sender through this path
+instead of a second identity store: matched names the contact, an unknown
+sender carrying an email creates it, ambiguous evidence stays an unresolved
+duplicate-candidate for a human and is never merged. It opens on the
+consumer runtime (`{ modules, core, database, events }`) with this
+package's own name resolution and match policy — exactly one resolution,
+the provider's.
 
 ## The human-actor boundary, stated exactly
 

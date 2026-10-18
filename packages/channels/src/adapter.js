@@ -23,6 +23,23 @@ import { AppError, ValidationError, computeDefinitionFingerprint, createDefiniti
  * with dedup per providerEventId — an adapter never truncates a batch to
  * its first item.
  *
+ * An adapter whose provider keeps readable past additionally declares the
+ * optional `historyImport` capability: `{ windowMs, listHistory }`.
+ * `operations.js` then pulls that past one bounded page per advance call —
+ * never the whole history in one call — stores one inbox row per event
+ * through the same deduped path as webhooks, and reconciles every imported
+ * sender through the composed `channel-sender@1` capability. Adapters
+ * without it behave exactly as before: starting their import refuses with
+ * `CHANNEL_HISTORY_UNAVAILABLE`.
+ *
+ * `listHistory({ secret, account, since, pageToken, limit })` resolves to
+ * `{ events, nextPageToken }`: `events` are channel events in the
+ * `normalizeInbound` shape (an event may carry an optional `sender`
+ * `{ handle, email?, firstName?, lastName? }` the import reconciles);
+ * `nextPageToken` is an opaque bounded cursor, or null when the past is
+ * exhausted. The same token replays the same page — that determinism is
+ * what makes an interrupted import resume instead of restart.
+ *
  * An adapter whose provider restricts free text to a service window (Meta's
  * 24-hour customer-service window) additionally declares the optional
  * `outboundWindow` capability: `{ windowMs, subjectForRecipient,
@@ -53,7 +70,16 @@ const ADAPTER_KEYS = Object.freeze([
   'name', 'version', 'label', 'channel', 'config',
   'verifyInbound', 'normalizeInbound', 'normalizeOutbound', 'sendOutbound',
 ]);
-const ADAPTER_OPTIONAL_KEYS = Object.freeze(['outboundWindow']);
+const ADAPTER_OPTIONAL_KEYS = Object.freeze(['outboundWindow', 'historyImport']);
+
+/**
+ * Bounds for the progressive initial history import (backlog:66282d13d81c):
+ * an adapter that can list its provider's past may declare `historyImport`
+ * so connecting the channel starts a paged, resumable import of that past.
+ */
+export const CHANNEL_HISTORY_WINDOW_MAX_MS = 366 * 24 * 3600 * 1000;
+export const CHANNEL_HISTORY_PAGE_MAX = 100;
+export const CHANNEL_HISTORY_TOKEN_MAX = 256;
 
 function isPlainJsonSafe(value, depth = 0) {
   if (depth > 12) return false;
@@ -94,6 +120,112 @@ function validateOutboundWindow(window) {
 }
 
 /**
+ * Validate the optional history-import capability fail-closed. Absent is
+ * fine (adapters without readable past behave exactly as before); present
+ * must be the full shape — a half-declared import would page nothing while
+ * looking resumable.
+ */
+function validateHistoryImport(history) {
+  if (history === undefined) return;
+  if (!history || typeof history !== 'object' || Array.isArray(history)) {
+    throw new ValidationError('channel adapter historyImport must be a plain object', { field: 'adapter.historyImport' });
+  }
+  if (Object.getOwnPropertyNames(history).some((key) => HOSTILE_KEYS.includes(key))) {
+    throw new ValidationError('channel adapter historyImport carries a hostile key', { field: 'adapter.historyImport' });
+  }
+  if (!Number.isSafeInteger(history.windowMs) || history.windowMs < 1 || history.windowMs > CHANNEL_HISTORY_WINDOW_MAX_MS) {
+    throw new ValidationError('channel adapter historyImport.windowMs must be a positive duration in milliseconds (at most 366 days)', {
+      field: 'adapter.historyImport.windowMs',
+    });
+  }
+  if (typeof history.listHistory !== 'function') {
+    throw new ValidationError('channel adapter historyImport.listHistory must be a function', {
+      field: 'adapter.historyImport.listHistory',
+    });
+  }
+}
+
+function isCanonicalInstant(value) {
+  if (typeof value !== 'string' || value === '') return false;
+  const ms = Date.parse(value);
+  return Number.isSafeInteger(ms) && new Date(ms).toISOString() === value;
+}
+
+function assertHistorySender(sender) {
+  if (sender === undefined) return undefined;
+  if (!sender || typeof sender !== 'object' || Array.isArray(sender)) {
+    throw new ValidationError('channel history event sender must be a plain object', { field: 'sender' });
+  }
+  const handle = typeof sender.handle === 'string' ? sender.handle : '';
+  if (handle === '' || handle.length > 256) {
+    throw new ValidationError('channel history event sender needs a bounded handle (1-256 characters)', { field: 'sender.handle' });
+  }
+  const bounded = (name, max) => {
+    const value = sender[name];
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== 'string' || value === '' || value.length > max) {
+      throw new ValidationError(`channel history event sender.${name} must be bounded text when present`, { field: `sender.${name}` });
+    }
+    return value;
+  };
+  return {
+    handle,
+    ...(bounded('email', 256) === undefined ? {} : { email: bounded('email', 256) }),
+    ...(bounded('firstName', 128) === undefined ? {} : { firstName: bounded('firstName', 128) }),
+    ...(bounded('lastName', 128) === undefined ? {} : { lastName: bounded('lastName', 128) }),
+  };
+}
+
+/**
+ * Validate one history page against the channel-event contract both the
+ * import engine and the adapter kit enforce: the same four fields the
+ * webhook ingest requires, plus the optional sender evidence. Throws
+ * fail-closed; returns the frozen page the engine stores and reconciles.
+ *
+ * @param {unknown} page @param {number} limit
+ */
+export function assertHistoryPage(page, limit) {
+  if (!page || typeof page !== 'object' || Array.isArray(page)) {
+    throw new ValidationError('channel history page must be a plain object', { field: 'historyPage' });
+  }
+  const { events, nextPageToken } = /** @type {{events?: unknown, nextPageToken?: unknown}} */ (page);
+  if (!Array.isArray(events) || events.length > limit) {
+    throw new ValidationError(`channel history page carries 0-${limit} events`, { field: 'historyPage.events' });
+  }
+  if (nextPageToken !== null
+    && (typeof nextPageToken !== 'string' || nextPageToken === '' || nextPageToken.length > CHANNEL_HISTORY_TOKEN_MAX)) {
+    throw new ValidationError('channel history nextPageToken must be null or bounded opaque text', { field: 'historyPage.nextPageToken' });
+  }
+  const checked = events.map((event, index) => {
+    const field = `historyPage.events[${index}]`;
+    if (!event || typeof event !== 'object' || Array.isArray(event)) {
+      throw new ValidationError('channel history event must be a plain object', { field });
+    }
+    const entry = /** @type {Record<string, any>} */ (event);
+    if (typeof entry.providerEventId !== 'string' || entry.providerEventId === '' || entry.providerEventId.length > 256) {
+      throw new ValidationError('channel history event needs a bounded providerEventId', { field: `${field}.providerEventId` });
+    }
+    if (typeof entry.subject !== 'string' || entry.subject.length > 256) {
+      throw new ValidationError('channel history event needs a bounded subject', { field: `${field}.subject` });
+    }
+    if (entry.sequence !== null && entry.sequence !== undefined && !Number.isSafeInteger(entry.sequence)) {
+      throw new ValidationError('channel history event sequence must be an integer when present', { field: `${field}.sequence` });
+    }
+    if (entry.occurredAt !== null && entry.occurredAt !== undefined && !isCanonicalInstant(entry.occurredAt)) {
+      throw new ValidationError('channel history event occurredAt must be a canonical instant when present', { field: `${field}.occurredAt` });
+    }
+    return Object.freeze({
+      providerEventId: entry.providerEventId,
+      subject: entry.subject,
+      sequence: Number.isSafeInteger(entry.sequence) ? entry.sequence : null,
+      occurredAt: isCanonicalInstant(entry.occurredAt) ? entry.occurredAt : null,
+      sender: assertHistorySender(entry.sender),
+    });
+  });
+  return Object.freeze({ events: Object.freeze(checked), nextPageToken: nextPageToken ?? null });
+}
+
+/**
  * Validate one adapter definition fail-closed. Returns the frozen,
  * fingerprinted definition the registries store.
  */
@@ -116,6 +248,7 @@ export function validateChannelAdapter(definition) {
   }
   const value = /** @type {Record<string, any>} */ (definition);
   validateOutboundWindow(value.outboundWindow);
+  validateHistoryImport(value.historyImport);
   if (typeof value.name !== 'string' || !ADAPTER_NAME.test(value.name) || value.name.length > 64) {
     throw new ValidationError('channel adapter name must match ^[a-z][a-z0-9-]*$ (at most 64 characters)', { field: 'adapter.name' });
   }
@@ -151,6 +284,7 @@ export function validateChannelAdapter(definition) {
     normalizeOutbound: value.normalizeOutbound,
     sendOutbound: value.sendOutbound,
     ...(value.outboundWindow === undefined ? {} : { outboundWindow: value.outboundWindow }),
+    ...(value.historyImport === undefined ? {} : { historyImport: value.historyImport }),
   });
   return Object.freeze({
     contract: CHANNEL_ADAPTER_CONTRACT,
@@ -164,6 +298,7 @@ export function validateChannelAdapter(definition) {
     normalizeOutbound: value.normalizeOutbound,
     sendOutbound: value.sendOutbound,
     ...(value.outboundWindow === undefined ? {} : { outboundWindow: Object.freeze({ ...value.outboundWindow }) }),
+    ...(value.historyImport === undefined ? {} : { historyImport: Object.freeze({ ...value.historyImport }) }),
     fingerprint,
   });
 }

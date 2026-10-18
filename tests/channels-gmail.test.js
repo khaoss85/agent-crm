@@ -74,8 +74,16 @@ function gmailDefinition(options = {}) {
 }
 
 test('the Gmail adapter passes the shared channel kit', async (t) => {
-  const { harness } = setup();
+  const { harness, api } = setup();
   t.after(() => harness.close());
+  // Three recent threads, so the kit history check pages a real past
+  // (limit 2: two pages) instead of an empty mailbox.
+  const at = Date.now() - 30 * 60 * 1000;
+  api.seedMailbox([
+    { id: 'gmail-kit-1', threadId: 'thread-kit-A', from: 'cliente-a@example.com', internalDateMs: at },
+    { id: 'gmail-kit-2', threadId: 'thread-kit-B', from: 'cliente-b@example.com', internalDateMs: at + 1000 },
+    { id: 'gmail-kit-3', threadId: 'thread-kit-A', from: 'cliente-a@example.com', internalDateMs: at + 2000 },
+  ]);
   const results = await runChannelAdapterKit({
     adapter: harness.internals.registries.getAdapter(GMAIL_ADAPTER_NAME, GMAIL_ADAPTER_VERSION).definition,
     secrets: { ref: SECRET_REF, value: SECRET },
@@ -84,10 +92,15 @@ test('the Gmail adapter passes the shared channel kit', async (t) => {
     accountB: 'cliente-b@example.com',
     harness,
   });
-  assert.equal(results.length, 7);
+  assert.equal(results.length, 8);
   for (const result of results) {
     assert.equal(result.pass, true, `kit check "${result.name}" failed: ${result.detail}`);
   }
+  assert.match(
+    results.find((row) => row.name === 'history').detail,
+    /3 event\(s\) across 2 page\(s\)/,
+    'the history check saw the seeded past, not an empty mailbox',
+  );
 });
 
 test('inbound mail lands in the thread conversation', async (t) => {

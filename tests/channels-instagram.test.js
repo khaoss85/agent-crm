@@ -106,7 +106,7 @@ test('the instagram adapter passes the channel kit', async (t) => {
   });
   assert.deepEqual(
     results.map((row) => `${row.name}:${row.pass ? 'pass' : `FAIL ${row.detail}`}`),
-    ['receive:pass', 'send:pass', 'replay:pass', 'bad-signature:pass', 'out-of-order:pass', 'no-secrets:pass', 'space-isolation:pass'],
+    ['receive:pass', 'send:pass', 'replay:pass', 'bad-signature:pass', 'out-of-order:pass', 'no-secrets:pass', 'space-isolation:pass', 'history:pass'],
   );
 });
 
