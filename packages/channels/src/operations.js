@@ -16,7 +16,7 @@ import {
 import { assertHistoryPage, CHANNEL_HISTORY_PAGE_MAX } from './adapter.js';
 import { assertConnectionInput, assertSpaceId, boundedKey, channelSendIdempotencyKey } from './connection.js';
 import { fingerprintPayload } from './crypto.js';
-import { transitionInbox } from './transitions.js';
+import { advanceLetter, assertJobTransition, jobSendState, transitionInbox } from './transitions.js';
 
 /**
  * Channel operations (backlog:e5532d1c9146).
@@ -1424,6 +1424,39 @@ export function createChannelOperations(deps) {
   }
 
   /**
+   * Normalize one human-supplied outbound message through the adapter,
+   * window included. Shared by queue and requeue: the window observation is
+   * re-resolved server-side from the inbox in both, so a message approved
+   * while the window was open but sent after it still refuses at execution.
+   */
+  function normalizeOutboundMessage(adapter, spaceId, connection, rawMessage) {
+    // Resolved outside the normalize try: a storage failure here is a 500
+    // of its own, never a malformed message.
+    const windowCtx = adapter.outboundWindow
+      ? {
+        lastInboundAt: resolveWindowObservation(
+          spaceId, connection.sourceKey, rawMessage, adapter.outboundWindow,
+        ),
+      }
+      : undefined;
+    let message;
+    try {
+      message = adapter.outboundWindow
+        ? adapter.normalizeOutbound(rawMessage, windowCtx)
+        : adapter.normalizeOutbound(rawMessage);
+    } catch (error) {
+      // A window refusal is the adapter's contract with its callers (send a
+      // template instead): it travels intact, never flattened into the
+      // generic malformed code.
+      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'CHANNEL_TEMPLATE_REQUIRED') {
+        throw error;
+      }
+      throw new AppError('Channel message is not well-formed', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
+    }
+    return assertOutboundMessage(message);
+  }
+
+  /**
    * Queue one outbound message through the durable-jobs outbox. The payload
    * carries routing and content only — the handler resolves the secret at
    * execution time, so no secret material ever rests in the jobs table.
@@ -1434,30 +1467,7 @@ export function createChannelOperations(deps) {
     const connectionKey = typeof params?.connectionKey === 'string' ? params.connectionKey : '';
     const connection = requireActiveConnection(spaceId, connectionKey);
     const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
-    let message;
-    // Resolved outside the normalize try: a storage failure here is a 500
-    // of its own, never a malformed message.
-    const windowCtx = adapter.outboundWindow
-      ? {
-        lastInboundAt: resolveWindowObservation(
-          spaceId, connection.sourceKey, params?.message, adapter.outboundWindow,
-        ),
-      }
-      : undefined;
-    try {
-      message = adapter.outboundWindow
-        ? adapter.normalizeOutbound(params?.message, windowCtx)
-        : adapter.normalizeOutbound(params?.message);
-    } catch (error) {
-      // A window refusal is the adapter's contract with its callers (send a
-      // template instead): it travels intact, never flattened into the
-      // generic malformed code.
-      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'CHANNEL_TEMPLATE_REQUIRED') {
-        throw error;
-      }
-      throw new AppError('Channel message is not well-formed', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
-    }
-    assertOutboundMessage(message);
+    const message = normalizeOutboundMessage(adapter, spaceId, connection, params?.message);
     const messageKey = typeof params?.messageKey === 'string' && params.messageKey !== ''
       ? params.messageKey : null;
     const keyInput = messageKey ?? fingerprintPayload(JSON.stringify(message));
@@ -1618,10 +1628,100 @@ export function createChannelOperations(deps) {
     return registry;
   }
 
-  // Dead-letter requeue (human retry of an open letter) is intentionally NOT
-  // here: it moves to its own follow-up voice with its own state machine, so
-  // this PR keeps register / ingest / queue / dead-letter inventory only.
-  // The dead-letter rows stay readable through listDeadLetters.
+  /**
+   * Requeue one open dead letter with a human-supplied message (backlog:560ff58370a8).
+   * The letter carries no payload by design, so retrying means approving the
+   * content again — a human actor owns it, and the new job gets a
+   * deterministic key derived from the letter AND the new message
+   * (boundedKey, always within the 256-char outbox bound), so the same
+   * content dedups and different content keys differently. A settled letter
+   * 404s on repeat: one letter, one provider send.
+   *
+   * Claim-first, never enqueue-first: the letter moves `open` -> `requeued`
+   * through advanceLetter (one chain slot, one durable unit, one fresh
+   * re-read — conditioned on the state read, never on a stale copy) BEFORE
+   * any job exists, and the new job is enqueued only for the winner, in the
+   * SAME unit as the claim: the two commit together or roll back together,
+   * so no failure between them leaves a claimed letter without its send. A
+   * concurrent requeue reads the winner's state and is refused with
+   * CHANNEL_LETTER_UNKNOWN before creating anything: the winner's job is
+   * never touched — no cancel path exists anywhere here, because an
+   * idempotent enqueue can hand the loser the winner's own job.
+   */
+  async function requeueChannelLetter(params) {
+    const actor = requireUser(params?.actor);
+    const spaceId = assertSpaceId(params?.spaceId);
+    // Exact read by id, then the space check: a letter from another space is
+    // not found (404), never forbidden (403).
+    let letter = null;
+    try {
+      letter = typeof params?.letterId === 'string' && params.letterId !== ''
+        ? letters().get(params.letterId) : null;
+    } catch {
+      letter = null;
+    }
+    if (!letter || letter.spaceId !== spaceId) {
+      throw new AppError('Unknown or settled dead letter', { code: 'CHANNEL_LETTER_UNKNOWN', status: 404 });
+    }
+    // A settled letter is not found (404), never a transition refusal: the
+    // API contract reports unknown-or-settled, and the machine below keeps
+    // the same answer for a race that settles between this read and the
+    // claim.
+    if (letter.state !== 'open') {
+      throw new AppError('Unknown or settled dead letter', { code: 'CHANNEL_LETTER_UNKNOWN', status: 404 });
+    }
+    // The job-side edge of the same move: an open letter IS a send in
+    // `dead-letter`, and only `requeue` leaves it. Both tables gate this
+    // path, so a future row shape that drifts from the machine breaks loudly
+    // here instead of sending from a state the machine forbids.
+    assertJobTransition(jobSendState({ letterState: letter.state }), 'requeue');
+    const connection = requireActiveConnection(spaceId, letter.connectionKey);
+    const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
+    const message = normalizeOutboundMessage(adapter, spaceId, connection, params?.message);
+    const messageFingerprint = fingerprintPayload(JSON.stringify(message));
+    const idempotencyKey = boundedKey('ch-send', spaceId, connection.sourceKey, `requeue:${letter.id}`, messageFingerprint);
+    // The claim carries the intended send identity either way: where the
+    // store opens no durable unit, the follow-up still runs in the same
+    // chain slot right after the move, and the root names the job that
+    // should exist so the gap stays observable.
+    const stateReason = `human retry by ${actorId(actor)} as ${idempotencyKey}`;
+    const letterService = letters();
+    let moved;
+    try {
+      moved = await advanceLetter({ letters: letterService, database }, letter.id, {
+        event: 'requeue',
+        patch: { stateReason },
+        actor,
+        write: async ({ transaction }) => {
+          try {
+            const job = await jobs().enqueue({
+              kind: CHANNEL_SEND_KIND,
+              handler: { name: CHANNEL_SEND_HANDLER, contract: CHANNEL_SEND_CONTRACT, version: CHANNEL_SEND_VERSION },
+              payload: { spaceId, connectionKey: connection.sourceKey, idempotencyKey, message },
+              idempotencyRoot: idempotencyKey,
+              outcomeReference: idempotencyKey,
+              recoveryPolicy: 'reconcilable_at_least_once',
+              maxAttempts: maxSendAttempts,
+            }, transaction ? { transaction, actor } : { actor });
+            return { jobId: job.id, idempotencyKey };
+          } catch (error) {
+            if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'DURABLE_JOB_PAYLOAD_INVALID') {
+              throw new AppError('Channel message is not well-formed: message refused by the outbox payload controls', {
+                code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
+              });
+            }
+            throw error;
+          }
+        },
+      });
+    } catch (error) {
+      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'CHANNEL_TRANSITION_INVALID') {
+        throw new AppError('Unknown or settled dead letter', { code: 'CHANNEL_LETTER_UNKNOWN', status: 404 });
+      }
+      throw error;
+    }
+    return { jobId: moved.wrote.jobId, letterId: moved.letter.id, idempotencyKey: moved.wrote.idempotencyKey };
+  }
 
   function listConnections(spaceId) {
     return connections().listWhere({ spaceId: assertSpaceId(spaceId) });
@@ -1650,6 +1750,7 @@ export function createChannelOperations(deps) {
     registerChannelConnection,
     ingestChannelEvent,
     queueChannelSend,
+    requeueChannelLetter,
     registerChannelSendHandlers,
     startInitialImport,
     advanceInitialImport,

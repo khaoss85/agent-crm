@@ -218,7 +218,7 @@ export function createChannelsPackage(options = {}) {
     name: CHANNELS_PACKAGE,
     version: 1,
     label: 'Channels',
-    description: 'Space-scoped messaging-channel bindings: one connection record per space, verified replay-proof inbound webhooks with quarantine, outbound sends through the durable-jobs outbox with retries and a dead-letter queue, the progressive initial history import for adapters with readable past, and the adapter contract-test kit.',
+    description: 'Space-scoped messaging-channel bindings: one connection record per space, verified replay-proof inbound webhooks with quarantine, outbound sends through the durable-jobs outbox with retries and a dead-letter queue with human requeue, the progressive initial history import for adapters with readable past, and the adapter contract-test kit.',
     resources: [...CHANNELS_RESOURCES],
 
     // No declared reach into another package: the sender reconciliation the
@@ -321,9 +321,21 @@ export function createChannelsPackage(options = {}) {
           return (params) => ops.readInitialImport(params);
         },
       },
-      // Dead-letter requeue is deferred to a follow-up voice with its own
-      // state machine: this PR ships register / ingest / queue / dead-letter
-      // inventory only.
+      {
+        operationContract: 1,
+        name: 'requeue-channel-letter',
+        label: 'Requeue dead letter',
+        appMethod: 'requeueChannelLetter',
+        description: 'Retry one open dead letter with a human-supplied message: the letter carries no payload by design, so retrying means approving the content again. Concurrent retries serialize on the letter state: one wins and queues the send, the other is refused without touching the winner\'s job.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+          { name: 'letterId', type: 'string', required: true, hint: 'The open dead-letter id.' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.requeueChannelLetter(params);
+        },
+      },
     ],
     /** Function-free, additive schema metadata — never a secret, never a function. */
     metadata() {
@@ -336,9 +348,8 @@ export function createChannelsPackage(options = {}) {
         secretDiscipline: 'connections store secretRef, never the secret; the deployment resolves it at call time; outbox payloads carry no secret-shaped keys',
         initialImport: 'one bounded history page per advance call through the deduped inbox path; every event writes one channel-import-outcome row and the progress counts those rows (one COUNT per state), never hand tallies; sender reconciliation arrives through the composed channel-sender@1 capability when present and stays pending otherwise; the cursor moves only on an owned transition',
         reuses: ['channel-sender@1'],
-        humanApproval: 'register, status changes and sends require actor.type === "user"; provider-driven ingest runs under a system actor and ignores any caller-supplied actor',
+        humanApproval: 'register, status changes, sends and requeues require actor.type === "user"; provider-driven ingest runs under a system actor and ignores any caller-supplied actor',
         notModeled: [
-          'dead-letter requeue (human retry of an open letter) — follow-up voice with its own state machine',
           'real provider adapters beyond WhatsApp (Instagram, Gmail, …) — fixture only until credentials exist',
           'the per-space HTTP route — the pilot owns it and passes spaceId from the verified path',
           'secret custody and rotation flow — the deployment owns it via resolveSecret',
