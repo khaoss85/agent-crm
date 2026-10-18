@@ -4,6 +4,18 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The full measurement runs on this schedule — the configured window
+  # (backlog:911355123044). A push to `main` never starts `measure-suite.js`:
+  # the full suite with its measurement holds the shared Mac's single heavy
+  # lock ~25 minutes per run, and one runner serves this repository plus
+  # Arvo, so merge bursts used to queue one 25-minute measure per merge ahead
+  # of the fast PR gates. At most one scheduled run measures per window (see
+  # the `verify` job's head-changed guard), and `workflow_dispatch` measures
+  # on demand. Keep `MEASURE_WINDOW_HOURS` in `scripts/ci-measurement-age.js`
+  # equal to the interval below.
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
 
 # One self-hosted runner serves this repository: a push to a PR branch used to
 # start two identical runs (the `push` event and the `pull_request` event) and
@@ -12,11 +24,13 @@ on:
 # carries refs/pull/*/merge, so the two groups never matched and
 # cancel-in-progress never fired across them. The PR number unites both events
 # of the same PR (and `push` is limited to main, so a branch push runs once,
-# through the pull_request event). One run per PR, always the newest; a
-# superseded run is cancelled, never queued.
-concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+# through the pull_request event).
+#
+# Concurrency lives on the jobs, not on the workflow, so the three lanes can
+# supersede within their own lane without cancelling each other: a push to
+# `main` must never cancel a measurement already running (nor queue behind
+# it), and a newer scheduled window supersedes a still-waiting older one
+# instead of queueing a second 25-minute run behind it.
 
 # All jobs read the Node version from `.nvmrc` rather than pinning it inline.
 #
@@ -42,6 +56,12 @@ jobs:
   # on `main` (job `verify` below), not on every PR push.
   fast:
     if: github.event_name == 'pull_request'
+    # One run per PR, always the newest; a superseded run is cancelled, never
+    # queued. (Was the workflow-level group; moved here so `main` lanes keep
+    # their own groups — see the concurrency note above.)
+    concurrency:
+      group: ci-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     # Same billing-lock routing as `verify` below.
     runs-on: [self-hosted, accordo-ci]
     env:
@@ -101,18 +121,26 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: HEAVY_JOB_MAX_SEC=540 scripts/ci-heavy.sh fast -- bash scripts/ci-fast.sh
 
-  # Left at the default fetch-depth: 1 deliberately. Nothing under `npm run verify` or
-  # `npm run smoke` reads git history — the only git these run is `ls-files`, `status`
-  # and `diff HEAD`, all of which work in a one-commit checkout, and the provenance
-  # tests build their own fixture repositories rather than reading this one.
+  # Full history here, not the default fetch-depth: 1. The measure itself needs
+  # no history, but the re-anchor binds the record with ancestor checks and
+  # the realign step works branches — both moved here with the measurement
+  # (backlog:911355123044). The pack is under 3 MB, so this stays cheap.
   verify:
-    # The full suite with its measurement runs only on `main`: on a PR it
-    # would hold the shared Mac's single heavy lock ~25 minutes per push,
-    # queueing Arvo's releases behind it. (What runs where is §7 of
-    # docs/QUALITY_GATES.md.) A red measurement here keeps `main` red: the
-    # step below has no `continue-on-error`, and `public-claims` refuses a
-    # missing measurement instead of going quiet.
-    if: github.event_name == 'push'
+    # The full suite with its measurement runs on `main` on a schedule — the
+    # configured window — plus manual dispatch, never on `push`
+    # (backlog:911355123044): on a push it would hold the shared Mac's single
+    # heavy lock ~25 minutes per merge, queueing Arvo's releases and the fast
+    # PR gates behind it. (What runs where is §7 of docs/QUALITY_GATES.md.)
+    # A red measurement here keeps `main` red: the measure step below has no
+    # `continue-on-error`, and the re-anchor refuses a missing measurement
+    # instead of going quiet.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # At most one scheduled measurement alive: a newer window supersedes a
+    # still-waiting older one instead of queueing a second 25-minute run. A
+    # push to `main` is a different group and never cancels this job.
+    concurrency:
+      group: ci-main-measure
+      cancel-in-progress: true
     # Self-hosted while the account billing lock rejects every GitHub-hosted
     # job at start (0 steps, "account is locked due to a billing issue").
     # Switch back to ubuntu-latest once billing is unlocked.
@@ -128,12 +156,28 @@ jobs:
       ACCORDO_FULL_SHELL_ORACLE: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: see the job-level comment above.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
+      # Second half of "at most once per window, and only when the head
+      # changed": when the committed ledger already names this head, every
+      # step below skips and the run ends green without touching the lock.
+      # Runs on plain setup-node, before `npm ci`: the guard imports only
+      # node builtins and `scripts/git-env.js`.
+      - name: Skip when HEAD is already measured
+        id: guard
+        run: |
+          if [ "$(node scripts/ci-measure-guard.js)" = "true" ]; then
+            echo "measure_needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "measure_needed=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Start PostgreSQL 16 (self-hosted macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.guard.outputs.measure_needed == 'true'
         run: |
           brew services start postgresql@16
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 && break; sleep 2; done
@@ -141,12 +185,12 @@ jobs:
           psql -h /tmp -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'postgres') THEN CREATE ROLE postgres SUPERUSER LOGIN; END IF; END \$\$;"
           psql -h /tmp -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'accordo_test'" | grep -q 1 || psql -h /tmp -d postgres -c "CREATE DATABASE accordo_test OWNER postgres;"
       - name: Start PostgreSQL 16 (GitHub-hosted Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.guard.outputs.measure_needed == 'true'
         run: |
           docker run -d --name accordo-pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 -U postgres && break; sleep 2; done
       - name: Install and verify PostgreSQL 16 backup client (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.guard.outputs.measure_needed == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install --yes postgresql-client-16
@@ -154,38 +198,76 @@ jobs:
           pg_restore --version | grep -E '^pg_restore \(PostgreSQL\) 16\.'
           psql --version | grep -E '^psql \(PostgreSQL\) 16\.'
       - name: Verify PostgreSQL 16 backup client (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.guard.outputs.measure_needed == 'true'
         run: |
           pg_dump --version | grep -E '^pg_dump \(PostgreSQL\) 16\.'
           pg_restore --version | grep -E '^pg_restore \(PostgreSQL\) 16\.'
           psql --version | grep -E '^psql \(PostgreSQL\) 16\.'
-      - run: npm ci
+      - name: Install dependencies
+        if: steps.guard.outputs.measure_needed == 'true'
+        run: npm ci
       # The measurement script executes npm run verify itself on this clean
       # checkout. Reuse that run instead of maintaining an unmeasured suite and
       # asking a maintainer to run it again on a different machine.
       - name: Verify and emit the measured claim record
+        if: steps.guard.outputs.measure_needed == 'true'
         run: scripts/ci-heavy.sh measure -- node scripts/measure-suite.js > "$RUNNER_TEMP/measurement.json"
       # The account's artifact storage can be full (the billing lock also stops the
-      # quota from being freed), and both jobs run on the same self-hosted runner, so
-      # the record is also kept on the runner. Keyed by this run and attempt, never by
-      # commit: a re-run of a commit whose verify failed must not find the record an
-      # earlier green run left behind.
-      - name: Keep the measurement on the runner for public-claims
+      # quota from being freed), and the re-anchor below runs in this same job,
+      # so the record is also kept on the runner. Keyed by this run and attempt,
+      # never by commit: a re-run of a commit whose verify failed must not find
+      # the record an earlier green run left behind.
+      - name: Keep the measurement on the runner for the re-anchor
+        if: steps.guard.outputs.measure_needed == 'true'
         run: |
           mkdir -p "$HOME/.accordo-ci/measurements"
           cp "$RUNNER_TEMP/measurement.json" "$HOME/.accordo-ci/measurements/${{ github.run_id }}-${{ github.run_attempt }}.json"
-      - run: scripts/ci-heavy.sh smoke -- npm run smoke
+      - name: Smoke the measured tree
+        if: steps.guard.outputs.measure_needed == 'true'
+        run: scripts/ci-heavy.sh smoke -- npm run smoke
       - name: Replay the published quote approval recipe
+        if: steps.guard.outputs.measure_needed == 'true'
         run: |
           scripts/ci-heavy.sh recipe -- bash -c 'node --no-warnings examples/recipes/quote-approval/run.mjs "$RUNNER_TEMP/quote-approval-crm" && npm --prefix "$RUNNER_TEMP/quote-approval-crm" run verify'
       - uses: actions/upload-artifact@v4
-        # Best effort: the runner-local copy above is what public-claims falls back to.
+        # Best effort: the runner-local copy above is what the re-anchor falls back to.
+        if: steps.guard.outputs.measure_needed == 'true'
         continue-on-error: true
         with:
           name: claims-measurement-${{ github.sha }}
           path: ${{ runner.temp }}/measurement.json
           if-no-files-found: error
           retention-days: 30
+      # What `public-claims` used to do on every push now happens here, once per
+      # window, on the tree just measured: the committed truth document must
+      # equal a fresh generation from its own inputs (same leniency as on PRs —
+      # advisory-only drift warns instead of failing), then the ledger is
+      # re-anchored at this run's measurement, the document regenerated, and
+      # freshness (`--require-current`) proves the new numbers. A missing or
+      # failed measurement fails red here instead of passing quietly.
+      - name: The committed truth document agrees with its authorities
+        if: steps.guard.outputs.measure_needed == 'true'
+        run: npm run repo:truth -- --check --drift-advisory
+      - name: Re-anchor the ledger at this run's measurement
+        if: steps.guard.outputs.measure_needed == 'true'
+        run: node scripts/apply-ci-measurement.js "${{ runner.temp }}/measurement.json"
+      - name: Regenerate the truth document from the re-anchored ledger
+        if: steps.guard.outputs.measure_needed == 'true'
+        run: npm run repo:truth
+      - name: Freshness holds on the fresh measurement
+        if: steps.guard.outputs.measure_needed == 'true'
+        run: npm run repo:truth -- --check --require-current
+      # Controlled regeneration (backlog:6a3d0316): when merges since the last
+      # measurement carried advisory-only drift, the regenerated files above go
+      # onto the fixed branch `chore/truth-realign-main` behind ONE PR titled
+      # `chore(truth): realign main`, which follows the normal gate, so `main`
+      # returns aligned with no manual commit and CI never pushes to `main`
+      # directly. (Moved here from `public-claims` with the measurement.)
+      - name: Realign the committed truth document when merges drifted
+        if: steps.guard.outputs.measure_needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/realign-truth-main.js --push
 
   # Public claims are held to the same standard as the code that backs them:
   # a marketing sentence whose evidence has moved fails the build, exactly like a
@@ -193,24 +275,25 @@ jobs:
   public-claims:
     # Same billing-lock routing as `verify` above.
     runs-on: [self-hosted, accordo-ci]
-    # The measurement this job checks is the one `verify` just produced on
-    # this same tree (same workflow run, same checkout ref): no local
-    # `measure-suite --apply` commit is needed for a PR to go green
-    # (backlog:98cb04b959e6). `needs` orders the two jobs; `!cancelled()`
-    # keeps the ordering without silencing a failure — a `needs` alone would
-    # SKIP this job when `verify` fails, and a skipped gate reads as quiet.
-    # Running unless cancelled means a missing or failed measurement fails
-    # this job red instead: the download finds no artifact and refuses.
-    # Freshness against a new measurement (`--require-current`) needs the full
-    # suite, so like `verify` this runs only on `main`: a PR proves agreement
-    # in `fast` and is re-measured at merge time here.
-    needs: [verify]
-    if: ${{ github.event_name == 'push' && !cancelled() }}
+    # A push to `main` proves agreement and reports the measurement's age, and
+    # stays green between a merge and the next scheduled measurement
+    # (backlog:911355123044): no local `measure-suite --apply` commit is
+    # needed for a PR to go green (backlog:98cb04b959e6), and the merged tree
+    # is re-measured on schedule by `verify`, not at merge time here. The
+    # re-anchor, the freshness gate (`--require-current`) and the realign PR
+    # moved to `verify` with the measurement; this job never starts
+    # `measure-suite.js` and never fails for a stale-but-agreeing ledger.
+    # Its own lane: a newer push supersedes this check, and it never cancels
+    # — nor waits on — a scheduled measurement already running.
+    concurrency:
+      group: ci-main-claims
+      cancel-in-progress: true
+    if: ${{ github.event_name == 'push' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # The one job that reads history, because it is the one job that checks a
-          # historical fact. site/claims.json records the commit its public numbers were
+          # A job that reads history, because it checks a historical fact.
+          # site/claims.json records the commit its public numbers were
           # measured at, and scripts/measurement.js has to show that commit is an
           # ancestor of HEAD — object existence is not provenance; a commit pushed to an
           # unrelated branch has that too.
@@ -233,10 +316,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run gtm:check
-      # The Repository Truth Contract (ADR-039) belongs in this job and in no
-      # other. Its measurement provenance checks need full git history, and this
-      # is the one job that has it — which is also why it cannot go in `verify`,
-      # deliberately left at `fetch-depth: 1`.
+      # The Repository Truth Contract (ADR-039) agreement gate belongs in this
+      # job and in `fast`, never the freshness gate: its measurement
+      # provenance checks need full git history, and this job has it. The
+      # freshness gate (`--require-current`) runs in the scheduled `verify`
+      # flow, which also checks out full history since the re-anchor moved
+      # there with the measurement.
       #
       # It shipped wired into nothing: a contract written because the failure it
       # closes was "found by a person, not by a gate" was itself waiting on a
@@ -245,65 +330,19 @@ jobs:
       # developer runs locally in a possibly shallow clone — is unchanged. It
       # takes about half a second.
       #
-      # Before this step the ledger still names the last locally measured
-      # commit, so any PR that moved `tests/` would fail below until somebody
-      # re-ran the suite on a Mac. Instead the job takes the measurement
-      # `verify` just produced on this exact tree: the artifact is missing
-      # exactly when `verify` failed or never measured, and the download
-      # refuses in that case — a missing measurement fails red, never quiet.
-      # `apply-ci-measurement.js` binds the record to this checkout (HEAD,
-      # `HEAD:tests`, clean tree, green run) before writing anything.
-      # Gate 1 on the committed document, before anything is regenerated: the
-      # document the merge commits must equal a fresh generation from its own
-      # inputs — with the same leniency as on PRs (S70, backlog:6a3d0316):
-      # advisory-only drift warns instead of failing (no `--base` here: the
-      # realign PR at the end of this job shows the whole diff under the
-      # normal gate). A moved or dropped value still fails here, and only
-      # the measurement re-anchor below is CI's to do; every other fact stays
-      # the author's to regenerate.
+      # Gate 1 on the committed document: the document the merge commits must
+      # equal a fresh generation from its own inputs — with the same leniency
+      # as on PRs (S70, backlog:6a3d0316): advisory-only drift warns instead
+      # of failing. A moved or dropped value still fails here. Measurement
+      # staleness does NOT fail here: between a merge and the next scheduled
+      # measurement the ledger names the older tree by design, and freshness
+      # (`--require-current`) runs in the scheduled `verify` flow instead.
+      # Every non-measurement fact stays the author's to regenerate.
       - name: The committed truth document agrees with its authorities
         run: npm run repo:truth -- --check --drift-advisory
-      - name: Take the measurement verify just produced on this tree
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: claims-measurement-${{ github.sha }}
-          path: ${{ runner.temp }}/ci-measurement
-      # The artifact is missing when storage is full; the runner-local copy written by
-      # `verify` for this same commit stands in. Neither present means verify never
-      # measured this tree, and the job fails red here.
-      - name: Fall back to the runner-local measurement
-        run: |
-          dest="${{ runner.temp }}/ci-measurement/measurement.json"
-          if [ ! -s "$dest" ]; then
-            src="$HOME/.accordo-ci/measurements/${{ github.run_id }}-${{ github.run_attempt }}.json"
-            [ -s "$src" ] || { echo "no CI measurement from this run (${{ github.run_id }}-${{ github.run_attempt }}): neither artifact nor runner copy" >&2; exit 1; }
-            mkdir -p "$(dirname "$dest")" && cp "$src" "$dest"
-          fi
-      - name: Re-anchor the ledger at the CI measurement
-        run: node scripts/apply-ci-measurement.js "${{ runner.temp }}/ci-measurement/measurement.json"
-      # The committed document was checked as committed above. Its measurement
-      # facts still name the last measured tree, so it is regenerated here from
-      # the re-anchored ledger for the freshness check below only. Authors still
-      # regenerate and commit it for every other fact they move (QUALITY_GATES
-      # s6.1); what they no longer do is re-measure the suite on a Mac.
-      - run: npm run repo:truth
-      # `--require-current` holds the freshness ratio at 1: any fact whose
-      # status is not `current` (a measurement that no longer describes this
-      # tree) fails this job, exactly like a test would. A local `--check`
-      # without the flag still guards agreement only.
-      - run: npm run repo:truth -- --check --require-current
-      # Controlled regeneration (backlog:6a3d0316): when the merge carried
-      # advisory-only drift — parallel PRs, S70 — the regenerated files above
-      # go onto the fixed branch `chore/truth-realign-main` behind ONE PR
-      # titled `chore(truth): realign main`, which follows the normal gate,
-      # so `main` returns aligned with no manual commit and CI never pushes
-      # to `main` directly. The step refuses red when a fact value moved
-      # or dropped outside the CI-owned measurement facts: that always needs
-      # a person. A lost race for the branch warns instead of failing red —
-      # the other run owns it and the next `main` run retries; any other
-      # push failure stays red.
-      - name: Realign the committed truth document when the merge drifted
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/realign-truth-main.js --push
+      # Signal, never gate: reports which tree the public numbers were
+      # measured at and how old that measurement is — a `::notice::` inside
+      # the measure window, a `::warning::` past it. Always exits 0, so this
+      # job stays green between a merge and the next scheduled measurement.
+      - name: Report the measurement age
+        run: node scripts/ci-measurement-age.js --window-hours 6

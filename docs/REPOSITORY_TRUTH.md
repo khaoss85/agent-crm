@@ -255,7 +255,7 @@ fact warns only when the base already carries it.
 
 On `main` the same drift goes onto ONE fixed branch (`chore/truth-realign-main`)
 behind ONE pull request titled `chore(truth): realign main`
-(`scripts/realign-truth-main.js --push`, last step of `public-claims`), which
+(`scripts/realign-truth-main.js --push`, last step of the scheduled `verify` flow), which
 follows the normal merge gate — so `main` returns aligned with no manual
 commit, and CI never pushes to `main` directly. A moved or dropped value
 refuses there too: that always needs a person.
@@ -284,7 +284,7 @@ tree — which is how three `stale` measurement facts once left `--check` green.
 `--check --require-current` adds the gate the first three cannot be: every fact
 whose status is not `current` fails as `TRUTH_FACT_NOT_CURRENT`, naming the fact,
 its status and the freshness ratio (`current` facts over all facts), so a ratio
-below 1 breaks the run. The `public-claims` CI job passes the flag; a local
+below 1 breaks the run. The scheduled `verify` flow on `main` passes the flag; a local
 `--check` without it is unchanged. The header prints the ratio in both modes, so
 the number CI enforces is the number a developer already sees.
 
@@ -414,11 +414,13 @@ is a new gate with its own false-positive budget, and it needs count-shaped fact
 
 ## Where it runs, and where it deliberately does not
 
-`repo:truth -- --check` runs on every push and every pull request, as its own step in
-the **`public-claims`** CI job. That is the one job checked out with `fetch-depth: 0`,
-and the measurement provenance checks need full git history — which is also why it is
-**not** in `npm run verify`, deliberately left at `fetch-depth: 1`, where a
-fail-closed history check would be a flake rather than a gate.
+`repo:truth -- --check` runs on every pull request (its own step in the `fast`
+gate) and on every push to `main` (its own step in the **`public-claims`** CI
+job). Both check out full history (`fetch-depth: 0`), which the measurement
+provenance checks need. The freshness flag (`--require-current`) lives in the
+scheduled `verify` flow instead — it also checks out full history now that the
+re-anchor moved there with the measurement — never in a shallow checkout,
+where a fail-closed history check would be a flake rather than a gate.
 
 It is a separate step rather than a member of `npm run gtm:check`, because
 `gtm:check` is also run locally, in a clone that may be shallow.
@@ -460,8 +462,8 @@ re-measure flips them back:
 Neither state is the design: staleness is the transient half of the cycle, and a
 stale reading is the signal to re-measure, not a failure of the record. What fails
 is publishing without re-measuring — `--check` refuses a document that no longer
-matches its authorities, and `--check --require-current` in the `public-claims`
-CI job refuses any fact that is not `current`. The operating rule that keeps the
+matches its authorities, and `--check --require-current` in the scheduled
+`verify` flow on `main` refuses any fact that is not `current`. The operating rule that keeps the
 goal's ratio at one is to **re-measure before publish**: a PR that moves `tests/`
 re-anchors the record (a full `--apply` run, or `measure:refresh` where it
 qualifies) before it merges to main, so the three measurement facts are `current`
@@ -496,17 +498,20 @@ fixture edit under `tests/`, a broken lineage, a red targeted run, a record
 that predates the map — fails closed with the reason, and only a full run may
 speak for the new tree.
 
-That full run now belongs to CI, not to a developer machine. The `verify` job
-runs `measure-suite.js` on the PR tree and uploads the record as the
-`claims-measurement` artifact; the `public-claims` job downloads that artifact,
-binds it to its own checkout with `scripts/apply-ci-measurement.js` (HEAD, the
-`tests/` fingerprint, a clean tree, a green run — anything else refuses), and
-regenerates the truth document from the re-anchored ledger before running
-`--check --require-current`. A PR that changes code and tests goes green without
-any local measure commit, and a missing or failed CI measurement fails the job
-red instead of passing quietly. The local `--apply` and `--refresh` remain for
-verifying the ledger on a workstation; no CI step and no turn needs them on a
-shared machine anymore.
+That full run now belongs to CI, not to a developer machine. On schedule — at most
+once per 6-hour window, and only when the head moved since the last recording —
+the `verify` flow runs `measure-suite.js` on `main` and uploads the record as the
+`claims-measurement` artifact; in the same flow it binds the record to its own
+checkout with `scripts/apply-ci-measurement.js` (HEAD, the `tests/` fingerprint,
+a clean tree, a green run — anything else refuses), and regenerates the truth
+document from the re-anchored ledger before running `--check --require-current`.
+A PR that changes code and tests goes green without any local measure commit, and
+a missing or failed CI measurement fails the scheduled job red instead of passing
+quietly. Between a merge and the next scheduled measurement the push-time
+`public-claims` job proves agreement only and reports the measurement's age
+(`scripts/ci-measurement-age.js`), staying green by design. The local `--apply`
+and `--refresh` remain for verifying the ledger on a workstation; no CI step and
+no turn needs them on a shared machine anymore.
 
 A superseded measurement says *what* superseded it: the site-check provenance
 note and `repo:truth -- --check` name the commits that touched `tests/` since
