@@ -296,7 +296,7 @@ export function createChannelsPackage(options = {}) {
         name: 'advance-initial-import',
         label: 'Advance initial history import',
         appMethod: 'advanceInitialImport',
-        description: 'Pull one bounded history page, store one inbox row per event through the deduped webhook path, and reconcile every imported sender to its contact. Repeat until done.',
+        description: 'Pull one bounded history page, store one inbox row per event through the deduped webhook path, and reconcile every imported sender to its contact — pending without the composed capability. Repeat until done.',
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
           { name: 'connectionKey', type: 'string', required: true, hint: 'The active connection source key in that space.' },

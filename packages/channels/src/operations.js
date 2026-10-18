@@ -768,27 +768,29 @@ export function createChannelOperations(deps) {
    * Record one event's outcome under its unique (import, event) key. A
    * concurrent advance that won the same event keeps its row: the loser
    * re-reads it instead of surfacing a raw unique violation — the same
-   * contract as the inbox store below. Refinement is one-directional
-   * (absent/failed/pending may move, a final outcome is kept), except a
-   * store that just won the inbox insert always records `imported`: the
-   * row it stored is proof, whoever wrote first.
+   * contract as the inbox store below. Refinement is one-directional:
+   * absent and `failed` take the new values, `pending` takes the refined
+   * sender, a final outcome is kept. The row part never needs forcing: the
+   * caller derives it from the inbox row (a store that inserted proves
+   * `imported`; a duplicate reads the row's importKey), so whatever the
+   * interleave, the recorded outcome agrees with the row.
    */
-  async function recordImportOutcome({ spaceId, connectionKey, importKey, providerEventId, outcome, sender, applied, forceImported }) {
+  async function recordImportOutcome({ spaceId, connectionKey, importKey, providerEventId, outcome, sender, applied }) {
     const service = importOutcomes();
     const sourceKey = outcomeSourceKey(importKey, providerEventId);
     const actor = SYSTEM();
-    // One-directional refinement over the committed row: absent and `failed`
-    // take the new values, `pending` takes the refined sender, a final
-    // outcome is kept — except a store that just won the inbox insert, whose
-    // stored row proves `imported` whoever wrote first.
     const refine = (current) => {
       const final = IMPORT_OUTCOME_FINAL_SENDERS.has(current.sender) && current.outcome !== 'failed';
-      if (final && !forceImported) return null;
-      return {
-        ...(forceImported || current.outcome === 'failed' ? { outcome } : {}),
-        ...(!final ? { sender } : {}),
+      if (final) return null;
+      const next = {
+        outcome: current.outcome === 'failed' ? outcome : current.outcome,
+        sender: current.sender === 'pending' || current.outcome === 'failed' ? sender : current.sender,
         applied,
       };
+      if (next.outcome === current.outcome && next.sender === current.sender && next.applied === current.applied) {
+        return null;
+      }
+      return next;
     };
     const existing = service.listWhere({ sourceKey })[0] ?? null;
     if (existing) {
