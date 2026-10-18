@@ -23,7 +23,7 @@
  * vercel.json — the indexing gate checks for exactly that.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawnGit } from './git-env.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -46,9 +46,8 @@ import { pathToFileURL } from 'node:url';
 export function restoreProvenance(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
-  const runGit = options.runGit ?? ((args) => spawnSync('git', args, {
+  const runGit = options.runGit ?? ((args) => spawnGit(args, {
     cwd,
-    encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }));
   const out = options.out ?? console.log;

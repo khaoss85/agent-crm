@@ -46,6 +46,7 @@
 
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { spawnGit } from './git-env.js';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -123,7 +124,7 @@ export function realignDecision({ committed, disk }) {
 }
 
 const git = (args, cwd) => {
-  const run = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const run = spawnGit(args, { cwd });
   return { status: run.status ?? 1, stdout: String(run.stdout ?? '').trim(), stderr: String(run.stderr ?? '').trim() };
 };
 

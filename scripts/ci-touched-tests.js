@@ -87,6 +87,7 @@
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { spawnGit } from './git-env.js';
 import { dirname, join, normalize } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -202,7 +203,7 @@ export const REPO_WIDE_GUARD_EXCLUSIONS = Object.freeze({
 });
 
 const git = (/** @type {string[]} */ args) => {
-  const run = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  const run = spawnGit(args, { cwd: root });
   return { status: run.status ?? 1, stdout: String(run.stdout ?? '').trim() };
 };
 

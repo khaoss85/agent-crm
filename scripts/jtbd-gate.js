@@ -38,7 +38,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execGit } from './git-env.js';
 import { createReadStream, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -817,12 +817,12 @@ async function main() {
     // A deliberate human action: re-stamp what each assessment reads, at HEAD. Kept apart
     // from `--write` so that regenerating an overlay can never bless evidence that moved.
     const doc = JSON.parse(readFileSync(join(ROOT, PATHS.assessments), 'utf8'));
-    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+    const head = execGit(['rev-parse', 'HEAD'], { cwd: ROOT }).trim();
     for (const entry of doc.assessments) {
       for (const item of entry.evidence) {
-        const dirty = execFileSync('git', ['status', '--porcelain', '--', item.path], { cwd: ROOT, encoding: 'utf8' }).trim();
+        const dirty = execGit(['status', '--porcelain', '--', item.path], { cwd: ROOT }).trim();
         if (dirty) throw new Error(`${item.path} has uncommitted changes; commit it before --reverify`);
-        const committed = execFileSync('git', ['show', `HEAD:${item.path}`], { cwd: ROOT, encoding: 'utf8' });
+        const committed = execGit(['show', `HEAD:${item.path}`], { cwd: ROOT });
         item.sha256 = sha256(committed);
       }
       entry.verifiedAtSha = head;

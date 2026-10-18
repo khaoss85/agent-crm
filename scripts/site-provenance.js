@@ -1,5 +1,5 @@
 // @ts-check
-import { execFileSync } from 'node:child_process';
+import { execGit } from './git-env.js';
 
 /**
  * Resolve the source commit from Git itself. Deployment environment SHAs are intentionally ignored:
@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
  */
 export function checkoutSha({ cwd, env = process.env }) {
   try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return execGit(['rev-parse', 'HEAD'], { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch {
     const fixtureSha = env.ACCORDO_SITE_TEST_CHECKOUT_SHA;
     if (env.NODE_ENV === 'test' && /^[0-9a-f]{40}$/i.test(String(fixtureSha))) return String(fixtureSha);
