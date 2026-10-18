@@ -83,9 +83,9 @@ function resolvedNames(moduleNames = {}) {
 }
 
 /** @param {{domains: any, modules: any, actor?: unknown, now?: () => string}} ctx */
-function lifecycleSource({ domains, modules, actor, now }) {
+async function lifecycleSource({ domains, modules, actor, now }) {
   try {
-    return domains.capability({
+    return await domains.capability({
       consumer: LIFECYCLE_PACKAGE,
       capability: SOURCE_CAPABILITY.capability,
       version: SOURCE_CAPABILITY.version,
@@ -111,9 +111,9 @@ function lifecycleSource({ domains, modules, actor, now }) {
  *
  * @param {{domains: any, modules: any, actor?: unknown, now?: () => string}} ctx
  */
-function workFollowUp({ domains, modules, actor, now }) {
+async function workFollowUp({ domains, modules, actor, now }) {
   try {
-    return domains.capability({
+    return await domains.capability({
       consumer: LIFECYCLE_PACKAGE,
       capability: WORK_FOLLOW_UP_CAPABILITY.capability,
       version: WORK_FOLLOW_UP_CAPABILITY.version,
@@ -349,7 +349,7 @@ export function buildPlanRenewalAction(moduleNames) {
     async execute({ record, input, actor, modules, domains, now }) {
       requireCalendarDate(input.asOf, 'asOf');
       const windowDays = Number.isSafeInteger(input.windowDays) && input.windowDays > 0 ? input.windowDays : 90;
-      const source = lifecycleSource({ domains, modules, actor, now });
+      const source = await lifecycleSource({ domains, modules, actor, now });
       const evidence = source.termEvidence(record.id);
       if (!evidence) {
         throw new AppError('This contract has no readable term evidence', { code: 'CONTRACT_NOT_READABLE', status: 404 });
@@ -427,7 +427,7 @@ export function buildRecordRenewalDecisionAction(moduleNames) {
       const decidedBy = requireHuman(actor, 'Recording a renewal decision');
       const reason = requireReason(input.reason);
       requireCalendarDate(input.asOf, 'asOf');
-      const source = lifecycleSource({ domains, modules, actor, now });
+      const source = await lifecycleSource({ domains, modules, actor, now });
       const evidence = source.termEvidence(record.id);
       if (!evidence) {
         throw new AppError('This contract has no readable term evidence', { code: 'CONTRACT_NOT_READABLE', status: 404 });
@@ -453,7 +453,7 @@ export function buildRecordRenewalDecisionAction(moduleNames) {
       const submitted = { decision: input.decision, reason };
       const replay = { code: 'RENEWAL_DECISION_CONFLICT', what: 'A renewal decision for this contract on this date' };
 
-      const existing = decisions.listWhere({ sourceKey })[0];
+      const existing = (await decisions.listWhere({ sourceKey }))[0];
       if (existing) return replayOrConflict(existing, submitted, replay);
 
       const decidedAt = now();
@@ -476,7 +476,7 @@ export function buildRecordRenewalDecisionAction(moduleNames) {
         // re-reading makes them one — so the unique constraint decides, and the
         // loser answers from the winner's row rather than from a driver error.
         if (!isUniqueConflict(error)) throw error;
-        const raced = decisions.listWhere({ sourceKey })[0];
+        const raced = (await decisions.listWhere({ sourceKey }))[0];
         if (!raced) throw error;
         return replayOrConflict(raced, submitted, replay);
       }
@@ -526,15 +526,15 @@ export function buildRequestCommercialFollowupAction(moduleNames, options = {}) 
     async execute({ record, input, actor, modules, domains, now }) {
       const requestedBy = requireHuman(actor, 'Requesting commercial follow-up');
       const summary = requireReason(input.summary, 'summary');
-      const source = lifecycleSource({ domains, modules, actor, now });
+      const source = await lifecycleSource({ domains, modules, actor, now });
       const evidence = source.termEvidence(record.id);
       if (!evidence) {
         throw new AppError('This contract has no readable term evidence', { code: 'CONTRACT_NOT_READABLE', status: 404 });
       }
       const decisions = modules.get(names.decision)?.service;
       if (input.decisionId) {
-        const decision = decisions?.listWhere({ contractId: record.id })
-          .find((row) => row.id === input.decisionId);
+        const decision = (await decisions?.listWhere({ contractId: record.id }))
+          ?.find((row) => row.id === input.decisionId);
         if (!decision) {
           throw new ValidationError('decisionId does not name a decision recorded on this contract', { field: 'decisionId' });
         }
@@ -556,7 +556,7 @@ export function buildRequestCommercialFollowupAction(moduleNames, options = {}) 
       //
       // Both reads are exact (`listWhere`, no page bound): the guard and the
       // round number must be complete, not the first 500 rows.
-      const history = followups.listWhere({ contractId: record.id, intent: input.intent });
+      const history = await followups.listWhere({ contractId: record.id, intent: input.intent });
       const submitted = { summary, decisionId: input.decisionId ?? null };
       const replay = { code: 'FOLLOWUP_ALREADY_PENDING', what: `A ${input.intent} follow-up on this contract` };
 
@@ -613,14 +613,14 @@ export function buildRequestCommercialFollowupAction(moduleNames, options = {}) 
         // picked the winner. The loser answers from the winner's row — and
         // creates no work task, because the winner already created that one.
         if (!isUniqueConflict(error)) throw error;
-        const raced = followups.listWhere({ sourceKey })[0];
+        const raced = (await followups.listWhere({ sourceKey }))[0];
         if (!raced) throw error;
         return replayOrConflict(raced, submitted, replay);
       }
       if (followUpEnabled) {
         // Same transaction, the caller's own `modules` handle: if this throws,
         // the follow-up record above rolls back with it.
-        const work = workFollowUp({ domains, modules, actor, now });
+        const work = await workFollowUp({ domains, modules, actor, now });
         await work.createFollowUp({
           // (contract, intent, round) is already the ask's identity, and the
           // record that carries it has an id. Keying on that id means a second

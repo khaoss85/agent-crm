@@ -338,6 +338,6 @@ test('a caller that cannot produce the signed document is refused, never downgra
 
   // Supplying the real document verifies, and answers the term that was signed.
   const document = JSON.parse(s.db.prepare('SELECT document_json FROM signature_envelopes WHERE quote_version_id = ?').get(s.versionId).document_json);
-  const verified = quotes.verifySignedTerms({ scope: 'order', orderId: s.order.id, rows, documentTerms: document.terms });
+  const verified = await quotes.verifySignedTerms({ scope: 'order', orderId: s.order.id, rows, documentTerms: document.terms });
   assert.equal(verified.verified.termEndDate, '2027-08-31');
 });

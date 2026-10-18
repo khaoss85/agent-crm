@@ -2785,14 +2785,14 @@
     "packages/commercial/modules/quote-version-total.module.json": "9ea4af6efc5ff7e506b7f7b78c7440e9be603507d6d0246904b7b384bb1a88e2",
     "packages/commercial/modules/quote-version.module.json": "b3a209f5f45c1486f942e145437e69f091cd3bd77972485386607af0dc5f3bc9",
     "packages/commercial/modules/quote.module.json": "08a6d9a8e48d2d412837a8a52c6fae22520b3add5a82275901ce4754c31386b0",
-    "packages/commercial/src/actions.js": "d256803ff214681f88c5fe74b1991c0d6c0da7c0dbb1bd04a1daff9c3f7f5cbb",
-    "packages/commercial/src/capability.js": "46a561e9021b601b12f4467e2c7facead61d459391e307d004c00e704cadbf98",
-    "packages/commercial/src/catalog-sync.js": "f9ac765ce30ebde27e35aa9f441f417dd1da640a70a98dbb7a013b900489bdb4",
+    "packages/commercial/src/actions.js": "c54feaa41ff41c41f0f2b343c60bb43a8a8979d61b697d79d454282f302249c0",
+    "packages/commercial/src/capability.js": "d530d30ad31ab0cd5a7af3d3486e0329b79736ba61eeaf9a4a6ac9976d0c7004",
+    "packages/commercial/src/catalog-sync.js": "d315a3a12535820661083d651fd104dafcff696d2df4ba4c5f094a057ffc6a73",
     "packages/commercial/src/index.js": "e9eaf14c47ee205720a6e2e38c9d321e1e694926ab957e4f4639866ecd826b64",
     "packages/commercial/src/money.js": "5a2716542ebac08388b75d425c0c8c7b91b3dbc8ec756e42927d6d9b203d5a86",
     "packages/commercial/src/registry.js": "60d7ceff3de3bf88363288cb2c0a9386a335f6c1b10bf6a935306695a75b40af",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",
-    "packages/commercial/src/verify-terms.js": "e3c4e150fc4e6a0efe925f8db6d14698e4a69e9c6518d5e3f7ee90473db8871c",
+    "packages/commercial/src/verify-terms.js": "74da76ec3246e25110ec70b40d15afa1bce6ed0031b036bcee5d30efdcb48f87",
     "packages/core/src/action-runtime.js": "b8870679dfe76d2293912866085c83713aa1bdbe8509acaabaa81fe6a100c851",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
     "packages/core/src/definition-version-store.js": "fde9bbfcd95687fb0aa7bd7bddb1eb6bb69104f6dc291a3773f70412677b0ca3",
@@ -2813,7 +2813,7 @@
     "packages/signature/modules/signed-artifact.module.json": "8f783ce318c59d86be6987290382db542c5023d95e65986667b47d612e1f4e53",
     "packages/signature/src/capability.js": "190733860a2f046703a792a37764a516b54aef334d7a700463bcce28758cf87f",
     "packages/signature/src/index.js": "2b8f8a55f5476f5694dadae99049d3704a8c73dab5c5b0a4cd8b50f780c6f313",
-    "packages/signature/src/operations.js": "a71669d9bbf268ae266c8b55d30ee9237a4e9682bafed48e00df3d45d85f1c3a",
+    "packages/signature/src/operations.js": "ab3fa0c8f2467ddee9729ac92e8c630511d702ce4d37412784abb46352ae3559",
     "packages/signature/src/registry.js": "1a375f02aceab37108f86ab5cfdf36d6b04411ece17841ef996f1d5260d3b2dd"
   }
 }

@@ -111,13 +111,13 @@ function fromJson(text) {
  * Load a pinned offer revision with its immutable components and tier
  * schedules, in deterministic order. Exact indexed reads only.
  */
-function loadOfferPricing(modules, cfg, offerId) {
-  const offer = trusted(modules, cfg.offerModule).get(offerId);
-  const components = trusted(modules, cfg.componentModule)
-    .listWhere({ offerId: offer.id })
+async function loadOfferPricing(modules, cfg, offerId) {
+  const offer = await trusted(modules, cfg.offerModule).get(offerId);
+  const components = (await trusted(modules, cfg.componentModule)
+    .listWhere({ offerId: offer.id }))
     .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
   const tierService = trusted(modules, cfg.tierModule);
-  const priced = components.map((component) => ({
+  const priced = await Promise.all(components.map(async (component) => ({
     id: component.id,
     sourceKey: component.sourceKey,
     componentKey: component.componentKey,
@@ -133,8 +133,8 @@ function loadOfferPricing(modules, cfg, offerId) {
     provider: component.provider,
     externalPriceId: component.externalPriceId,
     sourcePricingModel: component.sourcePricingModel,
-    tiers: tierService
-      .listWhere({ componentId: component.id })
+    tiers: (await tierService
+      .listWhere({ componentId: component.id }))
       .sort((a, b) => a.position - b.position)
       .map((tier) => ({
         position: tier.position,
@@ -142,7 +142,7 @@ function loadOfferPricing(modules, cfg, offerId) {
         unitAmountCents: tier.unitAmountCents,
         flatAmountCents: tier.flatAmountCents,
       })),
-  }));
+  })));
   return { offer, components: priced };
 }
 
@@ -157,9 +157,9 @@ function checkRevision(quote, input) {
 }
 
 /** Active (non-removed) draft lines in deterministic order. */
-function activeLines(modules, cfg, quoteId) {
-  return trusted(modules, cfg.lineModule)
-    .listWhere({ quoteId, removed: false })
+async function activeLines(modules, cfg, quoteId) {
+  return (await trusted(modules, cfg.lineModule)
+    .listWhere({ quoteId, removed: false }))
     .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
 }
 
@@ -178,7 +178,7 @@ function quoteComponentAmounts(lines) {
  * draft revision — atomically with whatever edit triggered it.
  */
 async function recalc(modules, cfg, quote, managed) {
-  const lines = activeLines(modules, cfg, quote.id);
+  const lines = await activeLines(modules, cfg, quote.id);
   const totals = groupComponentTotals(quoteComponentAmounts(lines), quote.currency);
   return managed(quote.id, {
     totalsJson: toJson(totals),
@@ -206,7 +206,7 @@ export function buildCreateQuoteAction(config) {
     ],
     /** @param {any} ctx */
     async execute({ record, input, actor, modules, step }) {
-      const book = trusted(modules, cfg.priceBookModule).get(input.priceBookId);
+      const book = await trusted(modules, cfg.priceBookModule).get(input.priceBookId);
       if (book.active !== true) {
         throw new AppError(`Price book "${book.id}" is not active`, { code: 'PRICE_BOOK_INACTIVE', status: 409 });
       }
@@ -230,8 +230,8 @@ export function buildCreateQuoteAction(config) {
 }
 
 /** Shared validation for line-editing actions. */
-function requireOwnLine(modules, cfg, quote, lineId) {
-  const line = trusted(modules, cfg.lineModule).get(lineId);
+async function requireOwnLine(modules, cfg, quote, lineId) {
+  const line = await trusted(modules, cfg.lineModule).get(lineId);
   if (line.quoteId !== quote.id) {
     throw new AppError('The line belongs to another quote', { code: 'COMMERCIAL_STATE_CORRUPT', status: 409 });
   }
@@ -262,7 +262,7 @@ export function buildQuoteLineActions(config) {
     /** @param {any} ctx */
     async execute({ record: quote, input, actor, modules, managed, step }) {
       checkRevision(quote, input);
-      const { offer, components } = loadOfferPricing(modules, cfg, input.offerId);
+      const { offer, components } = await loadOfferPricing(modules, cfg, input.offerId);
       if (offer.priceBookId !== quote.priceBookId) {
         throw new AppError('The offer belongs to another price book', { code: 'PRICE_BOOK_MISMATCH', status: 409 });
       }
@@ -281,7 +281,7 @@ export function buildQuoteLineActions(config) {
       if (components.length === 0 || components.length !== offer.componentCount) {
         throw new AppError('The offer has an incomplete component set and cannot be quoted', { code: 'OFFER_INCOMPLETE', status: 409 });
       }
-      const productVersion = trusted(modules, cfg.productVersionModule).get(offer.productVersionId);
+      const productVersion = await trusted(modules, cfg.productVersionModule).get(offer.productVersionId);
       const breakdown = computeLineBreakdown({ components, quantity: input.quantity, discountBps: input.discountBps ?? 0 });
       const lines = trusted(modules, cfg.lineModule);
       const line = await lines.createManaged(
@@ -302,7 +302,7 @@ export function buildQuoteLineActions(config) {
           discountAmountCents: breakdown.discountAmountCents,
           netAmountCents: breakdown.netAmountCents,
           removed: false,
-          position: lines.countWhere({ quoteId: quote.id }) + 1,
+          position: (await lines.countWhere({ quoteId: quote.id })) + 1,
         },
         { actor },
       );
@@ -332,10 +332,10 @@ export function buildQuoteLineActions(config) {
       if (input.quantity === undefined && input.discountBps === undefined) {
         throw new ValidationError('Provide quantity and/or discountBps to update', { field: 'quantity' });
       }
-      const line = requireOwnLine(modules, cfg, quote, input.lineId);
+      const line = await requireOwnLine(modules, cfg, quote, input.lineId);
       // Re-price from the PINNED offer revision: a later catalog revision never
       // silently re-prices an existing draft line.
-      const { components } = loadOfferPricing(modules, cfg, line.offerId);
+      const { components } = await loadOfferPricing(modules, cfg, line.offerId);
       const quantity = input.quantity ?? line.quantity;
       const discountBps = input.discountBps ?? line.discountBps;
       const breakdown = computeLineBreakdown({ components, quantity, discountBps });
@@ -372,7 +372,7 @@ export function buildQuoteLineActions(config) {
     /** @param {any} ctx */
     async execute({ record: quote, input, actor, modules, managed, step }) {
       checkRevision(quote, input);
-      const line = requireOwnLine(modules, cfg, quote, input.lineId);
+      const line = await requireOwnLine(modules, cfg, quote, input.lineId);
       await trusted(modules, cfg.lineModule).applyManaged(line.id, { removed: true }, { actor });
       step('quote.line-removed', { lineId: line.id });
       const updated = await recalc(modules, cfg, quote, managed);
@@ -412,7 +412,7 @@ export function buildSubmitQuoteAction(config, registries) {
     /** @param {any} ctx */
     async execute({ record: quote, input, actor, modules, services, managed, now, step }) {
       checkRevision(quote, input);
-      const lines = activeLines(modules, cfg, quote.id);
+      const lines = await activeLines(modules, cfg, quote.id);
       if (lines.length === 0) {
         throw new AppError('A quote needs at least one active line before submission', { code: 'EMPTY_QUOTE', status: 409 });
       }
@@ -426,7 +426,7 @@ export function buildSubmitQuoteAction(config, registries) {
       // quote-term manifest is indistinguishable from one that did and left it
       // empty.
       const draftTerms = optionalService(modules, cfg.quoteTermModule);
-      const draftTerm = draftTerms ? (draftTerms.listWhere({ quoteId: quote.id })[0] ?? null) : null;
+      const draftTerm = draftTerms ? ((await draftTerms.listWhere({ quoteId: quote.id }))[0] ?? null) : null;
       const signedTerm = draftTerm
         ? requireSignedTerm({
           effectiveDate: draftTerm.effectiveDate,
@@ -445,7 +445,7 @@ export function buildSubmitQuoteAction(config, registries) {
 
       let opportunity = null;
       try {
-        const record = services.opportunities?.get(quote.opportunityId);
+        const record = services.opportunities ? await services.opportunities.get(quote.opportunityId) : null;
         if (record) opportunity = { id: record.id, valueCents: record.valueCents, stage: record.stage, pipelineStage: record.pipelineStage ?? null };
       } catch {
         opportunity = null;
@@ -547,7 +547,7 @@ export function buildSubmitQuoteAction(config, registries) {
           },
           { actor },
         );
-        const priced = loadOfferPricing(modules, cfg, line.offerId);
+        const priced = await loadOfferPricing(modules, cfg, line.offerId);
         const definitionById = new Map(priced.components.map((component) => [component.id, component]));
         for (const component of breakdown.components ?? []) {
           const definition = definitionById.get(component.componentId) ?? null;
@@ -712,7 +712,7 @@ export function buildQuoteDecisionActions(config) {
         throw new AppError('The quote is pending approval but carries no approval/version link', { code: 'COMMERCIAL_STATE_CORRUPT', status: 409 });
       }
       const approvals = trusted(modules, cfg.approvalModule);
-      const approval = approvals.get(quote.currentApprovalId);
+      const approval = await approvals.get(quote.currentApprovalId);
       if (approval.quoteId !== quote.id || approval.quoteVersionId !== quote.currentVersionId) {
         throw new AppError('The approval link points at another quote or version', { code: 'COMMERCIAL_STATE_CORRUPT', status: 409 });
       }

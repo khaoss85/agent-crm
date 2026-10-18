@@ -152,24 +152,24 @@ function pascalName(moduleName) {
  */
 function moduleQuotesReader(modules, names) {
   return {
-    quote: (id) => trusted(modules, names.quote).get(id),
-    version: (id) => trusted(modules, names.version).get(id),
-    versionLines: (id) => trusted(modules, names.versionLine).listWhere({ versionId: id }),
-    versionComponents: (id) => trusted(modules, names.versionComponent).listWhere({ versionId: id }),
-    versionTotals: (id) => trusted(modules, names.versionTotal).listWhere({ versionId: id }),
+    quote: async (id) => await trusted(modules, names.quote).get(id),
+    version: async (id) => await trusted(modules, names.version).get(id),
+    versionLines: async (id) => await trusted(modules, names.versionLine).listWhere({ versionId: id }),
+    versionComponents: async (id) => await trusted(modules, names.versionComponent).listWhere({ versionId: id }),
+    versionTotals: async (id) => await trusted(modules, names.versionTotal).listWhere({ versionId: id }),
     // The version's signed-term snapshot, or null. Null is the ordinary case:
     // every version submitted before terms existed, every project that never
     // applied the quote-version-term manifest. The document builder adds a
     // `terms` section only when this answers a row, so a termless version
     // produces byte-identical canonical bytes.
-    versionTerm: (id) => {
+    versionTerm: async (id) => {
       let service = null;
       try {
         service = modules.get(names.versionTerm)?.service ?? null;
       } catch {
         service = null;
       }
-      return service ? (service.listWhere({ versionId: id })[0] ?? null) : null;
+      return service ? ((await service.listWhere({ versionId: id }))[0] ?? null) : null;
     },
   };
 }
@@ -182,11 +182,11 @@ function moduleQuotesReader(modules, names) {
  * null for an unknown id; the generated services throw — the wrapper restores
  * the exact refusal the callers have always produced.
  */
-function openCommercialQuotes(domains, modules, names) {
+async function openCommercialQuotes(domains, modules, names) {
   /** @type {any} */
   let iface;
   try {
-    iface = domains.capability({
+    iface = await domains.capability({
       consumer: 'signature', capability: 'commercial-quotes', version: 2, context: { modules },
     });
   } catch (error) {
@@ -201,26 +201,26 @@ function openCommercialQuotes(domains, modules, names) {
     return record;
   };
   return {
-    quote: (id) => require_(iface.quote(id), names.quote, id),
-    version: (id) => require_(iface.version(id), names.version, id),
-    versionLines: (id) => iface.versionLines(id),
-    versionComponents: (id) => iface.versionComponents(id),
-    versionTotals: (id) => iface.versionTotals(id),
+    quote: async (id) => require_(await iface.quote(id), names.quote, id),
+    version: async (id) => require_(await iface.version(id), names.version, id),
+    versionLines: async (id) => iface.versionLines(id),
+    versionComponents: async (id) => iface.versionComponents(id),
+    versionTotals: async (id) => iface.versionTotals(id),
     // `commercial-quotes@2`: Commercial verifies its own snapshot against the
     // canonical fingerprint before answering, so a corrupted version term
     // refuses HERE — before the document is canonicalized, before its hash is
     // taken and before any provider is called (M-1).
-    versionTerm: (id) => {
-      const outcome = iface.verifySignedTerms({ scope: 'quote-version', versionId: id });
+    versionTerm: async (id) => {
+      const outcome = await iface.verifySignedTerms({ scope: 'quote-version', versionId: id });
       return outcome ? outcome.row : null;
     },
   };
 }
 
 /** Open `commercial-quote-binding@1` — the declared edge for the one bounded write. */
-function openCommercialBinding(domains) {
+async function openCommercialBinding(domains) {
   try {
-    return domains.capability({
+    return await domains.capability({
       consumer: 'signature', capability: 'commercial-quote-binding', version: 1, context: {},
     });
   } catch (error) {
@@ -317,20 +317,20 @@ export function normalizeSigners(raw) {
  * legitimately change, permanently blocking completion. The snapshot below is
  * stored on the envelope and is the only party source the package ever uses.
  */
-export function snapshotParties({ services, version }) {
+export async function snapshotParties({ services, version }) {
   const parties = { companyId: null, companyName: null, contactId: null, contactEmail: null, opportunityId: version.opportunityId ?? null };
   try {
-    const opportunity = services?.opportunities?.get(version.opportunityId);
+    const opportunity = services?.opportunities ? await services.opportunities.get(version.opportunityId) : null;
     if (opportunity) {
       parties.opportunityId = opportunity.id;
       parties.contactId = opportunity.contactId ?? null;
-      const company = opportunity.companyId ? services?.companies?.get(opportunity.companyId) : null;
+      const company = opportunity.companyId && services?.companies ? await services.companies.get(opportunity.companyId) : null;
       if (company) {
         parties.companyId = company.id;
         parties.companyName = company.name ?? null;
       }
       if (opportunity.contactId && services?.contacts) {
-        const contact = services.contacts.get(opportunity.contactId);
+        const contact = await services.contacts.get(opportunity.contactId);
         if (contact) parties.contactEmail = contact.email ?? null;
       }
     }
@@ -363,13 +363,13 @@ function documentTermsSection(snapshot) {
   };
 }
 
-export function buildDocumentPackage({ reader, quote, version, signers, parties }) {
+export async function buildDocumentPackage({ reader, quote, version, signers, parties }) {
   // Copied before sorting: the capability hands back frozen evidence rows.
-  const lines = [...reader.versionLines(version.id)]
+  const lines = [...(await reader.versionLines(version.id))]
     .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
-  const components = reader.versionComponents(version.id);
-  const totals = reader.versionTotals(version.id);
-  const termSnapshot = typeof reader.versionTerm === 'function' ? reader.versionTerm(version.id) : null;
+  const components = await reader.versionComponents(version.id);
+  const totals = await reader.versionTotals(version.id);
+  const termSnapshot = typeof reader.versionTerm === 'function' ? await reader.versionTerm(version.id) : null;
 
   const document = {
     documentContract: 1,
@@ -450,8 +450,8 @@ export function buildDocumentPackage({ reader, quote, version, signers, parties 
 }
 
 /** Load the quote version and validate it is signable for this quote. */
-function requireApprovedVersion(reader, quote, quoteVersionId) {
-  const version = reader.version(quoteVersionId);
+async function requireApprovedVersion(reader, quote, quoteVersionId) {
+  const version = await reader.version(quoteVersionId);
   if (version.quoteId !== quote.id) {
     throw new AppError('The quote version belongs to another quote', { code: 'VERSION_MISMATCH', status: 409 });
   }
@@ -463,11 +463,11 @@ function requireApprovedVersion(reader, quote, quoteVersionId) {
   if (version.policyDecision === 'reject') {
     throw new AppError('The quote version was rejected by its discount policy', { code: 'VERSION_NOT_APPROVED', status: 409 });
   }
-  const lineCount = reader.versionLines(version.id).length;
+  const lineCount = (await reader.versionLines(version.id)).length;
   if (lineCount === 0) {
     throw new AppError('The quote version carries no commercial snapshot', { code: 'VERSION_SNAPSHOT_INCOMPLETE', status: 409 });
   }
-  if (reader.versionTotals(version.id).length === 0) {
+  if ((await reader.versionTotals(version.id)).length === 0) {
     throw new AppError('The quote version carries no grouped totals', { code: 'VERSION_SNAPSHOT_INCOMPLETE', status: 409 });
   }
   return { version, lineCount };
@@ -500,7 +500,7 @@ export function buildRequestSignatureAction(config, registries) {
     ],
 
     /** Transaction A: local intent only — no remote call has happened yet. */
-    intent({ record: quote, input, actor, modules, services, domains, now, step }) {
+    async intent({ record: quote, input, actor, modules, services, domains, now, step }) {
       // Sending for signature is a real external side effect: a human user
       // actor must own it. This is a HUMAN-ACTOR boundary, not Sales/Legal
       // role enforcement — real roles need the Production Spine.
@@ -510,26 +510,26 @@ export function buildRequestSignatureAction(config, registries) {
       const { definition: provider, fingerprint } = registries.getSignatureProvider(input.provider, input.providerVersion);
       // Every quote/version read below goes through commercial-quotes@2 — the
       // declared, registry-proven edge onto the commercial package.
-      const reader = openCommercialQuotes(domains, modules, names);
-      const { version } = requireApprovedVersion(reader, quote, input.quoteVersionId);
+      const reader = await openCommercialQuotes(domains, modules, names);
+      const { version } = await requireApprovedVersion(reader, quote, input.quoteVersionId);
       const signers = normalizeSigners(input.signers);
 
       const envelopes = trusted(modules, names.envelope);
       // Exactly one envelope per quote version, ever — the DB-unique source
       // key is also the provider idempotency key, so a repeated request can
       // never produce a second provider envelope.
-      const existing = envelopes.listWhere({ quoteVersionId: version.id })[0];
+      const existing = (await envelopes.listWhere({ quoteVersionId: version.id }))[0];
       if (existing) {
         throw new AppError(
           `A signature envelope already exists for this quote version (${existing.status}) — reconcile it instead of requesting a second one`,
           { code: 'ENVELOPE_EXISTS', status: 409, details: { envelopeId: existing.id, status: existing.status } },
         );
       }
-      const parties = snapshotParties({ services, version });
-      const { documentBytes, documentHash } = buildDocumentPackage({ reader, quote, version, signers, parties });
+      const parties = await snapshotParties({ services, version });
+      const { documentBytes, documentHash } = await buildDocumentPackage({ reader, quote, version, signers, parties });
       const idempotencyKey = `env:quote-version:${version.id}`;
       const requestedAt = now();
-      const envelope = envelopes.createManaged(
+      const envelope = await envelopes.createManaged(
         {
           sourceKey: idempotencyKey,
           idempotencyKey,
@@ -623,18 +623,18 @@ export function buildRequestSignatureAction(config, registries) {
       // creates its artifact and its order exactly like a webhook would.
       const outcome = await applyProviderState({
         modules, names,
-        envelope: envelopes.get(intent.envelopeId),
+        envelope: await envelopes.get(intent.envelopeId),
         provider: intent.provider,
         state: external.envelope,
         artifact: external.artifact,
         eventId: null, actor, now, step,
       });
-      const envelope = envelopes.get(intent.envelopeId);
+      const envelope = await envelopes.get(intent.envelopeId);
       // The one bounded cross-domain write, through its declared edge:
       // commercial-quote-binding@1 names the fields, and the write itself
       // stays the quote record's own managed path — exactly the capability's
       // written contract, never a second write mechanism.
-      const binding = openCommercialBinding(domains);
+      const binding = await openCommercialBinding(domains);
       const linkage = { signatureEnvelopeId: envelope.id, signatureStatus: envelope.status };
       for (const field of Object.keys(linkage)) {
         if (!binding.fields.includes(field)) {
@@ -657,7 +657,7 @@ export function buildRequestSignatureAction(config, registries) {
     async compensate({ intent, actor, modules, failure, phase, now, step }) {
       if (!intent?.envelopeId) return null;
       const envelopes = trusted(modules, names.envelope);
-      const envelope = envelopes.get(intent.envelopeId);
+      const envelope = await envelopes.get(intent.envelopeId);
       if (TERMINAL_ENVELOPE_STATES.includes(envelope.status)) return null;
       const updated = await envelopes.applyManaged(
         envelope.id,
@@ -708,7 +708,7 @@ function envelopeSummary(envelope) {
 async function linkQuarantinedEvents({ modules, names, envelope, actor, step }) {
   if (!envelope.providerEnvelopeId) return 0;
   const inbox = trusted(modules, names.event);
-  const orphans = inbox.listWhere({ providerEnvelopeId: envelope.providerEnvelopeId, envelopeId: null });
+  const orphans = await inbox.listWhere({ providerEnvelopeId: envelope.providerEnvelopeId, envelopeId: null });
   for (const orphan of orphans) {
     await inbox.applyManaged(
       orphan.id,
@@ -738,7 +738,7 @@ async function applyProviderState({ modules, names, envelope, provider, state, a
 
   // Signer evidence follows the provider, bounded to the signers we snapshotted.
   const signerService = trusted(modules, names.signer);
-  const signerRows = signerService.listWhere({ envelopeId: envelope.id });
+  const signerRows = await signerService.listWhere({ envelopeId: envelope.id });
   for (const providerSigner of state.signers ?? []) {
     const row = signerRows.find((candidate) => candidate.signerKey === providerSigner.signerKey);
     if (!row || row.status === providerSigner.status) continue;
@@ -771,8 +771,8 @@ async function applyProviderState({ modules, names, envelope, provider, state, a
 async function createCompletionEvidence({ modules, names, envelope, artifact, eventId, actor, now, step }) {
   const quotes = trusted(modules, names.quote);
   const reader = moduleQuotesReader(modules, names);
-  const quote = reader.quote(envelope.quoteId);
-  const version = reader.version(envelope.quoteVersionId);
+  const quote = await reader.quote(envelope.quoteId);
+  const version = await reader.version(envelope.quoteVersionId);
   if (version.quoteId !== envelope.quoteId) {
     throw new AppError('The envelope points at a version of another quote', { code: 'SIGNATURE_STATE_CORRUPT', status: 409 });
   }
@@ -780,14 +780,14 @@ async function createCompletionEvidence({ modules, names, envelope, artifact, ev
     throw new AppError(`The source quote is ${quote.status}, not approved`, { code: 'VERSION_NOT_APPROVED', status: 409 });
   }
 
-  const signers = trusted(modules, names.signer)
-    .listWhere({ envelopeId: envelope.id })
+  const signers = (await trusted(modules, names.signer)
+    .listWhere({ envelopeId: envelope.id }))
     .sort((a, b) => (a.signingOrder === b.signingOrder ? (a.signerKey < b.signerKey ? -1 : 1) : a.signingOrder - b.signingOrder));
 
   // The document package is rebuilt from the snapshot and must hash to exactly
   // what was sent for signature: proof that nothing in the commercial evidence
   // moved between the request and the signature.
-  const rebuilt = buildDocumentPackage({
+  const rebuilt = await buildDocumentPackage({
     reader, quote, version,
     signers: signers.map((signer) => ({ signerKey: signer.signerKey, name: signer.name, email: signer.email, role: signer.role, order: signer.signingOrder })),
     // The parties snapshot taken at request time — never a fresh read of
@@ -809,7 +809,7 @@ async function createCompletionEvidence({ modules, names, envelope, artifact, ev
   }
 
   const artifacts = trusted(modules, names.artifact);
-  const existingArtifact = artifacts.listWhere({ envelopeId: envelope.id })[0];
+  const existingArtifact = (await artifacts.listWhere({ envelopeId: envelope.id }))[0];
   const completedAt = artifact?.completedAt ?? now();
   const signedArtifact = existingArtifact ?? await artifacts.createManaged(
     {
@@ -840,16 +840,16 @@ async function createCompletionEvidence({ modules, names, envelope, artifact, ev
   );
 
   const orders = trusted(modules, names.order);
-  const existingOrder = orders.listWhere({ quoteVersionId: envelope.quoteVersionId })[0];
+  const existingOrder = (await orders.listWhere({ quoteVersionId: envelope.quoteVersionId }))[0];
   if (existingOrder) {
     step('order.exists', { orderId: existingOrder.id });
     return { artifact: signedArtifact, order: existingOrder };
   }
 
-  const versionLines = [...reader.versionLines(version.id)]
+  const versionLines = [...(await reader.versionLines(version.id))]
     .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
-  const versionComponents = reader.versionComponents(version.id);
-  const versionTotals = reader.versionTotals(version.id);
+  const versionComponents = await reader.versionComponents(version.id);
+  const versionTotals = await reader.versionTotals(version.id);
 
   // Party identity comes from the snapshot taken at request time, so the order
   // renders its customer without reading — or depending on — live CRM rows.
@@ -973,7 +973,7 @@ async function createCompletionEvidence({ modules, names, envelope, artifact, ev
   // included) just proved against the signed documentHash. Absent when the
   // signed document carried no term: absence is historical fact, and an old
   // order is never backfilled into claiming its terms were signed.
-  const termSnapshot = typeof reader.versionTerm === 'function' ? reader.versionTerm(version.id) : null;
+  const termSnapshot = typeof reader.versionTerm === 'function' ? await reader.versionTerm(version.id) : null;
   if (termSnapshot) {
     await trusted(modules, names.orderTerm).createManaged(
       {
@@ -1065,9 +1065,9 @@ export function createSignatureOperations(deps) {
       actor,
       timeoutMs,
       /** Transaction A: the append-only inbox row. */
-      intent({ now, step }) {
+      async intent({ now, step }) {
         const inbox = trusted(modules, names.event);
-        const already = inbox.listWhere({ provider: provider.name, providerEventId: event.providerEventId })[0];
+        const already = (await inbox.listWhere({ provider: provider.name, providerEventId: event.providerEventId }))[0];
         if (already) {
           // Replay is identified by provider + event id, but a replay must
           // also BE the same event: a reused id carrying a different payload
@@ -1082,7 +1082,7 @@ export function createSignatureOperations(deps) {
           // event that has not had its effect yet: a redelivery must resume
           // it, not answer "duplicate" and strand it forever.
           if (already.processed !== true) {
-            const envelope = already.envelopeId ? trusted(modules, names.envelope).get(already.envelopeId) : null;
+            const envelope = already.envelopeId ? await trusted(modules, names.envelope).get(already.envelopeId) : null;
             step('signature.event-resumed', { eventId: already.id, providerEventId: event.providerEventId });
             return {
               duplicate: false,
@@ -1098,7 +1098,7 @@ export function createSignatureOperations(deps) {
           step('signature.event-duplicate', { providerEventId: event.providerEventId });
           return { duplicate: true, eventId: already.id, effect: already.effect };
         }
-        const envelope = trusted(modules, names.envelope).listWhere({ providerEnvelopeId: event.providerEnvelopeId })[0] ?? null;
+        const envelope = (await trusted(modules, names.envelope).listWhere({ providerEnvelopeId: event.providerEnvelopeId }))[0] ?? null;
         return Promise.resolve(inbox.createManaged(
           {
             sourceKey: `sev:${provider.name}:${event.providerEventId}`,
@@ -1149,7 +1149,7 @@ export function createSignatureOperations(deps) {
           await inbox.applyManaged(intent.eventId, { processed: true }, { actor });
           return { quarantined: true, eventId: intent.eventId };
         }
-        const envelope = trusted(modules, names.envelope).get(intent.envelopeId);
+        const envelope = await trusted(modules, names.envelope).get(intent.envelopeId);
         const outcome = await applyProviderState({
           modules, names, envelope, provider,
           state: { status: event.status, sequence: event.sequence, signers: event.signers, completedAt: event.occurredAt },
@@ -1188,10 +1188,10 @@ export function createSignatureOperations(deps) {
       actor,
       timeoutMs,
       /** Read-only intent: reconciliation records nothing before it knows. */
-      intent({ step }) {
-        const envelope = trusted(modules, names.envelope).get(String(params.envelopeId));
-        const signerKeys = trusted(modules, names.signer)
-          .listWhere({ envelopeId: envelope.id })
+      async intent({ step }) {
+        const envelope = await trusted(modules, names.envelope).get(String(params.envelopeId));
+        const signerKeys = (await trusted(modules, names.signer)
+          .listWhere({ envelopeId: envelope.id }))
           .map((signer) => signer.signerKey)
           .sort(byteOrder);
         step('signature.reconcile-start', { envelopeId: envelope.id, status: envelope.status });
@@ -1243,7 +1243,7 @@ export function createSignatureOperations(deps) {
           // received becomes `failed` with an explicit, honest code rather
           // than sitting in `preparing` forever pretending to be in flight.
           const envelopes = trusted(modules, names.envelope);
-          const current = envelopes.get(intent.envelopeId);
+          const current = await envelopes.get(intent.envelopeId);
           if (canTransition(current.status, 'failed')) {
             await envelopes.applyManaged(
               current.id,
@@ -1252,17 +1252,17 @@ export function createSignatureOperations(deps) {
             );
             step('signature.absent-at-provider', { envelopeId: current.id });
           }
-          return { envelopeId: intent.envelopeId, applied: false, reason: 'absent-at-provider', status: envelopes.get(intent.envelopeId).status };
+          return { envelopeId: intent.envelopeId, applied: false, reason: 'absent-at-provider', status: (await envelopes.get(intent.envelopeId)).status };
         }
         const envelopes = trusted(modules, names.envelope);
-        const envelope = envelopes.get(intent.envelopeId);
+        const envelope = await envelopes.get(intent.envelopeId);
         const state = external.state;
         // A recovered provider envelope id is persisted even when the state
         // itself does not advance, so later lookups stop needing the key.
         if (!envelope.providerEnvelopeId && state.providerEnvelopeId) {
           await envelopes.applyManaged(envelope.id, { providerEnvelopeId: state.providerEnvelopeId, sentAt: envelope.sentAt ?? now() }, { actor });
         }
-        const current = envelopes.get(envelope.id);
+        const current = await envelopes.get(envelope.id);
         const outcome = await applyProviderState({
           modules, names, envelope: current, provider: intent.provider,
           state, artifact: external.artifact, eventId: null, actor, now, step,

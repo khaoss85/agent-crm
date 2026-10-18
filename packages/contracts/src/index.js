@@ -13,7 +13,7 @@ import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { createDeliveryObligationsCapability } from './capabilities.js';
 import { createServiceObligationsCapability } from './service-capability.js';
 import { createContractLifecycleSourceCapability } from './lifecycle-capability.js';
-import { CLASSIFICATIONS, CONTINUITIES, NOT_MODELED, createSuccessorActivationCapability } from './succession.js';
+import { CLASSIFICATIONS, CONTINUITIES, NOT_MODELED, createSuccessorActivationAsyncCapability, createSuccessorActivationCapability } from './succession.js';
 
 /**
  * The Contracts domain package (Milestone 12) — the first domain built under
@@ -123,7 +123,12 @@ export function createContractsDomain(options = {}) {
       // immutable Order, plus the immutable lineage row beside it. It mutates
       // no historical record, accepts no client-supplied classification, and
       // refuses an Order whose signed document carried no commercial term.
-      createSuccessorActivationCapability(options.modules),
+      // The contract-2 graph offers the awaited twin instead: same name and
+      // version, every storage read awaited, so a published synchronous
+      // contract never changes shape.
+      (options.packageContract === 2
+        ? createSuccessorActivationAsyncCapability(options.modules)
+        : createSuccessorActivationCapability(options.modules)),
     ],
     actions: buildContractActions(options.modules),
     policies,

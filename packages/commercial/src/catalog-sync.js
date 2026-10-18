@@ -319,7 +319,7 @@ export function createCatalogSync({ database, events, modules, commercial, confi
           /** @type {Map<string, any>} */
           const bookByKey = new Map();
           for (const book of catalog.priceBooks) {
-            const existing = books.listWhere({ sourceKey: book.sourceKey })[0];
+            const existing = (await books.listWhere({ sourceKey: book.sourceKey }))[0];
             if (!existing) {
               const created = await books.createManaged(
                 { sourceKey: book.sourceKey, name: book.name, currency: book.currency, sourceKind: 'provider', provider: provider.name, active: book.active },
@@ -348,7 +348,7 @@ export function createCatalogSync({ database, events, modules, commercial, confi
           for (const incoming of catalog.products) {
             const commercialData = { sku: incoming.sku, name: incoming.name, description: incoming.description, category: incoming.category };
             const sourceFingerprint = computeDefinitionFingerprint(commercialData);
-            const existing = products.listWhere({ sourceKey: incoming.sourceKey })[0];
+            const existing = (await products.listWhere({ sourceKey: incoming.sourceKey }))[0];
             if (!existing) {
               const product = await products.createManaged(
                 { sourceKey: incoming.sourceKey, sourceKind: 'provider', provider: provider.name, externalId: incoming.externalId, active: incoming.active },
@@ -375,10 +375,10 @@ export function createCatalogSync({ database, events, modules, commercial, confi
                 { code: 'SYNC_CONFLICT', status: 409 },
               );
             }
-            const currentVersion = existing.currentVersionId ? versions.get(existing.currentVersionId) : null;
+            const currentVersion = existing.currentVersionId ? await versions.get(existing.currentVersionId) : null;
             let versionId = currentVersion?.id ?? null;
             if (!currentVersion || currentVersion.sourceFingerprint !== sourceFingerprint) {
-              const nextNumber = versions.countWhere({ productId: existing.id }) + 1;
+              const nextNumber = (await versions.countWhere({ productId: existing.id })) + 1;
               const version = await versions.createManaged(
                 {
                   productId: existing.id, version: nextNumber, sourceKey: `pv:${incoming.sourceKey}:${nextNumber}`,
@@ -428,7 +428,7 @@ export function createCatalogSync({ database, events, modules, commercial, confi
               })),
             };
             const sourceFingerprint = computeDefinitionFingerprint(declared);
-            const revisions = offers.listWhere({ logicalKey: incoming.sourceKey });
+            const revisions = await offers.listWhere({ logicalKey: incoming.sourceKey });
             const current = revisions.sort((a, b) => b.revision - a.revision)[0];
             if (current && current.sourceFingerprint === sourceFingerprint && current.active === incoming.active) {
               counts.unchanged += 1;
@@ -506,14 +506,14 @@ export function createCatalogSync({ database, events, modules, commercial, confi
           // under the provider's explicit declared policy.
           if (provider.config?.deactivateMissing === true) {
             const sent = new Set(catalog.products.map((product) => product.sourceKey));
-            for (const record of products.listWhere({ provider: provider.name, sourceKind: 'provider', active: true })) {
+            for (const record of await products.listWhere({ provider: provider.name, sourceKind: 'provider', active: true })) {
               if (!sent.has(record.sourceKey)) {
                 await products.applyManaged(record.id, { active: false }, context);
                 counts.deactivated += 1;
               }
             }
             const sentOffers = new Set(catalog.offers.map((offer) => offer.sourceKey));
-            for (const record of offers.listWhere({ provider: provider.name, active: true })) {
+            for (const record of await offers.listWhere({ provider: provider.name, active: true })) {
               if (!sentOffers.has(record.logicalKey)) {
                 await offers.applyManaged(record.id, { active: false }, context);
                 counts.deactivated += 1;

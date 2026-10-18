@@ -182,6 +182,12 @@ export function verifyMatchesSignedDocument(normalized, documentTerms, subject) 
  * which is the only thing holding storage handles — this function never
  * reaches a database.
  *
+ * The synchronous form serves the contract-1 capability, whose methods cannot
+ * await: its `authoritativeFor` answers the row, never a Promise. The
+ * contract-2 capability uses `verifyOrderTermRowsAsync` below, whose
+ * `authoritativeFor` may settle through a Promise. The checks are the same;
+ * only the settling differs.
+ *
  * @param {{rows: any[], authoritativeFor: (versionId: string) => any, orderId: string, documentTerms?: any}} input
  */
 export function verifyOrderTermRows({ rows, authoritativeFor, orderId, documentTerms }) {
@@ -196,6 +202,38 @@ export function verifyOrderTermRows({ rows, authoritativeFor, orderId, documentT
   const verified = verifySelfConsistent(row, { kind: 'order', id: orderId });
   const quoteVersionId = typeof row?.quoteVersionId === 'string' ? row.quoteVersionId : '';
   const authoritative = quoteVersionId ? authoritativeFor(quoteVersionId) : null;
+  if (!authoritative) {
+    refuse(TERMS_SNAPSHOT_DIVERGED,
+      'The order\'s signed-term snapshot names a quote version that has no signed term, so its provenance cannot be confirmed',
+      { orderId, quoteVersionId });
+  }
+  verifySelfConsistent(authoritative, { kind: 'quoteVersion', id: quoteVersionId });
+  verifyMatchesAuthoritative(row, authoritative, { orderId, quoteVersionId });
+  // The anchor the other two questions cannot provide: both compare rows to
+  // rows, and a writer that can rewrite one can rewrite the other.
+  verifyMatchesSignedDocument(verified, documentTerms, { orderId, quoteVersionId });
+  return { verified, row };
+}
+
+/**
+ * The awaited twin of `verifyOrderTermRows`, for the contract-2 capability:
+ * the same checks, with `authoritativeFor` settled through a Promise because
+ * on asynchronous storage the authoritative read is asynchronous.
+ *
+ * @param {{rows: any[], authoritativeFor: (versionId: string) => any, orderId: string, documentTerms?: any}} input
+ */
+export async function verifyOrderTermRowsAsync({ rows, authoritativeFor, orderId, documentTerms }) {
+  const snapshots = Array.isArray(rows) ? rows : [];
+  if (snapshots.length === 0) return null; // absence is history, never a failure
+  if (snapshots.length > 1) {
+    refuse(TERMS_SNAPSHOT_AMBIGUOUS,
+      'This order carries more than one signed-term snapshot, so which term was signed cannot be decided from the evidence',
+      { orderId, count: snapshots.length });
+  }
+  const [row] = snapshots;
+  const verified = verifySelfConsistent(row, { kind: 'order', id: orderId });
+  const quoteVersionId = typeof row?.quoteVersionId === 'string' ? row.quoteVersionId : '';
+  const authoritative = quoteVersionId ? await authoritativeFor(quoteVersionId) : null;
   if (!authoritative) {
     refuse(TERMS_SNAPSHOT_DIVERGED,
       'The order\'s signed-term snapshot names a quote version that has no signed term, so its provenance cannot be confirmed',

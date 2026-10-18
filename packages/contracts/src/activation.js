@@ -84,6 +84,11 @@ export function toJson(value, label) {
  * refusal — an Order whose signature evidence is missing or incoherent is
  * never activated on the assumption that it is probably fine.
  */
+/**
+ * Load the signed Order and prove it is activatable. Every check is a stable
+ * refusal — an Order whose signature evidence is missing or incoherent is
+ * never activated on the assumption that it is probably fine.
+ */
 export function loadActivationSource(modules, names, order, domains = null) {
   if (order.status !== 'accepted') {
     throw new AppError(`The order is ${order.status}, not accepted`, { code: 'ORDER_NOT_ACTIVATABLE', status: 409 });
@@ -176,6 +181,113 @@ export function loadActivationSource(modules, names, order, domains = null) {
     // what a snapshot must match. Commercial owns the comparison; Contracts
     // only supplies the evidence it legitimately holds.
     const outcome = quotes.verifySignedTerms({
+      scope: 'order', orderId: order.id, rows: signedTermRows,
+      documentTerms: signedDocumentTerms(envelope),
+    });
+    signedTerm = outcome ? outcome.row : null;
+  }
+
+  return { envelope, artifact, lines, components, totals, signedTerm };
+}
+
+/**
+ * The awaited twin of `loadActivationSource`, for the contract-2 graph
+ * only: on asynchronous storage (PostgreSQL) every record read settles
+ * through a Promise. Action `execute` seams and the async succession
+ * capability await it; the synchronous factory keeps the original above.
+ */
+export async function loadActivationSourceAsync(modules, names, order, domains = null) {
+  if (order.status !== 'accepted') {
+    throw new AppError(`The order is ${order.status}, not accepted`, { code: 'ORDER_NOT_ACTIVATABLE', status: 409 });
+  }
+  if (!order.envelopeId || !order.signedArtifactId) {
+    throw new AppError('The order carries no signature evidence', { code: 'ORDER_NOT_SIGNED', status: 409 });
+  }
+  const envelope = await trusted(modules, names.envelope).get(order.envelopeId);
+  if (envelope.status !== 'completed') {
+    throw new AppError(`The signature envelope is ${envelope.status}, not completed`, { code: 'ORDER_NOT_SIGNED', status: 409 });
+  }
+  if (envelope.quoteVersionId !== order.quoteVersionId) {
+    throw new AppError('The signature envelope belongs to another quote version', { code: 'SOURCE_INCOHERENT', status: 409 });
+  }
+  const artifact = await trusted(modules, names.artifact).get(order.signedArtifactId);
+  if (artifact.envelopeId !== envelope.id) {
+    throw new AppError('The signed artifact belongs to another envelope', { code: 'SOURCE_INCOHERENT', status: 409 });
+  }
+  // The Order recorded the hash of the document that was actually signed; if
+  // the three no longer agree, the commercial source is not trustworthy.
+  if (order.documentHash !== envelope.documentHash || artifact.documentHash !== envelope.documentHash) {
+    throw new AppError('The order, envelope and artifact disagree on the signed document', {
+      code: 'SOURCE_HASH_MISMATCH', status: 409,
+    });
+  }
+
+  const lines = (await trusted(modules, names.orderLine)
+    .listWhere({ orderId: order.id }))
+    .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
+  if (lines.length === 0 || lines.length !== order.lineCount) {
+    throw new AppError('The order snapshot is incomplete', { code: 'SOURCE_INCOMPLETE', status: 409, details: { expected: order.lineCount, found: lines.length } });
+  }
+  const componentService = trusted(modules, names.orderComponent);
+  const components = [];
+  for (const line of lines) {
+    const forLine = (await componentService
+      .listWhere({ orderLineId: line.id }))
+      .sort((a, b) => (a.componentKey < b.componentKey ? -1 : a.componentKey > b.componentKey ? 1 : a.id < b.id ? -1 : 1));
+    if (forLine.length !== line.componentCount) {
+      throw new AppError('An order line is missing price components', {
+        code: 'SOURCE_INCOMPLETE', status: 409, details: { orderLineId: line.id },
+      });
+    }
+    for (const component of forLine) components.push({ line, component });
+  }
+  const totals = await trusted(modules, names.orderTotal).listWhere({ orderId: order.id });
+  if (totals.length === 0) {
+    throw new AppError('The order snapshot carries no grouped totals', { code: 'SOURCE_INCOMPLETE', status: 409 });
+  }
+
+  // The Order's signed commercial term, when its signed document carried one.
+  // Null is the ordinary historical case — orders signed before terms
+  // existed, projects that never applied the order-term manifest — and null
+  // means the operational path, never a guess. A snapshot that names a
+  // different signed document than the order's is refused like every other
+  // incoherent evidence pair.
+  let signedTermRows = [];
+  try {
+    const service = modules.get(names.orderTerm)?.service ?? null;
+    signedTermRows = service ? await service.listWhere({ orderId: order.id }) : [];
+  } catch {
+    signedTermRows = [];
+  }
+  let signedTerm = signedTermRows[0] ?? null;
+  if (signedTerm && signedTerm.documentHash !== order.documentHash) {
+    throw new AppError('The order term snapshot names a different signed document than the order', {
+      code: 'SOURCE_HASH_MISMATCH', status: 409,
+    });
+  }
+  // **The signed-term verifier (M-1).** A fingerprint nobody recomputes is a
+  // decoration: before these dates may be described as signed — activated,
+  // derived `signed: true`, planned or executed into a successor — Commercial
+  // re-derives the canonical fingerprint from the row's own values and proves
+  // the row still matches the quote version it was copied from. The authority
+  // is Commercial's alone (`commercial-quotes@2`); this package recomputes
+  // nothing. Absence stays absence, and history is never rewritten.
+  if (signedTermRows.length > 0) {
+    if (!domains || typeof domains.capability !== 'function') {
+      throw new AppError(
+        'Signed commercial terms cannot be verified without the package registry, so they will not be treated as signed',
+        { code: 'TERMS_VERIFIER_UNAVAILABLE', status: 500 },
+      );
+    }
+    const quotes = await domains.capability({
+      consumer: 'contracts', capability: 'commercial-quotes', version: 2, context: { modules },
+    });
+    // The signed bytes are the anchor: this package already holds the
+    // envelope and has already proven that the order, envelope and artifact
+    // agree on `documentHash`, so the `terms` section of those exact bytes is
+    // what a snapshot must match. Commercial owns the comparison; Contracts
+    // only supplies the evidence it legitimately holds.
+    const outcome = await quotes.verifySignedTerms({
       scope: 'order', orderId: order.id, rows: signedTermRows,
       documentTerms: signedDocumentTerms(envelope),
     });
@@ -377,13 +489,13 @@ export function buildPlanActivationAction(config) {
     /** @param {any} ctx */
     async execute({ record: order, input, modules, domains, step }) {
       const { definition: policy, fingerprint } = domains.getPolicy('contracts', POLICY_KIND, input.policy, input.policyVersion);
-      const source = loadActivationSource(modules, names, order, domains);
+      const source = await loadActivationSourceAsync(modules, names, order, domains);
       const overrides = normalizeOverrides(
         input.classificationOverrides,
         new Set(source.components.map(({ component }) => component.id)),
       );
       const decisions = classifyComponents({ policy, fingerprint, order, components: source.components, overrides });
-      const existingContract = trusted(modules, names.contract).listWhere({ orderId: order.id })[0] ?? null;
+      const existingContract = (await trusted(modules, names.contract).listWhere({ orderId: order.id }))[0] ?? null;
       step('activation.planned', { orderId: order.id, ...summarize(decisions) });
       return {
         plan: planPayload({ order, envelope: source.envelope, artifact: source.artifact, decisions, totals: source.totals, existingContract, policy, fingerprint, signedTerm: source.signedTerm }),
@@ -438,7 +550,7 @@ export function buildActivateContractAction(config) {
       // a plan the caller computed earlier is never trusted. It is loaded
       // before the term is resolved, because which provenance applies is the
       // Order's fact, not the caller's choice.
-      const source = loadActivationSource(modules, names, order, domains);
+      const source = await loadActivationSourceAsync(modules, names, order, domains);
 
       /** @type {ReturnType<typeof requireTerm> | ReturnType<typeof signedTermFromSnapshot>} */
       let term;
@@ -464,7 +576,7 @@ export function buildActivateContractAction(config) {
       // a retry deserves the same stable refusal whether or not it repeats the
       // overrides the first call carried.
       const contracts = trusted(modules, names.contract);
-      const existing = contracts.listWhere({ orderId: order.id })[0];
+      const existing = (await contracts.listWhere({ orderId: order.id }))[0];
       if (existing) {
         throw new AppError('This order is already activated', {
           code: 'ORDER_ALREADY_ACTIVATED', status: 409, details: { contractId: existing.id },
