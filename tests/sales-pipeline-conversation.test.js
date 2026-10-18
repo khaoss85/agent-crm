@@ -31,7 +31,8 @@ function project(t) {
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
-  for (const manifest of ['conversation.module.json', 'interaction-message.module.json', 'interaction-call.module.json']) {
+  for (const manifest of ['conversation.module.json', 'interaction-message.module.json', 'interaction-call.module.json',
+    'conversation-thread-key.module.json']) {
     const applied = cli(root, ['module', 'create', join(root, 'packages/interactions/modules', manifest), '--apply']);
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }
@@ -240,8 +241,12 @@ test('one conversation opens one opportunity; the trigger must be its own inboun
     (error) => error.code === 'OPPORTUNITY_NOT_INBOUND',
   );
 
-  // Neither does a message logged on another thread.
-  const other = await saleConversation(app, interactions, { subject, handle: '+3902000002' });
+  // Neither does a message logged on another thread. With one thread per
+  // customer the same subject would join the open thread instead of opening
+  // another one, so the other thread belongs to another customer.
+  const other = await saleConversation(app, interactions, {
+    subject: { resource: 'contact', id: stranger.id, owner: 'host' }, handle: '+3902000002',
+  });
   await assert.rejects(
     () => app.runAction({ module: 'conversation', action: 'open-opportunity', recordId: conversation.id, input: input(other.inbound.id), actor: ACTOR }),
     (error) => error.code === 'OPPORTUNITY_MESSAGE_MISMATCH',
