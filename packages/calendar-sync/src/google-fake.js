@@ -50,7 +50,9 @@ function snapshot(event) {
 }
 
 /**
- * @param {{ nowMs?: () => number, secret?: string }} [options]
+ * @param {{ nowMs?: () => number, secret?: string, expectedSecret?: string }} [options]
+ * `expectedSecret` binds the fake to the space grant: every engine call
+ * must then carry it as its call-time `secret`, or the call refuses.
  * `secret` signs nothing here — the push channel uses a bearer token the
  * test holds. It is accepted only so a future signature variant has a
  * named parameter, and is never stored on any row.
@@ -58,6 +60,23 @@ function snapshot(event) {
 export function createFakeGoogleCalendar(options = {}) {
   const nowMs = typeof options.nowMs === 'function' ? options.nowMs : () => Date.now();
   const nowIso = () => new Date(nowMs()).toISOString();
+  // The space grant this fake is bound to (backlog:43b62d4bcaa3): when set,
+  // every engine call must carry the call-time secret the sync resolved
+  // from the vault — a call without it refuses GOOGLE_GRANT_REFUSED, the
+  // way the real binding refuses without its OAuth grant. Unset, the fake
+  // stays permissive, so unwired compositions prove the sync logic as
+  // before. The expected value itself is never echoed, stored, or logged.
+  const expectedSecret = typeof options.expectedSecret === 'string' && options.expectedSecret !== ''
+    ? options.expectedSecret
+    : null;
+
+  function requireGrant(params, what) {
+    if (expectedSecret === null) return;
+    if (!params || params.secret !== expectedSecret) {
+      throw fakeError('GOOGLE_GRANT_REFUSED', 401,
+        `google ${what} refused: the call carries no grant for this calendar`);
+    }
+  }
   /** @type {Map<string, { events: Map<string, any>, log: Array<{seq:number, eventId:string}>, seq: number, epoch: number, channels: Map<string, any> }>} */
   const calendars = new Map();
   let channelCounter = 0;
@@ -132,7 +151,8 @@ export function createFakeGoogleCalendar(options = {}) {
      * `nextSyncToken`. Without: the full snapshot (`timeMin` bounds it to
      * events ending after the instant; `showDeleted` adds tombstones).
      */
-    listEvents({ calendarId, syncToken, timeMin, showDeleted = false }) {
+    listEvents({ calendarId, syncToken, timeMin, showDeleted = false, secret } = {}) {
+      requireGrant({ secret }, 'listEvents');
       const cal = calendar(calendarId);
       if (syncToken !== undefined) {
         const since = parseToken(cal, syncToken);
@@ -168,7 +188,8 @@ export function createFakeGoogleCalendar(options = {}) {
      * this before inserting, so a retry after a lost link never inserts
      * a second event — the provider-side half of export idempotency.
      */
-    findByAccordoSourceKey(calendarId, sourceKey) {
+    findByAccordoSourceKey({ calendarId, sourceKey, secret } = {}) {
+      requireGrant({ secret }, 'findByAccordoSourceKey');
       for (const event of calendar(calendarId).events.values()) {
         if (event.status !== 'cancelled' && event.extendedProperties?.accordoSourceKey === sourceKey) {
           return snapshot(event);
@@ -178,7 +199,8 @@ export function createFakeGoogleCalendar(options = {}) {
     },
 
     /** Provider-side insert (the push direction lands here). */
-    insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id }) {
+    insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret } = {}) {
+      requireGrant({ secret }, 'insertEvent');
       const cal = calendar(calendarId);
       const eventId = id === undefined ? `fake-${cal.seq + 1}-${Math.floor(nowMs() % 100000)}` : checkEventId(id);
       if (liveEvent(cal, eventId)) {
@@ -218,7 +240,8 @@ export function createFakeGoogleCalendar(options = {}) {
     },
 
     /** Provider-side cancellation: the tombstone incremental sync reports. */
-    cancelEvent({ calendarId, eventId }) {
+    cancelEvent({ calendarId, eventId, secret } = {}) {
+      requireGrant({ secret }, 'cancelEvent');
       const cal = calendar(calendarId);
       const live = liveEvent(cal, checkEventId(eventId));
       if (!live) {
