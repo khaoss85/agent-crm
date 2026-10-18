@@ -13,6 +13,7 @@ import {
   SCHEMA_MIGRATIONS_CHECKSUM_VERSION,
   applySchemaMigrationsChecksumUpgrade,
   checksumForReleasedMigration,
+  isPinnedModuleBootstrapPredecessor,
   ledgerHasChecksumColumn,
 } from './schema-migrations-ledger.js';
 
@@ -750,10 +751,17 @@ export function createDatabase(options = {}) {
         ).get(migration.name);
         if (recorded) {
           if (String(recorded.checksum) !== checksum) {
-            throw new Error(
-              `Module migration "${migration.name}" was already applied with different SQL. ` +
-                'Applied migrations are immutable: add a new migration instead of editing an applied one.',
-            );
+            // A released predecessor (b8266ea's unbumped widening recorded a
+            // different bootstrap under this name) is the same migration, not
+            // drift: its objects already exist, so it counts as applied and
+            // the recorded row is never rewritten — later revisions in this
+            // composition still apply on top.
+            if (!isPinnedModuleBootstrapPredecessor(migration.name, String(recorded.checksum), checksum)) {
+              throw new Error(
+                `Module migration "${migration.name}" was already applied with different SQL. ` +
+                  'Applied migrations are immutable: add a new migration instead of editing an applied one.',
+              );
+            }
           }
           return;
         }

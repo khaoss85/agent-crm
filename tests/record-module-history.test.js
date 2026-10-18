@@ -2,14 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { createDatabase } from '../packages/core/src/database.js';
 import { generateModuleMigration } from '../packages/core/src/module-manifest.js';
 import {
   generatePostgresModuleBootstrap,
 } from '../packages/core/src/module-evolution.js';
+import {
+  PINNED_MODULE_BOOTSTRAP_PREDECESSORS,
+  isPinnedModuleBootstrapPredecessor,
+} from '../packages/core/src/schema-migrations-ledger.js';
 import {
   postgresRecordModuleMigrations,
   recordModuleMigrations,
@@ -324,5 +330,150 @@ test('history that does not start at revision 1 fails closed', () => {
       previousManifests: [currentManifest()],
     }]),
     /does not match the checked-in revision history/,
+  );
+});
+
+/**
+ * b8266ea widened the data-quality-issue `kind` enum without raising the
+ * revision, so revision 1 shipped two released bootstrap identities: the
+ * original (recorded by presti-group) and the widened one (recorded by every
+ * database bootstrapped from b8266ea until the revision-2 fix). The revision
+ * 2 framework renders the original bootstrap plus one additive evolution —
+ * and the ledger bridge in `schema-migrations-ledger.js` accepts the widened
+ * recording as the same migration, so both generations upgrade instead of
+ * failing with MODULE_MIGRATION_CHECKSUM_MISMATCH.
+ *
+ * What b8266ea shipped, reconstructed from the checked-in history plus its
+ * one known edit (the `identity_conflict_windowed_scope` value after
+ * `conflicting_external_identity`, no revision key): the honest source of
+ * the pinned predecessor checksums below, never a copied constant.
+ */
+const widenedDqiRevision1 = () => {
+  const widened = JSON.parse(JSON.stringify(dqiHistoryFile().previousManifests[0]));
+  const kind = widened.fields.find((field) => field.name === 'kind');
+  kind.values.splice(kind.values.indexOf('conflicting_external_identity') + 1, 0, 'identity_conflict_windowed_scope');
+  return widened;
+};
+
+test('the pinned bridge predecessors are exactly what b8266ea rendered', () => {
+  const widened = widenedDqiRevision1();
+  assert.equal(widened.revision, undefined, 'b8266ea shipped no revision key');
+  const pg = PINNED_MODULE_BOOTSTRAP_PREDECESSORS['pg_bootstrap_data_quality_issues'];
+  const sqlite = PINNED_MODULE_BOOTSTRAP_PREDECESSORS['create_data_quality_issues'];
+  assert.equal(sha(generatePostgresModuleBootstrap(widened).sql), pg.predecessors[0]);
+  assert.equal(sha(generateModuleMigration(widened).sql), sqlite.predecessors[0]);
+  assert.equal(pg.predecessors[0], '44aec90d03eb7f00803870bf7b18201100e008d6be97ef8153918100c6a565cf');
+  // The pinned `rendered` identities are what the revision-2 chain renders
+  // today: the bridge only accepts the predecessor while that holds, so new
+  // drift is still refused on bridged databases.
+  assert.equal(pg.rendered, RECORDED_DQI_PG_CHECKSUM);
+  assert.equal(sqlite.rendered, RECORDED_DQI_SQLITE_CHECKSUM);
+});
+
+test('isPinnedModuleBootstrapPredecessor bridges only the two released widened bootstraps', () => {
+  const pg = PINNED_MODULE_BOOTSTRAP_PREDECESSORS['pg_bootstrap_data_quality_issues'];
+  const sqlite = PINNED_MODULE_BOOTSTRAP_PREDECESSORS['create_data_quality_issues'];
+  assert.equal(isPinnedModuleBootstrapPredecessor('pg_bootstrap_data_quality_issues', pg.predecessors[0], pg.rendered), true);
+  assert.equal(isPinnedModuleBootstrapPredecessor('create_data_quality_issues', sqlite.predecessors[0], sqlite.rendered), true);
+  assert.equal(isPinnedModuleBootstrapPredecessor('pg_bootstrap_data_quality_issues', pg.rendered, pg.rendered), false);
+  assert.equal(isPinnedModuleBootstrapPredecessor('pg_bootstrap_work_activities', pg.predecessors[0], pg.rendered), false);
+  assert.equal(isPinnedModuleBootstrapPredecessor('pg_bootstrap_data_quality_issues', sqlite.predecessors[0], pg.rendered), false);
+  assert.equal(isPinnedModuleBootstrapPredecessor('create_data_quality_issues', pg.predecessors[0], sqlite.rendered), false);
+  assert.equal(isPinnedModuleBootstrapPredecessor('pg_bootstrap_data_quality_issues', '0'.repeat(64), pg.rendered), false);
+  assert.equal(isPinnedModuleBootstrapPredecessor('pg_bootstrap_data_quality_issues', pg.predecessors[0], '0'.repeat(64)), false);
+  assert.equal(isPinnedModuleBootstrapPredecessor('no_such_migration', pg.predecessors[0], pg.rendered), false);
+});
+
+function tempDqiDbPath(t) {
+  const directory = mkdtempSync(join(tmpdir(), 'accordo-dqi-upgrade-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  return join(directory, 'test.sqlite');
+}
+
+function dqiLedger(database) {
+  return database.raw.prepare('SELECT name, checksum FROM module_migrations WHERE name LIKE \'%data_quality_issue%\' ORDER BY name').all();
+}
+
+function insertDqiRow(database, id, kind) {
+  database.raw.prepare(
+    'INSERT INTO data_quality_issues (id, source_key, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(id, `seed:${id}`, kind, 'then', 'then');
+}
+
+// The current production path for this module: one manifest-only entry, the
+// way every composer builds it — the framework supplies the checked-in
+// history itself.
+const currentDqiChain = () => recordModuleMigrations([{ name: 'data-quality-issue', manifest: currentDqiManifest() }]);
+
+test('a pre-b8266ea sqlite database upgrades with its rows intact', (t) => {
+  // The database presti-group holds: the original revision 1 bootstrap, as
+  // the framework rendered it before b8266ea (no history mechanism existed).
+  const path = tempDqiDbPath(t);
+  const setup = [{ name: 'create_data_quality_issues', sql: generateModuleMigration(dqiHistoryFile().previousManifests[0]).sql }];
+  createDatabase({ path, moduleMigrations: setup }).close();
+  const seed = createDatabase({ path, moduleMigrations: setup });
+  insertDqiRow(seed, 'legacy-1', 'conflicting_external_identity');
+  seed.close();
+
+  const upgraded = createDatabase({ path, moduleMigrations: currentDqiChain() });
+  try {
+    const ledger = dqiLedger(upgraded);
+    assert.deepEqual(ledger.map((row) => row.name), ['create_data_quality_issues', 'evolve_data_quality_issues_r2']);
+    assert.equal(ledger[0].checksum, RECORDED_DQI_SQLITE_CHECKSUM);
+    const legacy = upgraded.raw.prepare('SELECT id, source_key, kind FROM data_quality_issues WHERE id = ?').get('legacy-1');
+    assert.equal(legacy.source_key, 'seed:legacy-1');
+    assert.equal(legacy.kind, 'conflicting_external_identity');
+    insertDqiRow(upgraded, 'post-upgrade-1', 'identity_conflict_windowed_scope');
+  } finally {
+    upgraded.close();
+  }
+});
+
+test('a b8266ea sqlite database upgrades with its rows intact instead of mismatching', (t) => {
+  // The generation the first revision of this cure broke: bootstrapped from
+  // b8266ea until the revision-2 fix, holding the widened bootstrap under
+  // the same migration name. The bridge accepts it as the same migration —
+  // the recorded row is never rewritten — and the r2 evolution converges it.
+  const path = tempDqiDbPath(t);
+  const widenedBootstrap = generateModuleMigration(widenedDqiRevision1()).sql;
+  assert.equal(sha(widenedBootstrap), PINNED_MODULE_BOOTSTRAP_PREDECESSORS['create_data_quality_issues'].predecessors[0]);
+  const setup = [{ name: 'create_data_quality_issues', sql: widenedBootstrap }];
+  createDatabase({ path, moduleMigrations: setup }).close();
+  const seed = createDatabase({ path, moduleMigrations: setup });
+  insertDqiRow(seed, 'legacy-1', 'conflicting_external_identity');
+  insertDqiRow(seed, 'legacy-2', 'identity_conflict_windowed_scope');
+  seed.close();
+
+  const upgraded = createDatabase({ path, moduleMigrations: currentDqiChain() });
+  try {
+    const ledger = dqiLedger(upgraded);
+    assert.deepEqual(ledger.map((row) => row.name), ['create_data_quality_issues', 'evolve_data_quality_issues_r2']);
+    assert.equal(
+      ledger[0].checksum,
+      PINNED_MODULE_BOOTSTRAP_PREDECESSORS['create_data_quality_issues'].predecessors[0],
+      'the widened recording stands: history is bridged, never rewritten',
+    );
+    assert.equal(upgraded.raw.prepare('SELECT kind FROM data_quality_issues WHERE id = ?').get('legacy-1').kind, 'conflicting_external_identity');
+    assert.equal(upgraded.raw.prepare('SELECT kind FROM data_quality_issues WHERE id = ?').get('legacy-2').kind, 'identity_conflict_windowed_scope');
+    insertDqiRow(upgraded, 'post-upgrade-1', 'identity_conflict_windowed_scope');
+    assert.throws(
+      () => insertDqiRow(upgraded, 'bad-kind-1', 'not_a_kind'),
+      /CHECK/,
+      'the converged CHECK still rejects unknown kinds',
+    );
+  } finally {
+    upgraded.close();
+  }
+});
+
+test('drifted SQL on a bridged database still refuses instead of being treated as applied', (t) => {
+  const path = tempDqiDbPath(t);
+  const setup = [{ name: 'create_data_quality_issues', sql: generateModuleMigration(widenedDqiRevision1()).sql }];
+  createDatabase({ path, moduleMigrations: setup }).close();
+  const chain = currentDqiChain();
+  const drifted = [{ ...chain[0], sql: `${chain[0].sql}\n-- drifted` }, chain[1]];
+  assert.throws(
+    () => createDatabase({ path, moduleMigrations: drifted }),
+    /create_data_quality_issues.*already applied with different SQL.*immutable/s,
   );
 });

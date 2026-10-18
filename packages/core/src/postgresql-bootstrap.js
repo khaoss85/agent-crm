@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { AppError } from './errors.js';
 import { CORE_SCHEMA_INTENT, renderCorePostgresSql } from './core-schema-intent.js';
 import { POSTGRES_SCHEMA_NAME, quotePostgresIdent } from './physical-name.js';
-import { SCHEMA_MIGRATIONS_CHECKSUM_VERSION, sqlChecksum } from './schema-migrations-ledger.js';
+import { SCHEMA_MIGRATIONS_CHECKSUM_VERSION, isPinnedModuleBootstrapPredecessor, sqlChecksum } from './schema-migrations-ledger.js';
 import {
   createPostgresqlPool,
   createPostgresqlStorage,
@@ -296,9 +296,14 @@ async function applyUnits(client, {
     const checksum = sqlChecksum(migration.sql);
     const existing = moduleRecorded.get(migration.name);
     if (existing) {
-      if (existing !== checksum) {
+      if (existing !== checksum && !isPinnedModuleBootstrapPredecessor(migration.name, existing, checksum)) {
         refuse('MODULE_MIGRATION_CHECKSUM_MISMATCH', 'module migration SQL is immutable once applied');
       }
+      // A released predecessor (b8266ea's unbumped widening recorded a
+      // different bootstrap under this name) is the same migration, not
+      // drift: its objects already exist, so its SQL is not re-executed and
+      // the recorded row is never rewritten — later revisions below still
+      // apply on top.
       continue;
     }
     fault({ faultInject }, `${prefix}-before-module-${migration.name}`);
@@ -1083,7 +1088,7 @@ async function verifyReaderSchema(client, { migrations, moduleMigrations }) {
     if (existing === undefined) {
       refuse('READER_SCHEMA_SKEW', 'the data plane is missing a module migration this code renders');
     }
-    if (existing !== sqlChecksum(migration.sql)) {
+    if (existing !== sqlChecksum(migration.sql) && !isPinnedModuleBootstrapPredecessor(migration.name, existing, sqlChecksum(migration.sql))) {
       refuse('READER_SCHEMA_SKEW', 'a module migration in the data plane does not match the one this code renders');
     }
   }
