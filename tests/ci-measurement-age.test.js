@@ -63,32 +63,22 @@ test('the window constant matches the workflow schedule it mirrors', () => {
   assert.equal(MEASURE_WINDOW_HOURS, 6);
 });
 
-test('the run timestamp wins over the commit date for the same tree', () => {
+test('the run timestamp dates the tree, with no git and no clock', () => {
   const sha40 = '16a5299fda2bd85eaa76bc4baadbce06ac869bde';
   const runAt = NOW - 30 * 60000;
-  // A nonexistent root proves the run record answers without git: the commit
-  // date is never consulted when the record names the ledger's tree.
-  assert.equal(
-    resolveMeasuredAtMs('/nonexistent-root-for-guard-test', '16a5299', '2026-10-01', { sha: sha40, measuredAt: runAt }),
-    runAt,
-  );
-  assert.equal(
-    resolveMeasuredAtMs('/nonexistent-root-for-guard-test', sha40, '2026-10-01', { sha: '16a5299', measuredAt: runAt }),
-    runAt,
-  );
+  assert.equal(resolveMeasuredAtMs('16a5299', { sha: sha40, measuredAt: runAt }), runAt);
+  assert.equal(resolveMeasuredAtMs(sha40, { sha: '16a5299', measuredAt: runAt }), runAt);
 });
 
-test('a run record for another tree falls back to the older datings', () => {
+test('without a run record for this tree the age is unknown, never the commit date', () => {
+  // The commit date can already be nearly a window old when its first
+  // measurement starts: dating from it would warn on a fresh measurement.
   const other = { sha: 'd906099d906099d906099d906099d906099d9060', measuredAt: NOW - 30 * 60000 };
-  assert.equal(
-    resolveMeasuredAtMs('/nonexistent-root-for-guard-test', '16a5299', '2026-10-01', other),
-    Date.parse('2026-10-01T00:00:00Z'),
-  );
-  assert.equal(
-    resolveMeasuredAtMs('/nonexistent-root-for-guard-test', '16a5299', '2026-10-01', { sha: '16a5299', measuredAt: Number.NaN }),
-    Date.parse('2026-10-01T00:00:00Z'),
-  );
-  assert.equal(resolveMeasuredAtMs('/nonexistent-root-for-guard-test', 'zzzzzzz', 'not-a-date', other), null);
+  assert.equal(resolveMeasuredAtMs('16a5299', other), null);
+  assert.equal(resolveMeasuredAtMs('16a5299', { sha: '16a5299', measuredAt: Number.NaN }), null);
+  assert.equal(resolveMeasuredAtMs('16a5299', { sha: '16a5299', measuredAt: 0 }), null);
+  assert.equal(resolveMeasuredAtMs('16a5299', {}), null);
+  assert.equal(resolveMeasuredAtMs('zzzzzzz', other), null);
 });
 
 test('runRecordNamesLedger matches prefixes either way, nothing looser', () => {

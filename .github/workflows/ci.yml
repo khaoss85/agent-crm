@@ -170,10 +170,12 @@ jobs:
       # last successful measurement already names this head, every step below
       # skips and the run ends green without touching the lock. The ledger
       # alone cannot answer (a re-anchored merge always moves HEAD past the
-      # measured commit), so the record the `--record` step below maintains
-      # outside the checkout is the durable half of the comparison. Runs on
+      # measured commit), and neither can the record alone (the same merge
+      # moves HEAD past the recorded head too), so the guard additionally
+      # treats a head that differs from the recorded head only in the
+      # measurement-flow files as unmoved. Runs on
       # plain setup-node, before `npm ci`: the guard imports only node
-      # builtins and `scripts/git-env.js`.
+      # builtins and local scripts without npm dependencies.
       - name: Skip when HEAD is already measured
         id: guard
         run: |

@@ -23,8 +23,6 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { spawnGit } from './git-env.js';
-
 /** The scheduled-measure window in `.github/workflows/ci.yml`. Keep the two equal. */
 export const MEASURE_WINDOW_HOURS = 6;
 
@@ -105,37 +103,25 @@ export function runRecordNamesLedger(runSha, ledgerSha) {
 }
 
 /**
- * When the recorded measurement was taken, precisely. Prefers the run
- * timestamp the scheduled measurement recorded for this exact tree (the
- * commit date can already be nearly a window old when its first measurement
+ * When the recorded measurement was taken: the run timestamp the scheduled
+ * measurement recorded for this exact tree, and nothing else. The measured
+ * commit's date is deliberately NOT a fallback — under the scheduled model
+ * a commit can already be nearly a window old when its first measurement
  * starts, so dating the age from it would warn on a freshly taken
- * measurement), then the measured commit's committer date from git (the
- * ledger only carries a day), then the ledger date at UTC midnight. Never
- * throws: null means unknown.
+ * measurement, and the ledger date (UTC midnight of the measurement day)
+ * has the same flaw at day granularity. No run record for this tree means
+ * the age is unknown until the next scheduled run records one; the caller
+ * reports that as a warning, never as a failure. Pure: no filesystem, no
+ * clock, no git.
  *
- * @param {string} root repository root
  * @param {unknown} recordedSha the ledger's measuredAgainst.sha
- * @param {unknown} ledgerDate the ledger's measuredAgainst.date
  * @param {{ sha?: unknown, measuredAt?: unknown }} [runRecord] the state file's record
  * @returns {number | null} epoch milliseconds, or null when unknowable
  */
-export function resolveMeasuredAtMs(root, recordedSha, ledgerDate, runRecord = {}) {
+export function resolveMeasuredAtMs(recordedSha, runRecord = {}) {
   const measuredAt = Number(runRecord?.measuredAt);
   if (runRecordNamesLedger(runRecord?.sha, recordedSha) && Number.isFinite(measuredAt) && measuredAt > 0) {
     return measuredAt;
-  }
-  if (typeof recordedSha === 'string' && /^[0-9a-f]{7,40}$/.test(recordedSha.trim())) {
-    try {
-      const run = spawnGit(['log', '-1', '--format=%cI', recordedSha.trim()], { cwd: root });
-      const parsed = Date.parse(String(run.stdout ?? '').trim());
-      if (run.status === 0 && Number.isFinite(parsed)) return parsed;
-    } catch {
-      // Fall through to the ledger date.
-    }
-  }
-  if (typeof ledgerDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ledgerDate)) {
-    const parsed = Date.parse(`${ledgerDate}T00:00:00Z`);
-    if (Number.isFinite(parsed)) return parsed;
   }
   return null;
 }
@@ -176,7 +162,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     record = {
       sha: measured.sha,
       tests: measured.tests,
-      atMs: resolveMeasuredAtMs(root, measured.sha, measured.date, runRecord),
+      atMs: resolveMeasuredAtMs(measured.sha, runRecord),
     };
   } catch {
     record = {};
