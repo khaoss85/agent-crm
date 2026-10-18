@@ -134,20 +134,42 @@ function isNewerThan(candidateUpdated, baselineUpdated) {
 }
 
 /**
- * The Google event a pending snapshot holds. Current snapshots store an
- * envelope `{ event, preStatus, cancelCommitted }`; older rows may hold
- * the plain event — both read the same way. Null when the snapshot is
- * unreadable (the retry path drops those by operator decision).
+ * The Google event a pending snapshot holds. Every snapshot this code
+ * writes is an envelope `{ event, preStatus, cancelCommitted }`; a pending
+ * without a boolean `cancelCommitted` predates the atomic-move protocol
+ * (calendar-sync never synced a real calendar before it existed) and is
+ * rejected by `isLegacyPending` before this ever reads it. Null when the
+ * snapshot is unreadable (the retry path drops those by operator decision).
  */
-function pendingSnapshotEvent(link) {
+function pendingEnvelope(link) {
   if (!link?.pendingRemote) return null;
-  let snapshot = null;
   try {
-    snapshot = JSON.parse(link.pendingRemote);
+    const snapshot = JSON.parse(link.pendingRemote);
+    return snapshot && typeof snapshot === 'object' ? snapshot : null;
   } catch {
     return null;
   }
-  return snapshot?.event ?? snapshot ?? null;
+}
+
+/** The Google event a pending envelope snapshot holds. */
+function pendingSnapshotEvent(link) {
+  const envelope = pendingEnvelope(link);
+  return envelope?.event ?? null;
+}
+
+/**
+ * A pending snapshot without a boolean `cancelCommitted` predates the
+ * atomic-move protocol: calendar-sync never synced a real calendar before
+ * the envelope existed, so such a row can only come from older code. It is
+ * rejected with an explicit code and kept as a visible operator conflict —
+ * never replayed, never superseded, and never converted into a Google
+ * cancellation (the old row it raced may already read as locally
+ * cancelled against a booked fingerprint, which a naive re-decision
+ * would push to Google as a cancellation the user never made).
+ */
+function isLegacyPending(link) {
+  const envelope = pendingEnvelope(link);
+  return !!envelope && typeof envelope.cancelCommitted !== 'boolean';
 }
 
 /** A storage unique-guard refusal is the loser of a link race, never driver text. */
@@ -164,11 +186,12 @@ function isLinkConflict(error) {
  * capability definition (it carries `.create`); the deployment hands the
  * created object over, the way appointments receives work's `follow-up@1`.
  * `database` is the deployment's database handle (the channels per-runtime
- * pattern): when it carries `transactionAsync`, a reschedule commits its
- * cancel and its rebook together. Without it the link records' own handle
- * is tried; without either, the rebook is proven before the cancel. The
- * package factory forwards its explicit `database` option here, winning
- * over the runtime's.
+ * pattern): it must carry `transactionAsync`, because a reschedule commits
+ * its cancel with its rebook in one storage transaction. Without it the
+ * link records' own handle is tried; without either, creation refuses
+ * with CALENDAR_SYNC_TRANSACTIONS_REQUIRED instead of running — there is
+ * no transaction-less fallback. The package factory forwards its explicit
+ * `database` option here, winning over the runtime's.
  */
 export function createCalendarSyncOperations(options = {}) {
   const modules = options.modules;
@@ -197,24 +220,32 @@ export function createCalendarSyncOperations(options = {}) {
   }
 
   /**
-   * The storage transaction a reschedule commits in: the deployment's
+   * The storage transaction every reschedule commits in: the deployment's
    * explicit handle first, else the link records' own handle (the same
    * `?.database?.transactionAsync` idiom the appointments booking path
-   * uses). Null when neither carries one — every write still goes through
-   * the capability and the record services, the transaction only adds
-   * atomicity, so a missing one degrades to prove-before-cancel, never to
-   * cancel-before-proof.
+   * uses). Resolved once, at creation: a storage without transactions
+   * refuses to start the sync at all (CALENDAR_SYNC_TRANSACTIONS_REQUIRED)
+   * instead of degrading — the old prove-before-cancel fallback is gone,
+   * because its crash window orphaned the rebooked row and the retry then
+   * cancelled Google on a false cancellation-wins.
    */
-  function transactionRunner() {
-    if (typeof database?.transactionAsync === 'function') {
-      return (critical) => database.transactionAsync(critical);
-    }
-    const linkDb = linkService(context)?.database ?? null;
-    if (typeof linkDb?.transactionAsync === 'function') {
-      return (critical) => linkDb.transactionAsync(critical);
-    }
-    return null;
+  const links = linkService(context);
+  const transactionSource = typeof database?.transactionAsync === 'function'
+    ? database
+    : (typeof links?.database?.transactionAsync === 'function' ? links.database : null);
+  if (!transactionSource) {
+    throw syncError('CALENDAR_SYNC_TRANSACTIONS_REQUIRED', 500,
+      'calendar-sync needs a storage transaction (transactionAsync on the explicit database handle or the link records\' handle): a reschedule commits its cancel with its rebook, atomically, and never runs without that.');
   }
+  const transact = (critical) => transactionSource.transactionAsync(critical);
+  // The EventBus the record services emit on: the atomic move buffers its
+  // domain events until after the storage commit (ADR-012, the same
+  // events.buffered idiom catalog-sync and external-operation use), so a
+  // rolled-back move emits nothing. Null when the services carry no bus —
+  // then the transaction still rolls back the rows, only the ghost-event
+  // suppression is absent.
+  const serviceEvents = links?.events ?? null;
+  const eventBuffer = serviceEvents && typeof serviceEvents.buffered === 'function' ? serviceEvents : null;
 
   const bookHandle = (actor) => appointmentBook.create({
     modules,
@@ -299,7 +330,9 @@ export function createCalendarSyncOperations(options = {}) {
    * Book one imported event, folding every expected refusal into a result
    * entry: an overlap or a divergent replay is the operator's conflict to
    * resolve in Accordo, never a row booked over a held slot and never a
-   * half-written link. Anything else (a 500, a mapping bug) throws.
+   * half-written link. A transient storage conflict (busy, serialization)
+   * is rethrown as a retryable error instead — contention is not an
+   * operator conflict. Anything else (a 500, a mapping bug) throws.
    * A success clears any pending remote the link carried: it applied.
    */
   async function importSingle(handle, actor, calendarId, event, revision, priorLink, prebuilt = null) {
@@ -313,7 +346,7 @@ export function createCalendarSyncOperations(options = {}) {
     try {
       booked = await handle.bookAppointment(request);
     } catch (error) {
-      if (error instanceof AppError && (error.status === 409 || error.status === 422)) {
+      if (error instanceof AppError && (error.status === 409 || error.status === 422) && error.details?.transient !== true) {
         return { status: 'conflict', eventId, reason: `${error.code}: ${error.message}` };
       }
       throw error;
@@ -371,6 +404,19 @@ export function createCalendarSyncOperations(options = {}) {
   }
 
   /**
+   * Refuse a pre-protocol pending with an explicit code and keep it as a
+   * visible operator conflict: the snapshot stays on the link, nothing is
+   * replayed, nothing is superseded, and no provider write happens — so a
+   * legacy row can never turn into a Google cancellation. The operator
+   * resolves it in Accordo; the token moves on, the conflict does not hide.
+   */
+  async function rejectLegacyPending(actor, calendarId, link) {
+    const reason = 'CALENDAR_SYNC_PENDING_UPGRADE_REQUIRED: this pending predates the atomic reschedule protocol (no cancelCommitted flag): resolve it in Accordo — the sync will not replay it or cancel Google for it';
+    await linkService(context).applyManaged(link.id, { conflictNote: reason.slice(0, 300) }, { actor });
+    return { status: 'conflict', eventId: rowLinkEventId(link, calendarId), reason, pending: true };
+  }
+
+  /**
    * Finish a reschedule after its rebook committed: carry a `confirmed`
    * forward (the only lifecycle a moved booking keeps) and point the link
    * at the new row. Shared by the fresh path and the pending retry, so a
@@ -399,12 +445,14 @@ export function createCalendarSyncOperations(options = {}) {
   }
 
   /**
-   * Retry one pending snapshot: an orphan replays the import; a snapshot
-   * whose cancel already committed replays only the booking half and
-   * finishes like the fresh path, confirmed-forward included; a refused
-   * move whose cancel never committed re-decides on current state through
-   * the tracked path — terminal immunity and cancellation-wins included —
-   * so a locally cancelled or completed row is never rebooked over.
+   * Retry one pending snapshot: a pre-protocol envelope is rejected
+   * visibly (never replayed, never a Google write); an orphan replays the
+   * import; a snapshot whose cancel already committed replays only the
+   * booking half and finishes like the fresh path, confirmed-forward
+   * included; a refused move whose cancel never committed re-decides on
+   * current state through the tracked path — terminal immunity and
+   * cancellation-wins included — so a locally cancelled or completed row
+   * is never rebooked over.
    */
   async function retryPending(handle, actor, calendarId, link) {
     let envelope;
@@ -414,6 +462,9 @@ export function createCalendarSyncOperations(options = {}) {
       await linkService(context).applyManaged(link.id, { pendingRemote: null, conflictNote: 'pending snapshot unreadable: dropped by operator decision' }, { actor });
       return { status: 'conflict', eventId: link.googleEventId, reason: 'pending snapshot unreadable' };
     }
+    if (isLegacyPending(link)) {
+      return rejectLegacyPending(actor, calendarId, link);
+    }
     const orphan = link.appointmentId === '';
     const snapshotEvent = (envelope && typeof envelope === 'object' ? (envelope.event ?? envelope) : null);
     if (snapshotEvent && isNewerThan(link.googleUpdated, snapshotEvent?.updated)) {
@@ -421,7 +472,7 @@ export function createCalendarSyncOperations(options = {}) {
       // while the snapshot stood: retrying the older envelope would move
       // the link backward past consumed state, so it is left pending for
       // the operator instead of retried — never silently dropped.
-      return { status: 'conflict', eventId: link.googleEventId, reason: link.conflictNote ?? 'stale snapshot: the link knows a newer version', pending: true };
+      return { status: 'conflict', eventId: link.googleEventId, reason: `stale snapshot: the link knows a newer version (${link.conflictNote ?? 'no earlier note'})`, pending: true };
     }
     if (!orphan && envelope && typeof envelope === 'object' && envelope.cancelCommitted === false) {
       const out = await applyTrackedChange(handle, actor, calendarId, envelope.event ?? envelope, link);
@@ -475,6 +526,12 @@ export function createCalendarSyncOperations(options = {}) {
       return entry;
     }
     if (link.pendingRemote) {
+      if (isLegacyPending(link)) {
+        // A pre-protocol snapshot is never re-decided — not even by a
+        // tombstone or a newer event: the envelope predates the protocol
+        // this decision would run under.
+        return rejectLegacyPending(actor, calendarId, link);
+      }
       if (cancelled) {
         // A tombstone supersedes the outstanding snapshot: the event is
         // gone, so retrying its move would book a dead slot and swallow
@@ -596,15 +653,16 @@ export function createCalendarSyncOperations(options = {}) {
 
   /**
    * Move one booking to Google's new slot without ever sacrificing the
-   * valid local row: the cancel commits only with its rebook. With a
-   * storage transaction both commit together — rollback on refusal, which
-   * also covers self-overlapping moves (a cancelled row holds no slot, so
-   * the rebook reads the freed slot inside the same commit). Without one
-   * the rebook is proven first and the cancel follows only on success,
-   * staged behind a pending snapshot so a crash between the proven booking
-   * and its link update still retries instead of dropping the move. A
-   * refused move keeps the row and the pending snapshot retries it; the
-   * token is acknowledged either way.
+   * valid local row: the cancel commits only with its rebook, in one
+   * storage transaction — rollback on refusal, which also covers
+   * self-overlapping moves (a cancelled row holds no slot, so the rebook
+   * reads the freed slot inside the same commit). The domain events the
+   * move emits stay buffered until after the storage commit (ADR-012):
+   * a refused move rolls back the rows AND drops the ghost emissions, so
+   * no in-process listener ever observes a cancel that never committed.
+   * A refused move keeps the row and the pending snapshot retries it; a
+   * transient storage conflict (busy, serialization) is rethrown as a
+   * retryable error, never staged as a pending conflict.
    */
   async function moveBooking(handle, actor, calendarId, event, link, row) {
     const eventId = event?.id;
@@ -621,41 +679,26 @@ export function createCalendarSyncOperations(options = {}) {
       // the re-dispatch reads fresh state and takes another branch.
       return applyTrackedChange(handle, actor, calendarId, event, link);
     }
-    const transact = transactionRunner();
-    if (transact) {
-      try {
-        await transact(async () => {
-          await handle.advanceAppointment(live, 'cancelled', 'Rescheduled in Google Calendar');
-          const booked = await handle.bookAppointment(request);
-          await finishReschedule(handle, actor, calendarId, event, link, revision, row.status, { appointmentId: booked.appointment.id });
-        });
-      } catch (error) {
-        if (error instanceof AppError && (error.status === 409 || error.status === 422)) {
-          return keepPending(actor, calendarId, event, link, `${error.code}: ${error.message}`, row.status, { cancelCommitted: false });
-        }
-        throw error;
-      }
-      return { status: 'applied', eventId, direction: 'google-to-local', change: 'rescheduled', revision };
-    }
-    await keepPending(actor, calendarId, event, link, 'move staged: proving the new slot before cancelling', row.status, { cancelCommitted: false });
-    let booked;
+    const critical = async () => {
+      await handle.advanceAppointment(live, 'cancelled', 'Rescheduled in Google Calendar');
+      const booked = await handle.bookAppointment(request);
+      await finishReschedule(handle, actor, calendarId, event, link, revision, row.status, { appointmentId: booked.appointment.id });
+    };
     try {
-      booked = await handle.bookAppointment(request);
+      if (eventBuffer) {
+        await eventBuffer.buffered(async (outbox) => {
+          await transact(critical);
+          await outbox.commit();
+        });
+      } else {
+        await transact(critical);
+      }
     } catch (error) {
-      if (error instanceof AppError && (error.status === 409 || error.status === 422)) {
+      if (error instanceof AppError && (error.status === 409 || error.status === 422) && error.details?.transient !== true) {
         return keepPending(actor, calendarId, event, link, `${error.code}: ${error.message}`, row.status, { cancelCommitted: false });
       }
       throw error;
     }
-    // The new slot proved free: finish the move. The pre-cancel read above
-    // still holds, so only a still-open row is cancelled — a concurrent
-    // local move is never overwritten, and the success clears the staged
-    // snapshot through the link update.
-    const afterBook = await readLocal(handle, link);
-    if (afterBook && afterBook.status !== 'cancelled' && !TERMINAL_STATUSES.includes(afterBook.status)) {
-      await handle.advanceAppointment(afterBook, 'cancelled', 'Rescheduled in Google Calendar');
-    }
-    await finishReschedule(handle, actor, calendarId, event, link, revision, row.status, { appointmentId: booked.appointment.id });
     return { status: 'applied', eventId, direction: 'google-to-local', change: 'rescheduled', revision };
   }
 
@@ -712,6 +755,10 @@ export function createCalendarSyncOperations(options = {}) {
         const known = await findLinkByEvent(calendarId, event.id);
         if (known) {
           if (known.pendingRemote) {
+            if (isLegacyPending(known)) {
+              entries.push(await rejectLegacyPending(who, calendarId, known));
+              continue;
+            }
             const snapshotEvent = pendingSnapshotEvent(known);
             if (snapshotEvent && isNewerThan(event?.updated, snapshotEvent?.updated)) {
               // Same newest-wins rule as the incremental path: the newer

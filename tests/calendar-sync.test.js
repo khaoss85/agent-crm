@@ -83,7 +83,7 @@ function setup(options = {}) {
   const linkRows = () => [...modules.get('calendar-link').service.listWhere({})];
   const stateRows = () => [...modules.get('calendar-sync-state').service.listWhere({})];
   return {
-    database, modules, provider, sync, mapping, appointmentRows, linkRows, stateRows,
+    database, modules, provider, sync, mapping, appointmentRows, linkRows, stateRows, events,
     setNow: (ms) => { fakeNow = ms; },
     close: () => database.close(),
   };
@@ -357,9 +357,8 @@ test('the engine awaits an asynchronous provider binding', async (t) => {
 
 test('a self-overlapping Google move applies atomically: no sacrifice, no double hold', async (t) => {
   // The new slot overlaps the booking's own old slot with no other
-  // blocker: prove-before-cancel alone would refuse against itself, so
-  // this locks the storage-transaction path (cancel and rebook in one
-  // commit, rollback on refusal).
+  // blocker: only the atomic commit converges it (cancel and rebook in
+  // one storage transaction, rollback on refusal).
   const ctx = setup();
   t.after(() => ctx.close());
   seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
@@ -673,4 +672,160 @@ test('the package factory forwards an explicit database handle to reschedules', 
   assert.equal(applied.change, 'rescheduled');
   assert.equal(out.pendingConflicts.length, 0);
   assert.equal(ctx.appointmentRows().find((r) => r.status === 'booked').startsAt, '2026-10-21T09:30:00.000Z');
+});
+
+test('creation refuses without a storage transaction: fail closed, no fallback', () => {
+  const book = createAppointmentBookCapability({});
+  const provider = createFakeGoogleCalendar({});
+  const mapping = {
+    subjectForEvent: () => ({ ...SUBJECT }),
+    teamMemberForCalendar: () => MEMBER,
+    serviceForEvent: () => ({ ...SERVICE }),
+    summaryForAppointment: () => 'x',
+  };
+  const stubService = () => ({
+    service: {
+      createManaged: async () => ({}),
+      applyManaged: async () => ({}),
+      listWhere: async () => [],
+    },
+  });
+  const modules = new Map([
+    ['calendar-link', stubService()],
+    ['calendar-sync-state', stubService()],
+  ]);
+  // Neither the explicit handle nor the link records' handle carries a
+  // transaction: creation refuses instead of running transaction-less.
+  assert.throws(
+    () => createCalendarSyncOperations({ modules, appointmentBook: book, provider, mapping, database: {} }),
+    (error) => error.code === 'CALENDAR_SYNC_TRANSACTIONS_REQUIRED',
+  );
+  assert.throws(
+    () => createCalendarSyncOperations({ modules, appointmentBook: book, provider, mapping }),
+    (error) => error.code === 'CALENDAR_SYNC_TRANSACTIONS_REQUIRED',
+  );
+});
+
+test('a pre-protocol pending is rejected visibly, never pushed to Google as a cancellation', async (t) => {
+  // The envelope the pre-atomic code left: {event, preStatus} with no
+  // cancelCommitted flag, the old row already cancelled, the fingerprint
+  // still booked. A newer Google move must not turn it into a Google
+  // cancellation of the live event.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  await handle.bookAppointment({
+    sourceKey: 'gym:held:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T14:00:00.000Z',
+    endsAt: '2026-10-21T15:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  const [link] = ctx.linkRows();
+  const bookedFingerprint = link.localFingerprint;
+  const row = ctx.appointmentRows()[0];
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
+  const staleMove = ctx.provider.getEvent(CAL, 'evt1');
+  await handle.advanceAppointment(row, 'cancelled', 'Rescheduled in Google Calendar');
+  const linkService = ctx.modules.get('calendar-link').service;
+  await linkService.applyManaged(link.id, {
+    pendingRemote: JSON.stringify({ event: staleMove, preStatus: 'booked' }),
+    localFingerprint: bookedFingerprint,
+    conflictNote: 'legacy pending from the pre-atomic code',
+  }, { actor: ACTOR });
+  // Google moves again — S2, free — before the next pull.
+  ctx.setNow(T0 + 120_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '16:00', '17:00') } });
+  const pull = await ctx.sync.pullIncremental(CAL);
+  const entries = pull.entries.filter((e) => String(e.eventId).endsWith('evt1'));
+  assert.ok(entries.length > 0);
+  assert.ok(entries.every((e) => e.status === 'conflict' && e.pending === true));
+  assert.ok(entries.every((e) => /UPGRADE_REQUIRED/.test(e.reason ?? '')));
+  // S2 was never pushed as a Google cancellation: the live event stands,
+  // nothing was booked over it, and the snapshot stays visible.
+  assert.equal(ctx.provider.getEvent(CAL, 'evt1').status, 'confirmed');
+  assert.equal(ctx.appointmentRows().filter((r) => r.status === 'booked').length, 1);
+  assert.ok(ctx.linkRows()[0].pendingRemote);
+  assert.ok((pull.pendingConflicts ?? []).length >= 1);
+});
+
+test('a refused atomic move emits no appointment events: rollback drops the ghosts', async (t) => {
+  // The blocker sits back-to-back with the old slot but inside the moved
+  // one: the cancel rolls back with the refused rebook, and the buffered
+  // domain events roll back with the rows — no listener ever observes a
+  // cancel that never committed.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const held = await handle.bookAppointment({
+    sourceKey: 'gym:held:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T10:00:00.000Z',
+    endsAt: '2026-10-21T10:30:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  const seen = [];
+  ctx.events.subscribe('*', ({ event }) => { seen.push(event); });
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '09:15', '10:15') } });
+  const pull = await ctx.sync.pullIncremental(CAL);
+  assert.equal(pull.entries.find((e) => e.eventId === 'evt1').status, 'conflict');
+  assert.ok(seen.filter((name) => name.startsWith('appointment.')).length === 0);
+  // The converged move does emit: the buffer flushes after the commit.
+  await handle.advanceAppointment(held.appointment, 'cancelled', 'Customer moved');
+  ctx.setNow(T0 + 120_000);
+  const retry = await ctx.sync.pullIncremental(CAL);
+  assert.equal(retry.entries.find((e) => e.eventId === 'evt1').status, 'applied');
+  assert.ok(seen.filter((name) => name.startsWith('appointment.')).length > 0);
+});
+
+test('a push-converged cancellation leaves the older move snapshot standing, never rebooked', async (t) => {
+  // The retryPending stale-snapshot guard, reached: the S1 move was refused
+  // and kept pending, then the local row was cancelled and the push
+  // converged the cancellation to Google — advancing the link past the
+  // standing S1 snapshot. The next pull must not retry the older envelope
+  // backward onto the freed slot.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  await handle.bookAppointment({
+    sourceKey: 'gym:held:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T14:00:00.000Z',
+    endsAt: '2026-10-21T15:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
+  const conflicted = await ctx.sync.pullIncremental(CAL);
+  assert.equal(conflicted.entries.find((e) => e.eventId === 'evt1').status, 'conflict');
+  assert.ok(ctx.linkRows()[0].pendingRemote);
+  const row = ctx.appointmentRows().find((r) => r.sourceKey === `gcal:${CAL}:evt1`);
+  await handle.advanceAppointment(row, 'cancelled', 'Customer called off');
+  ctx.setNow(T0 + 120_000);
+  const push = await ctx.sync.pushLocalChanges(CAL);
+  assert.equal(push.entries.find((e) => e.sourceKey === row.sourceKey).status, 'pushed');
+  assert.equal(ctx.provider.getEvent(CAL, 'evt1').status, 'cancelled');
+  const pull = await ctx.sync.pullIncremental(CAL);
+  const stale = pull.entries.find((e) => /stale snapshot/.test(e.reason ?? ''));
+  assert.ok(stale);
+  assert.equal(stale.status, 'conflict');
+  // The older envelope never rebooked: no revision row, Google stays
+  // cancelled, the freed slot is not resurrected.
+  assert.ok(!ctx.appointmentRows().some((r) => /:r1$/.test(r.sourceKey)));
+  assert.equal(ctx.provider.getEvent(CAL, 'evt1').status, 'cancelled');
+  assert.equal(ctx.appointmentRows().filter((r) => r.status === 'booked').length, 1);
 });

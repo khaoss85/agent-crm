@@ -64,18 +64,33 @@ Two halves, two owners. Accordo owns **lifecycle**; Google owns
    between two imports applies locally before the token moves past
    it — never skipped past. A tombstone for an event never imported
    is ignored, never booked.
-10. A move that **overlaps its own old slot needs a storage
-    transaction** to converge: without one the prove-before-cancel
-    fallback proves the new slot against the still-held old row, so
-    the move stays pending and is retried — waited on, never
-    sacrificed. Atomic commit (cancel with rebook) is the supported
-    path for self-overlapping moves.
-11. The **newest Google version always wins** over an older pending
+10. A move **needs a storage transaction**: without
+    `transactionAsync` on the explicit database handle or the link
+    records' handle, creation refuses with
+    `CALENDAR_SYNC_TRANSACTIONS_REQUIRED` — there is no
+    transaction-less fallback. Every reschedule commits its cancel
+    with its rebook atomically, including self-overlapping moves (a
+    cancelled row holds no slot, so the rebook reads the freed slot
+    inside the same commit).
+11. A **pre-protocol pending is rejected, never replayed**: a pending
+    snapshot without a `cancelCommitted` flag predates the atomic
+    reschedule protocol and is kept as a visible operator conflict
+    (`CALENDAR_SYNC_PENDING_UPGRADE_REQUIRED`) — it is never retried,
+    never superseded, and never converted into a Google cancellation.
+    The operator resolves it in Accordo.
+12. The **newest Google version always wins** over an older pending
     snapshot: when the event in hand carries a newer `updated` stamp
     than the outstanding envelope, the envelope is replaced and the
     event is decided through the tracked path — never retried stale
     first, never skipped past by the advancing token. A snapshot older
-    than the link's known version is not retried.
+    than the link's known version is left pending, never retried
+    backward (a push-converged cancellation advances the link past a
+    still-standing move snapshot).
+13. A refused atomic move **emits no ghost events**: the move's domain
+    events stay buffered until after the storage commit, so a rolled-back
+    rebook drops its emissions — no listener ever observes a cancel that
+    never committed. A transient storage conflict (busy, serialization)
+    is a retryable error, never a pending conflict.
 
 ## How to prove it
 
@@ -89,5 +104,9 @@ move keeping the valid row (and converging once the slot frees), a
 self-overlapping move applying atomically, a settled retry still
 applying the newer Google move on a full import, a newer move
 superseding a still-conflicted pending on a pull (with no resurrection
-when the old blocker frees), and the package factory forwarding an
-explicit database handle. No test dials Google.
+when the old blocker frees), a pre-protocol pending rejected visibly
+with no Google write, a refused move emitting no appointment events, a
+push-converged cancellation leaving the older move snapshot standing
+instead of rebooking it, the package factory forwarding an explicit
+database handle, and creation refusing without a storage transaction.
+No test dials Google.

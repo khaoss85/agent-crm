@@ -62,10 +62,12 @@ const SPACE_INPUT = {
  * `mapping` names the deployment's customer/member/service bindings.
  * All three are required before any operation runs, because a sync that
  * books without them would invent identities. `database` is optional and
- * never replaces those bindings: it only lets a reschedule commit its
- * cancel and its rebook in one storage transaction. An explicit `database`
- * wins over the runtime's; without either, the link records' own handle
- * is tried, then the prove-before-cancel fallback.
+ * never replaces those bindings: it only names the storage handle whose
+ * transaction commits a reschedule's cancel with its rebook. An explicit
+ * `database` wins over the runtime's; without either, the link records'
+ * own handle is tried. A storage without transactions refuses creation
+ * with CALENDAR_SYNC_TRANSACTIONS_REQUIRED: there is no
+ * transaction-less fallback.
  */
 export function createCalendarSyncPackage(options = {}) {
   for (const key of ['appointmentBook', 'provider', 'mapping']) {
