@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "name": "conversation",
   "table": "interaction_conversations",
-  "description": "One message thread with a customer on one channel, held against the ADR-030 opaque subject envelope (a contact or company the host application owns). Every field is managed: a conversation exists only through the interactions package's log capability, and no client can create, forge or rewrite one. Messages and calls name the conversation with a plain indexed string; SQLite cannot enforce a foreign key whose target varies, and this package does not pretend it can. Identity stays in customer-data (external-identity): remoteHandle here is a display snapshot, never an identifier.",
+  "description": "One message thread with a customer across channels, held against the ADR-030 opaque subject envelope (a contact or company the host application owns): one open thread per subject, joined whatever channel the next message arrives on. Every field is managed: a conversation exists only through the interactions package's log capability, and no client can create, forge or rewrite one. Messages and calls name the conversation with a plain indexed string; SQLite cannot enforce a foreign key whose target varies, and this package does not pretend it can. Identity stays in customer-data (external-identity): remoteHandle here is a display snapshot, never an identifier.",
   "fields": [
     { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
     { "name": "subjectResource", "type": "string", "index": true, "writable": "managed" },

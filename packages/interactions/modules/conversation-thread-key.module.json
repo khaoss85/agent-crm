@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "name": "conversation-thread-key",
+  "table": "conversation_thread_keys",
+  "description": "One channel thread key joined to one conversation: the adapter's business identity for the thread (provider + remote thread id) naming the conversation it opened or joined. The first key opens the thread; every later key for the same customer joins it and leaves one row here, so a retried open under a joined key replays the joined thread instead of opening a duplicate — including after the thread closed. Every field is managed: a thread key exists only through the interactions package's open path, and no client can create, forge or rewrite one.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "conversationId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "joinedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "joinedByType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "joinedById", "type": "string", "writable": "managed" },
+    { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
+    { "name": "sourceAction", "type": "string", "writable": "managed" }
+  ]
+}
