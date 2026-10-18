@@ -12,7 +12,7 @@ import { MAX_NOTICE_DAYS, MAX_TERM_DAYS, SIGNED_TERMS_NOTE, SIGNED_TERMS_SOURCE,
 import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { createDeliveryObligationsCapability } from './capabilities.js';
 import { createServiceObligationsCapability } from './service-capability.js';
-import { createContractLifecycleSourceCapability } from './lifecycle-capability.js';
+import { createContractLifecycleSourceAsyncCapability, createContractLifecycleSourceCapability } from './lifecycle-capability.js';
 import { CLASSIFICATIONS, CONTINUITIES, NOT_MODELED, createSuccessorActivationAsyncCapability, createSuccessorActivationCapability } from './succession.js';
 
 /**
@@ -117,7 +117,12 @@ export function createContractsDomain(options = {}) {
       // term evidence an operational lifecycle package needs — read-only, with
       // provenance attached and its signed state DERIVED from that provenance
       // rather than asserted beside it (M16a).
-      createContractLifecycleSourceCapability(options.modules),
+      // The contract-2 graph offers the awaited twin instead: same name and
+      // version, every storage read awaited, so a published synchronous
+      // contract never changes shape.
+      (options.packageContract === 2
+        ? createContractLifecycleSourceAsyncCapability(options.modules)
+        : createContractLifecycleSourceCapability(options.modules)),
       // M16b (ADR-035). The only capability in this package that writes, and
       // it writes exactly one thing: a successor agreement built from a signed
       // immutable Order, plus the immutable lineage row beside it. It mutates

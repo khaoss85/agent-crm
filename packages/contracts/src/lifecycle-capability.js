@@ -308,3 +308,208 @@ export function createContractLifecycleSourceCapability(moduleNames) {
     },
   };
 }
+
+/** Awaited twin of the capability's primary-key read, for the contract-2 graph only. */
+async function safeGetAsync(svc, id) {
+  try { return await svc.get(id); } catch { return null; }
+}
+
+/**
+ * `contract-lifecycle-source@2` reads for the contract-2 graph — the awaited
+ * twin of `createContractLifecycleSourceCapability`, method for method.
+ * Offered only by the `packageContract: 2` contracts domain (which selects it
+ * instead of the synchronous factory), so the two graphs can never share it:
+ * the synchronous graph keeps the published synchronous shape, and every
+ * `await` here settles an asynchronous-storage read. Internal consumers
+ * (Lifecycle renewal actions) already `await` every call, so the same call
+ * sites run unchanged on both graphs.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function createContractLifecycleSourceAsyncCapability(moduleNames) {
+  const names = resolvedNames(moduleNames);
+  return {
+    name: LIFECYCLE_SOURCE.name,
+    version: LIFECYCLE_SOURCE.version,
+    capabilityContract: 2,
+    description:
+      'Read one contract\'s term evidence with its declared provenance, its current version, its contract lines and its subscription lines. Grants no write path, no contract storage and no ability to change what was agreed.',
+    /** @param {{modules?: any}} context */
+    async create(context = {}) {
+      const modules = context.modules;
+      if (!modules || typeof modules.get !== 'function') {
+        throw new AppError(`${LIFECYCLE_SOURCE.name} requires the caller's modules view`, {
+          code: 'CAPABILITY_CONTEXT_INVALID', status: 500,
+        });
+      }
+      const service = (name) => {
+        const module = modules.get(name);
+        if (!module?.service) {
+          throw new AppError(`The contracts package is installed without its "${name}" records`, {
+            code: 'CONTRACT_STORAGE_INVALID', status: 500,
+          });
+        }
+        return module.service;
+      };
+
+      // **The fail-closed gate.** Same refusal as the synchronous factory:
+      // every `termsSource` the contract module declares must have been
+      // classified before this capability answers anything at all.
+      let contractModule = null;
+      try { contractModule = modules.get(names.contract); } catch { contractModule = null; }
+      const declared = declaredTermSources(contractModule);
+      if (declared.length === 0) {
+        // No enum to derive from means no basis for the one claim this
+        // capability exists to make. It refuses rather than defaulting.
+        throw new AppError(
+          `${LIFECYCLE_SOURCE.name} cannot report term provenance: the "${names.contract}" module declares no `
+            + 'termsSource values, so whether a term is signed cannot be derived from anything.',
+          { code: 'TERM_SOURCE_UNDECLARED', status: 500 },
+        );
+      }
+      const unclassified = declared.filter((value) => !Object.hasOwn(TERM_SOURCE_SIGNED, value)).sort();
+      if (unclassified.length > 0) {
+        throw new AppError(
+          `${LIFECYCLE_SOURCE.name} cannot report term provenance: the ${names.contract} module declares `
+            + `termsSource ${unclassified.map((value) => `"${value}"`).join(', ')} with no decision on whether `
+            + 'a term from that source is signed. Classify it in TERM_SOURCE_SIGNED.',
+          { code: 'TERM_SOURCE_UNCLASSIFIED', status: 500, details: { unclassified } },
+        );
+      }
+
+      // Frozen, like everything else it hands back: the interface a consumer
+      // holds is evidence too, and a consumer that can redefine `termEvidence`
+      // on it can make its own package lie in its own trace.
+      return Object.freeze({
+        // The awaited twin declares contract 2, so a published synchronous
+        // contract never changes shape behind its consumers.
+        capabilityContract: 2,
+
+        /**
+         * One contract's term evidence, or null.
+         *
+         * An exact primary-key read. A filtered list here could hand back
+         * somebody else's contract when the filter is not understood, which is
+         * the worst failure mode available across a package boundary.
+         *
+         * @param {string} contractId
+         */
+        async termEvidence(contractId) {
+          const contract = typeof contractId === 'string' && contractId !== ''
+            ? await safeGetAsync(service(names.contract), contractId) : null;
+          if (!contract) return null;
+          const version = contract.currentVersionId
+            ? await safeGetAsync(service(names.contractVersion), contract.currentVersionId) : null;
+          return Object.freeze({
+            contractId: contract.id,
+            status: contract.status,
+            currency: contract.currency,
+            customerName: contract.customerName,
+            companyId: contract.companyId,
+            contactId: contract.contactId,
+            orderId: contract.orderId,
+            quoteId: contract.quoteId,
+            currentVersionId: contract.currentVersionId,
+            versionNumber: version ? version.versionNumber : null,
+            term: Object.freeze({
+              startDate: contract.termStartDate,
+              // Inclusive. A term ending 2026-12-31 is live ON 2026-12-31.
+              endDate: contract.termEndDate,
+              endDateIsInclusive: true,
+              days: contract.termDays,
+              autoRenew: Boolean(contract.autoRenew),
+              renewalNoticeDays: contract.renewalNoticeDays ?? null,
+              // The whole reason this capability exists in this shape.
+              source: contract.termsSource ?? null,
+              reason: contract.termsReason ?? null,
+              // Derived from the source above, never asserted independently of
+              // it: one truth, in one place. See TERM_SOURCE_SIGNED. `null`
+              // means the stored source is outside the declared enum — the
+              // capability will not invent a decision for a row whose
+              // provenance nobody classified.
+              signed: termSignedState(contract.termsSource),
+              // Why `signed` says what it says, so a consumer can tell a
+              // decided `false` apart from an absent decision without
+              // re-implementing the rule.
+              signedBasis: contract.termsSource == null
+                ? 'NO_DECLARED_TERM_SOURCE'
+                : termSignedState(contract.termsSource) === null
+                  ? 'UNCLASSIFIED_TERM_SOURCE'
+                  : 'DERIVED_FROM_DECLARED_TERM_SOURCE',
+              // Derived from the SAME source as `signed`, so the sentence can
+              // never contradict the flag: a signed term is described as
+              // signed, an operational one as operational, and an
+              // unclassified source gets the gap named rather than a guess.
+              provenanceNote: termSignedState(contract.termsSource) === true
+                ? 'these dates are the SIGNED commercial term: part of the canonical document the customer signed (covered by its documentHash), frozen at quote submission and copied from the order term snapshot at activation'
+                : termSignedState(contract.termsSource) === false
+                  ? 'these dates are post-signature OPERATIONAL metadata recorded at activation (M12). They are not signed renewal terms, and nothing here should be reported as one'
+                  : 'this term names a provenance nobody classified; whether it was signed is unknown and must be surfaced as a gap, never asserted either way',
+            }),
+          });
+        },
+
+        /**
+         * The contract's lines, in a deterministic order — the commercial
+         * baseline a renewal conversation starts from. Amounts are integer
+         * minor units and are never summed across currencies here.
+         *
+         * @param {string} contractId
+         */
+        async listContractLines(contractId) {
+          if (typeof contractId !== 'string' || contractId === '') return Object.freeze([]);
+          return Object.freeze((await service(names.contractLine)
+            .listWhere({ contractId }))
+            .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position))
+            .map((row) => Object.freeze({
+              id: row.id,
+              contractVersionId: row.contractVersionId,
+              label: row.label,
+              componentKey: row.componentKey,
+              chargeType: row.chargeType,
+              pricingModel: row.pricingModel,
+              interval: row.interval,
+              intervalCount: row.intervalCount,
+              quantity: row.quantity,
+              netAmountCents: row.netAmountCents,
+              currency: row.currency,
+              commercialActivation: row.commercialActivation,
+              position: row.position,
+            })));
+        },
+
+        /**
+         * The subscription lines that are live under this contract, if any.
+         * @param {string} contractId
+         */
+        async listSubscriptionLines(contractId) {
+          if (typeof contractId !== 'string' || contractId === '') return Object.freeze([]);
+          const subscriptions = await service(names.subscription).listWhere({ contractId });
+          const lines = [];
+          for (const subscription of subscriptions) {
+            for (const row of await service(names.subscriptionLine).listWhere({ subscriptionId: subscription.id })) {
+              lines.push(Object.freeze({
+                id: row.id,
+                subscriptionId: row.subscriptionId,
+                contractLineId: row.contractLineId,
+                label: row.label,
+                componentKey: row.componentKey,
+                chargeType: row.chargeType,
+                interval: row.interval,
+                intervalCount: row.intervalCount,
+                quantity: row.quantity,
+                netAmountCents: row.netAmountCents,
+                currency: row.currency,
+                status: row.status,
+                startDate: row.startDate,
+                endDate: row.endDate,
+              }));
+            }
+          }
+          return Object.freeze(lines.sort((a, b) => (a.componentKey === b.componentKey ? (a.id < b.id ? -1 : 1)
+            : a.componentKey < b.componentKey ? -1 : 1)));
+        },
+      });
+    },
+  };
+}
