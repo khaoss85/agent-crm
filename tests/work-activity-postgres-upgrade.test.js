@@ -1,14 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { bootPostgresqlApp, openIsolatedPostgresqlPlanes } from './helpers/postgresql-application.js';
 import { createTestVerifier } from './helpers/identity-verifier-fixture.mjs';
 import { createAccordoAppAsync } from '../packages/app/src/index.js';
-import { loadManifestSelectedEntries } from '../packages/app/src/manifest-selection.js';
 
 const { Client } = pg;
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -22,8 +21,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  *
  * This test replays that upgrade on real PostgreSQL: migrate with the
  * revision 1 manifest (what b48b09e shipped), then compose through the
- * production loader (`loadManifestSelectedEntries` over the checked-in
- * modules, the path `startPortablePostgresqlApp` compositions use).
+ * production path — plain `{name, manifest}` entries built from the
+ * checked-in `*.module.json` files alone, exactly what `startPortablePostgresqlApp`
+ * and the pilot writer composition pass. The framework reads the checked-in
+ * `<name>.history.json` itself; no caller attaches anything.
  * Skips cleanly without a database; CI always runs this suite against
  * postgres:16.
  */
@@ -35,8 +36,7 @@ const revision2 = () => loadJson('../packages/work/modules/work-activity.module.
 const workTask = () => loadJson('../packages/work/modules/work-task.module.json');
 
 // The database as framework b48b09e left it: plain `{name, manifest}`
-// entries with the revision 1 manifest, exactly what the old production
-// loader built — no sidecar, no previousManifests support.
+// entries with the revision 1 manifest — no history support at all.
 const selectedRev1 = () => ({
   packageContract: 2, packages: [], actions: [],
   modules: [
@@ -44,16 +44,18 @@ const selectedRev1 = () => ({
     { name: 'work-task', manifest: workTask() },
   ],
 });
-const selectedRev2NoHistory = () => ({
-  packageContract: 2, packages: [], actions: [],
-  modules: [{ name: 'work-activity', manifest: revision2() }],
-});
-// The current production path: the framework loader reads the checked-in
-// manifests with the `<name>.history.json` sidecar beside each one, and the
-// selected graph carries the history into startPortablePostgresqlApp.
+// The current production path: every `*.module.json` as a plain
+// `{name, manifest}` entry, the way the pilot builds its selection. The
+// framework supplies the checked-in history for work-activity itself.
 const selectedRev2Production = () => ({
   packageContract: 2, packages: [], actions: [],
-  modules: loadManifestSelectedEntries(WORK_MODULES_DIR),
+  modules: readdirSync(WORK_MODULES_DIR)
+    .filter((file) => file.endsWith('.module.json'))
+    .sort()
+    .map((file) => {
+      const manifest = JSON.parse(readFileSync(join(WORK_MODULES_DIR, file), 'utf8'));
+      return { name: manifest.name, manifest };
+    }),
 });
 
 async function connectTo(plane) {
@@ -65,7 +67,7 @@ async function connectTo(plane) {
   return client;
 }
 
-test('a revision-1 database composes with the current framework once it carries the history', { timeout: 300_000 }, async (t) => {
+test('a revision-1 database composes with the current framework through the production path', { timeout: 300_000 }, async (t) => {
   const planes = await openIsolatedPostgresqlPlanes(t);
   if (!planes) return;
 
@@ -83,8 +85,8 @@ test('a revision-1 database composes with the current framework once it carries 
   }
   await old.app.close();
 
-  // Through the production loader the current framework composes over that
-  // database: the recorded bootstrap matches, and revision 2 arrives as the
+  // The current framework composes over that database from manifest-only
+  // entries: the recorded bootstrap matches, and revision 2 arrives as the
   // additive `pg_evolve_work_activities_r2` migration.
   const upgraded = await bootPostgresqlApp(t, { planes, selected: selectedRev2Production() });
   const check = await connectTo(planes.data);
@@ -126,15 +128,16 @@ test('a revision-1 database composes with the current framework once it carries 
   assert.equal(written.seq, 1);
 });
 
-test('without the history the same upgrade still refuses loudly', { timeout: 300_000 }, async (t) => {
+test('a hand-built history that disagrees with the checked-in one refuses loudly', { timeout: 300_000 }, async (t) => {
   const planes = await openIsolatedPostgresqlPlanes(t);
   if (!planes) return;
 
   const old = await bootPostgresqlApp(t, { planes, selected: selectedRev1() });
   await old.app.close();
 
-  // No history means the applied migration is re-rendered from the revision 2
-  // manifest: the checksum ledger must refuse, never silently no-op.
+  // The framework always renders the checked-in history. A caller that claims
+  // "no history" (or any other chain) for a module that ships one is refused
+  // before any migration renders — never silently re-applied.
   const identityVerifier = createTestVerifier({ tenantId: 'acme' });
   await assert.rejects(
     createAccordoAppAsync({
@@ -142,10 +145,14 @@ test('without the history the same upgrade still refuses loudly', { timeout: 300
       testHarness: { loopback: true, control: planes.control, data: planes.data },
       spine: { mode: 'local-development', tenant: { id: 'acme' } },
       identityVerifier,
-      selected: selectedRev2NoHistory(),
+      selected: {
+        packageContract: 2, packages: [], actions: [],
+        modules: [{ name: 'work-activity', manifest: revision2(), previousManifests: [] }],
+      },
     }),
     (error) => {
-      assert.equal(error.code, 'MODULE_MIGRATION_CHECKSUM_MISMATCH');
+      assert.equal(error.code, 'VALIDATION_ERROR');
+      assert.match(error.message, /does not match the checked-in revision history/);
       return true;
     },
   );

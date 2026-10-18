@@ -128,11 +128,13 @@ function readSelectedContract(selected) {
 /**
  * A `{name, manifest}` selected entry registers a record module built at
  * runtime from the manifest. Refused loudly on any mismatch: a module object
- * silently dropped is the defect this seam closes. An entry may also carry
- * `previousManifests` — the exact manifests previous revisions shipped,
- * oldest first — so a revised module composes its original migration
- * byte-identical plus one additive evolution per later revision, instead of
- * re-rendering the applied migration and tripping the checksum ledger.
+ * silently dropped is the defect this seam closes. A revised module needs no
+ * extra field: the framework reads its checked-in `<name>.history.json`
+ * itself when rendering migrations, so the entry composes its original
+ * migration byte-identical plus one additive evolution per later revision,
+ * instead of re-rendering the applied migration and tripping the checksum
+ * ledger. An entry may still carry `previousManifests`, oldest first, but
+ * only as an assertion — it must match the checked-in history exactly.
  * @param {unknown} entry
  */
 function normalizeRecordModuleEntry(entry) {

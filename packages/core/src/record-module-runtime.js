@@ -38,6 +38,12 @@ import {
   manifestRevision,
 } from './module-evolution.js';
 import {
+  assertCallerHistoryMatchesRegistry,
+  canonicalJson,
+  recordModuleHistoryFor,
+  recordModuleHistoryPath,
+} from './record-module-history.js';
+import {
   isSyncStorage,
   storageApi,
   storageMany,
@@ -560,19 +566,50 @@ export function createRecordModuleFromManifest(manifestInput, { database, audit,
 }
 
 /**
- * The manifest history a manifest-selected entry carries. Generated modules
+ * The manifest history a manifest-selected entry composes. Generated modules
  * keep theirs in `module.state.json`; a module selected by manifest has no
- * state file, so the entry carries it instead: `previousManifests`, oldest
- * first, each the exact manifest a previous revision shipped. Without history
- * the single migration renders from the current manifest — the behavior every
- * revision-1 module relies on, unchanged.
+ * state file, so the framework reads its checked-in `<name>.history.json`
+ * itself (`record-module-history.js`) — every composer gets the original
+ * migration plus one additive evolution without passing anything. An entry
+ * may still carry `previousManifests`, oldest first, but only as an assertion:
+ * it must match the checked-in history exactly, otherwise the composition
+ * refuses. A module with no checked-in history renders its single migration
+ * from the current manifest — the behavior every revision-1 module relies on,
+ * unchanged.
  *
  * @param {{name: string, manifest: unknown, previousManifests?: unknown}} entry
  * @returns {{current: any, previous: any[]}}
  */
 function validatedHistoryChain(entry) {
   const current = validateModuleManifest(entry.manifest);
-  const raw = entry.previousManifests ?? [];
+  const registered = recordModuleHistoryFor(current.name);
+  if (entry.previousManifests !== undefined) {
+    assertCallerHistoryMatchesRegistry(current.name, entry.previousManifests);
+  }
+  // Render from the checked-in history when the framework ships one: it is
+  // the canonical source, so a caller copy that matches under key reordering
+  // still renders the recorded checksum, never a reordered variant of it.
+  // Resolved relative to the entry's own revision: an entry carrying an older
+  // revision than the framework's latest (the database the old framework
+  // migrated, replayed in tests) composes the prefix ending at that revision
+  // — which must be exactly the checked-in revision, never an edited copy,
+  // or an edited old manifest would fork the migration history.
+  let raw = registered ?? entry.previousManifests ?? [];
+  if (registered !== undefined) {
+    const revision = manifestRevision(current);
+    if (revision <= registered.length) {
+      const checkedIn = validateModuleManifest(registered[revision - 1]);
+      if (canonicalJson(current) !== canonicalJson(checkedIn)) {
+        throw new ValidationError(
+          `Selected record module "${current.name}": manifest at revision ${revision} does not match the checked-in `
+            + `revision history (${recordModuleHistoryPath(current.name)}). The framework's latest ${current.name} is `
+            + `revision ${registered.length + 1}: compose the checked-in manifest at the revision you mean, not an edited `
+            + 'copy — rendering edited old DDL would fork the migration history.',
+        );
+      }
+      raw = registered.slice(0, revision - 1);
+    }
+  }
   if (!Array.isArray(raw)) {
     throw new ValidationError(
       `Selected record module "${current.name}": previousManifests must be an array of manifests when present`,
