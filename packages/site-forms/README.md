@@ -27,12 +27,19 @@ carries only an email address, both when it carries both.
 ## What it needs
 
 - `interactions` with `interaction-log@1` (declared in `requires`).
+- The deployment's `resolveSecret` custody edge for the per-space IP-hash
+  secret (like the channels package): without it the intake refuses
+  instead of inventing custody.
 - The pilot calls, in order: `checkSiteForm` (spam pre-check — stop when it
   refuses), `openSiteFormSubmission` (mandatory spam gate before anything is
   stored), `resolveChannelSender` (customer-data, only for a gated-clean
   request), then the `submit` action. A sender the resolution leaves
   `unresolved` stays `needs-review`: evidence for a human, never a message
   from nobody.
+- The pilot passes the caller socket address as `ip` plus the per-space
+  secret locator as `ipHashSecretRef` (never the value). A caller-supplied
+  `ipHash` is refused, and the raw address is never stored — only its HMAC
+  reaches the row. The trap is strict: only an empty trap passes.
 
 ## What it deliberately does not do
 

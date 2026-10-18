@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "name": "site-form-submission",
   "table": "site_form_submissions",
-  "description": "One website-form request per row: the bounded fields the visitor typed, the resolved customer-data subject, the inbound website-form message it became, the reply channels the team answers on, and the spam verdict when it is refused. Every field is managed: a submission exists only through the site-forms package's open operation, and it moves pending -> accepted | rejected | needs-review only through its submit action. The raw IP is never stored — only its hash. (backlog:9d42035eca26)",
+  "description": "One website-form request per row: the bounded fields the visitor typed, the resolved customer-data subject, the inbound website-form message it became, the reply channels the team answers on, and the spam verdict when it is refused. Every field is managed: a submission exists only through the site-forms package's open operation, and it moves pending -> accepted | rejected | needs-review only through its submit action. The raw caller address is never stored — only its HMAC with the per-space secret. (backlog:9d42035eca26)",
   "fields": [
     { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
     { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },

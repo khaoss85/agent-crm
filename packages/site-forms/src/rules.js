@@ -1,6 +1,6 @@
 // @ts-check
 
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { ValidationError } from '../../core/index.js';
 
 /**
@@ -29,7 +29,21 @@ export const EMAIL_MAX = 200;
 export const PHONE_MAX = 32;
 export const COMPANY_MAX = 200;
 export const SPACE_MAX = 128;
-export const IP_HASH_MAX = 128;
+/** The caller socket address the pilot passes for the rate window: bounded text, never stored. */
+export const IP_MAX = 256;
+/** A per-space IP-hash secret locator is bounded like every other secret reference. */
+export const IP_HASH_SECRET_REF_MAX = 256;
+/**
+ * A secret reference is a namespaced locator, never a value:
+ * `vault://<space>/<name>` (or the `secret://` scheme where a deployment
+ * names its own). Same discipline as the channels connection secretRef
+ * (packages/channels/src/connection.js): the pattern is deliberately
+ * stricter than the kernel's own secret-reference shape, so a raw value
+ * pasted in place of its locator is refused before anything is resolved.
+ * It lives here instead of an import because a domain package reaches
+ * another package only through a declared capability, never its sources.
+ */
+const SECRET_REF_PATTERN = /^(?:vault|secret):\/\/[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/;
 
 /** Base anti-spam thresholds. */
 export const MIN_DWELL_MS = 1500;
@@ -71,8 +85,41 @@ function optionalText(value, field, max) {
 }
 
 /**
+ * The honeypot trap is strict: only an empty trap passes. The snippet sends
+ * a real boolean, so anything else that is not empty — `1`, `"true"`, any
+ * non-empty text — is a crafted request and fills the trap. Fail-closed:
+ * when in doubt the trap is filled.
+ * @param {unknown} value
+ */
+export function isHoneypotFilled(value) {
+  if (value === false || value === undefined || value === null || value === '') return false;
+  return true;
+}
+
+/**
+ * A per-space IP-hash secret locator. Anything else — a raw pasted secret,
+ * a bare token, a hostile key — is refused before any resolution.
+ * @param {unknown} value
+ */
+export function assertIpHashSecretRef(value) {
+  if (typeof value !== 'string' || value.length > IP_HASH_SECRET_REF_MAX
+    || !SECRET_REF_PATTERN.test(value)) {
+    throw new ValidationError(
+      'ipHashSecretRef must be a bounded reference locator ("vault://<space>/<name>"), never a secret value',
+      { field: 'ipHashSecretRef' },
+    );
+  }
+  return value;
+}
+
+/**
  * Validate the raw fields of one form request. Throws fail-closed; reads and
  * writes nothing. Returns the normalized fields the row stores.
+ *
+ * The submitter key never arrives from the caller: `ip` is the socket
+ * address the pilot passes from its server route, and a caller-supplied
+ * `ipHash` — even a well-formed one — is refused, so a raw address can
+ * never be persisted and the rate window is never caller-controlled.
  * @param {unknown} raw
  */
 export function validateFormFields(raw) {
@@ -119,8 +166,11 @@ export function validateFormFields(raw) {
   if (!Number.isInteger(dwellMs) || dwellMs < 0 || dwellMs > 86_400_000) {
     throw new ValidationError('dwellMs must be a non-negative integer of milliseconds', { field: 'dwellMs' });
   }
-  const ipHash = optionalText(value.ipHash, 'ipHash', IP_HASH_MAX);
-  if (!ipHash) throw new ValidationError('ipHash is required', { field: 'ipHash' });
+  if (Object.hasOwn(raw, 'ipHash')) {
+    throw new ValidationError('ipHash must not be supplied by the caller: the pilot passes ip and the package hashes it', { field: 'ipHash' });
+  }
+  const ip = optionalText(value.ip, 'ip', IP_MAX);
+  if (!ip) throw new ValidationError('ip is required: the pilot passes the caller socket address', { field: 'ip' });
   // A request the team cannot answer is triage, not intake: refused at the door.
   replyChannels({ phone, email });
   return Object.freeze({
@@ -131,8 +181,8 @@ export function validateFormFields(raw) {
     phone,
     companyName: optionalText(value.companyName, 'companyName', COMPANY_MAX),
     body: collapsed,
-    ipHash,
-    honeypotFilled: value.honeypotFilled === true,
+    ip,
+    honeypotFilled: isHoneypotFilled(value.honeypotFilled),
     dwellMs,
   });
 }
@@ -142,13 +192,13 @@ export function validateFormFields(raw) {
  * this submitter's recent submissions. Pure: `recentOccurredAtMs` is the
  * caller-read window, already bounded by `RATE_READ_CAP`.
  *
- * @param {{honeypotFilled: boolean, dwellMs: number}} fields
+ * @param {{honeypotFilled: unknown, dwellMs: number}} fields
  * @param {number[]} recentOccurredAtMs epoch milliseconds, newest last
  * @param {number} nowMs
  * @returns {{spam: boolean, reasonCode: string|null}}
  */
 export function evaluateSpam(fields, recentOccurredAtMs, nowMs) {
-  if (fields.honeypotFilled) return { spam: true, reasonCode: REASON.HONEYPOT };
+  if (isHoneypotFilled(fields.honeypotFilled)) return { spam: true, reasonCode: REASON.HONEYPOT };
   if (fields.dwellMs < MIN_DWELL_MS) return { spam: true, reasonCode: REASON.TOO_FAST };
   if (recentOccurredAtMs.length >= RATE_READ_CAP) {
     return { spam: true, reasonCode: REASON.RATE_LIMITED };
@@ -198,12 +248,26 @@ export function submissionSourceKey(spaceId, idempotencyKey) {
   return `site-form:${spaceId}:${key}`;
 }
 
-/** Hash a caller IP for the rate window. The raw address is never stored. */
-export function hashIp(ip, spaceId) {
-  if (typeof ip !== 'string' || ip.trim() === '') {
+/**
+ * Hash a caller address for the rate window: HMAC-SHA256 with the
+ * per-space secret, resolved by the deployment from its reference at call
+ * time and never stored. The raw address is never stored either — only
+ * this hash reaches the row — and two spaces hash the same address
+ * differently, so no dump or log export enumerates back to the address.
+ * @param {string} ip @param {string} spaceId @param {string} secret the resolved per-space value, never its reference
+ */
+export function hashIp(ip, spaceId, secret) {
+  if (typeof ip !== 'string' || ip.trim() === '' || ip.length > IP_MAX) {
     throw new ValidationError('ip is required to hash', { field: 'ip' });
   }
-  return createHash('sha256').update(`site-form|${spaceId}|${ip.trim()}`, 'utf8').digest('hex');
+  if (typeof spaceId !== 'string' || spaceId === '') {
+    throw new ValidationError('spaceId is required to hash', { field: 'spaceId' });
+  }
+  if (typeof secret !== 'string' || secret === '') {
+    // The message names the missing custody, never the value.
+    throw new ValidationError('ip hash custody is not wired: resolve the per-space secret first', { field: 'ipHashSecretRef' });
+  }
+  return createHmac('sha256', secret).update(`site-form|${spaceId}|${ip.trim()}`, 'utf8').digest('hex');
 }
 
 const SNIPPET_MAX_ENDPOINT = 200;

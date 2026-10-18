@@ -16,8 +16,11 @@ import {
   RATE_WINDOW_MS,
   REASON,
   SITE_FORMS_PACKAGE,
+  assertIpHashSecretRef,
   buildSnippet,
   evaluateSpam,
+  hashIp,
+  isHoneypotFilled,
   replyChannels,
   submissionSourceKey,
   validateFormFields,
@@ -40,9 +43,17 @@ import {
  * record, and the module factory for its own evidence rows. It changes no
  * kernel file (ADR-018).
  *
+ * The submitter key never arrives from the caller: the pilot passes the
+ * socket address (`ip`) from its server route plus the per-space secret
+ * locator (`ipHashSecretRef`, never the value), and the package hashes
+ * internally (HMAC with the deployment-resolved secret). A caller-supplied
+ * `ipHash` is refused, and the raw address is never stored. Secret custody
+ * is deployment-owned through the `resolveSecret` edge, like the channels
+ * package: without it the intake refuses instead of inventing custody.
+ *
  * What is deliberately NOT here: the per-space HTTP route and the sender
  * orchestration (the pilot owns them, like every channel adapter route),
- * secret custody, provider sends, and paid anti-spam services.
+ * secret values, provider sends, and paid anti-spam services.
  */
 
 export const SITE_FORMS_DOMAIN = SITE_FORMS_PACKAGE;
@@ -132,6 +143,28 @@ const SITE_FORMS_REQUIRES = Object.freeze([
   { package: 'interactions', capability: 'interaction-log', version: 1 },
 ]);
 
+/**
+ * Resolve the submitter key for one request: validate the per-space secret
+ * locator, resolve its value through the deployment's custody edge, and
+ * hash the pilot-supplied address. The value is never stored, logged, or
+ * echoed — only the hash reaches the row and the rate window.
+ */
+async function resolveIpHash(resolveSecret, { spaceId, ip, ipHashSecretRef }) {
+  const reference = assertIpHashSecretRef(ipHashSecretRef);
+  if (typeof resolveSecret !== 'function') {
+    throw new AppError('Site-form IP-hash custody is not wired: compose the package with resolveSecret', {
+      code: 'SITE_FORMS_SECRET_UNAVAILABLE', status: 500,
+    });
+  }
+  const secret = await resolveSecret(reference, { spaceId, purpose: 'site-forms-ip-hash' });
+  if (typeof secret !== 'string' || secret === '') {
+    throw new AppError('Site-form IP-hash custody is not wired: the per-space secret did not resolve', {
+      code: 'SITE_FORMS_SECRET_UNAVAILABLE', status: 500,
+    });
+  }
+  return hashIp(ip, spaceId, secret);
+}
+
 /** @param {Record<string, string>} [config] */
 export function buildSiteFormsActions(config = {}) {
   const names = resolvedNames(config);
@@ -161,7 +194,9 @@ export function buildSiteFormsActions(config = {}) {
         const decidedAt = now();
 
         // The row being submitted is not its own flood: the window counts the
-        // submitter's *other* rows.
+        // submitter's *other* rows. The trap stays strict on the stored row
+        // too, so a row written outside the open gate cannot smuggle a
+        // truthy non-boolean trap past the re-gate.
         const window = await recentSubmitterRows(
           submissions, { spaceId: record.spaceId, ipHash: record.ipHash }, record.id,
         );
@@ -170,7 +205,7 @@ export function buildSiteFormsActions(config = {}) {
         const verdict = window.capped
           ? { spam: true, reasonCode: REASON.RATE_LIMITED }
           : evaluateSpam(
-            { honeypotFilled: record.honeypotFilled === true, dwellMs: record.dwellMs },
+            { honeypotFilled: isHoneypotFilled(record.honeypotFilled), dwellMs: record.dwellMs },
             window.atMs,
             Date.parse(decidedAt),
           );
@@ -271,10 +306,18 @@ export function buildSiteFormsActions(config = {}) {
 
 /**
  * Build the package definition the application composes.
- * @param {{config?: Record<string, string>}} [options]
+ * @param {{config?: Record<string, string>,
+ *   resolveSecret?: (reference: string, context: {spaceId: string, purpose: string}) => Promise<string>}} [options]
+ * `resolveSecret` is the deployment's custody edge for the per-space
+ * IP-hash secret (like the channels package); validation and conformance
+ * compose empty, and every hash refuses until it is wired.
  */
 export function createSiteFormsPackage(options = {}) {
   const config = options.config;
+  const { resolveSecret } = options;
+  if (resolveSecret !== undefined && typeof resolveSecret !== 'function') {
+    throw new ValidationError('site-forms resolveSecret must be a function', { field: 'resolveSecret' });
+  }
   return selectPackageGraph(definePackage({
     packageContract: 1,
     name: SITE_FORMS_DOMAIN,
@@ -311,14 +354,19 @@ export function createSiteFormsPackage(options = {}) {
             // Mandatory spam gate before anything is stored — and before the
             // pilot resolves the sender, which runs only after open accepts.
             // A bot request throws here: no row, and the pilot resolves
-            // nobody. The submit action re-gates authoritatively.
+            // nobody. The submit action re-gates authoritatively. The
+            // submitter key is hashed here from the pilot-supplied address:
+            // the raw address never reaches the row.
+            const ipHash = await resolveIpHash(resolveSecret, {
+              spaceId: fields.spaceId, ip: fields.ip, ipHashSecretRef: request.ipHashSecretRef,
+            });
             const gate = await recentSubmitterRows(
-              submissions, { spaceId: fields.spaceId, ipHash: fields.ipHash },
+              submissions, { spaceId: fields.spaceId, ipHash },
             );
             const gateVerdict = gate.capped
               ? { spam: true, reasonCode: REASON.RATE_LIMITED }
               : evaluateSpam(
-                { honeypotFilled: fields.honeypotFilled === true, dwellMs: fields.dwellMs },
+                { honeypotFilled: fields.honeypotFilled, dwellMs: fields.dwellMs },
                 gate.atMs,
                 Date.parse(nowIso()),
               );
@@ -340,7 +388,7 @@ export function createSiteFormsPackage(options = {}) {
                 phone: fields.phone,
                 companyName: fields.companyName,
                 body: fields.body,
-                ipHash: fields.ipHash,
+                ipHash,
                 honeypotFilled: fields.honeypotFilled,
                 dwellMs: fields.dwellMs,
                 subjectResource: null,
@@ -374,15 +422,22 @@ export function createSiteFormsPackage(options = {}) {
           + 'action re-gates authoritatively.',
         input: [
           { name: 'spaceId', type: 'string', hint: 'The Accordo space slug.' },
-          { name: 'ipHash', type: 'string', hint: 'The sha256 of the caller IP for this space — never the raw address.' },
-          { name: 'honeypotFilled', type: 'json', hint: 'Whether the trap field arrived filled (JSON boolean).' },
+          { name: 'ip', type: 'string', hint: 'The caller socket address from the server route — never a client hash.' },
+          { name: 'ipHashSecretRef', type: 'string', hint: 'The per-space IP-hash secret locator (vault://<space>/<name>), never the value.' },
+          { name: 'honeypotFilled', type: 'json', hint: 'The trap field as it arrived: only an empty trap passes, any other value refuses.' },
           { name: 'dwellMs', type: 'integer', hint: 'Milliseconds between render and submit.' },
         ],
         create(runtime) {
           const moduleNames = resolvedNames(runtime.config ?? {});
           return async (request) => {
+            if (request !== null && typeof request === 'object' && Object.hasOwn(request, 'ipHash')) {
+              throw new ValidationError('ipHash must not be supplied by the caller: the pilot passes ip and the package hashes it', { field: 'ipHash' });
+            }
             const spaceId = typeof request.spaceId === 'string' ? request.spaceId : '';
-            const ipHash = typeof request.ipHash === 'string' ? request.ipHash : '';
+            const ip = typeof request.ip === 'string' ? request.ip : '';
+            const ipHash = await resolveIpHash(resolveSecret, {
+              spaceId, ip, ipHashSecretRef: request.ipHashSecretRef,
+            });
             const { capped, atMs } = await recentSubmitterRows(
               trusted(runtime.modules, moduleNames.submission), { spaceId, ipHash },
             );
@@ -394,7 +449,7 @@ export function createSiteFormsPackage(options = {}) {
               });
             }
             const verdict = evaluateSpam({
-              honeypotFilled: request.honeypotFilled === true,
+              honeypotFilled: request.honeypotFilled,
               dwellMs: Number.isInteger(request.dwellMs) ? request.dwellMs : -1,
             }, atMs, Date.parse(nowIso()));
             if (verdict.spam) {
@@ -432,16 +487,19 @@ export function createSiteFormsPackage(options = {}) {
         siteFormsContract: 1,
         submissionStates: ['pending', 'accepted', 'rejected', 'needs-review'],
         spam: {
-          honeypot: 'a filled trap field refuses the submission as SPAM_HONEYPOT',
+          honeypot: 'only an empty trap passes: any other trap value refuses the submission as SPAM_HONEYPOT',
           minDwellMs: MIN_DWELL_MS,
           rateWindow: `at most ${RATE_MAX_PER_WINDOW} submissions per space and submitter hash per ${RATE_WINDOW_MS / 1000} seconds, else SPAM_RATE_LIMITED`,
           noPaidService: 'no captcha, no scoring service, no third party sees the request',
+          submitterKey: 'HMAC-SHA256 over the pilot-supplied caller address with the per-space secret (by reference); the raw address is never stored',
         },
         replyRule: 'phone present answers on WhatsApp, email-only answers by email, both present answers on both',
         provenance: 'the contact and its channel identities are written only by customer-data sender resolution (runId channel-sender); this package records the subject, never the identity',
         replayScope: 'one idempotency key opens one submission; the same key replays the stored row, never a second one',
+        secretDiscipline: 'the pilot passes ipHashSecretRef, never the secret; the deployment resolves it at call time; rows carry the hash only',
         pilotOwns: [
           'the per-space HTTP route (POST /site/:spaceId/submit), passing spaceId from the verified path',
+          'passing the caller socket address as ip (never a caller-supplied ipHash, which is refused) and the per-space secret locator as ipHashSecretRef',
           'running the check-site-form pre-check first and stopping when it refuses',
           'opening the submission before resolving the sender, so a refused request resolves nobody',
           'resolving the sender with customer-data resolveChannelSender only for a gated-clean request',

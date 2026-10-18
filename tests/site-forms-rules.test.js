@@ -7,9 +7,11 @@ import {
   RATE_MAX_PER_WINDOW,
   RATE_WINDOW_MS,
   REASON,
+  assertIpHashSecretRef,
   buildSnippet,
   evaluateSpam,
   hashIp,
+  isHoneypotFilled,
   replyChannels,
   submissionSourceKey,
   validateFormFields,
@@ -29,7 +31,7 @@ const FIELDS = Object.freeze({
   phone: '+39 333 123 4567',
   companyName: 'Presti Group',
   body: 'Vorrei informazioni sui pacchetti.',
-  ipHash: 'h'.repeat(64),
+  ip: '203.0.113.7',
   honeypotFilled: false,
   dwellMs: 5000,
 });
@@ -49,9 +51,44 @@ test('missing or hostile fields refuse fail-closed', () => {
   assert.throws(() => validateFormFields({ ...FIELDS, body: '   ' }), /body is required/);
   assert.throws(() => validateFormFields({ ...FIELDS, body: 'x'.repeat(BODY_MAX + 1) }), /at most 2000/);
   assert.throws(() => validateFormFields({ ...FIELDS, body: 'ok\x07bell' }), /control characters/);
-  assert.throws(() => validateFormFields({ ...FIELDS, ipHash: '' }), /ipHash is required/);
+  assert.throws(() => validateFormFields({ ...FIELDS, ip: '' }), /ip is required/);
+  assert.throws(() => validateFormFields({ ...FIELDS, ip: undefined }), /ip is required/);
+  assert.throws(
+    () => validateFormFields({ ...FIELDS, ipHash: 'a'.repeat(64) }),
+    /must not be supplied/,
+    'even a well-formed caller ipHash is refused',
+  );
+  assert.throws(
+    () => validateFormFields({ ...FIELDS, ipHash: '203.0.113.7' }),
+    /must not be supplied/,
+    'a raw address smuggled as ipHash is refused, never stored',
+  );
   assert.throws(() => validateFormFields({ ...FIELDS, dwellMs: -1 }), /dwellMs/);
   assert.throws(() => validateFormFields({ ...FIELDS, email: null, phone: null }), /phone number or an email/);
+});
+
+test('the honeypot trap is strict: only an empty trap passes', () => {
+  assert.equal(isHoneypotFilled(false), false);
+  assert.equal(isHoneypotFilled(undefined), false);
+  assert.equal(isHoneypotFilled(null), false);
+  assert.equal(isHoneypotFilled(''), false);
+  assert.equal(isHoneypotFilled(true), true);
+  assert.equal(isHoneypotFilled(1), true);
+  assert.equal(isHoneypotFilled(0), true, 'fail-closed: a number is never the snippet boolean');
+  assert.equal(isHoneypotFilled('true'), true);
+  assert.equal(isHoneypotFilled('x'), true);
+  assert.equal(validateFormFields({ ...FIELDS, honeypotFilled: 1 }).honeypotFilled, true);
+  assert.equal(validateFormFields({ ...FIELDS, honeypotFilled: 'true' }).honeypotFilled, true);
+  assert.equal(validateFormFields({ ...FIELDS, honeypotFilled: false }).honeypotFilled, false);
+});
+
+test('the secret locator is a reference, never a value', () => {
+  assert.equal(assertIpHashSecretRef('vault://presti/site-forms-ip'), 'vault://presti/site-forms-ip');
+  assert.equal(assertIpHashSecretRef('secret://presti/site-forms-ip'), 'secret://presti/site-forms-ip');
+  assert.throws(() => assertIpHashSecretRef('a'.repeat(64)), /never a secret value/);
+  assert.throws(() => assertIpHashSecretRef('sk_live_abc'), /never a secret value/);
+  assert.throws(() => assertIpHashSecretRef(''), /never a secret value/);
+  assert.throws(() => assertIpHashSecretRef(42), /never a secret value/);
 });
 
 test('the reply-channel rule follows phone/email presence', () => {
@@ -78,6 +115,13 @@ test('spam verdict: honeypot, dwell and the rate window', () => {
     evaluateSpam({ honeypotFilled: false, dwellMs: MIN_DWELL_MS }, [], now),
     { spam: false, reasonCode: null },
   );
+  for (const trap of [1, 'true', 'x']) {
+    assert.deepEqual(
+      evaluateSpam({ honeypotFilled: trap, dwellMs: 9000 }, [], now),
+      { spam: true, reasonCode: REASON.HONEYPOT },
+      `trap ${JSON.stringify(trap)} fills the honeypot`,
+    );
+  }
   const full = Array.from({ length: RATE_MAX_PER_WINDOW }, (_, index) => now - index * 1000);
   assert.deepEqual(
     evaluateSpam({ honeypotFilled: false, dwellMs: 9000 }, full, now),
@@ -98,12 +142,16 @@ test('submission source keys are bounded and space-scoped', () => {
   assert.throws(() => submissionSourceKey('presti', 'x'.repeat(129)), /idempotencyKey/);
 });
 
-test('ip hashes are deterministic per space and never the address', () => {
-  const first = hashIp('203.0.113.7', 'presti');
-  assert.equal(first, hashIp('203.0.113.7', 'presti'));
-  assert.notEqual(first, hashIp('203.0.113.7', 'altro'));
+test('ip hashes are HMACs with the per-space secret, never the address', () => {
+  const first = hashIp('203.0.113.7', 'presti', 'secret-presti');
+  assert.equal(first, hashIp('203.0.113.7', 'presti', 'secret-presti'));
+  assert.match(first, /^[0-9a-f]{64}$/);
+  assert.notEqual(first, hashIp('203.0.113.7', 'altro', 'secret-altro'), 'two spaces hash differently');
+  assert.notEqual(first, hashIp('203.0.113.7', 'presti', 'secret-altro'), 'two secrets hash differently');
+  assert.notEqual(first, hashIp('203.0.113.7', 'altro', 'secret-presti'), 'the space binds the hash too');
   assert.ok(!first.includes('203.0.113.7'));
-  assert.throws(() => hashIp('', 'presti'), /ip is required/);
+  assert.throws(() => hashIp('', 'presti', 'secret-presti'), /ip is required/);
+  assert.throws(() => hashIp('203.0.113.7', 'presti', ''), /custody is not wired/);
 });
 
 test('the snippet posts to the per-space route with a trap field', () => {

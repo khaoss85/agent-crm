@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { assertPackageConforms } from './helpers/package-conformance.js';
-import { RATE_READ_CAP } from '../packages/site-forms/src/rules.js';
+import { RATE_READ_CAP, hashIp } from '../packages/site-forms/src/rules.js';
 import { createSiteFormsPackage } from '../packages/site-forms/src/index.js';
 
 /**
@@ -25,6 +25,11 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
 const ACTOR = { type: 'user', id: 'site-forms-e2e' };
 const SPACE = 'presti';
+/** The per-space secret locator the pilot passes; the value stays in custody. */
+const SECRET_REF = 'vault://presti/site-forms-ip';
+/** Fixture custody: one secret per locator, so two spaces hash differently. */
+const fixtureResolveSecret = async (reference) => `fixture-secret:${reference}`;
+const fixtureIpHash = (ip, spaceId, secretRef = SECRET_REF) => hashIp(ip, spaceId, `fixture-secret:${secretRef}`);
 
 const CUSTOMER_DATA_MANIFESTS = [
   'customer-import-run.module.json',
@@ -69,6 +74,8 @@ function project(t) {
     "import { createInteractionsPackage } from '../../interactions/src/index.js';",
     "import { createSiteFormsPackage } from '../../site-forms/src/index.js';",
     "import { definePackage } from '../../core/index.js';",
+    'const fixtureResolveSecret = async (reference) => `fixture-secret:${reference}`;',
+    'const siteFormsWithCustody = createSiteFormsPackage({ resolveSecret: fixtureResolveSecret });',
     'const cardProbe = definePackage({',
     "  packageContract: 1, name: 'card-probe', version: 1, label: 'Card probe',",
     "  description: 'A do-nothing consumer that declares the timeline capability so a test reads the card through the registry.',",
@@ -80,7 +87,7 @@ function project(t) {
     'export const generatedDomains = [',
     '  createCustomerDataPackage(),',
     '  createInteractionsPackage(),',
-    '  createSiteFormsPackage(),',
+    '  siteFormsWithCustody,',
     '  cardProbe,',
     '];',
     '',
@@ -107,7 +114,8 @@ const FORM = Object.freeze({
   phone: '+39 333 123 4567',
   companyName: 'Presti Group',
   body: 'Vorrei informazioni sui pacchetti in palestra.',
-  ipHash: 's'.repeat(64),
+  ip: '203.0.113.7',
+  ipHashSecretRef: SECRET_REF,
   honeypotFilled: false,
   dwellMs: 8000,
 });
@@ -117,8 +125,9 @@ async function intake(app, fields, resolution) {
   try {
     await app.checkSiteForm({
       spaceId: fields.spaceId,
-      ipHash: fields.ipHash,
-      honeypotFilled: fields.honeypotFilled === true,
+      ip: fields.ip,
+      ipHashSecretRef: fields.ipHashSecretRef,
+      honeypotFilled: fields.honeypotFilled,
       dwellMs: fields.dwellMs,
     });
   } catch (error) {
@@ -183,6 +192,10 @@ test('site-forms conforms to the domain-package contract it ships', () => {
   const metadata = createSiteFormsPackage().metadata();
   assert.ok(metadata.replyRule.includes('WhatsApp'), 'the reply rule is stated');
   assert.ok(metadata.notModeled.includes('paid or third-party anti-spam (captcha, scoring)'));
+});
+
+test('site-forms refuses a non-function custody edge at composition', () => {
+  assert.throws(() => createSiteFormsPackage({ resolveSecret: 42 }), /must be a function/);
 });
 
 test('a form request creates the contact and lands on the card in one pass', async (t) => {
@@ -267,7 +280,7 @@ test('phone-only on a known contact answers on WhatsApp', async (t) => {
     firstName: 'Anna',
     lastName: 'Bianchi',
     body: 'Chiamatemi su WhatsApp.',
-    ipHash: 'p'.repeat(64),
+    ip: '203.0.113.8',
   }, linked);
   assert.equal(outcome.status, 'accepted');
   assert.equal(outcome.replyWhatsapp, true);
@@ -281,7 +294,7 @@ test('an unknown phone-only sender stays needs-review with no message', async (t
     email: null,
     phone: '+393339999999',
     body: 'Numero mai visto.',
-    ipHash: 'q'.repeat(64),
+    ip: '203.0.113.9',
   });
   assert.equal(resolved.outcome, 'unresolved');
   assert.equal(resolved.contact, null);
@@ -297,7 +310,7 @@ test('the pre-check refuses spam before anything is written', async (t) => {
   assert.equal(trapped.refused, 'SPAM_HONEYPOT');
 
   const fast = await intake(app, {
-    ...FORM, dwellMs: 50, body: 'Too fast.', ipHash: 'f'.repeat(64),
+    ...FORM, dwellMs: 50, body: 'Too fast.', ip: '203.0.113.10',
   });
   assert.equal(fast.refused, 'SPAM_TOO_FAST');
 
@@ -360,7 +373,8 @@ test('the submit action re-gates a row stored outside the open gate', async (t) 
 test('the pre-check and open fail closed past the read cap', async (t) => {
   const { app } = await scene(t, 'site-form-cap');
   const service = app.modules.get('site-form-submission').service;
-  const ipHash = 'z'.repeat(64);
+  // The flood rows carry the same HMAC the gates compute for this address.
+  const ipHash = fixtureIpHash('203.0.113.11', SPACE);
   for (let index = 0; index < RATE_READ_CAP; index += 1) {
     await service.createManaged({
       sourceKey: `site-form:${SPACE}:cap-${index}`,
@@ -388,12 +402,12 @@ test('the pre-check and open fail closed past the read cap', async (t) => {
   }
   // The capped window read is itself the flood: both gates refuse it.
   await assert.rejects(
-    app.checkSiteForm({ spaceId: SPACE, ipHash, honeypotFilled: false, dwellMs: 9000 }),
+    app.checkSiteForm({ spaceId: SPACE, ip: '203.0.113.11', ipHashSecretRef: SECRET_REF, honeypotFilled: false, dwellMs: 9000 }),
     (error) => error.code === 'SPAM_RATE_LIMITED' && error.status === 422,
   );
   await assert.rejects(
     app.openSiteFormSubmission({
-      ...FORM, ipHash, body: 'Flood.', idempotencyKey: nextKey('cap'),
+      ...FORM, ip: '203.0.113.11', body: 'Flood.', idempotencyKey: nextKey('cap'),
     }),
     (error) => error.code === 'SPAM_RATE_LIMITED' && error.status === 422,
   );
@@ -474,14 +488,97 @@ test('two parallel opens behind one key leave one row', async (t) => {
 test('checkSiteForm pre-checks spam without writing', async (t) => {
   const { app } = await scene(t, 'site-form-check');
   const clean = await app.checkSiteForm({
-    spaceId: SPACE, ipHash: 'c'.repeat(64), honeypotFilled: false, dwellMs: 9000,
+    spaceId: SPACE, ip: '203.0.113.12', ipHashSecretRef: SECRET_REF, honeypotFilled: false, dwellMs: 9000,
   });
   assert.deepEqual(clean, { ok: true });
   await assert.rejects(
-    app.checkSiteForm({ spaceId: SPACE, ipHash: 'c'.repeat(64), honeypotFilled: true, dwellMs: 9000 }),
+    app.checkSiteForm({ spaceId: SPACE, ip: '203.0.113.12', ipHashSecretRef: SECRET_REF, honeypotFilled: true, dwellMs: 9000 }),
     (error) => error.code === 'SPAM_HONEYPOT' && error.status === 422,
   );
   assert.equal(rows(app, 'site-form-submission', {}).length, 0, 'the pre-check writes nothing');
+});
+
+test('a caller-supplied ipHash is refused by open and by the pre-check', async (t) => {
+  const { app } = await scene(t, 'site-form-nohash');
+  await assert.rejects(
+    app.openSiteFormSubmission({
+      ...FORM, ipHash: 'a'.repeat(64), body: 'Smuggled hash.', idempotencyKey: nextKey('smuggle'),
+    }),
+    (error) => error?.details?.field === 'ipHash' && /must not be supplied/.test(error.message),
+  );
+  await assert.rejects(
+    app.openSiteFormSubmission({
+      ...FORM, ipHash: '203.0.113.7', body: 'Raw as hash.', idempotencyKey: nextKey('smuggle-raw'),
+    }),
+    (error) => error?.details?.field === 'ipHash' && /must not be supplied/.test(error.message),
+  );
+  await assert.rejects(
+    app.checkSiteForm({
+      spaceId: SPACE, ip: FORM.ip, ipHashSecretRef: SECRET_REF,
+      ipHash: 'a'.repeat(64), honeypotFilled: false, dwellMs: 9000,
+    }),
+    (error) => error?.details?.field === 'ipHash' && /must not be supplied/.test(error.message),
+  );
+  assert.equal(rows(app, 'site-form-submission', {}).length, 0, 'no row for a caller key');
+  assert.equal(app.modules.get('contact').service.list().length, 0, 'no contact: refused before any resolution');
+});
+
+test('the raw caller address is never stored, only its HMAC', async (t) => {
+  const { app } = await scene(t, 'site-form-noip');
+  const { outcome } = await intake(app, { ...FORM });
+  assert.equal(outcome.status, 'accepted');
+  const stored = rows(app, 'site-form-submission', {})[0];
+  assert.equal(stored.ipHash, fixtureIpHash(FORM.ip, SPACE));
+  assert.match(stored.ipHash, /^[0-9a-f]{64}$/);
+  assert.ok(!JSON.stringify(stored).includes('203.0.113'), 'no raw address anywhere in the row');
+  assert.ok(!('ip' in stored), 'no address field on the row');
+});
+
+test('the trap refuses a crafted value in every gate: string, number, boolean', async (t) => {
+  const { app } = await scene(t, 'site-form-strict-trap');
+  for (const trap of [1, 'true', 'x', true]) {
+    await assert.rejects(
+      app.openSiteFormSubmission({
+        ...FORM, honeypotFilled: trap, body: `Bot ${JSON.stringify(trap)}.`, idempotencyKey: nextKey('trap-open'),
+      }),
+      (error) => error.code === 'SPAM_HONEYPOT' && error.status === 422,
+      `open refuses trap ${JSON.stringify(trap)}`,
+    );
+    await assert.rejects(
+      app.checkSiteForm({
+        spaceId: SPACE, ip: FORM.ip, ipHashSecretRef: SECRET_REF, honeypotFilled: trap, dwellMs: 9000,
+      }),
+      (error) => error.code === 'SPAM_HONEYPOT' && error.status === 422,
+      `pre-check refuses trap ${JSON.stringify(trap)}`,
+    );
+  }
+  assert.equal(rows(app, 'site-form-submission', {}).length, 0, 'no row for a filled trap');
+  assert.equal(rows(app, 'external-identity', {}).length, 0, 'no identity from a filled trap');
+});
+
+test('two spaces hash the same address differently', async (t) => {
+  const { app } = await scene(t, 'site-form-twospaces');
+  const first = await intake(app, { ...FORM });
+  assert.equal(first.outcome.status, 'accepted');
+  // Open-only for the second space: the hash is stored at open, before any
+  // sender resolution, which is exactly the layer this test pins (sender
+  // matching across spaces belongs to customer-data, not to this cure).
+  const { submission } = await app.openSiteFormSubmission({
+    ...FORM,
+    spaceId: 'altro',
+    email: 'marco.verdi@prestigroup.example',
+    phone: null,
+    firstName: 'Marco',
+    lastName: 'Verdi',
+    body: 'Stesso indirizzo, altro spazio.',
+    ipHashSecretRef: 'vault://altro/site-forms-ip',
+    idempotencyKey: nextKey('twospaces'),
+  });
+  assert.equal(submission.status, 'pending');
+  const [prestiRow] = rows(app, 'site-form-submission', { spaceId: SPACE });
+  const [altroRow] = rows(app, 'site-form-submission', { spaceId: 'altro' });
+  assert.notEqual(prestiRow.ipHash, altroRow.ipHash, 'one address, two spaces, two hashes');
+  assert.ok(!JSON.stringify(altroRow).includes('203.0.113'));
 });
 
 test('the snippet endpoint serves one space only', async (t) => {
