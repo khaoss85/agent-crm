@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnGit } from './helpers/isolated-git.js';
 import {
   REPO_WIDE_GUARDS,
+  REPO_WIDE_GUARD_EXCLUSIONS,
   buildFileImports,
   changedTestFiles,
   fallbackPlan,
@@ -724,7 +725,7 @@ function looksLikeRepoWideGuard(_relativePath, source) {
   return false;
 }
 
-test('a repo-wide guard outside the declared list fails this test', () => {
+test('a repo-wide guard outside the declared lists fails this test', () => {
   const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
   const testFiles = [];
   const walk = (/** @type {string} */ directory) => {
@@ -742,18 +743,48 @@ test('a repo-wide guard outside the declared list fails this test', () => {
     }
   };
   walk(join(repoRoot, 'tests'));
-  const unlisted = [];
+  const unexplained = [];
   for (const relative of testFiles.sort()) {
     const source = readFileSync(join(repoRoot, relative), 'utf8');
-    if (looksLikeRepoWideGuard(relative, source) && !REPO_WIDE_GUARDS.includes(relative)) {
-      unlisted.push(relative);
+    if (
+      looksLikeRepoWideGuard(relative, source)
+      && !REPO_WIDE_GUARDS.includes(relative)
+      && !Object.prototype.hasOwnProperty.call(REPO_WIDE_GUARD_EXCLUSIONS, relative)
+    ) {
+      unexplained.push(relative);
     }
   }
   assert.deepEqual(
-    unlisted,
+    unexplained,
     [],
-    `repo-wide guard(s) outside REPO_WIDE_GUARDS in scripts/ci-touched-tests.js: ${unlisted.join(', ')}. `
+    `repo-wide guard(s) outside REPO_WIDE_GUARDS and REPO_WIDE_GUARD_EXCLUSIONS in scripts/ci-touched-tests.js: ${unexplained.join(', ')}. `
     + 'Add them to the list (a guard in a new mechanism shape extends looksLikeRepoWideGuard here too), '
     + 'or, when the file only walks scratch directories it built itself, say so in the PR.',
   );
+});
+
+test('every declared exclusion is load-bearing and reasoned', () => {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const names = Object.keys(REPO_WIDE_GUARD_EXCLUSIONS);
+  assert.ok(names.length > 0, 'the exclusion list exists so a slow corpus stays out by name, not by silence');
+  for (const relative of names) {
+    const reason = REPO_WIDE_GUARD_EXCLUSIONS[relative];
+    assert.match(relative, /^tests\/.+\.test\.[cm]?js$/, `${relative} is not a test file under tests/`);
+    assert.ok(existsSync(join(repoRoot, relative)), `${relative} is excluded but missing on disk`);
+    assert.ok(
+      typeof reason === 'string' && reason.length > 0,
+      `${relative} is excluded without a reason`,
+    );
+    assert.ok(
+      !REPO_WIDE_GUARDS.includes(relative),
+      `${relative} is both guarded and excluded — pick one`,
+    );
+    // Load-bearing: the file still looks guard-shaped today. When the
+    // slow corpus is split and stops scanning the repo, this fails and
+    // the entry goes away instead of lingering.
+    assert.ok(
+      looksLikeRepoWideGuard(relative, readFileSync(join(repoRoot, relative), 'utf8')),
+      `${relative} no longer looks like a repo-wide guard: drop its exclusion entry`,
+    );
+  }
 });

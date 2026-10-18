@@ -140,10 +140,9 @@ const STEP_BUDGET_SEC = 300;
  * added to the fast step in total. Deliberately NOT here: the three
  * characterization suites (~80 s together) and the fixed-directory
  * listers (e.g. the `*-package-absence` kernel reads) — same bug class,
- * separate follow-up voices with their own budget strategy. The
- * milestone-identifiers guard was split out of the hanging
- * agent-tool-selection-prompts matrix into its own fast file for this
- * list; the rest of that file stays a follow-up with the hang itself.
+ * separate follow-up voices with their own budget strategy. The one
+ * guard-shaped file that stays out by name is declared in
+ * `REPO_WIDE_GUARD_EXCLUSIONS` below, with its reason.
  */
 export const REPO_WIDE_GUARDS = Object.freeze([
   // Repo-wide `grep trustedSystemActor/SYSTEM_ACTOR` over packages+apps:
@@ -171,14 +170,36 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // Recursive walk of packages+apps+api refusing raw SQLite consumers
   // outside the adapter.
   'tests/spine-v2-m2f-entry-wiring.test.js',
-  // Recursive walk of docs/ holding the prompt milestone-identifier scan.
-  // Split out of the hanging prompts matrix so the gate can run it.
+  // Recursive walk of docs/ holding the prompt milestone-identifier
+  // scan. Fast twin of the same check inside the slow prompts matrix
+  // (doubled until that file is split — see REPO_WIDE_GUARD_EXCLUSIONS).
   'tests/agent-tool-selection-docs-ids.test.js',
   // This gate's own audit (the unlisted-guard test walks tests/ itself):
   // a PR adding a guard-shaped file anywhere must run the audit that
   // requires it listed.
   'tests/ci-touched-tests.test.js',
 ]);
+
+/**
+ * Guard-shaped test files deliberately NOT in `REPO_WIDE_GUARDS`: the
+ * audit in `tests/ci-touched-tests.test.js` requires every guard-shaped
+ * file to be either listed above or named here with a reason — a third
+ * state (unlisted and unexplained) fails the gate. An entry stays only
+ * while it is load-bearing: the audit fails when a named file stops
+ * looking guard-shaped (split the file, then drop the entry) or silently
+ * joins the list above.
+ */
+export const REPO_WIDE_GUARD_EXCLUSIONS = Object.freeze({
+  // Slow benchmark matrix (~240 s idle on the shared Mac, past the 300 s
+  // step budget under load: a driver that shells out per corpus case, and
+  // it hangs the pre-push hook the same way). A test this slow is not a
+  // guard — it can never fit the always-run gate. Its
+  // milestone-identifiers check runs instead through the fast twin
+  // tests/agent-tool-selection-docs-ids.test.js (doubled until the matrix
+  // file itself is split; that split and the hang are their own voice).
+  'tests/agent-tool-selection-prompts.test.js':
+    'slow benchmark matrix (~240 s): covered by the fast twin tests/agent-tool-selection-docs-ids.test.js',
+});
 
 const git = (/** @type {string[]} */ args) => {
   const run = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
