@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "channel-import-state",
-  "description": "Progressive initial history import of one channel connection (backlog:66282d13d81c). One row per connection: the opaque provider cursor the next page resumes from, the window the run covers, and the counts the progress surface reads. Rows are evidence of the provider past already stored as inbox rows — replaying a page stores nothing twice, so an interrupted import resumes from its cursor instead of restarting. processedEvents is the recovery ledger of the current page: the outcome codes of the events a failed attempt already counted, so the retry never tallies them twice and converges to a clean run's counts.",
+  "description": "Progressive initial history import of one channel connection (backlog:66282d13d81c). One row per connection: the opaque provider cursor the next page resumes from, the window the run covers, and the phase plus the failure code. The row keeps no counters: the progress surface counts the channel-import-outcome rows carrying this row's sourceKey (one COUNT per state), so the number is always the rows themselves and no racing advance or crash retry can drift it.",
   "fields": [
     { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
     { "name": "spaceId", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },
@@ -11,16 +11,9 @@
     { "name": "status", "type": "enum", "values": ["running", "done"], "index": true, "writable": "managed", "classification": "non-personal" },
     { "name": "windowStart", "type": "timestamp", "writable": "managed", "classification": "non-personal" },
     { "name": "nextPageToken", "type": "string", "writable": "managed", "classification": "non-personal" },
-    { "name": "importedEvents", "type": "integer", "writable": "managed", "classification": "non-personal" },
-    { "name": "duplicateEvents", "type": "integer", "writable": "managed", "classification": "non-personal" },
-    { "name": "matchedContacts", "type": "integer", "writable": "managed", "classification": "non-personal" },
-    { "name": "createdContacts", "type": "integer", "writable": "managed", "classification": "non-personal" },
-    { "name": "unresolvedContacts", "type": "integer", "writable": "managed", "classification": "non-personal" },
-    { "name": "eventsWithoutSender", "type": "integer", "writable": "managed", "classification": "non-personal" },
     { "name": "startedAt", "type": "timestamp", "writable": "managed", "classification": "non-personal" },
     { "name": "finishedAt", "type": "timestamp", "writable": "managed", "classification": "non-personal" },
     { "name": "lastErrorCode", "type": "string", "writable": "managed", "classification": "non-personal" },
-    { "name": "lastErrorReason", "type": "string", "writable": "managed", "classification": "non-personal" },
-    { "name": "processedEvents", "type": "string", "writable": "managed", "classification": "non-personal" }
+    { "name": "lastErrorReason", "type": "string", "writable": "managed", "classification": "non-personal" }
   ]
 }

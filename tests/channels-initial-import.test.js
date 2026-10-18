@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { ValidationError } from '../packages/core/index.js';
 import { createChannelOperations } from '../packages/channels/src/operations.js';
@@ -11,9 +14,14 @@ import { createChannelsHarness } from './helpers/channels-harness.js';
  * page per advance call, one inbox row per event through the deduped
  * webhook path, every applied sender reconciled, an interrupted import
  * resumed from its stored cursor — on real sqlite with real module
- * services. The stub sender stands in for the composed `channel-sender@1`
- * capability where this file proves the engine; the real reconciliation
- * path is proven end-to-end in `tests/channels-import-reconcile.test.js`.
+ * services. Every event writes one `channel-import-outcome` row under its
+ * unique (import, event) key and the progress surface counts those rows
+ * (one COUNT per state) instead of trusting hand tallies, so racing
+ * advances and crash retries converge to a clean run's numbers — the
+ * number is always the rows themselves. The stub sender stands in for the
+ * composed `channel-sender@1` capability where this file proves the
+ * engine; the real reconciliation path is proven end-to-end in
+ * `tests/channels-import-reconcile.test.js`.
  */
 
 const SPACE = 'presti';
@@ -145,7 +153,7 @@ test('a paged import stores one row per event, reconciles every sender, and repo
   const first = await harness.advanceImport(SPACE, { connectionKey: key, limit: 2 });
   assert.equal(first.done, false);
   assert.deepEqual(first.page, {
-    imported: 2, duplicates: 0, matched: 0, created: 2, unresolved: 0, withoutSender: 0,
+    imported: 2, duplicates: 0, failed: 0, matched: 0, created: 2, unresolved: 0, withoutSender: 0,
   });
   const progress = harness.readImport(SPACE, { connectionKey: key });
   assert.equal(progress.status, 'running');
@@ -248,7 +256,7 @@ test('a webhook stored first is adopted by the later import, never doubled', asy
   // without this replay the common webhook-before-backfill flow would
   // leave the sender with no external identity and no contact.
   assert.deepEqual(advanced.page, {
-    imported: 0, duplicates: 1, matched: 0, created: 1, unresolved: 0, withoutSender: 0,
+    imported: 0, duplicates: 1, failed: 0, matched: 0, created: 1, unresolved: 0, withoutSender: 0,
   });
   assert.ok(
     sender.calls.some((request) => request.handle === '+390200007001'),
@@ -259,7 +267,7 @@ test('a webhook stored first is adopted by the later import, never doubled', asy
   assert.equal(harness.inbox(SPACE).length, 1, 'one message, one row, whichever path saw it first');
 });
 
-test('two advances racing one import keep exact cumulative counts', async (t) => {
+test('two advances racing one import keep exactly one outcome per event', async (t) => {
   const { harness, api } = setup({ tenantId: 'channel-import-race' });
   t.after(() => harness.close());
   const key = await registeredActive(harness);
@@ -269,29 +277,35 @@ test('two advances racing one import keep exact cumulative counts', async (t) =>
   await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
   // Two schedulers advance the same import before either finishes: both
   // read the same row and the same page token, so both process the same
-  // page. The commits serialize on the fresh row, so the loser adds to
-  // the winner's counters instead of overwriting them with its stale
-  // snapshot — importedEvents never reverts to zero and no processed
-  // event goes uncounted.
+  // page. The advances serialize in one slot and the loser replays to the
+  // winner's outcome rows — final outcomes are kept, never recounted — so
+  // every event ends with exactly one outcome and the loser's page is all
+  // zeros instead of a second tally of the same page.
   const [first, second] = await Promise.all([
     harness.advanceImport(SPACE, { connectionKey: key }),
     harness.advanceImport(SPACE, { connectionKey: key }),
   ]);
   assert.equal(first.done, true);
   assert.equal(second.done, true);
-  assert.equal(first.page.imported + first.page.duplicates, 2);
-  assert.equal(second.page.imported + second.page.duplicates, 2);
+  assert.deepEqual(first.page, {
+    imported: 2, duplicates: 0, failed: 0, matched: 0, created: 2, unresolved: 0, withoutSender: 0,
+  });
+  assert.deepEqual(second.page, {
+    imported: 0, duplicates: 0, failed: 0, matched: 0, created: 0, unresolved: 0, withoutSender: 0,
+  }, 'the loser replays to kept outcomes: nothing recounted, nothing re-resolved');
   const state = harness.readImport(SPACE, { connectionKey: key });
   assert.equal(state.status, 'done');
   assert.equal(state.importedEvents, 2, 'every event stored exactly once across both racers');
-  assert.equal(state.duplicateEvents, 2, 'the replayed page counts as duplicates, never as new imports');
+  assert.equal(state.duplicateEvents, 0, 'no event double-stored, so none replays as a duplicate');
   assert.equal(
-    state.importedEvents + state.duplicateEvents, 4,
-    'no processed event goes uncounted: two racers times a two-event page',
+    state.importedEvents + state.duplicateEvents + state.failedEvents, 2,
+    'one outcome per event: the COUNT is the events, not the attempts',
   );
   assert.equal(state.createdContacts, 2);
-  assert.equal(state.matchedContacts, 2);
+  assert.equal(state.matchedContacts, 0, 'each sender resolved once: the replay skips final outcomes');
   assert.equal(harness.inbox(SPACE).length, 2, 'two events, two rows — the race doubled nothing');
+  const outcomes = harness.internals.modules.get('channel-import-outcome').service.listWhere({});
+  assert.equal(outcomes.length, 2, 'two events, two outcome rows');
 });
 
 test('a sender seen twice reconciles to one contact; ambiguity stays unresolved', async (t) => {
@@ -311,7 +325,7 @@ test('a sender seen twice reconciles to one contact; ambiguity stays unresolved'
   const advanced = await harness.advanceImport(SPACE, { connectionKey: key });
   assert.equal(advanced.done, true);
   assert.deepEqual(advanced.page, {
-    imported: 5, duplicates: 0, matched: 1, created: 1, unresolved: 1, withoutSender: 1,
+    imported: 5, duplicates: 0, failed: 0, matched: 1, created: 1, unresolved: 1, withoutSender: 1,
   });
   // created once for the repeated handle, matched on its replay;
   // ambiguous evidence unresolved; malformed evidence kept without a
@@ -327,21 +341,44 @@ test('a sender seen twice reconciles to one contact; ambiguity stays unresolved'
   assert.equal(quarantined[0].effect, 'quarantined');
 });
 
-test('starting refuses without readable past, without a sender path, and off an inactive binding', async (t) => {
+test('without customer-data the import stores everything and leaves senders pending', async (t) => {
+  // The optional edge (review on #242): a composition without the
+  // channel-sender@1 capability boots and imports — conversations and
+  // messages land, reconciliation waits as pending (counted unresolved),
+  // and no contact is invented.
+  const { harness, api } = setup({ noSender: true, tenantId: 'channel-import-nosender' });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  api.seedHistory(historySeed(2, nowIso()));
+
+  const started = await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  assert.equal(started.started, true, 'starting never requires the sender path');
+  const advanced = await harness.advanceImport(SPACE, { connectionKey: key });
+  assert.equal(advanced.done, true);
+  assert.deepEqual(advanced.page, {
+    imported: 2, duplicates: 0, failed: 0, matched: 0, created: 0, unresolved: 2, withoutSender: 0,
+  });
+  const state = harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(state.status, 'done');
+  assert.equal(state.importedEvents, 2);
+  assert.equal(state.unresolvedContacts, 2, 'pending reconciliation counts as unresolved');
+  assert.equal(state.createdContacts, 0, 'no capability: no contact invented');
+  assert.equal(harness.inbox(SPACE).length, 2, 'both messages stored');
+  const outcomes = harness.internals.modules.get('channel-import-outcome').service.listWhere({});
+  assert.deepEqual(
+    outcomes.map((entry) => entry.sender).sort(),
+    ['pending', 'pending'],
+    'reconciliation waits, visibly, for the capability',
+  );
+});
+
+test('starting refuses without readable past and off an inactive binding', async (t) => {
   const { harness } = setup({ noHistory: true, tenantId: 'channel-import-nohistory' });
   t.after(() => harness.close());
   const key = await registeredActive(harness);
   await assert.rejects(
     harness.startImport(SPACE, { connectionKey: key, actor: ACTOR }),
     (error) => error.code === 'CHANNEL_HISTORY_UNAVAILABLE',
-  );
-
-  const unsolved = setup({ noSender: true, tenantId: 'channel-import-nosender' });
-  t.after(() => unsolved.harness.close());
-  const key2 = await registeredActive(unsolved.harness);
-  await assert.rejects(
-    unsolved.harness.startImport(SPACE, { connectionKey: key2, actor: ACTOR }),
-    (error) => error.code === 'CHANNEL_SENDER_UNAVAILABLE',
   );
 
   const idle = setup({ tenantId: 'channel-import-idle' });
@@ -427,6 +464,7 @@ const LEAK_PROBE = 'leak-probe-token-7f3a9c2e41';
 function scanDurable(harness, space) {
   return JSON.stringify([
     [...harness.internals.modules.get('channel-import-state').service.listWhere({})],
+    [...harness.internals.modules.get('channel-import-outcome').service.listWhere({})],
     harness.inbox(space),
     harness.auditRows(),
   ]);
@@ -494,7 +532,7 @@ test('a sender error carrying a secret never lands in the import row or the prog
  * clean run — never a permanent drift.
  */
 const CONVERGE_FIELDS = [
-  'importedEvents', 'duplicateEvents', 'matchedContacts',
+  'importedEvents', 'duplicateEvents', 'failedEvents', 'matchedContacts',
   'createdContacts', 'unresolvedContacts', 'eventsWithoutSender',
 ];
 
@@ -541,8 +579,10 @@ test('a mid-page sender failure replays to the same rows and the same counts as 
 
   const retried = await flaky.harness.advanceImport(SPACE, { connectionKey: key });
   assert.equal(retried.done, true);
+  // unresolved goes 1 → 0: the pending sender the failed attempt left
+  // behind resolves now, so the honest delta reads -1 next to the +1 create.
   assert.deepEqual(retried.page, {
-    imported: 0, duplicates: 0, matched: 0, created: 1, unresolved: 0, withoutSender: 0,
+    imported: 0, duplicates: 0, failed: 0, matched: 0, created: 1, unresolved: -1, withoutSender: 0,
   }, 'the retry finishes only the pending sender: nothing already counted is tallied again');
   const cleanState = clean.harness.readImport(SPACE, { connectionKey: clean.key });
   for (const field of CONVERGE_FIELDS) {
@@ -594,14 +634,17 @@ test('a mid-page row-store failure replays to the same rows and the same counts 
   const partial = stumb.harness.readImport(SPACE, { connectionKey: key });
   assert.equal(partial.status, 'running');
   assert.equal(partial.importedEvents, 1);
+  assert.equal(partial.failedEvents, 1, 'the unstored event is recorded failed, not lost');
   assert.equal(partial.createdContacts, 1);
   assert.equal(partial.lastErrorCode, 'CHANNEL_STORE_TRANSIENT');
 
   const retried = await stumb.harness.advanceImport(SPACE, { connectionKey: key });
   assert.equal(retried.done, true);
+  // failed goes 1 → 0: the page answer reports honest before/after deltas,
+  // so resolving a recorded failure reads as -1 next to the +1 import.
   assert.deepEqual(retried.page, {
-    imported: 1, duplicates: 0, matched: 0, created: 1, unresolved: 0, withoutSender: 0,
-  }, 'the retry skips the ledgered event and processes only the missing one');
+    imported: 1, duplicates: 0, failed: -1, matched: 0, created: 1, unresolved: 0, withoutSender: 0,
+  }, 'the retry skips the recorded event and processes only the missing one');
   const cleanState = clean.harness.readImport(SPACE, { connectionKey: clean.key });
   for (const field of CONVERGE_FIELDS) {
     assert.equal(retried.state[field], cleanState[field], `${field} converges to the clean run`);
@@ -612,4 +655,190 @@ test('a mid-page row-store failure replays to the same rows and the same counts 
     'the retry stores the same rows as the clean run',
   );
   assert.equal(stumb.harness.readImport(SPACE, { connectionKey: key }).lastErrorCode, null);
+});
+
+/**
+ * Dropped cursor commit (review on #242): the worker dies after the rows
+ * and outcomes are durable but before the cursor moves. Nothing tallies in
+ * memory, so the retry replays the same page to the same rows and the COUNT
+ * reads them — no drift, no recount.
+ */
+test('a dropped cursor commit replays to the same rows and counts', async (t) => {
+  const clean = await cleanRun(t, 'cursor');
+
+  const scene = setup({ tenantId: 'channel-import-cursor-drop' });
+  t.after(() => scene.harness.close());
+  // Drop exactly one cursor commit: any import-state write carrying a
+  // nextPageToken throws, everything else (rows, outcomes, error stamps)
+  // lands. The next advance retries the same page.
+  const stateEntry = scene.harness.internals.modules.get('channel-import-state');
+  const innerState = stateEntry.service;
+  let armed = true;
+  const droppingService = Object.create(innerState, {
+    applyManaged: {
+      value: async (id, patch, context) => {
+        if (armed && patch && Object.hasOwn(patch, 'nextPageToken')) {
+          armed = false;
+          const error = new Error('cursor commit lost with the worker');
+          error.code = 'CHANNEL_STORE_TRANSIENT';
+          throw error;
+        }
+        return innerState.applyManaged(id, patch, context);
+      },
+    },
+  });
+  scene.harness.internals.modules.set('channel-import-state', { service: droppingService });
+
+  const key = await registeredActive(scene.harness);
+  scene.api.seedHistory(convergeSeed(nowIso()));
+  await scene.harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+
+  await assert.rejects(
+    scene.harness.advanceImport(SPACE, { connectionKey: key }),
+    (error) => error.code === 'CHANNEL_STORE_TRANSIENT',
+  );
+  const interrupted = scene.harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(interrupted.status, 'running', 'the cursor never moved');
+  assert.equal(interrupted.importedEvents, 2, 'rows and outcomes are durable without the cursor');
+  assert.equal(interrupted.createdContacts, 2);
+
+  scene.harness.internals.modules.set('channel-import-state', { service: innerState });
+  const retried = await scene.harness.advanceImport(SPACE, { connectionKey: key });
+  assert.equal(retried.done, true);
+  assert.deepEqual(retried.page, {
+    imported: 0, duplicates: 0, failed: 0, matched: 0, created: 0, unresolved: 0, withoutSender: 0,
+  }, 'every outcome already final: the replay recounts nothing');
+  const cleanState = clean.harness.readImport(SPACE, { connectionKey: clean.key });
+  for (const field of CONVERGE_FIELDS) {
+    assert.equal(retried.state[field], cleanState[field], `${field} converges to the clean run`);
+  }
+  assert.deepEqual(
+    scene.harness.inbox(SPACE).map((row) => row.sourceKey).sort(),
+    clean.harness.inbox(SPACE).map((row) => row.sourceKey).sort(),
+    'the retry stores the same rows as the clean run',
+  );
+});
+
+/**
+ * Two processes, one store (review on #242): two operations instances over
+ * two connections to one file database advance the same import at once,
+ * like two schedulers on two dynos. Every event keeps exactly one outcome
+ * row (unique key, loser keeps the winner), so the COUNTs equal the rows —
+ * no lost increments, no matter the interleave.
+ */
+test('two processes on one store converge counts to the rows', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'channel-import-twoproc-'));
+  t.after(() => { rmSync(dir, { recursive: true, force: true }); });
+  const dbPath = join(dir, 'shared.sqlite');
+  const sender = stubSender();
+  const { definition, api } = createFixtureChannelAdapter({ secret: SECRET });
+  const common = {
+    adapterDefinition: definition,
+    fixtureApi: api,
+    secretRef: SECRET_REF,
+    secretValue: SECRET,
+    tenantId: 'channel-import-twoproc',
+    resolveSender: sender.resolveSender,
+    dbPath,
+  };
+  const first = createChannelsHarness(common);
+  t.after(() => first.close());
+  const second = createChannelsHarness({ ...common });
+  t.after(() => second.close());
+
+  const reg = await first.register(SPACE, {
+    channel: 'whatsapp', account: ACCOUNT, adapter: 'fixture-channel', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  await first.activate(SPACE, reg.connection.sourceKey);
+  const key = reg.connection.sourceKey;
+  api.seedHistory(historySeed(4, nowIso()));
+  await first.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+
+  const [one, two] = await Promise.all([
+    first.advanceImport(SPACE, { connectionKey: key }),
+    second.advanceImport(SPACE, { connectionKey: key }),
+  ]);
+  assert.equal(one.done, true);
+  assert.equal(two.done, true);
+  const state = first.readImport(SPACE, { connectionKey: key });
+  assert.equal(state.status, 'done');
+  assert.equal(state.failedEvents, 0);
+  assert.equal(
+    state.importedEvents + state.duplicateEvents + state.failedEvents, 4,
+    'one outcome per event across both processes',
+  );
+  assert.equal(
+    state.createdContacts + state.matchedContacts, 4,
+    'every sender resolved exactly once net, however the racers interleaved',
+  );
+  assert.equal(first.inbox(SPACE).length, 4, 'four events, four rows');
+  const outcomes = first.internals.modules.get('channel-import-outcome').service.listWhere({});
+  assert.equal(outcomes.length, 4, 'four events, four outcome rows — the race doubled nothing');
+  assert.equal(sender.seen.size, 4, 'four senders, four contacts — no duplicate identity per handle');
+});
+
+/**
+ * Pending reconciliation is not a dead end: an advance that brings the
+ * capability resolves the senders an earlier capability-less attempt left
+ * pending, over the same store.
+ */
+test('a pending sender resolves when a later advance brings the capability', async (t) => {
+  const scene = setup({ noSender: true, tenantId: 'channel-import-pending-then-capable' });
+  t.after(() => scene.harness.close());
+  // A transient outage on the second row write: the first event is stored
+  // with its sender pending, the second leaves a failed outcome, and the
+  // page aborts with the cursor unmoved.
+  const inboxEntry = scene.harness.internals.modules.get('channel-inbox-event');
+  const innerService = inboxEntry.service;
+  let writes = 0;
+  const throwingService = Object.create(innerService, {
+    createManaged: {
+      value: async (...args) => {
+        writes += 1;
+        if (writes === 2) {
+          const error = new Error('inbox store transiently unavailable');
+          error.code = 'CHANNEL_STORE_TRANSIENT';
+          throw error;
+        }
+        return innerService.createManaged(...args);
+      },
+    },
+  });
+  scene.harness.internals.modules.set('channel-inbox-event', { service: throwingService });
+
+  const key = await registeredActive(scene.harness);
+  scene.api.seedHistory(convergeSeed(nowIso()));
+  await scene.harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  await assert.rejects(
+    scene.harness.advanceImport(SPACE, { connectionKey: key }),
+    (error) => error.code === 'CHANNEL_STORE_TRANSIENT',
+  );
+  const partial = scene.harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(partial.importedEvents, 1);
+  assert.equal(partial.unresolvedContacts, 1, 'the stored sender waits, visibly');
+
+  // A restarted worker with the capability composed opens the same store:
+  // nothing about the run lives in the closed composition.
+  scene.harness.internals.modules.set('channel-inbox-event', { service: innerService });
+  const sender = stubSender();
+  const { database, modules, registries } = scene.harness.internals;
+  const capable = createChannelOperations({
+    database,
+    modules,
+    registries,
+    resolveSecret: async () => SECRET,
+    tenantId: 'channel-import-pending-capable',
+    resolveSender: sender.resolveSender,
+  });
+  const retried = await capable.advanceInitialImport({ spaceId: SPACE, connectionKey: key, limit: 50 });
+  assert.equal(retried.done, true);
+  assert.equal(retried.state.importedEvents, 2);
+  assert.equal(retried.state.failedEvents, 0);
+  assert.equal(retried.state.createdContacts, 2, 'both pending and failed senders resolved');
+  assert.equal(retried.state.unresolvedContacts, 0, 'nothing waits anymore');
+  assert.ok(
+    sender.calls.some((request) => request.handle === '+390200005101')
+    && sender.calls.some((request) => request.handle === '+390200005102'),
+    'the retry resolves the senders the earlier attempt left pending',
+  );
 });

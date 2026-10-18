@@ -249,9 +249,8 @@ back door around that.
 ## `channel-sender@1`
 
 ```js
-// The composed customer-data definition, e.g. beside createCustomerDataPackage()
-requires: [{ package: 'customer-data', capability: 'channel-sender', version: 1 }],
-customerData,
+// The composed customer-data definition, handed to createChannelsPackage()
+createChannelsPackage({ customerData /* … */ }),
 ```
 
 One write: `resolveSender`. The channels initial history import
@@ -261,7 +260,8 @@ sender carrying an email creates it, ambiguous evidence stays an unresolved
 duplicate-candidate for a human and is never merged. It opens on the
 consumer runtime (`{ modules, core, database, events }`) with this
 package's own name resolution and match policy — exactly one resolution,
-the provider's.
+the provider's. The edge is optional: without it the import still stores
+conversations and messages and leaves senders pending, never refusing.
 
 ## The human-actor boundary, stated exactly
 

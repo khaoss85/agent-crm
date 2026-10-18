@@ -40,6 +40,7 @@ function loadManifest(name) {
 
 export const CHANNEL_MANIFEST_NAMES = Object.freeze([
   'channel-connection', 'channel-inbox-event', 'channel-dead-letter', 'channel-import-state',
+  'channel-import-outcome',
 ]);
 
 /**
@@ -48,9 +49,11 @@ export const CHANNEL_MANIFEST_NAMES = Object.freeze([
  *   secretRef?: string, secretValue?: string,
  *   tenantId?: string, config?: Record<string, any>,
  *   resolveSender?: ((request: any) => Promise<any>) | null,
+ *   dbPath?: string,
  * }} options `resolveSender` stands in for the composed `channel-sender@1`
  *   capability where the test proves the engine rather than the
- *   reconciliation itself.
+ *   reconciliation itself. `dbPath` opens a file database instead of
+ *   `:memory:` so two harnesses can share one store like two processes.
  */
 export function createChannelsHarness(options) {
   const secretRef = options.secretRef ?? 'vault://kit/channel-a';
@@ -58,7 +61,7 @@ export function createChannelsHarness(options) {
   const tenantId = options.tenantId ?? 'channel-kit';
   const userActor = { type: 'user', id: 'channel-kit' };
 
-  const database = createDatabase({ path: ':memory:' });
+  const database = createDatabase({ path: options.dbPath ?? ':memory:' });
   for (const { sql } of recordModuleMigrations(CHANNEL_MANIFEST_NAMES.map((name) => ({ name, manifest: loadManifest(name) })))) {
     database.raw.exec(sql);
   }

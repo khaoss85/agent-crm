@@ -108,12 +108,16 @@ webhooks and sends keep working standalone.
   with `windowMs` and `listHistory`) import it one bounded page per advance
   call — one inbox row per event through the same deduped path webhooks
   use, so a replayed page stores nothing twice and an interrupted import
-  resumes from its stored cursor. Every applied sender reconciles through
-  the composed `channel-sender@1` capability (matched, created, or an
-  unresolved candidate for a human — never merged, never invented);
-  quarantined rows stay evidence and invent no contact. Progress is the
-  `channel-import-state` row: status plus counts, readable with
-  `readInitialImport`.
+  resumes from its stored cursor. Every event writes one
+  `channel-import-outcome` row under its unique (import, event) key and the
+  progress counts those rows (one COUNT per state) instead of trusting hand
+  tallies, so racing advances and crash retries converge to a clean run's
+  numbers. Every applied sender reconciles through the composed
+  `channel-sender@1` capability when present (matched, created, or an
+  unresolved candidate for a human — never merged, never invented), and
+  stays pending otherwise; quarantined rows stay evidence and invent no
+  contact. Progress is the `channel-import-state` row (cursor, phase, error
+  code) plus the outcome COUNTs, readable with `readInitialImport`.
 - `npm run crm -- package validate packages/channels` and
   `npm run crm -- package test packages/channels` (DX4 conformance).
 

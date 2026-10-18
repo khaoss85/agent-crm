@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "name": "channel-import-outcome",
+  "description": "Per-event outcomes of one connection's progressive initial history import (backlog:66282d13d81c). One row per (import, provider event): whether the event stored a new inbox row, was already present, or failed, plus its sender reconciliation. Rows are written once and never tallied by hand — the progress surface counts them (one COUNT per state), so racing advances and crash retries converge to the same numbers as a clean run, because the number is always the rows themselves. importKey references the channel-import-state row's sourceKey.",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "connectionKey", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "importKey", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "providerEventId", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "outcome", "type": "enum", "values": ["imported", "duplicate", "failed"], "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "sender", "type": "enum", "values": ["created", "matched", "unresolved", "none", "pending"], "index": true, "writable": "managed", "classification": "non-personal" },
+    { "name": "applied", "type": "boolean", "writable": "managed", "classification": "non-personal" }
+  ]
+}

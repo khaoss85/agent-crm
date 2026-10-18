@@ -26,6 +26,7 @@ export const CHANNELS_PACKAGE = 'channels';
 /** The record modules this package owns; declaring them makes a collision detectable. */
 export const CHANNELS_RESOURCES = Object.freeze([
   'channel-connection', 'channel-inbox-event', 'channel-dead-letter', 'channel-import-state',
+  'channel-import-outcome',
 ]);
 
 function boundedReason(input, action) {
@@ -74,8 +75,8 @@ function statusAction(name, label, description, fromStates, toState, extra = {})
  * definition, or null when the composition runs standalone. Opened once
  * per runtime with the caller's modules — the provider's names and the
  * caller's transaction. Webhook ingest and sends never resolve senders,
- * so a null here changes nothing until an import starts, which then
- * refuses naming the edge.
+ * so a null here changes nothing until an import advances, which then
+ * stores conversations and messages and leaves senders pending.
  */
 function openSenderResolution(channelSender, runtime) {
   if (channelSender === undefined || channelSender === null) return null;
@@ -163,7 +164,8 @@ export function buildChannelConnectionActions(config = {}) {
  *   package takes the created `channel-sender@1` capability object from it,
  *   so sender reconciliation always runs with the provider's own name
  *   resolution and never with a second resolution from this package's
- *   options. Without it the initial history import refuses, while webhooks
+ *   options. Without it the initial history import still stores
+ *   conversations and messages and leaves senders pending, while webhooks
  *   and sends work standalone as before.
  */
 export function createChannelsPackage(options = {}) {
@@ -219,12 +221,14 @@ export function createChannelsPackage(options = {}) {
     description: 'Space-scoped messaging-channel bindings: one connection record per space, verified replay-proof inbound webhooks with quarantine, outbound sends through the durable-jobs outbox with retries and a dead-letter queue, the progressive initial history import for adapters with readable past, and the adapter contract-test kit.',
     resources: [...CHANNELS_RESOURCES],
 
-    // The one declared reach into another package: the sender
-    // reconciliation the import writes through. Without customer-data
-    // composed, the application refuses to start naming this edge — never
-    // a missing-module stack trace at import time. Everything else (inbox,
-    // outbox, connections) stays inside this package.
-    requires: [{ package: 'customer-data', capability: 'channel-sender', version: 1 }],
+    // No declared reach into another package: the sender reconciliation the
+    // import writes through arrives as the handed-over `channel-sender@1`
+    // capability object when customer-data is composed beside channels, and
+    // the import leaves senders pending otherwise. A standalone composition
+    // boots, receives webhooks, sends, and imports exactly as before —
+    // never a missing-package refusal at boot, never a new requirement.
+    // Everything (inbox, outbox, connections, import state and outcomes)
+    // stays inside this package.
 
     actions: buildChannelConnectionActions(options.modules),
     operations: [
@@ -330,7 +334,7 @@ export function createChannelsPackage(options = {}) {
         replayScope: 'space + connection + providerEventId; the payload fingerprint must match or the reuse is refused 409 CHANNEL_EVENT_ID_CONFLICT',
         sendRetry: 'bounded attempts on the durable job (default 5); transient failures ride the worker backoff; exhaustion writes a dead-letter row with phase, error code and payload fingerprint',
         secretDiscipline: 'connections store secretRef, never the secret; the deployment resolves it at call time; outbox payloads carry no secret-shaped keys',
-        initialImport: 'one bounded history page per advance call through the deduped inbox path; sender reconciliation arrives through the composed channel-sender@1 capability; the cursor moves only after the whole page reconciled',
+        initialImport: 'one bounded history page per advance call through the deduped inbox path; every event writes one channel-import-outcome row and the progress counts those rows (one COUNT per state), never hand tallies; sender reconciliation arrives through the composed channel-sender@1 capability when present and stays pending otherwise; the cursor moves only on an owned transition',
         reuses: ['channel-sender@1'],
         humanApproval: 'register, status changes and sends require actor.type === "user"; provider-driven ingest runs under a system actor and ignores any caller-supplied actor',
         notModeled: [

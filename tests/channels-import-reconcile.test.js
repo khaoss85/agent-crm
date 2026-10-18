@@ -12,7 +12,7 @@ import { boot, project } from './helpers/customer-data-project.js';
  * (backlog:66282d13d81c): the composed application wires the channels
  * package beside customer-data, handing it the composed customer-data
  * definition — channels takes the created `channel-sender@1` capability
- * from its published capabilities, through the declared package edge. A
+ * from its published capabilities, through the optional handover. A
  * Gmail past imports page by page, and every sender becomes or names its
  * contact through `external-identity` — no second identity store, no
  * duplicate on resume or restart.
@@ -33,6 +33,7 @@ const CHANNEL_MANIFESTS = [
   'channel-inbox-event.module.json',
   'channel-dead-letter.module.json',
   'channel-import-state.module.json',
+  'channel-import-outcome.module.json',
 ];
 
 async function scene(t, tag) {
