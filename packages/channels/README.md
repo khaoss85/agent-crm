@@ -108,14 +108,25 @@ webhooks and sends keep working standalone.
   with `windowMs` and `listHistory`) import it one bounded page per advance
   call — one inbox row per event through the same deduped path webhooks
   use, so a replayed page stores nothing twice and an interrupted import
-  resumes from its stored cursor. Every event writes one
+  resumes from its stored cursor. An event's identity is its
+  (connection, providerEventId): a re-listed event whose envelope drifted
+  (a webhook-first echo later listed with its provider instant, a skewed
+  redelivery) is adopted as a duplicate and the drift annotated on the
+  outcome row with fixed package text — never a 409, so one drifted event
+  can never brick the run. A poisoned event (a deterministic 4xx failure,
+  whatever the attempt) is recorded failed and skipped while the page
+  continues and the cursor advances; only transient failures abort with
+  the cursor unmoved. Starting is idempotent: overlapping starts resolve
+  to the single stored row. Every event writes one
   `channel-import-outcome` row under its unique (import, event) key and the
   progress counts those rows (one COUNT per state) instead of trusting hand
   tallies, so racing advances and crash retries converge to a clean run's
   numbers. Every applied sender reconciles through the composed
   `channel-sender@1` capability when present (matched, created, or an
   unresolved candidate for a human — never merged, never invented), and
-  stays pending otherwise; quarantined rows stay evidence and invent no
+  stays pending otherwise; a re-listed same event whose sender evidence
+  now conflicts refines toward unresolved, reaching the same human
+  confirm queue. Quarantined rows stay evidence and invent no
   contact. Progress is the `channel-import-state` row (cursor, phase, error
   code) plus the outcome COUNTs, readable with `readInitialImport`.
 - `npm run crm -- package validate packages/channels` and

@@ -81,6 +81,20 @@ export const CHANNEL_IMPORT_ROW_REASON = 'initial history import';
  */
 export const CHANNEL_IMPORT_READ_FAILED_NOTE = 'provider history read failed: retry the advance';
 export const CHANNEL_IMPORT_PAGE_FAILED_NOTE = 'import page failed before completion: retry the advance';
+/**
+ * The only technical notes an import-outcome row ever carries. An event's
+ * stable identity is its (connection, providerEventId) — the inbox source
+ * key — so a re-listed event whose envelope drifted (a webhook-first echo
+ * later listed with its provider instant, a skewed redelivery, a second
+ * sighting with conflicting sender evidence) is adopted as the same event,
+ * never a 409, and the drift is annotated here. Every fragment is static
+ * package text: provider-controlled values never reach the row.
+ */
+export const CHANNEL_IMPORT_NOTE_SUBJECT = 'subject differs from the stored row: adopted as the same event';
+export const CHANNEL_IMPORT_NOTE_SEQUENCE = 'sequence differs from the stored row: adopted as the same event';
+export const CHANNEL_IMPORT_NOTE_OCCURRED_AT = 'occurredAt differs from the stored row: adopted as the same event';
+export const CHANNEL_IMPORT_NOTE_SENDER_CONFLICT = 'sender evidence conflicts with the earlier sighting: left for a human to confirm';
+export const CHANNEL_IMPORT_NOTE_SENDER_REFUSED = 'sender resolution refused: left for a human to confirm';
 
 /**
  * Same-process serialization for import progress commits, one FIFO chain
@@ -133,15 +147,25 @@ function importFailureCode(error, fallback) {
  * is stored but its sender is not resolved yet: a composition without the
  * `channel-sender@1` capability leaves it there ("reconciliation pending",
  * counted as unresolved), and a retry with the capability resolves only
- * the sender. `failed` means the event's last attempt stored nothing or
- * resolved nothing and the page aborted: the retry reprocesses it like a
- * new event. Every other sender value is final and the retry skips it.
+ * the sender. `failed` means the event did not complete: a poisoned event
+ * (one that fails deterministically, whatever the attempt) is recorded
+ * failed and skipped — the page continues and the cursor advances past
+ * it — while a transient failure still aborts the page with the cursor
+ * unmoved, so the retry reprocesses it like a new event. Every other
+ * sender value is final and the retry skips it, except a re-listed same
+ * event whose sender evidence now conflicts: the fresh `unresolved`
+ * verdict refines a previously final sender, routing the conflict to the
+ * human confirm queue the reconciliation already keeps
+ * (duplicate-candidate), never a 409.
  *
- * Refinement is one-directional: absent → anything, `failed` → anything,
- * `pending` → a final sender, final → kept. A replay never overwrites a
- * final outcome, so two advances racing one page converge instead of
- * recounting each other — and a store that just won the inbox insert
- * always records `imported`, even when a racer already wrote `duplicate`.
+ * Refinement is one-directional with that single exception: absent →
+ * anything, `failed` → anything, `pending` → a final sender, final →
+ * kept — except final created/matched → `unresolved` when a later
+ * sighting of the same event resolves to conflicting sender evidence.
+ * Notes only accumulate static fragments: a replay never rewrites them,
+ * so two advances racing one page converge instead of recounting each
+ * other — and a store that just won the inbox insert always records
+ * `imported`, even when a racer already wrote `duplicate`.
  */
 const IMPORT_OUTCOME_FINAL_SENDERS = new Set(['created', 'matched', 'unresolved', 'none']);
 
@@ -409,11 +433,12 @@ export function createChannelOperations(deps) {
   }
 
   /**
-   * The same provider message in the other path's envelope: normalized
-   * identity agrees, and either this call imports (it knows the envelope
-   * differs) or the stored row does (it carries the import marker).
-   * Anything else with different bytes stays a 409 — the webhook contract
-   * does not move.
+   * The same provider message in the webhook envelope: the stored row was
+   * import-marked and the normalized fields agree. The import path never
+   * calls this — its identity is the (connection, providerEventId) source
+   * key alone, so a re-listed event is always adopted and its drift
+   * annotated, never a 409. Anything else with different bytes on the
+   * webhook path stays a 409 — the webhook contract does not move.
    */
   function sameImportEvent(already, item, imported) {
     if (!imported && already.effectReason !== CHANNEL_IMPORT_ROW_REASON) return false;
@@ -421,6 +446,34 @@ export function createChannelOperations(deps) {
       && (already.subject ?? '') === (item.subject ?? '')
       && already.sequence === item.sequence
       && already.occurredAt === item.occurredAt;
+  }
+
+  /**
+   * The static annotation an import adoption carries when the re-listed
+   * envelope drifted from the stored row. Compared field by field; every
+   * fragment is fixed package text — provider-controlled values never
+   * reach the outcome row. Null when nothing drifted.
+   */
+  function adoptionNote(already, item) {
+    const parts = [];
+    if ((already.subject ?? '') !== (item.subject ?? '')) parts.push(CHANNEL_IMPORT_NOTE_SUBJECT);
+    if (already.sequence !== item.sequence) parts.push(CHANNEL_IMPORT_NOTE_SEQUENCE);
+    if (already.occurredAt !== item.occurredAt) parts.push(CHANNEL_IMPORT_NOTE_OCCURRED_AT);
+    return parts.length > 0 ? parts.join('; ') : null;
+  }
+
+  /**
+   * A per-event failure the event will fail again: an owned 4xx the caller
+   * can read and fix (malformed event, refused sender resolution). Anything
+   * else — 5xx, timeouts, outages, unknown shapes — is retryable or
+   * unknown, so the page aborts with the cursor unmoved instead of
+   * skipping an event that a retry could complete. Fail-closed: unknown
+   * errors never become silent skips.
+   */
+  function isDeterministicImportEventError(error) {
+    const status = error !== null && typeof error === 'object'
+      ? /** @type {any} */ (error).status : undefined;
+    return Number.isSafeInteger(status) && status >= 400 && status < 500;
   }
 
   /**
@@ -444,11 +497,13 @@ export function createChannelOperations(deps) {
    * payload a 409, a redelivery resumes an unprocessed row, and an
    * inactive connection quarantines instead of applying.
    *
-   * `imported` marks history-path calls: the same message listed from the
-   * provider past never shares the webhook bytes, so an import adopts the
-   * stored row when the normalized identity agrees instead of 409ing on
-   * the envelope — and import-stored applied rows earn the same adoption
-   * from later webhooks through their marker.
+   * `imported` marks history-path calls: an event's identity there is its
+   * (connection, providerEventId) source key alone, so an import always
+   * adopts the stored row — a webhook-first echo later listed with its
+   * provider instant, a skewed redelivery, a re-listed past — and the
+   * caller annotates the drift on the outcome row instead of 409ing.
+   * Import-stored applied rows earn the same adoption from later webhooks
+   * through their marker, subject to the normalized envelope agreeing.
    */
   async function storeInboxItem(service, {
     spaceId, connection, adapter, item, payloadFingerprint, actor, now, imported = false, importKey = null,
@@ -456,6 +511,15 @@ export function createChannelOperations(deps) {
     const already = service.listWhere({ sourceKey: item.sourceKey })[0];
     if (already) {
       if (already.payloadFingerprint !== payloadFingerprint) {
+        // The import path adopts on stable identity alone: the same
+        // message arrives in a different envelope on each path (push bytes
+        // vs history payload), so fingerprints can never match across
+        // paths — and a drifted re-listing must never brick the run with
+        // a 409 the retry replays forever. The webhook path keeps its
+        // conflict contract below.
+        if (imported) {
+          return { duplicate: true, eventId: already.id, effect: already.effect };
+        }
         if (sameImportEvent(already, item, imported)) {
           return { duplicate: true, eventId: already.id, effect: already.effect };
         }
@@ -524,10 +588,14 @@ export function createChannelOperations(deps) {
       // A concurrent delivery of the same event won the insert: resolve
       // against the committed row instead of surfacing a raw violation —
       // the same contract as the pre-read branch above, so a conflicting
-      // payload is CHANNEL_EVENT_ID_CONFLICT 409 on every path.
+      // payload is CHANNEL_EVENT_ID_CONFLICT 409 on the webhook path,
+      // while the import path adopts on stable identity alone.
       const raced = service.listWhere({ sourceKey: item.sourceKey })[0];
       if (raced) {
         if (raced.payloadFingerprint === payloadFingerprint) {
+          return { duplicate: true, eventId: raced.id, effect: raced.effect };
+        }
+        if (imported) {
           return { duplicate: true, eventId: raced.id, effect: raced.effect };
         }
         if (sameImportEvent(raced, item, imported)) {
@@ -775,22 +843,40 @@ export function createChannelOperations(deps) {
    * `imported`; a duplicate reads the row's importKey), so whatever the
    * interleave, the recorded outcome agrees with the row.
    */
-  async function recordImportOutcome({ spaceId, connectionKey, importKey, providerEventId, outcome, sender, applied }) {
+  async function recordImportOutcome({ spaceId, connectionKey, importKey, providerEventId, outcome, sender, applied, note = null }) {
     const service = importOutcomes();
     const sourceKey = outcomeSourceKey(importKey, providerEventId);
     const actor = SYSTEM();
+    // Notes only accumulate static fragments (a '; '-separated set union):
+    // a replay carrying the same annotation is a no-op, never a rewrite —
+    // so racing advances still converge instead of recounting each other.
+    const mergeNote = (current, incoming) => {
+      if (!incoming) return null;
+      if (!current) return incoming;
+      const seen = new Set(String(current).split('; '));
+      const fresh = String(incoming).split('; ').filter((part) => !seen.has(part));
+      return fresh.length > 0 ? `${current}; ${fresh.join('; ')}` : null;
+    };
     const refine = (current) => {
-      const final = IMPORT_OUTCOME_FINAL_SENDERS.has(current.sender) && current.outcome !== 'failed';
-      if (final) return null;
-      const next = {
-        outcome: current.outcome === 'failed' ? outcome : current.outcome,
-        sender: current.sender === 'pending' || current.outcome === 'failed' ? sender : current.sender,
-        applied,
-      };
-      if (next.outcome === current.outcome && next.sender === current.sender && next.applied === current.applied) {
-        return null;
+      const patch = {};
+      const senderFinal = IMPORT_OUTCOME_FINAL_SENDERS.has(current.sender) && current.outcome !== 'failed';
+      if (!senderFinal) {
+        const nextOutcome = current.outcome === 'failed' ? outcome : current.outcome;
+        const nextSender = current.sender === 'pending' || current.outcome === 'failed' ? sender : current.sender;
+        if (nextOutcome !== current.outcome) patch.outcome = nextOutcome;
+        if (nextSender !== current.sender) patch.sender = nextSender;
+        if (applied !== current.applied) patch.applied = applied;
+      } else if ((current.sender === 'created' || current.sender === 'matched') && sender === 'unresolved') {
+        // A later sighting of the same event resolves to conflicting sender
+        // evidence: the conflict belongs to the human confirm queue, so the
+        // outcome refines toward unresolved — the only direction a final
+        // sender ever moves.
+        patch.sender = sender;
       }
-      return next;
+      const notePatch = mergeNote(current.note ?? null, note);
+      if (notePatch) patch.note = notePatch;
+      if (Object.keys(patch).length === 0) return null;
+      return patch;
     };
     const existing = service.listWhere({ sourceKey })[0] ?? null;
     if (existing) {
@@ -801,7 +887,7 @@ export function createChannelOperations(deps) {
     try {
       return await service.createManaged({
         sourceKey, spaceId, connectionKey, importKey, providerEventId,
-        outcome, sender, applied,
+        outcome, sender, applied, note,
       }, { actor });
     } catch {
       // A concurrent advance won the same event between the read and the
@@ -875,8 +961,10 @@ export function createChannelOperations(deps) {
    * A human decision (connecting the channel): the actor is required, like
    * registration. Records the window the adapter declares and the cursor to
    * resume from; pulling starts with the first advance call. Restarting a
-   * running import resumes it; a completed one refuses — a refresh is a new
-   * voice, not a silent re-import.
+   * running import resumes it — including two overlapping starts, which
+   * resolve to the single stored row instead of a raw unique violation;
+   * a completed one refuses — a refresh is a new voice, not a silent
+   * re-import.
    */
   async function startInitialImport(params) {
     const actor = requireUser(params?.actor);
@@ -888,31 +976,44 @@ export function createChannelOperations(deps) {
     // import still stores conversations and messages, leaving sender
     // reconciliation pending — never a new boot requirement.
     const sourceKey = importSourceKey(spaceId, connection.sourceKey);
-    const existing = importStates().listWhere({ sourceKey })[0];
-    if (existing) {
+    // Starting is idempotent: a repeated start resumes the running import,
+    // and two overlapping starts resolve to the single stored row — never
+    // a raw unique violation, never a second import of one connection.
+    const resolveExisting = (existing) => {
       if (existing.status === 'done') {
         throw new AppError('Initial import already completed for this connection', {
           code: 'CHANNEL_IMPORT_COMPLETE', status: 409,
         });
       }
       return { resumed: true, started: false, state: importStateSummary(existing) };
-    }
+    };
+    const existing = importStates().listWhere({ sourceKey })[0];
+    if (existing) return resolveExisting(existing);
     const now = nowIso();
-    const row = await importStates().createManaged({
-      sourceKey,
-      spaceId,
-      connectionKey: connection.sourceKey,
-      adapter: adapter.name,
-      adapterVersion: adapter.version,
-      status: 'running',
-      windowStart: new Date(Date.parse(now) - adapter.historyImport.windowMs).toISOString(),
-      nextPageToken: null,
-      startedAt: now,
-      finishedAt: null,
-      lastErrorCode: null,
-      lastErrorReason: null,
-    }, { actor });
-    return { resumed: false, started: true, state: importStateSummary(row) };
+    try {
+      const row = await importStates().createManaged({
+        sourceKey,
+        spaceId,
+        connectionKey: connection.sourceKey,
+        adapter: adapter.name,
+        adapterVersion: adapter.version,
+        status: 'running',
+        windowStart: new Date(Date.parse(now) - adapter.historyImport.windowMs).toISOString(),
+        nextPageToken: null,
+        startedAt: now,
+        finishedAt: null,
+        lastErrorCode: null,
+        lastErrorReason: null,
+      }, { actor });
+      return { resumed: false, started: true, state: importStateSummary(row) };
+    } catch (error) {
+      // A concurrent start won the same source key between the read and
+      // the insert: losing the race resumes the committed row — the same
+      // contract as the connection registration above.
+      const raced = importStates().listWhere({ sourceKey })[0];
+      if (raced) return resolveExisting(raced);
+      throw error;
+    }
   }
 
   /**
@@ -928,7 +1029,11 @@ export function createChannelOperations(deps) {
    * (one COUNT per state) instead of trusting hand-kept counters. A page
    * that aborts keeps the cursor, so the retry replays to the same rows and
    * the COUNT reads them: the same numbers as a clean run, because the
-   * number is always the rows themselves. Sender resolution itself stays
+   * number is always the rows themselves. A poisoned event — one that
+   * fails deterministically (an owned 4xx), whatever the attempt — is
+   * recorded failed and skipped instead: the page continues and the cursor
+   * advances past it, so one bad event can never brick the run. Only
+   * transient failures abort with the cursor unmoved. Sender resolution itself stays
    * autonomous — its own transactions, never nested in the page's — and
    * optional: without the composed capability the import still stores
    * conversations and messages, leaving senders pending.
@@ -1031,17 +1136,56 @@ export function createChannelOperations(deps) {
     const processEvent = async (event) => {
       const known = knownOutcome(event.providerEventId);
       if (known && known.outcome !== 'failed' && known.sender !== 'pending') {
-        // A final outcome from an earlier attempt: replaying it must
-        // neither recount nor re-resolve. Rows are never deleted by any
-        // package path, so the stored row is still there.
+        // A final outcome from an earlier attempt: replaying it recounts
+        // nothing — except a re-listed same event whose sender evidence
+        // now conflicts with the earlier sighting. The stored rows carry
+        // no sender text by design, so the conflict is detected by
+        // re-resolving: only a fresh `unresolved` verdict refines, routing
+        // the conflict to the human confirm queue the reconciliation
+        // already keeps. Anything else keeps the recorded outcome, and a
+        // resolution outage on this best-effort check never aborts a page
+        // whose rows are already final.
+        if (event.sender && known.applied === true
+          && (known.sender === 'created' || known.sender === 'matched')) {
+          let fresh = null;
+          try {
+            fresh = await resolveImportSender(event, adapter, actor);
+          } catch {
+            fresh = null;
+          }
+          if (fresh === 'unresolved') {
+            await recordImportOutcome({
+              spaceId, connectionKey: connection.sourceKey, importKey,
+              providerEventId: event.providerEventId, outcome: known.outcome,
+              sender: fresh, applied: known.applied,
+              note: CHANNEL_IMPORT_NOTE_SENDER_CONFLICT,
+            });
+          }
+        }
         return;
       }
-      const item = toInboxItem(event, {
-        spaceId, connectionKey: connection.sourceKey, now, receiveMs,
-      });
-      const record = (outcome, sender, applied) => recordImportOutcome({
+      let item;
+      try {
+        item = toInboxItem(event, {
+          spaceId, connectionKey: connection.sourceKey, now, receiveMs,
+        });
+      } catch (error) {
+        // The envelope itself is malformed — deterministically, whatever
+        // the attempt: record the failure and continue with the page.
+        // Anything unrecognized still aborts below, fail-closed.
+        if (isDeterministicImportEventError(error)) {
+          await recordImportOutcome({
+            spaceId, connectionKey: connection.sourceKey, importKey,
+            providerEventId: event.providerEventId, outcome: 'failed',
+            sender: 'none', applied: false, note: null,
+          });
+          return;
+        }
+        throw error;
+      }
+      const record = (outcome, sender, applied, note = null) => recordImportOutcome({
         spaceId, connectionKey: connection.sourceKey, importKey,
-        providerEventId: event.providerEventId, outcome, sender, applied,
+        providerEventId: event.providerEventId, outcome, sender, applied, note,
       });
       let stored;
       try {
@@ -1057,10 +1201,16 @@ export function createChannelOperations(deps) {
           importKey,
         });
       } catch (error) {
-        // The event stored nothing: record the failure and abort the page —
-        // the cursor stays, so the retry reprocesses it like a new event.
-        // The abort below carries no error text: it may echo
-        // provider-controlled secrets or PII.
+        // A deterministically failing event is recorded failed and
+        // skipped: the page continues and the cursor advances past it. A
+        // transient failure still aborts the page — the cursor stays, so
+        // the retry reprocesses it like a new event. The abort below
+        // carries no error text: it may echo provider-controlled secrets
+        // or PII.
+        if (isDeterministicImportEventError(error)) {
+          await record('failed', 'none', false);
+          return;
+        }
         if (!known) await record('failed', 'none', false);
         throw error;
       }
@@ -1068,10 +1218,17 @@ export function createChannelOperations(deps) {
       // the row: one this import stored carries its importKey, so a crash
       // between the inbox write and the outcome write replays as `imported`
       // and converges to a clean run — while a webhook-first row stays a
-      // duplicate. A resumed row predates the import by construction.
+      // duplicate. A resumed row predates the import by construction. An
+      // adopted duplicate annotates how the re-listed envelope drifted
+      // from the stored row — static text only, never provider values.
       let rowOutcome;
+      let note = null;
       if (stored.duplicate === false && stored.resumed !== true) {
         rowOutcome = 'imported';
+      } else if (stored.duplicate === true) {
+        const current = service.listWhere({ sourceKey: item.sourceKey })[0];
+        rowOutcome = current && current.importKey === importKey ? 'imported' : 'duplicate';
+        if (current) note = adoptionNote(current, item);
       } else {
         const current = service.listWhere({ sourceKey: item.sourceKey })[0];
         rowOutcome = current && current.importKey === importKey ? 'imported' : 'duplicate';
@@ -1085,20 +1242,28 @@ export function createChannelOperations(deps) {
       // Quarantined or set-aside items stay evidence: no contact is ever
       // invented from a row the package refused to apply.
       if (!appliedNow || !event.sender) {
-        await record(rowOutcome, 'none', appliedNow);
+        await record(rowOutcome, 'none', appliedNow, note);
         return;
       }
       let sender;
       try {
         sender = await resolveImportSender(event, adapter, actor);
       } catch (error) {
-        // Genuine failure after the row landed: the outcome stays pending
-        // so the retry resolves only the sender, and the abort carries no
+        // A deterministically refused sender fails whatever the attempt:
+        // record it failed and skip like a poisoned event. A transient
+        // outage still leaves the outcome pending and aborts the page, so
+        // the retry resolves only the sender — and the abort carries no
         // error text.
-        await record(rowOutcome, 'pending', appliedNow);
+        if (isDeterministicImportEventError(error)) {
+          await record('failed', 'unresolved', appliedNow, note
+            ? `${note}; ${CHANNEL_IMPORT_NOTE_SENDER_REFUSED}`
+            : CHANNEL_IMPORT_NOTE_SENDER_REFUSED);
+          return;
+        }
+        await record(rowOutcome, 'pending', appliedNow, note);
         throw error;
       }
-      await record(rowOutcome, sender, appliedNow);
+      await record(rowOutcome, sender, appliedNow, note);
     };
 
     const processPage = async () => {

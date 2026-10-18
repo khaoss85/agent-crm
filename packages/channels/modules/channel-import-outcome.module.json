@@ -10,6 +10,7 @@
     { "name": "providerEventId", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },
     { "name": "outcome", "type": "enum", "values": ["imported", "duplicate", "failed"], "index": true, "writable": "managed", "classification": "non-personal" },
     { "name": "sender", "type": "enum", "values": ["created", "matched", "unresolved", "none", "pending"], "index": true, "writable": "managed", "classification": "non-personal" },
-    { "name": "applied", "type": "boolean", "writable": "managed", "classification": "non-personal" }
+    { "name": "applied", "type": "boolean", "writable": "managed", "classification": "non-personal" },
+    { "name": "note", "type": "string", "writable": "managed", "classification": "non-personal" }
   ]
 }

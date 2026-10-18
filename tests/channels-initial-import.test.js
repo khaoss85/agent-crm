@@ -102,6 +102,7 @@ function setup(options = {}) {
         armed = false;
         const error = new Error(spec.message);
         error.code = spec.code;
+        if (spec.status !== undefined) error.status = spec.status;
         throw error;
       }
       return inner(request);
@@ -841,4 +842,164 @@ test('a pending sender resolves when a later advance brings the capability', asy
     && sender.calls.some((request) => request.handle === '+390200005102'),
     'the retry resolves the senders the earlier attempt left pending',
   );
+});
+
+/**
+ * Stable import identity (giro 3 della #242): an event is its
+ * (connection, providerEventId). A webhook-first echo stored without its
+ * provider instant, later listed with it, is adopted as the same event —
+ * a duplicate with the drift annotated, never a 409 that bricks the run.
+ */
+test('a webhook-first echo listed later with its provider instant is adopted, never a 409', async (t) => {
+  const { harness, api } = setup({ tenantId: 'channel-import-echo-adopt' });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const at = nowIso();
+
+  // The live webhook arrives first without its provider instant (an echo of
+  // our own send): stored as quarantine evidence, no sender resolved.
+  const { fixtureEventBody } = await import('../packages/channels/src/fixture.js');
+  const rawBody = fixtureEventBody({ id: 'evt-echo-1', subject: '', seq: null, at: null });
+  const delivered = await harness.ingest(SPACE, {
+    connectionKey: key, rawBody, headers: harness.faults.sign(rawBody),
+  });
+  assert.equal(delivered.effect, 'quarantined');
+
+  // The backfill lists the same id with its provider instant and sender.
+  api.seedHistory([{ id: 'evt-echo-1', subject: 'chat-echo', seq: 1, at, sender: { handle: '+390200007101' } }]);
+  await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  const advanced = await harness.advanceImport(SPACE, { connectionKey: key });
+  assert.equal(advanced.done, true);
+  assert.deepEqual(advanced.page, {
+    imported: 0, duplicates: 1, failed: 0, matched: 0, created: 0, unresolved: 0, withoutSender: 0,
+  });
+  assert.equal(harness.inbox(SPACE).length, 1, 'one message, one row, whichever path saw it first');
+  const outcomes = harness.internals.modules.get('channel-import-outcome').service.listWhere({});
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].outcome, 'duplicate');
+  assert.ok(
+    outcomes[0].note && outcomes[0].note.includes('occurredAt differs'),
+    `the drift is annotated on the import row, got ${JSON.stringify(outcomes[0].note)}`,
+  );
+  const state = harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(state.status, 'done');
+  assert.equal(state.duplicateEvents, 1);
+});
+
+/**
+ * Idempotent start (giro 3 della #242): two overlapping starts resolve to
+ * the single stored row — one winner, one resume — never a raw unique
+ * violation, never a second import of one connection.
+ */
+test('two overlapping starts resolve to one running import', async (t) => {
+  const { harness, api } = setup({ tenantId: 'channel-import-start-race' });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  api.seedHistory(historySeed(1, nowIso()));
+
+  const [first, second] = await Promise.all([
+    harness.startImport(SPACE, { connectionKey: key, actor: ACTOR }),
+    harness.startImport(SPACE, { connectionKey: key, actor: ACTOR }),
+  ]);
+  assert.deepEqual(
+    [first.started, second.started].sort(),
+    [false, true],
+    'exactly one start wins, the other resumes',
+  );
+  assert.equal(first.state.status, 'running');
+  assert.equal(second.state.status, 'running');
+  const states = harness.internals.modules.get('channel-import-state').service.listWhere({});
+  assert.equal(states.length, 1, 'one connection, one import row');
+});
+
+/**
+ * Poison skip (giro 3 della #242): an event that fails deterministically
+ * is recorded failed and skipped — the page completes and the cursor
+ * advances past it, so one bad event can never brick the run.
+ */
+test('a deterministically failing event is recorded failed and skipped: the page completes', async (t) => {
+  const poison = '+390200008101';
+  const { harness, api } = setup({
+    tenantId: 'channel-import-poison',
+    senderThrows: { handle: poison, message: 'sender evidence refused', code: 'CHANNEL_SENDER_REFUSED', status: 422 },
+  });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const at = nowIso();
+  api.seedHistory([
+    { id: 'evt-p-1', subject: 'chat-p', seq: 1, at, sender: { handle: '+390200008100' } },
+    { id: 'evt-p-2', subject: 'chat-p', seq: 2, at, sender: { handle: poison } },
+    { id: 'evt-p-3', subject: 'chat-p', seq: 3, at, sender: { handle: '+390200008102' } },
+  ]);
+
+  await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  const advanced = await harness.advanceImport(SPACE, { connectionKey: key });
+  assert.equal(advanced.done, true, 'one poisoned event never bricks the page');
+  assert.deepEqual(advanced.page, {
+    imported: 2, duplicates: 0, failed: 1, matched: 0, created: 2, unresolved: 1, withoutSender: 0,
+  });
+  const state = harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(state.status, 'done');
+  assert.equal(state.failedEvents, 1);
+  assert.equal(state.importedEvents, 2);
+  assert.equal(harness.inbox(SPACE).length, 3, 'the poisoned row is stored; only its reconciliation failed');
+  const outcomes = harness.internals.modules.get('channel-import-outcome').service.listWhere({});
+  const poisoned = outcomes.find((entry) => entry.providerEventId === 'evt-p-2');
+  assert.equal(poisoned.outcome, 'failed');
+  assert.ok(
+    poisoned.note && poisoned.note.includes('sender resolution refused'),
+    `the refusal is annotated, got ${JSON.stringify(poisoned.note)}`,
+  );
+  // The cursor moved past the poison: the next advance answers done
+  // without reprocessing it.
+  const again = await harness.advanceImport(SPACE, { connectionKey: key });
+  assert.equal(again.done, true);
+  assert.equal(again.page, null);
+});
+
+/**
+ * Conflicting sender across sightings (giro 3 della #242): the same
+ * provider id re-listed with conflicting sender evidence refines a
+ * previously final sender toward unresolved — the human confirm queue —
+ * never a 409, and the conflict is annotated on the import row.
+ */
+test('a re-listed same event with conflicting sender evidence refines to unresolved for a human', async (t) => {
+  const { harness, api, sender } = setup({ tenantId: 'channel-import-sender-conflict' });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const at = Date.parse(nowIso());
+  // Same provider id on two pages (oldest first): the first sighting
+  // reconciles, the second carries conflicting sender evidence.
+  api.seedHistory([
+    { id: 'evt-d-1', subject: 'chat-d', seq: 1, at: new Date(at).toISOString(), sender: { handle: '+390200009101' } },
+    { id: 'evt-d-1', subject: 'chat-d', seq: 1, at: new Date(at + 1000).toISOString(), sender: { handle: 'ambiguous-case' } },
+  ]);
+
+  await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  const first = await harness.advanceImport(SPACE, { connectionKey: key, limit: 1 });
+  assert.equal(first.done, false);
+  assert.equal(first.page.imported, 1);
+
+  const second = await harness.advanceImport(SPACE, { connectionKey: key, limit: 1 });
+  assert.equal(second.done, true);
+  assert.deepEqual(second.page, {
+    imported: 0, duplicates: 0, failed: 0, matched: 0, created: -1, unresolved: 1, withoutSender: 0,
+  }, 'the conflict moves the sender to unresolved: nothing recounted, nothing doubled');
+  assert.ok(
+    sender.calls.some((request) => request.handle === '+390200009101')
+    && sender.calls.some((request) => request.handle === 'ambiguous-case'),
+    'both sightings reached the reconciliation',
+  );
+  const outcomes = harness.internals.modules.get('channel-import-outcome').service.listWhere({});
+  assert.equal(outcomes.length, 1, 'one event, one outcome row');
+  assert.equal(outcomes[0].outcome, 'imported');
+  assert.equal(outcomes[0].sender, 'unresolved');
+  assert.ok(
+    outcomes[0].note && outcomes[0].note.includes('sender evidence conflicts'),
+    `the conflict is annotated, got ${JSON.stringify(outcomes[0].note)}`,
+  );
+  assert.equal(harness.inbox(SPACE).length, 1, 'one event, one row');
+  const state = harness.readImport(SPACE, { connectionKey: key });
+  assert.equal(state.unresolvedContacts, 1);
+  assert.equal(state.createdContacts, 0);
 });
