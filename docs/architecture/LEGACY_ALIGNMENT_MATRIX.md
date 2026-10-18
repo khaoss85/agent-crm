@@ -1967,7 +1967,11 @@ selection the composing project makes, proven per domain, not a migration.
 An `aligned` row below means the domain's records were composed and executed
 on both storages in this milestone's proof; a `deferred` row means its
 shipped manifests select through the same seam and its per-domain proof is
-later work, not a code gap.
+later work, not a code gap. A revised module's entry may also carry
+`previousManifests` (the exact manifests previous revisions shipped, oldest
+first): the composition then keeps the original migration byte-identical and
+adds one additive evolution per later revision, so databases the previous
+revision migrated keep composing (see `docs/MODULE_EVOLUTION.md`).
 
 | Domain | Status | Reason |
 |---|---|---|

@@ -211,6 +211,25 @@ Identical in every respect. The mechanism does not know whether a module belongs
 to a package, and `examples/custom-packages/` evolves the same way a project
 module does. See `docs/PACKAGE_AUTHORING.md`.
 
+## Manifest-selected modules (no state file)
+
+A module composed by manifest selection (`{name, manifest}` in an async-v2
+selected graph) has no `module.state.json`, so its history travels with the
+entry: `previousManifests`, oldest first, each the exact manifest a previous
+revision shipped. The composition renders the first migration from the oldest
+manifest — byte-identical to what existing databases recorded — then one
+additive evolution per later revision (`evolve_<table>_r<revision>` on SQLite,
+`pg_evolve_<table>_r<revision>` on PostgreSQL). Without `previousManifests`
+the single migration renders from the current manifest, unchanged.
+
+The history is checked in beside the manifest as `<name>.history.json` (never
+`<name>.module.json`: compositors load every `*.module.json` as a module).
+`packages/work/modules/work-activity.history.json` is the first one: revision
+1 of work-activity, after revision 2 added the `seq` field. A database that
+recorded the revision 1 migration composes without a checksum mismatch; a
+composition without the history still refuses loudly rather than silently
+re-applying a changed migration.
+
 ## Related
 
 `docs/MODULE_FACTORY.md` · `docs/plans/platform-module-evolution-v1.md` ·

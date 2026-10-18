@@ -128,14 +128,18 @@ function readSelectedContract(selected) {
 /**
  * A `{name, manifest}` selected entry registers a record module built at
  * runtime from the manifest. Refused loudly on any mismatch: a module object
- * silently dropped is the defect this seam closes.
+ * silently dropped is the defect this seam closes. An entry may also carry
+ * `previousManifests` — the exact manifests previous revisions shipped,
+ * oldest first — so a revised module composes its original migration
+ * byte-identical plus one additive evolution per later revision, instead of
+ * re-rendering the applied migration and tripping the checksum ledger.
  * @param {unknown} entry
  */
 function normalizeRecordModuleEntry(entry) {
   if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
     throw new ValidationError('Selected graph modules must be name strings or {name, manifest} objects');
   }
-  const { name, manifest } = /** @type {{name: unknown, manifest: unknown}} */ (entry);
+  const { name, manifest, previousManifests } = /** @type {{name: unknown, manifest: unknown, previousManifests?: unknown}} */ (entry);
   if (typeof name !== 'string' || name === '') {
     throw new ValidationError('Selected record module entries need a string name');
   }
@@ -146,7 +150,16 @@ function normalizeRecordModuleEntry(entry) {
       { field: name },
     );
   }
-  return { name, manifest: normalized };
+  if (previousManifests !== undefined && !Array.isArray(previousManifests)) {
+    throw new ValidationError(
+      `Selected record module "${name}": previousManifests must be an array of manifests when present`,
+    );
+  }
+  return {
+    name,
+    manifest: normalized,
+    ...(previousManifests === undefined ? {} : { previousManifests: Object.freeze([...previousManifests]) }),
+  };
 }
 
 export function preflightSelectedGraph(selected) {
