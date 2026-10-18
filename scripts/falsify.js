@@ -35,6 +35,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { spawnGit } from './git-env.js';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -198,7 +199,7 @@ export function runFalsification(mutations, { say }) {
   // Damage from a killed process must be undoable with one git command, so nothing is written
   // until every target file is clean.
   const files = [...new Set(mutations.map((mutation) => mutation.file))];
-  const dirty = spawnSync('git', ['-C', root, 'status', '--porcelain', '--', ...files], { encoding: 'utf8' });
+  const dirty = spawnGit(['-C', root, 'status', '--porcelain', '--', ...files]);
   if (dirty.status !== 0) {
     throw new Error(`git status failed: ${(dirty.stderr ?? '').trim() || 'no output'}`);
   }
