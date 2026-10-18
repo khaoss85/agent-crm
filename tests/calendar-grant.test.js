@@ -391,3 +391,82 @@ test('watch validates the channel shape before reading grant state', async (t) =
     (error) => error?.code === 'VALIDATION_ERROR',
   );
 });
+
+test('an expired sync token carrying a secret is normalized to a fixed message', async (t) => {
+  const leaking = new Error(`sync token invalid for grant ${GRANT} (personal data)`);
+  leaking.code = 'GOOGLE_SYNC_TOKEN_INVALID';
+  leaking.status = 410;
+  const ctx = setup({ providerThrows: leaking });
+  t.after(() => ctx.close());
+  await bound(ctx);
+  const failure = await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN }).then(
+    () => { throw new Error('import should have failed'); },
+    (error) => error,
+  );
+  assert.equal(failure.code, 'GOOGLE_SYNC_TOKEN_INVALID');
+  assert.ok(!String(failure.message).includes(GRANT), 'callers get the fixed message, never provider text');
+  assert.ok(!JSON.stringify(ctx.rows()).includes(GRANT), 'rows keep no provider text');
+});
+
+test('an expired token mid-pull still reconciles without leaking the secret', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await bound(ctx);
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN });
+  const realList = ctx.provider.listEvents.bind(ctx.provider);
+  let refused = false;
+  ctx.provider.listEvents = async (params) => {
+    if (!refused && params?.syncToken) {
+      refused = true;
+      const leaking = new Error(`sync token invalid for grant ${GRANT}`);
+      leaking.code = 'GOOGLE_SYNC_TOKEN_INVALID';
+      leaking.status = 410;
+      throw leaking;
+    }
+    return realList(params);
+  };
+  const pull = await ctx.sync.pullIncremental(CAL, { spaceId: SPACE });
+  assert.equal(pull.recovered, true, 'the expired token reconciles fully');
+  assert.ok(refused, 'the token-invalid branch ran');
+  assert.ok(!JSON.stringify(ctx.rows()).includes(GRANT), 'rows keep no provider text');
+});
+
+test('a padded calendar id syncs as the bound calendar, never as shadow state', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await bound(ctx);
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN });
+  const padded = await ctx.sync.importFuture(`  ${CAL}  `, { spaceId: `  ${SPACE}  `, timeMin: TIME_MIN });
+  assert.ok(padded.entries.every((e) => e.status === 'already-tracked'), 'the padded variant reads the same row');
+  assert.equal(padded.calendarId, CAL, 'the canonical id is answered');
+  assert.equal(ctx.rows().states.length, 1, 'no shadow state row for the padded spelling');
+  await ctx.sync.revokeCalendarGrant({ spaceId: SPACE, calendarId: CAL, actor: ACTOR });
+  await assert.rejects(
+    ctx.sync.importFuture(`  ${CAL}  `, { spaceId: SPACE, timeMin: TIME_MIN }),
+    (error) => error?.code === 'CALENDAR_GRANT_REVOKED',
+    'the revoke stops the padded variant too',
+  );
+});
+
+test('the fake reconciles a positional lookup and refuses a malformed one loudly', async (t) => {
+  const ctx = setup({ unwired: true, expectedSecret: null });
+  t.after(() => ctx.close());
+  ctx.provider.insertEvent({
+    calendarId: CAL, id: 'evt-pos', summary: 'Positional',
+    start: { dateTime: '2026-10-21T09:00:00.000Z' }, end: { dateTime: '2026-10-21T10:00:00.000Z' },
+    extendedProperties: { accordoSourceKey: 'pos-key-1' },
+  });
+  const found = await ctx.provider.findByAccordoSourceKey(CAL, 'pos-key-1');
+  assert.ok(found, 'the old positional shape reconciles instead of inserting a duplicate');
+  assert.equal(found.extendedProperties.accordoSourceKey, 'pos-key-1');
+  const foundObject = await ctx.provider.findByAccordoSourceKey({ calendarId: CAL, sourceKey: 'pos-key-1' });
+  assert.ok(foundObject, 'the object shape keeps working');
+  assert.throws(
+    // @ts-expect-error — the contract needs the locator pair, not a number.
+    () => ctx.provider.findByAccordoSourceKey(42),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+    'a malformed lookup refuses instead of returning a silent null',
+  );
+});

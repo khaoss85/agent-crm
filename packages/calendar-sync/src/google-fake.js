@@ -187,8 +187,30 @@ export function createFakeGoogleCalendar(options = {}) {
      * (`extendedProperties.accordoSourceKey`). The sync reconciles with
      * this before inserting, so a retry after a lost link never inserts
      * a second event — the provider-side half of export idempotency.
+     *
+     * Call shape: one object `{ calendarId, sourceKey, secret }` — the
+     * same object-plus-call-time-secret shape every provider method
+     * takes (see the provider contract in sync.js). The old positional
+     * shape `(calendarId, sourceKey)` is still accepted and mapped onto
+     * it, so an old caller reconciles instead of inserting a duplicate;
+     * anything else refuses loudly instead of returning a silent null.
      */
-    findByAccordoSourceKey({ calendarId, sourceKey, secret } = {}) {
+    findByAccordoSourceKey(first = {}, second, third) {
+      let calendarId;
+      let sourceKey;
+      let secret;
+      if (typeof first === 'string') {
+        calendarId = first;
+        sourceKey = second;
+        secret = third !== undefined && typeof third === 'object' && third !== null ? third.secret : undefined;
+      } else if (first !== null && typeof first === 'object') {
+        ({ calendarId, sourceKey, secret } = first);
+      } else {
+        throw fakeError('GOOGLE_CALL_MALFORMED', 422, 'findByAccordoSourceKey needs { calendarId, sourceKey }');
+      }
+      if (typeof calendarId !== 'string' || typeof sourceKey !== 'string') {
+        throw fakeError('GOOGLE_CALL_MALFORMED', 422, 'findByAccordoSourceKey needs { calendarId, sourceKey }');
+      }
       requireGrant({ secret }, 'findByAccordoSourceKey');
       for (const event of calendar(calendarId).events.values()) {
         if (event.status !== 'cancelled' && event.extendedProperties?.accordoSourceKey === sourceKey) {

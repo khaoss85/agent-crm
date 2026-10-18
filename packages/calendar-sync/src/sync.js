@@ -32,6 +32,9 @@ import { AppError, ConflictError, NotFoundError, ValidationError } from '../../c
  * Required: `listEvents`, `insertEvent`, `cancelEvent`,
  * `findByAccordoSourceKey` (export reconciliation — a retry after a lost
  * link finds the already-inserted event instead of inserting a second).
+ * Every provider call takes one object param (`{ calendarId, … }`) plus
+ * the call-time `secret` the engine resolved from the vault; a real
+ * adapter must keep that shape.
  *
  * No remote change is ever silently dropped: a move the sync cannot apply
  * yet keeps its valid local row and is kept as a `pendingRemote` snapshot
@@ -102,6 +105,23 @@ function assertGrantText(value, label, max) {
     throw new ValidationError(`${label} must be bounded single-line text (at most ${max} characters)`, { field: label });
   }
   return value.trim();
+}
+
+/**
+ * One canonical spelling for every calendar and space on the sync path:
+ * bind and revoke already trim through `assertGrantText`, so every other
+ * entry trims the same way before any state read, state write, or provider
+ * call — a padded variant never forks a shadow state row past the revoke.
+ * Absent space stays absent (unbound calendars sync unwired, as on main).
+ */
+function canonicalCalendarId(value) {
+  return assertGrantText(value, 'calendarId', 128);
+}
+
+/** @param {unknown} value */
+function canonicalSpaceIdOrAbsent(value) {
+  if (value === undefined || value === null) return value;
+  return assertGrantText(value, 'spaceId', 128);
 }
 
 /** Binding a grant and revoking one are human decisions, like connecting a channel. */
@@ -350,18 +370,20 @@ export function createCalendarSyncOperations(options = {}) {
   }
 
   async function readState(calendarId) {
-    const rows = await stateService(context).listWhere({ stateKey: stateKeyFor(calendarId) });
+    const cal = canonicalCalendarId(calendarId);
+    const rows = await stateService(context).listWhere({ stateKey: stateKeyFor(cal) });
     return rows[0] ?? null;
   }
 
   async function writeState(calendarId, patch, actor) {
-    const existing = await readState(calendarId);
+    const cal = canonicalCalendarId(calendarId);
+    const existing = await readState(cal);
     if (existing) {
       return stateService(context).applyManaged(existing.id, { ...patch }, { actor });
     }
     return stateService(context).createManaged({
-      stateKey: stateKeyFor(calendarId),
-      calendarId,
+      stateKey: stateKeyFor(cal),
+      calendarId: cal,
       syncToken: null,
       channelId: '',
       channelTokenHash: null,
@@ -384,14 +406,16 @@ export function createCalendarSyncOperations(options = {}) {
    * calendars (synced before grants existed) stay unwired, as on main.
    */
   async function requireLiveGrant(calendarId, callerSpaceId) {
-    const state = await readState(calendarId);
-    if (state?.spaceId !== null && state?.spaceId !== undefined && state.spaceId !== callerSpaceId) {
+    const cal = canonicalCalendarId(calendarId);
+    const space = canonicalSpaceIdOrAbsent(callerSpaceId);
+    const state = await readState(cal);
+    if (state?.spaceId !== null && state?.spaceId !== undefined && state.spaceId !== space) {
       throw syncError('CALENDAR_GRANT_UNKNOWN', 404,
-        `calendar "${calendarId}" has no grant for this space: bind it before syncing`);
+        `calendar "${cal}" has no grant for this space: bind it before syncing`);
     }
     if (state && state.grantStatus === 'revoked') {
       throw syncError('CALENDAR_GRANT_REVOKED', 409,
-        `calendar "${calendarId}" grant is revoked: re-bind it before syncing`);
+        `calendar "${cal}" grant is revoked: re-bind it before syncing`);
     }
     return state;
   }
@@ -438,21 +462,32 @@ export function createCalendarSyncOperations(options = {}) {
     // public operation entry (requireLiveGrant) — every chain below runs on
     // the same calendarId under the entry that already proved the caller's
     // space owns this calendar.
-    const state = await readState(calendarId);
+    const cal = canonicalCalendarId(calendarId);
+    const state = await readState(cal);
     if (state && state.grantStatus === 'revoked') {
       throw syncError('CALENDAR_GRANT_REVOKED', 409,
-        `calendar "${calendarId}" grant is revoked: re-bind it before syncing`);
+        `calendar "${cal}" grant is revoked: re-bind it before syncing`);
     }
     return state;
   }
 
   async function providerCall(calendarId, op, params, purpose) {
-    const state = await requireUsableGrant(calendarId);
+    const cal = canonicalCalendarId(calendarId);
+    const state = await requireUsableGrant(cal);
     const grant = await resolveGrant(state, purpose);
+    // The provider never sees a padded variant: the canonical id wins over
+    // whatever spelling the caller passed in `params`.
+    const canonicalParams = { ...params, calendarId: cal };
     try {
-      return await provider[op]({ ...params, ...(grant === null ? {} : { secret: grant }) });
+      return await provider[op]({ ...canonicalParams, ...(grant === null ? {} : { secret: grant }) });
     } catch (error) {
-      if (error?.code === 'GOOGLE_SYNC_TOKEN_INVALID') throw error;
+      if (providerErrorCode(error) === 'GOOGLE_SYNC_TOKEN_INVALID') {
+        // The expired-token signal survives, but never with provider text:
+        // a real Google error may echo the grant, a token, or personal
+        // data, so the code rides with a fixed message instead.
+        throw syncError('GOOGLE_SYNC_TOKEN_INVALID', providerErrorStatus(error),
+          'google sync token expired or unknown: running a full reconcile without provider detail');
+      }
       throw syncError(providerErrorCode(error), providerErrorStatus(error),
         `google calendar ${op} failed without provider detail: retry the sync`);
     }
@@ -898,6 +933,8 @@ export function createCalendarSyncOperations(options = {}) {
      */
     async importFuture(calendarId, { spaceId, timeMin, actor } = {}) {
       const who = actor ?? defaultActor;
+      calendarId = canonicalCalendarId(calendarId);
+      spaceId = canonicalSpaceIdOrAbsent(spaceId);
       await requireLiveGrant(calendarId, spaceId);
       const handle = bookHandle(who);
       const page = await providerCall(calendarId, 'listEvents',
@@ -962,6 +999,8 @@ export function createCalendarSyncOperations(options = {}) {
     /** Incremental pull on the stored sync token (expired token → full reconcile). */
     async pullIncremental(calendarId, { spaceId, actor } = {}) {
       const who = actor ?? defaultActor;
+      calendarId = canonicalCalendarId(calendarId);
+      spaceId = canonicalSpaceIdOrAbsent(spaceId);
       await requireLiveGrant(calendarId, spaceId);
       const handle = bookHandle(who);
       const state = await readState(calendarId);
@@ -1000,6 +1039,8 @@ export function createCalendarSyncOperations(options = {}) {
      */
     async pushAppointment(calendarId, sourceKey, { spaceId, actor } = {}) {
       const who = actor ?? defaultActor;
+      calendarId = canonicalCalendarId(calendarId);
+      spaceId = canonicalSpaceIdOrAbsent(spaceId);
       await requireLiveGrant(calendarId, spaceId);
       const handle = bookHandle(who);
       const row = await handle.appointmentBySourceKey(sourceKey);
@@ -1071,6 +1112,8 @@ export function createCalendarSyncOperations(options = {}) {
 
     /** Push every linked row of a calendar whose local half moved. */
     async pushLocalChanges(calendarId, { spaceId, actor } = {}) {
+      calendarId = canonicalCalendarId(calendarId);
+      spaceId = canonicalSpaceIdOrAbsent(spaceId);
       await requireLiveGrant(calendarId, spaceId);
       const links = await linkService(context).listWhere({ calendarId });
       const entries = [];
@@ -1082,6 +1125,10 @@ export function createCalendarSyncOperations(options = {}) {
 
     /** One pull plus one push: the second consecutive run changes nothing. */
     async syncOnce(calendarId, options = {}) {
+      calendarId = canonicalCalendarId(calendarId);
+      if (options && typeof options === 'object' && 'spaceId' in options) {
+        options = { ...options, spaceId: canonicalSpaceIdOrAbsent(options.spaceId) };
+      }
       const pull = await api.pullIncremental(calendarId, options);
       const push = await api.pushLocalChanges(calendarId, options);
       return { calendarId, pull, push };
@@ -1095,6 +1142,7 @@ export function createCalendarSyncOperations(options = {}) {
      * only acknowledges the watch; anything else pulls incrementally.
      */
     async handlePush({ channelId, channelToken, resourceState, spaceId } = {}) {
+      spaceId = canonicalSpaceIdOrAbsent(spaceId);
       const states = await stateService(context).listWhere({});
       const state = states.find((row) => row.channelId === channelId && channelId);
       if (!state) {
@@ -1128,6 +1176,8 @@ export function createCalendarSyncOperations(options = {}) {
      */
     async watchCalendar(calendarId, { spaceId, channelId, resourceId, channelToken, actor } = {}) {
       const who = actor ?? defaultActor;
+      calendarId = canonicalCalendarId(calendarId);
+      spaceId = canonicalSpaceIdOrAbsent(spaceId);
       if (typeof channelId !== 'string' || channelId === '' || typeof channelToken !== 'string' || channelToken === '') {
         throw new ValidationError('watchCalendar needs the provider channel id and Bearer [REDACTED]', { field: 'watch' });
       }
