@@ -20,12 +20,20 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { spawnGit } from './git-env.js';
 
 /** The scheduled-measure window in `.github/workflows/ci.yml`. Keep the two equal. */
 export const MEASURE_WINDOW_HOURS = 6;
+
+/**
+ * Where the scheduled run records its successful measurements (written by
+ * `scripts/ci-measure-guard.js --record`). The same single runner serves the
+ * push-time `public-claims` job, so the run timestamp is visible here.
+ */
+export const DEFAULT_STATE_FILE = join(homedir(), '.accordo-ci', 'main-last-measurement.json');
 
 /**
  * A duration in milliseconds as a short human span: `42m`, `5h 12m`, `19d 4h`.
@@ -80,16 +88,42 @@ export function describeMeasurementAge(record, options = {}) {
 }
 
 /**
- * When the recorded measurement was taken, precisely. Prefers the measured
- * commit's committer date from git (the ledger only carries a day), and falls
- * back to the ledger date at UTC midnight. Never throws: null means unknown.
+ * Whether the runner-local run record names the ledger's tree. The record
+ * carries the full 40-hex checkout head while the ledger carries a short
+ * prefix, so either direction of the prefix relation counts — the same
+ * tolerance the schedule guard uses, and nothing looser.
+ *
+ * @param {unknown} runSha the state file's `sha`
+ * @param {unknown} ledgerSha the ledger's `measuredAgainst.sha`
+ * @returns {boolean} true only when the two provably name the same tree
+ */
+export function runRecordNamesLedger(runSha, ledgerSha) {
+  const run = String(runSha ?? '').trim().toLowerCase();
+  const ledger = String(ledgerSha ?? '').trim().toLowerCase();
+  if (!/^[0-9a-f]{7,40}$/.test(run) || !/^[0-9a-f]{7,40}$/.test(ledger)) return false;
+  return run.startsWith(ledger) || ledger.startsWith(run);
+}
+
+/**
+ * When the recorded measurement was taken, precisely. Prefers the run
+ * timestamp the scheduled measurement recorded for this exact tree (the
+ * commit date can already be nearly a window old when its first measurement
+ * starts, so dating the age from it would warn on a freshly taken
+ * measurement), then the measured commit's committer date from git (the
+ * ledger only carries a day), then the ledger date at UTC midnight. Never
+ * throws: null means unknown.
  *
  * @param {string} root repository root
  * @param {unknown} recordedSha the ledger's measuredAgainst.sha
  * @param {unknown} ledgerDate the ledger's measuredAgainst.date
+ * @param {{ sha?: unknown, measuredAt?: unknown }} [runRecord] the state file's record
  * @returns {number | null} epoch milliseconds, or null when unknowable
  */
-export function resolveMeasuredAtMs(root, recordedSha, ledgerDate) {
+export function resolveMeasuredAtMs(root, recordedSha, ledgerDate, runRecord = {}) {
+  const measuredAt = Number(runRecord?.measuredAt);
+  if (runRecordNamesLedger(runRecord?.sha, recordedSha) && Number.isFinite(measuredAt) && measuredAt > 0) {
+    return measuredAt;
+  }
   if (typeof recordedSha === 'string' && /^[0-9a-f]{7,40}$/.test(recordedSha.trim())) {
     try {
       const run = spawnGit(['log', '-1', '--format=%cI', recordedSha.trim()], { cwd: root });
@@ -106,6 +140,24 @@ export function resolveMeasuredAtMs(root, recordedSha, ledgerDate) {
   return null;
 }
 
+/**
+ * Read the runner-local run record the scheduled measurement maintains.
+ * Never throws: a missing or malformed file resolves to "no record", and the
+ * caller falls back to the commit and ledger dates.
+ *
+ * @param {string} stateFile runner-local state file path
+ * @returns {{ sha?: unknown, measuredAt?: unknown }} the record, when usable
+ */
+export function readRunRecord(stateFile) {
+  try {
+    const record = JSON.parse(readFileSync(stateFile, 'utf8'));
+    if (record !== null && typeof record === 'object') return { sha: record.sha, measuredAt: record.measuredAt };
+  } catch {
+    // Fall through: no record means the older datings below.
+  }
+  return {};
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const argv = process.argv.slice(2);
   const flag = (/** @type {string} */ name) => {
@@ -114,6 +166,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   };
   const root = String(flag('--root') ?? join(fileURLToPath(import.meta.url), '..', '..'));
   const windowArg = Number(flag('--window-hours') ?? MEASURE_WINDOW_HOURS);
+  const stateFile = String(flag('--state-file') ?? DEFAULT_STATE_FILE);
+  const runRecord = readRunRecord(stateFile);
   /** @type {{ sha?: unknown, tests?: unknown, atMs?: unknown }} */
   let record = {};
   try {
@@ -122,7 +176,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     record = {
       sha: measured.sha,
       tests: measured.tests,
-      atMs: resolveMeasuredAtMs(root, measured.sha, measured.date),
+      atMs: resolveMeasuredAtMs(root, measured.sha, measured.date, runRecord),
     };
   } catch {
     record = {};

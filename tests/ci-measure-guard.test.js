@@ -8,7 +8,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { decideMeasure, headAlreadyMeasured } from '../scripts/ci-measure-guard.js';
+import {
+  decideMeasure,
+  headAlreadyMeasured,
+  parseStateRecord,
+  recordStatePayload,
+} from '../scripts/ci-measure-guard.js';
 
 const HEAD = '16a5299fda2bd85eaa76bc4baadbce06ac869bde';
 
@@ -37,4 +42,27 @@ test('missing or malformed values measure, never skip', () => {
 
 test('matching is case-insensitive and trims whitespace', () => {
   assert.equal(headAlreadyMeasured({ headSha: HEAD, recordedSha: '  16A5299\n' }), true);
+});
+
+test('the state file naming this head skips the run without a ledger match', () => {
+  // The re-anchored merge always moves HEAD past the measured commit, so the
+  // ledger alone never matches: the runner-local record is what skips the
+  // unchanged-head window.
+  assert.equal(decideMeasure({ headSha: HEAD, recordedSha: 'd906099', sidecarSha: HEAD }), false);
+  assert.equal(decideMeasure({ headSha: HEAD, recordedSha: 'd906099', sidecarSha: 'd9060991111111111111111111111111111111111' }), true);
+});
+
+test('an unusable state record never skips, it measures', () => {
+  for (const text of ['', 'not json', '{}', '{"sha":"zzzzzzz"}', '{"sha":"16a5299"}', '{"measuredAt": 42}']) {
+    assert.deepEqual(parseStateRecord(text), {});
+  }
+  assert.deepEqual(parseStateRecord(JSON.stringify({ sha: HEAD, measuredAt: 1 })), { sidecarSha: HEAD });
+  assert.equal(decideMeasure({ headSha: HEAD, recordedSha: 'd906099', sidecarSha: undefined }), true);
+});
+
+test('the record payload needs a full head and a usable clock', () => {
+  assert.deepEqual(recordStatePayload(HEAD, 1000), { sha: HEAD, measuredAt: 1000 });
+  assert.equal(recordStatePayload('16a5299', 1000), null);
+  assert.equal(recordStatePayload(HEAD, Number.NaN), null);
+  assert.equal(recordStatePayload(undefined, 1000), null);
 });

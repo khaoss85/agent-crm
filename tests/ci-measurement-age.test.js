@@ -13,6 +13,8 @@ import {
   MEASURE_WINDOW_HOURS,
   describeMeasurementAge,
   formatAge,
+  resolveMeasuredAtMs,
+  runRecordNamesLedger,
 } from '../scripts/ci-measurement-age.js';
 
 const HOUR = 3600000;
@@ -59,4 +61,42 @@ test('an undatable ledger warns instead of failing the push', () => {
 
 test('the window constant matches the workflow schedule it mirrors', () => {
   assert.equal(MEASURE_WINDOW_HOURS, 6);
+});
+
+test('the run timestamp wins over the commit date for the same tree', () => {
+  const sha40 = '16a5299fda2bd85eaa76bc4baadbce06ac869bde';
+  const runAt = NOW - 30 * 60000;
+  // A nonexistent root proves the run record answers without git: the commit
+  // date is never consulted when the record names the ledger's tree.
+  assert.equal(
+    resolveMeasuredAtMs('/nonexistent-root-for-guard-test', '16a5299', '2026-10-01', { sha: sha40, measuredAt: runAt }),
+    runAt,
+  );
+  assert.equal(
+    resolveMeasuredAtMs('/nonexistent-root-for-guard-test', sha40, '2026-10-01', { sha: '16a5299', measuredAt: runAt }),
+    runAt,
+  );
+});
+
+test('a run record for another tree falls back to the older datings', () => {
+  const other = { sha: 'd906099d906099d906099d906099d906099d9060', measuredAt: NOW - 30 * 60000 };
+  assert.equal(
+    resolveMeasuredAtMs('/nonexistent-root-for-guard-test', '16a5299', '2026-10-01', other),
+    Date.parse('2026-10-01T00:00:00Z'),
+  );
+  assert.equal(
+    resolveMeasuredAtMs('/nonexistent-root-for-guard-test', '16a5299', '2026-10-01', { sha: '16a5299', measuredAt: Number.NaN }),
+    Date.parse('2026-10-01T00:00:00Z'),
+  );
+  assert.equal(resolveMeasuredAtMs('/nonexistent-root-for-guard-test', 'zzzzzzz', 'not-a-date', other), null);
+});
+
+test('runRecordNamesLedger matches prefixes either way, nothing looser', () => {
+  const sha40 = '16a5299fda2bd85eaa76bc4baadbce06ac869bde';
+  assert.equal(runRecordNamesLedger(sha40, '16a5299'), true);
+  assert.equal(runRecordNamesLedger('16a5299', sha40), true);
+  assert.equal(runRecordNamesLedger(sha40, sha40), true);
+  assert.equal(runRecordNamesLedger(sha40, 'd906099'), false);
+  assert.equal(runRecordNamesLedger('zzzzzzz', '16a5299'), false);
+  assert.equal(runRecordNamesLedger(undefined, '16a5299'), false);
 });
