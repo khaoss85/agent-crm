@@ -10,6 +10,10 @@ import {
   generatePostgresModuleBootstrap,
   manifestRevision,
 } from '../packages/core/src/module-evolution.js';
+import {
+  MODULE_BORN_AT_REVISION,
+  assertRevisionHistoryContract,
+} from '../packages/core/src/record-module-history.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..');
@@ -31,6 +35,15 @@ const sha = (sql) => createHash('sha256').update(sql).digest('hex');
  * on every PR, because this file is a repo-wide guard (see
  * `scripts/ci-touched-tests.js`): it walks the modules instead of importing
  * them, so the import mapping would never select it.
+ *
+ * The guard also enforces the history contract itself
+ * (`assertRevisionHistoryContract`): a revision above 1 without a covering
+ * history fails even when RECORDED matches the new current-manifest SQL —
+ * that combination is exactly the b8266ea recurrence (old databases fail
+ * while the guard stays green). Seven revision-2 modules predate the history
+ * mechanism and are declared born at revision 2 in
+ * `MODULE_BORN_AT_REVISION` (same registry file); the declaration excuses
+ * exactly revision 2, and the next bump of any of them ships history.
  */
 const RECORDED = Object.freeze({
   "appointment": { revision: 1, sqlite: "25bb4a8a4a505db484177c20992dbe0923716706538e4b08ef2a086fdf5b34a8", pg: "50b43a7c22f935eb30f645d91b100f6d471a360988e8f29a2326969ea9a4edb1" },
@@ -193,6 +206,15 @@ test('every manifest-selected module renders its recorded migration SQL at its r
       );
       continue;
     }
+    try {
+      assertRevisionHistoryContract(normalized.name, revision);
+    } catch (error) {
+      failures.push(
+        `${relative}: revision ${revision} breaks the history contract — `
+        + (error instanceof Error ? error.message : String(error)),
+      );
+      continue;
+    }
     const sqlite = sha(generateModuleMigration(normalized).sql);
     const pg = sha(generatePostgresModuleBootstrap(normalized).sql);
     if (sqlite !== recorded.sqlite || pg !== recorded.pg) {
@@ -224,4 +246,54 @@ test('the guard proves its own premise: changed SQL with the same revision fails
   const drifted = sha(generatePostgresModuleBootstrap(edited).sql) !== recorded.pg
     || sha(generateModuleMigration(edited).sql) !== recorded.sqlite;
   assert.equal(drifted, true, 'the probe edit should change the rendered SQL');
+});
+
+// The seven revision-2 modules that predate the history mechanism (accordo
+// 61c450a2a1b1): declared born at revision 2 in MODULE_BORN_AT_REVISION, so
+// the walk above stays green — and only exactly there. Pinned here as well,
+// so widening the declaration is a visible test change, never a silent one.
+const BORN_AT_REVISION_2 = Object.freeze({
+  'commercial-contract': 2,
+  'contract-activation': 2,
+  'contract-version': 2,
+  'service-obligation': 2,
+  'delivery-milestone': 2,
+  'delivery-project': 2,
+  'delivery-work-package': 2,
+});
+
+test('a revision bump without history fails the history contract', () => {
+  // The P2 hole from the #247 review: a bump that only updates RECORDED to
+  // the new current-manifest SQL passes the SQL check, so the contract
+  // itself must refuse — whoever raises revision ships the previous
+  // manifest, or the guard fails.
+  assert.throws(
+    () => assertRevisionHistoryContract('guard-probe-module', 2),
+    /at revision 2 without history/,
+  );
+  // Revision 1 needs nothing.
+  assertRevisionHistoryContract('guard-probe-module', 1);
+  // Modules with real history stay covered by it.
+  assertRevisionHistoryContract('data-quality-issue', 2);
+  assertRevisionHistoryContract('work-activity', 2);
+  assertRevisionHistoryContract('calendar-sync-state', 2);
+  // A covering history that is short for the revision fails too.
+  assert.throws(
+    () => assertRevisionHistoryContract('work-activity', 3),
+    /ships 1 revision\(s\) of history; expected 2/,
+  );
+});
+
+test('born-at-revision-2 modules are covered exactly at revision 2', () => {
+  assert.deepEqual({ ...MODULE_BORN_AT_REVISION }, { ...BORN_AT_REVISION_2 });
+  for (const name of Object.keys(BORN_AT_REVISION_2)) {
+    assertRevisionHistoryContract(name, 2);
+  }
+  // The declaration excuses nothing above: the next bump ships history.
+  for (const name of Object.keys(BORN_AT_REVISION_2)) {
+    assert.throws(
+      () => assertRevisionHistoryContract(name, 3),
+      new RegExp(`${name}".*at revision 3 without history`),
+    );
+  }
 });

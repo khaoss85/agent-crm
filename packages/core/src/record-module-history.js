@@ -45,6 +45,44 @@ const MODULE_HISTORY_FILES = Object.freeze({
   'calendar-sync-state': join(HERE, '../../calendar-sync/modules/calendar-sync-state.history.json'),
 });
 
+/**
+ * Module name → revision the framework adopts as its original migration
+ * identity, for modules that reached that revision before any history file
+ * existed. The composition renders a module with no checked-in history from
+ * its current manifest alone, so a revision above 1 without history silently
+ * re-renders every bootstrap databases may have recorded at an earlier
+ * revision (accordo 61c450a2a1b1: seven modules reached revision 2 in August
+ * 2026 with real SQL changes and no history — delivery-milestone,
+ * delivery-project and delivery-work-package in 4a1815c, service-obligation
+ * in 9d16f01, commercial-contract, contract-activation and contract-version
+ * in 0217469 — while their revision 1 existed only before those commits).
+ *
+ * No released database is evidenced to hold an earlier bootstrap for these
+ * seven: the first LIVE customer database (presti-group) dates from October
+ * 2026, and the only evidenced revision-1 recordings in this repository are
+ * work-activity's b48b09e checksums and data-quality-issue's presti-group
+ * recording, which both ship history files above. So no bridge predecessor
+ * is pinned for them: shipping history now would change what every database
+ * created since the bump recorded, and inventing bridge checksums no
+ * database evidenced would widen the ledger's acceptance for nothing.
+ *
+ * This excuses exactly the declared revision — the manifest guard
+ * (tests/module-manifest-revision-guard.test.js) refuses any revision above
+ * it without history, and refuses a history chain that does not start at
+ * revision 1 and step by one. The next bump of a listed module ships its
+ * full revision-1-based history (git retains every revision 1 manifest), at
+ * which point its entry here is removed.
+ */
+export const MODULE_BORN_AT_REVISION = Object.freeze({
+  'commercial-contract': 2,
+  'contract-activation': 2,
+  'contract-version': 2,
+  'service-obligation': 2,
+  'delivery-milestone': 2,
+  'delivery-project': 2,
+  'delivery-work-package': 2,
+});
+
 /** @type {Map<string, unknown[]>} */
 const historyCache = new Map();
 
@@ -117,6 +155,62 @@ export function recordModuleHistoryFor(moduleName) {
     historyCache.set(moduleName, historyPath === undefined ? undefined : readHistoryFile(moduleName, historyPath));
   }
   return historyCache.get(moduleName);
+}
+
+/**
+ * The revision-history contract the repo-wide manifest guard enforces
+ * (tests/module-manifest-revision-guard.test.js): whoever raises a module's
+ * revision ships the previous manifests in `<name>.history.json` and
+ * registers the file above — otherwise the guard fails. A revision bump that
+ * only updates the guard's RECORDED hashes passes the current-SQL check
+ * while old databases still fail with MODULE_MIGRATION_CHECKSUM_MISMATCH
+ * (the b8266ea recurrence the guard was built to prevent), so the history
+ * itself is required, never just matching current SQL.
+ *
+ * Throws a ValidationError naming the missing history or the malformed
+ * chain; returns undefined when the revision is covered. Revision 1 needs
+ * nothing. A module declared born above 1 in MODULE_BORN_AT_REVISION is
+ * covered exactly at its declared revision; anything above it needs the
+ * full history from revision 1.
+ *
+ * @param {string} moduleName
+ * @param {number} revision
+ */
+export function assertRevisionHistoryContract(moduleName, revision) {
+  if (revision <= 1) return;
+  const history = recordModuleHistoryFor(moduleName);
+  if (history !== undefined) {
+    if (history.length !== revision - 1) {
+      throw new ValidationError(
+        `Selected record module "${moduleName}" is at revision ${revision} but ships ${history.length} revision(s) of history; `
+          + `expected ${revision - 1}. Ship the previous manifest in ${moduleName}.history.json and register it in `
+          + 'packages/core/src/record-module-history.js.',
+      );
+    }
+    for (let index = 0; index < history.length; index += 1) {
+      const entry = history[index];
+      const entryRevision = (entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+        && typeof /** @type {Record<string, unknown>} */ (entry).revision === 'number')
+        ? /** @type {Record<string, unknown>} */ (entry).revision
+        : 1;
+      if (entryRevision !== index + 1) {
+        throw new ValidationError(
+          `Selected record module "${moduleName}" history must start at revision 1 and step by one; `
+            + `entry ${index} is at revision ${String(entryRevision)}.`,
+        );
+      }
+    }
+    return;
+  }
+  const bornAt = /** @type {Record<string, number>} */ (MODULE_BORN_AT_REVISION)[moduleName] ?? 1;
+  if (bornAt !== revision) {
+    throw new ValidationError(
+      `Selected record module "${moduleName}" is at revision ${revision} without history. `
+        + `Ship the previous manifest in ${moduleName}.history.json, register it in `
+        + 'packages/core/src/record-module-history.js, and update RECORDED in '
+        + 'tests/module-manifest-revision-guard.test.js in the same PR.',
+    );
+  }
 }
 
 /**

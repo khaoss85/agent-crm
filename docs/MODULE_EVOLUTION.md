@@ -257,7 +257,19 @@ and so does history for a module that ships none. When a revision ships a new
 SQL of every manifest-selected module at its recorded revision, and runs on
 every PR as a repo-wide guard: a manifest edit that changes SQL without
 raising the revision fails there before any database records the old
-checksum.
+checksum. The guard also enforces the history contract itself: a revision
+above 1 without a covering history fails even when the pinned SQL matches,
+because that combination re-renders an applied migration on old databases
+while the guard stays green.
+
+Seven revision-2 modules predate the history mechanism (August 2026 bumps in
+`contracts` and `delivery` with real SQL changes and no history file) and no
+released database is evidenced to hold their revision-1 bootstraps, so they
+are declared born at revision 2 in `MODULE_BORN_AT_REVISION` in
+`packages/core/src/record-module-history.js` instead of shipping reconstructed
+histories with invented bridge checksums. The declaration excuses exactly
+revision 2; the next bump of any of them ships its full revision-1-based
+history (git retains every revision 1 manifest) and removes its entry.
 
 ## Related
 
