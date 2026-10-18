@@ -211,6 +211,33 @@ Identical in every respect. The mechanism does not know whether a module belongs
 to a package, and `examples/custom-packages/` evolves the same way a project
 module does. See `docs/PACKAGE_AUTHORING.md`.
 
+## Manifest-selected modules (no state file)
+
+A module composed by manifest selection (`{name, manifest}` in an async-v2
+selected graph) has no `module.state.json`, so the framework reads its history
+itself: each revised module checks in `<name>.history.json` beside its
+`<name>.module.json` (never `<name>.module.json`: compositors load every
+`*.module.json` as a module), and the internal registry in
+`packages/core/src/record-module-history.js` maps the module name to that
+file. The composition renders the first migration from the oldest manifest —
+byte-identical to what existing databases recorded — then one additive
+evolution per later revision (`evolve_<table>_r<revision>` on SQLite,
+`pg_evolve_<table>_r<revision>` on PostgreSQL). A module with no checked-in
+history renders its single migration from the current manifest, unchanged.
+
+`packages/work/modules/work-activity.history.json` is the first history file:
+revision 1 of work-activity, after revision 2 added the `seq` field. A
+database that recorded the revision 1 migration composes without a checksum
+mismatch, from a plain `{name, manifest}` entry — no caller attaches
+anything, so `startPortablePostgresqlApp`, `createAccordoAppAsync` and the
+pilot writer composition all render the same migrations.
+
+An entry may still carry `previousManifests`, oldest first, but only as an
+assertion: it must match the checked-in history exactly, otherwise the
+composition refuses rather than silently re-applying a changed migration —
+and so does history for a module that ships none. When a revision ships a new
+`<name>.history.json`, register it in the registry in the same PR.
+
 ## Related
 
 `docs/MODULE_FACTORY.md` · `docs/plans/platform-module-evolution-v1.md` ·
