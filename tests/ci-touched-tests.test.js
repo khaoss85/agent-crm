@@ -398,7 +398,7 @@ test('selection is end to end on a throwaway repository with real git', () => {
   }
 });
 
-test('deleted files leave the selection but keep the guard check', () => {
+test('deleted files leave the run but keep reachability and the guard check', () => {
   const directory = mkdtempSync(join(tmpdir(), 'touched-deleted-'));
   try {
     const git = (/** @type {string[]} */ args) =>
@@ -416,6 +416,10 @@ test('deleted files leave the selection but keep the guard check', () => {
     write('packages/app/src/gone.js', 'export const gone = 1;\n');
     write('tests/keep.test.js', "import { keep } from '../packages/app/src/keep.js';\n");
     write('tests/gone.test.js', "import { gone } from '../packages/app/src/gone.js';\n");
+    // Unchanged, still imports the module the PR deletes: the fast gate
+    // must run it, or it passes while the full suite on `main` fails on
+    // the missing import.
+    write('tests/stale.test.js', "import { gone } from '../packages/app/src/gone.js';\n");
     git(['add', '.']);
     git(['commit', '-m', 'base']);
     git(['branch', 'base']);
@@ -427,9 +431,10 @@ test('deleted files leave the selection but keep the guard check', () => {
     git(['add', '.']);
     git(['commit', '-m', 'pr']);
 
-    const { changed, allChanged } = listChangedFiles(git, 'base');
-    // Deleted files need no test run: only the edit selects.
+    const { changed, deleted, allChanged } = listChangedFiles(git, 'base');
+    // Deleted files need no test run: only the edit drives the run.
     assert.deepEqual(changed, ['packages/app/src/keep.js']);
+    assert.deepEqual(deleted, ['packages/app/src/gone.js', 'tests/gone.test.js']);
     // The unfiltered diff still sees the deletions, so the guard check in
     // main() (withRepoWideGuards over allChanged) still runs on them: a
     // deleted listed guard is missing from the corpus and throws instead
@@ -438,8 +443,17 @@ test('deleted files leave the selection but keep the guard check', () => {
       [...allChanged].sort(),
       ['packages/app/src/gone.js', 'packages/app/src/keep.js', 'tests/gone.test.js'],
     );
-    const testContents = new Map([['tests/keep.test.js', git(['show', 'HEAD:tests/keep.test.js']).stdout]]);
-    assert.deepEqual(selectTouchedTests(changed, testContents), ['tests/keep.test.js']);
+    const testContents = new Map([
+      ['tests/keep.test.js', git(['show', 'HEAD:tests/keep.test.js']).stdout],
+      ['tests/stale.test.js', git(['show', 'HEAD:tests/stale.test.js']).stdout],
+    ]);
+    // main() seeds reachability with the deleted paths: the deleted module
+    // pulls in its unchanged importer, while the deleted test itself is
+    // absent from the corpus and never selected.
+    assert.deepEqual(
+      selectTouchedTests([...changed, ...deleted], testContents),
+      ['tests/keep.test.js', 'tests/stale.test.js'],
+    );
     // Guards still join a deletion-only remainder through the unfiltered diff.
     assert.deepEqual(
       withRepoWideGuards([], testContents, allChanged, ['tests/keep.test.js']),
@@ -454,6 +468,31 @@ test('deleted files leave the selection but keep the guard check', () => {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('a deleted module selects its unchanged importer, a deleted test never itself', () => {
+  const testContents = contents({
+    'tests/stale.test.js': "import { gone } from '../packages/app/src/gone.js';\n",
+    'tests/other.test.js': "import test from 'node:test';\n",
+  });
+  // The deleted source path seeds reachability: the test still importing
+  // it runs and fails red on the missing import, on the PR and on main.
+  assert.deepEqual(
+    selectTouchedTests(['packages/app/src/gone.js'], testContents),
+    ['tests/stale.test.js'],
+  );
+  // A deleted test file seeds its own importers but is absent from the
+  // corpus, so it is never itself selected.
+  assert.deepEqual(
+    selectTouchedTests(
+      ['tests/gone.test.js'],
+      contents({
+        'tests/wrapper.test.js': "import './gone.test.js';\n",
+        'tests/other.test.js': "import test from 'node:test';\n",
+      }),
+    ),
+    ['tests/wrapper.test.js'],
+  );
 });
 
 /**

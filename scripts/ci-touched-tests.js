@@ -34,10 +34,13 @@
  *   chooses best-effort — the full suite on `main` stays the safety net
  *   behind it — so an unlinked source file is a warning, never a refusal.
  *   The refusal stays only for an empty fallback suite (see `fallbackPlan`).
- *   Deleted files never count as uncovered: the diff excludes them with
- *   `--diff-filter=d` (a deleted file needs no test run), while the
- *   unfiltered diff still drives the guard check below, so deleting a
- *   listed guard without updating the list still fails the step red.
+ *   Deleted files never run and never count as uncovered (a deleted file
+ *   needs no test run), but their paths still seed the reachability search:
+ *   a PR deleting a module an unchanged test still imports selects that
+ *   importer, or the fast gate would pass while the full suite on `main`
+ *   fails on the missing import. The unfiltered diff still drives the
+ *   guard check below, so deleting a listed guard without updating the
+ *   list still fails the step red.
  *
  * - the repo-wide guards (`REPO_WIDE_GUARDS` below) always run on top of
  *   the selection, on every non-empty diff. They are the test files whose
@@ -567,13 +570,17 @@ export function buildFileImports(
 }
 
 /**
- * The PR's changed files against `base`, split in two: `changed` drives the
- * selection (deleted files excluded via `--diff-filter=d` — a deleted file
- * needs no test run and no test can reach it anymore), `allChanged` drives
- * the guard check (a PR deleting a listed guard without updating the list
- * still fails red). Throws on git failure; `main()` reports it as
- * unusable input. The git runner is injected so the end-to-end test drives
- * these exact commands against a throwaway repository with real git.
+ * The PR's changed files against `base`, split in three: `changed` drives
+ * what runs (deleted files excluded via `--diff-filter=D` — a deleted file
+ * needs no test run, and a deleted test file no longer on disk would fail
+ * the run), `deleted` seeds the reachability search only (a deleted module
+ * an unchanged test still imports selects that importer — the walk stops
+ * at test files, and a deleted test is absent from the corpus so it is
+ * never itself selected), `allChanged` drives the guard check (a PR
+ * deleting a listed guard without updating the list still fails red).
+ * Throws on git failure; `main()` reports it as unusable input. The git
+ * runner is injected so the end-to-end test drives these exact commands
+ * against a throwaway repository with real git.
  * @param {(args: string[]) => { status: number | null, stdout: string }} runGit
  */
 export function listChangedFiles(runGit, /** @type {string} */ base) {
@@ -591,7 +598,11 @@ export function listChangedFiles(runGit, /** @type {string} */ base) {
     : []);
   const deleted = new Set(paths(gone.stdout));
   const allChanged = paths(all.stdout);
-  return { changed: allChanged.filter((file) => !deleted.has(file)), allChanged };
+  return {
+    changed: allChanged.filter((file) => !deleted.has(file)),
+    deleted: allChanged.filter((file) => deleted.has(file)),
+    allChanged,
+  };
 }
 
 async function main() {
@@ -607,9 +618,10 @@ async function main() {
   }
 
   let changed;
+  let deleted;
   let allChanged;
   try {
-    ({ changed, allChanged } = listChangedFiles(git, options.base));
+    ({ changed, deleted, allChanged } = listChangedFiles(git, options.base));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : error}\n`);
     process.exit(2);
@@ -631,7 +643,12 @@ async function main() {
     }
   }
 
-  const mapped = selectTouchedTests(changed, contents, buildFileImports(root));
+  // Deleted paths seed the reachability search but never the run: a deleted
+  // module an unchanged test still imports selects that importer, while a
+  // deleted test file is absent from the corpus and so never selected.
+  // Plans, fallbacks and warnings below keep using `changed` (no deleted
+  // files): deleted files never run and never count as uncovered.
+  const mapped = selectTouchedTests([...changed, ...deleted], contents, buildFileImports(root));
   const selectionElapsedSec = (Date.now() - selectStarted) / 1000;
 
   const base = selectionElapsedSec > options.selectTimeoutSec
