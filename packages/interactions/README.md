@@ -137,9 +137,11 @@ handover replays; a divergent handover behind the same key is refused `409`.
 An explicit key is stored even when the owner does not change, so reusing it
 with another handover is refused instead of silently replaying the old row.
 The `conversation.assign` action does the same through the record runtime and
-defaults its key to the handover itself — previous owner to next owner — so
-repeating the current owner replays instead of writing audit noise, while a
-return to a prior owner is a new row. Concurrent handovers on one thread run
+defaults its key to the handover row it follows — the latest handover row,
+or the conversation itself for the first handover — so repeating the current
+owner with the same note replays instead of writing audit noise, a repeat
+with another note is a new row, and a return to a prior owner is always a new
+row. Concurrent handovers on one thread run
 serialized, so the waiter names the winner as its previous owner and the
 trail never claims two predecessors. Each row stamps itself past its
 predecessor, so bursts decided in the same instant still order

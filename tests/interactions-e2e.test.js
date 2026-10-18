@@ -929,6 +929,65 @@ test('the assign action cycles owners on default keys: a return is a new row, a 
 });
 
 // ---------------------------------------------------------------------------
+// Default handover keys: named by the predecessor row, never by the pair
+// ---------------------------------------------------------------------------
+
+test('default handover keys follow the predecessor row: ping-pong writes every round, a retry replays', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'assign-pingpong.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, readConversationThread } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:pingpong', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const rows = () => app.modules.get('conversation-assignment')
+    .service.listWhere({ conversationId: conversation.id });
+
+  // Four alternating handovers on default keys: every round is a new row,
+  // including the second visit to the (guido, maria) pair.
+  let last = null;
+  for (const owner of ['guido', 'maria', 'guido', 'maria']) {
+    const handed = await run(app, 'conversation', 'assign', conversation.id, { assigneeMemberId: owner });
+    assert.equal(handed.result.replayed, false);
+    last = handed.result.assignment;
+  }
+  assert.equal((await rows()).length, 4);
+  assert.equal(last.assigneeMemberId, 'maria');
+
+  // The four default keys name four distinct predecessors: the pair
+  // (guido, maria) never shares one key.
+  const keys = (await rows()).map((row) => row.sourceKey);
+  assert.equal(new Set(keys).size, 4);
+
+  // Retrying the last handover while it still stands replays it: one row.
+  const retry = await run(app, 'conversation', 'assign', conversation.id, { assigneeMemberId: 'maria' });
+  assert.equal(retry.result.replayed, true);
+  assert.equal(retry.result.assignment.id, last.id);
+  assert.equal((await rows()).length, 4);
+
+  // The same owner with a new note is a new audit claim, never a replay.
+  const noted = await run(app, 'conversation', 'assign', conversation.id, {
+    assigneeMemberId: 'maria', note: 'conferma il turno di reperibilita',
+  });
+  assert.equal(noted.result.replayed, false);
+  assert.notEqual(noted.result.assignment.id, last.id);
+  assert.equal((await rows()).length, 5);
+
+  const thread = await readConversationThread({ modules: app.modules, moduleNames: {} }, conversation.id);
+  assert.deepEqual(
+    thread.assignment.history.map((entry) => entry.assignee),
+    ['guido', 'maria', 'guido', 'maria', 'maria'],
+  );
+  assert.deepEqual(
+    thread.assignment.history.map((entry) => entry.previous),
+    [null, 'guido', 'maria', 'guido', 'maria'],
+  );
+  assert.equal(thread.assignment.assignee, 'maria');
+});
+
+// ---------------------------------------------------------------------------
 // Assignment races: serialized per thread, every row names its true predecessor
 // ---------------------------------------------------------------------------
 

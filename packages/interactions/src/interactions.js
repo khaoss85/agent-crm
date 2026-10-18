@@ -879,12 +879,13 @@ export async function logCall(context, request) {
  * a new row rather than rewriting one. Idempotent by source key, like every
  * other write in this package: same key with the same payload replays the
  * stored row, a divergent payload behind the same key is refused 409 — and
- * without a key the handover names itself from the move it records, so a
- * return to a prior owner is a new row rather than a conflict behind the old
- * one, while repeating the current owner replays instead of writing noise. A
- * default-key retry that arrives after the thread moved on names the move
- * that beat it as its previous owner: the default names a handover, not a
- * stable identity, and only an explicit key promises strict replay-or-refusal.
+ * without a key the handover names the row it follows, so a return to a
+ * prior owner is a new row rather than a conflict behind the old one, while
+ * repeating the current owner with the same note and provenance replays
+ * instead of writing noise. A default-key handover that arrives after the
+ * thread moved on follows the row that beat it as its previous owner: the
+ * default names a handover, not a stable identity, and only an explicit key
+ * promises strict replay-or-refusal.
  * The compared payload carries the handover but not its stamp — `assignedAt`
  * is when the row was written, not what the handover claims, exactly like
  * `subjectLabel` on a conversation — so a retry that arrives later still
@@ -901,9 +902,10 @@ export function validateAssignRequest(request) {
   const assigneeMemberId = rawAssignee === undefined || rawAssignee === null
     ? null
     : validateMemberId(rawAssignee, 'assigneeMemberId');
-  // The key is optional: without one the handover names itself from the move
-  // it records (previous owner to next owner), inside the serialized section
-  // below, so the default never names two different handovers with one key.
+  // The key is optional: without one the handover names the row it follows
+  // (the latest handover row, or the conversation itself for the first one),
+  // inside the serialized section below, so the default never names two
+  // different handovers with one key.
   const rawKey = value.sourceKey;
   const sourceKey = rawKey === undefined || rawKey === null || String(rawKey).trim() === ''
     ? null
@@ -1006,18 +1008,22 @@ function nextHandoverStamp(now, previousAssignedAt) {
 }
 
 /**
- * The default identity of a handover: who the thread moves from, to who. A
- * key that names only the resulting owner cannot tell a return to a prior
- * owner from the first handover to them, and refuses the return 409 behind
- * its own key; a key that names the move replays the same move and writes
- * every different one. Member ids fit the source-key alphabet by
- * construction, so only an over-long conversation id can overflow the bound
- * — refused naming the bound, like the appointment reminder key, with the
- * way out (pass an explicit source key), never a silent truncation that
- * would hand two threads the same handover identity.
+ * The default identity of a handover: the row it follows, to who. A key
+ * that names the (previous owner, next owner) pair cannot tell the second
+ * visit to a pair from the first: a ping-pong guido->maria->guido->maria
+ * replays the stale first row — or refuses the legitimate fourth handover
+ * 409 — instead of writing it. Naming the predecessor row instead makes
+ * every handover unique by construction: the first handover follows the
+ * conversation itself, every later one follows the latest handover row, so
+ * a retry still standing on the same predecessor replays while a thread
+ * that moved on writes a new row. Member and row ids fit the source-key
+ * alphabet by construction, so only an over-long conversation id can
+ * overflow the bound — refused naming the bound, like the appointment
+ * reminder key, with the way out (pass an explicit source key), never a
+ * silent truncation that would hand two threads the same handover identity.
  */
-function defaultAssignSourceKey(conversationId, previous, assignee) {
-  const key = `assign:${conversationId}:${previous ?? 'unassigned'}:${assignee ?? 'unassigned'}`;
+function defaultAssignSourceKey(conversationId, predecessorRowId, assignee) {
+  const key = `assign:${conversationId}:${predecessorRowId}:${assignee ?? 'unassigned'}`;
   if (key.length > MAX_SOURCE_KEY || !SOURCE_KEY_RE.test(key)) {
     throw new ValidationError(
       'a handover on this conversation needs an explicit sourceKey: the default handover identity does not fit the source-key bound',
@@ -1073,12 +1079,17 @@ export async function assignConversation(context, request) {
 
     // Repeating the member who already owns the thread replays the row that
     // established them instead of writing audit noise — but only when no
-    // explicit key was supplied. The default key names each handover, so the
-    // no-op is answered here, before any key is derived; an explicit key is
-    // a strict replay-or-refusal promise, so it always falls through to the
-    // listWhere + replayOrConflict path below, which persists the key on
-    // first use and refuses a divergent reuse 409.
-    if (excludeKey === null && previousRow && previous === input.assigneeMemberId) {
+    // explicit key was supplied and the repeat carries nothing new. A
+    // default-key repeat with another note or another provenance is a new
+    // audit claim, not a retry: it falls through, derives its own
+    // predecessor-based key below, and is written as a new row. An explicit
+    // key is a strict replay-or-refusal promise, so it always falls through
+    // to the listWhere + replayOrConflict path below, which persists the key
+    // on first use and refuses a divergent reuse 409.
+    if (excludeKey === null && previousRow && previous === input.assigneeMemberId
+      && (previousRow.note ?? null) === (input.note ?? null)
+      && previousRow.sourcePackage === source.package
+      && previousRow.sourceAction === source.action) {
       return {
         assignment: previousRow,
         replayed: true,
@@ -1086,8 +1097,14 @@ export async function assignConversation(context, request) {
       };
     }
 
+    // The default key names the predecessor row, so two distinct handovers
+    // never share one: the first handover follows the conversation itself.
     const sourceKey = excludeKey
-      ?? defaultAssignSourceKey(input.conversationId, previous, input.assigneeMemberId);
+      ?? defaultAssignSourceKey(
+        input.conversationId,
+        previousRow ? previousRow.id : input.conversationId,
+        input.assigneeMemberId,
+      );
 
     const submitted = {
       conversationId: input.conversationId,
@@ -1646,12 +1663,14 @@ export function buildCloseConversationAction(moduleNames) {
  * `assign` — hand one conversation to one team member, or clear it.
  *
  * A repeated handover to the member who already owns the thread replays
- * instead of writing audit noise: without a source key the handover names
- * itself from the move it records (previous owner to next owner), so the same
- * move retried is the same key with the same payload while a return to a
- * prior owner is a new row. A handover to someone else is a new row with the
- * previous owner named on it. Clearing names no owner and keeps the previous
- * one the same way.
+ * instead of writing audit noise — but only when the repeat carries the same
+ * note through the same provenance; a new note is a new audit claim and is
+ * written as a new row. Without a source key the handover names the row it
+ * follows (the latest handover row, or the conversation itself for the
+ * first), so the same handover retried is the same key with the same payload
+ * while a return to a prior owner is a new row. A handover to someone else
+ * is a new row with the previous owner named on it. Clearing names no owner
+ * and keeps the previous one the same way.
  *
  * @param {Record<string, string>} [moduleNames]
  */
@@ -1668,7 +1687,7 @@ export function buildAssignConversationAction(moduleNames) {
     input: [
       { name: 'assigneeMemberId', type: 'string', required: false, hint: 'The team member who owns the thread now. Omit to clear the owner.' },
       { name: 'note', type: 'string', required: false, hint: 'One line saying why the thread moves.' },
-      { name: 'sourceKey', type: 'string', required: false, hint: 'Idempotency key. Defaults to naming the handover itself, from the previous owner to the next.' },
+      { name: 'sourceKey', type: 'string', required: false, hint: 'Idempotency key. Defaults to naming the handover row it follows, so every handover is unique.' },
     ],
     /** @param {any} ctx */
     async execute({ record, input, actor, modules, now }) {
