@@ -9,10 +9,11 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { gitIn } from './helpers/isolated-git.js';
 
 import {
   decideMeasure,
@@ -101,7 +102,7 @@ test('a measurement-only move past the recorded head skips the run', () => {
 test('only the measurement flow writing since the record skips, real code measures', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ci-measure-guard-'));
   try {
-    const git = (args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+    const git = gitIn(dir);
     assert.equal(git(['init', '-q']).status, 0);
     mkdirSync(join(dir, 'site'), { recursive: true });
     mkdirSync(join(dir, 'docs'), { recursive: true });
