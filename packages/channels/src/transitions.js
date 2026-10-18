@@ -244,6 +244,8 @@ export async function withLetterWrite(critical) {
  * the claim stays observable and repairable instead of silent.
  *
  * @param {{ letters: any, database?: any }} stores
+ * @returns {Promise<{ letter: any, wrote: any }>} `wrote` is the `write`
+ * follow-up's return, or null when no follow-up ran.
  */
 export async function advanceLetter(stores, id, { event, patch = {}, actor, write = null } = {}) {
   return withLetterWrite(async () => {
@@ -260,6 +262,6 @@ export async function advanceLetter(stores, id, { event, patch = {}, actor, writ
     if (typeof write === 'function') {
       return { letter, wrote: await write({ letter }) };
     }
-    return { letter };
+    return { letter, wrote: null };
   });
 }
