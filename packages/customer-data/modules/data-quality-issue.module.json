@@ -1,5 +1,6 @@
 {
   "manifestVersion": 1,
+  "revision": 2,
   "name": "data-quality-issue",
   "description": "One explainable data-quality finding about a record Accordo owns, with the evidence that produced it. Governing an issue records a human decision and never erases the finding: a resolved issue keeps its history, and none of this is a compliance or legal-assurance claim.",
   "fields": [
