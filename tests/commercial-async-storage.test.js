@@ -36,15 +36,14 @@ function asyncRecordService(service) {
   });
 }
 
-/** Apply the async-storage contract to every composed record service. */
+/**
+ * Apply the async-storage contract to every composed record module service.
+ * Core services (`app.services`) stay untouched: the application's own health
+ * readers consume them synchronously by design.
+ */
 function asyncStorage(app) {
   for (const module of app.modules.modules.values()) {
     if (module?.service) module.service = asyncRecordService(module.service);
-  }
-  for (const key of Object.keys(app.services ?? {})) {
-    if (app.services[key] && typeof app.services[key] === 'object') {
-      app.services[key] = asyncRecordService(app.services[key]);
-    }
   }
 }
 
