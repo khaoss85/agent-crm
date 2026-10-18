@@ -119,6 +119,37 @@ const sourceKeyFor = (calendarId, eventId, revision) => (revision > 0
 const linkKeyFor = (calendarId, eventId) => `${calendarId}:${eventId}`;
 const stateKeyFor = (calendarId) => `calendar:${calendarId}`;
 
+/**
+ * Newest-wins comparison for the pending-snapshot rule: an in-hand Google
+ * event supersedes a pending snapshot only when its `updated` stamp is
+ * strictly newer. Missing or unparseable stamps never supersede —
+ * retrying the snapshot is the fail-closed choice.
+ */
+function isNewerThan(candidateUpdated, baselineUpdated) {
+  if (typeof candidateUpdated !== 'string' || typeof baselineUpdated !== 'string') return false;
+  const candidateMs = Date.parse(candidateUpdated);
+  const baselineMs = Date.parse(baselineUpdated);
+  if (!Number.isNaN(candidateMs) && !Number.isNaN(baselineMs)) return candidateMs > baselineMs;
+  return candidateUpdated > baselineUpdated;
+}
+
+/**
+ * The Google event a pending snapshot holds. Current snapshots store an
+ * envelope `{ event, preStatus, cancelCommitted }`; older rows may hold
+ * the plain event — both read the same way. Null when the snapshot is
+ * unreadable (the retry path drops those by operator decision).
+ */
+function pendingSnapshotEvent(link) {
+  if (!link?.pendingRemote) return null;
+  let snapshot = null;
+  try {
+    snapshot = JSON.parse(link.pendingRemote);
+  } catch {
+    return null;
+  }
+  return snapshot?.event ?? snapshot ?? null;
+}
+
 /** A storage unique-guard refusal is the loser of a link race, never driver text. */
 function isLinkConflict(error) {
   return error instanceof ConflictError && error.details?.transient !== true;
@@ -135,7 +166,9 @@ function isLinkConflict(error) {
  * `database` is the deployment's database handle (the channels per-runtime
  * pattern): when it carries `transactionAsync`, a reschedule commits its
  * cancel and its rebook together. Without it the link records' own handle
- * is tried; without either, the rebook is proven before the cancel.
+ * is tried; without either, the rebook is proven before the cancel. The
+ * package factory forwards its explicit `database` option here, winning
+ * over the runtime's.
  */
 export function createCalendarSyncOperations(options = {}) {
   const modules = options.modules;
@@ -382,6 +415,14 @@ export function createCalendarSyncOperations(options = {}) {
       return { status: 'conflict', eventId: link.googleEventId, reason: 'pending snapshot unreadable' };
     }
     const orphan = link.appointmentId === '';
+    const snapshotEvent = (envelope && typeof envelope === 'object' ? (envelope.event ?? envelope) : null);
+    if (snapshotEvent && isNewerThan(link.googleUpdated, snapshotEvent?.updated)) {
+      // The link already decided a newer Google version than this snapshot
+      // while the snapshot stood: retrying the older envelope would move
+      // the link backward past consumed state, so it is left pending for
+      // the operator instead of retried — never silently dropped.
+      return { status: 'conflict', eventId: link.googleEventId, reason: link.conflictNote ?? 'stale snapshot: the link knows a newer version', pending: true };
+    }
     if (!orphan && envelope && typeof envelope === 'object' && envelope.cancelCommitted === false) {
       const out = await applyTrackedChange(handle, actor, calendarId, envelope.event ?? envelope, link);
       if (out.status === 'applied' || out.status === 'imported') return { ...out, retried: true };
@@ -439,6 +480,18 @@ export function createCalendarSyncOperations(options = {}) {
         // gone, so retrying its move would book a dead slot and swallow
         // the cancellation with the advancing token. The tracked path
         // cancels the local row and clears the snapshot with it.
+        return applyTrackedChange(handle, actor, calendarId, event, link);
+      }
+      const snapshotEvent = pendingSnapshotEvent(link);
+      if (snapshotEvent && isNewerThan(event?.updated, snapshotEvent?.updated)) {
+        // Newest Google version wins over the older pending snapshot: the
+        // stale envelope is replaced by the event in hand, which is
+        // decided through the tracked path. The old envelope is never
+        // retried, and a refusal on the new event re-stages the NEW
+        // snapshot — the token never advances past an event this branch
+        // did not decide. (The tracked path never reads the cleared
+        // snapshot; only the link id and its revisioned keys travel on.)
+        await linkService(context).applyManaged(link.id, { pendingRemote: null, conflictNote: null }, { actor });
         return applyTrackedChange(handle, actor, calendarId, event, link);
       }
       const retried = await retryPending(handle, actor, calendarId, link);
@@ -659,6 +712,15 @@ export function createCalendarSyncOperations(options = {}) {
         const known = await findLinkByEvent(calendarId, event.id);
         if (known) {
           if (known.pendingRemote) {
+            const snapshotEvent = pendingSnapshotEvent(known);
+            if (snapshotEvent && isNewerThan(event?.updated, snapshotEvent?.updated)) {
+              // Same newest-wins rule as the incremental path: the newer
+              // event in hand is decided instead of retrying the stale
+              // snapshot first (the retry could converge the link onto the
+              // older slot before the newer event is even examined).
+              entries.push(await applyRemoteChange(handle, who, calendarId, event));
+              continue;
+            }
             const retried = await retryPending(handle, who, calendarId, known);
             // A settled retry is either state: 'imported' (orphan replay)
             // or 'applied' (a converged move via the tracked path, e.g. a

@@ -595,3 +595,82 @@ test('export reconciles an already-inserted event instead of duplicating it', as
   assert.equal(ctx.provider.eventCount(CAL), countBefore);
   assert.equal(ctx.linkRows().length, 1);
 });
+
+test('a newer Google move supersedes a still-conflicted pending move on a pull', async (t) => {
+  // Newest Google version wins over an older pending envelope: the S1
+  // move was refused (blocker held) and kept pending, then Google moved
+  // the same event again to free S2 before the next pull. The pull must
+  // decide S2 — never retry-then-skip it — and freeing the blocker later
+  // must not resurrect S1.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  await handle.advanceAppointment(ctx.appointmentRows()[0], 'confirmed');
+  const held = await handle.bookAppointment({
+    sourceKey: 'gym:held:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T14:00:00.000Z',
+    endsAt: '2026-10-21T15:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
+  const conflicted = await ctx.sync.pullIncremental(CAL);
+  assert.equal(conflicted.entries.find((e) => e.eventId === 'evt1').status, 'conflict');
+  assert.equal(ctx.linkRows()[0].pendingRemote !== null, true);
+  // Google moves again — S2, free — before the next pull. The blocker
+  // stays held, so retrying stale S1 would still refuse.
+  ctx.setNow(T0 + 120_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '16:00', '17:00') } });
+  const pull = await ctx.sync.pullIncremental(CAL);
+  const converged = pull.entries.filter((e) => e.eventId === 'evt1').find((e) => e.status === 'applied');
+  assert.equal(converged?.change, 'rescheduled');
+  assert.equal(pull.pendingConflicts.length, 0);
+  // Accordo ends on S2: the link tracks Google's newest update with no
+  // pending snapshot left, and the live booking sits on S2.
+  const live = ctx.provider.getEvent(CAL, 'evt1');
+  assert.equal(ctx.linkRows()[0].googleUpdated, live.updated);
+  assert.equal(ctx.linkRows()[0].pendingRemote, null);
+  assert.equal(ctx.linkRows()[0].conflictNote, null);
+  const rows = ctx.appointmentRows();
+  assert.equal(rows.find((r) => r.status === 'confirmed').startsAt, '2026-10-21T16:00:00.000Z');
+  // Freeing the old blocker resurrects nothing: S2 stands, S1 never books.
+  await handle.advanceAppointment(held.appointment, 'cancelled', 'Customer moved');
+  const retry = await ctx.sync.pullIncremental(CAL);
+  assert.ok(retry.entries.every((e) => e.status === 'replayed' || e.status === 'acknowledged' || e.status === 'ignored'));
+  assert.equal(ctx.appointmentRows().find((r) => r.status === 'confirmed').startsAt, '2026-10-21T16:00:00.000Z');
+  assert.equal(ctx.linkRows()[0].pendingRemote, null);
+});
+
+test('the package factory forwards an explicit database handle to reschedules', async (t) => {
+  // index.js documents options.database: a self-overlapping move (which
+  // converges only inside a storage transaction) must apply when the
+  // handle arrives via the factory with a runtime that carries none.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  assert.throws(() => createCalendarSyncPackage({ database: 42 }), /database must be an object/);
+  const definition = createCalendarSyncPackage({
+    appointmentBook: createAppointmentBookCapability({}),
+    provider: ctx.provider,
+    mapping: ctx.mapping,
+    database: ctx.database,
+    actor: ACTOR,
+  });
+  const byName = Object.fromEntries(definition.operations.map((o) => [o.name, o]));
+  const importFuture = byName['import-future-events'].create({ modules: ctx.modules });
+  const pull = byName['pull-calendar'].create({ modules: ctx.modules });
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await importFuture({ spaceId: 'presti', calendarId: CAL, timeMin: '2026-10-20T00:00:00.000Z' });
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '09:30', '10:30') } });
+  const out = await pull({ spaceId: 'presti', calendarId: CAL });
+  const applied = out.entries.find((e) => e.eventId === 'evt1');
+  assert.equal(applied.status, 'applied');
+  assert.equal(applied.change, 'rescheduled');
+  assert.equal(out.pendingConflicts.length, 0);
+  assert.equal(ctx.appointmentRows().find((r) => r.status === 'booked').startsAt, '2026-10-21T09:30:00.000Z');
+});

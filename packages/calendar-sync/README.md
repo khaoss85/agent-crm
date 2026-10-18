@@ -70,6 +70,12 @@ Two halves, two owners. Accordo owns **lifecycle**; Google owns
     the move stays pending and is retried — waited on, never
     sacrificed. Atomic commit (cancel with rebook) is the supported
     path for self-overlapping moves.
+11. The **newest Google version always wins** over an older pending
+    snapshot: when the event in hand carries a newer `updated` stamp
+    than the outstanding envelope, the envelope is replaced and the
+    event is decided through the tracked path — never retried stale
+    first, never skipped past by the advancing token. A snapshot older
+    than the link's known version is not retried.
 
 ## How to prove it
 
@@ -80,5 +86,8 @@ changing nothing, the cancellation-wins convergence, push delivery
 applying remotely-made changes, token-expiry recovery, overlap refusal,
 terminal-row immunity, tombstone-between-imports convergence, a refused
 move keeping the valid row (and converging once the slot frees), a
-self-overlapping move applying atomically, and a settled retry still
-applying the newer Google move on a full import. No test dials Google.
+self-overlapping move applying atomically, a settled retry still
+applying the newer Google move on a full import, a newer move
+superseding a still-conflicted pending on a pull (with no resurrection
+when the old blocker frees), and the package factory forwarding an
+explicit database handle. No test dials Google.

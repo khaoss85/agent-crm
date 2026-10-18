@@ -63,7 +63,9 @@ const SPACE_INPUT = {
  * All three are required before any operation runs, because a sync that
  * books without them would invent identities. `database` is optional and
  * never replaces those bindings: it only lets a reschedule commit its
- * cancel and its rebook in one storage transaction.
+ * cancel and its rebook in one storage transaction. An explicit `database`
+ * wins over the runtime's; without either, the link records' own handle
+ * is tried, then the prove-before-cancel fallback.
  */
 export function createCalendarSyncPackage(options = {}) {
   for (const key of ['appointmentBook', 'provider', 'mapping']) {
@@ -71,6 +73,9 @@ export function createCalendarSyncPackage(options = {}) {
     if (value !== undefined && (typeof value !== 'object' || value === null)) {
       throw new ValidationError(`calendar-sync ${key} must be an object when provided`, { field: key });
     }
+  }
+  if (options.database !== undefined && options.database !== null && typeof options.database !== 'object') {
+    throw new ValidationError('calendar-sync database must be an object when provided', { field: 'database' });
   }
 
   const composedByRuntime = new WeakMap();
@@ -85,7 +90,7 @@ export function createCalendarSyncPackage(options = {}) {
         mapping: options.mapping,
         actor: options.actor,
         now: options.now,
-        database: runtime.database,
+        database: options.database ?? runtime.database,
       });
       composedByRuntime.set(runtime, composed);
     }
