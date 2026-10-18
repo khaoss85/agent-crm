@@ -378,10 +378,17 @@ export function createCalendarSyncOperations(options = {}) {
    * every Google-touching operation refuses before reading anything, so a
    * revocation the deployment records takes effect on the very next call —
    * including a pull already scheduled, which refuses instead of listing
-   * with a dead grant.
+   * with a dead grant. The caller's space is enforced first: a bound
+   * calendar syncs only for its owning space, and a foreign or missing
+   * space reads as unknown — never as a cross-space oracle. Unbound
+   * calendars (synced before grants existed) stay unwired, as on main.
    */
-  async function requireLiveGrant(calendarId) {
+  async function requireLiveGrant(calendarId, callerSpaceId) {
     const state = await readState(calendarId);
+    if (state?.spaceId !== null && state?.spaceId !== undefined && state.spaceId !== callerSpaceId) {
+      throw syncError('CALENDAR_GRANT_UNKNOWN', 404,
+        `calendar "${calendarId}" has no grant for this space: bind it before syncing`);
+    }
     if (state && state.grantStatus === 'revoked') {
       throw syncError('CALENDAR_GRANT_REVOKED', 409,
         `calendar "${calendarId}" grant is revoked: re-bind it before syncing`);
@@ -425,8 +432,22 @@ export function createCalendarSyncOperations(options = {}) {
    * message — the expired sync token still reconciles, everything else
    * retries without provider text.
    */
+  async function requireUsableGrant(calendarId) {
+    // The per-call gate behind every provider call: a revoked grant refuses
+    // before any Google read or write. Space scope is enforced once at each
+    // public operation entry (requireLiveGrant) — every chain below runs on
+    // the same calendarId under the entry that already proved the caller's
+    // space owns this calendar.
+    const state = await readState(calendarId);
+    if (state && state.grantStatus === 'revoked') {
+      throw syncError('CALENDAR_GRANT_REVOKED', 409,
+        `calendar "${calendarId}" grant is revoked: re-bind it before syncing`);
+    }
+    return state;
+  }
+
   async function providerCall(calendarId, op, params, purpose) {
-    const state = await requireLiveGrant(calendarId);
+    const state = await requireUsableGrant(calendarId);
     const grant = await resolveGrant(state, purpose);
     try {
       return await provider[op]({ ...params, ...(grant === null ? {} : { secret: grant }) });
@@ -875,9 +896,9 @@ export function createCalendarSyncOperations(options = {}) {
      * applies instead of being skipped past. A tombstone for an event
      * never imported is ignored, never booked, never kept pending.
      */
-    async importFuture(calendarId, { timeMin, actor } = {}) {
+    async importFuture(calendarId, { spaceId, timeMin, actor } = {}) {
       const who = actor ?? defaultActor;
-      await requireLiveGrant(calendarId);
+      await requireLiveGrant(calendarId, spaceId);
       const handle = bookHandle(who);
       const page = await providerCall(calendarId, 'listEvents',
         { calendarId, timeMin: timeMin ?? now(), showDeleted: true }, GRANT_PURPOSE_READ);
@@ -939,9 +960,9 @@ export function createCalendarSyncOperations(options = {}) {
     },
 
     /** Incremental pull on the stored sync token (expired token → full reconcile). */
-    async pullIncremental(calendarId, { actor } = {}) {
+    async pullIncremental(calendarId, { spaceId, actor } = {}) {
       const who = actor ?? defaultActor;
-      await requireLiveGrant(calendarId);
+      await requireLiveGrant(calendarId, spaceId);
       const handle = bookHandle(who);
       const state = await readState(calendarId);
       if (!state?.syncToken) {
@@ -977,9 +998,9 @@ export function createCalendarSyncOperations(options = {}) {
      * nothing changed is a no-op — the second of two syncs in a row
      * writes nothing anywhere.
      */
-    async pushAppointment(calendarId, sourceKey, { actor } = {}) {
+    async pushAppointment(calendarId, sourceKey, { spaceId, actor } = {}) {
       const who = actor ?? defaultActor;
-      await requireLiveGrant(calendarId);
+      await requireLiveGrant(calendarId, spaceId);
       const handle = bookHandle(who);
       const row = await handle.appointmentBySourceKey(sourceKey);
       if (!row) {
@@ -1049,11 +1070,12 @@ export function createCalendarSyncOperations(options = {}) {
     },
 
     /** Push every linked row of a calendar whose local half moved. */
-    async pushLocalChanges(calendarId, { actor } = {}) {
+    async pushLocalChanges(calendarId, { spaceId, actor } = {}) {
+      await requireLiveGrant(calendarId, spaceId);
       const links = await linkService(context).listWhere({ calendarId });
       const entries = [];
       for (const link of links.filter((row) => row.appointmentId !== '')) {
-        entries.push(await api.pushAppointment(calendarId, link.appointmentSourceKey, { actor }));
+        entries.push(await api.pushAppointment(calendarId, link.appointmentSourceKey, { spaceId, actor }));
       }
       return { calendarId, entries };
     },
@@ -1067,18 +1089,16 @@ export function createCalendarSyncOperations(options = {}) {
 
     /**
      * Handle one Google push delivery: unknown channel or wrong token is
-     * refused before anything is read; the handshake state (`sync`) only
-     * acknowledges the watch; anything else pulls incrementally.
+     * refused before anything is read — the token is verified before the
+     * grant state is even looked at, so an unauthenticated probe can never
+     * tell a revoked channel from a live one; the handshake state (`sync`)
+     * only acknowledges the watch; anything else pulls incrementally.
      */
-    async handlePush({ channelId, channelToken, resourceState } = {}) {
+    async handlePush({ channelId, channelToken, resourceState, spaceId } = {}) {
       const states = await stateService(context).listWhere({});
       const state = states.find((row) => row.channelId === channelId && channelId);
       if (!state) {
         throw syncError('CALENDAR_PUSH_UNKNOWN_CHANNEL', 404, 'push for an unknown channel: never pull on an unverified signal');
-      }
-      if (state.grantStatus === 'revoked') {
-        throw syncError('CALENDAR_GRANT_REVOKED', 409,
-          `calendar "${state.calendarId}" grant is revoked: re-bind it before syncing`);
       }
       const candidate = typeof channelToken === 'string' ? channelToken : '';
       const digest = (value) => createHash('sha256').update(value).digest();
@@ -1087,8 +1107,17 @@ export function createCalendarSyncOperations(options = {}) {
       if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
         throw syncError('CALENDAR_PUSH_FORBIDDEN', 403, 'push channel token mismatch: the signal is not Google\'s');
       }
+      if (state.spaceId !== null && state.spaceId !== undefined && state.spaceId !== spaceId) {
+        // Same unknown-channel refusal: a forged delivery for another
+        // space reads as unknown, never as a cross-space oracle.
+        throw syncError('CALENDAR_PUSH_UNKNOWN_CHANNEL', 404, 'push for an unknown channel: never pull on an unverified signal');
+      }
+      if (state.grantStatus === 'revoked') {
+        throw syncError('CALENDAR_GRANT_REVOKED', 409,
+          `calendar "${state.calendarId}" grant is revoked: re-bind it before syncing`);
+      }
       if (resourceState === 'sync') return { effect: 'ack', calendarId: state.calendarId };
-      const pull = await api.pullIncremental(state.calendarId);
+      const pull = await api.pullIncremental(state.calendarId, { spaceId });
       return { effect: 'pulled', calendarId: state.calendarId, pull };
     },
 
@@ -1097,12 +1126,12 @@ export function createCalendarSyncOperations(options = {}) {
      * the bearer token itself never lands in a row — and stamps the sync
      * token baseline when the watch answers `sync`.
      */
-    async watchCalendar(calendarId, { channelId, resourceId, channelToken, actor } = {}) {
+    async watchCalendar(calendarId, { spaceId, channelId, resourceId, channelToken, actor } = {}) {
       const who = actor ?? defaultActor;
-      await requireLiveGrant(calendarId);
       if (typeof channelId !== 'string' || channelId === '' || typeof channelToken !== 'string' || channelToken === '') {
-        throw new ValidationError('watchCalendar needs the provider channel id and bearer token', { field: 'watch' });
+        throw new ValidationError('watchCalendar needs the provider channel id and Bearer [REDACTED]', { field: 'watch' });
       }
+      await requireLiveGrant(calendarId, spaceId);
       const channelTokenHash = createHash('sha256').update(channelToken).digest('hex');
       await writeState(calendarId, { channelId, channelTokenHash, resourceId: resourceId ?? null }, who);
       return { channelId, calendarId };
@@ -1121,6 +1150,14 @@ export function createCalendarSyncOperations(options = {}) {
       const space = assertGrantText(spaceId, 'spaceId', 128);
       const cal = assertGrantText(calendarId, 'calendarId', 128);
       const ref = assertSecretReference(secretRef);
+      const existing = await readState(cal);
+      if (existing && existing.grantStatus === 'active'
+        && existing.spaceId !== null && existing.spaceId !== undefined && existing.spaceId !== space) {
+        // One space never hijacks another's live binding: the owning space
+        // revokes first. A conflict without naming the owning space.
+        throw syncError('CALENDAR_GRANT_ALREADY_BOUND', 409,
+          `calendar "${cal}" is already bound: revoke it from its owning space before re-binding`);
+      }
       await writeState(cal, { spaceId: space, secretRef: ref, grantStatus: 'active' }, who);
       return { calendarId: cal, spaceId: space, secretRef: ref, grantStatus: 'active' };
     },

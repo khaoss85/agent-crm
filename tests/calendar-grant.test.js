@@ -147,7 +147,7 @@ test('a bound calendar imports with the grant resolved from the vault', async (t
   assert.deepEqual(binding, { calendarId: CAL, spaceId: SPACE, secretRef: SECRET_REF, grantStatus: 'active' });
   seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
   seedEvent(ctx, 'evt2', '21', '11:00', '12:00');
-  const first = await ctx.sync.importFuture(CAL, { timeMin: TIME_MIN });
+  const first = await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN });
   assert.equal(first.entries.filter((e) => e.status === 'imported').length, 2);
   assert.equal(ctx.rows().appointments.length, 2);
   assert.equal(ctx.resolveCalls.length, 1);
@@ -161,10 +161,10 @@ test('the grant resolves per call and never lands in a row', async (t) => {
   t.after(() => ctx.close());
   await bound(ctx);
   seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
-  await ctx.sync.importFuture(CAL, { timeMin: TIME_MIN });
+  await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN });
   ctx.setNow(T0 + 60_000);
   ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
-  const pull = await ctx.sync.pullIncremental(CAL);
+  const pull = await ctx.sync.pullIncremental(CAL, { spaceId: SPACE });
   assert.ok(pull.entries.some((e) => e.status === 'applied'));
   assert.ok(ctx.resolveCalls.length >= 2, 'no caching: every provider call resolves again');
   const dump = JSON.stringify(ctx.rows());
@@ -179,7 +179,7 @@ test('a wrong grant refuses with a fixed message and no secret anywhere', async 
   t.after(() => ctx.close());
   await bound(ctx);
   seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
-  const failure = await ctx.sync.importFuture(CAL, { timeMin: TIME_MIN }).then(
+  const failure = await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN }).then(
     () => { throw new Error('import should have refused'); },
     (error) => error,
   );
@@ -197,7 +197,7 @@ test('a provider error echoing the grant is normalized before rows and callers',
   const ctx = setup({ providerThrows: echoing });
   t.after(() => ctx.close());
   await bound(ctx);
-  const failure = await ctx.sync.importFuture(CAL, { timeMin: TIME_MIN }).then(
+  const failure = await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN }).then(
     () => { throw new Error('import should have failed'); },
     (error) => error,
   );
@@ -211,30 +211,30 @@ test('revoke stops import, pull, push and push delivery', async (t) => {
   t.after(() => ctx.close());
   await bound(ctx);
   seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
-  await ctx.sync.importFuture(CAL, { timeMin: TIME_MIN });
+  await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN });
   const watched = ctx.provider.watch({ calendarId: CAL, token: 'push-bearer-grant' });
   await ctx.sync.watchCalendar(CAL, {
-    channelId: watched.channelId, resourceId: watched.resourceId, channelToken: 'push-bearer-grant',
+    spaceId: SPACE, channelId: watched.channelId, resourceId: watched.resourceId, channelToken: 'push-bearer-grant',
   });
   const revoked = await ctx.sync.revokeCalendarGrant({ spaceId: SPACE, calendarId: CAL, actor: ACTOR });
   assert.deepEqual(revoked, { calendarId: CAL, grantStatus: 'revoked' });
   for (const call of [
-    () => ctx.sync.importFuture(CAL, { timeMin: TIME_MIN }),
-    () => ctx.sync.pullIncremental(CAL),
-    () => ctx.sync.pushLocalChanges(CAL),
-    () => ctx.sync.watchCalendar(CAL, { channelId: 'x', channelToken: 'y' }),
+    () => ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN }),
+    () => ctx.sync.pullIncremental(CAL, { spaceId: SPACE }),
+    () => ctx.sync.pushLocalChanges(CAL, { spaceId: SPACE }),
+    () => ctx.sync.watchCalendar(CAL, { spaceId: SPACE, channelId: 'x', channelToken: 'y' }),
   ]) {
     await assert.rejects(call(), (error) => error?.code === 'CALENDAR_GRANT_REVOKED');
   }
   const row = ctx.rows().appointments[0];
   await assert.rejects(
-    ctx.sync.pushAppointment(CAL, row.sourceKey),
+    ctx.sync.pushAppointment(CAL, row.sourceKey, { spaceId: SPACE }),
     (error) => error?.code === 'CALENDAR_GRANT_REVOKED',
   );
   // The forgotten push channel refuses as unknown: a stale Google push
   // after the revoke can never trigger a pull.
   await assert.rejects(
-    ctx.sync.handlePush({ channelId: watched.channelId, channelToken: 'push-bearer-grant', resourceState: 'exists' }),
+    ctx.sync.handlePush({ spaceId: SPACE, channelId: watched.channelId, channelToken: 'push-bearer-grant', resourceState: 'exists' }),
     (error) => error?.code === 'CALENDAR_PUSH_UNKNOWN_CHANNEL',
   );
   const dump = JSON.stringify(ctx.rows());
@@ -250,12 +250,12 @@ test('re-bind after revoke reconnects the calendar', async (t) => {
   t.after(() => ctx.close());
   await bound(ctx);
   seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
-  await ctx.sync.importFuture(CAL, { timeMin: TIME_MIN });
+  await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN });
   await ctx.sync.revokeCalendarGrant({ spaceId: SPACE, calendarId: CAL, actor: ACTOR });
   await bound(ctx);
   ctx.setNow(T0 + 60_000);
   ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
-  const pull = await ctx.sync.pullIncremental(CAL);
+  const pull = await ctx.sync.pullIncremental(CAL, { spaceId: SPACE });
   assert.ok(pull.entries.some((e) => e.status === 'applied'), 'the reconnected calendar syncs again');
   assert.equal(ctx.rows().states[0].grantStatus, 'active');
 });
@@ -296,7 +296,7 @@ test('a bound calendar refuses until the custody edge is wired', async (t) => {
   await bound(ctx);
   seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
   await assert.rejects(
-    ctx.sync.importFuture(CAL, { timeMin: TIME_MIN }),
+    ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN }),
     (error) => error?.code === 'CALENDAR_SECRET_UNWIRED',
   );
 });
@@ -305,5 +305,89 @@ test('the package factory rejects a non-function custody edge', () => {
   assert.throws(
     () => createCalendarSyncPackage({ resolveSecret: 'vault://presti/google-calendar' }),
     (error) => /resolveSecret must be a function/.test(error?.message ?? ''),
+  );
+});
+
+test('a foreign space reads a bound calendar as unknown, on every sync path', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await bound(ctx);
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN });
+  for (const call of [
+    () => ctx.sync.importFuture(CAL, { spaceId: 'altro-spazio', timeMin: TIME_MIN }),
+    () => ctx.sync.importFuture(CAL, { timeMin: TIME_MIN }),
+    () => ctx.sync.pullIncremental(CAL, { spaceId: 'altro-spazio' }),
+    () => ctx.sync.pushLocalChanges(CAL, { spaceId: 'altro-spazio' }),
+  ]) {
+    await assert.rejects(call(), (error) => error?.code === 'CALENDAR_GRANT_UNKNOWN');
+  }
+  const row = ctx.rows().appointments[0];
+  await assert.rejects(
+    ctx.sync.pushAppointment(CAL, row.sourceKey, { spaceId: 'altro-spazio' }),
+    (error) => error?.code === 'CALENDAR_GRANT_UNKNOWN',
+  );
+  // The owning space is unaffected: its sync still resolves its own grant.
+  const pull = await ctx.sync.pullIncremental(CAL, { spaceId: SPACE });
+  assert.ok(Array.isArray(pull.entries));
+});
+
+test('one space cannot hijack another space live binding', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await bound(ctx);
+  await assert.rejects(
+    ctx.sync.bindCalendarGrant({ spaceId: 'altro-spazio', calendarId: CAL, secretRef: SECRET_REF, actor: ACTOR }),
+    (error) => error?.code === 'CALENDAR_GRANT_ALREADY_BOUND' && error?.status === 409,
+  );
+  const [state] = ctx.rows().states;
+  assert.equal(state.spaceId, SPACE, 'the binding still belongs to the owning space');
+  assert.equal(state.secretRef, SECRET_REF);
+  assert.equal(state.grantStatus, 'active');
+  // The owning space re-binds freely (secret rotation); the foreign space
+  // binds only after the owner revoked.
+  await ctx.sync.bindCalendarGrant({ spaceId: SPACE, calendarId: CAL, secretRef: SECRET_REF, actor: ACTOR });
+  await ctx.sync.revokeCalendarGrant({ spaceId: SPACE, calendarId: CAL, actor: ACTOR });
+  const rebound = await ctx.sync.bindCalendarGrant({ spaceId: 'altro-spazio', calendarId: CAL, secretRef: SECRET_REF, actor: ACTOR });
+  assert.equal(rebound.spaceId, 'altro-spazio');
+});
+
+test('a push delivery verifies the channel token before reading grant state', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await bound(ctx);
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN });
+  const watched = ctx.provider.watch({ calendarId: CAL, token: 'push-bearer-oracle' });
+  await ctx.sync.watchCalendar(CAL, {
+    spaceId: SPACE, channelId: watched.channelId, resourceId: watched.resourceId, channelToken: 'push-bearer-oracle',
+  });
+  // A deployment-recorded revocation that keeps the channel registered:
+  // an unauthenticated probe still reads 403, never the 409 oracle.
+  const [live] = ctx.rows().states;
+  await ctx.modules.get('calendar-sync-state').service.applyManaged(live.id, { grantStatus: 'revoked' }, { actor: ACTOR });
+  await assert.rejects(
+    ctx.sync.handlePush({ spaceId: SPACE, channelId: watched.channelId, channelToken: 'wrong-bearer', resourceState: 'exists' }),
+    (error) => error?.code === 'CALENDAR_PUSH_FORBIDDEN',
+  );
+  await assert.rejects(
+    ctx.sync.handlePush({ spaceId: SPACE, channelId: watched.channelId, channelToken: 'push-bearer-oracle', resourceState: 'exists' }),
+    (error) => error?.code === 'CALENDAR_GRANT_REVOKED',
+  );
+  // And a foreign space with the right token reads unknown, not revoked.
+  await assert.rejects(
+    ctx.sync.handlePush({ spaceId: 'altro-spazio', channelId: watched.channelId, channelToken: 'push-bearer-oracle', resourceState: 'exists' }),
+    (error) => error?.code === 'CALENDAR_PUSH_UNKNOWN_CHANNEL',
+  );
+});
+
+test('watch validates the channel shape before reading grant state', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await bound(ctx);
+  await ctx.sync.revokeCalendarGrant({ spaceId: SPACE, calendarId: CAL, actor: ACTOR });
+  await assert.rejects(
+    ctx.sync.watchCalendar(CAL, { spaceId: SPACE, channelId: '', channelToken: '' }),
+    (error) => error?.code === 'VALIDATION_ERROR',
   );
 });
