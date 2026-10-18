@@ -62,6 +62,7 @@ export const REASON = Object.freeze({
   TOO_FAST: 'SPAM_TOO_FAST',
   RATE_LIMITED: 'SPAM_RATE_LIMITED',
   NEEDS_REVIEW: 'SENDER_UNRESOLVED',
+  SPACE_MISMATCH: 'SPACE_CONVERSATION_MISMATCH',
 });
 
 /**
@@ -292,21 +293,27 @@ export function buildSnippet(input) {
     throw new ValidationError('formId must be a lowercase slug', { field: 'formId' });
   }
   const action = `${endpoint.replace(/\/+$/, '')}/site/${spaceId}/submit`;
+  // The selector is one complete string: quoting the slug inside a second
+  // pair of quotes throws a CSS SyntaxError and the pasted form never posts.
+  const selector = `form[data-accordo-space="${spaceId}"]`;
   const html = [
     `<form data-accordo-space="${spaceId}" data-accordo-form="${formId}" method="post" action="${action}">`,
     '  <label>Nome <input name="firstName" maxlength="100" autocomplete="given-name"></label>',
     '  <label>Cognome <input name="lastName" maxlength="100" autocomplete="family-name"></label>',
     '  <label>Email <input name="email" type="email" maxlength="200" autocomplete="email"></label>',
     '  <label>Telefono <input name="phone" type="tel" maxlength="32" autocomplete="tel"></label>',
+    '  <label>Azienda <input name="companyName" maxlength="200" autocomplete="organization"></label>',
     '  <label>Messaggio <textarea name="body" maxlength="2000" required></textarea></label>',
     '  <input type="text" name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">',
     '  <button type="submit">Invia la richiesta</button>',
     '</form>',
     '<script>(function(){',
-    'var f=document.querySelector(\'form[data-accordo-space=\"'+JSON.stringify(spaceId)+'\"\']\');',
+    'var __accordoN=0;',
+    'function __accordoKey(){__accordoN+=1;if(window.crypto&&crypto.randomUUID){try{return crypto.randomUUID();}catch(e){}}var r="";try{if(window.crypto&&crypto.getRandomValues){r=Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(16)),function(x){return("0"+x.toString(16)).slice(-2)}).join("");}}catch(e){}if(!r){r=Math.floor(Math.random()*4294967296).toString(16)+"-"+Math.floor(Math.random()*4294967296).toString(16);}return Date.now().toString(36)+"-"+__accordoN.toString(36)+"-"+r;}',
+    'var f=document.querySelector('+JSON.stringify(selector)+');',
     'if(!f)return;var t0=Date.now();',
     'f.addEventListener("submit",function(e){e.preventDefault();',
-    'var d={spaceId:'+JSON.stringify(spaceId)+',dwellMs:Date.now()-t0,honeypotFilled:!!(f.website&&f.website.value),idempotencyKey:(window.crypto&&crypto.randomUUID?crypto.randomUUID():String(Date.now()))};',
+    'var d={spaceId:'+JSON.stringify(spaceId)+',dwellMs:Date.now()-t0,honeypotFilled:!!(f.website&&f.website.value),idempotencyKey:__accordoKey()};',
     '["firstName","lastName","email","phone","companyName","body"].forEach(function(k){d[k]=f[k]?f[k].value:"";});',
     'fetch(f.action,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});',
     '});})();</script>',

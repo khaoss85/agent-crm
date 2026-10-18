@@ -581,6 +581,56 @@ test('two spaces hash the same address differently', async (t) => {
   assert.ok(!JSON.stringify(altroRow).includes('203.0.113'));
 });
 
+test('two spaces hold separate contacts on separate threads', async (t) => {
+  const { app } = await scene(t, 'site-form-spaces-threads');
+  const first = await intake(app, { ...FORM });
+  assert.equal(first.outcome.status, 'accepted');
+  const second = await intake(app, {
+    ...FORM,
+    spaceId: 'altro',
+    email: 'marco.verdi@prestigroup.example',
+    phone: null,
+    firstName: 'Marco',
+    lastName: 'Verdi',
+    body: 'Altro spazio, altro cliente.',
+    ipHashSecretRef: 'vault://altro/site-forms-ip',
+  });
+  assert.equal(second.outcome.status, 'accepted');
+  assert.notEqual(second.resolved.contact.id, first.resolved.contact.id, 'two contacts');
+  assert.notEqual(second.outcome.conversationId, first.outcome.conversationId, 'two threads');
+  const prestiMessages = rows(app, 'interaction-message', { subjectId: first.resolved.contact.id });
+  const altroMessages = rows(app, 'interaction-message', { subjectId: second.resolved.contact.id });
+  assert.equal(prestiMessages.length, 1, 'each thread carries only its own space words');
+  assert.equal(altroMessages.length, 1);
+  assert.equal(altroMessages[0].conversationId, second.outcome.conversationId);
+  assert.equal(altroMessages[0].body, 'Altro spazio, altro cliente.');
+});
+
+test('a submission matching another space\u2019s contact never logs on its thread', async (t) => {
+  const { app } = await scene(t, 'site-form-spaces-cross');
+  const first = await intake(app, { ...FORM });
+  assert.equal(first.outcome.status, 'accepted');
+  // The same visitor writes to the other space: the global sender identity
+  // matches presti's contact, whose site-form thread is already open.
+  const second = await intake(app, {
+    ...FORM,
+    spaceId: 'altro',
+    firstName: 'Luca',
+    lastName: 'Rossi',
+    body: 'Stesso visitatore, altro spazio.',
+    ipHashSecretRef: 'vault://altro/site-forms-ip',
+  });
+  assert.equal(second.resolved.contact.id, first.resolved.contact.id, 'identity is global');
+  assert.equal(second.outcome.status, 'needs-review');
+  assert.equal(second.outcome.reasonCode, 'SPACE_CONVERSATION_MISMATCH');
+  assert.equal(
+    rows(app, 'interaction-message', { subjectId: first.resolved.contact.id }).length,
+    1,
+    'the other space\u2019s thread keeps only its own words',
+  );
+  assert.equal(rows(app, 'interaction-message', {}).length, 1, 'no message leaked across spaces');
+});
+
 test('the snippet endpoint serves one space only', async (t) => {
   const { app } = await scene(t, 'site-form-snippet');
   const snippet = await app.siteFormSnippet({ spaceId: SPACE, endpoint: 'https://app.accordo.dev' });

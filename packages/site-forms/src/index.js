@@ -266,6 +266,26 @@ export function buildSiteFormsActions(config = {}) {
           remoteHandle,
           source,
         });
+        // Space tenancy: the thread join is by subject by design (one thread
+        // per customer across channels), so a sender the global identity
+        // matched to another space's contact joins that space's open thread.
+        // Verify the joined thread's provenance before logging: a site-form
+        // thread whose key names another space keeps that space's card — this
+        // space's words stay needs-review evidence for a human instead.
+        if (
+          conversation.sourcePackage === SITE_FORMS_PACKAGE
+          && typeof conversation.sourceKey === 'string'
+          && !conversation.sourceKey.startsWith(`site-form:${record.spaceId}:`)
+        ) {
+          const updated = await managed(record.id, {
+            status: 'needs-review', reasonCode: REASON.SPACE_MISMATCH, decidedAt,
+          });
+          return {
+            submission: {
+              id: updated.id, status: updated.status, reasonCode: updated.reasonCode, replayed: false,
+            },
+          };
+        }
         const { message } = await log.logMessage({
           sourceKey: `site-form-message:${record.id}`,
           conversationId: conversation.id,
@@ -496,6 +516,7 @@ export function createSiteFormsPackage(options = {}) {
         replyRule: 'phone present answers on WhatsApp, email-only answers by email, both present answers on both',
         provenance: 'the contact and its channel identities are written only by customer-data sender resolution (runId channel-sender); this package records the subject, never the identity',
         replayScope: 'one idempotency key opens one submission; the same key replays the stored row, never a second one',
+        spaceTenancy: 'a submission whose sender matches a contact with an open site-form thread from another space stays needs-review (SPACE_CONVERSATION_MISMATCH): one space never logs on another space\u2019s thread',
         secretDiscipline: 'the pilot passes ipHashSecretRef, never the secret; the deployment resolves it at call time; rows carry the hash only',
         pilotOwns: [
           'the per-space HTTP route (POST /site/:spaceId/submit), passing spaceId from the verified path',

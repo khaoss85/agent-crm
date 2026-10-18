@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { getRandomValues } from 'node:crypto';
 
 import {
   BODY_MAX,
@@ -173,4 +174,91 @@ test('the snippet posts to the per-space route with a trap field', () => {
   );
   const named = buildSnippet({ spaceId: 'presti', endpoint: 'https://app.accordo.dev', formId: 'richiesta-presti' });
   assert.ok(named.html.includes('data-accordo-form="richiesta-presti"'));
+});
+
+/**
+ * Run the generated snippet the way a pasted page would: one fake form, one
+ * submit, one captured POST. A selector the page cannot parse (or a key the
+ * page never sends) fails here instead of on the customer's site.
+ */
+function runSnippet(html, { nowMs, cryptoImpl }) {
+  const script = html.split('<script>')[1].split('</script>')[0];
+  const seen = { selectors: [], posts: [] };
+  const form = {
+    action: 'https://app.accordo.dev/site/presti/submit',
+    website: { value: '' },
+    firstName: { value: 'Luca' },
+    lastName: { value: 'Rossi' },
+    email: { value: 'luca@prestigroup.example' },
+    phone: { value: '+393331234567' },
+    companyName: { value: 'Presti Group' },
+    body: { value: 'Vorrei informazioni sui pacchetti.' },
+    addEventListener(name, handler) { this[`on${name}`] = handler; },
+  };
+  const document = {
+    querySelector(selector) { seen.selectors.push(selector); return form; },
+  };
+  const fakeWindow = {};
+  if (cryptoImpl !== undefined) fakeWindow.crypto = cryptoImpl;
+  const fakeFetch = async (url, options) => {
+    seen.posts.push({ url, options });
+    return { ok: true };
+  };
+  const fakeDate = { now: () => nowMs };
+  const run = new Function('document', 'window', 'crypto', 'fetch', 'Date', script);
+  run(document, fakeWindow, cryptoImpl, fakeFetch, fakeDate);
+  form.onsubmit({ preventDefault() {} });
+  return seen;
+}
+
+function postedBody(seen) {
+  assert.equal(seen.posts.length, 1, 'one submit posts once');
+  const [post] = seen.posts;
+  assert.equal(post.url, 'https://app.accordo.dev/site/presti/submit');
+  assert.equal(post.options.method, 'POST');
+  assert.equal(post.options.headers['Content-Type'], 'application/json');
+  return JSON.parse(post.options.body);
+}
+
+test('the pasted snippet selects the form and posts JSON', () => {
+  const snippet = buildSnippet({ spaceId: 'presti', endpoint: 'https://app.accordo.dev' });
+  const seen = runSnippet(snippet.html, { nowMs: 1_700_000_000_000, cryptoImpl: undefined });
+  assert.deepEqual(seen.selectors, ['form[data-accordo-space="presti"]']);
+  const body = postedBody(seen);
+  assert.equal(body.spaceId, 'presti');
+  assert.equal(body.dwellMs, 0);
+  assert.equal(body.honeypotFilled, false);
+  assert.equal(typeof body.idempotencyKey, 'string');
+  assert.ok(body.idempotencyKey.length > 0, 'one render, one key');
+  assert.equal(body.firstName, 'Luca');
+  assert.equal(body.companyName, 'Presti Group');
+  assert.equal(body.body, 'Vorrei informazioni sui pacchetti.');
+});
+
+test('every collected snippet key has a named input', () => {
+  const snippet = buildSnippet({ spaceId: 'presti', endpoint: 'https://app.accordo.dev' });
+  for (const key of ['firstName', 'lastName', 'email', 'phone', 'companyName', 'body']) {
+    assert.ok(snippet.html.includes(`name="${key}"`), `the snippet renders an input for ${key}`);
+  }
+});
+
+test('the snippet prefers a random UUID for the idempotency key', () => {
+  const snippet = buildSnippet({ spaceId: 'presti', endpoint: 'https://app.accordo.dev' });
+  const seen = runSnippet(snippet.html, {
+    nowMs: 1_700_000_000_000,
+    cryptoImpl: { randomUUID: () => 'uuid-per-render' },
+  });
+  assert.equal(postedBody(seen).idempotencyKey, 'uuid-per-render');
+});
+
+test('two snippet renders in the same millisecond never share a key', () => {
+  const snippet = buildSnippet({ spaceId: 'presti', endpoint: 'https://app.accordo.dev' });
+  assert.ok(!snippet.html.includes('String(Date.now())'), 'no bare-timestamp key');
+  const keys = [0, 1].map(() => runSnippet(snippet.html, {
+    nowMs: 1_700_000_000_000,
+    cryptoImpl: { getRandomValues: (array) => getRandomValues(array) },
+  }).posts);
+  const first = JSON.parse(keys[0][0].options.body).idempotencyKey;
+  const second = JSON.parse(keys[1][0].options.body).idempotencyKey;
+  assert.notEqual(first, second, 'same millisecond, two renders, two keys');
 });

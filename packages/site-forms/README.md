@@ -36,6 +36,11 @@ carries only an email address, both when it carries both.
   request), then the `submit` action. A sender the resolution leaves
   `unresolved` stays `needs-review`: evidence for a human, never a message
   from nobody.
+- Space tenancy: a submission whose sender matches a contact with an open
+  site-form thread from another space stays `needs-review`
+  (`SPACE_CONVERSATION_MISMATCH`) — one space never logs on another
+  space's thread. Contact identity itself is global (`customer-data`), not
+  per space.
 - The pilot passes the caller socket address as `ip` plus the per-space
   secret locator as `ipHashSecretRef` (never the value). A caller-supplied
   `ipHash` is refused, and the raw address is never stored — only its HMAC
