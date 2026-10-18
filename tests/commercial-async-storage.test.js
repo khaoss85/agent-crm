@@ -15,10 +15,18 @@
  *
  * The journey covers the seed path the acceptance names — syncCatalog, the
  * commercial proposal and its approval — on the synchronous application graph.
- * Signature and activation on asynchronous storage run through the contract-2
- * capability, which the third test opens directly: composing the synchronous
- * graph with asynchronous storage for those paths would prove a hybrid that
- * never runs in production (PostgreSQL composes the contract-2 graph).
+ * Signature, completion, activation and succession on asynchronous storage run
+ * through the contract-2 capabilities, which the third test opens directly:
+ * the synchronous graph's capability readers spread an unsettled Promise into
+ * a frozen empty row (proven while scoping this file: request-signature on the
+ * sync graph answers VERSION_MISMATCH on async storage), so composing the
+ * synchronous graph with asynchronous storage for those paths would prove a
+ * hybrid that never runs in production (PostgreSQL composes the contract-2
+ * graph). The end-to-end journey for those paths needs the async-composed
+ * application — contract-2 graphs plus the app methods the portable async
+ * factory does not wire yet (syncCatalog, ingestSignatureEvent) — and stays a
+ * follow-up. Composition edges are the dual-graph test's subject; the third
+ * test proves the reads themselves.
  */
 
 import test from 'node:test';

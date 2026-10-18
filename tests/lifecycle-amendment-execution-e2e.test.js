@@ -102,6 +102,36 @@ async function readyRun(app, contract, successorOrder, actor = ACTOR) {
 
 /* ------------------------------------------------------------------ paths */
 
+test('a contract-1 consumer plans synchronously, without await', async (t) => {
+  // Contract 1 stays synchronous (accordo 105ba984): a custom contract-1
+  // consumer on synchronous storage reads the frozen plan with no await. An
+  // async method here would hand back a Promise and read undefined fields —
+  // exactly the regression the capabilityContract split prevents.
+  const { app, contract, successor } = await scene(t, { db: 'contract1-sync' });
+  const cap = app.domains.capability({
+    // lifecycle is the declared consumer: the registry proves the requirement,
+    // and the probe reads through the same seam a custom contract-1 package
+    // would use once it declares it.
+    consumer: 'lifecycle',
+    capability: 'contracts-successor-activation',
+    version: 1,
+    context: { modules: app.modules, domains: app.domains },
+  });
+  assert.equal(cap.capabilityContract, 1, 'the synchronous graph offers the contract-1 interface');
+  const plan = cap.planSuccession({
+    sourceContractId: contract.id,
+    successorOrderId: successor.order.id,
+    ...POLICY,
+  });
+  assert.equal(typeof plan?.then, 'undefined', 'plan answers the frozen plan, never a Promise');
+  assert.equal(plan.coherent, true, JSON.stringify(plan.refusals));
+  assert.equal(typeof plan.coherent, 'boolean', 'coherent reads off the answer, not off a Promise');
+  const lineage = cap.succession(contract.id);
+  assert.equal(lineage, null, 'no lineage recorded yet — and the read answered null, not a Promise');
+  const byOrder = cap.successionByOrder(successor.order.id);
+  assert.equal(byOrder, null, 'the order consumed nothing yet — answered null, not a Promise');
+});
+
 test('a signed successor order becomes a governed successor agreement, and history is untouched', async (t) => {
   const { app, source, contract, successor } = await scene(t);
 
