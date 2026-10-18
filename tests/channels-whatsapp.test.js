@@ -26,24 +26,33 @@ import { createChannelsHarness } from './helpers/channels-harness.js';
 
 const SPACE = 'presti';
 const ACCOUNT = '+390200000001';
+const NEAR_ACCOUNT = '+390200000002';
 const SECRET_REF = 'vault://kit/whatsapp-a';
 const SECRET = 'whatsapp-fake-secret-1';
 const PHONE_NUMBER_ID = '15550001111';
 const NOW = new Date('2026-10-17T12:00:00.000Z').getTime();
 const TS = 1760700000;
 
+/**
+ * One clock for the whole path: the same function drives the adapter window
+ * check and the package ingest/window resolution, so a frozen NOW proves
+ * the window property at any hour of the day instead of mixing the frozen
+ * adapter clock with the real receive clock.
+ */
 function setup(options = {}) {
+  const { nowMs = () => NOW, ...adapterOptions } = options;
   const { definition, api } = createWhatsAppChannelAdapter({
     phoneNumberId: PHONE_NUMBER_ID,
     approvedTemplates: [{ name: 'presti_reminder', language: 'it' }],
     businessNumber: '+390200000099',
     secret: SECRET,
-    nowMs: () => NOW,
-    ...options,
+    ...adapterOptions,
+    nowMs,
   });
   const harness = createChannelsHarness({
     adapterDefinition: definition, fixtureApi: api, secretRef: SECRET_REF, secretValue: SECRET,
     tenantId: options.tenantId ?? 'channel-kit-whatsapp',
+    nowMs,
   });
   return { harness, api, definition };
 }
@@ -208,13 +217,15 @@ test('free text sends inside the window and refuses outside it', () => {
     () => definition.normalizeOutbound({ to: ACCOUNT, text: 'Troppo tardi' }, win(hoursAgo(25))),
     (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED' && /24-hour window/.test(error.message),
   );
-  // Fail-closed: no observation, a future instant or a non-canonical one
-  // never opens the window — the caller sends a template instead.
+  // Fail-closed: no observation, a beyond-skew future instant or a
+  // non-canonical one never opens the window — the caller sends a template
+  // instead. Within the package skew (a few minutes of clock drift) the
+  // observation stands: the adapter shares the package margin, never its own.
   for (const [name, ctx] of [
     ['absent context', undefined],
     ['absent observation', win(undefined)],
     ['null observation', win(null)],
-    ['future observation', win(new Date(NOW + 3600 * 1000).toISOString())],
+    ['beyond-skew future observation', win(new Date(NOW + 3600 * 1000).toISOString())],
   ]) {
     assert.throws(
       () => definition.normalizeOutbound({ to: ACCOUNT, text: 'Senza prova' }, ctx),
@@ -222,6 +233,11 @@ test('free text sends inside the window and refuses outside it', () => {
       `${name} refuses fail-closed`,
     );
   }
+  assert.deepEqual(
+    definition.normalizeOutbound({ to: ACCOUNT, text: 'Quasi in orario' }, win(new Date(NOW + 60 * 1000).toISOString())),
+    { to: ACCOUNT, kind: 'text', text: 'Quasi in orario' },
+    'a within-skew future observation opens the window like the ingest path keeps it',
+  );
   assert.throws(
     () => definition.normalizeOutbound({ to: ACCOUNT, text: 'x' }, win('not-a-date')),
     (error) => error.code === 'CHANNEL_MESSAGE_MALFORMED',
@@ -465,27 +481,41 @@ test('a future-dated inbound never opens the window', async (t) => {
   const { harness } = setup();
   t.after(() => harness.close());
   const key = await registeredActive(harness);
-  await ingestMetaMessage(harness, key, {
-    id: 'wamid.FUT1', from: '390200000001', at: Math.floor(NOW / 1000) + 3600,
+  // An hour past the single clock: the package keeps it as quarantine
+  // evidence at receive time — never a window observation, at any hour of
+  // the day the suite runs.
+  const rawBody = metaBody({
+    messages: [{
+      id: 'wamid.FUT1', from: '390200000001', timestamp: String(Math.floor(NOW / 1000) + 3600),
+      type: 'text', text: { body: 'dal futuro' },
+    }],
   });
+  const future = await harness.ingest(SPACE, { connectionKey: key, rawBody, headers: signedHeaders(rawBody) });
+  assert.equal(future.effect, 'quarantined');
+  const rows = harness.inbox(SPACE).filter((row) => row.providerEventId === 'wamid.FUT1');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sequence, null);
+  assert.equal(rows[0].occurredAt, rows[0].receivedAt);
+  assert.match(rows[0].effectReason, /beyond \+5min skew/);
   await assert.rejects(
     harness.queue(SPACE, {
       connectionKey: key, message: { to: ACCOUNT, text: 'Dal futuro' }, messageKey: 'wa-future',
     }),
     (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
+  assert.equal((await harness.jobs()).length, 0, 'a refused send never reaches the outbox');
 });
 
 test('a provider timestamp beyond +5min skew quarantines and never poisons the window', async (t) => {
   const { harness } = setup();
   t.after(() => harness.close());
   const key = await registeredActive(harness);
-  const realSec = Math.floor(Date.now() / 1000);
-  // A message dated an hour in the real future is kept as evidence at
+  const nowSec = Math.floor(NOW / 1000);
+  // A message dated an hour past the single clock is kept as evidence at
   // receive time: never a window observation, never a sequence.
   const futureBody = metaBody({
     messages: [{
-      id: 'wamid.SKEW1', from: '390200000001', timestamp: String(realSec + 3600),
+      id: 'wamid.SKEW1', from: '390200000001', timestamp: String(nowSec + 3600),
       type: 'text', text: { body: 'dal futuro' },
     }],
   });
@@ -502,18 +532,24 @@ test('a provider timestamp beyond +5min skew quarantines and never poisons the w
     }),
     (error) => error.code === 'CHANNEL_TEMPLATE_REQUIRED',
   );
-  // Within the tolerance the delivery still applies.
+  // Within the tolerance the delivery still applies — and opens the window
+  // too: one margin rule between the package and the adapter, so a message
+  // the ingest keeps as evidence also lets its own reply through.
   const nearBody = metaBody({
     messages: [{
-      id: 'wamid.SKEW2', from: '390200000002', timestamp: String(realSec + 60),
+      id: 'wamid.SKEW2', from: '390200000002', timestamp: String(nowSec + 60),
       type: 'text', text: { body: 'quasi in orario' },
     }],
   });
   const near = await harness.ingest(SPACE, { connectionKey: key, rawBody: nearBody, headers: signedHeaders(nearBody) });
   assert.equal(near.effect, 'applied');
+  const margin = await harness.queue(SPACE, {
+    connectionKey: key, message: { to: NEAR_ACCOUNT, text: 'Subito dopo' }, messageKey: 'wa-margin-skew',
+  });
+  assert.equal((await harness.pump(margin.jobId)).state, 'succeeded');
   // A legitimate message after the skewed one still applies (never
   // suppressed by it) and opens the window again.
-  await ingestMetaMessage(harness, key, { id: 'wamid.REAL1', from: '390200000001', at: Math.floor(NOW / 1000) - 60 });
+  await ingestMetaMessage(harness, key, { id: 'wamid.REAL1', from: '390200000001', at: nowSec - 60 });
   const queued = await harness.queue(SPACE, {
     connectionKey: key, message: { to: ACCOUNT, text: 'Di nuovo dentro' }, messageKey: 'wa-after-skew',
   });
