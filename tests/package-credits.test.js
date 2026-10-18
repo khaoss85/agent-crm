@@ -44,6 +44,10 @@ const appointment = (overrides = {}) => ({
   id: 'appt-1',
   subjectResource: 'contact',
   subjectId: 'c-presti',
+  // Real booking rows carry the full envelope (appointments.js): the balance
+  // filters on it, so the fakes mirror it.
+  subjectOwner: 'host',
+  subjectOwnerPackage: null,
   status: 'done',
   decidedAt: '2026-10-18T10:00:00.000Z',
   ...overrides,
@@ -159,6 +163,35 @@ test('a no-show costs nothing unless the grant configures it', async () => {
   const charged = await readPackageBalance({ modules: strictModules }, SUBJECT);
   assert.equal(charged.consumed, 1, 'the configured grant charges the no-show');
   assert.equal(charged.balance, 2);
+});
+
+test('the balance never crosses the subject owner: same resource and id, other owner', async () => {
+  const credits = fakeCredits();
+  const held = fakeAppointments([
+    appointment({ id: 'appt-host', decidedAt: '2026-10-18T10:00:00.000Z' }),
+    appointment({
+      id: 'appt-pkg',
+      subjectOwner: 'package',
+      subjectOwnerPackage: 'loyalty',
+      decidedAt: '2026-10-18T11:00:00.000Z',
+    }),
+  ]);
+  const modules = modulesFor({ credits, appointments: held });
+  const context = { modules, actor: ACTOR, now: () => NOW };
+  await grantPackageEntries(context, grant({ totalEntries: 2 }));
+
+  const host = await readPackageBalance({ modules }, SUBJECT);
+  assert.equal(host.granted, 2);
+  assert.equal(host.consumed, 1, 'the package-owned appointment is not the host subject’s session');
+  assert.equal(host.balance, 1);
+
+  const pkg = await readPackageBalance(
+    { modules },
+    { resource: 'contact', id: 'c-presti', owner: 'package', ownerPackage: 'loyalty' },
+  );
+  assert.equal(pkg.granted, 0, 'the host grant is not the package-owned subject’s entries');
+  assert.equal(pkg.consumed, 0);
+  assert.equal(pkg.balance, 0);
 });
 
 test('open, cancelled and booked appointments consume nothing', async () => {

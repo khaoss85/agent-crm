@@ -442,7 +442,12 @@ export async function readPackageBalance(context, subject) {
   const names = resolvedNames(context.moduleNames);
   const grants = creditReader({ modules: context.modules, names });
   const who = validateCreditSubject(subject);
-  const rows = (await grants.listWhere({ subjectResource: who.resource, subjectId: who.id }))
+  const rows = (await grants.listWhere({
+    subjectResource: who.resource,
+    subjectId: who.id,
+    subjectOwner: who.owner,
+    subjectOwnerPackage: who.ownerPackage,
+  }))
     .slice()
     .sort((a, b) => String(a.grantedAt ?? '').localeCompare(String(b.grantedAt ?? ''))
       || String(a.id ?? '').localeCompare(String(b.id ?? '')));
@@ -478,7 +483,12 @@ export async function readPackageBalance(context, subject) {
         + '— this is not a claim the balance equals the granted count',
     });
   }
-  const held = await appointments.listWhere({ subjectResource: who.resource, subjectId: who.id });
+  const held = await appointments.listWhere({
+    subjectResource: who.resource,
+    subjectId: who.id,
+    subjectOwner: who.owner,
+    subjectOwnerPackage: who.ownerPackage,
+  });
   // Our own rows, but the order is load-bearing for FIFO: a grant whose
   // instant cannot be proven refuses the balance rather than allocating
   // against a guess — the same fail-closed rule as for appointment rows.
