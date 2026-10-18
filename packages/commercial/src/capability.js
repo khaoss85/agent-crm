@@ -46,10 +46,10 @@ function service(modules, name) {
   return module.service;
 }
 
-/** Exact primary-key read that answers null instead of throwing. */
-function safeGet(recordService, id) {
+/** Exact primary-key read that answers null instead of throwing. Awaited: on async storage the read settles through a Promise. */
+async function safeGet(recordService, id) {
   try {
-    return recordService.get(id);
+    return await recordService.get(id);
   } catch {
     return null;
   }
@@ -102,33 +102,33 @@ export function createCommercialQuotesCapability(registries, config) {
         capabilityContract: 1,
 
         /** The quote record, or null — the lifecycle facts live on it. @param {string} quoteId */
-        quote(quoteId) {
-          const record = typeof quoteId === 'string' && quoteId !== '' ? safeGet(service(modules, names.quote), quoteId) : null;
+        async quote(quoteId) {
+          const record = typeof quoteId === 'string' && quoteId !== '' ? await safeGet(service(modules, names.quote), quoteId) : null;
           return record ? Object.freeze({ ...record }) : null;
         },
 
         /** One immutable Quote Version row, or null. @param {string} versionId */
-        version(versionId) {
-          const record = typeof versionId === 'string' && versionId !== '' ? safeGet(service(modules, names.version), versionId) : null;
+        async version(versionId) {
+          const record = typeof versionId === 'string' && versionId !== '' ? await safeGet(service(modules, names.version), versionId) : null;
           return record ? Object.freeze({ ...record }) : null;
         },
 
         /** Every version line, exact indexed read, position-ordered. @param {string} versionId */
-        versionLines(versionId) {
-          return Object.freeze(service(modules, names.versionLine).listWhere({ versionId })
+        async versionLines(versionId) {
+          return Object.freeze((await service(modules, names.versionLine).listWhere({ versionId }))
             .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position))
             .map((row) => Object.freeze({ ...row })));
         },
 
         /** Every version component, exact indexed read. @param {string} versionId */
-        versionComponents(versionId) {
-          return Object.freeze(service(modules, names.versionComponent).listWhere({ versionId })
+        async versionComponents(versionId) {
+          return Object.freeze((await service(modules, names.versionComponent).listWhere({ versionId }))
             .map((row) => Object.freeze({ ...row })));
         },
 
         /** Every grouped total; unlike periods are never summed. @param {string} versionId */
-        versionTotals(versionId) {
-          return Object.freeze(service(modules, names.versionTotal).listWhere({ versionId })
+        async versionTotals(versionId) {
+          return Object.freeze((await service(modules, names.versionTotal).listWhere({ versionId }))
             .map((row) => Object.freeze({ ...row })));
         },
 
@@ -143,7 +143,7 @@ export function createCommercialQuotesCapability(registries, config) {
          * the quote-version-term manifest also answers null.
          * @param {string} versionId
          */
-        versionTerm(versionId) {
+        async versionTerm(versionId) {
           let terms = null;
           try {
             terms = modules.get(names.versionTerm)?.service ?? null;
@@ -151,7 +151,7 @@ export function createCommercialQuotesCapability(registries, config) {
             terms = null;
           }
           if (!terms || typeof versionId !== 'string' || versionId === '') return null;
-          const record = terms.listWhere({ versionId })[0] ?? null;
+          const record = (await terms.listWhere({ versionId }))[0] ?? null;
           return record ? Object.freeze({ ...record }) : null;
         },
 
@@ -194,7 +194,7 @@ export function createCommercialQuotesVerifiedCapability(registries, config) {
     create(context = {}) {
       const modules = requireModules(context, 'commercial-quotes@2');
       const inner = base.create(context);
-      const versionTermRows = (versionId) => {
+      const versionTermRows = async (versionId) => {
         let terms = null;
         try {
           terms = modules.get(names.versionTerm)?.service ?? null;
@@ -231,9 +231,9 @@ export function createCommercialQuotesVerifiedCapability(registries, config) {
          *
          * @param {{scope: 'quote-version'|'order', versionId?: string, orderId?: string, rows?: any[], documentTerms?: any}} request
          */
-        verifySignedTerms(request = /** @type {any} */ ({})) {
+        async verifySignedTerms(request = /** @type {any} */ ({})) {
           if (request?.scope === 'quote-version') {
-            const rows = versionTermRows(request.versionId ?? '');
+            const rows = await versionTermRows(request.versionId ?? '');
             if (rows.length === 0) return null;
             if (rows.length > 1) {
               throw new AppError(
@@ -245,9 +245,9 @@ export function createCommercialQuotesVerifiedCapability(registries, config) {
             return Object.freeze({ verified, row: Object.freeze({ ...rows[0] }) });
           }
           if (request?.scope === 'order') {
-            const outcome = verifyOrderTermRows({
+            const outcome = await verifyOrderTermRows({
               rows: Array.isArray(request.rows) ? request.rows : [],
-              authoritativeFor: (versionId) => versionTermRows(versionId)[0] ?? null,
+              authoritativeFor: async (versionId) => (await versionTermRows(versionId))[0] ?? null,
               orderId: String(request.orderId ?? ''),
               // Absent on the request object means the caller never produced
               // the signed document: that is refused, never downgraded.

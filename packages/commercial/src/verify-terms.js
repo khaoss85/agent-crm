@@ -184,7 +184,7 @@ export function verifyMatchesSignedDocument(normalized, documentTerms, subject) 
  *
  * @param {{rows: any[], authoritativeFor: (versionId: string) => any, orderId: string, documentTerms?: any}} input
  */
-export function verifyOrderTermRows({ rows, authoritativeFor, orderId, documentTerms }) {
+export async function verifyOrderTermRows({ rows, authoritativeFor, orderId, documentTerms }) {
   const snapshots = Array.isArray(rows) ? rows : [];
   if (snapshots.length === 0) return null; // absence is history, never a failure
   if (snapshots.length > 1) {
@@ -195,7 +195,7 @@ export function verifyOrderTermRows({ rows, authoritativeFor, orderId, documentT
   const [row] = snapshots;
   const verified = verifySelfConsistent(row, { kind: 'order', id: orderId });
   const quoteVersionId = typeof row?.quoteVersionId === 'string' ? row.quoteVersionId : '';
-  const authoritative = quoteVersionId ? authoritativeFor(quoteVersionId) : null;
+  const authoritative = quoteVersionId ? await authoritativeFor(quoteVersionId) : null;
   if (!authoritative) {
     refuse(TERMS_SNAPSHOT_DIVERGED,
       'The order\'s signed-term snapshot names a quote version that has no signed term, so its provenance cannot be confirmed',
