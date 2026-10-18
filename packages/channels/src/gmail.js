@@ -45,6 +45,28 @@ import { verifyHmacWebhook } from './crypto.js';
 
 export const GMAIL_ADAPTER_NAME = 'gmail-api';
 export const GMAIL_ADAPTER_VERSION = 1;
+/** The initial import window: threads of the last 90 days. */
+export const GMAIL_HISTORY_WINDOW_MS = 90 * 24 * 3600 * 1000;
+
+function encodeHistoryToken(index) {
+  return Buffer.from(String(index), 'utf8').toString('base64url');
+}
+
+function decodeHistoryToken(pageToken) {
+  if (pageToken === null || pageToken === undefined) return 0;
+  let index = -1;
+  try {
+    index = Number.parseInt(Buffer.from(String(pageToken), 'base64url').toString('utf8'), 10);
+  } catch {
+    index = -1;
+  }
+  if (!Number.isSafeInteger(index) || index < 0) {
+    throw new AppError('Gmail history page token is not one this adapter issued', {
+      code: 'CHANNEL_HISTORY_MALFORMED', status: 422,
+    });
+  }
+  return index;
+}
 /** Inbox subjects carry the `email:` prefix, so threads stay namespaced per channel. */
 export const GMAIL_SUBJECT_PREFIX = 'email:';
 const MAX_ID = 256;
@@ -334,6 +356,8 @@ export function createGmailChannelAdapter(options = {}) {
     /** @type {Map<string, {providerMessageId: string, request: any}>} */
     sentByKey: new Map(),
     sendCalls: 0,
+    /** @type {Array<{id: string, threadId: string, from: string, to?: string, subject?: string, internalDateMs: number}>} */
+    mailboxHistory: [],
   };
 
   const api = {
@@ -344,6 +368,9 @@ export function createGmailChannelAdapter(options = {}) {
       state.flakyRemaining = flakyFailures;
     },
     reset() {
+      // Transport state only: the seeded provider past is fixture data, and
+      // re-seeding replaces it. A mid-run reset (the kit resets before its
+      // send check) must never wipe the past the history check pages.
       state.mode = 'ok';
       state.flakyRemaining = 0;
       state.sentByKey.clear();
@@ -354,6 +381,41 @@ export function createGmailChannelAdapter(options = {}) {
     },
     sentRequests() {
       return [...state.sentByKey.values()].map((entry) => entry.request);
+    },
+    /**
+     * Seed the fake mailbox the import pages through: provider messages
+     * (`{ id, threadId, from, to?, subject?, internalDateMs }`). Each seed
+     * normalizes through the same `normalizeGmailMessage` the push path
+     * uses, so a bad seed fails the test setup, never the import.
+     * @param {Array<any>} messages
+     */
+    seedMailbox(messages) {
+      const seeds = Array.isArray(messages) ? messages : [];
+      state.mailboxHistory.length = 0;
+      for (const item of seeds) {
+        const atMs = item?.internalDateMs;
+        if (!Number.isSafeInteger(atMs) || atMs < 0 || atMs > 4102444800000) {
+          malformedEvent('seeded message needs a valid internalDateMs');
+        }
+        const normalized = normalizeGmailMessage({
+          message: {
+            id: item?.id,
+            threadId: item?.threadId,
+            from: item?.from,
+            to: item?.to ?? config.mailbox,
+            subject: item?.subject ?? '',
+            snippet: '',
+            internalDateMs: atMs,
+          },
+        }, config);
+        // A sent copy looping back carries no subject, so the import
+        // quarantines it exactly like the push path does — with its
+        // provider time, so the window keeps it instead of dropping it.
+        const event = normalized.subject === ''
+          ? { ...normalized, occurredAt: new Date(atMs).toISOString() }
+          : normalized;
+        state.mailboxHistory.push({ normalized: event, from: canonicalGmailAddress(item?.from) });
+      }
     },
   };
 
@@ -411,6 +473,39 @@ export function createGmailChannelAdapter(options = {}) {
         }
         if (config.testOnly) return [normalizeKitEvent(parsed)];
         malformedEvent('only Gmail push notifications are accepted');
+      },
+
+      historyImport: {
+        windowMs: GMAIL_HISTORY_WINDOW_MS,
+        /**
+         * Page the seeded mailbox oldest-first: threads of the last 90
+         * days, one normalized event per message with its sender attached.
+         * The fake serves its single bound mailbox; production lists the
+         * OAuth mailbox the call-time secret names, through the same
+         * `resolveSecret` edge the import uses.
+         */
+        async listHistory({ secret, since, pageToken, limit }) {
+          if (secret !== expectedSecret) {
+            throw new AppError('Gmail history refuses this secret', { code: 'CHANNEL_HISTORY_REFUSED', status: 403 });
+          }
+          const start = decodeHistoryToken(pageToken);
+          const from = Date.parse(since);
+          const past = state.mailboxHistory
+            .filter((entry) => Date.parse(entry.normalized.occurredAt ?? '') >= from)
+            .sort((a, b) => {
+              const atA = a.normalized.occurredAt ?? '';
+              const atB = b.normalized.occurredAt ?? '';
+              if (atA !== atB) return atA < atB ? -1 : 1;
+              return a.normalized.providerEventId < b.normalized.providerEventId ? -1 : 1;
+            });
+          const size = Number.isSafeInteger(limit) && limit > 0 ? limit : past.length;
+          const slice = past.slice(start, start + size);
+          const next = start + size < past.length ? encodeHistoryToken(start + size) : null;
+          return {
+            events: slice.map((entry) => ({ ...entry.normalized, sender: { handle: entry.from } })),
+            nextPageToken: next,
+          };
+        },
       },
 
       normalizeOutbound(message) {

@@ -26,14 +26,25 @@ The shared, space-scoped foundation every messaging channel builds on
 - Composition with adapters, a secret resolver and the bound tenant id:
 
 ```js
+import { createCustomerDataPackage } from './packages/customer-data/src/index.js';
 import { createChannelsPackage } from './packages/channels/src/index.js';
+
+const customerData = createCustomerDataPackage();
 
 createChannelsPackage({
   channelAdapters: [fixtureChannelAdapterDefinition],
   resolveSecret: async (ref, { spaceId, purpose }) => vault.resolve(ref, spaceId),
   tenantId: boundTenantId,
+  customerData,
 });
 ```
+
+The `customerData` definition is the declared `customer-data /
+channel-sender@1` edge: channels takes the created capability from its
+published capabilities (the same handover appointments uses for work's
+`follow-up@1`). Composing channels without customer-data refuses at boot
+naming the edge; without the edge the history import refuses while
+webhooks and sends keep working standalone.
 
 - Registration is one static import in the project's composition file
   (this repository's `packages/domains/generated/index.js` stays empty —
@@ -88,7 +99,36 @@ createChannelsPackage({
   (`email:<threadId>`, so a card reply with that thread id stays in
   the same thread); a sent copy looping back off the bound mailbox
   quarantines; email has no service window, so replies send at any
-  time — against a fake transport, no credentials.
+  time — against a fake transport, no credentials. It declares the
+  history-import capability with the 90-day window: threads of the last
+  90 days page oldest-first through the same normalizer the push path
+  uses, each message carrying its sender for the import reconciliation.
+- The progressive initial history import (`tests/channels-initial-import.test.js`,
+  backlog:66282d13d81c): adapters that declare readable past (`historyImport`
+  with `windowMs` and `listHistory`) import it one bounded page per advance
+  call — one inbox row per event through the same deduped path webhooks
+  use, so a replayed page stores nothing twice and an interrupted import
+  resumes from its stored cursor. An event's identity is its
+  (connection, providerEventId): a re-listed event whose envelope drifted
+  (a webhook-first echo later listed with its provider instant, a skewed
+  redelivery) is adopted as a duplicate and the drift annotated on the
+  outcome row with fixed package text — never a 409, so one drifted event
+  can never brick the run. A poisoned event (a deterministic 4xx failure,
+  whatever the attempt) is recorded failed and skipped while the page
+  continues and the cursor advances; only transient failures abort with
+  the cursor unmoved. Starting is idempotent: overlapping starts resolve
+  to the single stored row. Every event writes one
+  `channel-import-outcome` row under its unique (import, event) key and the
+  progress counts those rows (one COUNT per state) instead of trusting hand
+  tallies, so racing advances and crash retries converge to a clean run's
+  numbers. Every applied sender reconciles through the composed
+  `channel-sender@1` capability when present (matched, created, or an
+  unresolved candidate for a human — never merged, never invented), and
+  stays pending otherwise; a re-listed same event whose sender evidence
+  now conflicts refines toward unresolved, reaching the same human
+  confirm queue. Quarantined rows stay evidence and invent no
+  contact. Progress is the `channel-import-state` row (cursor, phase, error
+  code) plus the outcome COUNTs, readable with `readInitialImport`.
 - `npm run crm -- package validate packages/channels` and
   `npm run crm -- package test packages/channels` (DX4 conformance).
 
@@ -105,8 +145,10 @@ createChannelsPackage({
 - No secret custody or rotation flow: the deployment resolves `secretRef`
   at call time; rotation replaces the referenced value without touching
   CRM data.
-- No reconciliation against provider truth and no per-connection
-  observability aggregates yet (follow-ups).
+- No reconciliation against provider truth beyond the initial history
+  import, and no per-connection observability aggregates yet (follow-ups).
+  No automatic re-import of a completed connection, no calendar initial
+  window, no Meta history adapters yet: those are the follow-up voices.
 - No dead-letter requeue (human retry of an open letter): follow-up voice
   with its own state machine.
 - Sends, registrations and status changes require

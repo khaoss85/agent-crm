@@ -39,7 +39,8 @@ function loadManifest(name) {
 }
 
 export const CHANNEL_MANIFEST_NAMES = Object.freeze([
-  'channel-connection', 'channel-inbox-event', 'channel-dead-letter',
+  'channel-connection', 'channel-inbox-event', 'channel-dead-letter', 'channel-import-state',
+  'channel-import-outcome',
 ]);
 
 /**
@@ -47,7 +48,12 @@ export const CHANNEL_MANIFEST_NAMES = Object.freeze([
  *   adapterDefinition: any, fixtureApi: any,
  *   secretRef?: string, secretValue?: string,
  *   tenantId?: string, config?: Record<string, any>,
- * }} options
+ *   resolveSender?: ((request: any) => Promise<any>) | null,
+ *   dbPath?: string,
+ * }} options `resolveSender` stands in for the composed `channel-sender@1`
+ *   capability where the test proves the engine rather than the
+ *   reconciliation itself. `dbPath` opens a file database instead of
+ *   `:memory:` so two harnesses can share one store like two processes.
  */
 export function createChannelsHarness(options) {
   const secretRef = options.secretRef ?? 'vault://kit/channel-a';
@@ -55,7 +61,7 @@ export function createChannelsHarness(options) {
   const tenantId = options.tenantId ?? 'channel-kit';
   const userActor = { type: 'user', id: 'channel-kit' };
 
-  const database = createDatabase({ path: ':memory:' });
+  const database = createDatabase({ path: options.dbPath ?? ':memory:' });
   for (const { sql } of recordModuleMigrations(CHANNEL_MANIFEST_NAMES.map((name) => ({ name, manifest: loadManifest(name) })))) {
     database.raw.exec(sql);
   }
@@ -78,6 +84,7 @@ export function createChannelsHarness(options) {
   };
   const ops = createChannelOperations({
     database, modules, registries, resolveSecret, tenantId, config: options.config,
+    resolveSender: options.resolveSender ?? null,
   });
 
   const jobRegistry = createDurableJobHandlerRegistry();
@@ -150,6 +157,9 @@ export function createChannelsHarness(options) {
     connections: (spaceId) => ops.listConnections(spaceId),
     inbox: (spaceId) => ops.listInbox(spaceId),
     letters: (spaceId, state = null) => ops.listDeadLetters(spaceId, state),
+    startImport: (spaceId, args) => ops.startInitialImport({ spaceId, ...args, actor: args?.actor ?? userActor }),
+    advanceImport: (spaceId, args) => ops.advanceInitialImport({ spaceId, ...args }),
+    readImport: (spaceId, args) => ops.readInitialImport({ spaceId, ...args }),
     jobs: () => jobStore.list(500),
     auditRows: () => audit.list({ limit: 500 }),
     async dumpStorage() {

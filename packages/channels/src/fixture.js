@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError } from '../../core/index.js';
+import { assertHistoryPage } from './adapter.js';
 import { hmacWebhookHeaders, verifyHmacWebhook } from './crypto.js';
 
 /**
@@ -20,6 +21,28 @@ import { hmacWebhookHeaders, verifyHmacWebhook } from './crypto.js';
 
 export const FIXTURE_ADAPTER_NAME = 'fixture-channel';
 export const FIXTURE_ADAPTER_VERSION = 1;
+/** The past the fixture import covers: seven days, like a trial week. */
+export const FIXTURE_HISTORY_WINDOW_MS = 7 * 24 * 3600 * 1000;
+
+function encodeHistoryToken(index) {
+  return Buffer.from(String(index), 'utf8').toString('base64url');
+}
+
+function decodeHistoryToken(pageToken) {
+  if (pageToken === null || pageToken === undefined) return 0;
+  let index = -1;
+  try {
+    index = Number.parseInt(Buffer.from(String(pageToken), 'base64url').toString('utf8'), 10);
+  } catch {
+    index = -1;
+  }
+  if (!Number.isSafeInteger(index) || index < 0) {
+    throw new AppError('Fixture history page token is not one this adapter issued', {
+      code: 'CHANNEL_HISTORY_MALFORMED', status: 422,
+    });
+  }
+  return index;
+}
 
 export function createFixtureChannelAdapter(options = {}) {
   const name = options.name ?? FIXTURE_ADAPTER_NAME;
@@ -31,6 +54,8 @@ export function createFixtureChannelAdapter(options = {}) {
     /** @type {Map<string, {providerMessageId: string, message: any}>} */
     sentByKey: new Map(),
     sendCalls: 0,
+    /** @type {Array<any>} */
+    history: [],
   };
 
   const api = {
@@ -41,10 +66,30 @@ export function createFixtureChannelAdapter(options = {}) {
       state.flakyRemaining = flakyFailures;
     },
     reset() {
+      // Transport state only: the seeded past is fixture data, replaced by
+      // re-seeding. A mid-run reset must never wipe it (see gmail.js).
       state.mode = 'ok';
       state.flakyRemaining = 0;
       state.sentByKey.clear();
       state.sendCalls = 0;
+    },
+    /**
+     * Seed the provider past the import pages through: already-normalized
+     * channel events (`{ id, subject, seq?, at, sender? }`), validated like
+     * a provider page so a bad seed fails the test setup, never the import.
+     * @param {Array<any>} items
+     */
+    seedHistory(items) {
+      const seeds = (Array.isArray(items) ? items : []).map((item) => ({
+        providerEventId: item?.id,
+        subject: item?.subject ?? '',
+        sequence: item?.seq ?? null,
+        occurredAt: item?.at ?? null,
+        ...(item?.sender === undefined ? {} : { sender: item.sender }),
+      }));
+      const checked = assertHistoryPage({ events: seeds, nextPageToken: null }, seeds.length);
+      state.history.length = 0;
+      state.history.push(...checked.events);
     },
     sentMessages() {
       return [...state.sentByKey.values()].map((entry) => entry.message);
@@ -83,6 +128,30 @@ export function createFixtureChannelAdapter(options = {}) {
           sequence: Number.isSafeInteger(parsed.seq) ? parsed.seq : null,
           occurredAt: typeof parsed.at === 'string' ? parsed.at : null,
         };
+      },
+
+      historyImport: {
+        windowMs: FIXTURE_HISTORY_WINDOW_MS,
+        /**
+         * Page the seeded past: at or after `since`, oldest first, `limit`
+         * per page. The token is the next index — the same token replays
+         * the same page, which is what makes an import resume.
+         */
+        async listHistory({ secret, since, pageToken, limit }) {
+          if (secret !== expectedSecret) {
+            throw new AppError('Fixture history refuses this secret', { code: 'CHANNEL_HISTORY_REFUSED', status: 403 });
+          }
+          const start = decodeHistoryToken(pageToken);
+          const from = Date.parse(since);
+          const past = state.history
+            .filter((event) => event.occurredAt !== null && Date.parse(event.occurredAt) >= from)
+            .sort((a, b) => (a.occurredAt < b.occurredAt ? -1 : a.occurredAt > b.occurredAt ? 1
+              : (a.providerEventId < b.providerEventId ? -1 : 1)));
+          const size = Number.isSafeInteger(limit) && limit > 0 ? limit : past.length;
+          const slice = past.slice(start, start + size);
+          const next = start + size < past.length ? encodeHistoryToken(start + size) : null;
+          return { events: slice, nextPageToken: next };
+        },
       },
 
       normalizeOutbound(message) {

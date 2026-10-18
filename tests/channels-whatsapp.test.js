@@ -113,7 +113,7 @@ test('the WhatsApp adapter passes the shared channel kit', async (t) => {
     secrets: { ref: SECRET_REF, value: SECRET },
     harness,
   });
-  assert.equal(results.length, 7);
+  assert.equal(results.length, 8);
   for (const result of results) {
     assert.equal(result.pass, true, `kit check "${result.name}" failed: ${result.detail}`);
   }
