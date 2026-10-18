@@ -230,6 +230,13 @@ recorded the revision 1 migration composes without a checksum mismatch; a
 composition without the history still refuses loudly rather than silently
 re-applying a changed migration.
 
+Composers must not read `*.module.json` alone: `loadManifestSelectedEntries`
+(`packages/app/src/manifest-selection.js`) loads a package `modules`
+directory into selected-graph entries, attaching each checked-in sidecar, and
+is the production path for `startPortablePostgresqlApp` compositions. A
+hand-built `{name, manifest}` entry without the sidecar history is only for
+tests that prove the fail-closed refusal.
+
 ## Related
 
 `docs/MODULE_FACTORY.md` · `docs/plans/platform-module-evolution-v1.md` ·

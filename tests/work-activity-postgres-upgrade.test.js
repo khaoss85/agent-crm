@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { bootPostgresqlApp, openIsolatedPostgresqlPlanes } from './helpers/postgresql-application.js';
 import { createTestVerifier } from './helpers/identity-verifier-fixture.mjs';
 import { createAccordoAppAsync } from '../packages/app/src/index.js';
+import { loadManifestSelectedEntries } from '../packages/app/src/manifest-selection.js';
 
 const { Client } = pg;
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -20,27 +21,39 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  * MODULE_MIGRATION_CHECKSUM_MISMATCH).
  *
  * This test replays that upgrade on real PostgreSQL: migrate with the
- * revision 1 manifest (what b48b09e shipped), then compose with the current
- * framework carrying the revision history. Skips cleanly without a database;
- * CI always runs this suite against postgres:16.
+ * revision 1 manifest (what b48b09e shipped), then compose through the
+ * production loader (`loadManifestSelectedEntries` over the checked-in
+ * modules, the path `startPortablePostgresqlApp` compositions use).
+ * Skips cleanly without a database; CI always runs this suite against
+ * postgres:16.
  */
 
 const loadJson = (path) => JSON.parse(readFileSync(join(HERE, path), 'utf8'));
+const WORK_MODULES_DIR = join(HERE, '../packages/work/modules');
 const revision1 = () => loadJson('../packages/work/modules/work-activity.history.json').previousManifests[0];
 const revision2 = () => loadJson('../packages/work/modules/work-activity.module.json');
-const history = () => loadJson('../packages/work/modules/work-activity.history.json').previousManifests;
+const workTask = () => loadJson('../packages/work/modules/work-task.module.json');
 
+// The database as framework b48b09e left it: plain `{name, manifest}`
+// entries with the revision 1 manifest, exactly what the old production
+// loader built — no sidecar, no previousManifests support.
 const selectedRev1 = () => ({
   packageContract: 2, packages: [], actions: [],
-  modules: [{ name: 'work-activity', manifest: revision1() }],
+  modules: [
+    { name: 'work-activity', manifest: revision1() },
+    { name: 'work-task', manifest: workTask() },
+  ],
 });
 const selectedRev2NoHistory = () => ({
   packageContract: 2, packages: [], actions: [],
   modules: [{ name: 'work-activity', manifest: revision2() }],
 });
-const selectedRev2WithHistory = () => ({
+// The current production path: the framework loader reads the checked-in
+// manifests with the `<name>.history.json` sidecar beside each one, and the
+// selected graph carries the history into startPortablePostgresqlApp.
+const selectedRev2Production = () => ({
   packageContract: 2, packages: [], actions: [],
-  modules: [{ name: 'work-activity', manifest: revision2(), previousManifests: history() }],
+  modules: loadManifestSelectedEntries(WORK_MODULES_DIR),
 });
 
 async function connectTo(plane) {
@@ -70,10 +83,10 @@ test('a revision-1 database composes with the current framework once it carries 
   }
   await old.app.close();
 
-  // With the history the current framework composes over that database: the
-  // recorded bootstrap matches, and revision 2 arrives as the additive
-  // `pg_evolve_work_activities_r2` migration.
-  const upgraded = await bootPostgresqlApp(t, { planes, selected: selectedRev2WithHistory() });
+  // Through the production loader the current framework composes over that
+  // database: the recorded bootstrap matches, and revision 2 arrives as the
+  // additive `pg_evolve_work_activities_r2` migration.
+  const upgraded = await bootPostgresqlApp(t, { planes, selected: selectedRev2Production() });
   const check = await connectTo(planes.data);
   try {
     const ledger = await check.query('SELECT name FROM accordo.module_migrations WHERE name LIKE \'%work_activit%\' ORDER BY name');
