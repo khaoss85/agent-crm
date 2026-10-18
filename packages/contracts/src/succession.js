@@ -5,6 +5,7 @@ import { requireCallerTransaction } from './capabilities.js';
 import {
   classifyComponents,
   loadActivationSource,
+  loadActivationSourceAsync,
   resolvedNames,
   toJson,
   trusted,
@@ -385,7 +386,12 @@ export function termContinuity(source, successor) {
 
 /* ------------------------------------------------------------------------ */
 
-async function safeGet(service, id) {
+function safeGet(service, id) {
+  try { return service.get(id); } catch { return null; }
+}
+
+/** Awaited twin of `safeGet`, for the contract-2 graph only. */
+async function safeGetAsync(service, id) {
   try { return await service.get(id); } catch { return null; }
 }
 
@@ -507,13 +513,505 @@ export function createSuccessorActivationCapability(moduleNames) {
       }
 
       /** Everything both entry points need, derived once. */
+      function derive({ sourceContractId, successorOrderId, policy, policyVersion, overrides }) {
+        /** @type {any[]} */
+        const refusals = [];
+        const successions = trusted(modules, names.succession);
+
+        const contract = typeof sourceContractId === 'string' && sourceContractId !== ''
+          ? safeGet(trusted(modules, names.contract), sourceContractId) : null;
+        if (!contract) {
+          refusals.push(refusal('SOURCE_CONTRACT_NOT_FOUND', 'The source commercial contract does not exist', 404,
+            { sourceContractId: String(sourceContractId ?? '') }));
+          return { coherent: false, refusals, source: null, successor: null, delta: null };
+        }
+        if (!contract.currentVersionId) {
+          refusals.push(refusal('SOURCE_CONTRACT_INCOHERENT', 'The source contract has no current version', 409,
+            { sourceContractId: contract.id }));
+        }
+        const sourceTerm = sourceTermEvidence(contract);
+        if (sourceTerm.signed === null && sourceTerm.source !== null) {
+          refusals.push(refusal('SOURCE_TERM_PROVENANCE_UNCLASSIFIED',
+            'The source contract names a term provenance nobody classified, so nothing may be derived from its term', 409,
+            { termsSource: sourceTerm.source }));
+        }
+
+        // Exact indexed reads, never a paged scan: both guards must be
+        // complete, not the first 500 rows.
+        const sourceLines = trusted(modules, names.contractLine)
+          .listWhere({ contractId: contract.id })
+          .sort((a, b) => (a.position === b.position ? (a.id < b.id ? -1 : 1) : a.position - b.position));
+        const sourceSubscription = trusted(modules, names.subscription).listWhere({ contractId: contract.id })[0] ?? null;
+        if (sourceLines.length === 0) {
+          refusals.push(refusal('SOURCE_CONTRACT_INCOHERENT', 'The source contract carries no contract lines', 409,
+            { sourceContractId: contract.id }));
+        }
+        if (sourceSubscription) {
+          const strayLine = trusted(modules, names.subscriptionLine)
+            .listWhere({ subscriptionId: sourceSubscription.id })
+            .find((row) => row.contractId !== contract.id);
+          if (strayLine) {
+            refusals.push(refusal('SOURCE_CONTRACT_INCOHERENT',
+              'A subscription line under this contract names a different contract', 409,
+              { subscriptionLineId: strayLine.id }));
+          }
+        }
+
+        const existing = freezeSuccession(successions.listWhere({ sourceContractId: contract.id })[0] ?? null);
+        if (existing) {
+          refusals.push(refusal('CONFLICTING_SUCCESSOR',
+            'This contract already has a successor agreement; a contract is succeeded exactly once', 409,
+            { successionId: existing.id, successorContractId: existing.successorContractId }));
+        }
+
+        const source = Object.freeze({
+          contractId: contract.id,
+          status: contract.status,
+          currency: contract.currency,
+          companyId: contract.companyId ?? null,
+          contactId: contract.contactId ?? null,
+          customerName: contract.customerName ?? null,
+          customerEmail: contract.customerEmail ?? null,
+          orderId: contract.orderId,
+          currentVersionId: contract.currentVersionId ?? null,
+          subscriptionId: sourceSubscription?.id ?? null,
+          documentHash: contract.documentHash ?? null,
+          lineCount: sourceLines.length,
+          term: sourceTerm,
+        });
+
+        const orders = trusted(modules, names.order);
+        const order = typeof successorOrderId === 'string' && successorOrderId !== ''
+          ? safeGet(orders, successorOrderId) : null;
+        if (!order) {
+          refusals.push(refusal('SUCCESSOR_ORDER_NOT_FOUND', 'The successor order does not exist', 404,
+            { successorOrderId: String(successorOrderId ?? '') }));
+          return { coherent: false, refusals, source, successor: null, delta: null, existing, sourceLines, contract };
+        }
+        if (order.id === contract.orderId) {
+          refusals.push(refusal('SUCCESSOR_ORDER_IS_SOURCE_ORDER',
+            'The successor order is the order this contract was activated from; an agreement cannot succeed itself', 409,
+            { orderId: order.id }));
+        }
+
+        /** @type {any} */
+        let evidence = null;
+        try {
+          // Verified through `commercial-quotes@2` inside this read, so a plan
+          // and an execution both refuse a corrupted snapshot (M-1).
+          evidence = loadActivationSource(modules, names, order, domains);
+        } catch (error) {
+          if (!(error instanceof AppError)) throw error;
+          refusals.push(refusal(error.code ?? 'SOURCE_INCOHERENT', error.message, error.status ?? 409,
+            /** @type {any} */ (error).details ?? null));
+        }
+
+        let successor = null;
+        let delta = null;
+        let classification = null;
+        let continuity = { relation: 'unknown', gapDays: null, note: 'not derived: the successor order could not be read' };
+        let decisions = null;
+
+        if (evidence) {
+          // **The core invariant.** No signed term snapshot, no successor.
+          if (!evidence.signedTerm) {
+            refusals.push(refusal('SUCCESSOR_TERMS_NOT_SIGNED',
+              'The successor order carries no signed commercial term: its signed document contained none, so a successor term cannot be '
+              + 'claimed as signed. Post-signature operational dates are never promoted to signed renewal terms.', 409,
+              { successorOrderId: order.id, documentHash: order.documentHash }));
+          }
+          if (!customerMatches(contract, order)) {
+            refusals.push(refusal('SUCCESSOR_CUSTOMER_MISMATCH',
+              'The successor order belongs to a different customer than the source contract', 409,
+              {
+                sourceCompanyId: contract.companyId ?? null,
+                successorCompanyId: order.companyId ?? null,
+              }));
+          }
+          const alreadyActivated = trusted(modules, names.contract).listWhere({ orderId: order.id })[0] ?? null;
+          if (alreadyActivated) {
+            refusals.push(refusal('ORDER_ALREADY_ACTIVATED', 'This order is already activated', 409,
+              { contractId: alreadyActivated.id }));
+          }
+          const consumed = successions.listWhere({ successorOrderId: order.id })[0] ?? null;
+          if (consumed) {
+            refusals.push(refusal('SUCCESSOR_ORDER_ALREADY_CONSUMED',
+              'This order is already the successor of another agreement', 409, { successionId: consumed.id }));
+          }
+
+          const signedTerm = evidence.signedTerm ? signedTermFromSnapshot(evidence.signedTerm) : null;
+          if (signedTerm) {
+            continuity = termContinuity(sourceTerm, signedTerm);
+            if (sourceTerm.startDate
+              && calendarDaysBetween(sourceTerm.startDate, signedTerm.termStartDate) !== null
+              && calendarDaysBetween(sourceTerm.startDate, signedTerm.termStartDate) < 0) {
+              refusals.push(refusal('SUCCESSOR_TERM_PRECEDES_SOURCE',
+                'The successor term starts before the source agreement started', 409,
+                { sourceTermStartDate: sourceTerm.startDate, successorTermStartDate: signedTerm.termStartDate }));
+            }
+          }
+
+          delta = deriveDelta(sourceLines, evidence.components, order.currency ?? null);
+          const derived = classifyDelta(delta);
+          classification = derived;
+
+          successor = Object.freeze({
+            orderId: order.id,
+            quoteId: order.quoteId ?? null,
+            quoteVersionId: order.quoteVersionId ?? null,
+            documentHash: order.documentHash,
+            artifactHash: order.artifactHash ?? null,
+            companyId: order.companyId ?? null,
+            contactId: order.contactId ?? null,
+            customerName: order.customerName ?? null,
+            customerEmail: order.customerEmail ?? null,
+            currency: order.currency,
+            componentCount: evidence.components.length,
+            term: signedTerm
+              ? Object.freeze({
+                effectiveDate: signedTerm.effectiveDate,
+                startDate: signedTerm.termStartDate,
+                endDate: signedTerm.termEndDate,
+                endDateIsInclusive: true,
+                days: signedTerm.termDays,
+                autoRenew: signedTerm.autoRenew,
+                renewalNoticeDays: signedTerm.renewalNoticeDays,
+                source: SIGNED_TERMS_SOURCE,
+                signed: true,
+                signedBasis: 'DERIVED_FROM_DECLARED_TERM_SOURCE',
+                provenanceNote: SIGNED_TERMS_NOTE,
+                termsFingerprint: evidence.signedTerm.termsFingerprint,
+              })
+              : null,
+            termsProvenance: signedTerm
+              ? { source: SIGNED_TERMS_SOURCE, signed: true, note: SIGNED_TERMS_NOTE }
+              : {
+                source: null,
+                signed: false,
+                note: 'this order\'s signed document carried no commercial term. Any dates recorded against it would be post-signature '
+                  + 'operational metadata, and M16b refuses to build a successor agreement on them',
+              },
+          });
+
+          // The policy is optional for a plan and mandatory for an execution.
+          if (policy && domains) {
+            const resolved = domains.getPolicy('contracts', POLICY_KIND, policy, policyVersion);
+            const normalized = normalizeOverrides(overrides, new Set(evidence.components.map(({ component }) => component.id)));
+            decisions = classifyComponents({
+              policy: resolved.definition,
+              fingerprint: resolved.fingerprint,
+              order,
+              components: evidence.components,
+              overrides: normalized,
+            });
+            const ambiguous = decisions.filter((decision) => decision.ambiguousDimensions.length > 0);
+            if (ambiguous.length > 0) {
+              refusals.push(refusal('CLASSIFICATION_AMBIGUOUS',
+                `${ambiguous.length} order component(s) could not be classified and need an explicit human override`, 409,
+                {
+                  orderComponentIds: ambiguous.map((decision) => decision.component.id),
+                  dimensions: ambiguous.map((decision) => ({
+                    orderComponentId: decision.component.id,
+                    dimensions: decision.ambiguousDimensions,
+                  })),
+                }));
+            }
+            decisions = { decisions, policy: resolved.definition, fingerprint: resolved.fingerprint };
+          }
+        }
+
+        return {
+          coherent: refusals.length === 0,
+          refusals,
+          source,
+          successor,
+          delta,
+          classification,
+          continuity,
+          existing,
+          sourceLines,
+          contract,
+          order,
+          evidence,
+          decisions,
+        };
+      }
+
+      return Object.freeze({
+        capabilityContract: 1,
+
+        /**
+         * What executing this pairing would do, and every reason it would be
+         * refused — **writing nothing at all**: no record, no audit entry, no
+         * domain event. A plan is never an authorisation; `executeSuccession`
+         * recomputes all of it inside its own transaction.
+         */
+        planSuccession(request = {}) {
+          const derived = derive({
+            sourceContractId: request.sourceContractId,
+            successorOrderId: request.successorOrderId,
+            policy: request.policy ?? null,
+            policyVersion: request.policyVersion ?? null,
+            overrides: request.classificationOverrides ?? null,
+          });
+          return Object.freeze({
+            successionContract: 1,
+            writes: 'nothing — this is a read-only plan',
+            sourceContractId: request.sourceContractId ?? null,
+            successorOrderId: request.successorOrderId ?? null,
+            coherent: derived.coherent,
+            refusals: Object.freeze(derived.refusals),
+            source: derived.source,
+            successor: derived.successor,
+            termContinuity: derived.continuity ? Object.freeze({ ...derived.continuity }) : null,
+            delta: derived.delta,
+            classification: derived.classification?.classification ?? null,
+            classificationBasis: derived.classification?.basis ?? null,
+            classificationVocabulary: [...CLASSIFICATIONS],
+            existingSuccession: derived.existing ?? null,
+            notModeled: [...NOT_MODELED],
+            limitations: Object.freeze([
+              'NO_SCHEDULER — nothing here fires on a date, and no term renews itself',
+              'NOT_A_LEGAL_INSTRUMENT — the successor agreement is evidence assembled from a signed order, not a legal opinion about it',
+              'SIGNED_TERM_REQUIRED — an order whose signed document carried no term cannot produce a successor agreement',
+              'NO_BILLING — no invoice, payment, tax, proration or revenue recognition exists to follow from this',
+              'NO_NOTIFICATION — nobody is told that any of this happened',
+            ]),
+          });
+        },
+
+        /**
+         * Execute the successor agreement, inside the caller's transaction.
+         *
+         * Every fact is recomputed here from immutable evidence — a plan the
+         * caller computed earlier is never trusted, and no classification the
+         * caller supplies is accepted. The first refusal is thrown, whole:
+         * partial execution is not a state this framework produces.
+         */
+        async executeSuccession(request = {}) {
+          const actor = request.actor ?? context.actor;
+          if (!actor || typeof actor !== 'object' || /** @type {any} */ (actor).type !== 'user') {
+            throw new AppError('Executing a successor commercial agreement requires a human user actor', {
+              code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+            });
+          }
+          if (typeof request.policy !== 'string' || request.policy === '' || !Number.isSafeInteger(request.policyVersion)) {
+            throw new AppError('An explicit order activation policy name and version are required', {
+              code: 'ACTIVATION_POLICY_REQUIRED', status: 400,
+            });
+          }
+          if (typeof request.executionRef !== 'string' || request.executionRef === '' || request.executionRef.length > 200) {
+            throw new AppError('An execution reference is required', { code: 'EXECUTION_REF_REQUIRED', status: 400 });
+          }
+
+          const derived = derive({
+            sourceContractId: request.sourceContractId,
+            successorOrderId: request.successorOrderId,
+            policy: request.policy,
+            policyVersion: request.policyVersion,
+            overrides: request.classificationOverrides ?? null,
+          });
+          if (derived.refusals.length > 0) throw asError(derived.refusals[0]);
+          if (!derived.decisions) {
+            // Unreachable through the declared consumer, which always brings the
+            // registry handle. A caller that reaches it gets a sentence rather
+            // than a TypeError on the next line — the same fail-closed posture
+            // every other boundary in this file takes.
+            throw new AppError(
+              `${SUCCESSION_CAPABILITY.name} requires the caller's domains view to resolve the activation policy`,
+              { code: 'CAPABILITY_CONTEXT_INVALID', status: 500 },
+            );
+          }
+
+          const now = typeof context.now === 'function' ? context.now : () => new Date().toISOString();
+          const activatedAt = now();
+          const term = signedTermFromSnapshot(derived.evidence.signedTerm);
+
+          // Every refusal above is a read: the plan, the coherence guards, the
+          // policy. Below is the largest write set this repository produces —
+          // a contract, its version, its lines, a subscription and its lines,
+          // the obligations, the activation row and the lineage that says what
+          // was replaced. `translateRace` below states plainly that a lost race
+          // "rolls back whole"; that is true only inside a caller-owned
+          // transaction, so this proves there is one before the first row.
+          //
+          // All nine services, not the first one: they must land on ONE
+          // connection, and two handles would break the set even inside a
+          // transaction because they would be inside two different ones.
+          requireCallerTransaction(
+            [
+              trusted(modules, names.contract), trusted(modules, names.contractVersion),
+              trusted(modules, names.contractLine), trusted(modules, names.subscription),
+              trusted(modules, names.subscriptionLine), trusted(modules, names.deliveryObligation),
+              trusted(modules, names.serviceObligation), trusted(modules, names.activation),
+              trusted(modules, names.succession),
+            ],
+            'Executing a successor commercial agreement',
+          );
+
+          let written;
+          try {
+            written = await writeActivation({
+              order: derived.order,
+              source: derived.evidence,
+              term,
+              policy: derived.decisions.policy,
+              fingerprint: derived.decisions.fingerprint,
+              decisions: derived.decisions.decisions,
+              actor,
+              modules,
+              names,
+              activatedAt,
+            });
+          } catch (error) {
+            throw translateRace(error, 'ORDER_ALREADY_ACTIVATED',
+              'This order was activated by another connection while this execution was running');
+          }
+
+          const delta = derived.delta;
+          const classification = derived.classification;
+          const continuity = derived.continuity;
+          const successions = trusted(modules, names.succession);
+          let lineage;
+          try {
+            lineage = await successions.createManaged({
+              // The lineage's identity is the source agreement: a contract is
+              // succeeded exactly once, so nothing smaller identifies it and
+              // no clock belongs in it.
+              sourceKey: `contract-succession:${derived.source.contractId}`,
+              sourceContractId: derived.source.contractId,
+              sourceContractVersionId: derived.source.currentVersionId,
+              sourceSubscriptionId: derived.source.subscriptionId,
+              sourceOrderId: derived.source.orderId,
+              successorContractId: written.contract.id,
+              successorContractVersionId: written.version.id,
+              successorSubscriptionId: written.subscription?.id ?? null,
+              successorOrderId: derived.order.id,
+              successorActivationId: written.activation.id,
+              executionRef: request.executionRef,
+              companyId: derived.source.companyId,
+              customerName: derived.source.customerName,
+              currency: derived.order.currency,
+              classification: classification.classification,
+              classificationBasis: classification.basis,
+              deltaJson: toJson(delta, 'successor delta'),
+              addedLineCount: delta.counts.added,
+              removedLineCount: delta.counts.removed,
+              changedLineCount: delta.counts.changed,
+              unchangedLineCount: delta.counts.unchanged,
+              sourceTermStartDate: derived.source.term.startDate,
+              sourceTermEndDate: derived.source.term.endDate,
+              sourceTermsSource: derived.source.term.source,
+              sourceTermSigned: derived.source.term.signed === true,
+              successorTermStartDate: term.termStartDate,
+              successorTermEndDate: term.termEndDate,
+              successorTermsSource: term.termsSource,
+              successorTermsFingerprint: derived.evidence.signedTerm.termsFingerprint,
+              termContinuity: continuity.relation,
+              termGapDays: continuity.gapDays,
+              documentHash: derived.order.documentHash,
+              policy: derived.decisions.policy.name,
+              policyVersion: derived.decisions.policy.version,
+              policyFingerprint: derived.decisions.fingerprint,
+              executedBy: String(/** @type {any} */ (actor).id ?? 'unknown'),
+              executedAt: activatedAt,
+            }, { actor });
+          } catch (error) {
+            throw translateRace(error, 'CONFLICTING_SUCCESSOR',
+              'Another connection recorded a successor for this agreement while this execution was running');
+          }
+
+          return {
+            succession: freezeSuccession(lineage),
+            successorContractId: written.contract.id,
+            successorContractVersionId: written.version.id,
+            successorSubscriptionId: written.subscription?.id ?? null,
+            successorActivationId: written.activation.id,
+            successorStatus: written.state,
+            counts: written.counts,
+            classification: classification.classification,
+            classificationBasis: classification.basis,
+            termContinuity: continuity.relation,
+            termGapDays: continuity.gapDays,
+            delta,
+          };
+        },
+
+        /** The lineage recorded for one source agreement, or null. */
+        succession(sourceContractId) {
+          if (typeof sourceContractId !== 'string' || sourceContractId === '') return null;
+          return freezeSuccession(trusted(modules, names.succession).listWhere({ sourceContractId })[0] ?? null);
+        },
+
+        /** The lineage that produced one successor agreement, or null. */
+        successionBySuccessor(successorContractId) {
+          if (typeof successorContractId !== 'string' || successorContractId === '') return null;
+          return freezeSuccession(trusted(modules, names.succession).listWhere({ successorContractId })[0] ?? null);
+        },
+
+        /** The lineage that consumed one signed order, or null. */
+        successionByOrder(successorOrderId) {
+          if (typeof successorOrderId !== 'string' || successorOrderId === '') return null;
+          return freezeSuccession(trusted(modules, names.succession).listWhere({ successorOrderId })[0] ?? null);
+        },
+      });
+    },
+  };
+}
+
+/**
+ * `contracts-successor-activation@1` reads and writes for the contract-2
+ * graph — the awaited twin of `createSuccessorActivationCapability`,
+ * method for method. Offered only by the `packageContract: 2` contracts
+ * domain (which selects it instead of the synchronous factory), so the two
+ * graphs can never share it: the synchronous graph keeps the published
+ * synchronous shape, and every `await` here settles an asynchronous-storage
+ * read. Internal consumers (Lifecycle amendment actions) already `await`
+ * every call, so the same call sites run unchanged on both graphs.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function createSuccessorActivationAsyncCapability(moduleNames) {
+  const names = resolvedNames(moduleNames);
+  return {
+    name: SUCCESSION_CAPABILITY.name,
+    version: SUCCESSION_CAPABILITY.version,
+    capabilityContract: 2,
+    description:
+      'Plan and execute a governed successor commercial agreement from a signed immutable Order, and read the immutable lineage it produced. '
+      + 'Planning writes nothing; execution recomputes every fact inside the caller\'s transaction and refuses an Order whose signed document '
+      + 'carried no term. Grants no storage handle, mutates no historical record, and cancels, schedules, prices and bills nothing.',
+    /** @param {{modules?: any, domains?: any, actor?: unknown, now?: () => string}} context */
+    async create(context = {}) {
+      const modules = context.modules;
+      if (!modules || typeof modules.get !== 'function') {
+        throw new AppError(`${SUCCESSION_CAPABILITY.name} requires the caller's modules view`, {
+          code: 'CAPABILITY_CONTEXT_INVALID', status: 500,
+        });
+      }
+      const domains = context.domains ?? null;
+      // The lineage record is what this capability exists to write; a project
+      // that composed the package without applying the manifest gets a
+      // sentence at the boundary rather than a NotFoundError from three calls
+      // deeper, where it reads as "the contract is missing".
+      let successionModule = null;
+      try { successionModule = modules.get(names.succession); } catch { successionModule = null; }
+      if (!successionModule?.service?.createManaged) {
+        throw new AppError(
+          `The contracts package is installed without its "${names.succession}" records, so successor lineage cannot be recorded. `
+          + 'Apply packages/contracts/modules/contract-succession.module.json.',
+          { code: 'CONTRACT_STORAGE_INVALID', status: 500 },
+        );
+      }
+
+      /** Everything both entry points need, derived once. */
       async function derive({ sourceContractId, successorOrderId, policy, policyVersion, overrides }) {
         /** @type {any[]} */
         const refusals = [];
         const successions = trusted(modules, names.succession);
 
         const contract = typeof sourceContractId === 'string' && sourceContractId !== ''
-          ? await safeGet(trusted(modules, names.contract), sourceContractId) : null;
+          ? await safeGetAsync(trusted(modules, names.contract), sourceContractId) : null;
         if (!contract) {
           refusals.push(refusal('SOURCE_CONTRACT_NOT_FOUND', 'The source commercial contract does not exist', 404,
             { sourceContractId: String(sourceContractId ?? '') }));
@@ -576,7 +1074,7 @@ export function createSuccessorActivationCapability(moduleNames) {
 
         const orders = trusted(modules, names.order);
         const order = typeof successorOrderId === 'string' && successorOrderId !== ''
-          ? await safeGet(orders, successorOrderId) : null;
+          ? await safeGetAsync(orders, successorOrderId) : null;
         if (!order) {
           refusals.push(refusal('SUCCESSOR_ORDER_NOT_FOUND', 'The successor order does not exist', 404,
             { successorOrderId: String(successorOrderId ?? '') }));
@@ -593,7 +1091,7 @@ export function createSuccessorActivationCapability(moduleNames) {
         try {
           // Verified through `commercial-quotes@2` inside this read, so a plan
           // and an execution both refuse a corrupted snapshot (M-1).
-          evidence = await loadActivationSource(modules, names, order, domains);
+          evidence = await loadActivationSourceAsync(modules, names, order, domains);
         } catch (error) {
           if (!(error instanceof AppError)) throw error;
           refusals.push(refusal(error.code ?? 'SOURCE_INCOHERENT', error.message, error.status ?? 409,
@@ -732,7 +1230,7 @@ export function createSuccessorActivationCapability(moduleNames) {
       }
 
       return Object.freeze({
-        capabilityContract: 1,
+        capabilityContract: 2,
 
         /**
          * What executing this pairing would do, and every reason it would be
