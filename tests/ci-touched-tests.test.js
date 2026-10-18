@@ -25,6 +25,7 @@ import {
   changedTestFiles,
   fallbackPlan,
   hasCodeChange,
+  listChangedFiles,
   parseArgs,
   planGate,
   relativeImportsOf,
@@ -279,35 +280,36 @@ test('changedTestFiles is the PR-owned test scope, sorted', () => {
 test('planGate runs a selection that fits the budget', () => {
   assert.deepEqual(
     planGate(['packages/app/src/index.js', 'tests/api.test.js'], ['tests/api.test.js'], 50),
-    { kind: 'run', tests: ['tests/api.test.js'], reason: null },
+    { kind: 'run', tests: ['tests/api.test.js'], reason: null, dropped: [] },
   );
 });
 
 test('planGate skips docs-only changes with an empty selection', () => {
   assert.deepEqual(
     planGate(['docs/QUALITY_GATES.md', 'package.json'], [], 50),
-    { kind: 'skip', tests: [], reason: 'empty-selection' },
+    { kind: 'skip', tests: [], reason: 'empty-selection', dropped: [] },
   );
 });
 
-test('planGate refuses fail-closed when code changed and nothing reaches it', () => {
+test('planGate warns (fallback) when code changed and nothing reaches it', () => {
+  // Best-effort, never a refusal: the guards still join in main() and run,
+  // and the full suite on `main` stays the safety net.
   assert.deepEqual(
     planGate(['packages/cli/bin/accordo.js'], [], 50),
-    {
-      kind: 'refuse',
-      tests: [],
-      reason: 'empty-selection',
-      uncovered: ['packages/cli/bin/accordo.js'],
-    },
+    { kind: 'fallback', tests: [], reason: 'empty-selection', dropped: [] },
   );
 });
 
 test('planGate falls back to the changed tests on an oversized selection', () => {
   const selected = Array.from({ length: 51 }, (_, i) => `tests/s${i}.test.js`);
-  assert.deepEqual(
-    planGate(['packages/core/src/deep.js', 'tests/mine.test.js'], selected, 50),
-    { kind: 'fallback', tests: ['tests/mine.test.js'], reason: 'oversized-selection' },
-  );
+  const plan = planGate(['packages/core/src/deep.js', 'tests/mine.test.js'], selected, 50);
+  assert.equal(plan.kind, 'fallback');
+  assert.deepEqual(plan.tests, ['tests/mine.test.js']);
+  assert.equal(plan.reason, 'oversized-selection');
+  // The fifty-one selected tests the fallback does not run are reported,
+  // so main() can warn naming them.
+  assert.equal(plan.dropped.length, 51);
+  assert.ok(!plan.dropped.includes('tests/mine.test.js'));
 });
 
 test('planGate refuses an oversized selection with no changed test of its own', () => {
@@ -316,24 +318,68 @@ test('planGate refuses an oversized selection with no changed test of its own', 
   const plan = planGate(['packages/core/src/deep.js'], selected, 50);
   assert.equal(plan.kind, 'refuse');
   assert.deepEqual(plan.uncovered, ['packages/core/src/deep.js']);
+  assert.deepEqual(plan.dropped, selected);
 });
 
-test('fallbackPlan resolves skip, refuse and fallback without a selection', () => {
+test('a deletion-only oversized selection refuses and names the dropped importers', () => {
+  // Regression test: the runnable set alone (`changed`, without deleted
+  // paths) made this a silent skip — `hasCodeChange([])` is false — while
+  // sixty stale importers proved the breakage and the full suite on `main`
+  // failed on the missing import. Decided on the reachability scope, it
+  // refuses; deleted files still never run.
+  const selected = Array.from({ length: 60 }, (_, i) => `tests/keep${i}.test.js`);
+  const plan = planGate([], selected, 50, ['packages/core/src/shared.js']);
+  assert.equal(plan.kind, 'refuse');
+  assert.deepEqual(plan.tests, []);
+  assert.deepEqual(plan.dropped, selected);
+});
+
+test('a timed-out deletion-only selection warns and names the dropped importers', () => {
+  // Same family through the timeout path: `changed` is empty, the mapped
+  // set is not, the scope carries the deleted source — a warned fallback,
+  // never a skip, and the dropped importers are named.
+  const selected = Array.from({ length: 60 }, (_, i) => `tests/keep${i}.test.js`);
+  const plan = fallbackPlan([], 'selection-timeout', ['packages/core/src/shared.js'], selected);
+  assert.equal(plan.kind, 'fallback');
+  assert.deepEqual(plan.tests, []);
+  assert.deepEqual(plan.dropped, selected);
+});
+
+test('a docs-only change still skips even with a deleted scope beside it', () => {
+  // No JavaScript anywhere in the scope: nothing to refuse or warn about.
+  const plan = fallbackPlan(['docs/QUALITY_GATES.md'], 'empty-selection', ['docs/QUALITY_GATES.md']);
+  assert.deepEqual(plan, { kind: 'skip', tests: [], reason: 'empty-selection', dropped: [] });
+});
+
+test('fallbackPlan resolves skip, warned fallback and refuse without a selection', () => {
   assert.deepEqual(
     fallbackPlan(['docs/QUALITY_GATES.md'], 'selection-timeout'),
-    { kind: 'skip', tests: [], reason: 'selection-timeout' },
+    { kind: 'skip', tests: [], reason: 'selection-timeout', dropped: [] },
   );
   assert.deepEqual(
     fallbackPlan(['packages/app/src/index.js', 'tests/mine.test.js'], 'selection-timeout'),
-    { kind: 'fallback', tests: ['tests/mine.test.js'], reason: 'selection-timeout' },
+    { kind: 'fallback', tests: ['tests/mine.test.js'], reason: 'selection-timeout', dropped: [] },
   );
+  // Code changed with no reaching test warns instead of refusing: main()
+  // still joins the repo-wide guards and runs them.
   assert.deepEqual(
     fallbackPlan(['packages/app/src/index.js'], 'selection-timeout'),
+    { kind: 'fallback', tests: [], reason: 'selection-timeout', dropped: [] },
+  );
+  assert.deepEqual(
+    fallbackPlan(['packages/app/src/index.js'], 'empty-selection'),
+    { kind: 'fallback', tests: [], reason: 'empty-selection', dropped: [] },
+  );
+  // The only refusal left: an oversized selection the PR carries no test
+  // file of its own for — no evidence this step can run.
+  assert.deepEqual(
+    fallbackPlan(['packages/app/src/index.js'], 'oversized-selection'),
     {
       kind: 'refuse',
       tests: [],
-      reason: 'selection-timeout',
+      reason: 'oversized-selection',
       uncovered: ['packages/app/src/index.js'],
+      dropped: [],
     },
   );
 });
@@ -374,9 +420,10 @@ test('selection is end to end on a throwaway repository with real git', () => {
     git(['add', '.']);
     git(['commit', '-m', 'pr']);
 
-    const diff = git(['diff', '--name-only', 'base...HEAD']);
-    assert.equal(diff.status, 0);
-    const changed = diff.stdout.trim().split('\n');
+    // The production diff commands, not a copy: listChangedFiles runs them.
+    const { changed, allChanged } = listChangedFiles(git, 'base');
+    assert.deepEqual(changed, ['packages/app/src/index.js', 'tests/new.test.js']);
+    assert.deepEqual(allChanged, changed);
     const testContents = new Map();
     for (const testPath of ['tests/api.test.js', 'tests/other.test.js', 'tests/new.test.js']) {
       testContents.set(testPath, git(['show', `HEAD:${testPath}`]).stdout);
@@ -385,6 +432,103 @@ test('selection is end to end on a throwaway repository with real git', () => {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('deleted files leave the run but keep reachability and the guard check', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'touched-deleted-'));
+  try {
+    const git = (/** @type {string[]} */ args) =>
+      spawnGit(args, { cwd: directory });
+    const write = (/** @type {string} */ path, /** @type {string} */ body) => {
+      const full = join(directory, path);
+      mkdirSync(join(full, '..'), { recursive: true });
+      writeFileSync(full, body);
+    };
+
+    git(['init']);
+    git(['config', 'user.email', 'touched@example.invalid']);
+    git(['config', 'user.name', 'touched']);
+    write('packages/app/src/keep.js', 'export const keep = 1;\n');
+    write('packages/app/src/gone.js', 'export const gone = 1;\n');
+    write('tests/keep.test.js', "import { keep } from '../packages/app/src/keep.js';\n");
+    write('tests/gone.test.js', "import { gone } from '../packages/app/src/gone.js';\n");
+    // Unchanged, still imports the module the PR deletes: the fast gate
+    // must run it, or it passes while the full suite on `main` fails on
+    // the missing import.
+    write('tests/stale.test.js', "import { gone } from '../packages/app/src/gone.js';\n");
+    git(['add', '.']);
+    git(['commit', '-m', 'base']);
+    git(['branch', 'base']);
+
+    // A PR change: one source edit plus two deletions (a source file and
+    // the test that reached it).
+    write('packages/app/src/keep.js', 'export const keep = 2;\n');
+    git(['rm', '-q', 'packages/app/src/gone.js', 'tests/gone.test.js']);
+    git(['add', '.']);
+    git(['commit', '-m', 'pr']);
+
+    const { changed, deleted, allChanged } = listChangedFiles(git, 'base');
+    // Deleted files need no test run: only the edit drives the run.
+    assert.deepEqual(changed, ['packages/app/src/keep.js']);
+    assert.deepEqual(deleted, ['packages/app/src/gone.js', 'tests/gone.test.js']);
+    // The unfiltered diff still sees the deletions, so the guard check in
+    // main() (withRepoWideGuards over allChanged) still runs on them: a
+    // deleted listed guard is missing from the corpus and throws instead
+    // of shrinking the gate.
+    assert.deepEqual(
+      [...allChanged].sort(),
+      ['packages/app/src/gone.js', 'packages/app/src/keep.js', 'tests/gone.test.js'],
+    );
+    const testContents = new Map([
+      ['tests/keep.test.js', git(['show', 'HEAD:tests/keep.test.js']).stdout],
+      ['tests/stale.test.js', git(['show', 'HEAD:tests/stale.test.js']).stdout],
+    ]);
+    // main() seeds reachability with the deleted paths: the deleted module
+    // pulls in its unchanged importer, while the deleted test itself is
+    // absent from the corpus and never selected.
+    assert.deepEqual(
+      selectTouchedTests([...changed, ...deleted], testContents),
+      ['tests/keep.test.js', 'tests/stale.test.js'],
+    );
+    // Guards still join a deletion-only remainder through the unfiltered diff.
+    assert.deepEqual(
+      withRepoWideGuards([], testContents, allChanged, ['tests/keep.test.js']),
+      ['tests/keep.test.js'],
+    );
+    // But a deleted guard that stays listed fails red instead of shrinking
+    // the gate.
+    assert.throws(
+      () => withRepoWideGuards([], testContents, allChanged, ['tests/gone.test.js']),
+      /absent from tests\//,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a deleted module selects its unchanged importer, a deleted test never itself', () => {
+  const testContents = contents({
+    'tests/stale.test.js': "import { gone } from '../packages/app/src/gone.js';\n",
+    'tests/other.test.js': "import test from 'node:test';\n",
+  });
+  // The deleted source path seeds reachability: the test still importing
+  // it runs and fails red on the missing import, on the PR and on main.
+  assert.deepEqual(
+    selectTouchedTests(['packages/app/src/gone.js'], testContents),
+    ['tests/stale.test.js'],
+  );
+  // A deleted test file seeds its own importers but is absent from the
+  // corpus, so it is never itself selected.
+  assert.deepEqual(
+    selectTouchedTests(
+      ['tests/gone.test.js'],
+      contents({
+        'tests/wrapper.test.js': "import './gone.test.js';\n",
+        'tests/other.test.js': "import test from 'node:test';\n",
+      }),
+    ),
+    ['tests/wrapper.test.js'],
+  );
 });
 
 /**
@@ -508,11 +652,14 @@ test('an oversized synthetic selection falls back to the changed tests', () => {
   const changed = ['packages/synth/src/target.js', 'tests/synth-t0.test.js'];
   const selected = selectTouchedTests(changed, testContents, fileImports);
   assert.ok(selected.length > 50);
-  assert.deepEqual(planGate(changed, selected, 50), {
-    kind: 'fallback',
-    tests: ['tests/synth-t0.test.js'],
-    reason: 'oversized-selection',
-  });
+  const plan = planGate(changed, selected, 50);
+  assert.equal(plan.kind, 'fallback');
+  assert.deepEqual(plan.tests, ['tests/synth-t0.test.js']);
+  assert.equal(plan.reason, 'oversized-selection');
+  assert.deepEqual(
+    plan.dropped,
+    selected.filter((test) => test !== 'tests/synth-t0.test.js'),
+  );
 });
 
 // ------------------------------------------------------------------ repo-wide guards
