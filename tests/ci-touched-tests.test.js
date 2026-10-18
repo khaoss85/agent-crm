@@ -523,7 +523,7 @@ test('an oversized synthetic selection falls back to the changed tests', () => {
 // none of it, so the import mapping never selects them. They always run on
 // top of the selection (see `withRepoWideGuards`); these tests hold that.
 
-test('the declared list holds the two acceptance guards', () => {
+test('the declared list holds the acceptance guards', () => {
   assert.ok(
     REPO_WIDE_GUARDS.includes('tests/actor-fails-closed.test.js'),
     'a payments-only PR must run tests/actor-fails-closed.test.js',
@@ -531,6 +531,10 @@ test('the declared list holds the two acceptance guards', () => {
   assert.ok(
     REPO_WIDE_GUARDS.includes('tests/isolated-git.test.js'),
     'a payments-only PR must run tests/isolated-git.test.js',
+  );
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/module-manifest-revision-guard.test.js'),
+    'a manifest-only PR must run tests/module-manifest-revision-guard.test.js',
   );
 });
 
