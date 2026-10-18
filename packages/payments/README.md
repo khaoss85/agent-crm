@@ -44,8 +44,9 @@ lifecycle table, so a mint racing another mint resolves to the same
 checkout and a suspend racing a delivery quarantines instead of applying.
 A suspend racing a mint holds the minted checkout reference on the open
 intent instead of dropping it: the retry with the same key resumes that
-session (no second mint), and its webhook still matches after
-reactivation — a minted session is never left orphaned.
+session (no second mint), and a webhook arriving before the retry
+promotes the held intent through mint first — a minted session is never
+left orphaned on either ordering.
 
 A deployment that renamed the record modules maps the canonical record
 names to its own; anything else is refused, never silently ignored:

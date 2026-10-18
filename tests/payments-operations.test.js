@@ -800,6 +800,96 @@ test('a suspend during checkout mint holds the session: no orphan, same session 
   assert.equal(harness.status(SPACE_A, retry.request.id).status, 'paid');
 });
 
+test('a webhook that beats the retry promotes the held intent instead of refusing it', async (t) => {
+  const { definition, api } = createFixtureStripeAdapter({ secret: SECRET });
+  let suspendMidMint = null;
+  const gated = {
+    ...definition,
+    createPayment: async (args) => {
+      const created = await definition.createPayment(args);
+      if (suspendMidMint) await suspendMidMint();
+      return created;
+    },
+  };
+  const { harness } = setup({ adapterDefinition: gated });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  suspendMidMint = () => directAction(
+    harness, 'payment-connection', 'suspend-connection',
+    connectionRow(harness, SPACE_A, key), { reason: 'kit suspends mid-mint' },
+  );
+  await assert.rejects(
+    harness.request(SPACE_A, {
+      connectionKey: key, quoteId: 'quote-webhook-first', amount: 100, currency: 'EUR', requestKey: 'req-webhook-first',
+    }),
+    (e) => e.code === 'PAYMENT_CONNECTION_NOT_ACTIVE',
+  );
+  const mintedRef = [...api.state.createdByKey.values()][0].providerRef;
+  // No outbound retry: the binding is reactivated and the provider
+  // webhook arrives first. The held intent promotes through mint, then
+  // the outcome applies — never open → paid, never a refusal.
+  await harness.activate(SPACE_A, key);
+  const body = paidBody(mintedRef, 'evt_webhook_first_1');
+  const ingested = await harness.ingest(SPACE_A, {
+    connectionKey: key, rawBody: body, headers: harness.faults.sign(body),
+  });
+  assert.equal(ingested.duplicate, false);
+  assert.equal(ingested.effect, 'applied');
+  assert.equal(ingested.status, 'paid');
+  const rows = harness.internals.modules.get('payment-request').service.listWhere({ spaceId: SPACE_A });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'paid');
+  assert.equal(rows[0].providerRef, mintedRef);
+  assert.equal(JSON.parse(harness.dumpStorage()).events.length, 1);
+  assert.equal(api.state.createCalls, 1, 'no second mint on the webhook path either');
+});
+
+test('a quarantined held checkout resumes through the same promotion after reactivation', async (t) => {
+  const { definition, api } = createFixtureStripeAdapter({ secret: SECRET });
+  let suspendMidMint = null;
+  const gated = {
+    ...definition,
+    createPayment: async (args) => {
+      const created = await definition.createPayment(args);
+      if (suspendMidMint) await suspendMidMint();
+      return created;
+    },
+  };
+  const { harness } = setup({ adapterDefinition: gated });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  suspendMidMint = () => directAction(
+    harness, 'payment-connection', 'suspend-connection',
+    connectionRow(harness, SPACE_A, key), { reason: 'kit suspends mid-mint' },
+  );
+  await assert.rejects(
+    harness.request(SPACE_A, {
+      connectionKey: key, quoteId: 'quote-resume-hold', amount: 100, currency: 'EUR', requestKey: 'req-resume-hold',
+    }),
+    (e) => e.code === 'PAYMENT_CONNECTION_NOT_ACTIVE',
+  );
+  const mintedRef = [...api.state.createdByKey.values()][0].providerRef;
+  // The webhook arrives while the binding is still suspended: held as
+  // inactive-connection quarantine evidence, linked to the open intent.
+  const body = paidBody(mintedRef, 'evt_resume_hold_1');
+  const held = await harness.ingest(SPACE_A, {
+    connectionKey: key, rawBody: body, headers: harness.faults.sign(body),
+  });
+  assert.equal(held.quarantined, true);
+  // Reactivation resumes the identical retry bytes to paid, on one event row.
+  await harness.activate(SPACE_A, key);
+  const resumed = await harness.ingest(SPACE_A, {
+    connectionKey: key, rawBody: body, headers: harness.faults.sign(body),
+  });
+  assert.equal(resumed.duplicate, true);
+  assert.equal(resumed.effect, 'applied');
+  assert.equal(resumed.resumed, true);
+  assert.equal(resumed.status, 'paid');
+  const rows = harness.internals.modules.get('payment-request').service.listWhere({ spaceId: SPACE_A });
+  assert.equal(rows[0].status, 'paid');
+  assert.equal(JSON.parse(harness.dumpStorage()).events.length, 1);
+});
+
 test('ops.listPayments refuses an unknown status filter directly, never an empty list', async (t) => {
   const { harness } = setup();
   t.after(() => harness.close());

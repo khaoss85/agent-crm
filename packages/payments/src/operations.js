@@ -613,6 +613,40 @@ export function createPaymentOperations(deps) {
     }
 
     /**
+     * Promote a held intent (open with a held checkout reference) through
+     * mint, so a webhook that beats the outbound retry still finalizes the
+     * matching checkout instead of refusing open → paid. The row was found
+     * by its provider reference above, so an open row here always carries
+     * the held checkout for this same intent — only the hold path ever
+     * sets a reference on an open row. A concurrent retry that promoted
+     * first is followed onto the winner; anything else rethrows for the
+     * caller's own mapping (a suspend still quarantines there).
+     */
+    async function promoteHeldIntent(held, item) {
+      if (held.status !== 'open') return held;
+      try {
+        const promoted = await advancePaymentRequest(stores, held.id, {
+          event: 'mint',
+          patch: {
+            providerRef: held.providerRef, providerUrl: held.providerUrl ?? '',
+            statusReason: `held provider checkout resumed by webhook ${item.providerEventId}`,
+          },
+          actor,
+          requireActiveConnection: true,
+        });
+        return promoted.request;
+      } catch (error) {
+        if (error && typeof error === 'object' && error.code === 'PAYMENT_TRANSITION_INVALID') {
+          const current = await requestService.get(held.id);
+          if (current && (current.status === 'pending' || REQUEST_TERMINAL.includes(current.status))) {
+            return current;
+          }
+        }
+        throw error;
+      }
+    }
+
+    /**
      * Resume a delivery quarantined only because its connection was not
      * active: the binding is active again, so the same Stripe retry bytes
      * are re-evaluated instead of replaying the old quarantine forever.
@@ -630,9 +664,13 @@ export function createPaymentOperations(deps) {
       if (REQUEST_TERMINAL.includes(request.status)) {
         return storeTerminalEvent(request, item, outcome, stored);
       }
+      const minted = await promoteHeldIntent(request, item);
+      if (REQUEST_TERMINAL.includes(minted.status)) {
+        return storeTerminalEvent(minted, item, outcome, stored);
+      }
       let finalized;
       try {
-        finalized = await advancePaymentRequest(stores, request.id, {
+        finalized = await advancePaymentRequest(stores, minted.id, {
           event: outcome,
           patch: outcome === 'pay'
             ? { paidAt: now, statusReason: `provider webhook ${item.providerEventId}: checkout completed` }
@@ -657,7 +695,7 @@ export function createPaymentOperations(deps) {
         // A concurrent delivery finalized the request first: the redelivery
         // follows the terminal contract instead of erroring the provider.
         if (error && typeof error === 'object' && error.code === 'PAYMENT_TRANSITION_INVALID') {
-          const current = await requestService.get(request.id);
+          const current = await requestService.get(minted.id);
           if (current && REQUEST_TERMINAL.includes(current.status)) {
             return storeTerminalEvent(current, item, outcome, stored);
           }
@@ -754,9 +792,16 @@ export function createPaymentOperations(deps) {
       if (REQUEST_TERMINAL.includes(request.status)) {
         return storeTerminalEvent(request, item, outcome);
       }
+      // A held intent (open with a held checkout) is promoted through mint
+      // first: a webhook that beats the outbound retry finalizes the held
+      // session instead of refusing open → paid.
+      const minted = await promoteHeldIntent(request, item);
+      if (REQUEST_TERMINAL.includes(minted.status)) {
+        return storeTerminalEvent(minted, item, outcome);
+      }
       let finalized;
       try {
-        finalized = await advancePaymentRequest(stores, request.id, {
+        finalized = await advancePaymentRequest(stores, minted.id, {
           event: outcome,
           patch: outcome === 'pay'
             ? { paidAt: now, statusReason: `provider webhook ${item.providerEventId}: checkout completed` }
@@ -767,7 +812,7 @@ export function createPaymentOperations(deps) {
           // loser's rollback can never swallow the winner's row.
           write: () => insertEvent({
             sourceKey: item.sourceKey, spaceId, connectionKey: live.sourceKey,
-            providerEventId: item.providerEventId, paymentRequestId: request.id,
+            providerEventId: item.providerEventId, paymentRequestId: minted.id,
             eventType: item.eventType, payloadFingerprint,
             occurredAt: item.occurredAt, receivedAt: now,
             processed: true, effect: 'applied',
@@ -779,12 +824,12 @@ export function createPaymentOperations(deps) {
         // single path saw the fresh inactive binding, so this delivery
         // quarantines instead of finalizing on a dead binding.
         if (error && typeof error === 'object' && error.code === 'PAYMENT_CONNECTION_NOT_ACTIVE') {
-          return quarantineInactive(item, request.id);
+          return quarantineInactive(item, minted.id);
         }
         // A concurrent delivery finalized the request first: the redelivery
         // follows the terminal contract instead of erroring the provider.
         if (error && typeof error === 'object' && error.code === 'PAYMENT_TRANSITION_INVALID') {
-          const current = await requestService.get(request.id);
+          const current = await requestService.get(minted.id);
           if (current && REQUEST_TERMINAL.includes(current.status)) {
             return storeTerminalEvent(current, item, outcome);
           }
