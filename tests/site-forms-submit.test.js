@@ -588,10 +588,11 @@ test('two spaces hold separate contacts on separate threads', async (t) => {
   const second = await intake(app, {
     ...FORM,
     spaceId: 'altro',
-    email: 'marco.verdi@prestigroup.example',
+    email: 'marco.verdi@studioverdi.example',
     phone: null,
     firstName: 'Marco',
     lastName: 'Verdi',
+    companyName: 'Studio Verdi',
     body: 'Altro spazio, altro cliente.',
     ipHashSecretRef: 'vault://altro/site-forms-ip',
   });
