@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   allocateConsumption,
@@ -346,6 +350,56 @@ test('stored 0/1 flags replay and read as the booleans they are', async () => {
   assert.equal(balance.balance, 1, 'two entries minus one charged no-show leaves one');
   assert.equal(balance.grants[0].allowNegative, true);
   assert.equal(balance.grants[0].noShowConsumes, true);
+});
+
+test('the checked-in manifest migrates and round-trips a grant on real storage', async (t) => {
+  // The fakes above prove the accounting; only real storage can prove the
+  // manifest — the table, the boolean CHECKs, the timestamp and enum shapes.
+  const { createAccordoAppAsync } = await import('../packages/app/src/index.js');
+  const manifest = JSON.parse(readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'packages', 'commercial', 'modules', 'package-credit.module.json'),
+    'utf8',
+  ));
+  assert.equal(manifest.name, 'package-credit');
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-package-credit-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const app = await createAccordoAppAsync({
+    dbPath: join(dir, 'credits.sqlite'),
+    selected: { packageContract: 2, packages: [], actions: [], modules: [{ name: 'package-credit', manifest }] },
+  });
+  t.after(() => app.close());
+  const service = app.modules.get('package-credit').service;
+  const stored = await service.createManaged({
+    sourceKey: 'stripe:evt:real',
+    subjectResource: 'contact',
+    subjectId: 'c-presti',
+    subjectOwner: 'host',
+    subjectOwnerPackage: null,
+    subjectLabel: null,
+    productKey: 'pack-10',
+    totalEntries: 5,
+    allowNegative: false,
+    noShowConsumes: true,
+    grantedAt: NOW,
+    actorType: 'user',
+    actorId: 'owner',
+    sourcePackage: 'host',
+    sourceAction: 'grant',
+  }, { actor: ACTOR });
+  assert.ok(stored.id, 'the grant row exists');
+  const read = (await service.listWhere({ subjectResource: 'contact', subjectId: 'c-presti' }))[0];
+  assert.equal(read.totalEntries, 5);
+  assert.ok(read.noShowConsumes === true || read.noShowConsumes === 1, 'the stored flag reads back true in either encoding');
+
+  // The accounting runs unchanged on the real rows.
+  const modules = {
+    get: (name) => {
+      if (name === 'package-credit') return { service };
+      throw new NotFoundError('module', name);
+    },
+  };
+  const balance = await readPackageBalance({ modules }, SUBJECT);
+  assert.equal(balance.available, false, 'no appointment module composed here: no silent full balance');
 });
 
 test('the capability opens on the caller modules view and grants through it', async () => {
