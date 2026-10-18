@@ -140,12 +140,15 @@ component rows are invented for it, and quoting it is a stable
 `product`, `product-version`, `price-book`, `offer`, `price-component`,
 `price-tier`, `catalog-sync-run`, `quote`, `quote-line`, `quote-version`,
 `quote-version-line`, `quote-version-component`, `quote-version-total`,
-`quote-approval` — all read-only publicly, capabilities `get`/`list` only. No
+`quote-approval`, `package-credit` — all read-only publicly, capabilities `get`/`list` only. No
 public create or update exists on any of them: records are produced solely by
 catalog sync and the quote actions through the trusted in-process
 `createManaged`/`applyManaged` path, so no client can forge a price, a total or
 a version. Correctness reads use exact `listWhere`/`countWhere` over
-manifest-declared indexes, never a paged scan.
+manifest-declared indexes, never a paged scan. Package credit grants are the
+one record a host selling path writes (one row per paid package, idempotent by
+the payment source key); the balance itself is never stored — it is computed
+from the stored appointment rows.
 
 Signed commercial terms add two records. **`quote-term`** is the one
 public-writable record in this family — the DRAFT term of a quote (effective

@@ -14,7 +14,7 @@ before the move, and zero asserted observations moved across it.
   path): `product`, `product-version`, `price-book`, `offer`,
   `price-component`, `price-tier`, `catalog-sync-run`, `quote`, `quote-line`,
   `quote-version`, `quote-version-line`, `quote-version-component`,
-  `quote-version-total`, `quote-approval`. Manifests in `modules/`,
+  `quote-version-total`, `quote-approval`, `package-credit`. Manifests in `modules/`,
   byte-identical to the ones the starter used to carry: same tables, same
   migrations, same checksums, no data migration.
 - **Actions**: `opportunity.create-quote` (on the host application's
@@ -45,6 +45,14 @@ before the move, and zero asserted observations moved across it.
   `signatureStatus` and `orderId` onto a quote. The capability names the field
   allowlist and the guarantee; the write itself stays the quote record's own
   managed path.
+- `package-credits@1` — one paid package of entries per grant call (idempotent
+  by the payment source key) plus one customer's balance computed from the
+  stored appointment rows: a `done` appointment consumes one entry, a `no-show`
+  consumes one only where the grant's `noShowConsumes` rule says so, and the
+  balance never drops below zero except on grants carrying the explicit
+  `allowNegative` choice. No `requires` edge on appointments by design: the
+  appointment read is optional through the caller's modules view, and absence
+  answers `available: false` with the reason, never a silent zero.
 
 ## Composition
 

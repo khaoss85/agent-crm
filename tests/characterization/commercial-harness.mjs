@@ -45,6 +45,10 @@ export const COMMERCIAL_MODULES = Object.freeze([
   'quote-version-component.module.json',
   'quote-version-total.module.json',
   'quote-approval.module.json',
+  // Package credits ledger (prepaid entries consumed by appointments): a
+  // record module like the others above, digest-owned through the spread
+  // into BEHAVIOUR_BEARING_SOURCE below.
+  'package-credit.module.json',
 ]);
 
 /** The fixed clock every case runs against: a characterization may not drift with the wall clock. */
@@ -132,6 +136,9 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   // it decides which products and prices a workspace exposes, so it is
   // behaviour-bearing by definition.
   'packages/commercial/src/price-list.js',
+  // Package credits ledger (grants consumed by completed appointments):
+  // it decides balances, so it is behaviour-bearing by definition.
+  'packages/commercial/src/package-credits.js',
   // Signed commercial terms: digest-owned, deliberately NOT in
   // COMMERCIAL_MODULES - the baseline application's applied-manifest set is
   // part of the frozen shape, and a baseline project without the term

@@ -7,6 +7,7 @@ import { createCatalogSync } from './catalog-sync.js';
 import {
   createCommercialQuotesVerifiedCapability, createCommercialQuoteBindingCapability,
 } from './capability.js';
+import { createPackageCreditsCapability } from './package-credits.js';
 
 /**
  * The Commercial Operations domain package (ADR-016, extracted under ADR-018).
@@ -56,6 +57,10 @@ export const COMMERCIAL_RESOURCES = Object.freeze([
   // Signed commercial terms (M16b prerequisite): the per-quote draft term and
   // the write-once per-version snapshot the signature document embeds.
   'quote-term', 'quote-version-term',
+  // Package credits: one paid grant of N entries per row, scaled by the
+  // appointments that happened. The balance is computed from the stored
+  // appointment rows, so this resource holds grants only, never a counter.
+  'package-credit',
 ]);
 
 /**
@@ -97,7 +102,12 @@ export function createCommercialDomain(options = {}) {
     // 4: retires commercial-quotes@1 — every in-repo consumer reads through
     // @2, and the registry refuses a @1 requirement naming the consumer, so
     // the composition contract shrank by one offered capability.
-    version: 4,
+    // 5: offers package-credits@1 alongside the quote capabilities — one paid
+    // grant of N entries per row plus the balance computed from the stored
+    // appointment rows. Additive: every pre-existing record, action contract
+    // and capability answer is byte-identical (held by the LA0-Commercial
+    // baseline, regenerated for the new files only).
+    version: 5,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',
@@ -108,6 +118,16 @@ export function createCommercialDomain(options = {}) {
       // byte-identically in @2's base.
       createCommercialQuotesVerifiedCapability(registries, config),
       createCommercialQuoteBindingCapability(),
+      // Package credits: grants plus the balance read from the appointment
+      // rows. No `requires` edge on appointments by design — see
+      // package-credits.js: the appointment read is optional through the
+      // caller's modules view, and absence answers available:false.
+      createPackageCreditsCapability({
+        moduleNames: {
+          credit: config?.creditModule,
+          appointment: config?.appointmentModule,
+        },
+      }),
     ],
     actions: buildCommercialActions(config, registries),
     // Deliberately empty; see `persistFingerprints` below. The definitions ARE
@@ -191,3 +211,8 @@ export {
   createCommercialQuotesCapability, createCommercialQuotesVerifiedCapability,
   createCommercialQuoteBindingCapability, QUOTE_BINDING_FIELDS,
 } from './capability.js';
+export {
+  PACKAGE_CREDITS_CONTRACT, allocateConsumption, consumingAppointments,
+  createPackageCreditsCapability, grantPackageEntries, isUniqueConflict as isPackageCreditUniqueConflict,
+  readPackageBalance, resolveCreditModule, validateCreditSubject, validatePackageCreditGrant,
+} from './package-credits.js';
