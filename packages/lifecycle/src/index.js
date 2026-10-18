@@ -350,13 +350,13 @@ export function buildPlanRenewalAction(moduleNames) {
       requireCalendarDate(input.asOf, 'asOf');
       const windowDays = Number.isSafeInteger(input.windowDays) && input.windowDays > 0 ? input.windowDays : 90;
       const source = await lifecycleSource({ domains, modules, actor, now });
-      const evidence = source.termEvidence(record.id);
+      const evidence = await source.termEvidence(record.id);
       if (!evidence) {
         throw new AppError('This contract has no readable term evidence', { code: 'CONTRACT_NOT_READABLE', status: 404 });
       }
       const days = evidence.term.endDate ? daysToBoundary(input.asOf, evidence.term.endDate) : null;
-      const lines = source.listContractLines(record.id);
-      const subscriptionLines = source.listSubscriptionLines(record.id);
+      const lines = await source.listContractLines(record.id);
+      const subscriptionLines = await source.listSubscriptionLines(record.id);
 
       return {
         lifecyclePlanContract: 1,
@@ -428,7 +428,7 @@ export function buildRecordRenewalDecisionAction(moduleNames) {
       const reason = requireReason(input.reason);
       requireCalendarDate(input.asOf, 'asOf');
       const source = await lifecycleSource({ domains, modules, actor, now });
-      const evidence = source.termEvidence(record.id);
+      const evidence = await source.termEvidence(record.id);
       if (!evidence) {
         throw new AppError('This contract has no readable term evidence', { code: 'CONTRACT_NOT_READABLE', status: 404 });
       }
@@ -527,7 +527,7 @@ export function buildRequestCommercialFollowupAction(moduleNames, options = {}) 
       const requestedBy = requireHuman(actor, 'Requesting commercial follow-up');
       const summary = requireReason(input.summary, 'summary');
       const source = await lifecycleSource({ domains, modules, actor, now });
-      const evidence = source.termEvidence(record.id);
+      const evidence = await source.termEvidence(record.id);
       if (!evidence) {
         throw new AppError('This contract has no readable term evidence', { code: 'CONTRACT_NOT_READABLE', status: 404 });
       }
@@ -567,7 +567,7 @@ export function buildRequestCommercialFollowupAction(moduleNames, options = {}) 
       const open = history.filter((row) => row.status === FOLLOWUP_OPEN);
       if (open.length > 0) return replayOrConflict(open[0], submitted, replay);
 
-      const lines = source.listContractLines(record.id);
+      const lines = await source.listContractLines(record.id);
       const groups = groupBaseline(lines);
       // A one-time €1,200 and an annual €1,200 must not be byte-identical rows,
       // and a mixed baseline must not lose its money evidence to a null scalar.
