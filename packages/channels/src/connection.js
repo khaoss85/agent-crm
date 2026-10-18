@@ -76,7 +76,10 @@ export function boundedKey(...parts) {
 // the public kernel surface; the deployment's resolver validates again at
 // resolve time.
 const SECRET_REF_PATTERN = /^(?:vault|secret):\/\/[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/;
-const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+// The whole C0 range plus DEL, tab/newline/CR included: a key is single-line
+// text, and a smuggled line break must refuse here, never land in a row.
+// Same shape as the payments package fence (MEM_ACC_REUSE).
+const CONTROL_RE = /[\x00-\x1f\x7f]/;
 
 function boundedLine(value, label, max) {
   if (typeof value !== 'string' || value.trim() === '' || value.length > max || CONTROL_RE.test(value)) {
