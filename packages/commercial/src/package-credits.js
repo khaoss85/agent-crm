@@ -42,8 +42,6 @@ import {
 
 export const PACKAGE_CREDIT_MODULE = 'package-credit';
 
-export const PACKAGE_CREDITS_PACKAGE = 'commercial';
-
 export const PACKAGE_CREDITS_CONTRACT = 1;
 
 /** Appointment states that scale an entry off a grant. `done` always does. */
@@ -173,6 +171,17 @@ function resolvedNames(moduleNames = {}) {
   };
 }
 
+/**
+ * Storage returns booleans as stored: SQLite keeps them as 0/1 integers, so
+ * every flag read compares normalized — the same `=== true || === 1` shape
+ * the terms code uses for its own stored booleans.
+ *
+ * @param {unknown} value
+ */
+function isTrue(value) {
+  return value === true || value === 1;
+}
+
 /** @param {{modules: any, names: {credit: string}}} context */
 function creditService(context) {
   const service = resolveCreditModule(context.modules, context.names.credit)?.service;
@@ -184,6 +193,40 @@ function creditService(context) {
     );
   }
   return service;
+}
+
+/** The read half: a balance never writes, so it must not require a writer. */
+function creditReader(context) {
+  const service = resolveCreditModule(context.modules, context.names.credit)?.service;
+  if (!service || typeof service.listWhere !== 'function') {
+    throw new AppError(
+      'The commercial package is installed without its "package-credit" records. '
+        + 'Apply the manifest with `crm module create` before composing it.',
+      { code: 'COMMERCIAL_STORAGE_INVALID', status: 500 },
+    );
+  }
+  return service;
+}
+
+/**
+ * **Bind provenance to the caller, not to caller text.** The registry
+ * resolves the consumer against this package's own offered capability and the
+ * capability hands it here; when present it IS the provenance, and a request
+ * asserting a different package is refused rather than quietly corrected —
+ * the same binding the booking path applies to appointment sources. A host
+ * caller passing no consumer may only assert `host`.
+ */
+function bindSourcePackage(source, consumer) {
+  const bound = typeof consumer === 'string' && consumer !== '' ? consumer : 'host';
+  if (source.package !== bound) {
+    throw new AppError(
+      `A package credit grant by "${bound}" may not record source.package "${source.package}": provenance is bound to the `
+        + `${consumer ? 'package the registry resolved as the consumer' : 'host, because no package consumer opened this capability'}, `
+        + 'not to the request body.',
+      { code: 'COMMERCIAL_PACKAGE_CREDIT_SOURCE_MISMATCH', status: 403, details: { asserted: source.package, bound } },
+    );
+  }
+  return { package: bound, action: source.action };
 }
 
 /**
@@ -238,9 +281,14 @@ export function validatePackageCreditGrant(request) {
  * Same key, same grant → the row that already exists. Same key, different
  * grant → 409 naming the fields, so recorded evidence is never overwritten.
  */
+const BOOLEAN_GRANT_FIELDS = new Set(['allowNegative', 'noShowConsumes']);
+
 function replayOrConflict(existing, submitted) {
   const conflictingFields = Object.keys(submitted)
-    .filter((field) => (existing[field] ?? null) !== (submitted[field] ?? null))
+    .filter((field) => {
+      if (BOOLEAN_GRANT_FIELDS.has(field)) return isTrue(existing[field]) !== isTrue(submitted[field]);
+      return (existing[field] ?? null) !== (submitted[field] ?? null);
+    })
     .sort();
   if (conflictingFields.length === 0) return existing;
   throw new AppError(
@@ -255,7 +303,7 @@ function replayOrConflict(existing, submitted) {
  * source key is the payment reference, so a webhook redelivery replays the
  * grant rather than doubling the entries. Idempotent by source key.
  *
- * @param {{modules: any, moduleNames?: Record<string, string>, actor: unknown, now?: () => string}} context
+ * @param {{modules: any, moduleNames?: {credit?: string, appointment?: string}, actor: unknown, now?: () => string, consumer?: string}} context
  * @param {unknown} request
  */
 export async function grantPackageEntries(context, request) {
@@ -264,6 +312,7 @@ export async function grantPackageEntries(context, request) {
   const actor = context.actor;
   const who = requireActor(actor);
   const input = validatePackageCreditGrant(request);
+  const source = bindSourcePackage(input.source, context.consumer);
   const now = typeof context.now === 'function' ? context.now() : new Date().toISOString();
   const submitted = {
     subjectResource: input.subject.resource,
@@ -274,8 +323,8 @@ export async function grantPackageEntries(context, request) {
     totalEntries: input.totalEntries,
     allowNegative: input.allowNegative,
     noShowConsumes: input.noShowConsumes,
-    sourcePackage: input.source.package,
-    sourceAction: input.source.action,
+    sourcePackage: source.package,
+    sourceAction: source.action,
   };
   const existing = (await grants.listWhere({ sourceKey: input.sourceKey }))[0];
   if (existing) {
@@ -349,7 +398,8 @@ export function consumingAppointments(rows) {
  * — and only past those, or with none, is counted `uncovered`: the balance
  * then floors at zero instead of going negative on its own.
  *
- * @param {Array<any>} grants the subject's grant rows, oldest first
+ * @param {Array<any>} grants the subject's grant rows, oldest first — the
+ * caller orders them, because FIFO is the contract, not a sort hidden inside
  * @param {Array<{id: any, status: string}>} consuming
  */
 export function allocateConsumption(grants, consuming) {
@@ -362,7 +412,7 @@ export function allocateConsumption(grants, consuming) {
       // pays for an earlier session. (Grant instants are proven before this
       // runs; see readPackageBalance.)
       if (Date.parse(ledger.grant.grantedAt) > appointment.decidedMs) return false;
-      if (wantsNoShow && ledger.grant.noShowConsumes !== true) return false;
+      if (wantsNoShow && !isTrue(ledger.grant.noShowConsumes)) return false;
       return true;
     };
     const withRoom = ledgers.find((ledger) => eligible(ledger) && ledger.used < ledger.grant.totalEntries);
@@ -370,7 +420,7 @@ export function allocateConsumption(grants, consuming) {
       withRoom.used += 1;
       continue;
     }
-    const negative = ledgers.find((ledger) => eligible(ledger) && ledger.grant.allowNegative === true);
+    const negative = ledgers.find((ledger) => eligible(ledger) && isTrue(ledger.grant.allowNegative));
     if (negative) {
       negative.used += 1;
       continue;
@@ -390,7 +440,7 @@ export function allocateConsumption(grants, consuming) {
  */
 export async function readPackageBalance(context, subject) {
   const names = resolvedNames(context.moduleNames);
-  const grants = creditService({ modules: context.modules, names });
+  const grants = creditReader({ modules: context.modules, names });
   const who = validateCreditSubject(subject);
   const rows = (await grants.listWhere({ subjectResource: who.resource, subjectId: who.id }))
     .slice()
@@ -457,9 +507,9 @@ export async function readPackageBalance(context, subject) {
       used,
       // The floor lives here, per grant: only a grant carrying the explicit
       // `allowNegative` choice reports below zero.
-      remaining: grant.allowNegative === true ? remaining : Math.max(0, remaining),
-      allowNegative: grant.allowNegative === true,
-      noShowConsumes: grant.noShowConsumes === true,
+      remaining: isTrue(grant.allowNegative) ? remaining : Math.max(0, remaining),
+      allowNegative: isTrue(grant.allowNegative),
+      noShowConsumes: isTrue(grant.noShowConsumes),
       grantedAt: grant.grantedAt,
     });
   });
@@ -497,15 +547,15 @@ export function createPackageCreditsCapability({ moduleNames } = {}) {
     moduleNames: { credit: names.credit, appointment: names.appointment },
     actor: context.actor,
     now: context.now,
+    consumer: context.consumer,
   });
   return {
     name: 'package-credits',
     version: 1,
     description:
-      'Grant one paid package of entries per call — idempotent by the payment source key — and read one customer\'s '
-      + 'balance computed from the stored appointment rows: a done appointment consumes one entry, a no-show consumes one '
-      + 'only where the grant\'s no-show rule says so, and the balance never drops below zero except on grants carrying '
-      + 'the explicit allow-negative choice. Grants no read beyond the written row and the exact subject lookup, no update and no delete.',
+      'Grant one paid package of entries per call, idempotent by the payment source key, and read one customer\'s '
+      + 'balance from the stored appointment rows: done consumes one entry, no-show only where the grant\'s rule says so, '
+      + 'and the floor holds at zero without the explicit allow-negative choice. No update and no delete.',
     /** @param {{modules: any, actor?: unknown, now?: () => string}} context */
     create(context = {}) {
       const modules = context?.modules;

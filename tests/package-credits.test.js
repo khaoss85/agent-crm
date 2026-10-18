@@ -299,6 +299,55 @@ test('allocation is a pure deterministic order: oldest decision first', () => {
   assert.deepEqual(ledgers.map((ledger) => ledger.used), [1, 1]);
 });
 
+test('a grant asserting another package provenance is refused, not corrected', async () => {
+  const credits = fakeCredits();
+  const modules = modulesFor({ credits, appointments: fakeAppointments() });
+  const context = { modules, actor: ACTOR, now: () => NOW, consumer: 'payments' };
+  await assert.rejects(
+    grantPackageEntries(context, grant({ source: { package: 'host', action: 'grant' } })),
+    (error) => error.code === 'COMMERCIAL_PACKAGE_CREDIT_SOURCE_MISMATCH' && error.status === 403,
+  );
+  assert.equal(credits.rows.length, 0, 'nothing is stored on a refused provenance');
+  const bound = await grantPackageEntries(
+    context, grant({ source: { package: 'payments', action: 'finalize' } }),
+  );
+  assert.equal(bound.replayed, false);
+  assert.equal(bound.grant.sourcePackage, 'payments');
+});
+
+test('stored 0/1 flags replay and read as the booleans they are', async () => {
+  const credits = fakeCredits();
+  const held = fakeAppointments([appointment({ status: 'no-show' })]);
+  const modules = modulesFor({ credits, appointments: held });
+  const context = { modules, actor: ACTOR, now: () => NOW };
+  // SQLite keeps booleans as integers: the stored row reads back 1/0.
+  credits.rows.push({
+    id: 'pc-0',
+    sourceKey: 'stripe:evt:int',
+    subjectResource: 'contact',
+    subjectId: 'c-presti',
+    subjectOwner: 'host',
+    subjectOwnerPackage: null,
+    productKey: 'pack-10',
+    totalEntries: 2,
+    allowNegative: 1,
+    noShowConsumes: 1,
+    sourcePackage: 'host',
+    sourceAction: 'grant',
+    grantedAt: NOW,
+  });
+  const replayed = await grantPackageEntries(context, grant({
+    sourceKey: 'stripe:evt:int', totalEntries: 2, allowNegative: true, noShowConsumes: true,
+  }));
+  assert.equal(replayed.replayed, true, '1 reads as true: no false conflict');
+  assert.equal(replayed.grant.id, 'pc-0');
+  const balance = await readPackageBalance({ modules }, SUBJECT);
+  assert.equal(balance.consumed, 1, '1 reads as true: the no-show consumes');
+  assert.equal(balance.balance, 1, 'two entries minus one charged no-show leaves one');
+  assert.equal(balance.grants[0].allowNegative, true);
+  assert.equal(balance.grants[0].noShowConsumes, true);
+});
+
 test('the capability opens on the caller modules view and grants through it', async () => {
   const credits = fakeCredits();
   const held = fakeAppointments([appointment({})]);
