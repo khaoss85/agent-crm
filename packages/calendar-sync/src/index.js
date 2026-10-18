@@ -53,7 +53,7 @@ const SPACE_INPUT = {
  * @param {{
  *   appointmentBook?: any, provider?: any, mapping?: any,
  *   actor?: unknown, now?: () => string, modules?: Record<string, string>,
- *   database?: any,
+ *   database?: any, resolveSecret?: (reference: string, context: {spaceId: string, purpose: string}) => Promise<string>,
  * }} [options] `appointmentBook` is the created `appointment-book@1`
  * capability object — the same handover shape appointments uses for work's
  * `follow-up@1`, so the reminder-style name resolution happens once, at
@@ -67,7 +67,11 @@ const SPACE_INPUT = {
  * `database` wins over the runtime's; without either, the link records'
  * own handle is tried. A storage without transactions refuses creation
  * with CALENDAR_SYNC_TRANSACTIONS_REQUIRED: there is no
- * transaction-less fallback.
+ * transaction-less fallback. `resolveSecret` is the deployment custody
+ * edge (the platform vault in production, a fixture map in tests): bound
+ * calendars resolve their space grant per call through it. Optional at
+ * composition so tooling composes empty; a bound calendar refuses until
+ * it is wired, fail-closed.
  */
 export function createCalendarSyncPackage(options = {}) {
   for (const key of ['appointmentBook', 'provider', 'mapping']) {
@@ -81,6 +85,9 @@ export function createCalendarSyncPackage(options = {}) {
   }
 
   const composedByRuntime = new WeakMap();
+  if (options.resolveSecret !== undefined && typeof options.resolveSecret !== 'function') {
+    throw new ValidationError('calendar-sync resolveSecret must be a function', { field: 'resolveSecret' });
+  }
   const operations = (runtime) => {
     let composed = composedByRuntime.get(runtime);
     if (!composed) {
@@ -93,6 +100,7 @@ export function createCalendarSyncPackage(options = {}) {
         actor: options.actor,
         now: options.now,
         database: options.database ?? runtime.database,
+        resolveSecret: options.resolveSecret,
       });
       composedByRuntime.set(runtime, composed);
     }
@@ -118,6 +126,27 @@ export function createCalendarSyncPackage(options = {}) {
     actions: [],
     policies: [],
     operations: [
+      {
+        operationContract: 1,
+        name: 'bind-calendar-grant',
+        label: 'Bind calendar space grant',
+        appMethod: 'bindCalendarGrant',
+        description: 'Bind one calendar to the space Google grant kept in the vault (human decision). Stores the secret reference on the calendar state — the grant value is resolved per call and never stored.',
+        input: [
+          { ...SPACE_INPUT },
+          { ...CALENDAR_INPUT },
+          {
+            name: 'secretRef',
+            type: 'string',
+            required: true,
+            hint: 'The vault reference of the space grant (vault://<space>/google-calendar) — a locator, never the grant value.',
+          },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.bindCalendarGrant(params);
+        },
+      },
       {
         operationContract: 1,
         name: 'import-future-events',
@@ -215,6 +244,18 @@ export function createCalendarSyncPackage(options = {}) {
           return (params) => ops.handlePush(params);
         },
       },
+      {
+        operationContract: 1,
+        name: 'revoke-calendar-grant',
+        label: 'Revoke calendar space grant',
+        appMethod: 'revokeCalendarGrant',
+        description: 'Stop one calendar sync on its revoked grant (human decision): pulls, pushes, imports and push deliveries refuse, and the push channel registration is forgotten. Re-binding reconnects.',
+        input: [{ ...SPACE_INPUT }, { ...CALENDAR_INPUT }],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.revokeCalendarGrant(params);
+        },
+      },
     ],
     /** Function-free, additive schema metadata — never a secret, never a function. */
     metadata() {
@@ -229,13 +270,14 @@ export function createCalendarSyncPackage(options = {}) {
         },
         idempotency: 'sync tokens resume pulls; link rows dedup at storage level (unique event and source keys); export reconciles with the provider before inserting; a repeated push with an unchanged fingerprint is a no-op — the second of two syncs in a row writes nothing anywhere',
         pushDiscipline: 'a push notification carries no event data, only "something changed": unknown channels and token mismatches refuse before any read; the channel token is stored as a hash, never the bearer',
+        secretDiscipline: 'calendars store the vault secretRef, never the grant; the deployment resolves it per call through resolveSecret and the provider authenticates with the call-time secret; provider errors are normalized to codes with fixed messages, so no grant, token or personal detail lands in a row, an error or a log',
         humanApproval: 'import, export and push-channel registration are human decisions (actor required on every booking); provider-driven pulls run under a system actor',
         notModeled: [
           'recurrence or series expansion — each synced event is one timed occurrence; all-day events are refused by slot validation',
           'reminders for imported bookings (remindAt stays null — Google keeps notifying on its side)',
           'confirmed/done/no-show propagation to Google — lifecycle stays Accordo-side',
           'the per-space HTTP route — the pilot owns it and passes spaceId from the verified path',
-          'real Google credentials — fake-backed until they exist (owner decision MEM_ACC_DECISIONS)',
+          'real Google transport — the space grant resolves from the vault but the provider stays fake-backed until credentials exist (owner decision MEM_ACC_DECISIONS)',
         ],
         reuses: ['appointment-book@1'],
       };

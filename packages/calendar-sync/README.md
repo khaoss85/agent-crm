@@ -110,3 +110,24 @@ push-converged cancellation leaving the older move snapshot standing
 instead of rebooking it, the package factory forwarding an explicit
 database handle, and creation refusing without a storage transaction.
 No test dials Google.
+
+## Space grant
+
+Backlog: `43b62d4bcaa3` — «Gmail e Calendar usano il grant dello spazio
+e partono col sync».
+
+One calendar syncs under the space's Google grant from the platform
+vault (`vault://<space>/google-calendar`, saved by accordo-platform
+`e0dcc28`). `bind-calendar-grant` stores that reference on the
+calendar's state row — the grant value itself is resolved per call
+through the deployment's `resolveSecret` (the same custody edge the
+channel connections use) and never lands in a row. Every provider call
+carries the call-time secret; a provider throw is normalized to its code
+with a fixed message, so no grant, token or personal detail lands in a
+row, an error or a log. `revoke-calendar-grant` stops the sync on the
+next call and forgets the push channel; re-binding reconnects.
+`tests/calendar-grant.test.js` proves it against the fake, and
+`tests/channels-google-grant.test.js` proves the Gmail side (active
+connection starts the initial import with the vault grant, revoke stops
+it). The pilot composes both with the vault resolver and starts the
+import when a Google connection turns active.
