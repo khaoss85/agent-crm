@@ -451,6 +451,50 @@ test('a Google move onto a held slot keeps the valid local booking', async (t) =
   assert.equal(after.find((r) => r.status === 'confirmed').startsAt, '2026-10-21T14:00:00.000Z');
 });
 
+test('a settled retry still applies the newer Google move on a full import', async (t) => {
+  // The S1 move was refused (blocker held) and kept pending; the blocker
+  // freed and Google moved the same event again — to S2 — before the next
+  // full import. The import retries the stale S1 envelope first, which now
+  // books: the settled retry must not skip the newer S2 event in hand.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  await handle.advanceAppointment(ctx.appointmentRows()[0], 'confirmed');
+  const held = await handle.bookAppointment({
+    sourceKey: 'gym:held:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T14:00:00.000Z',
+    endsAt: '2026-10-21T15:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
+  const conflicted = await ctx.sync.pullIncremental(CAL);
+  assert.equal(conflicted.entries.find((e) => e.eventId === 'evt1').status, 'conflict');
+  assert.equal(ctx.linkRows()[0].pendingRemote !== null, true);
+  // The slot frees and Google moves the event again — S2 — before the
+  // next full import.
+  await handle.advanceAppointment(held.appointment, 'cancelled', 'Customer moved');
+  ctx.setNow(T0 + 120_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '16:00', '17:00') } });
+  const second = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const converged = second.entries.find((e) => e.eventId === 'evt1');
+  assert.equal(converged?.status, 'applied');
+  assert.equal(converged?.change, 'rescheduled');
+  // Accordo ends on S2: the link tracks Google's newest update with no
+  // pending snapshot and no conflict left, and the live booking sits on S2.
+  const live = ctx.provider.getEvent(CAL, 'evt1');
+  assert.equal(ctx.linkRows()[0].googleUpdated, live.updated);
+  assert.equal(ctx.linkRows()[0].pendingRemote, null);
+  assert.equal(ctx.linkRows()[0].conflictNote, null);
+  const rows = ctx.appointmentRows();
+  assert.equal(rows.find((r) => r.status === 'confirmed').startsAt, '2026-10-21T16:00:00.000Z');
+});
+
 test('a refused self-overlapping move keeps the row: rollback, not sacrifice', async (t) => {
   // The blocker sits back-to-back with the old slot but inside the
   // moved one, which still overlaps the old slot: the cancel must roll

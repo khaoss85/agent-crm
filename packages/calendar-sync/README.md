@@ -64,6 +64,12 @@ Two halves, two owners. Accordo owns **lifecycle**; Google owns
    between two imports applies locally before the token moves past
    it — never skipped past. A tombstone for an event never imported
    is ignored, never booked.
+10. A move that **overlaps its own old slot needs a storage
+    transaction** to converge: without one the prove-before-cancel
+    fallback proves the new slot against the still-held old row, so
+    the move stays pending and is retried — waited on, never
+    sacrificed. Atomic commit (cancel with rebook) is the supported
+    path for self-overlapping moves.
 
 ## How to prove it
 
@@ -73,5 +79,6 @@ local cancellation visible on Google, two consecutive `syncOnce` runs
 changing nothing, the cancellation-wins convergence, push delivery
 applying remotely-made changes, token-expiry recovery, overlap refusal,
 terminal-row immunity, tombstone-between-imports convergence, a refused
-move keeping the valid row (and converging once the slot frees), and a
-self-overlapping move applying atomically. No test dials Google.
+move keeping the valid row (and converging once the slot frees), a
+self-overlapping move applying atomically, and a settled retry still
+applying the newer Google move on a full import. No test dials Google.

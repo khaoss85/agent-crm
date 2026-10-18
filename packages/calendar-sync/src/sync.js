@@ -660,7 +660,12 @@ export function createCalendarSyncOperations(options = {}) {
         if (known) {
           if (known.pendingRemote) {
             const retried = await retryPending(handle, who, calendarId, known);
-            if (retried.status !== 'imported') {
+            // A settled retry is either state: 'imported' (orphan replay)
+            // or 'applied' (a converged move via the tracked path, e.g. a
+            // cancelCommitted:false retry that just booked). Like the
+            // incremental path's guard, both fall through so the event in
+            // hand — possibly newer than the snapshot — still decides.
+            if (retried.status !== 'imported' && retried.status !== 'applied') {
               entries.push(retried);
               continue;
             }
