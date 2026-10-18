@@ -275,17 +275,20 @@ it runs only where a merge has already happened — never on a PR push.
 | `public-claims` | push to `main` only | `gtm:check`, agreement `--check --drift-advisory` on the committed document, re-anchor from `verify`'s measurement, regenerate, `--require-current`, controlled realign of advisory-only drift onto the fixed branch behind ONE PR (`scripts/realign-truth-main.js --push`, normal gate, never a push to `main`) |
 | nightly matrix | daily 01:17 UTC | the full worktree-heavy tool-selection product behind its opt-in variable (see the nightly workflow), skipped by default elsewhere |
 
-Budgets, which are as much of the gate as the steps: every `fast` step runs
-under the machine lock via `scripts/ci-heavy.sh` — a budget per passo di
-300 s, set at each step in `.github/workflows/ci.yml` and applied by the
-wrapper killing the step past it (the touched-tests selection additionally
-enforces its own 60-second budget and its 270-second run bound, the run
-bound yielding to the selection's elapsed time so the two always fit the
-step). No timer enforces a total
-across the steps: keeping a PR under ten minutes of lock in total stays an
-objective the step budgets make room for, not a gate that fails the build.
-A step that cannot fit its budget does not get a longer budget — it gets
-split, or moved to `main`. The touched selection itself is best-effort: a
+Budgets, which are as much of the gate as the steps: the whole `fast` gate
+runs under ONE machine lock — `scripts/ci-fast.sh` runs the six phases
+sequentially behind a single heavy-job acquisition, with a total budget of
+540 s (nine minutes) set at the step in `.github/workflows/ci.yml` and
+applied by the wrapper killing the run past it. A PR holds the shared lock
+less than ten minutes in total, enforced,
+not an objective (measured ~290 s on CI run 39124350674, about half the
+budget). The touched-tests selection additionally enforces its own
+60-second budget and its 270-second run bound, the run bound yielding to
+the selection's elapsed time so the two always fit inside the shared total;
+each phase prints its own elapsed time and the script prints the total on
+success, so the bound stays readable in the log. A phase that cannot fit
+the shared budget does not get a longer budget — it gets split, or moved
+to `main`. The touched selection itself is best-effort: a
 changed JavaScript source no test reaches warns — a `::warning::`
 annotation in the job plus a summary line naming the uncovered files —
 and still runs the repo-wide guards, instead of refusing red and instead

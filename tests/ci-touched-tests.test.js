@@ -280,14 +280,14 @@ test('changedTestFiles is the PR-owned test scope, sorted', () => {
 test('planGate runs a selection that fits the budget', () => {
   assert.deepEqual(
     planGate(['packages/app/src/index.js', 'tests/api.test.js'], ['tests/api.test.js'], 50),
-    { kind: 'run', tests: ['tests/api.test.js'], reason: null },
+    { kind: 'run', tests: ['tests/api.test.js'], reason: null, dropped: [] },
   );
 });
 
 test('planGate skips docs-only changes with an empty selection', () => {
   assert.deepEqual(
     planGate(['docs/QUALITY_GATES.md', 'package.json'], [], 50),
-    { kind: 'skip', tests: [], reason: 'empty-selection' },
+    { kind: 'skip', tests: [], reason: 'empty-selection', dropped: [] },
   );
 });
 
@@ -296,16 +296,20 @@ test('planGate warns (fallback) when code changed and nothing reaches it', () =>
   // and the full suite on `main` stays the safety net.
   assert.deepEqual(
     planGate(['packages/cli/bin/accordo.js'], [], 50),
-    { kind: 'fallback', tests: [], reason: 'empty-selection' },
+    { kind: 'fallback', tests: [], reason: 'empty-selection', dropped: [] },
   );
 });
 
 test('planGate falls back to the changed tests on an oversized selection', () => {
   const selected = Array.from({ length: 51 }, (_, i) => `tests/s${i}.test.js`);
-  assert.deepEqual(
-    planGate(['packages/core/src/deep.js', 'tests/mine.test.js'], selected, 50),
-    { kind: 'fallback', tests: ['tests/mine.test.js'], reason: 'oversized-selection' },
-  );
+  const plan = planGate(['packages/core/src/deep.js', 'tests/mine.test.js'], selected, 50);
+  assert.equal(plan.kind, 'fallback');
+  assert.deepEqual(plan.tests, ['tests/mine.test.js']);
+  assert.equal(plan.reason, 'oversized-selection');
+  // The fifty-one selected tests the fallback does not run are reported,
+  // so main() can warn naming them.
+  assert.equal(plan.dropped.length, 51);
+  assert.ok(!plan.dropped.includes('tests/mine.test.js'));
 });
 
 test('planGate refuses an oversized selection with no changed test of its own', () => {
@@ -314,26 +318,57 @@ test('planGate refuses an oversized selection with no changed test of its own', 
   const plan = planGate(['packages/core/src/deep.js'], selected, 50);
   assert.equal(plan.kind, 'refuse');
   assert.deepEqual(plan.uncovered, ['packages/core/src/deep.js']);
+  assert.deepEqual(plan.dropped, selected);
+});
+
+test('a deletion-only oversized selection refuses and names the dropped importers', () => {
+  // Regression test: the runnable set alone (`changed`, without deleted
+  // paths) made this a silent skip — `hasCodeChange([])` is false — while
+  // sixty stale importers proved the breakage and the full suite on `main`
+  // failed on the missing import. Decided on the reachability scope, it
+  // refuses; deleted files still never run.
+  const selected = Array.from({ length: 60 }, (_, i) => `tests/keep${i}.test.js`);
+  const plan = planGate([], selected, 50, ['packages/core/src/shared.js']);
+  assert.equal(plan.kind, 'refuse');
+  assert.deepEqual(plan.tests, []);
+  assert.deepEqual(plan.dropped, selected);
+});
+
+test('a timed-out deletion-only selection warns and names the dropped importers', () => {
+  // Same family through the timeout path: `changed` is empty, the mapped
+  // set is not, the scope carries the deleted source — a warned fallback,
+  // never a skip, and the dropped importers are named.
+  const selected = Array.from({ length: 60 }, (_, i) => `tests/keep${i}.test.js`);
+  const plan = fallbackPlan([], 'selection-timeout', ['packages/core/src/shared.js'], selected);
+  assert.equal(plan.kind, 'fallback');
+  assert.deepEqual(plan.tests, []);
+  assert.deepEqual(plan.dropped, selected);
+});
+
+test('a docs-only change still skips even with a deleted scope beside it', () => {
+  // No JavaScript anywhere in the scope: nothing to refuse or warn about.
+  const plan = fallbackPlan(['docs/QUALITY_GATES.md'], 'empty-selection', ['docs/QUALITY_GATES.md']);
+  assert.deepEqual(plan, { kind: 'skip', tests: [], reason: 'empty-selection', dropped: [] });
 });
 
 test('fallbackPlan resolves skip, warned fallback and refuse without a selection', () => {
   assert.deepEqual(
     fallbackPlan(['docs/QUALITY_GATES.md'], 'selection-timeout'),
-    { kind: 'skip', tests: [], reason: 'selection-timeout' },
+    { kind: 'skip', tests: [], reason: 'selection-timeout', dropped: [] },
   );
   assert.deepEqual(
     fallbackPlan(['packages/app/src/index.js', 'tests/mine.test.js'], 'selection-timeout'),
-    { kind: 'fallback', tests: ['tests/mine.test.js'], reason: 'selection-timeout' },
+    { kind: 'fallback', tests: ['tests/mine.test.js'], reason: 'selection-timeout', dropped: [] },
   );
   // Code changed with no reaching test warns instead of refusing: main()
   // still joins the repo-wide guards and runs them.
   assert.deepEqual(
     fallbackPlan(['packages/app/src/index.js'], 'selection-timeout'),
-    { kind: 'fallback', tests: [], reason: 'selection-timeout' },
+    { kind: 'fallback', tests: [], reason: 'selection-timeout', dropped: [] },
   );
   assert.deepEqual(
     fallbackPlan(['packages/app/src/index.js'], 'empty-selection'),
-    { kind: 'fallback', tests: [], reason: 'empty-selection' },
+    { kind: 'fallback', tests: [], reason: 'empty-selection', dropped: [] },
   );
   // The only refusal left: an oversized selection the PR carries no test
   // file of its own for — no evidence this step can run.
@@ -344,6 +379,7 @@ test('fallbackPlan resolves skip, warned fallback and refuse without a selection
       tests: [],
       reason: 'oversized-selection',
       uncovered: ['packages/app/src/index.js'],
+      dropped: [],
     },
   );
 });
@@ -616,11 +652,14 @@ test('an oversized synthetic selection falls back to the changed tests', () => {
   const changed = ['packages/synth/src/target.js', 'tests/synth-t0.test.js'];
   const selected = selectTouchedTests(changed, testContents, fileImports);
   assert.ok(selected.length > 50);
-  assert.deepEqual(planGate(changed, selected, 50), {
-    kind: 'fallback',
-    tests: ['tests/synth-t0.test.js'],
-    reason: 'oversized-selection',
-  });
+  const plan = planGate(changed, selected, 50);
+  assert.equal(plan.kind, 'fallback');
+  assert.deepEqual(plan.tests, ['tests/synth-t0.test.js']);
+  assert.equal(plan.reason, 'oversized-selection');
+  assert.deepEqual(
+    plan.dropped,
+    selected.filter((test) => test !== 'tests/synth-t0.test.js'),
+  );
 });
 
 // ------------------------------------------------------------------ repo-wide guards

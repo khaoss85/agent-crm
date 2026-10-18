@@ -25,19 +25,22 @@
  *   per run, then a single reverse search from the changed files finds the
  *   reaching tests, instead of one forward search per test file;
  * - a changed file no test file reaches selects nothing only when no
- *   JavaScript source changed (docs, workflows, `package.json`, site
- *   content): the agreement gates of the same CI job (`gtm:check`,
- *   `repo:truth -- --check`) still run. A changed `.js`/`.cjs`/`.mjs`
- *   file with no reaching test does NOT block: the gate warns (a
- *   `::warning::` annotation plus a summary line naming the uncovered
- *   files) and still runs the repo-wide guards below. The fast gate
- *   chooses best-effort — the full suite on `main` stays the safety net
- *   behind it — so an unlinked source file is a warning, never a refusal.
- *   The refusal stays only for an empty fallback suite (see `fallbackPlan`).
- *   Deleted files never run and never count as uncovered (a deleted file
- *   needs no test run), but their paths still seed the reachability search:
- *   a PR deleting a module an unchanged test still imports selects that
- *   importer, or the fast gate would pass while the full suite on `main`
+ *   JavaScript source changed or was deleted (docs, workflows,
+ *   `package.json`, site content): the agreement gates of the same CI job
+ *   (`gtm:check`, `repo:truth -- --check`) still run. A changed
+ *   `.js`/`.cjs`/`.mjs` file with no reaching test does NOT block: the
+ *   gate warns (a `::warning::` annotation plus a summary line naming the
+ *   uncovered files) and still runs the repo-wide guards below. The fast
+ *   gate chooses best-effort — the full suite on `main` stays the safety
+ *   net behind it — so an unlinked source file is a warning, never a
+ *   refusal. The refusal stays only for an empty fallback suite (see
+ *   `fallbackPlan`). Deleted files never run and never join the run list
+ *   (a deleted file needs no test run), but their paths count for the
+ *   skip-vs-warn-vs-refuse decision as well as the reachability search: a
+ *   PR deleting a module an unchanged test still imports selects that
+ *   importer, and a deletion-only diff whose importers overflow the budget
+ *   refuses (or warns naming the dropped tests) instead of silently
+ *   skipping — or the fast gate would pass while the full suite on `main`
  *   fails on the missing import. The unfiltered diff still drives the
  *   guard check below, so deleting a listed guard without updating the
  *   list still fails the step red.
@@ -68,8 +71,9 @@
  * The default fast suite is the PR's own changed test files — always
  * relevant, self-maintaining, and small by construction. It is not the
  * default `npm test` suite: the full suite holds the machine lock
- * ~20 minutes and cannot fit this step's five-minute budget, so it still
- * runs only on `main`, which stays the safety net behind every fallback.
+ * ~20 minutes and cannot fit the gate's shared ten-minute total, so it
+ * still runs only on `main`, which stays the safety net behind every
+ * fallback.
  *
  * Usage:
  *
@@ -80,10 +84,11 @@
  * default; CI fetches the PR base and passes it explicitly). `--list` prints
  * the files that would run (the selection, or the default fast suite when
  * the gate would fall back) without running them. The run itself is bounded:
- * the per-step CI budget is five minutes, so the run timeout refuses to hold
- * the machine lock longer than that — a hanging run fails red instead of
- * queueing every other factory behind it. The run bound additionally yields
- * to the selection phase so select-plus-run always fits the step wrapper.
+ * the run timeout refuses to hold the machine lock longer than that — a
+ * hanging run fails red instead of queueing every other factory behind
+ * it — inside the gate's shared total (540 s, see `scripts/ci-fast.sh`).
+ * The run bound additionally yields to the selection phase so
+ * select-plus-run always fits its share of the total.
  *
  * Exit codes: 0 the tests that ran passed (the selection plus the
  * repo-wide guards, or the fallback suite plus the guards after a warned
@@ -119,8 +124,9 @@ const DEFAULT_SELECT_TIMEOUT_SEC = 60;
 const DEFAULT_MAX_SELECTED = 50;
 
 /**
- * The step wrapper's budget in `.github/workflows/ci.yml`: select-plus-run
- * must fit inside it, with a few seconds of margin for process startup.
+ * This phase's internal share of the gate's shared 540 s total (see
+ * `scripts/ci-fast.sh`): select-plus-run must fit inside it, with a few
+ * seconds of margin for process startup.
  */
 const STEP_BUDGET_SEC = 300;
 
@@ -384,19 +390,32 @@ export function changedTestFiles(
  * oversized selection with no changed test file of its own refuses,
  * fail-closed: there is no evidence to run, and it is the only refusal
  * left. Pure: unit-tested without git or timers.
+ *
+ * `scopeFiles` is the reachability scope the skip-vs-warn-vs-refuse
+ * decision reads (`main()` passes `allChanged`: runnable changes plus
+ * deleted paths, which seed the search but never run). Deciding on the
+ * runnable set alone lets a deletion-only diff silent-skip: with no
+ * runnable change `hasCodeChange` is false even while sixty stale
+ * importers prove the breakage, and the fast gate exits 0 while the full
+ * suite on `main` fails on the missing import. The run list, the
+ * `changedTestFiles` fallback and `uncovered` stay runnable-only —
+ * deleted files never run — while `dropped` always names the selected
+ * tests the plan does not run, so `main()` warns whenever a non-empty
+ * mapped set is discarded, including the skip path.
  */
 export function planGate(
   /** @type {string[]} */ changedFiles,
   /** @type {string[]} */ selectedTests,
   /** @type {number} */ maxSelected = DEFAULT_MAX_SELECTED,
+  /** @type {string[]} */ scopeFiles = changedFiles,
 ) {
   if (selectedTests.length === 0) {
-    return fallbackPlan(changedFiles, 'empty-selection');
+    return fallbackPlan(changedFiles, 'empty-selection', scopeFiles, selectedTests);
   }
   if (selectedTests.length <= maxSelected) {
-    return { kind: 'run', tests: selectedTests, reason: null };
+    return { kind: 'run', tests: selectedTests, reason: null, dropped: [] };
   }
-  return fallbackPlan(changedFiles, 'oversized-selection');
+  return fallbackPlan(changedFiles, 'oversized-selection', scopeFiles, selectedTests);
 }
 
 /**
@@ -408,23 +427,29 @@ export function planGate(
  * no tests of its own: `main()` still joins the repo-wide guards and runs
  * them, and warns naming the uncovered files. A changed source file no
  * test reaches never blocks the PR; the full suite on `main` is the net.
+ * `scopeFiles` and `selectedTests` feed the decision and the `dropped`
+ * list as `planGate` documents; both default to the runnable inputs so a
+ * caller without a reachability scope keeps the old behavior.
  */
 export function fallbackPlan(
   /** @type {string[]} */ changedFiles,
   /** @type {string} */ reason,
+  /** @type {string[]} */ scopeFiles = changedFiles,
+  /** @type {string[]} */ selectedTests = [],
 ) {
   const tests = changedTestFiles(changedFiles);
+  const dropped = selectedTests.filter((test) => !tests.includes(test));
   if (tests.length > 0) {
-    return { kind: 'fallback', tests, reason };
+    return { kind: 'fallback', tests, reason, dropped };
   }
-  if (!hasCodeChange(changedFiles)) {
-    return { kind: 'skip', tests: [], reason };
+  if (!hasCodeChange(scopeFiles)) {
+    return { kind: 'skip', tests: [], reason, dropped };
   }
   if (reason === 'oversized-selection') {
     const uncovered = changedFiles.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
-    return { kind: 'refuse', tests: [], reason, uncovered };
+    return { kind: 'refuse', tests: [], reason, uncovered, dropped };
   }
-  return { kind: 'fallback', tests: [], reason };
+  return { kind: 'fallback', tests: [], reason, dropped };
 }
 
 /**
@@ -571,8 +596,10 @@ export function buildFileImports(
 
 /**
  * The PR's changed files against `base`, split in three: `changed` drives
- * what runs (deleted files excluded via `--diff-filter=D` — a deleted file
- * needs no test run, and a deleted test file no longer on disk would fail
+ * what runs (the unfiltered diff minus the deleted-only diff: uppercase
+ * `--diff-filter=D` selects only deleted paths — lowercase `-d` would
+ * exclude them — so the code subtracts that set; a deleted file needs no
+ * test run, and a deleted test file no longer on disk would fail
  * the run), `deleted` seeds the reachability search only (a deleted module
  * an unchanged test still imports selects that importer — the walk stops
  * at test files, and a deleted test is absent from the corpus so it is
@@ -651,9 +678,14 @@ async function main() {
   const mapped = selectTouchedTests([...changed, ...deleted], contents, buildFileImports(root));
   const selectionElapsedSec = (Date.now() - selectStarted) / 1000;
 
+  // The skip-vs-warn-vs-refuse decision reads the reachability scope
+  // (`allChanged`: runnable changes plus deleted paths), never the
+  // runnable set alone: a deletion-only diff whose importers overflow the
+  // budget must refuse (or warn), never silent-skip. The run list below
+  // stays runnable-only: deleted files never run.
   const base = selectionElapsedSec > options.selectTimeoutSec
-    ? fallbackPlan(changed, 'selection-timeout')
-    : planGate(changed, mapped, options.maxSelected);
+    ? fallbackPlan(changed, 'selection-timeout', allChanged, mapped)
+    : planGate(changed, mapped, options.maxSelected, allChanged);
   // The over-budget note is reported on the fallback only; the run path
   // keeps the full bound minus the selection's elapsed time.
   const selectNote = selectionElapsedSec > options.selectTimeoutSec
@@ -679,9 +711,21 @@ async function main() {
     ? []
     : plan.tests.filter((test) => !preGuardTests.includes(test));
 
+  // Selected tests the plan does not run, after the guards joined: a
+  // non-empty set here is always reported — a `::warning::` annotation
+  // plus a summary line naming them — including on the skip path, so a
+  // discarded mapped set can never go quiet.
+  const droppedTests = (plan.dropped ?? []).filter((test) => !plan.tests.includes(test));
+  const droppedNote = droppedTests.length === 0
+    ? null
+    : `dropping ${droppedTests.length} selected test(s) this step does not run: ${droppedTests.join(', ')}`;
+
   if (options.list) {
     if (plan.reason && plan.kind === 'fallback') {
       process.stderr.write(`ci-touched-tests: warning: ${selectNote ?? plan.reason} — listing the fallback suite plus the repo-wide guards.\n`);
+    }
+    if (droppedNote !== null) {
+      process.stderr.write(`ci-touched-tests: warning: ${droppedNote}.\n`);
     }
     process.stdout.write(plan.tests.length === 0 ? '' : `${plan.tests.join('\n')}\n`);
     process.exit(0);
@@ -692,13 +736,19 @@ async function main() {
   // other unusable selection warns and runs the guards instead (below).
   if (plan.kind === 'refuse') {
     const uncovered = plan.uncovered ?? changed.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
+    const deletedScope = deleted.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
     process.stdout.write(
       'ci-touched-tests: refusing — the selection outgrew this step\'s budget '
       + 'and the PR carries no test file of its own, so there is nothing to run: '
-      + `${uncovered.join(', ')}.\n`
+      + `${uncovered.join(', ') || '(no runnable source in scope)'}.`
+      + `${deletedScope.length === 0 ? '' : ` The PR deletes source still in scope: ${deletedScope.join(', ')} — update the stale importers (or restore the module) so the full suite on \`main\` stays green.`}\n`
+      + `${droppedNote === null ? '' : `ci-touched-tests: warning: ${droppedNote}.\n`}`
       + 'Add a test that relatively imports them (directly or through tests/helpers); '
-      + 'the default `npm test` suite cannot fit this step\'s five-minute budget, '
+      + 'the default `npm test` suite cannot fit the gate\'s shared ten-minute total, '
       + 'so it runs only on `main`, not here.\n',
+    );
+    process.stdout.write(
+      `::error::ci-touched-tests: refusing — the selection outgrew this step's budget with no test file of its own.${droppedNote === null ? '' : ` ${droppedNote}.`}\n`,
     );
     process.exit(1);
   }
@@ -709,6 +759,10 @@ async function main() {
     process.stdout.write(
       `ci-touched-tests: ${allChanged.length} changed file(s), no test file reaches them — nothing to run.\n`,
     );
+    if (droppedNote !== null) {
+      process.stdout.write(`ci-touched-tests: warning: ${droppedNote}.\n`);
+      process.stdout.write(`::warning::ci-touched-tests: ${droppedNote}.\n`);
+    }
     process.exit(0);
   }
   if (addedGuards.length > 0) {
@@ -721,20 +775,33 @@ async function main() {
     // A changed source file no test reaches warns here — the ::warning::
     // annotation for the job plus this summary line naming the uncovered
     // files — instead of blocking: the guards above still run, and the full
-    // suite on `main` stays the safety net.
+    // suite on `main` stays the safety net. A discarded mapped set is
+    // named too, so an oversized or timed-out deletion-only diff can never
+    // go quiet about the importers it drops.
     const uncovered = changed.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
     const why = plan.reason === 'selection-timeout' && selectNote !== null
       ? selectNote
       : plan.reason === 'empty-selection' && preGuardTests.length === 0
-        ? `no test file relatively reaches these changed source file(s): ${uncovered.join(', ')} — best-effort guards only, the full suite on \`main\` stays the safety net`
+        ? `no test file relatively reaches these changed source file(s): ${uncovered.join(', ') || '(deleted scope only)'} — best-effort guards only, the full suite on \`main\` stays the safety net`
         : `selected ${mapped.length} test file(s), past the ${options.maxSelected} this step can run`;
     process.stdout.write(
       `ci-touched-tests: warning: ${why} — running the fallback suite instead `
-      + `(${preGuardTests.length} changed test file(s) plus ${addedGuards.length} repo-wide guard(s)): ${plan.tests.join(', ')}.\n`,
+      + `(${preGuardTests.length} changed test file(s) plus ${addedGuards.length} repo-wide guard(s)): ${plan.tests.join(', ')}.`
+      + `${droppedNote === null ? '' : ` ${droppedNote}.`}\n`,
     );
     process.stdout.write(
-      `::warning::ci-touched-tests: ${why} — running ${plan.tests.length} test file(s) instead of ${mapped.length} selected.\n`,
+      `::warning::ci-touched-tests: ${why} — running ${plan.tests.length} test file(s) instead of ${mapped.length} selected.${droppedNote === null ? '' : ` ${droppedNote}.`}\n`,
     );
+  }
+  if (plan.kind === 'skip' && droppedNote !== null) {
+    // Pathological but reachable: the scope carries no JavaScript, yet a
+    // test relatively imports a changed non-source file (a fixture, a data
+    // file). The guards above still run; the dropped mapped set is named
+    // instead of going quiet.
+    process.stdout.write(
+      `ci-touched-tests: warning: ${droppedNote} — best-effort guards only, the full suite on \`main\` stays the safety net.\n`,
+    );
+    process.stdout.write(`::warning::ci-touched-tests: ${droppedNote}.\n`);
   }
 
   // Same flags as `npm test`: two files at a time keeps peak memory inside
