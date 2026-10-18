@@ -34,7 +34,7 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, renameSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawnGit } from './git-env.js';
 import { join, relative } from 'node:path';
 
 const root = process.cwd();
@@ -360,7 +360,7 @@ console.log('');
 // ---------------------------------------------------------------- apply
 
 if (apply) {
-  const status = spawnSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' });
+  const status = spawnGit(['status', '--porcelain'], { cwd: root });
   if (status.error || status.status !== 0) {
     refuse(`could not read git status: ${status.error?.message ?? status.stderr?.trim() ?? 'unknown error'}`);
   }
@@ -387,7 +387,7 @@ if (apply) {
   }
 
   for (const rename of renames) {
-    const moved = spawnSync('git', ['mv', rename.from, rename.to], { cwd: root, encoding: 'utf8' });
+    const moved = spawnGit(['mv', rename.from, rename.to], { cwd: root });
     if (moved.status !== 0) renameSync(join(root, rename.from), join(root, rename.to));
   }
 

@@ -56,6 +56,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { spawnGit } from './git-env.js';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MeasurementError, assertMeasurementUnchanged, parseMeasurementReport } from './measurement-report.js';
@@ -64,7 +65,7 @@ const root = process.cwd();
 const claimsPath = join(root, 'site', 'claims.json');
 
 const git = (/** @type {string[]} */ args) => {
-  const run = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  const run = spawnGit(args, { cwd: root });
   return { status: run.status ?? 1, stdout: String(run.stdout ?? '').trim() };
 };
 
