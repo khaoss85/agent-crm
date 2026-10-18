@@ -139,24 +139,24 @@ test('commercial-quotes@2 returns the immutable evidence shape a consumer copies
     const cap = app.domains.capability({ consumer: 'capability-probe', capability: 'commercial-quotes', version: 2, context: { modules: app.modules } });
     out.interface = Object.keys(cap).sort();
 
-    const q = cap.quote(out.quoteId);
+    const q = await cap.quote(out.quoteId);
     out.lifecycle = { status: q.status, currentVersionIsSignable: q.currentVersionId === out.versionId };
 
-    const v = cap.version(out.versionId);
+    const v = await cap.version(out.versionId);
     out.policyEvidence = {
       policy: v.policy, policyVersion: v.policyVersion,
       fingerprint64: typeof v.policyFingerprint === 'string' && /^[0-9a-f]{64}$/.test(v.policyFingerprint),
       policyDecision: v.policyDecision,
     };
 
-    const lines = cap.versionLines(out.versionId);
+    const lines = await cap.versionLines(out.versionId);
     out.lines = lines.map((l) => ({
       hasCents: Number.isSafeInteger(l.netAmountCents) && Number.isSafeInteger(l.listAmountCents),
       hasOfferRevision: 'offerRevision' in l, hasSku: 'sku' in l, position: l.position,
     }));
     out.linesPositionOrdered = lines.every((l, i) => i === 0 || lines[i - 1].position <= l.position);
 
-    const comps = cap.versionComponents(out.versionId);
+    const comps = await cap.versionComponents(out.versionId);
     out.components = comps.map((c) => ({
       hasTiersJsonString: typeof c.tiersJson === 'string',
       hasTierBreakdownString: typeof c.tierBreakdownJson === 'string',
@@ -165,10 +165,10 @@ test('commercial-quotes@2 returns the immutable evidence shape a consumer copies
     // The tier encodings must be parseable JSON — the exact shape Signature copies.
     out.tiersParse = comps.every((c) => { try { JSON.parse(c.tiersJson); JSON.parse(c.tierBreakdownJson); return true; } catch { return false; } });
 
-    const totals = cap.versionTotals(out.versionId);
+    const totals = await cap.versionTotals(out.versionId);
     out.totals = totals.map((tt) => ({ kind: tt.kind, interval: tt.interval, hasNet: 'netAmountCents' in tt }));
 
-    out.policies = cap.policies().map((p) => ({ name: p.name, version: p.version, fingerprint64: /^[0-9a-f]{64}$/.test(p.fingerprint) }));
+    out.policies = (await cap.policies()).map((p) => ({ name: p.name, version: p.version, fingerprint64: /^[0-9a-f]{64}$/.test(p.fingerprint) }));
 
     // Immutability: a returned row is frozen and mutating it neither succeeds
     // nor touches storage. Baseline against the capability's OWN read, since the
@@ -178,7 +178,7 @@ test('commercial-quotes@2 returns the immutable evidence shape a consumer copies
     let mutationThrew = false;
     try { v.oneTimeNetCents = -1; } catch { mutationThrew = true; }
     out.frozen = { versionFrozen: Object.isFrozen(v), linesFrozen: Object.isFrozen(lines), mutationRejected: mutationThrew || v.oneTimeNetCents !== -1 };
-    out.storageUnchanged = cap.version(out.versionId).oneTimeNetCents === netBefore;
+    out.storageUnchanged = (await cap.version(out.versionId)).oneTimeNetCents === netBefore;
   `);
 
   assert.equal(built.__error, undefined, `phase errored: ${JSON.stringify(built.__error)}`);

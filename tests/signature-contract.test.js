@@ -164,7 +164,7 @@ test('the document package canonicalizes to stable bytes, locale-independently',
   refuses(() => canonicalDocument({ big: 'x'.repeat(250_000) }), /exceeds the storable bound/);
 });
 
-test('a document builds with an older commercial reader that has no versionTerm, and it is byte-identical to a termless one', () => {
+test('a document builds with an older commercial reader that has no versionTerm, and it is byte-identical to a termless one', async () => {
   // The signed-terms no-bump rests on ONE load-bearing guard: signature reads
   // `versionTerm` off `commercial-quotes@1` behind `typeof … === 'function'`,
   // so a composition carrying an OLDER commercial package — one that offers
@@ -182,16 +182,16 @@ test('a document builds with an older commercial reader that has no versionTerm,
   const parties = [];
 
   // Older provider: the reader object simply has no `versionTerm` property.
-  const older = buildDocumentPackage({ reader: base, quote, version, signers, parties });
+  const older = await buildDocumentPackage({ reader: base, quote, version, signers, parties });
   // Newer provider on a termless version: the method exists and answers null.
-  const newerTermless = buildDocumentPackage({ reader: { ...base, versionTerm: () => null }, quote, version, signers, parties });
+  const newerTermless = await buildDocumentPackage({ reader: { ...base, versionTerm: () => null }, quote, version, signers, parties });
 
   assert.equal('terms' in JSON.parse(older.documentBytes), false, 'an older reader yields a document with no terms key at all');
   assert.equal(older.documentHash, newerTermless.documentHash, 'older-provider and termless-newer bytes are identical — the guard degrades, never diverges');
 
   // And a version that DID freeze a term still embeds it and moves the hash,
   // so the guard is not merely swallowing everything.
-  const termed = buildDocumentPackage({
+  const termed = await buildDocumentPackage({
     reader: { ...base, versionTerm: () => ({ termsContract: 1, effectiveDate: '2026-09-01', termStartDate: '2026-09-01', termEndDate: '2027-08-31', termDays: 365, autoRenew: true, renewalNoticeDays: 60 }) },
     quote, version, signers, parties,
   });
