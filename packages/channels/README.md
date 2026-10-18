@@ -60,9 +60,10 @@ webhooks and sends keep working standalone.
 - `tests/channels-operations.test.js` — behavior on real `:memory:`
   sqlite with real module services, the real durable-job store and the
   real worker: registration, activation, ingest (apply/replay/forgery/
-  out-of-order/quarantine/verify-timeout/system-actor), send with retries
-  and the dead-letter queue. Dead-letter requeue is deferred to a follow-up
-  voice and has no test here.
+  out-of-order/quarantine/verify-timeout/system-actor), send with retries,
+  the dead-letter queue, and dead-letter requeue (one open letter retries
+  with a human-supplied message; concurrent retries serialize — one wins,
+  the other is refused without touching the winner's job).
 - The kit: `runChannelAdapterKit({ adapter, secrets, harness })` — the
   same seven checks the acceptance names (receive, send, replay, bad
   signature, out-of-order) plus no-secrets and space isolation. The
@@ -149,8 +150,8 @@ webhooks and sends keep working standalone.
   import, and no per-connection observability aggregates yet (follow-ups).
   No automatic re-import of a completed connection, no calendar initial
   window, no Meta history adapters yet: those are the follow-up voices.
-- No dead-letter requeue (human retry of an open letter): follow-up voice
-  with its own state machine.
+- No automatic retry of dead letters: every retry is a human-approved
+  requeue of one open letter, never a silent loop.
 - Sends, registrations and status changes require
   `actor.type === 'user'`. Provider-driven ingest runs under a system
   actor after verification and ignores any caller-supplied actor.

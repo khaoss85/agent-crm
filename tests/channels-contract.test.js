@@ -24,11 +24,15 @@ import {
 import {
   INBOX_EVENTS,
   INBOX_STATES,
+  JOB_EVENTS,
+  JOB_STATES,
   LETTER_EVENTS,
   LETTER_STATES,
   assertInboxTransition,
+  assertJobTransition,
   assertLetterTransition,
   inboxState,
+  jobSendState,
   transitionInbox,
   transitionLetter,
 } from '../packages/channels/src/transitions.js';
@@ -258,6 +262,49 @@ test('inbox and letter rows move on one explicit table; every other pair is refu
   assert.equal(inboxState({ processed: true, effect: 'ignored' }), 'discarded');
   assert.equal(inboxState({ processed: true, effect: 'quarantined' }), 'quarantined');
   assert.equal(inboxState(null), 'received');
+});
+
+test('the send lifecycle is one explicit table; every other pair is refused', () => {
+  // Backlog 560ff58370a8: one send attempt from queue to outcome — queued,
+  // sent, failed, dead-letter, requeued. Every (state, event) pair is
+  // enumerated here: allowed pairs resolve to the mapped state, everything
+  // else throws CHANNEL_TRANSITION_INVALID.
+  const allowed = {
+    queued: { send: 'sent', fail: 'failed' },
+    sent: {},
+    failed: { letter: 'dead-letter' },
+    'dead-letter': { requeue: 'requeued' },
+    requeued: {},
+  };
+  for (const from of JOB_STATES) {
+    for (const event of JOB_EVENTS) {
+      const want = allowed[from]?.[event] ?? null;
+      if (want === null) {
+        assert.throws(
+          () => assertJobTransition(from, event),
+          (e) => e.code === 'CHANNEL_TRANSITION_INVALID',
+          `send ${from} + ${event} is refused`,
+        );
+      } else {
+        assert.equal(assertJobTransition(from, event), want, `send ${from} + ${event} resolves`);
+      }
+    }
+  }
+  assert.throws(() => assertJobTransition('nope', JOB_EVENTS[0]), (e) => e.code === 'CHANNEL_TRANSITION_INVALID');
+  assert.throws(() => assertJobTransition(JOB_STATES[0], 'nope'), (e) => e.code === 'CHANNEL_TRANSITION_INVALID');
+  // The letter row is the persisted projection of the tail, so it wins when
+  // present; without one the durable-job row decides; unknown shapes are
+  // still queued, like unknown inbox rows are still received.
+  assert.equal(jobSendState({ letterState: 'open' }), 'dead-letter');
+  assert.equal(jobSendState({ letterState: 'open', jobState: 'failed_terminal' }), 'dead-letter');
+  assert.equal(jobSendState({ letterState: 'requeued' }), 'requeued');
+  assert.equal(jobSendState({ letterState: 'resolved' }), 'failed');
+  assert.equal(jobSendState({ jobState: 'succeeded' }), 'sent');
+  assert.equal(jobSendState({ jobState: 'failed_terminal' }), 'failed');
+  assert.equal(jobSendState({ jobState: 'pending' }), 'queued');
+  assert.equal(jobSendState({ jobState: 'claimed' }), 'queued');
+  assert.equal(jobSendState({}), 'queued');
+  assert.equal(jobSendState({ letterState: 'nope', jobState: 'nope' }), 'queued');
 });
 
 test('state moves go through one function; replay writes nothing; patches carry no state', async () => {

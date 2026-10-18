@@ -14,10 +14,12 @@ import { createChannelsHarness } from './helpers/channels-harness.js';
  * Channels behavior tests (backlog:e5532d1c9146): registration, activation,
  * verified ingest (apply / replay / forgery / out-of-order / quarantine /
  * verify-timeout / system-actor), sends with retries, the dead-letter queue,
- * cross-space refusal and the no-secrets scan — on real sqlite, real module
- * services, the real durable-job store and the real worker. The kit
- * acceptance itself runs last, against the same harness. Dead-letter requeue
- * is deferred to a follow-up voice and has no test here.
+ * dead-letter requeue (backlog:560ff58370a8: one open letter retries with a
+ * human-supplied message; concurrent retries serialize — one wins, the other
+ * is refused without touching the winner's job), cross-space refusal and
+ * the no-secrets scan — on real sqlite, real module services, the real
+ * durable-job store and the real worker. The kit acceptance itself runs
+ * last, against the same harness.
  */
 
 const SPACE_A = 'presti';
@@ -561,16 +563,163 @@ test('ingest ignores a caller-supplied actor and writes as the system actor', as
   );
 });
 
-test('dead-letter requeue is deferred: the operations surface has no retry path', async (t) => {
-  // Supervisor scope cut (review round 4): the human retry of an open dead
-  // letter moves to its own follow-up voice with its own state machine. This
-  // PR keeps the dead-letter inventory readable; nothing here moves a letter.
+test('requeue retries an open letter with a human-supplied message', async (t) => {
+  // Backlog 560ff58370a8: the letter carries no payload, so retrying means
+  // approving the content again. The new job keys on the letter AND the new
+  // message, inside the outbox bound.
   const { harness, api } = setup({ config: { maxSendAttempts: 2 } });
   t.after(() => harness.close());
   const key = await registeredActive(harness);
   api.setMode('refuse');
-  const queued = await harness.queue(SPACE_A, { connectionKey: key, message: { to: ACCOUNT_A, text: 'first try' }, messageKey: 'm-noreq' });
+  const queued = await harness.queue(SPACE_A, { connectionKey: key, message: { to: ACCOUNT_A, text: 'first try' }, messageKey: 'm-req' });
   await harness.pump(queued.jobId);
-  assert.equal(harness.letters(SPACE_A, 'open').length, 1);
-  assert.equal(typeof harness.ops.requeueChannelLetter, 'undefined', 'no requeue path on this surface');
+  const [letter] = harness.letters(SPACE_A, 'open');
+  api.setMode('ok');
+  const requeued = await harness.ops.requeueChannelLetter({
+    spaceId: SPACE_A, letterId: letter.id,
+    message: { to: ACCOUNT_A, text: 'second try' }, actor: harness.userActor,
+  });
+  assert.equal(requeued.letterId, letter.id);
+  assert.ok(requeued.idempotencyKey.includes('requeue'), 'the new key names the letter it retries');
+  assert.ok(requeued.idempotencyKey.length <= 256, `requeue key fits the outbox bound, got ${requeued.idempotencyKey.length}`);
+  const settled = await harness.pump(requeued.jobId);
+  assert.equal(settled.state, 'succeeded');
+  assert.equal(api.state.sentByKey.size, 1, 'one letter causes one provider send');
+  assert.equal(harness.letters(SPACE_A, 'open').length, 0);
+  assert.equal(harness.letters(SPACE_A, 'requeued').length, 1);
+});
+
+test('concurrent requeues with the same message: one wins, the loser is refused, the winner sends', async (t) => {
+  // Backlog 560ff58370a8, review P1 (old operations.js:654): the claim runs
+  // before any job exists, so the loser is refused before creating anything
+  // — its idempotent enqueue would have handed it the winner's own job, and
+  // cancelling that would delete the winner's send.
+  const { harness, api } = setup({ config: { maxSendAttempts: 2 } });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  api.setMode('refuse');
+  const queued = await harness.queue(SPACE_A, { connectionKey: key, message: { to: ACCOUNT_A, text: 'first try' }, messageKey: 'm-race-same' });
+  await harness.pump(queued.jobId);
+  const [letter] = harness.letters(SPACE_A, 'open');
+  const jobsBefore = (await harness.jobs()).length;
+  api.setMode('ok');
+  const message = { to: ACCOUNT_A, text: 'retry' };
+  const [first, second] = await Promise.allSettled([
+    harness.ops.requeueChannelLetter({ spaceId: SPACE_A, letterId: letter.id, message, actor: harness.userActor }),
+    harness.ops.requeueChannelLetter({ spaceId: SPACE_A, letterId: letter.id, message, actor: harness.userActor }),
+  ]);
+  const won = first.status === 'fulfilled' ? first.value : second.value;
+  const lost = first.status === 'rejected' ? first.reason : second.reason;
+  assert.ok(first.status !== second.status, 'exactly one requeue wins');
+  assert.equal(lost.code, 'CHANNEL_LETTER_UNKNOWN', 'the loser is refused as settled');
+  assert.equal(lost.status, 404);
+  assert.equal((await harness.jobs()).length, jobsBefore + 1, 'the refused requeue enqueues nothing');
+  const settled = await harness.pump(won.jobId);
+  assert.equal(settled.state, 'succeeded', "the winner's job still sends");
+  assert.equal(api.state.sentByKey.size, 1, 'one letter causes one provider send');
+  assert.equal(harness.letters(SPACE_A, 'requeued').length, 1);
+});
+
+test('concurrent requeues with different messages still send once and cancel nothing', async (t) => {
+  // Same race, different approved content: the old enqueue-first shape would
+  // have queued two jobs (two sends) or cancelled one of them. Claim-first
+  // refuses the loser before any job exists, so no job is ever cancelled.
+  const { harness, api } = setup({ config: { maxSendAttempts: 2 } });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  api.setMode('refuse');
+  const queued = await harness.queue(SPACE_A, { connectionKey: key, message: { to: ACCOUNT_A, text: 'first try' }, messageKey: 'm-race-diff' });
+  await harness.pump(queued.jobId);
+  const [letter] = harness.letters(SPACE_A, 'open');
+  const jobsBefore = (await harness.jobs()).length;
+  api.setMode('ok');
+  const [first, second] = await Promise.allSettled([
+    harness.ops.requeueChannelLetter({
+      spaceId: SPACE_A, letterId: letter.id,
+      message: { to: ACCOUNT_A, text: 'retry-a' }, actor: harness.userActor,
+    }),
+    harness.ops.requeueChannelLetter({
+      spaceId: SPACE_A, letterId: letter.id,
+      message: { to: ACCOUNT_A, text: 'retry-b' }, actor: harness.userActor,
+    }),
+  ]);
+  assert.ok(first.status !== second.status, 'exactly one requeue wins');
+  const won = first.status === 'fulfilled' ? first.value : second.value;
+  const lost = first.status === 'rejected' ? first.reason : second.reason;
+  assert.equal(lost.code, 'CHANNEL_LETTER_UNKNOWN');
+  const jobs = await harness.jobs();
+  assert.equal(jobs.length, jobsBefore + 1, 'the refused requeue enqueues nothing');
+  assert.ok(jobs.every((job) => job.state !== 'cancelled'), 'no job is cancelled, least of all the winner\'s');
+  const settled = await harness.pump(won.jobId);
+  assert.equal(settled.state, 'succeeded');
+  assert.equal(api.state.sentByKey.size, 1, 'one letter causes one provider send');
+});
+
+test('a settled letter refuses requeue without enqueueing another job', async (t) => {
+  // The winner's path, seen sequentially: once the letter is requeued, a
+  // second requeue with a different approved message 404s before touching
+  // the outbox — one letter, one provider send.
+  const { harness, api } = setup({ config: { maxSendAttempts: 2 } });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  api.setMode('refuse');
+  const queued = await harness.queue(SPACE_A, { connectionKey: key, message: { to: ACCOUNT_A, text: 'first try' }, messageKey: 'm-settled' });
+  await harness.pump(queued.jobId);
+  const [letter] = harness.letters(SPACE_A, 'open');
+  const jobsBefore = (await harness.jobs()).length;
+  api.setMode('ok');
+  const won = await harness.ops.requeueChannelLetter({
+    spaceId: SPACE_A, letterId: letter.id,
+    message: { to: ACCOUNT_A, text: 'retry-a' }, actor: harness.userActor,
+  });
+  await assert.rejects(
+    harness.ops.requeueChannelLetter({
+      spaceId: SPACE_A, letterId: letter.id,
+      message: { to: ACCOUNT_A, text: 'retry-b' }, actor: harness.userActor,
+    }),
+    (error) => error.code === 'CHANNEL_LETTER_UNKNOWN' && error.status === 404,
+  );
+  assert.equal((await harness.jobs()).length, jobsBefore + 1, 'the refused requeue enqueues nothing');
+  const settled = await harness.pump(won.jobId);
+  assert.equal(settled.state, 'succeeded');
+  assert.equal(api.state.sentByKey.size, 1, 'one letter causes one provider send');
+  assert.equal(harness.letters(SPACE_A, 'requeued').length, 1);
+});
+
+test('requeue refuses cross-space letters, non-human actors and malformed messages', async (t) => {
+  const { harness, api } = setup({ config: { maxSendAttempts: 2 } });
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  api.setMode('refuse');
+  const queued = await harness.queue(SPACE_A, { connectionKey: key, message: { to: ACCOUNT_A, text: 'first try' }, messageKey: 'm-guards' });
+  await harness.pump(queued.jobId);
+  const [letter] = harness.letters(SPACE_A, 'open');
+  const jobsBefore = (await harness.jobs()).length;
+  api.setMode('ok');
+  await assert.rejects(
+    harness.ops.requeueChannelLetter({
+      spaceId: SPACE_B, letterId: letter.id,
+      message: { to: ACCOUNT_A, text: 'retry' }, actor: harness.userActor,
+    }),
+    (error) => error.code === 'CHANNEL_LETTER_UNKNOWN' && error.status === 404,
+    'another space sees no letter (404), never forbidden (403)',
+  );
+  await assert.rejects(
+    harness.ops.requeueChannelLetter({
+      spaceId: SPACE_A, letterId: letter.id,
+      message: { to: ACCOUNT_A, text: 'retry' }, actor: { type: 'system', id: 'x' },
+    }),
+    (error) => error.code === 'HUMAN_APPROVAL_REQUIRED',
+    'a requeue is a human decision',
+  );
+  await assert.rejects(
+    harness.ops.requeueChannelLetter({
+      spaceId: SPACE_A, letterId: letter.id,
+      message: { to: ACCOUNT_A, text: 'x'.repeat(64 * 1024) }, actor: harness.userActor,
+    }),
+    (error) => error.code === 'CHANNEL_MESSAGE_MALFORMED',
+    'an oversized message never moves the letter',
+  );
+  assert.equal(harness.letters(SPACE_A, 'open').length, 1, 'the refused requeues move nothing');
+  assert.equal((await harness.jobs()).length, jobsBefore, 'the refused requeues enqueue nothing');
 });
