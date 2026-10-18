@@ -32,6 +32,19 @@
  *   exit 1, naming the uncovered files, rather than exiting 0 without
  *   running anything.
  *
+ * - the repo-wide guards (`REPO_WIDE_GUARDS` below) always run on top of
+ *   the selection, on every non-empty diff. They are the test files whose
+ *   verdict depends on files they never relatively import — repo-wide
+ *   `grep` scans and recursive walks of `packages/`, `apps/`, `tests/`
+ *   or `scripts/` — so the import mapping above never selects them, and
+ *   the fail-closed refusal never fires for them either (it fires only
+ *   when NO test is selected at all, while a normal PR always selects
+ *   some). Twice `main` turned red after green-alone PRs for exactly
+ *   this: #222 against #221 (`tests/isolated-git.test.js`) and #234
+ *   (`tests/actor-fails-closed.test.js:251`). The guards never substitute
+ *   for missing coverage: the fail-closed refusal is decided on the
+ *   mapped selection alone, before the guards join it.
+ *
  * Two budgets bound the step so a big PR cannot wedge it (CI run
  * 39044361164: 100 selected files, the run outlived its bound and the step
  * failed red on a change that needed the gate most):
@@ -64,11 +77,12 @@
  * queueing every other factory behind it. The run bound additionally yields
  * to the selection phase so select-plus-run always fits the step wrapper.
  *
- * Exit codes: 0 the tests that ran passed (the selection, or the default
- * fast suite after a warned fallback; or only non-source files changed and
- * there was nothing to run), 1 the selection failed, a test failed, the
- * fallback run failed, or the fail-closed refusal (a changed source file no
- * test reaches), 2 unusable input.
+ * Exit codes: 0 the tests that ran passed (the selection plus the
+ * repo-wide guards, or the fallback suite plus the guards after a warned
+ * fallback; an empty diff runs nothing), 1 the selection failed, a test
+ * failed, the fallback run failed, a listed guard is missing from `tests/`,
+ * or the fail-closed refusal (a changed source file no test reaches,
+ * decided before the guards join), 2 unusable input.
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
@@ -98,6 +112,73 @@ const DEFAULT_MAX_SELECTED = 50;
  * must fit inside it, with a few seconds of margin for process startup.
  */
 const STEP_BUDGET_SEC = 300;
+
+/**
+ * The repo-wide guards: test files whose verdict depends on repository
+ * files they never relatively import, so neither the import mapping nor
+ * the fail-closed refusal below ever selects them. Every entry runs on
+ * every non-empty diff, on top of the mapped selection (see
+ * `withRepoWideGuards`). THE single declaration: `tests/ci-touched-tests.test.js`
+ * fails when a repo-wide guard exists outside this list (one direction:
+ * a listed file that stops scanning stays listed until someone removes
+ * it — removal, not silence, is the update path).
+ *
+ * Membership rule: the file scans `packages/`, `apps/`, `tests/` or
+ * `scripts/` wholesale — a repo-wide `grep`/`rg`, or a recursive directory
+ * walk seeded at the repository — so adding any file there can flip its
+ * verdict. A test that reads one fixed repo file, or walks a scratch
+ * directory it built itself, is not a guard: its fixed path is either
+ * mapped through a relative import or covered by the fail-closed refusal.
+ *
+ * Measured cost on the shared Mac (2026-10-18, `node --test` per file):
+ * isolated-git ~1.1 s, spine-tenancy-truth ~2.1 s,
+ * commercial-quotes-deprecation ~0.5 s, actor-fails-closed ~1.3 s,
+ * scenario-document ~1.4 s, signed-terms-consumption-guard ~0.3 s,
+ * spine-v2-m2-final-raw-boundary ~9.8 s,
+ * agent-tool-selection-contract ~0.7 s, spine-v2-m2f-entry-wiring ~6.5 s,
+ * agent-tool-selection-docs-ids ~1 s, ci-touched-tests ~1 s — about 25 s
+ * added to the fast step in total. Deliberately NOT here: the three
+ * characterization suites (~80 s together) and the fixed-directory
+ * listers (e.g. the `*-package-absence` kernel reads) — same bug class,
+ * separate follow-up voices with their own budget strategy. The
+ * milestone-identifiers guard was split out of the hanging
+ * agent-tool-selection-prompts matrix into its own fast file for this
+ * list; the rest of that file stays a follow-up with the hang itself.
+ */
+export const REPO_WIDE_GUARDS = Object.freeze([
+  // Repo-wide `grep trustedSystemActor/SYSTEM_ACTOR` over packages+apps:
+  // a new system-authority call site anywhere flips it (reddened main
+  // after #234, which touched only packages/payments).
+  'tests/actor-fails-closed.test.js',
+  // Recursive walk of tests/ refusing direct git spawns outside the
+  // isolated helper (reddened main after #222 against #221).
+  'tests/isolated-git.test.js',
+  // Recursive walk of packages+apps holding the tenancy call boundary.
+  'tests/spine-tenancy-truth.test.js',
+  // Enumerates every packages/*/src and apps/* holding the
+  // commercial-quotes deprecation boundary.
+  'tests/commercial-quotes-deprecation.test.js',
+  // Recursive walk of the checked-in docs and data (docs, examples,
+  // packages) refusing reviewer-invisible bytes.
+  'tests/scenario-document.test.js',
+  // Scans every package src for signed-term evidence consumption.
+  'tests/signed-terms-consumption-guard.test.js',
+  // Scans packages+apps for raw-driver spellings outside the allowlist.
+  'tests/spine-v2-m2-final-raw-boundary.test.js',
+  // Recursive walk of the benchmark's own checked-in files refusing
+  // credential-shaped literals.
+  'tests/agent-tool-selection-contract.test.js',
+  // Recursive walk of packages+apps+api refusing raw SQLite consumers
+  // outside the adapter.
+  'tests/spine-v2-m2f-entry-wiring.test.js',
+  // Recursive walk of docs/ holding the prompt milestone-identifier scan.
+  // Split out of the hanging prompts matrix so the gate can run it.
+  'tests/agent-tool-selection-docs-ids.test.js',
+  // This gate's own audit (the unlisted-guard test walks tests/ itself):
+  // a PR adding a guard-shaped file anywhere must run the audit that
+  // requires it listed.
+  'tests/ci-touched-tests.test.js',
+]);
 
 const git = (/** @type {string[]} */ args) => {
   const run = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
@@ -307,6 +388,35 @@ export function fallbackPlan(
 }
 
 /**
+ * Add the repo-wide guards (`REPO_WIDE_GUARDS`) on top of a mapped or
+ * fallback selection. Pure: unit-tested, including the payments-only case
+ * from the acceptance contract.
+ *
+ * - an empty diff stays empty: with nothing changed there is nothing the
+ *   guards could catch;
+ * - a listed guard missing from `testContents` throws instead of silently
+ *   shrinking the gate: a PR deleting a guard updates the list in the same
+ *   PR, or the step fails red naming it;
+ * - duplicates collapse: a guard the mapping already selected runs once.
+ */
+export function withRepoWideGuards(
+  /** @type {string[]} */ selectedTests,
+  /** @type {Map<string, string>} */ testContents,
+  /** @type {string[]} */ changedFiles,
+  /** @type {readonly string[]} */ guards = REPO_WIDE_GUARDS,
+) {
+  if (changedFiles.length === 0) return [...selectedTests].sort();
+  const missing = guards.filter((guard) => !testContents.has(guard));
+  if (missing.length > 0) {
+    throw new Error(
+      'repo-wide guard(s) listed in REPO_WIDE_GUARDS but absent from tests/: '
+      + `${missing.join(', ')}. A PR deleting a guard updates the list in the same PR.`,
+    );
+  }
+  return [...new Set([...selectedTests, ...guards])].sort();
+}
+
+/**
  * The bound for the test run once the selection phase is over: the
  * configured run timeout, reduced by the selection's elapsed time so
  * select-plus-run always fits the step wrapper's budget, and never below
@@ -454,21 +564,38 @@ async function main() {
     }
   }
 
-  const selected = selectTouchedTests(changed, contents, buildFileImports(root));
+  const mapped = selectTouchedTests(changed, contents, buildFileImports(root));
   const selectionElapsedSec = (Date.now() - selectStarted) / 1000;
 
-  const plan = selectionElapsedSec > options.selectTimeoutSec
+  const base = selectionElapsedSec > options.selectTimeoutSec
     ? fallbackPlan(changed, 'selection-timeout')
-    : planGate(changed, selected, options.maxSelected);
+    : planGate(changed, mapped, options.maxSelected);
   // The over-budget note is reported on the fallback only; the run path
   // keeps the full bound minus the selection's elapsed time.
   const selectNote = selectionElapsedSec > options.selectTimeoutSec
     ? `selection took ${selectionElapsedSec.toFixed(1)}s, past the ${options.selectTimeoutSec}s budget`
     : null;
 
+  // Fail closed BEFORE the guards join: the refusal is decided on the
+  // mapped selection alone, so the always-run guards can never mask a
+  // changed source file no test reaches (see the header).
+  const plan = base;
+  const preGuardTests = plan.kind === 'skip' || plan.kind === 'refuse' ? [] : plan.tests;
+  if (plan.kind !== 'refuse') {
+    try {
+      plan.tests = withRepoWideGuards(preGuardTests, contents, changed);
+    } catch (error) {
+      process.stderr.write(`ci-touched-tests: ${error instanceof Error ? error.message : error}\n`);
+      process.exit(1);
+    }
+  }
+  const addedGuards = plan.kind === 'refuse'
+    ? []
+    : plan.tests.filter((test) => !preGuardTests.includes(test));
+
   if (options.list) {
     if (plan.reason && plan.kind === 'fallback') {
-      process.stderr.write(`ci-touched-tests: warning: ${selectNote ?? 'oversized selection'} — listing the default fast suite.\n`);
+      process.stderr.write(`ci-touched-tests: warning: ${selectNote ?? 'oversized selection'} — listing the fallback suite plus the repo-wide guards.\n`);
     }
     process.stdout.write(plan.tests.length === 0 ? '' : `${plan.tests.join('\n')}\n`);
     process.exit(0);
@@ -495,23 +622,31 @@ async function main() {
     );
     process.exit(1);
   }
-  if (plan.kind === 'skip') {
+  if (plan.tests.length === 0) {
+    // Only an empty diff reaches here with nothing to run: any real
+    // change — code or not — runs at least the repo-wide guards (a
+    // docs-only change can still flip tests/scenario-document.test.js).
     process.stdout.write(
       `ci-touched-tests: ${changed.length} changed file(s), no test file reaches them — nothing to run.\n`,
     );
     process.exit(0);
   }
+  if (addedGuards.length > 0) {
+    process.stdout.write(
+      `ci-touched-tests: plus ${addedGuards.length} repo-wide guard(s): ${addedGuards.join(', ')}.\n`,
+    );
+  }
 
   if (plan.kind === 'fallback') {
     const why = plan.reason === 'selection-timeout' && selectNote !== null
       ? selectNote
-      : `selected ${selected.length} test file(s), past the ${options.maxSelected} this step can run`;
+      : `selected ${mapped.length} test file(s), past the ${options.maxSelected} this step can run`;
     process.stdout.write(
-      `ci-touched-tests: warning: ${why} — running the default fast suite instead `
-      + `(${plan.tests.length} changed test file(s)): ${plan.tests.join(', ')}.\n`,
+      `ci-touched-tests: warning: ${why} — running the fallback suite instead `
+      + `(${preGuardTests.length} changed test file(s) plus ${addedGuards.length} repo-wide guard(s)): ${plan.tests.join(', ')}.\n`,
     );
     process.stdout.write(
-      `::warning::ci-touched-tests: ${why} — running ${plan.tests.length} changed test file(s) instead of ${selected.length} selected.\n`,
+      `::warning::ci-touched-tests: ${why} — running ${plan.tests.length} test file(s) instead of ${mapped.length} selected.\n`,
     );
   }
 

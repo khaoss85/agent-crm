@@ -12,12 +12,14 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { spawnGit } from './helpers/isolated-git.js';
 import {
+  REPO_WIDE_GUARDS,
   buildFileImports,
   changedTestFiles,
   fallbackPlan,
@@ -27,6 +29,7 @@ import {
   relativeImportsOf,
   runBudgetSec,
   selectTouchedTests,
+  withRepoWideGuards,
 } from '../scripts/ci-touched-tests.js';
 
 /** @param {Record<string, string>} entries */
@@ -509,4 +512,248 @@ test('an oversized synthetic selection falls back to the changed tests', () => {
     tests: ['tests/synth-t0.test.js'],
     reason: 'oversized-selection',
   });
+});
+
+// ------------------------------------------------------------------ repo-wide guards
+//
+// Twice `main` turned red after green-alone PRs (#222 against #221 through
+// tests/isolated-git.test.js, #234 through tests/actor-fails-closed.test.js)
+// because the guards below scan the whole repository while importing almost
+// none of it, so the import mapping never selects them. They always run on
+// top of the selection (see `withRepoWideGuards`); these tests hold that.
+
+test('the declared list holds the two acceptance guards', () => {
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/actor-fails-closed.test.js'),
+    'a payments-only PR must run tests/actor-fails-closed.test.js',
+  );
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/isolated-git.test.js'),
+    'a payments-only PR must run tests/isolated-git.test.js',
+  );
+});
+
+test('a payments-only change runs the guards on top of its selection', () => {
+  const guarded = withRepoWideGuards(
+    ['tests/payments-checkout.test.js'],
+    contents({
+      'tests/payments-checkout.test.js': "import test from 'node:test';\n",
+      'tests/actor-fails-closed.test.js': "import test from 'node:test';\n",
+      'tests/isolated-git.test.js': "import test from 'node:test';\n",
+    }),
+    ['packages/payments/src/operations.js'],
+    ['tests/actor-fails-closed.test.js', 'tests/isolated-git.test.js'],
+  );
+  assert.deepEqual(guarded, [
+    'tests/actor-fails-closed.test.js',
+    'tests/isolated-git.test.js',
+    'tests/payments-checkout.test.js',
+  ]);
+});
+
+test('guards join docs-only diffs but an empty diff stays empty', () => {
+  const guards = ['tests/isolated-git.test.js'];
+  const have = contents({ 'tests/isolated-git.test.js': "import test from 'node:test';\n" });
+  assert.deepEqual(
+    withRepoWideGuards([], have, ['docs/QUALITY_GATES.md'], guards),
+    ['tests/isolated-git.test.js'],
+  );
+  assert.deepEqual(withRepoWideGuards([], have, [], guards), []);
+});
+
+test('a guard the mapping already selected runs once', () => {
+  const guarded = withRepoWideGuards(
+    ['tests/isolated-git.test.js'],
+    contents({ 'tests/isolated-git.test.js': "import test from 'node:test';\n" }),
+    ['tests/isolated-git.test.js'],
+    ['tests/isolated-git.test.js'],
+  );
+  assert.deepEqual(guarded, ['tests/isolated-git.test.js']);
+});
+
+test('a listed guard missing from the corpus throws instead of shrinking the gate', () => {
+  assert.throws(
+    () => withRepoWideGuards([], contents({}), ['packages/payments/src/operations.js'], ['tests/gone.test.js']),
+    /tests\/gone\.test\.js/,
+  );
+});
+
+test('REPO_WIDE_GUARDS names existing test files, once each', () => {
+  assert.deepEqual(
+    [...new Set(REPO_WIDE_GUARDS)].sort(),
+    [...REPO_WIDE_GUARDS].sort(),
+    'a guard listed twice runs once but reads as two promises — list it once',
+  );
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  for (const guard of REPO_WIDE_GUARDS) {
+    assert.match(guard, /^tests\/.+\.test\.[cm]?js$/, `${guard} is not a test file under tests/`);
+    assert.ok(existsSync(join(repoRoot, guard)), `${guard} is listed but missing on disk`);
+  }
+});
+
+/**
+ * A test file is a repo-wide guard when its verdict can flip because of a
+ * repository file it never relatively imports. In this repository that
+ * always takes one of two shapes — the only two the fast gate ever missed:
+ *
+ * - a `grep`/`rg` child process with a bare `packages`, `apps`, `tests`
+ *   or `scripts` operand (the actor boundary's `grep -rn … packages apps`);
+ * - a recursive directory reader seeded at the repository: one function
+ *   whose own body reads a directory and calls itself, invoked with a
+ *   repo-rooted argument, a top-directory literal, or a loop variable over
+ *   top directories (the isolated-git walk of `tests/`).
+ *
+ * The reader check is scoped to the function's own braces, not a fixed
+ * window: a fixed window bleeds a neighbour's `readdirSync` into a CLI
+ * runner that merely defaults its `cwd` to the repo (project-doctor,
+ * package-scaffold), and the definition's own parameter list is not a
+ * call. Strings and comments are blanked first so a brace inside a
+ * message cannot move a boundary.
+ *
+ * Documented limits: a scan split across helper functions with no
+ * repo-rooted call site in the test file (today: the raw-driver boundary,
+ * whose walk lives behind a default parameter) is listed by audit, not
+ * caught here. A new guard in a new shape extends this detector alongside
+ * the list entry — the failure message below says so.
+ *
+ * @param {string} _relativePath repository-relative test path, unused: the
+ * shapes above are path-independent; it is kept so the call reads.
+ * @param {string} source the test file's text.
+ */
+function looksLikeRepoWideGuard(_relativePath, source) {
+  if (
+    /(execFileSync|execSync|spawnSync|spawn|execFile)\(\s*['"`](grep|rg)['"`]/.test(source)
+    && /,\s*['"`](packages|apps|tests|scripts)['"`]/.test(source)
+  ) {
+    return true;
+  }
+  if (!/readdir(Sync)?\(|opendir(Sync)?\(|globSync\(/.test(source)) return false;
+  // Blanks strings and comments (length-preserving, so indices survive);
+  // template bodies stay, `${…}` code with them.
+  const scrubbed = source
+    .replace(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"/g, (literal) => ' '.repeat(literal.length))
+    .replace(/\/\/[^\n]*/g, (comment) => ' '.repeat(comment.length))
+    .replace(/\/\*[\s\S]*?\*\//g, (comment) => ' '.repeat(comment.length));
+  const balancedEnd = (/** @type {string} */ text, /** @type {number} */ open) => {
+    let depth = 0;
+    for (let j = open; j < Math.min(text.length, open + 8000); j += 1) {
+      if (text[j] === '{') depth += 1;
+      else if (text[j] === '}') {
+        depth -= 1;
+        if (depth === 0) return j;
+      }
+    }
+    return -1;
+  };
+  const bodies = [];
+  const defPattern = /function\s+([A-Za-z_$][\w$]*)\s*\(|const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*=>/g;
+  for (const def of scrubbed.matchAll(defPattern)) {
+    const name = def[1] ?? def[2];
+    const isFunction = def[1] !== undefined;
+    let bodyStart = -1;
+    if (isFunction) {
+      let depth = 0;
+      let j = (def.index ?? 0) + def[0].length - 1;
+      for (; j < scrubbed.length; j += 1) {
+        if (scrubbed[j] === '(') depth += 1;
+        else if (scrubbed[j] === ')') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+      }
+      bodyStart = scrubbed.indexOf('{', j);
+    } else {
+      const arrow = scrubbed.indexOf('=>', (def.index ?? 0) + def[0].length - 2);
+      let j = arrow + 2;
+      while (scrubbed[j] === ' ') j += 1;
+      if (scrubbed[j] === '{') bodyStart = j;
+      else continue;
+    }
+    if (bodyStart < 0) continue;
+    const bodyEnd = balancedEnd(scrubbed, bodyStart);
+    if (bodyEnd < 0) continue;
+    bodies.push({
+      name,
+      body: scrubbed.slice(bodyStart, bodyEnd),
+      defIndex: def.index ?? 0,
+      end: bodyEnd,
+    });
+  }
+  const loopedDirs = new Set();
+  for (const loop of scrubbed.matchAll(/for\s*\([^)]*\bof\s+\[([^\]]*)\]\)/g)) {
+    if (/['"`](packages|apps|tests|scripts)['"`]/.test(source.slice(loop.index, (loop.index ?? 0) + loop[0].length))) {
+      const bound = /for\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of/.exec(loop[0]);
+      if (bound) loopedDirs.add(bound[1]);
+    }
+  }
+  for (const { name, body, defIndex, end } of bodies) {
+    if (!/readdir(Sync)?\(|opendir(Sync)?\(|globSync\(/.test(body)) continue;
+    if (!new RegExp(`\\b${name}\\s*\\(`).test(body)) continue;
+    // Call sites anywhere outside the definition itself (a hoisted
+    // `function` may run before the lines that declare it).
+    const regions = [
+      { text: scrubbed.slice(0, defIndex), base: 0 },
+      { text: scrubbed.slice(end), base: end },
+    ];
+    for (const { text, base } of regions) {
+      const callPattern = new RegExp(`\\b${name}\\s*\\(`, 'g');
+      for (const call of text.matchAll(callPattern)) {
+        // Balanced-paren arguments: seeds like join(REPO_ROOT, root) nest.
+        const open = (call.index ?? 0) + call[0].length - 1;
+        let depth = 0;
+        let j = open;
+        for (; j < Math.min(text.length, open + 300); j += 1) {
+          if (text[j] === '(') depth += 1;
+          else if (text[j] === ')') {
+            depth -= 1;
+            if (depth === 0) break;
+          }
+        }
+        if (depth !== 0) continue;
+        const args = text.slice(open + 1, j);
+        if (/(testsRoot|REPO_ROOT|repoRoot|\bROOT\b)/.test(args)) return true;
+        const globalAt = base + open + 1;
+        if (/['"`](packages|apps|tests|scripts)['"`]/.test(source.slice(globalAt, base + j))) {
+          return true;
+        }
+        const bare = /^[A-Za-z_$][\w$]*$/.exec(args.trim());
+        if (bare && loopedDirs.has(bare[0])) return true;
+      }
+    }
+  }
+  return false;
+}
+
+test('a repo-wide guard outside the declared list fails this test', () => {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const testFiles = [];
+  const walk = (/** @type {string} */ directory) => {
+    for (const name of readdirSync(directory)) {
+      if (name === 'node_modules') continue;
+      const absolute = join(directory, name);
+      try {
+        readdirSync(absolute);
+        walk(absolute);
+      } catch {
+        if (/\.test\.[cm]?js$/.test(name)) {
+          testFiles.push(absolute.slice(repoRoot.length + 1).replace(/\\/g, '/'));
+        }
+      }
+    }
+  };
+  walk(join(repoRoot, 'tests'));
+  const unlisted = [];
+  for (const relative of testFiles.sort()) {
+    const source = readFileSync(join(repoRoot, relative), 'utf8');
+    if (looksLikeRepoWideGuard(relative, source) && !REPO_WIDE_GUARDS.includes(relative)) {
+      unlisted.push(relative);
+    }
+  }
+  assert.deepEqual(
+    unlisted,
+    [],
+    `repo-wide guard(s) outside REPO_WIDE_GUARDS in scripts/ci-touched-tests.js: ${unlisted.join(', ')}. `
+    + 'Add them to the list (a guard in a new mechanism shape extends looksLikeRepoWideGuard here too), '
+    + 'or, when the file only walks scratch directories it built itself, say so in the PR.',
+  );
 });

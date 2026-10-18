@@ -413,31 +413,12 @@ test('an arrow is not a redirect, and neither is a comparison', () => {
   assert.equal(classifyAction('node -e "require(\'fs\').writeFileSync(\'x\', \'y\')"', surface).mutating, true);
 });
 
-test('the milestone identifiers a prompt may not carry are read from the repository', () => {
-  const surface = readAccordoSurface(REPO_ROOT);
-  // What the repository actually calls its milestones, gathered independently of the
-  // scanner's own source so the two can disagree.
-  const inDocs = new Set();
-  const walk = (dir) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) { walk(path); continue; }
-      if (!entry.name.endsWith('.md')) continue;
-      for (const match of readFileSync(path, 'utf8').matchAll(/\b(?:AX|DX|LA)\d{1,2}\b/g)) inDocs.add(match[0]);
-    }
-  };
-  walk(join(REPO_ROOT, 'docs'));
-  assert.ok(inDocs.size >= 20, 'this repository names a lot of milestones; a scan that found few is scanning the wrong thing');
-
-  const missed = [...inDocs].filter((identifier) => (
-    scanPromptForSurfaceLeak(`Please look at ${identifier} and tell me what it needs.`, surface).length === 0
-  ));
-  assert.deepEqual(
-    missed, [],
-    'a hand-typed list of milestone identifiers goes stale the moment somebody adds a milestone, '
-    + 'silently and in the direction that makes the benchmark look better',
-  );
-});
+/*
+ * The milestone-identifiers guard lived here; it now runs as
+ * tests/agent-tool-selection-docs-ids.test.js so the fast gate can always
+ * run it — this file also holds the slow benchmark matrix, which cannot
+ * fit the gate's five-minute budget.
+ */
 
 
 /**
