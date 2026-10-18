@@ -203,6 +203,26 @@ export async function runChannelAdapterKit(options) {
     return 'reference stored, value nowhere';
   });
 
+  await check('space-isolation', async () => {
+    // A's webhook under B's space: unknown connection, never A's rows.
+    const rawBody = JSON.stringify({ id: 'evt-xspace-1', subject: 'chat-kit-1', seq: 9 });
+    const code = await asCode(() => harness.ingest(spaceB, { connectionKey: keyA, rawBody, headers: faults.sign(rawBody) }));
+    if (code !== 'CHANNEL_CONNECTION_UNKNOWN') fail(`expected CHANNEL_CONNECTION_UNKNOWN, got ${code}`);
+    const queueCode = await asCode(() => harness.queue(spaceB, {
+      connectionKey: keyA, message: { to: accountA, text: 'cross-space' }, messageKey: 'kit-xspace-1',
+    }));
+    if (queueCode !== 'CHANNEL_CONNECTION_UNKNOWN') fail(`expected CHANNEL_CONNECTION_UNKNOWN, got ${queueCode}`);
+    for (const row of harness.inbox(spaceB)) {
+      if (row.connectionKey === keyA || row.providerEventId === 'evt-xspace-1') {
+        fail('space B holds a row bound to space A');
+      }
+    }
+    for (const row of harness.inbox(spaceA)) {
+      if (row.spaceId !== spaceA) fail('space A holds a foreign row');
+    }
+    return 'no row crosses spaces in either direction';
+  });
+
   await check('history', async () => {
     // Adapters without readable past skip with their reason: starting
     // their import refuses CHANNEL_HISTORY_UNAVAILABLE, so there is no
@@ -234,26 +254,6 @@ export async function runChannelAdapterKit(options) {
       token = following.nextPageToken;
     }
     return `${events} event(s) across ${pages} page(s)${token === null ? ', past exhausted' : ', past continues'}`;
-  });
-
-  await check('space-isolation', async () => {
-    // A's webhook under B's space: unknown connection, never A's rows.
-    const rawBody = JSON.stringify({ id: 'evt-xspace-1', subject: 'chat-kit-1', seq: 9 });
-    const code = await asCode(() => harness.ingest(spaceB, { connectionKey: keyA, rawBody, headers: faults.sign(rawBody) }));
-    if (code !== 'CHANNEL_CONNECTION_UNKNOWN') fail(`expected CHANNEL_CONNECTION_UNKNOWN, got ${code}`);
-    const queueCode = await asCode(() => harness.queue(spaceB, {
-      connectionKey: keyA, message: { to: accountA, text: 'cross-space' }, messageKey: 'kit-xspace-1',
-    }));
-    if (queueCode !== 'CHANNEL_CONNECTION_UNKNOWN') fail(`expected CHANNEL_CONNECTION_UNKNOWN, got ${queueCode}`);
-    for (const row of harness.inbox(spaceB)) {
-      if (row.connectionKey === keyA || row.providerEventId === 'evt-xspace-1') {
-        fail('space B holds a row bound to space A');
-      }
-    }
-    for (const row of harness.inbox(spaceA)) {
-      if (row.spaceId !== spaceA) fail('space A holds a foreign row');
-    }
-    return 'no row crosses spaces in either direction';
   });
 
   return Object.freeze(results);

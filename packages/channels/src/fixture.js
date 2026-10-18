@@ -66,11 +66,12 @@ export function createFixtureChannelAdapter(options = {}) {
       state.flakyRemaining = flakyFailures;
     },
     reset() {
+      // Transport state only: the seeded past is fixture data, replaced by
+      // re-seeding. A mid-run reset must never wipe it (see gmail.js).
       state.mode = 'ok';
       state.flakyRemaining = 0;
       state.sentByKey.clear();
       state.sendCalls = 0;
-      state.history.length = 0;
     },
     /**
      * Seed the provider past the import pages through: already-normalized

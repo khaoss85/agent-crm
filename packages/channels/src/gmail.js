@@ -368,11 +368,13 @@ export function createGmailChannelAdapter(options = {}) {
       state.flakyRemaining = flakyFailures;
     },
     reset() {
+      // Transport state only: the seeded provider past is fixture data, and
+      // re-seeding replaces it. A mid-run reset (the kit resets before its
+      // send check) must never wipe the past the history check pages.
       state.mode = 'ok';
       state.flakyRemaining = 0;
       state.sentByKey.clear();
       state.sendCalls = 0;
-      state.mailboxHistory.length = 0;
     },
     sentMessages() {
       return [...state.sentByKey.values()].map((entry) => entry.request.body);

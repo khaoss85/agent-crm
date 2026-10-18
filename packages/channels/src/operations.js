@@ -279,8 +279,12 @@ export function createChannelOperations(deps) {
     if (!providerEventId) {
       throw new AppError('Channel event is not well-formed', { code: 'CHANNEL_EVENT_MALFORMED', status: 422 });
     }
+    // The record contract stores no empty managed text (generated services
+    // reject '' while the core runtime folds it to null): an absent subject
+    // travels as null on the item, and every reader treats null like '' —
+    // quarantine evidence, never a conversation.
     const subject = typeof event?.subject === 'string' && event.subject !== '' && event.subject.length <= 256
-      ? event.subject : '';
+      ? event.subject : null;
     let sequence = Number.isSafeInteger(event?.sequence) ? event.sequence : null;
     let occurredAt = isCanonicalInstant(event?.occurredAt) ? event.occurredAt : null;
     // Fail-closed on provider time, here in the package so every adapter
@@ -313,7 +317,7 @@ export function createChannelOperations(deps) {
     if (item.futureSkew) {
       return { effect: 'quarantined', effectReason: 'provider timestamp beyond +5min skew: kept as evidence at receive time, never a window observation' };
     }
-    if (item.subject === '') {
+    if (item.subject === null || item.subject === '') {
       return { effect: 'quarantined', effectReason: 'unknown subject: no local mapping for this provider subject' };
     }
     if (item.sequence !== null) {
@@ -336,9 +340,18 @@ export function createChannelOperations(deps) {
   function sameImportEvent(already, item, imported) {
     if (!imported && already.effectReason !== CHANNEL_IMPORT_ROW_REASON) return false;
     return already.providerEventId === item.providerEventId
-      && already.subject === item.subject
+      && (already.subject ?? '') === (item.subject ?? '')
       && already.sequence === item.sequence
       && already.occurredAt === item.occurredAt;
+  }
+
+  /**
+   * Generated services reject empty managed text while the core runtime
+   * folds it to null: an absent reason stores as null on both, so one
+   * package runs unchanged on either service.
+   */
+  function storedReason(reason) {
+    return reason === '' ? null : reason;
   }
 
   function eventIdConflict(item) {
@@ -422,7 +435,7 @@ export function createChannelOperations(deps) {
         ...baseRow,
         processed: true,
         effect: decision.effect,
-        effectReason: reason,
+        effectReason: storedReason(reason),
       }, { actor });
       return { duplicate: false, eventId: row.id, effect: row.effect };
     } catch (error) {
