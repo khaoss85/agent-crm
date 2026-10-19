@@ -207,6 +207,9 @@ already has today does not stop a fix that improves something else.
   - a cure that does not fix the defect it claims to fix;
   - a measurement that cannot fail, for example one that re-runs the fixed code
     instead of reading what production produced.
+  - changed code that answers an HTTP 5xx, or swallows an exception, without
+    logging the cause (error name or code and the tenant/workspace id, never
+    cookies, tokens or personal data): a failure nobody can diagnose.
 - **Not blocking, report as P3 and start the title with `follow-up:`**:
   - a gap that already exists on `main` and that this PR does not make worse;
   - coverage of more phrasings or more cases than the PR's stated scope;
