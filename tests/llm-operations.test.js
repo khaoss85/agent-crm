@@ -55,6 +55,30 @@ const USAGE_MANIFEST = {
     .map((name) => ({ name, column: name })),
 };
 
+// The audit double carries the shipped manifest shape (field names and
+// types) with identity-mapped columns, so the spend receipt insert the
+// claim unit runs proves the same validation and mapping as production.
+const AUDIT_MANIFEST = {
+  name: 'llm-call-audit',
+  table: 'llm_call_audits',
+  fields: [
+    { name: 'callKey', column: 'callKey', type: 'string' },
+    { name: 'at', column: 'at', type: 'timestamp' },
+    { name: 'spaceId', column: 'spaceId', type: 'string' },
+    { name: 'purpose', column: 'purpose', type: 'string' },
+    { name: 'adapter', column: 'adapter', type: 'string' },
+    { name: 'model', column: 'model', type: 'string' },
+    { name: 'inputTokens', column: 'inputTokens', type: 'integer' },
+    { name: 'outputTokens', column: 'outputTokens', type: 'integer' },
+    { name: 'estimatedCostCents', column: 'estimatedCostCents', type: 'integer' },
+    { name: 'dryRun', column: 'dryRun', type: 'boolean' },
+    { name: 'refused', column: 'refused', type: 'string' },
+    { name: 'errorCode', column: 'errorCode', type: 'string' },
+    { name: 'sourceCount', column: 'sourceCount', type: 'integer' },
+    { name: 'sources', column: 'sources', type: 'string' },
+  ],
+};
+
 function stubService(uniqueKey, manifest = null) {
   const rows = [];
   let seq = 0;
@@ -64,9 +88,44 @@ function stubService(uniqueKey, manifest = null) {
     if (predicate.op !== 'eq') throw new Error(`stub storage supports only eq (got ${predicate.op})`);
     return row[predicate.column] === predicate.value;
   });
+  // Rows the claim unit inserts carry physical coercion (booleans as 1/0,
+  // like `toDbValue` persists in production): map them back on read, the
+  // way `mapRow` does for real storage.
+  const mapStored = (row) => {
+    const mapped = { ...row };
+    for (const field of manifest?.fields ?? []) {
+      if (field.type !== 'boolean') continue;
+      const key = field.column ?? field.name;
+      if (mapped[key] === 1) mapped[key] = true;
+      else if (mapped[key] === 0) mapped[key] = false;
+    }
+    return mapped;
+  };
+  // Tables another stub owns but this unit writes atomically (the spend
+  // claim and its domain receipt share one savepoint in production): the
+  // unit handle routes inserts by table, and the rollback below restores
+  // every linked table and collector with this stub's own rows.
+  const linkedTables = new Map();
+  const linkedCollectors = [];
   const storage = {
     execute: async (statement) => {
-      if (statement?.kind !== 'update') throw new Error(`stub storage supports only update (got ${statement?.kind})`);
+      if (statement?.kind === 'insert') {
+        const target = statement.table === manifest?.table
+          ? { rows, uniqueKey }
+          : linkedTables.get(statement.table);
+        if (!target) throw new Error(`stub storage has no table ${statement?.table}`);
+        const stored = {};
+        for (const { column, value } of statement.values ?? []) stored[column] = value;
+        if (target.uniqueKey !== null && target.uniqueKey !== undefined
+          && target.rows.some((existing) => existing[target.uniqueKey] === stored[target.uniqueKey])) {
+          throw new Error(`UNIQUE constraint failed: ${target.uniqueKey}`);
+        }
+        target.rows.push(stored);
+        return { affectedRows: 1 };
+      }
+      if (statement?.kind !== 'update') {
+        throw new Error(`stub storage supports only update/insert (got ${statement?.kind})`);
+      }
       const targets = rows.filter((row) => matchWhere(row, statement.where));
       for (const target of targets) {
         for (const assignment of statement.values ?? []) {
@@ -90,15 +149,26 @@ function stubService(uniqueKey, manifest = null) {
     emitted,
     manifest,
     database: manifest ? { storage } : undefined,
+    linkTable: (table, target) => { linkedTables.set(table, target); },
+    linkCollector: (array) => { linkedCollectors.push(array); },
     mutationAsync: manifest ? async (fn) => {
       const snapshot = rows.map((row) => ({ ...row }));
+      const linkedSnapshots = [...linkedTables.values()].map((target) => ({
+        target, rows: target.rows.map((row) => ({ ...row })),
+      }));
       const audits = auditRecords.length;
+      const collectors = linkedCollectors.map((array) => array.length);
       try {
         return await fn(tx);
       } catch (error) {
         rows.length = 0;
         for (const row of snapshot) rows.push(row);
+        for (const { target, rows: saved } of linkedSnapshots) {
+          target.rows.length = 0;
+          for (const row of saved) target.rows.push(row);
+        }
         auditRecords.length = audits;
+        linkedCollectors.forEach((array, index) => { array.length = collectors[index]; });
         throw error;
       }
     } : undefined,
@@ -107,7 +177,7 @@ function stubService(uniqueKey, manifest = null) {
     get: async (id) => {
       const stored = rows.find((row) => row.id === id);
       if (!stored) throw new Error(`missing row ${id}`);
-      return { ...stored };
+      return mapStored(stored);
     },
     createManaged: async (row) => {
       if (rows.some((existing) => existing[uniqueKey] === row[uniqueKey])) {
@@ -127,7 +197,7 @@ function stubService(uniqueKey, manifest = null) {
     },
     listWhere: async (filter) => rows
       .filter((row) => Object.entries(filter).every(([key, value]) => row[key] === value))
-      .map((row) => ({ ...row })),
+      .map((row) => mapStored(row)),
   };
 }
 
@@ -146,7 +216,13 @@ function stubFetchOk(seen) {
 
 function setup(options = {}) {
   const usage = stubService('dayKey', USAGE_MANIFEST);
-  const audit = stubService('callKey');
+  const audit = stubService('callKey', AUDIT_MANIFEST);
+  // The claim unit writes the domain receipt on its own handle, like the
+  // shared savepoint in production: the double routes that table here and
+  // rolls it back with the claim.
+  usage.linkTable(audit.manifest.table, { rows: audit.rows, uniqueKey: 'callKey' });
+  usage.linkCollector(audit.auditRecords);
+  usage.linkCollector(audit.emitted);
   const modules = new Map([
     ['llm-usage-day', { service: usage }],
     ['llm-call-audit', { service: audit }],
@@ -485,6 +561,33 @@ test('an audit failure rolls the spend claim back instead of landing it silently
     'the retry claims once, never twice');
 });
 
+test('a domain receipt failure rolls the spend claim back instead of landing it silently', async () => {
+  const { ops, modules, audit } = setup();
+  const first = await call(ops, modules, { tag: 'receipt-first' });
+  assert.equal(first.dryRun, false);
+  // Rig the DOMAIN receipt — the llm-call-audit insert the claim unit
+  // writes — not the framework receipt: the spend must still roll back.
+  const realRecord = audit.audit.record;
+  audit.audit.record = () => { throw new Error('audit disk full'); };
+  try {
+    await assert.rejects(() => call(ops, modules, { tag: 'receipt-second' }), /audit disk full/);
+  } finally {
+    audit.audit.record = realRecord;
+  }
+  const totals = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(totals.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[10, 4, 1]],
+    'the rolled-back spend left no totals behind');
+  assert.equal(audit.rows.length, 1, 'the rolled-back spend left no domain row behind');
+  const reads = await ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.equal(reads.length, 1, 'only the first attempt kept its receipt');
+  const retry = await call(ops, modules, { tag: 'receipt-retry' });
+  assert.equal(retry.dryRun, false);
+  const after = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(after.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[20, 8, 2]],
+    'the retry claims once, never twice');
+  assert.equal(audit.rows.length, 2, 'the retry wrote its own receipt');
+});
+
 test('requests validate fail-closed before any provider is touched', async () => {
   const { definition, api } = createFixtureLlmAdapter({ secret: SECRET });
   const { ops, modules } = setup({
@@ -593,6 +696,59 @@ test('a failing audit rolls the spend back on real storage', async (t) => {
     'the savepoint undid the claim with its missing receipt');
   const kept = await claimSpend(service, dayKey, delta, ACTOR, caps, () => T0);
   assert.deepEqual([kept.row.inputTokens, kept.row.outputTokens, kept.row.calls], [10, 4, 1]);
+});
+
+test('a failing domain receipt rolls the spend back on real storage', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-llm-receipt-'));
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* test litter */ } });
+  const writer = realLlmWriter(join(dir, 'llm-receipt.sqlite'));
+  t.after(() => { writer.close(); });
+  const usageService = writer.modules.get('llm-usage-day').service;
+  const auditService = writer.modules.get('llm-call-audit').service;
+  const dayKey = 'presti:2026-10-19';
+  await usageService.createManaged({
+    dayKey, spaceId: 'presti', day: '2026-10-19',
+    inputTokens: 0, outputTokens: 0, estimatedCostCents: 0, calls: 0,
+  }, { actor: ACTOR });
+  const caps = { dailyTokenCap: 1000000, dailyCostCentsCap: null };
+  const delta = { inputTokens: 10, outputTokens: 4, estimatedCostCents: 1 };
+  const patch = {
+    callKey: 'call:presti:receipt-1',
+    at: new Date(T0).toISOString(),
+    spaceId: 'presti', purpose: 'free-question',
+    adapter: 'openai', model: OPENAI_DEFAULT_MODEL,
+    inputTokens: 10, outputTokens: 4, estimatedCostCents: 1,
+    dryRun: false, refused: null, errorCode: null,
+    sourceCount: 0, sources: null,
+  };
+  // Both modules mirror one audit log: fail only the domain receipt, after
+  // the claim landed, and the shared savepoint must undo both.
+  assert.equal(usageService.audit, auditService.audit, 'both modules mirror one audit log');
+  const sharedAudit = usageService.audit;
+  const realRecord = sharedAudit.record.bind(sharedAudit);
+  sharedAudit.record = (event, handle) => {
+    if (event?.entityType === 'llm-call-audit') throw new Error('audit disk full');
+    return realRecord(event, handle);
+  };
+  try {
+    await assert.rejects(
+      () => claimSpend(usageService, dayKey, delta, ACTOR, caps, () => T0, { service: auditService, patch }),
+      /audit disk full/,
+    );
+  } finally {
+    sharedAudit.record = realRecord;
+  }
+  const rows = await usageService.listWhere({ dayKey });
+  assert.deepEqual([rows[0].inputTokens, rows[0].outputTokens, rows[0].calls], [0, 0, 0],
+    'the savepoint undid the claim with its missing receipt');
+  const audits = await auditService.listWhere({ spaceId: 'presti' });
+  assert.equal(audits.length, 0, 'no domain row survived the rollback');
+  const keptAfter = await claimSpend(usageService, dayKey, delta, ACTOR, caps, () => T0,
+    { service: auditService, patch: { ...patch, callKey: 'call:presti:receipt-2' } });
+  assert.deepEqual(
+    [keptAfter.row.inputTokens, keptAfter.row.outputTokens, keptAfter.row.calls], [10, 4, 1]);
+  const keptAudits = await auditService.listWhere({ spaceId: 'presti' });
+  assert.equal(keptAudits.length, 1, 'the retry wrote its own receipt');
 });
 
 test('real storage round-trips the exact audit sentinels', async (t) => {

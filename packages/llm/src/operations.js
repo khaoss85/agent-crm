@@ -36,6 +36,10 @@ import { OPENAI_DEFAULT_MODEL } from './openai.js';
  * estimated from a declared per-model table the deployment overrides when
  * OpenAI bills the first invoice; the estimate only drives caps and the
  * audit, never a charge.
+ *
+ * A committed spend always has its domain receipt: the claim and the
+ * `llm-call-audit` row land in one atomic storage unit, so a receipt
+ * failure rolls the spend back instead of landing totals no row explains.
  */
 
 export const LLM_PACKAGE = 'llm';
@@ -256,6 +260,113 @@ function mapClaimedRow(manifest, raw) {
 }
 
 /**
+ * The storage seam a spend receipt needs: the audit module's own manifest
+ * (field names to physical columns, resolved at runtime like `spendSeam`
+ * so no backend's naming is hardcoded here), its framework audit mirror
+ * and its events. Missing seam refuses fail-closed: a spend whose receipt
+ * cannot prove atomicity never claims.
+ */
+function receiptSeam(auditService) {
+  const manifest = auditService?.manifest;
+  const fields = Array.isArray(manifest?.fields) ? manifest.fields : null;
+  if (!manifest || typeof manifest.table !== 'string' || typeof manifest.name !== 'string' || !fields
+    || fields.some((field) => typeof field?.name !== 'string' || field.name === '')
+    || typeof auditService.audit?.record !== 'function'
+    || typeof auditService.events?.emit !== 'function') {
+    throw new AppError('llm audit storage cannot prove an atomic spend receipt', {
+      code: 'LLM_STORAGE_INVALID', status: 500,
+    });
+  }
+  return { manifest, fields };
+}
+
+/**
+ * Validate one receipt field the way `createManaged` would
+ * (`validation.js`, `buildEntity` in `record-module-runtime.js`): absent
+ * stays null on optional fields, strings trim, timestamps normalize to
+ * ISO, integers stay integers, booleans stay booleans. The insert below
+ * runs on the claim unit's own storage handle — which `createManaged`
+ * cannot join on sync storage — so the check lives here, next to the
+ * statement, instead of crossing the package boundary for core internals.
+ */
+function receiptFieldValue(field, value) {
+  const name = field.name;
+  if (value === undefined || value === null || value === '') {
+    if (field.required === true) {
+      throw new ValidationError(`llm audit ${name} is required`, { field: `audit.${name}` });
+    }
+    return null;
+  }
+  switch (field.type) {
+    case 'string':
+      if (typeof value !== 'string') {
+        throw new ValidationError(`llm audit ${name} must be a string`, { field: `audit.${name}` });
+      }
+      return value.trim();
+    case 'timestamp':
+      if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) {
+        throw new ValidationError(`llm audit ${name} must be an ISO date`, { field: `audit.${name}` });
+      }
+      return new Date(value).toISOString();
+    case 'integer':
+      if (!Number.isInteger(value)) {
+        throw new ValidationError(`llm audit ${name} must be an integer`, { field: `audit.${name}` });
+      }
+      return Number(value);
+    case 'boolean':
+      if (typeof value !== 'boolean') {
+        throw new ValidationError(`llm audit ${name} must be a boolean`, { field: `audit.${name}` });
+      }
+      return value;
+    default:
+      throw new AppError(`llm audit field "${name}" has an unsupported type "${field.type}"`, {
+        code: 'LLM_STORAGE_INVALID', status: 500,
+      });
+  }
+}
+
+/**
+ * Build the domain receipt write — the `llm-call-audit` insert plus its
+ * framework audit event — from the row `complete` already validated and
+ * shaped. Pure: no storage touched, so `claimSpend` builds it once and
+ * executes it inside the claim unit on sync and async storage alike
+ * (the sync savepoint callback cannot await, so nothing here may await).
+ */
+function buildSpendReceipt(auditService, patch, actor, clock) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    throw new ValidationError('llm spend receipt must carry the audit row', { field: 'receipt.patch' });
+  }
+  const { manifest, fields } = receiptSeam(auditService);
+  const stamp = new Date(clock()).toISOString();
+  const entity = { id: /** @type {any} */ (crypto).randomUUID(), createdAt: stamp, updatedAt: stamp };
+  const values = [{ column: 'id', value: entity.id }];
+  for (const field of fields) {
+    const column = field.column ?? field.name;
+    if (typeof column !== 'string' || column === '') {
+      throw new AppError(`llm audit field "${field.name}" maps to no column`, {
+        code: 'LLM_STORAGE_INVALID', status: 500,
+      });
+    }
+    const value = receiptFieldValue(field, patch[field.name]);
+    entity[field.name] = value;
+    // Same physical coercion `applyManaged` persists
+    // (`toDbValue` in `record-module-runtime.js`).
+    values.push({ column, value: typeof value === 'boolean' ? (value ? 1 : 0) : value });
+  }
+  values.push({ column: 'created_at', value: stamp }, { column: 'updated_at', value: stamp });
+  return {
+    manifestName: manifest.name,
+    service: auditService,
+    entity,
+    statement: { kind: 'insert', table: manifest.table, values },
+    auditEvent: {
+      actor, action: `${manifest.name}.created`,
+      entityType: manifest.name, entityId: entity.id, data: entity,
+    },
+  };
+}
+
+/**
  * Claim one spend against the day row with a single conditional write:
  * `UPDATE ... WHERE id AND the totals read fresh`. One statement is
  * atomic on every backend, so a cross-process racer either wins the
@@ -263,21 +374,37 @@ function mapClaimedRow(manifest, raw) {
  * it, and no update is ever lost. Bounded retries, then a retriable
  * refusal, never a silent overwrite.
  *
- * The claim, the framework audit row and the re-read land in one atomic
- * unit — the service's own `mutationSync`/`mutationAsync`, the same
- * entry points `applyManaged` uses (`record-module-runtime.js`). A crash
- * or an audit failure between the claim and its receipt rolls the spend
- * back instead of landing money no row explains; the retry then claims
- * once, never twice. The `updated` event still emits after the commit,
- * like `applyManaged`.
+ * The claim, the framework audit row, the domain `llm-call-audit` receipt
+ * row and the re-read land in one atomic unit — the service's own
+ * `mutationSync`/`mutationAsync`, the same entry points `applyManaged`
+ * uses (`record-module-runtime.js`). A crash or a receipt failure between
+ * the claim and its receipt rolls the spend back instead of landing money
+ * no row explains; the retry then claims once, never twice. The `updated`
+ * and `created` events still emit after the commit, like `applyManaged`.
+ * Pass `receipt: { service, patch }` (the audit module's service and the
+ * row `complete` built) to write the domain receipt in the same unit;
+ * without it the claim keeps only its framework receipt, for callers that
+ * prove the domain row another way.
  *
  * Returns `{ row, capExceeded }`: when racers filled the ceiling while
  * this call was at the provider, the spend still lands — real money is
  * never hidden — and `capExceeded` annotates the over-cap landing so
  * the caller slows down; the next call refuses before any provider.
  */
-export async function claimSpend(usageService, dayKey, delta, actor, caps, clock = Date.now) {
+export async function claimSpend(usageService, dayKey, delta, actor, caps, clock = Date.now, receipt = null) {
   const { manifest, columns, syncApi } = spendSeam(usageService);
+  if (receipt !== null && receipt !== undefined
+    && (typeof receipt !== 'object' || Array.isArray(receipt)
+      || receipt.service === undefined || receipt.patch === undefined)) {
+    throw new ValidationError('llm spend receipt must carry the audit service and its row', {
+      field: 'receipt',
+    });
+  }
+  // Built once, outside the unit: validation failures refuse before any
+  // storage is touched, and the sync savepoint below stays synchronous.
+  const built = receipt === null || receipt === undefined
+    ? null
+    : buildSpendReceipt(receipt.service, receipt.patch, actor, clock);
   const action = `${manifest.name}.updated`;
   for (let attempt = 1; attempt <= 8; attempt += 1) {
     const fresh = (await usageService.listWhere({ dayKey }))[0] ?? null;
@@ -323,6 +450,10 @@ export async function claimSpend(usageService, dayKey, delta, actor, caps, clock
         const claimed = syncApi.execute(statement);
         if (Number(claimed?.affectedRows ?? 0) !== 1) return null;
         usageService.audit.record(auditEvent, syncApi);
+        if (built) {
+          syncApi.execute(built.statement);
+          built.service.audit.record(built.auditEvent, syncApi);
+        }
         return usageService.get(fresh.id);
       });
     } else {
@@ -330,6 +461,10 @@ export async function claimSpend(usageService, dayKey, delta, actor, caps, clock
         const claimed = await tx.execute(statement);
         if (Number(claimed?.affectedRows ?? 0) !== 1) return null;
         await usageService.audit.record(auditEvent, tx);
+        if (built) {
+          await tx.execute(built.statement);
+          await built.service.audit.record(built.auditEvent, tx);
+        }
         const raw = await tx.maybeOne({
           kind: 'select', table: manifest.table, columns: '*',
           where: [{ column: columns.id, op: 'eq', value: fresh.id }],
@@ -344,6 +479,9 @@ export async function claimSpend(usageService, dayKey, delta, actor, caps, clock
     }
     if (row) {
       await usageService.events.emit(action, row);
+      if (built) {
+        await built.service.events.emit(`${built.manifestName}.created`, built.entity);
+      }
       return { row, capExceeded };
     }
     // A racer moved the totals between the fresh read and the claim:
@@ -513,13 +651,15 @@ export function createLlmOperations(options = {}) {
   const absentText = (value) => (value === undefined || value === null || value === '' ? null : value);
 
   /**
-   * One audit row per attempt — refused or completed — with the space, the
-   * purpose, the adapter, the model, the token counts and the estimated
-   * cost. The prompt text is never a column, so it can never be a row.
+   * Shape one audit row per attempt — refused or completed — with the
+   * space, the purpose, the adapter, the model, the token counts and the
+   * estimated cost. The prompt text is never a column, so it can never be
+   * a row. Pure: the spending paths hand the patch to `claimSpend`, which
+   * inserts it in the claim unit; the refusal paths persist it here.
    */
-  async function audit(auditService, entry, actor) {
+  function buildAuditPatch(entry) {
     const sources = entry.sources ?? [];
-    await auditService.createManaged({
+    return {
       callKey: `call:${entry.spaceId}:${randomId()}`,
       at: new Date(clock()).toISOString(),
       spaceId: entry.spaceId,
@@ -539,7 +679,11 @@ export function createLlmOperations(options = {}) {
       // returns the same ids in that form, while `complete` returns them
       // as an array.
       sources: sources.length > 0 ? sources.join(',') : null,
-    }, { actor });
+    };
+  }
+
+  async function audit(auditService, entry, actor) {
+    await auditService.createManaged(buildAuditPatch(entry), { actor });
   }
 
   async function complete(request, modules) {
@@ -612,14 +756,18 @@ export function createLlmOperations(options = {}) {
           secret: FIXTURE_LLM_SECRET, messages, model, maxTokens,
         });
         const cost = estimateCostCents({ inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, model, pricing });
+        // The dry-run spend claims with its domain receipt in one unit:
+        // a receipt failure rolls the claim back, never a silent total.
         const claimed = await claimSpend(usageService, current.key, {
           inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, estimatedCostCents: cost,
-        }, actor, caps, clock);
-        await audit(auditService, {
-          spaceId, purpose, adapter: dryRun.definition.name, model,
-          inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
-          estimatedCostCents: cost, dryRun: true, sources,
-        }, actor);
+        }, actor, caps, clock, {
+          service: auditService,
+          patch: buildAuditPatch({
+            spaceId, purpose, adapter: dryRun.definition.name, model,
+            inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
+            estimatedCostCents: cost, dryRun: true, sources,
+          }),
+        });
         // The dry-run result exposes the same shape as the live one,
         // including `usage` from the claimed row: every production call
         // today takes this path, and a consumer reading
@@ -689,12 +837,14 @@ export function createLlmOperations(options = {}) {
       });
       const claimed = await claimSpend(usageService, current.key, {
         inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, estimatedCostCents: cost,
-      }, actor, caps, clock);
-      await audit(auditService, {
-        spaceId, purpose, adapter: definition.name, model,
-        inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
-        estimatedCostCents: cost, dryRun: false, sources,
-      }, actor);
+      }, actor, caps, clock, {
+        service: auditService,
+        patch: buildAuditPatch({
+          spaceId, purpose, adapter: definition.name, model,
+          inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
+          estimatedCostCents: cost, dryRun: false, sources,
+        }),
+      });
       return Object.freeze({
         text: completion.text,
         model: completion.model,
