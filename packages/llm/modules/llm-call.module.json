@@ -1,0 +1,18 @@
+{
+  "manifestVersion": 1,
+  "name": "llm-call",
+  "table": "llm_calls",
+  "description": "One guarded model completion per row: the space, the asking feature, the model that answered, token counts, the outcome and a prompt hash. The prompt text is never stored — only its SHA-256 — and the provider key never reaches a row. Every field is managed: a call exists only through the llm package's completion operation. (backlog:6e54d6a7988a)",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "purpose", "type": "string", "index": true, "writable": "managed" },
+    { "name": "model", "type": "string", "writable": "managed" },
+    { "name": "inputTokens", "type": "integer", "writable": "managed" },
+    { "name": "outputTokens", "type": "integer", "writable": "managed" },
+    { "name": "outcome", "type": "enum", "values": ["ok", "dry-run", "refused", "error"], "index": true, "writable": "managed" },
+    { "name": "errorCode", "type": "string", "writable": "managed" },
+    { "name": "promptHash", "type": "string", "writable": "managed" },
+    { "name": "occurredAt", "type": "timestamp", "writable": "managed" }
+  ]
+}

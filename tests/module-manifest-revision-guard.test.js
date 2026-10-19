@@ -148,6 +148,7 @@ const RECORDED = Object.freeze({
   "signature-signer": { revision: 1, sqlite: "1439411f7959944f71aa922fcd940eaa96155e9b7bb605b7a0357b1d80e16c6b", pg: "09ad61239484100d37ea3bdb223c3ca5c4092aaf5999c8ca960105d27095bbcf" },
   "signed-artifact": { revision: 1, sqlite: "c13f85fa2ef1e792e196184181e168e0ed0ccd469e7932d9e685e66e06bfe820", pg: "8cfde2256c59d0baa0293732b19be7d47215191cb084d5b82a99ef949e25116a" },
   "site-form-submission": { revision: 1, sqlite: "b0725086cd07dd68a327fa63166c2e22b41cb499851eb2c1b86411acc4fcbf10", pg: "cc48ccb770280394c9e9f073919966c0727d9cb68efeea448d5edd7d2bb5cbb8" },
+  "llm-call": { revision: 1, sqlite: "f8a44266604578c4f5c570fe1c0750a106dae2e3b46e633cb1a983bb31ef3c61", pg: "fdca5e648744432e50e4600dab87b044735d5c000e7a85092021b9b045ad503e" },
   "work-activity": { revision: 2, sqlite: "42270f60cda19a00a619e349b9139484d6f7422dfb530806a253b6cb020d0fe2", pg: "105d69c5ce69c1f200ed4317d33112f5f3d3be9bc4bc79520100518e64279895" },
   "work-task": { revision: 1, sqlite: "42f2f15c58bfebce0e745d9090e23461202d0aba60df85446688f7a99b1085a3", pg: "3c3114ed031a0208c2c1abeb12026ef8502086923d88f87ef8d27bbc3e88c887" },
 });
