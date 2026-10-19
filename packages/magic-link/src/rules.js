@@ -1,6 +1,6 @@
 // @ts-check
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { AppError, ValidationError } from '../../core/index.js';
 
 /**
@@ -19,11 +19,19 @@ import { AppError, ValidationError } from '../../core/index.js';
  *    `>=`: the exact deadline instant is already dead.
  * 3. **Single use** — consuming marks the row spent in one conditional step;
  *    a second consume of the same token is refused, never replayed.
- * 4. **No enumeration** — the request receipt is byte-identical for a known
- *    and an unknown email, and both branches do the same store work (mint,
- *    save, then enqueue for a known address or spend-and-discard for an
- *    unknown one). The token travels only through the deployment's outbox
- *    edge, never in the API response.
+ * 4. **No enumeration in the receipt body** — the request receipt is
+ *    byte-identical for a known and an unknown email, and both branches do
+ *    the same store work (mint, save, then enqueue for a known address or
+ *    spend-and-discard for an unknown one). Timing is explicitly OUT of this
+ *    guarantee: the known branch awaits a persistent enqueue while the
+ *    unknown branch awaits an in-process spend, so a latency oracle remains
+ *    until per-address throttling lands (follow-up). The token travels only
+ *    through the deployment's outbox edge, never in the API response.
+ * 4b. **No brute-forceable mailbox artifact** — token rows carry an HMAC of
+ *    the address under a deployment-held secret (same secret-by-reference
+ *    custody as `site-forms` `hashIp`), never a fast unsalted hash and never
+ *    the raw address. A table dump cannot be dictionary-attacked back to the
+ *    mailbox without the deployment secret.
  * 5. **Claim first, send second** — the link email goes out only through the
  *    deployment's persistent outbox edge, enqueued under the deterministic
  *    key `magic-link:<tokenId>` with an actor. The persistent enqueue IS the
@@ -55,7 +63,31 @@ export const MAGIC_LINK_REASON = Object.freeze({
   EXPIRED: 'MAGIC_LINK_EXPIRED',
   NOT_CONFIGURED: 'MAGIC_LINK_NOT_CONFIGURED',
   CLOCK_FAILED: 'MAGIC_LINK_CLOCK_FAILED',
+  SECRET_UNAVAILABLE: 'MAGIC_LINK_SECRET_UNAVAILABLE',
 });
+
+/** A deployment-held secret locator, never the value. Same locator shape as
+ * `site-forms` `ipHashSecretRef` (`vault://<space>/<name>` or
+ * `secret://<space>/<name>`), so one vault discipline covers both. */
+export const EMAIL_HASH_SECRET_REF_MAX = 256;
+const SECRET_REF_RE = /^(?:vault|secret):\/\/[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/;
+
+/**
+ * Require the email-hash secret locator. Anything else — a missing value, a
+ * raw pasted secret, a bare token — is refused before any resolution, so a
+ * secret value can never be mistaken for its reference.
+ *
+ * @param {unknown} value
+ */
+export function assertEmailHashSecretRef(value) {
+  if (typeof value !== 'string' || value.length > EMAIL_HASH_SECRET_REF_MAX || !SECRET_REF_RE.test(value)) {
+    throw new ValidationError(
+      'emailHashSecretRef must be a bounded reference locator ("vault://<space>/<name>"), never a secret value',
+      { field: 'emailHashSecretRef' },
+    );
+  }
+  return value;
+}
 
 /**
  * Normalize one login email: trim, lowercase, bounded, no control
@@ -83,10 +115,26 @@ export function normalizeLoginEmail(value) {
  * Store only this, never the raw address: the login row needs to name the
  * subject's mailbox for audit, not to keep the mailbox itself.
  *
+ * HMAC under a deployment-held secret (resolved at call time from
+ * `emailHashSecretRef`, never stored): a fast unsalted hash over the small
+ * email space would dictionary-attack back to the mailbox from any table
+ * dump. The secret stays out of rows, logs and responses — only the HMAC
+ * reaches the row.
+ *
  * @param {string} normalizedEmail
+ * @param {string} secret the resolved per-deployment value, never its reference
  */
-export function hashLoginEmail(normalizedEmail) {
-  return createHash('sha256').update(`accordo.magic-link.v1\0${normalizedEmail}`).digest('hex');
+export function hashLoginEmail(normalizedEmail, secret) {
+  if (typeof normalizedEmail !== 'string' || normalizedEmail === '') {
+    throw new ValidationError('Login email must be a non-empty string to hash', { field: 'email' });
+  }
+  if (typeof secret !== 'string' || secret === '') {
+    // The message names the missing custody, never the value.
+    throw new ValidationError('email hash custody is not wired: resolve the deployment secret first', {
+      field: 'emailHashSecretRef',
+    });
+  }
+  return createHmac('sha256', secret).update(`magic-link-login|${normalizedEmail}`, 'utf8').digest('hex');
 }
 
 /** Mint one closed-format token: 128 bits of CSPRNG, no metadata inside. */

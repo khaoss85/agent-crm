@@ -11,10 +11,16 @@
  * - a link redeems exactly once: the second use is refused (test);
  * - a link dies ten minutes after issue, on both sides of the claim (test);
  * - known and unknown addresses get the byte-identical receipt with the
- *   same store work: no user enumeration (test);
+ *   same store work: the receipt BODY cannot enumerate (test). Timing is
+ *   out of the guarantee — throttling is the follow-up;
+ * - a caller-supplied actor is stripped, never trusted: the send runs under
+ *   the deployment send actor (test);
+ * - an async store cannot fail open: interleaved consumes still elect one
+ *   winner (test);
  * - malformed tokens are refused before any store is touched (test);
  * - a failed enqueue leaves no live orphan behind (test);
  * - a miswired clock fails closed, never with a receipt (test);
+ * - missing email-hash secret custody fails closed, never with a row (test);
  * - Google sign-in is untouched: the framework owns no OAuth client and
  *   emits no Google request — see tests/admin-login.test.js.
  */
@@ -31,7 +37,7 @@ const UNKNOWN = 'stranger@example.com';
 /** Opaque directory subjects, the way the control plane names them: never the address. */
 const SUBJECTS = Object.freeze({ [KNOWN]: 'op-7f3a2c91' });
 
-/** @param {{ known?: string[], failDirectory?: boolean, failEnqueue?: number }} [options] */
+/** @param {{ known?: string[], failDirectory?: boolean, failEnqueue?: number, sendActor?: unknown, failSecret?: boolean, omitSecretCustody?: boolean }} [options] */
 function scene(options = {}) {
   let now = 1_700_000_000_000;
   /** @type {Array<{ key: string, jobId: string, actor: unknown, message: { to: string, token: string, expiresAtIso: string } }>} */
@@ -40,11 +46,12 @@ function scene(options = {}) {
   let failuresLeft = options.failEnqueue ?? 0;
   const store = createMemoryMagicLinkStore();
   const lookups = [];
+  const secretLookups = [];
   const storeCalls = [];
   const countingStore = {
-    save: (/** @type {any} */ record) => { storeCalls.push('save'); return store.save(record); },
-    find: (/** @type {string} */ id) => { storeCalls.push('find'); return store.find(id); },
-    spend: (/** @type {string} */ id) => { storeCalls.push('spend'); return store.spend(id); },
+    save: async (/** @type {any} */ record) => { storeCalls.push('save'); return store.save(record); },
+    find: async (/** @type {string} */ id) => { storeCalls.push('find'); return store.find(id); },
+    spend: async (/** @type {string} */ id) => { storeCalls.push('spend'); return store.spend(id); },
   };
   const edges = {
     directory: {
@@ -74,11 +81,21 @@ function scene(options = {}) {
     },
     store: countingStore,
     clock: () => now,
+    ...(options.sendActor !== undefined ? { sendActor: options.sendActor } : {}),
+    ...(options.omitSecretCustody ? {} : {
+      emailHashSecretRef: 'vault://test/magic-link-email-hash',
+      resolveSecret: async (/** @type {string} */ reference, /** @type {{ purpose: string }} */ context) => {
+        secretLookups.push({ reference, purpose: context?.purpose });
+        if (options.failSecret) throw Object.assign(new Error('vault down'), { code: 'VAULT_DOWN' });
+        return 'test-email-hash-secret';
+      },
+    }),
   };
   return {
     edges,
     jobs,
     lookups,
+    secretLookups,
     store,
     storeCalls,
     resetStoreCalls: () => { storeCalls.length = 0; },
@@ -130,7 +147,7 @@ test('a token that crosses its deadline between check and claim refuses expired'
     (error) => error,
   );
   assert.equal(codeOf(failure), 'MAGIC_LINK_EXPIRED');
-  assert.ok(s.store.find(token)?.spent, 'the late row stays dead either way');
+  assert.ok((await s.store.find(token))?.spent, 'the late row stays dead either way');
   await assert.rejects(consumeMagicLink(s.edges, { token }), /already used/);
 });
 
@@ -145,7 +162,7 @@ test('known and unknown addresses get the byte-identical receipt', async () => {
   assert.ok(!JSON.stringify(known).includes(KNOWN), 'the receipt names nobody');
 });
 
-test('an unknown address does the same store work and leaves no live row', async () => {
+test('an unknown address leaves no live row; the store work is documented, timing is not promised', async () => {
   const s = scene();
   s.resetStoreCalls();
   const receipt = await requestMagicLink(s.edges, { email: UNKNOWN });
@@ -166,7 +183,7 @@ test('an unknown address does the same store work and leaves no live row', async
 test('malformed tokens are refused before any store is touched', async () => {
   const s = scene();
   let finds = 0;
-  const counting = { ...s.store, find: (/** @type {string} */ id) => { finds += 1; return s.store.find(id); } };
+  const counting = { ...s.store, find: async (/** @type {string} */ id) => { finds += 1; return s.store.find(id); } };
   const edges = { ...s.edges, store: counting };
   await assert.rejects(consumeMagicLink(edges, { token: 'not-a-token' }), /ml1\.<32-hex>/);
   await assert.rejects(consumeMagicLink(edges, { token: '' }), /ml1\.<32-hex>/);
@@ -222,12 +239,14 @@ test('a failed enqueue spends the row: no live orphan, the retry is the only liv
   assert.equal(redeemed.subject, SUBJECTS[KNOWN]);
 });
 
-test('raw addresses are never stored and never returned', async () => {
+test('raw addresses are never stored and never returned; the job payload carries exactly the delivery fields', async () => {
   const s = scene();
   await requestMagicLink(s.edges, { email: '  ELENA@StudioAurora.it ' });
-  const row = s.store.find(s.jobs[0].message.token);
+  const row = await s.store.find(s.jobs[0].message.token);
   assert.ok(row && !JSON.stringify(row).includes('ELENA') && !JSON.stringify(row).includes('@'),
     'the row keeps a hash, not the address');
+  assert.deepEqual(Object.keys(s.jobs[0].message).sort(), ['expiresAtIso', 'to', 'token'],
+    'the outbox payload is delivery material only: no extra copy of anything');
   const receipt = await consumeMagicLink(s.edges, { token: s.jobs[0].message.token });
   assert.ok(!JSON.stringify(receipt).includes('@'), 'the receipt names no address');
 });
@@ -250,19 +269,89 @@ test('a miswired clock fails closed, never with a receipt', async () => {
     (error) => error,
   );
   assert.equal(codeOf(consumeFailure), 'MAGIC_LINK_CLOCK_FAILED');
-  assert.ok(!isMagicLinkExpired(s.store.find(token), s.now()), 'the refusal spent nothing and expired nothing');
+  assert.ok(!isMagicLinkExpired(/** @type {any} */ (await s.store.find(token)), s.now()), 'the refusal spent nothing and expired nothing');
 });
 
-test('the send carries an actor: service default, deployment override, junk refused', async () => {
+test('the send actor is deployment-owned: a caller actor is stripped, never trusted', async () => {
   const s = scene();
   await requestMagicLink(s.edges, { email: KNOWN });
   assert.deepEqual(s.jobs[0].actor, { type: 'system', id: 'accordo' });
+  // Even a well-formed forged system actor in the request changes nothing.
+  await requestMagicLink(s.edges, { email: KNOWN, actor: { type: 'system', id: 'accordo' } });
   await requestMagicLink(s.edges, { email: KNOWN, actor: { type: 'user', id: 'op-7f3a2c91' } });
-  assert.deepEqual(s.jobs[1].actor, { type: 'user', id: 'op-7f3a2c91' });
-  await assert.rejects(
-    requestMagicLink(s.edges, { email: KNOWN, actor: { type: 'robot', id: 'x' } }),
-    /actor\.type/,
+  // Junk in the request is stripped too, not refused: it was never an input.
+  await requestMagicLink(s.edges, { email: KNOWN, actor: { type: 'robot', id: 'x' } });
+  for (const job of s.jobs) {
+    assert.deepEqual(job.actor, { type: 'system', id: 'accordo' }, 'every job carries the service actor');
+  }
+  // The deployment overrides the send actor through the edges, not the request.
+  const owned = scene({ sendActor: { type: 'user', id: 'op-deploy' } });
+  await requestMagicLink(owned.edges, { email: KNOWN });
+  assert.deepEqual(owned.jobs[0].actor, { type: 'user', id: 'op-deploy' });
+  // A junk deployment actor refuses at request time, never silently.
+  const junk = scene({ sendActor: { type: 'robot', id: 'x' } });
+  const junkFailure = await requestMagicLink(junk.edges, { email: KNOWN }).then(
+    () => { throw new Error('must refuse'); },
+    (error) => error,
   );
+  assert.equal(junkFailure?.details?.field, 'sendActor.type');
+});
+
+test('interleaved consumes over an async store still elect one winner', async () => {
+  const s = scene();
+  await requestMagicLink(s.edges, { email: KNOWN });
+  const { token } = s.jobs[0].message;
+  // Both consumes read through the same deferred find: the reads resolve
+  // together, past each other, before either spend runs. The winner must
+  // still be exactly one, because spend awaits nothing between check and
+  // mark — the way a durable conditional write behaves.
+  let release = () => {};
+  const gate = new Promise((resolve) => { release = /** @type {() => void} */ (resolve); });
+  const deferred = {
+    save: (/** @type {any} */ record) => s.store.save(record),
+    find: async (/** @type {string} */ id) => { await gate; return s.store.find(id); },
+    spend: (/** @type {string} */ id) => s.store.spend(id),
+  };
+  const edges = { ...s.edges, store: deferred };
+  const first = consumeMagicLink(edges, { token });
+  const second = consumeMagicLink(edges, { token });
+  release();
+  const outcomes = await Promise.allSettled([first, second]);
+  const won = outcomes.filter((o) => o.status === 'fulfilled');
+  const lost = outcomes.filter((o) => o.status === 'rejected');
+  assert.equal(won.length, 1, 'one winner despite the interleaved reads');
+  assert.equal(lost.length, 1);
+  assert.match(codeOf(/** @type {any} */ (lost[0]).reason), /MAGIC_LINK_INVALID/);
+});
+
+test('missing email-hash secret custody fails closed, never with a row', async () => {
+  const bare = scene({ omitSecretCustody: true });
+  const failure = await requestMagicLink(bare.edges, { email: KNOWN }).then(
+    () => { throw new Error('must refuse'); },
+    (error) => error,
+  );
+  assert.equal(codeOf(failure), 'MAGIC_LINK_NOT_CONFIGURED');
+  assert.equal(bare.jobs.length, 0);
+  const down = scene({ failSecret: true });
+  const vaultFailure = await requestMagicLink(down.edges, { email: KNOWN }).then(
+    () => { throw new Error('must refuse'); },
+    (error) => error,
+  );
+  assert.equal(codeOf(vaultFailure), 'MAGIC_LINK_SECRET_UNAVAILABLE');
+  assert.equal(vaultFailure?.status, 502);
+  assert.equal(down.jobs.length, 0);
+  assert.deepEqual(down.secretLookups, [
+    { reference: 'vault://test/magic-link-email-hash', purpose: 'magic-link-email-hash' },
+  ]);
+});
+
+test('an unknown package option is refused, never silently dropped', async () => {
+  assert.throws(
+    () => createMagicLinkPackage(/** @type {any} */ ({ deliver: () => {} })),
+    /unknown magic-link option 'deliver'/,
+  );
+  const pkg = createMagicLinkPackage();
+  assert.equal(pkg.name, 'magic-link');
 });
 
 test('unwired edges refuse loudly instead of inventing custody', async () => {

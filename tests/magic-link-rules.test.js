@@ -13,6 +13,7 @@ import {
   MAGIC_LINK_REASON,
   MAGIC_LINK_TOKEN_RE,
   MAGIC_LINK_TTL_MS,
+  assertEmailHashSecretRef,
   hashLoginEmail,
   isMagicLinkExpired,
   magicLinkExpiry,
@@ -64,12 +65,30 @@ test('login emails normalize and refuse like the rest of the framework', () => {
   assert.throws(() => normalizeLoginEmail(null), /must be a string/);
 });
 
-test('email hashes are stable, salted to this purpose, and never the address', () => {
-  const first = hashLoginEmail('elena@studioaurora.it');
-  assert.equal(first, hashLoginEmail('elena@studioaurora.it'));
+test('email hashes are HMACs under the deployment secret, never the address', () => {
+  const first = hashLoginEmail('elena@studioaurora.it', 'deployment-secret');
+  assert.equal(first, hashLoginEmail('elena@studioaurora.it', 'deployment-secret'));
   assert.equal(first.length, 64);
   assert.ok(!first.includes('elena'), 'the hash must not contain the address');
-  assert.notEqual(first, hashLoginEmail('elena@other.it'));
+  assert.notEqual(first, hashLoginEmail('elena@other.it', 'deployment-secret'));
+  assert.notEqual(first, hashLoginEmail('elena@studioaurora.it', 'another-secret'),
+    'without the secret a dump cannot be dictionary-attacked back to the mailbox');
+  for (const missing of ['', undefined]) {
+    try {
+      hashLoginEmail('elena@studioaurora.it', /** @type {any} */ (missing));
+      assert.fail('must refuse without custody');
+    } catch (error) {
+      assert.equal(/** @type {any} */ (error)?.details?.field, 'emailHashSecretRef');
+    }
+  }
+});
+
+test('the email-hash secret locator is a reference, never a value', () => {
+  assert.equal(assertEmailHashSecretRef('vault://production/magic-link-email-hash'), 'vault://production/magic-link-email-hash');
+  assert.equal(assertEmailHashSecretRef('secret://tenant/login-hash'), 'secret://tenant/login-hash');
+  for (const junk of ['', 'raw-secret-value', 'tok_abc123', 'vault://', 'http://vault/x', null, 42, {}, 'a'.repeat(257)]) {
+    assert.throws(() => assertEmailHashSecretRef(junk), /emailHashSecretRef/, JSON.stringify(junk));
+  }
 });
 
 test('the request receipt is a fresh identical envelope on every call', () => {
@@ -87,6 +106,7 @@ test('refusal codes are stable', () => {
     EXPIRED: 'MAGIC_LINK_EXPIRED',
     NOT_CONFIGURED: 'MAGIC_LINK_NOT_CONFIGURED',
     CLOCK_FAILED: 'MAGIC_LINK_CLOCK_FAILED',
+    SECRET_UNAVAILABLE: 'MAGIC_LINK_SECRET_UNAVAILABLE',
   });
 });
 

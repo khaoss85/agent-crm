@@ -50,13 +50,15 @@ function rig() {
     outbox,
     store,
     clock: () => now,
+    emailHashSecretRef: 'vault://test/magic-link-email-hash',
+    resolveSecret: async () => 'test-email-hash-secret',
   };
   // The deployment worker protocol (README "What it needs"): re-read the
   // row fresh and send only while it is still live.
   const settle = async (/** @type {string} */ jobId) => {
     const job = [...jobs.values()].find((entry) => entry.jobId === jobId);
     assert.ok(job, 'the worker only settles a claimed job');
-    const row = store.find(job.message.token);
+    const row = await store.find(job.message.token);
     if (!row || row.spent || isMagicLinkExpired(row, now)) return { sent: false };
     sends.push({ ...job.message });
     return { sent: true };

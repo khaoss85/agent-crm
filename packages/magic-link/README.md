@@ -6,27 +6,36 @@ no passwords anywhere.
 
 ## What it owns
 
-Two operations over an injected token store:
+Two operations over injected edges:
 
-- `request-magic-link` (`app.requestMagicLink({ email, actor? })`) — validates
+- `request-magic-link` (`app.requestMagicLink({ email })`) — validates
   one login email, records a single-use token, and enqueues the link through
   the deployment outbox edge under the deterministic key
-  `magic-link:<tokenId>` with an actor (the login-service system actor unless
-  the deployment names its own). The receipt is byte-identical for known and
-  unknown addresses, and both branches do the same store work, so the receipt
-  is not a timing oracle either.
+  `magic-link:<tokenId>` with the deployment send actor. A caller-supplied
+  actor is never read: the request is unauthenticated, so `actor` is a
+  server-controlled key — forgery in the request is stripped, never trusted.
+  The receipt is byte-identical for known and unknown addresses, and both
+  branches do the same store work. The receipt BODY cannot enumerate; timing
+  can — the known branch awaits a persistent enqueue while the unknown
+  branch awaits an in-process spend — so a latency oracle remains until
+  per-address throttling lands (follow-up).
 - `consume-magic-link` (`app.consumeMagicLink({ token })`) — redeems one link
   exactly once within ten minutes of issue. A second use, an expired link and
   an unknown token are all refused; expiry is re-checked with a fresh clock
   reading after the claim wins, so a token that crosses its deadline between
   the check and the claim still refuses instead of redeeming late.
 
-Token rows carry a hash of the address, never the address. The link travels
-only through the outbox edge, never in an API response.
+Token rows carry only the HMAC of the address under a deployment-held
+secret, never the address and never a fast unsalted hash. The link travels
+only through the outbox edge, never in an API response. The outbox job
+message IS delivery material — exactly `{ to, token, expiresAtIso }`,
+nothing else — carrying a live Bearer [REDACTED] beside the mailbox for ten minutes:
+the deployment MUST treat job payloads as transient secrets (never log
+them, delete the job after settle, scope backups accordingly).
 
 ## What it needs
 
-Three deployment-owned edges, passed to `createMagicLinkPackage()`:
+Five deployment-owned edges, passed to `createMagicLinkPackage()`:
 
 - `directory.lookup(normalizedEmail)` → `{ subject } | null` — the operator
   directory (in production: the control plane). Every operation refuses until
@@ -39,14 +48,23 @@ Three deployment-owned edges, passed to `createMagicLinkPackage()`:
   spends the just-saved row before throwing, so a failed send never leaves a
   live orphan. The package itself performs no network I/O and holds no
   credential.
-- `store` (`save`/`find`/`spend`) — `createMemoryMagicLinkStore()` is the
-  local/test default. A durable deployment backs it with its database, where
-  `spend` MUST stay one conditional write
-  (`UPDATE ... SET spent WHERE tokenId = ? AND spent = false`) so concurrent
-  consumes still elect exactly one winner.
+- `store` (async `save`/`find`/`spend`) — `createMemoryMagicLinkStore()` is
+  the local/test default. A durable deployment backs it with its database,
+  where `spend` MUST stay one conditional write
+  (`UPDATE ... SET spent WHERE tokenId = ? AND spent = false`), awaiting
+  nothing between check and mark, so concurrent consumes still elect exactly
+  one winner.
+- `emailHashSecretRef` — the email-hash secret locator
+  (`vault://<space>/<name>`, never the value; same shape as `site-forms`
+  `ipHashSecretRef`), plus `resolveSecret(reference, { purpose })` to resolve
+  it at call time. Without the secret there is no hash, and without the hash
+  there is no row: missing custody refuses fail-closed, never with a receipt.
+- `sendActor` (optional) — the actor the send runs under, validated with
+  `requireActor` at wiring. Unset, the send runs under the login service
+  system actor.
 
 The deployment worker that executes the outbox job MUST re-read the token row
-fresh (`store.find(tokenId)`) and send only while the row exists, is unspent
+fresh (`await store.find(tokenId)`) and send only while the row exists, is unspent
 and is unexpired (`isMagicLinkExpired` in `src/rules.js`); otherwise it skips
 the job without sending. That is the whole worker protocol — three lines —
 and `tests/magic-link-outbox.test.js` proves each skip against a fake worker
@@ -78,6 +96,9 @@ export const generatedDomains = [
     directory: myOperatorDirectory,
     outbox: myChannelSendOutbox,
     store: myDurableStore,
+    emailHashSecretRef: 'vault://production/magic-link-email-hash',
+    resolveSecret: myVaultResolve,
+    sendActor: myLoginServiceActor, // optional; unset means the login service system actor
   }),
 ];
 ```

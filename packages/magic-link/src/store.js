@@ -19,29 +19,36 @@
  */
 
 /**
- * In-process store. `spend` checks and marks in one synchronous step, which
- * is atomic on this thread: concurrent consumes elect exactly one winner.
+ * In-process store. The edge is async because the durable backing is: a
+ * deployment database driver always returns promises. `save`/`find`/`spend`
+ * therefore return promises, and every operation awaits them — an async
+ * store can never fail open through a truthy-promise `find`.
+ *
+ * `spend` awaits nothing between the check and the mark, so the step stays
+ * atomic on this thread: concurrent consumes elect exactly one winner even
+ * when their `find` calls interleave.
  */
 export function createMemoryMagicLinkStore() {
   /** @type {Map<string, MagicLinkRecord>} */
   const rows = new Map();
   return {
-    /** @param {MagicLinkRecord} record */
-    save(record) {
+    /** @param {MagicLinkRecord} record @returns {Promise<void>} */
+    async save(record) {
       rows.set(record.tokenId, { ...record });
     },
-    /** @param {string} tokenId @returns {MagicLinkRecord | null} */
-    find(tokenId) {
+    /** @param {string} tokenId @returns {Promise<MagicLinkRecord | null>} */
+    async find(tokenId) {
       const row = rows.get(tokenId);
       return row ? { ...row } : null;
     },
     /**
      * Mark spent only when still pending. Returns true for the single
-     * winner, false for a missing or already-spent token.
+     * winner, false for a missing or already-spent token. No await between
+     * the check and the mark: one winner, however the callers interleave.
      *
-     * @param {string} tokenId
+     * @param {string} tokenId @returns {Promise<boolean>}
      */
-    spend(tokenId) {
+    async spend(tokenId) {
       const row = rows.get(tokenId);
       if (!row || row.spent) return false;
       rows.set(tokenId, { ...row, spent: true });

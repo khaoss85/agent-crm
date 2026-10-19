@@ -11,6 +11,7 @@ import {
 import {
   MAGIC_LINK_CONTRACT,
   MAGIC_LINK_REASON,
+  assertEmailHashSecretRef,
   hashLoginEmail,
   isMagicLinkExpired,
   magicLinkExpiry,
@@ -30,7 +31,16 @@ import { createMemoryMagicLinkStore } from './store.js';
  * a known address is sent a single-use link valid for ten minutes, and the
  * link redeems exactly once. Unknown addresses get the byte-identical
  * receipt — the response never says whether an address is registered — and
- * do the same store work, so the receipt is not a timing oracle either.
+ * both branches do the same store work. Timing is explicitly OUT of the
+ * guarantee: the known branch awaits a persistent enqueue while the unknown
+ * branch awaits an in-process spend, so a latency oracle remains until
+ * per-address throttling lands (follow-up).
+ *
+ * Actor custody: the request is unauthenticated, so `actor` is a
+ * server-controlled key — a caller-supplied actor is never read, only the
+ * deployment's `sendActor` (validated once at wiring, defaulting to the
+ * framework's own system actor for this unattended send). A forged actor in
+ * the request is stripped, never trusted.
  *
  * It reuses and never duplicates: error shapes (`core` errors), actor
  * custody (`requireActor`, the framework's own system actor for this
@@ -48,21 +58,28 @@ import { createMemoryMagicLinkStore } from './store.js';
  *   job and there is no second send path (outbound-send rule). The package
  *   performs no network I/O and holds no credential, and every operation
  *   refuses until the edges are wired.
+ * - the mailbox beside the hash. Token rows carry only the HMAC of the
+ *   address under a deployment-held secret, never the raw address. The
+ *   outbox job message IS delivery material — exactly
+ *   `{to, token, expiresAtIso}`, nothing else — and carries a live Bearer [REDACTED]
+ *   beside the mailbox for ten minutes: the deployment MUST treat job
+ *   payloads as transient secrets (never log them, delete the job after
+ *   settle, scope backups accordingly).
  * - Google sign-in. The framework owns no OAuth client and emits no Google
  *   request (see `tests/admin-login.test.js`): "Continua con Google" on the
  *   login page targets the deployment's entry, which the control plane
  *   already serves. This package never touches that path.
  * - rate limiting and durable storage. The memory store is the local/test
- *   default; a durable deployment backs `{save, find, spend}` with its
- *   database, where `spend` MUST stay one conditional write
- *   (`UPDATE ... WHERE tokenId = ? AND spent = false`) so concurrent
- *   consumes still elect one winner. Per-address throttling over the real
- *   HTTP path is a follow-up (the residual timing delta after the equal
- *   store work lives in the deployment's transport, not in this package).
+ *   default; a durable deployment backs the async `{save, find, spend}`
+ *   edge with its database, where `spend` MUST stay one conditional write
+ *   (`UPDATE ... WHERE tokenId = ? AND spent = false`, awaiting nothing
+ *   between check and mark) so concurrent consumes still elect one winner.
+ *   Per-address throttling over the real HTTP path is a follow-up.
  *
  * @typedef {{ lookup: (normalizedEmail: string) => Promise<{ subject: string } | null> }} MagicLinkDirectory
  * @typedef {{ enqueue: (job: { key: string, actor: { type: string, id: string }, message: { to: string, token: string, expiresAtIso: string } }) => Promise<{ jobId: string }> }} MagicLinkOutbox
- * @typedef {{ save: (record: any) => void, find: (tokenId: string) => any | null, spend: (tokenId: string) => boolean }} MagicLinkStore
+ * @typedef {{ save: (record: any) => Promise<void>, find: (tokenId: string) => Promise<any | null>, spend: (tokenId: string) => Promise<boolean> }} MagicLinkStore
+ * @typedef {{ resolveSecret: (reference: string, context: { purpose: string }) => Promise<string> }} MagicLinkSecretCustody
  */
 
 export const MAGIC_LINK_DOMAIN = 'magic-link';
@@ -75,11 +92,22 @@ function requireSubject(value) {
   return value;
 }
 
+/** The only option keys the package accepts: anything else is refused, never ignored. */
+const KNOWN_OPTIONS = Object.freeze([
+  'directory', 'outbox', 'store', 'clock', 'sendActor', 'emailHashSecretRef', 'resolveSecret',
+]);
+
 /**
- * @param {{ directory?: MagicLinkDirectory, outbox?: MagicLinkOutbox, store?: MagicLinkStore, clock?: () => number }} [options]
+ * @param {{ directory?: MagicLinkDirectory, outbox?: MagicLinkOutbox, store?: MagicLinkStore, clock?: () => number, sendActor?: { type: string, id: string }, emailHashSecretRef?: string, resolveSecret?: MagicLinkSecretCustody['resolveSecret'] }} [options]
  */
 function resolveEdges(options = {}) {
-  const { directory, outbox, store, clock } = options;
+  const opts = options ?? {};
+  for (const key of Object.keys(opts)) {
+    if (!KNOWN_OPTIONS.includes(key)) {
+      throw new ValidationError(`unknown magic-link option '${key}': refusing instead of ignoring it`, { field: key });
+    }
+  }
+  const { directory, outbox, store, clock, sendActor, emailHashSecretRef, resolveSecret } = opts;
   if (directory !== undefined && (typeof directory !== 'object' || directory === null || typeof directory.lookup !== 'function')) {
     throw new ValidationError('magic-link directory must expose lookup()', { field: 'directory' });
   }
@@ -88,12 +116,17 @@ function resolveEdges(options = {}) {
   }
   if (store !== undefined && (typeof store !== 'object' || store === null
     || typeof store.save !== 'function' || typeof store.find !== 'function' || typeof store.spend !== 'function')) {
-    throw new ValidationError('magic-link store must expose save/find/spend', { field: 'store' });
+    throw new ValidationError('magic-link store must expose async save/find/spend', { field: 'store' });
   }
   if (clock !== undefined && typeof clock !== 'function') {
     throw new ValidationError('magic-link clock must be a function', { field: 'clock' });
   }
-  return { directory, outbox, store, clock: clock ?? (() => Date.now()) };
+  if (sendActor !== undefined) requireActor(sendActor, 'sendActor');
+  if (emailHashSecretRef !== undefined) assertEmailHashSecretRef(emailHashSecretRef);
+  if (resolveSecret !== undefined && typeof resolveSecret !== 'function') {
+    throw new ValidationError('magic-link resolveSecret must be a function', { field: 'resolveSecret' });
+  }
+  return { directory, outbox, store, clock: clock ?? (() => Date.now()), sendActor, emailHashSecretRef, resolveSecret };
 }
 
 function notConfigured(edge) {
@@ -103,21 +136,53 @@ function notConfigured(edge) {
 }
 
 /**
- * The send runs under this unattended service actor unless the deployment
- * names its own (validated with `requireActor`, like every write path).
+ * The send runs under the deployment's `sendActor`, or under this named
+ * unattended service actor when the deployment names none. The request
+ * itself is unauthenticated, so a caller-supplied actor is never read here
+ * — `actor` is a server-controlled key (see `SERVER_CONTROLLED_KEYS`).
  */
-function resolveSendActor(input) {
-  const actor = input?.actor;
-  if (actor === undefined || actor === null) return trustedSystemActor('magic-link login delivery');
-  return requireActor(actor);
+function sendActorOf(sendActor) {
+  if (sendActor === undefined) return trustedSystemActor('magic-link login delivery');
+  return requireActor(sendActor, 'sendActor');
+}
+
+/**
+ * Resolve the email-hash secret at call time from its reference, never from
+ * a stored value. A missing custody, a failed resolution or an empty secret
+ * refuses fail-closed (502), never with a receipt: without the secret there
+ * is no hash, and without the hash there is no row.
+ */
+async function resolveEmailHashSecret(resolveSecret, emailHashSecretRef) {
+  const reference = assertEmailHashSecretRef(emailHashSecretRef);
+  if (typeof resolveSecret !== 'function') notConfigured('email-hash secret custody');
+  let secret;
+  try {
+    secret = await resolveSecret(reference, { purpose: 'magic-link-email-hash' });
+  } catch (error) {
+    throw new AppError('magic-link email-hash custody failed while resolving the secret', {
+      code: MAGIC_LINK_REASON.SECRET_UNAVAILABLE, status: 502,
+    });
+  }
+  if (typeof secret !== 'string' || secret === '') {
+    throw new AppError('magic-link email-hash custody is not wired: the secret did not resolve', {
+      code: MAGIC_LINK_REASON.SECRET_UNAVAILABLE, status: 502,
+    });
+  }
+  return secret;
 }
 
 /**
  * Request one link. Always resolves to the identical receipt — known and
  * unknown addresses are indistinguishable in the response, and both
  * branches do the same store work (mint, save, then enqueue for a known
- * address or spend-and-discard for an unknown one), so the receipt is not
- * a timing oracle either.
+ * address or spend-and-discard for an unknown one). The receipt BODY cannot
+ * enumerate; timing can (see the package header), and throttling is the
+ * follow-up that closes it.
+ *
+ * A caller-supplied `actor` is never read: the request is unauthenticated,
+ * so the send runs under the deployment's `sendActor` (validated at wiring,
+ * defaulting to the login service system actor). Forgery in the request is
+ * stripped, never trusted.
  *
  * Claim first, send second: the token row is persisted BEFORE the outbox
  * enqueue runs, and the persistent enqueue under the deterministic key
@@ -128,14 +193,16 @@ function resolveSendActor(input) {
  * Each request mints its own row; earlier pending rows for the same address
  * stay valid until they expire.
  *
- * @param {{ directory?: MagicLinkDirectory, outbox?: MagicLinkOutbox, store?: MagicLinkStore, clock: () => number }} edges
- * @param {{ email: unknown, actor?: unknown }} input
+ * @param {{ directory?: MagicLinkDirectory, outbox?: MagicLinkOutbox, store?: MagicLinkStore, clock: () => number, sendActor?: { type: string, id: string }, emailHashSecretRef?: string, resolveSecret?: MagicLinkSecretCustody['resolveSecret'] }} edges
+ * @param {{ email: unknown }} input
  */
 export async function requestMagicLink(edges, input) {
   const email = normalizeLoginEmail(input?.email);
-  const actor = resolveSendActor(input);
-  const { directory, outbox, store, clock } = edges;
-  if (!directory || !outbox || !store) notConfigured(!directory ? 'directory' : (!outbox ? 'outbox' : 'store'));
+  const { directory, outbox, store, clock, sendActor, emailHashSecretRef, resolveSecret } = edges ?? {};
+  if (!directory || !outbox || !store || !resolveSecret) {
+    notConfigured(!directory ? 'directory' : (!outbox ? 'outbox' : (!store ? 'store' : 'email-hash secret custody')));
+  }
+  const actor = sendActorOf(sendActor);
   const nowMs = requireClockMs(/** @type {() => number} */ (clock)());
   let hit;
   try {
@@ -145,20 +212,21 @@ export async function requestMagicLink(edges, input) {
       code: 'MAGIC_LINK_DIRECTORY_FAILED', status: 502,
     });
   }
+  const secret = await resolveEmailHashSecret(resolveSecret, emailHashSecretRef);
   const record = {
     tokenId: mintMagicLinkToken(),
-    emailHash: hashLoginEmail(email),
+    emailHash: hashLoginEmail(email, secret),
     subject: hit === null || hit === undefined ? 'unknown' : requireSubject(hit.subject),
     issuedAtMs: nowMs,
     expiresAtMs: magicLinkExpiry(nowMs),
     spent: false,
   };
-  /** @type {MagicLinkStore} */ (store).save(record);
+  await /** @type {MagicLinkStore} */ (store).save(record);
   if (hit === null || hit === undefined) {
     // Same store work as the known branch, then discard: the dummy row is
     // spent before anyone could redeem it, so an unknown address leaves no
     // live token behind.
-    /** @type {MagicLinkStore} */ (store).spend(record.tokenId);
+    await /** @type {MagicLinkStore} */ (store).spend(record.tokenId);
     return magicLinkRequestReceipt();
   }
   try {
@@ -174,7 +242,7 @@ export async function requestMagicLink(edges, input) {
   } catch (error) {
     // No live orphan: the row this enqueue belonged to dies here, and the
     // retry mints the only live token.
-    /** @type {MagicLinkStore} */ (store).spend(record.tokenId);
+    await /** @type {MagicLinkStore} */ (store).spend(record.tokenId);
     throw new AppError('magic-link delivery failed after the link was recorded', {
       code: 'MAGIC_LINK_DELIVERY_FAILED', status: 502,
     });
@@ -201,10 +269,10 @@ export async function requestMagicLink(edges, input) {
  */
 export async function consumeMagicLink(edges, input) {
   const tokenId = requireMagicLinkToken(input?.token);
-  const { store, clock } = edges;
+  const { store, clock } = edges ?? {};
   if (!store) notConfigured('store');
   const tick = /** @type {() => number} */ (clock);
-  const row = /** @type {MagicLinkStore} */ (store).find(tokenId);
+  const row = await /** @type {MagicLinkStore} */ (store).find(tokenId);
   if (!row || row.spent) {
     throw new AppError('magic link is unknown or already used', {
       code: MAGIC_LINK_REASON.INVALID, status: 401,
@@ -215,7 +283,7 @@ export async function consumeMagicLink(edges, input) {
       code: MAGIC_LINK_REASON.EXPIRED, status: 401,
     });
   }
-  const won = /** @type {MagicLinkStore} */ (store).spend(tokenId);
+  const won = await /** @type {MagicLinkStore} */ (store).spend(tokenId);
   if (!won) {
     throw new AppError('magic link is unknown or already used', {
       code: MAGIC_LINK_REASON.INVALID, status: 401,
@@ -230,7 +298,7 @@ export async function consumeMagicLink(edges, input) {
 }
 
 /**
- * @param {{ directory?: MagicLinkDirectory, deliver?: MagicLinkDeliver, store?: MagicLinkStore, clock?: () => number }} [options]
+ * @param {{ directory?: MagicLinkDirectory, outbox?: MagicLinkOutbox, store?: MagicLinkStore, clock?: () => number, sendActor?: { type: string, id: string }, emailHashSecretRef?: string, resolveSecret?: MagicLinkSecretCustody['resolveSecret'] }} [options]
  */
 export function createMagicLinkPackage(options = {}) {
   const edges = resolveEdges(options);
@@ -242,7 +310,8 @@ export function createMagicLinkPackage(options = {}) {
     description:
       'Passwordless backoffice login (BO-F0-05): single-use links valid for ten minutes, '
       + 'identical receipts for known and unknown addresses. The deployment wires the operator '
-      + 'directory and the outbox edge; Google sign-in stays deployment-owned and untouched.',
+      + 'directory, the outbox edge and the email-hash secret custody; Google sign-in stays '
+      + 'deployment-owned and untouched.',
     // No module-factory records: token rows live behind the injected store
     // edge (memory here, durable in the deployment), never as CRUD records.
     resources: [],
@@ -259,11 +328,12 @@ export function createMagicLinkPackage(options = {}) {
         description:
           'Validate one login email and, when the deployment directory knows it, record a '
           + 'single-use token and enqueue the link through the deployment outbox edge under '
-          + 'the deterministic key magic-link:<tokenId> with an actor. The receipt is identical '
-          + 'for known and unknown addresses. Refuses until directory, outbox and store are wired.',
+          + 'the deterministic key magic-link:<tokenId> with the deployment send actor. '
+          + 'The receipt is identical for known and unknown addresses; a caller-supplied '
+          + 'actor is never read. Refuses until directory, outbox, store and secret custody '
+          + 'are wired.',
         input: [
           { name: 'email', type: 'string', hint: 'The visitor work email, never stored raw.' },
-          { name: 'actor', type: 'json', hint: 'Optional send actor; defaults to the login service system actor.' },
         ],
         create() {
           return (request) => requestMagicLink(edges, request);
