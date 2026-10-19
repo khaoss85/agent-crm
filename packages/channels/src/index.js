@@ -326,7 +326,7 @@ export function createChannelsPackage(options = {}) {
         name: 'read-sync-state',
         label: 'Read space sync state',
         appMethod: 'readSyncState',
-        description: 'Read the sync state of every connection in one space: one entry per connection with its first-import progress, plus the connected/completed totals. A connection whose import never started reads sync null.',
+        description: 'Read the sync state of every connection in one space: one entry per connection with its first-import progress, plus the connected/completed totals over active connections whose adapter keeps a readable history (importable). A connection whose import never started reads sync null.',
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
         ],

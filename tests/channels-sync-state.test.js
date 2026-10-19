@@ -10,8 +10,9 @@ import { createChannelsHarness } from './helpers/channels-harness.js';
  * Space sync state (backlog:f815763b7aa5): one read over every connection
  * of a space — each binding with its first-import progress — plus the
  * connected/completed totals the pilot's banner reads. Only `active`
- * connections count as connected; a connection whose import never started
- * reads `sync: null`, never an invented report. The per-connection
+ * connections whose adapter keeps a readable history count as connected;
+ * a connection whose import never started reads `sync: null`, never an
+ * invented report. The per-connection
  * progress is the same surface `readInitialImport` returns, never a
  * second computation of it.
  */
@@ -173,6 +174,54 @@ test('a connection that cannot sync never holds the totals back', async (t) => {
   state = readSync(harness);
   assert.deepEqual([state.connected, state.completed], [1, 1],
     'a suspended binding leaves the totals: only active connections count');
+});
+
+test('an active connection whose adapter keeps no history never holds the banner back', async (t) => {
+  const { definition: plain } = createFixtureChannelAdapter({ name: 'fixture-no-history', secret: SECRET });
+  const noHistory = { ...plain, historyImport: undefined };
+  const { definition, api } = createFixtureChannelAdapter({ secret: SECRET });
+  const harness = createChannelsHarness({
+    adapterDefinition: definition,
+    extraAdapters: [noHistory],
+    fixtureApi: api,
+    secretRef: SECRET_REF,
+    secretValue: SECRET,
+    tenantId: 'channel-sync-no-history',
+    resolveSender: null,
+  });
+  t.after(() => harness.close());
+  const keyA = await registeredActive(harness, ACCOUNT_A);
+  const regB = await harness.register(SPACE, {
+    channel: 'whatsapp', account: ACCOUNT_B,
+    adapter: 'fixture-no-history', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  await harness.activate(SPACE, regB.connection.sourceKey);
+  const keyB = regB.connection.sourceKey;
+  api.seedHistory(historySeed(2, nowIso()));
+
+  // The refusal that proves B can never finish an import: the totals must
+  // therefore never wait on it.
+  const refusal = await harness.startImport(SPACE, { connectionKey: keyB, actor: ACTOR }).then(
+    () => { throw new Error('start should have refused a history-less adapter'); },
+    (error) => error,
+  );
+  assert.equal(refusal.code, 'CHANNEL_HISTORY_UNAVAILABLE');
+
+  await harness.startImport(SPACE, { connectionKey: keyA, actor: ACTOR });
+  const done = await harness.advanceImport(SPACE, { connectionKey: keyA, limit: 50 });
+  assert.equal(done.done, true);
+
+  const state = readSync(harness);
+  assert.deepEqual([state.connected, state.completed], [1, 1],
+    'only the importable connector counts: the banner completes when its import does');
+  const entryA = state.connectors.find((entry) => entry.connectionKey === keyA);
+  assert.equal(entryA?.importable, true);
+  assert.equal(entryA?.sync?.status, 'done');
+  const entryB = state.connectors.find((entry) => entry.connectionKey === keyB);
+  assert.equal(entryB?.status, 'active');
+  assert.equal(entryB?.importable, false);
+  assert.equal(entryB?.sync, null);
+  assert.ok(!JSON.stringify(state).includes(SECRET_REF), 'no secret reference in the aggregate');
 });
 
 test('a provider failure stamps the normalized code on its connector, never the provider text', async (t) => {

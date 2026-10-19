@@ -133,8 +133,10 @@ webhooks and sends keep working standalone.
   `readInitialImport` and per space with `readSyncState`
   (backlog:f815763b7aa5): one entry per connection with its first-import
   progress plus the connected/completed totals. Only `active` connections
-  count as connected; a connection whose import never started reads
-  `sync: null`.
+  whose adapter keeps a readable history count as connected
+  (`importable: true`); an adapter without `historyImport` stays listed
+  with `sync: null` and never holds the totals back. A connection whose
+  import never started reads `sync: null`.
 - `npm run crm -- package validate packages/channels` and
   `npm run crm -- package test packages/channels` (DX4 conformance).
 
