@@ -461,6 +461,8 @@ if (boSidebar && boTopbar) {
       try { shellStorage.removeItem(ACTIVE_SPACE_KEY); } catch {
         // Logout still lands home without persistence.
       }
+      shellActiveSpace = null;
+      if (shellView) shellView.setSpaces(shellSpaces, shellSpaces[0].id);
       window.location.hash = '#/';
       toast('Spazio locale reimpostato.');
     },
@@ -475,7 +477,7 @@ if (boSidebar && boTopbar) {
 }
 
 let shellItems = buildShellNav();
-let shellFixCount = 0;
+let shellFixCount = null;
 let shellCustomerData = false;
 
 function shellScreenFor(target) {
@@ -490,8 +492,18 @@ function shellScreenFor(target) {
     case 'detail':
       return target.moduleName
         ? { id: `module-${target.moduleName}`, label: target.moduleName }
-        : null;
-    default: return null;
+        : { id: null, label: 'Modulo' };
+    // Admin views outside the backoffice prototype: an honest crumb with no
+    // sidebar highlight, never the previous screen left stale.
+    case 'spine': return { id: null, label: 'Identità e accessi' };
+    case 'work': return { id: null, label: 'Lavoro' };
+    case 'work-task': return { id: null, label: 'Attività' };
+    case 'marketing': return { id: null, label: 'Proposte' };
+    case 'marketing-proposal': return { id: null, label: 'Proposta' };
+    case 'quotes': return { id: null, label: 'Preventivi' };
+    case 'quote-detail': return { id: null, label: 'Preventivo' };
+    case 'invalid': return { id: null, label: 'Percorso non valido' };
+    default: return { id: null, label: 'Vista' };
   }
 }
 
@@ -501,7 +513,8 @@ function syncShell(target) {
   shellView.update({
     fixCount: shellFixCount,
     items: shellItems,
-    ...(screen ? { activeScreenId: screen.id, screenLabel: screen.label } : {}),
+    activeScreenId: typeof screen?.id === 'string' ? screen.id : '',
+    screenLabel: typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista',
   });
 }
 
@@ -523,7 +536,9 @@ async function populateNav() {
       pipelines: schema?.pipelineContract === 1 && Array.isArray(schema.pipelines) ? schema.pipelines : [],
       customModules: modules,
     });
-    syncShell({ view: 'dashboard' });
+    // The route owns screen state: re-sync to the current hash after the
+    // shell items update, so a cold deep link keeps its screen.
+    syncShell(targetForHash(window.location.hash || '#/'));
     await refreshShellBadge();
     while (generatedNav.firstChild) generatedNav.removeChild(generatedNav.firstChild);
     if (!supported) {
@@ -600,11 +615,16 @@ async function populateNav() {
   }
 }
 
-async function route() {
-  const hash = window.location.hash || '#/';
+function targetForHash(hash) {
   // Backoffice shell (BO-F0-02): the Impostazioni entry. Its tabs land in
   // BO-F0-03; today Stato sync links to the existing quality queue.
-  if (/^#\/impostazioni\/?$/.test(hash.split('?')[0])) {
+  if (/^#\/impostazioni\/?$/.test(String(hash || '').split('?')[0])) return { view: 'settings' };
+  return parseModuleRoute(hash);
+}
+
+async function route() {
+  const hash = window.location.hash || '#/';
+  if (targetForHash(hash).view === 'settings') {
     dashboardView.classList.add('hidden');
     moduleView.classList.remove('hidden');
     renderSettingsPanel({
@@ -616,7 +636,7 @@ async function route() {
     syncShell({ view: 'settings' });
     return;
   }
-  const target = parseModuleRoute(hash);
+  const target = targetForHash(hash);
   syncShell(target);
   const onDashboard = target.view === 'dashboard';
   dashboardView.classList.toggle('hidden', !onDashboard);

@@ -111,10 +111,11 @@ export function countFixes({ issues = [], candidates = [] } = {}) {
 }
 
 /**
- * Read the real fix count for the badge. Fails closed to 0 (no badge) when
- * the customer-data package is not composed or a read fails: an unknown
- * count must never light the badge.
+ * Read the real fix count for the badge. Returns null (unknown) when the
+ * customer-data package is not composed or a read fails: an unknown count
+ * must never light the badge, and it must never render as "none" either.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
+ * @returns {Promise<number | null>}
  */
 export async function loadFixCount(client) {
   try {
@@ -122,11 +123,18 @@ export async function loadFixCount(client) {
       client.request('/api/modules/data-quality-issue/records?limit=100'),
       client.request('/api/modules/duplicate-candidate/records?limit=100'),
     ]);
-    const issues = Array.isArray(issuesRead?.items) ? issuesRead.items : [];
-    const candidates = Array.isArray(candidatesRead?.items) ? candidatesRead.items : [];
-    return countFixes({ issues, candidates });
-  } catch {
-    return 0;
+    if (!Array.isArray(issuesRead?.items) || !Array.isArray(candidatesRead?.items)) return null;
+    return countFixes({ issues: issuesRead.items, candidates: candidatesRead.items });
+  } catch (error) {
+    // Review gate (AGENTS.md): a swallowed failure must leave its cause
+    // diagnosable. Only the error name is logged — never record bodies,
+    // cookies or personal data here.
+    try {
+      console.warn('bo-shell fix count unreadable:', error instanceof Error ? error.name : 'unknown');
+    } catch {
+      // Logging must never break the badge read.
+    }
+    return null;
   }
 }
 
@@ -515,18 +523,21 @@ export function createShellView({
  * delivers them (BO-F0-03 owns the tabs).
  * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void }} options
  */
-export function renderSettingsPanel({ doc, mount, fixCount = 0, navigate = () => {} } = {}) {
+export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {} } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
   mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
   mount.appendChild(el(doc, 'h2', undefined, 'Impostazioni'));
-  const badgeText = settingsBadge(fixCount);
+  const unknown = fixCount === null || fixCount === undefined;
+  const badgeText = unknown ? '' : settingsBadge(fixCount);
   mount.appendChild(el(
     doc,
     'p',
     'bo-muted',
-    badgeText === ''
-      ? 'Niente da sistemare.'
-      : `${badgeText} cose da sistemare (vedi Stato sync).`,
+    unknown
+      ? 'Non è stato possibile leggerle (non è detto che non ce ne siano).'
+      : badgeText === ''
+        ? 'Niente da sistemare.'
+        : `${badgeText} cose da sistemare (vedi Stato sync).`,
   ));
   const list = el(doc, 'div', 'bo-settings');
   for (const area of SETTINGS_AREAS) {

@@ -62,7 +62,7 @@ test('countFixes counts open issues and unresolved candidates only', () => {
   assert.equal(countFixes({}), 0);
 });
 
-test('loadFixCount fails closed to 0 when the package is absent or a read fails', async () => {
+test('loadFixCount returns null (unknown) when a read fails — never 0-as-none', async () => {
   const client = {
     async request(path) {
       if (path.includes('data-quality-issue')) return { items: [{ status: 'open' }, { status: 'open' }] };
@@ -72,10 +72,23 @@ test('loadFixCount fails closed to 0 when the package is absent or a read fails'
   assert.equal(await loadFixCount(client), 3);
 
   const failing = { async request() { throw new Error('no such module'); } };
-  assert.equal(await loadFixCount(failing), 0);
+  assert.equal(await loadFixCount(failing), null);
 
   const shapeless = { async request() { return { items: null }; } };
-  assert.equal(await loadFixCount(shapeless), 0);
+  assert.equal(await loadFixCount(shapeless), null);
+
+  const halfShapeless = {
+    async request(path) {
+      if (path.includes('data-quality-issue')) return { items: [] };
+      return { nope: true };
+    },
+  };
+  assert.equal(await loadFixCount(halfShapeless), null);
+
+  const empty = {
+    async request() { return { items: [] }; },
+  };
+  assert.equal(await loadFixCount(empty), 0);
 });
 
 test('⌘1/2/3 switch among the user spaces only', () => {
@@ -181,6 +194,8 @@ test('shell shows the badge only after a real count arrives', () => {
   const { sidebar, view } = renderShell();
   view.update({ fixCount: 0 });
   assert.equal(sidebar.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
+  view.update({ fixCount: null });
+  assert.equal(sidebar.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
   view.update({ fixCount: 2 });
   const badges = sidebar.findAll('span').filter((node) => node.className.includes('bo-badge'));
   assert.equal(badges.length, 1);
@@ -247,6 +262,11 @@ test('settings panel lists the four areas with honest availability', () => {
   const empty = createMount();
   renderSettingsPanel({ doc, mount: empty, fixCount: 0 });
   assert.ok(empty.textContent.includes('Niente da sistemare.'));
+
+  const unknown = createMount();
+  renderSettingsPanel({ doc, mount: unknown, fixCount: null });
+  assert.ok(unknown.textContent.includes('Non è stato possibile leggerle'));
+  assert.ok(!unknown.textContent.includes('Niente da sistemare.'));
 });
 
 test('shell stylesheet stays fluid under 700px', () => {
