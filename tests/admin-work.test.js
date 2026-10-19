@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createWorkView, sortTimelineRows } from '../apps/admin/public/admin-work.js';
+import { sortTimeline } from '../packages/work/src/index.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { createWorkPackage } from '../packages/work/src/index.js';
@@ -335,4 +336,64 @@ test('the timeline sort is deterministic when two entries share an instant', () 
   // the same list, which is what the package publishes.
   assert.deepEqual(sortTimelineRows([a, b]).map((row) => row.id), ['a', 'b']);
   assert.deepEqual(sortTimelineRows([b, a]).map((row) => row.id), ['a', 'b']);
+});
+
+test('admin and the work package order the same timeline identically (#223 follow-up)', () => {
+  // The admin copy (apps/admin/public/admin-work.js) cannot import the package
+  // — the Admin app ships its own public/ files with no bundler seam — so this
+  // test runs both functions over the same row sets and requires the same
+  // order. Each set isolates one step of the rule: write order inside one
+  // task, numeric seq, code-point (never ICU) comparison, chronology first,
+  // no ordering across tasks, and the legacy fallback for rows without seq.
+  const FROZEN = '2026-08-01T00:00:00.000Z';
+  const sets = [
+    [
+      { id: 'zzz-written-first', taskId: 't', seq: 1, occurredAt: FROZEN, createdAt: FROZEN },
+      { id: 'aaa-written-second', taskId: 't', seq: 2, occurredAt: FROZEN, createdAt: FROZEN },
+    ],
+    [
+      { id: 'tenth', taskId: 't', seq: 10, occurredAt: FROZEN, createdAt: FROZEN },
+      { id: 'ninth', taskId: 't', seq: 9, occurredAt: FROZEN, createdAt: FROZEN },
+    ],
+    // '-' is 0x2D and '_' is 0x5F, so code points put x-1 first; localeCompare
+    // puts x_1 first on every ICU build, which is the order this guards.
+    [
+      { id: 'x_1', taskId: 't', occurredAt: FROZEN, createdAt: FROZEN },
+      { id: 'x-1', taskId: 't', occurredAt: FROZEN, createdAt: FROZEN },
+    ],
+    [
+      { id: 'later', taskId: 't', seq: 1, occurredAt: '2026-08-01T10:00:00.000Z', createdAt: FROZEN },
+      { id: 'earlier', taskId: 't', seq: 2, occurredAt: '2026-08-01T09:00:00.000Z', createdAt: FROZEN },
+    ],
+    [
+      { id: 'b', taskId: 'task-two', seq: 1, occurredAt: FROZEN, createdAt: FROZEN },
+      { id: 'a', taskId: 'task-one', seq: 9, occurredAt: FROZEN, createdAt: FROZEN },
+    ],
+    [
+      { id: 'b', taskId: 't', occurredAt: FROZEN, createdAt: FROZEN },
+      { id: 'a', taskId: 't', occurredAt: FROZEN, createdAt: FROZEN },
+    ],
+  ];
+  for (const rows of sets) {
+    assert.deepEqual(
+      sortTimelineRows(rows).map((row) => row.id),
+      sortTimeline(rows).map((row) => row.id),
+      `admin and package disagree on ${JSON.stringify(rows.map((row) => row.id))}`,
+    );
+    assert.deepEqual(
+      sortTimelineRows([...rows].reverse()).map((row) => row.id),
+      sortTimeline([...rows].reverse()).map((row) => row.id),
+      'input order must not matter',
+    );
+  }
+  // And the locale pair pins the direction both must agree on, not just that
+  // they agree: a future change that reintroduces localeCompare on both sides
+  // would still agree — and still be wrong on every machine without full ICU.
+  assert.deepEqual(
+    sortTimeline([
+      { id: 'x_1', taskId: 't', occurredAt: FROZEN, createdAt: FROZEN },
+      { id: 'x-1', taskId: 't', occurredAt: FROZEN, createdAt: FROZEN },
+    ]).map((row) => row.id),
+    ['x-1', 'x_1'],
+  );
 });
