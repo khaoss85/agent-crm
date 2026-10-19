@@ -6,13 +6,13 @@ on:
   pull_request:
   # The full measurement runs on this schedule — the configured window
   # (backlog:911355123044). A push to `main` never starts `measure-suite.js`:
-  # the full suite with its measurement holds the shared Mac's single heavy
-  # lock ~25 minutes per run, and one runner serves this repository plus
-  # Arvo, so merge bursts used to queue one 25-minute measure per merge ahead
-  # of the fast PR gates. At most one scheduled run measures per window (see
-  # the `verify` job's head-changed guard), and `workflow_dispatch` measures
-  # on demand. Keep `MEASURE_WINDOW_HOURS` in `scripts/ci-measurement-age.js`
-  # equal to the interval below.
+  # the full suite with its measurement runs in short pieces, each under its
+  # own heavy-lock acquisition (backlog:9fff957f3968), and one runner serves
+  # this repository plus Arvo, so merge bursts used to queue one full measure
+  # per merge ahead of the fast PR gates. At most one scheduled run measures
+  # per window (see the `verify` job's head-changed guard), and
+  # `workflow_dispatch` measures on demand. Keep `MEASURE_WINDOW_HOURS` in
+  # `scripts/ci-measurement-age.js` equal to the interval below.
   schedule:
     - cron: '23 */6 * * *'
   workflow_dispatch:
@@ -217,12 +217,22 @@ jobs:
       - name: Install dependencies
         if: steps.guard.outputs.measure_needed == 'true'
         run: npm ci
-      # The measurement script executes npm run verify itself on this clean
-      # checkout. Reuse that run instead of maintaining an unmeasured suite and
-      # asking a maintainer to run it again on a different machine.
+      # The measurement runs piece by piece (`npm run measure`,
+      # `scripts/measure-pieces.sh`) on this clean checkout: `npm run check`,
+      # then one `measure-suite.js --shard i/n` per piece, each under its OWN
+      # heavy-job acquisition with its OWN declared maximum (600 s a normal
+      # piece, 1800 s the piece holding the full-oracle file) — the machine
+      # lock is free between two pieces, so Arvo's heavy steps slot in
+      # instead of queueing behind one ~40-minute hold (backlog:9fff957f3968).
+      # No outer ci-heavy wrapper on this step: wrapping the loop would hold
+      # the lock across the pieces the loop exists to release. The combine
+      # runs no tests and takes no lock, and the record it prints has the
+      # monolith's shape, so every step below reads it unchanged. Reuse that
+      # run instead of maintaining an unmeasured suite and asking a
+      # maintainer to run it again on a different machine.
       - name: Verify and emit the measured claim record
         if: steps.guard.outputs.measure_needed == 'true'
-        run: scripts/ci-heavy.sh measure -- node scripts/measure-suite.js > "$RUNNER_TEMP/measurement.json"
+        run: bash scripts/measure-pieces.sh > "$RUNNER_TEMP/measurement.json"
       # The account's artifact storage can be full (the billing lock also stops the
       # quota from being freed), and the re-anchor below runs in this same job,
       # so the record is also kept on the runner. Keyed by this run and attempt,

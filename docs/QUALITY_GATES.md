@@ -143,13 +143,14 @@ rules:
   at the measurement it just took on the same tree
   (`scripts/apply-ci-measurement.js`), so a PR goes green with no local measure
   commit and the merged tree is re-measured on schedule, at most once per
-  window and only when the head moved (§7). Locally, `node
-  scripts/measure-suite.js --apply` on a clean tree, or
+  window and only when the head moved (§7). Locally, `npm run measure`
+  (`scripts/measure-pieces.sh`: one lock acquisition per piece, lock free
+  between pieces) on a clean tree, or
   `npm run measure:refresh` when only test files changed (it runs the changed
   files and carries the rest). Inputs outside `tests/` also refuse refresh;
   only a ledger update restricted to `measuredAgainst` is exempt. Full measurement
-  obtains its per-file counts from the same verify run and refuses if the
-  checkout becomes dirty or HEAD moves before recording.
+  obtains its per-file counts from green per-piece runs over the same corpus
+  and refuses if the checkout becomes dirty or HEAD moves before recording.
 - **Residual, stated rather than hidden:** a robust check that the *rest* of
   `PROJECT_STATUS.md` is current — the milestone row, the open-PR row, the CI row
   — needs a source of truth this repository does not have offline. It stays the
@@ -253,26 +254,34 @@ This remains a finite regression set. It does not infer arbitrary prose or
 replace independent editorial review. Dated articles and plans preserve their
 historical scope; scoped absences remain valid.
 
-On `main` the CI verification job invokes `scripts/measure-suite.js`, which runs
-the same `npm run verify` and emits its machine-generated measurement as an
-artifact. The artifact names the actual checked-out commit. Never relabel a
-measurement of one commit as a measurement of another. Registry publication
-still requires its own installed-artifact and live-registry receipts.
+On `main` the CI verification job runs `npm run measure`
+(`scripts/measure-pieces.sh`), which measures the same corpus in short pieces
+and emits its machine-generated measurement as an artifact. The artifact
+names the actual checked-out commit. Never relabel a measurement of one
+commit as a measurement of another. Registry publication still requires its
+own installed-artifact and live-registry receipts.
 
 ## 7. What runs where: PR, `main`, nightly
 
 One self-hosted runner serves this repository, on a Mac it shares with other
 factories under a single heavy-job machine lock. The full suite with its
-measurement holds that lock ~25 minutes per run (CI run 38983644969: the
-22.9-minute measure step over the full two-hundred-file suite, plus a smoke
-step that waited
+measurement used to hold that lock ~25-40 minutes in one run (CI run
+38983644969: the 22.9-minute measure step over the full two-hundred-file
+suite; 2026-10-19: a 43-minute measure step — plus a smoke step that waited
 ~20 minutes on another factory's lock before running for under a second), so
-it runs only where a merge has already happened — never on a PR push.
+it runs only where a merge has already happened — never on a PR push. Since
+backlog:9fff957f3968 the measurement itself runs in short pieces
+(`npm run measure`, `scripts/measure-pieces.sh`): `npm run check`, then one
+`measure-suite.js --shard i/n` per piece, each under its own heavy-job
+acquisition with its own declared maximum (600 s a normal piece, 1800 s the
+piece holding the full-oracle file) — the lock is free between two pieces,
+and a piece past its maximum fails red instead of holding the machine. The
+combine runs no tests and takes no lock; one red piece reddens the measure.
 
 | Gate | Where | What |
 |---|---|---|
 | `fast` | every pull request | `npm run check`, the tests of the touched files (`scripts/ci-touched-tests.js`: transitive through every relative JS import in the repo — `tests/helpers` and `packages/` barrels incl. `export-from` — warned best-effort when no test reaches a changed source (a `::warning::` annotation plus a summary line naming the uncovered files, then the guards still run; deleted files never run and never count as uncovered, but their paths still seed the reachability search so a deleted module selects the tests that still import it), plus the declared repo-wide guards (`REPO_WIDE_GUARDS`: tests that scan `packages/`/`apps/`/`tests/`/`scripts/` wholesale and run on every non-empty diff, through the unfiltered diff, so deleting a listed guard without updating the list still fails red), plus the kernel boundary tests (`KERNEL_BOUNDARY_TESTS`: `tests/package-contract.test.js` and `tests/contracts-activation-e2e.test.js`, which the import mapping cannot reach from a core change, so they join only when the diff touches `packages/core/**` or `packages/app/**` — a docs-only diff never selects them), plus the characterization staleness suites (`CHARACTERIZATION_SUITES`: each `tests/characterization/*-baseline.json` selects its `*-characterization.test.js` when the diff touches a file its `source` digest map records — a docs-only diff never selects them), selection bounded to 60 s, selected run bounded to 270 s, warned fallback to the PR's own changed test files past either bound), the smoke demo, the published recipe replay, `npm run gtm:check`, `npm run repo:truth -- --check --drift-advisory --base origin/main` (agreement only; advisory drift warns, added warns only from base) |
-| `verify` | on schedule every 6 h (`23 */6 * * *`) plus manual dispatch of `main` only, and only when the head moved since the last successful measurement (the committed ledger or the runner-local record `~/.accordo-ci/main-last-measurement.json` the run itself maintains; a head that moved only in the measurement-flow files `site/claims.json` and `docs/repository-truth.json` counts as unmoved; `scripts/ci-measure-guard.js` skips the rest) | full `npm run verify` via `scripts/measure-suite.js` — never on `push`, so merge bursts queue no measurements (backlog:911355123044) — measured record kept as artifact and runner-local copy, smoke, recipe replay, then agreement `--check --drift-advisory` on the committed document, re-anchor at this run's measurement (`scripts/apply-ci-measurement.js`), regenerate, `--require-current`, controlled realign of advisory-only drift onto the fixed branch behind ONE PR (`scripts/realign-truth-main.js --push`, normal gate, never a push to `main`) |
+| `verify` | on schedule every 6 h (`23 */6 * * *`) plus manual dispatch of `main` only, and only when the head moved since the last successful measurement (the committed ledger or the runner-local record `~/.accordo-ci/main-last-measurement.json` the run itself maintains; a head that moved only in the measurement-flow files `site/claims.json` and `docs/repository-truth.json` counts as unmoved; `scripts/ci-measure-guard.js` skips the rest) | full corpus in pieces via `npm run measure` (`scripts/measure-pieces.sh`: `npm run check`, then one `measure-suite.js --shard i/n` per piece, each under its own lock with its own declared maximum, lock free between pieces — backlog:9fff957f3968) — never on `push`, so merge bursts queue no measurements (backlog:911355123044) — measured record kept as artifact and runner-local copy, smoke, recipe replay, then agreement `--check --drift-advisory` on the committed document, re-anchor at this run's measurement (`scripts/apply-ci-measurement.js`), regenerate, `--require-current`, controlled realign of advisory-only drift onto the fixed branch behind ONE PR (`scripts/realign-truth-main.js --push`, normal gate, never a push to `main`) |
 | `public-claims` | push to `main` only | `gtm:check`, agreement `--check --drift-advisory` on the committed document, and the measurement-age signal (`scripts/ci-measurement-age.js --window-hours 6`: a `::notice::` inside the window, a `::warning::` past it, always exit 0). Stays green between a merge and the next scheduled measurement; staleness never fails here — freshness is `verify`'s job |
 | nightly matrix | daily 01:17 UTC | the full worktree-heavy tool-selection product behind its opt-in variable (see the nightly workflow), skipped by default elsewhere |
 
