@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { createLlmOperations, estimateCostCents } from '../packages/llm/src/operations.js';
+import { AuditLog } from '../packages/core/src/audit.js';
+import { createDatabase } from '../packages/core/src/database.js';
+import { EventBus } from '../packages/core/src/event-bus.js';
+import {
+  createRecordModuleFromManifest,
+  recordModuleMigrations,
+} from '../packages/core/src/record-module-runtime.js';
+import { claimSpend, createLlmOperations, estimateCostCents } from '../packages/llm/src/operations.js';
 import { createFixtureLlmAdapter } from '../packages/llm/src/fixture.js';
 import { createOpenAiLlmAdapter } from '../packages/llm/src/openai.js';
 
@@ -24,12 +35,58 @@ const SECRET = ['llm', 'operations', 'secret', '1'].join('-');
 const SECRET_REF = 'secret://presti/openai';
 const T0 = Date.parse('2026-10-19T10:00:00.000Z');
 
-/** Minimal managed-record double: unique key, create/read/patch. */
-function stubService(uniqueKey) {
+/**
+ * Minimal managed-record double: unique key, create/read/patch, plus the
+ * storage seam the spend claim needs — a manifest (field names to columns,
+ * identity-mapped here), a `database.storage.execute` that interprets the
+ * conditional-update subset of the storage vocabulary with an
+ * `affectedRows` verdict, a managed `get`, and audit/events collectors.
+ * Single-threaded like the real single statement: `execute` runs to
+ * completion with no awaits inside, so a stale claim deterministically
+ * reports zero affected rows and the retry path is exercised for real.
+ */
+const USAGE_MANIFEST = {
+  name: 'llm-usage-day',
+  table: 'llm_usage_days',
+  fields: ['dayKey', 'spaceId', 'day', 'inputTokens', 'outputTokens', 'estimatedCostCents', 'calls']
+    .map((name) => ({ name, column: name })),
+};
+
+function stubService(uniqueKey, manifest = null) {
   const rows = [];
   let seq = 0;
+  const auditRecords = [];
+  const emitted = [];
+  const matchWhere = (row, where) => (where ?? []).every((predicate) => {
+    if (predicate.op !== 'eq') throw new Error(`stub storage supports only eq (got ${predicate.op})`);
+    return row[predicate.column] === predicate.value;
+  });
   return {
     rows,
+    auditRecords,
+    emitted,
+    manifest,
+    database: manifest ? {
+      storage: {
+        execute: async (statement) => {
+          if (statement?.kind !== 'update') throw new Error(`stub storage supports only update (got ${statement?.kind})`);
+          const targets = rows.filter((row) => matchWhere(row, statement.where));
+          for (const target of targets) {
+            for (const assignment of statement.values ?? []) {
+              target[assignment.column] = assignment.value;
+            }
+          }
+          return { affectedRows: targets.length };
+        },
+      },
+    } : undefined,
+    audit: manifest ? { record: async (entry) => { auditRecords.push(entry); } } : undefined,
+    events: manifest ? { emit: async (name, payload) => { emitted.push({ name, payload }); } } : undefined,
+    get: async (id) => {
+      const stored = rows.find((row) => row.id === id);
+      if (!stored) throw new Error(`missing row ${id}`);
+      return { ...stored };
+    },
     createManaged: async (row) => {
       if (rows.some((existing) => existing[uniqueKey] === row[uniqueKey])) {
         const error = new Error(`UNIQUE constraint failed: ${uniqueKey}`);
@@ -66,7 +123,7 @@ function stubFetchOk(seen) {
 }
 
 function setup(options = {}) {
-  const usage = stubService('dayKey');
+  const usage = stubService('dayKey', USAGE_MANIFEST);
   const audit = stubService('callKey');
   const modules = new Map([
     ['llm-usage-day', { service: usage }],
@@ -332,6 +389,43 @@ test('the audit keeps every cited source id, not the first few', async () => {
   assert.equal(audit[0].sources, ids.join(','));
 });
 
+test('a lost claim retries on the winner totals instead of overwriting', async () => {
+  const { ops, modules, usage } = setup();
+  const realExecute = usage.database.storage.execute;
+  let rigged = true;
+  usage.database.storage.execute = async (statement) => {
+    if (rigged) {
+      rigged = false;
+      return { affectedRows: 0 };
+    }
+    return realExecute(statement);
+  };
+  const out = await call(ops, modules, { tag: 'retry' });
+  assert.equal(out.text, 'live answer');
+  assert.equal(out.capExceeded, false);
+  const totals = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(totals.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[10, 4, 1]]);
+});
+
+test('a spend landing past a filled ceiling is recorded and annotated', async () => {
+  const { usage } = setup();
+  // Racers filled the ceiling while this call was at the provider: the
+  // day row already holds 15 tokens against a cap of 10.
+  await usage.createManaged({
+    dayKey: 'presti:2026-10-19', spaceId: 'presti', day: '2026-10-19',
+    inputTokens: 12, outputTokens: 3, estimatedCostCents: 1, calls: 1,
+  }, { actor: ACTOR });
+  const caps = { dailyTokenCap: 10, dailyCostCentsCap: null };
+  const { row, capExceeded } = await claimSpend(
+    usage, 'presti:2026-10-19',
+    { inputTokens: 10, outputTokens: 4, estimatedCostCents: 1 },
+    ACTOR, caps, () => T0,
+  );
+  assert.equal(capExceeded, true, 'the over-cap landing is annotated');
+  assert.deepEqual([row.inputTokens, row.outputTokens, row.calls], [22, 7, 2],
+    'real spend is recorded, never hidden by the refusal');
+});
+
 test('requests validate fail-closed before any provider is touched', async () => {
   const { definition, api } = createFixtureLlmAdapter({ secret: SECRET });
   const { ops, modules } = setup({
@@ -351,4 +445,66 @@ test('requests validate fail-closed before any provider is touched', async () =>
     spaces: { presti: { enabled: true, adapter: 'no-such-adapter', adapterVersion: 1 } },
   });
   assert.equal(await codeOf(() => call(unknown.ops, unknown.modules, {})), 'LLM_ADAPTER_UNKNOWN');
+});
+
+const llmPkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..', 'packages', 'llm');
+
+function loadLlmManifest(name) {
+  return JSON.parse(readFileSync(join(llmPkgRoot, 'modules', `${name}.module.json`), 'utf8'));
+}
+
+/**
+ * One writer on real sqlite: its own connection, the real module services
+ * built from the shipped manifests. Two writers share one file database
+ * the way two processes share production storage.
+ */
+function realLlmWriter(dbFile) {
+  const database = createDatabase({ path: dbFile });
+  for (const { sql } of recordModuleMigrations(['llm-usage-day', 'llm-call-audit']
+    .map((name) => ({ name, manifest: loadLlmManifest(name) })))) {
+    database.raw.exec(sql);
+  }
+  const audit = new AuditLog(database);
+  const events = new EventBus();
+  const modules = new Map();
+  for (const name of ['llm-usage-day', 'llm-call-audit']) {
+    const built = createRecordModuleFromManifest(loadLlmManifest(name), {
+      database, audit, events, references: {},
+    });
+    modules.set(name, { service: built.service });
+  }
+  return { database, modules, close: () => database.close() };
+}
+
+test('two writers on real storage keep every spend: claims are conditional', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-llm-race-'));
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* test litter */ } });
+  const first = realLlmWriter(join(dir, 'llm-race.sqlite'));
+  const second = realLlmWriter(join(dir, 'llm-race.sqlite'));
+  t.after(() => { first.close(); second.close(); });
+
+  const dayKey = 'presti:2026-10-19';
+  await first.modules.get('llm-usage-day').service.createManaged({
+    dayKey, spaceId: 'presti', day: '2026-10-19',
+    inputTokens: 0, outputTokens: 0, estimatedCostCents: 0, calls: 0,
+  }, { actor: ACTOR });
+  const caps = { dailyTokenCap: 1000000, dailyCostCentsCap: null };
+  const delta = { inputTokens: 10, outputTokens: 4, estimatedCostCents: 1 };
+  const perWriter = 10;
+  await Promise.all([
+    ...Array.from({ length: perWriter }, () => claimSpend(
+      first.modules.get('llm-usage-day').service, dayKey, delta, ACTOR, caps,
+    )),
+    ...Array.from({ length: perWriter }, () => claimSpend(
+      second.modules.get('llm-usage-day').service, dayKey, delta, ACTOR, caps,
+    )),
+  ]);
+  const rows = await first.modules.get('llm-usage-day').service.listWhere({ dayKey });
+  assert.equal(rows.length, 1, 'exactly one day row exists');
+  assert.deepEqual(
+    [rows[0].inputTokens, rows[0].outputTokens, rows[0].estimatedCostCents, rows[0].calls],
+    [perWriter * 2 * delta.inputTokens, perWriter * 2 * delta.outputTokens,
+      perWriter * 2 * delta.estimatedCostCents, perWriter * 2],
+    'every concurrent spend landed exactly once',
+  );
 });

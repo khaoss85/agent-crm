@@ -3,7 +3,7 @@
 import { AppError, ValidationError, requireActor } from '../../core/index.js';
 import { LlmRegistries, assertGenerateInput } from './adapter.js';
 import { FIXTURE_LLM_SECRET, createFixtureLlmAdapter } from './fixture.js';
-import { OPENAI_DEFAULT_MODEL, createOpenAiLlmAdapter } from './openai.js';
+import { OPENAI_DEFAULT_MODEL } from './openai.js';
 
 /**
  * The LLM package operations (backlog:6e54d6a7988a).
@@ -12,8 +12,12 @@ import { OPENAI_DEFAULT_MODEL, createOpenAiLlmAdapter } from './openai.js';
  * demands: the space opts in explicitly (absent or disabled refuses with
  * `LLM_SPACE_DISABLED` before any provider is touched), the day's token
  * and cost ceilings refuse with `LLM_DAILY_CAP_EXCEEDED` before any
- * provider is touched, and the spend section serializes per space-day so
- * racing calls re-read fresh totals. With no `secretRef` configured
+ * provider is touched, and every spend lands through one conditional
+ * storage claim on fresh totals, so racing calls — same process through
+ * the per-space chain, another process through the claim retry — neither
+ * bypass the cap nor lose each other's tokens. A spend that lands after
+ * racers filled the ceiling is still recorded and annotated
+ * (`capExceeded`), never hidden. With no `secretRef` configured
  * anywhere the call runs as an explicit dry-run on the fixture adapter —
  * announced in the result and the audit, with no network behind it. With
  * a key expected but custody failing or unwired the call refuses with
@@ -49,17 +53,21 @@ export const LLM_PURPOSES = Object.freeze([
 export const LLM_AUDIT_LIMIT = 200;
 const SPACE_ID = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
 const SECRET_REF = /^secret:\/\/[^\/\s]+\/[^\/\s]+$/;
-const HOSTILE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 const RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/;
 
 /**
- * Same-process serialization for one space's daily spend, one FIFO chain
- * per space-day: two completions racing the same day re-read the winner's
- * totals instead of overwriting them with a stale snapshot, and the loser
- * of a filled cap refuses instead of spending past it. Cross-process
- * writers still serialize on the managed row. (MEM_ACC_REUSE: the tail
- * pattern of channels' import commits — a package imports only core, so
- * the helper lives here rather than crossing the boundary.)
+ * Same-process serialization for one space's spend, one FIFO chain per
+ * space: two completions racing in this process commit in order, and the
+ * loser of a filled cap refuses instead of spending past it. The chain is
+ * keyed by space, never by day: two calls straddling UTC midnight resolve
+ * their own day inside the slot instead of splitting across two chains.
+ * Cross-process writers do NOT serialize here — the spend claim below is
+ * one conditional storage write on the totals read fresh, so a cross-process
+ * racer loses the claim and retries on the winner's totals instead of
+ * overwriting them (the spine conditional-claim idiom, `affectedRows`
+ * from the storage contract). (MEM_ACC_REUSE: the tail pattern of
+ * channels' import commits — a package imports only core, so the helper
+ * lives here rather than crossing the boundary.)
  */
 const daySpendChains = new Map();
 
@@ -177,6 +185,121 @@ export function estimateCostCents({ inputTokens, outputTokens, model, pricing })
     });
   }
   return Math.max(0, Math.ceil((inputTokens / 1000) * rate.input + (outputTokens / 1000) * rate.output));
+}
+
+function overCap(row, caps) {
+  const usedTokens = row.inputTokens + row.outputTokens;
+  return usedTokens >= caps.dailyTokenCap
+    || (caps.dailyCostCentsCap !== null && row.estimatedCostCents >= caps.dailyCostCentsCap);
+}
+
+/**
+ * The storage seam a spend claim needs: the managed service's own
+ * manifest (field names to physical columns, resolved at runtime so no
+ * backend's naming is hardcoded here), its storage `execute` with the
+ * `affectedRows` verdict from the storage contract, a managed read, and
+ * the audit/events mirrors `applyManaged` performs. Missing seam refuses
+ * fail-closed: a totals update that cannot prove atomicity never runs.
+ */
+function spendSeam(usageService) {
+  const manifest = usageService?.manifest;
+  const storage = usageService?.database?.storage;
+  const fields = Array.isArray(manifest?.fields) ? manifest.fields : null;
+  const columnOf = (name) => fields?.find((field) => field?.name === name)?.column ?? null;
+  const columns = {
+    id: 'id',
+    inputTokens: columnOf('inputTokens'),
+    outputTokens: columnOf('outputTokens'),
+    estimatedCostCents: columnOf('estimatedCostCents'),
+    calls: columnOf('calls'),
+  };
+  if (!manifest || typeof manifest.table !== 'string' || typeof manifest.name !== 'string'
+    || Object.values(columns).some((column) => typeof column !== 'string' || column === '')
+    || !storage || typeof storage.execute !== 'function'
+    || typeof usageService.get !== 'function'
+    || typeof usageService.audit?.record !== 'function'
+    || typeof usageService.events?.emit !== 'function') {
+    throw new AppError('llm usage storage cannot prove an atomic spend claim', {
+      code: 'LLM_STORAGE_INVALID', status: 500,
+    });
+  }
+  return { manifest, storage, columns };
+}
+
+/**
+ * Claim one spend against the day row with a single conditional write:
+ * `UPDATE ... WHERE id AND the totals read fresh`. One statement is
+ * atomic on every backend, so a cross-process racer either wins the
+ * claim first — and this call retries on the winner's totals — or loses
+ * it, and no update is ever lost. Bounded retries, then a retriable
+ * refusal, never a silent overwrite. The managed audit row and the
+ * `updated` event mirror `applyManaged` (`record-module-runtime.js`),
+ * and the row is re-read through the managed `get`.
+ *
+ * Returns `{ row, capExceeded }`: when racers filled the ceiling while
+ * this call was at the provider, the spend still lands — real money is
+ * never hidden — and `capExceeded` annotates the over-cap landing so
+ * the caller slows down; the next call refuses before any provider.
+ */
+export async function claimSpend(usageService, dayKey, delta, actor, caps, clock = Date.now) {
+  const { manifest, storage, columns } = spendSeam(usageService);
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
+    const fresh = (await usageService.listWhere({ dayKey }))[0] ?? null;
+    if (!fresh) {
+      throw new AppError('llm usage day row vanished mid-claim: retry the call', {
+        code: 'LLM_USAGE_CONFLICT', status: 503,
+      });
+    }
+    const capExceeded = overCap(fresh, caps);
+    const totals = {
+      inputTokens: fresh.inputTokens + delta.inputTokens,
+      outputTokens: fresh.outputTokens + delta.outputTokens,
+      estimatedCostCents: fresh.estimatedCostCents + delta.estimatedCostCents,
+      calls: fresh.calls + 1,
+    };
+    const at = new Date(clock()).toISOString();
+    const claimed = await storage.execute({
+      kind: 'update',
+      table: manifest.table,
+      values: [
+        { column: columns.inputTokens, value: totals.inputTokens },
+        { column: columns.outputTokens, value: totals.outputTokens },
+        { column: columns.estimatedCostCents, value: totals.estimatedCostCents },
+        { column: columns.calls, value: totals.calls },
+        // `updated_at` is the storage-level convention `applyManaged`
+        // maintains (`record-module-runtime.js`); the claim keeps it.
+        { column: 'updated_at', value: at },
+      ],
+      where: [
+        { column: columns.id, op: 'eq', value: fresh.id },
+        { column: columns.inputTokens, op: 'eq', value: fresh.inputTokens },
+        { column: columns.outputTokens, op: 'eq', value: fresh.outputTokens },
+        { column: columns.estimatedCostCents, op: 'eq', value: fresh.estimatedCostCents },
+        { column: columns.calls, op: 'eq', value: fresh.calls },
+      ],
+    });
+    if (Number(claimed?.affectedRows ?? 0) === 1) {
+      const action = `${manifest.name}.updated`;
+      await usageService.audit.record({
+        actor, entityType: manifest.name, entityId: fresh.id, data: totals, action,
+      });
+      const row = await usageService.get(fresh.id);
+      await usageService.events.emit(action, row);
+      return { row, capExceeded };
+    }
+    // A racer moved the totals between the fresh read and the claim:
+    // back off, then re-read the winner's row. The pause desynchronizes
+    // hot writers — without it parallel claimants starve each other
+    // retrying in lockstep — and the next read observes committed totals,
+    // so retries converge instead of spinning.
+    if (attempt < 8) {
+      const pauseMs = Math.min(200, 5 * 2 ** (attempt - 1)) + Math.random() * 5;
+      await new Promise((resolve) => { setTimeout(resolve, pauseMs); });
+    }
+  }
+  throw new AppError('llm usage claim raced too often: retry the call', {
+    code: 'LLM_USAGE_CONFLICT', status: 503,
+  });
 }
 
 function trusted(modules, name) {
@@ -321,27 +444,6 @@ export function createLlmOperations(options = {}) {
     }
   }
 
-  async function addUsage(usageService, current, delta, actor) {
-    const patch = {
-      inputTokens: current.inputTokens + delta.inputTokens,
-      outputTokens: current.outputTokens + delta.outputTokens,
-      estimatedCostCents: current.estimatedCostCents + delta.estimatedCostCents,
-      calls: current.calls + 1,
-    };
-    try {
-      return await usageService.applyManaged(current.id, patch, { actor });
-    } catch (error) {
-      if (!isUniqueConflict(error)) throw error;
-      const fresh = (await usageService.listWhere({ dayKey: current.dayKey }))[0] ?? current;
-      return usageService.applyManaged(fresh.id, {
-        inputTokens: fresh.inputTokens + delta.inputTokens,
-        outputTokens: fresh.outputTokens + delta.outputTokens,
-        estimatedCostCents: fresh.estimatedCostCents + delta.estimatedCostCents,
-        calls: fresh.calls + 1,
-      }, { actor });
-    }
-  }
-
   /**
    * One audit row per attempt — refused or completed — with the space, the
    * purpose, the adapter, the model, the token counts and the estimated
@@ -414,16 +516,15 @@ export function createLlmOperations(options = {}) {
       });
     }
 
-    // One serialized spend section per space-day: the ceiling re-reads
-    // fresh totals and every usage write lands on the winner's row, so
-    // racing calls neither bypass the cap nor lose each other's tokens.
-    // Computed synchronously so same-tick racers still order on the chain.
-    const spendKey = `${spaceId}:${todayKey(clock())}`;
-    return withDaySpend(spendKey, async () => {
+    // One serialized spend section per space: the ceiling re-reads fresh
+    // totals and every spend lands through the conditional claim, so racing
+    // calls neither bypass the cap nor lose each other's tokens. Keyed by
+    // space, never by day, so midnight straddlers share the slot and each
+    // resolves its own day inside. Synchronous until the chain links, so
+    // same-tick racers still order.
+    return withDaySpend(spaceId, async () => {
       const current = await usageToday(usageService, spaceId, actor);
-      const usedTokens = current.row.inputTokens + current.row.outputTokens;
-      if (usedTokens >= caps.dailyTokenCap
-        || (caps.dailyCostCentsCap !== null && current.row.estimatedCostCents >= caps.dailyCostCentsCap)) {
+      if (overCap(current.row, caps)) {
         await audit(auditService, {
           spaceId, purpose, adapter: '', model, inputTokens: 0, outputTokens: 0,
           estimatedCostCents: 0, dryRun: false, refused: 'daily-cap', sources,
@@ -440,9 +541,9 @@ export function createLlmOperations(options = {}) {
           secret: FIXTURE_LLM_SECRET, messages, model, maxTokens,
         });
         const cost = estimateCostCents({ inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, model, pricing });
-        await addUsage(usageService, current.row, {
+        const claimed = await claimSpend(usageService, current.key, {
           inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, estimatedCostCents: cost,
-        }, actor);
+        }, actor, caps, clock);
         await audit(auditService, {
           spaceId, purpose, adapter: dryRun.definition.name, model,
           inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
@@ -457,6 +558,7 @@ export function createLlmOperations(options = {}) {
           inputTokens: completion.inputTokens,
           outputTokens: completion.outputTokens,
           estimatedCostCents: cost,
+          capExceeded: claimed.capExceeded,
           sources,
         });
       }
@@ -506,9 +608,9 @@ export function createLlmOperations(options = {}) {
       const cost = estimateCostCents({
         inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, model, pricing,
       });
-      const updated = await addUsage(usageService, current.row, {
+      const claimed = await claimSpend(usageService, current.key, {
         inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, estimatedCostCents: cost,
-      }, actor);
+      }, actor, caps, clock);
       await audit(auditService, {
         spaceId, purpose, adapter: definition.name, model,
         inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
@@ -522,10 +624,11 @@ export function createLlmOperations(options = {}) {
         inputTokens: completion.inputTokens,
         outputTokens: completion.outputTokens,
         estimatedCostCents: cost,
+        capExceeded: claimed.capExceeded,
         sources,
         usage: Object.freeze({
-          dayTokens: updated.inputTokens + updated.outputTokens,
-          dayCostCents: updated.estimatedCostCents,
+          dayTokens: claimed.row.inputTokens + claimed.row.outputTokens,
+          dayCostCents: claimed.row.estimatedCostCents,
         }),
       });
     });

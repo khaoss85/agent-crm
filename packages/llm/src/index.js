@@ -97,7 +97,7 @@ export function createLlmPackage(options = {}) {
     clock: options.clock,
   });
 
-  return selectPackageGraph(definePackage({
+  const pkg = definePackage({
     packageContract: 1,
     name: LLM_PACKAGE,
     version: 1,
@@ -177,5 +177,18 @@ export function createLlmPackage(options = {}) {
         },
       },
     ],
-  }));
+  });
+
+  /**
+   * Adapter fingerprints persist exactly where every other declared
+   * definition's do — the package definition-version store — so a moved
+   * adapter source stops the boot like any other drift (ADR-015, same
+   * shape as `packages/channels/src/index.js`).
+   * @param {any} database
+   */
+  pkg.persistFingerprints = (database) => handle.registries.persistFingerprints(database);
+
+  /** The registries, for the composition that owns this package instance. */
+  pkg.registries = handle.registries;
+  return selectPackageGraph(pkg);
 }

@@ -42,9 +42,13 @@ same kit.
   the audit says so, no network happens. With a key expected but custody
   failing or unwired the call refuses with `LLM_SECRET_UNAVAILABLE`
   instead of serving canned text.
-- The spend section serializes per space-day, so racing calls re-read
-  fresh totals: the loser of a filled cap refuses, and no spend update is
-  lost.
+- Every spend lands through one conditional storage claim on fresh
+  totals (same-process calls also serialize on a per-space chain): the
+  loser of a filled cap refuses with `LLM_DAILY_CAP_EXCEEDED`, and no
+  spend update is lost — cross-process racers retry on the winner's
+  totals. A spend that lands after racers filled the ceiling is still
+  recorded and annotated (`capExceeded: true` in the result), never
+  hidden; the next call refuses.
 - The model surface is closed: the default model plus the space's explicit
   `models` allowlist. Every allowed model needs a valid price, or the call
   refuses with `LLM_PRICING_UNAVAILABLE` before the provider is touched.

@@ -72,7 +72,11 @@ export function createOpenAiLlmAdapter(options = {}) {
        * @param {{secret?: unknown, messages: any, model?: string, maxTokens: number, timeoutMs?: number}} request
        */
       async generate(request) {
-        const callModel = typeof request?.model === 'string' && request.model !== '' ? request.model : model;
+        // Fail closed on the caller's model: only an absent model falls
+        // back to the composed default. A mistyped model (a number, a
+        // blank string) refuses in `assertGenerateInput` instead of
+        // silently billing and auditing the wrong model.
+        const callModel = request?.model === undefined ? model : request.model;
         const { messages, maxTokens } = assertGenerateInput({ ...request, model: callModel });
         const secret = request?.secret;
         if (typeof secret !== 'string' || secret === '') {

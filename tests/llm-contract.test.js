@@ -98,6 +98,24 @@ test('the model name is written in exactly one place', () => {
   assert.deepEqual(hits, ['openai.js:1'], `model name repeats: ${hits.join(', ')}`);
 });
 
+test('the composed package exposes registries and fingerprint persistence', () => {
+  // ADR-015 drift detection only runs when the package exposes the same
+  // surface as channels: `registries` and `persistFingerprints`.
+  const definition = createLlmPackage({});
+  assert.equal(typeof definition.persistFingerprints, 'function');
+  assert.ok(definition.registries instanceof LlmRegistries);
+  assert.deepEqual(
+    definition.registries.metadata().adapters.map((entry) => entry.name).sort(),
+    [],
+    'no adapters composed, none fingerprinted',
+  );
+  const withAdapter = createLlmPackage({ adapters: [adapter()] });
+  assert.deepEqual(
+    withAdapter.registries.metadata().adapters.map((entry) => entry.name),
+    ['fixture-llm'],
+  );
+});
+
 test('the llm package conforms and imports no sibling package', () => {
   const definition = createLlmPackage({});
   assertPackageConforms({

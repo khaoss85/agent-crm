@@ -35,6 +35,44 @@ const CHECKS = Object.freeze([
 ]);
 
 /**
+ * Serialize a thrown error whole: `message` and `stack` as plain strings
+ * plus a recursive walk of every own property — enumerable or not — so a
+ * secret nested in `details` (or echoed in the message) is observable.
+ * Unreadable getters degrade to a marker, never to a skipped branch.
+ * @param {any} error
+ */
+function serializeErrorWhole(error) {
+  const parts = [];
+  if (error !== null && (typeof error === 'object' || typeof error === 'function')) {
+    parts.push(String(error.message ?? ''));
+    parts.push(String(error.stack ?? ''));
+  } else {
+    parts.push(String(error ?? ''));
+  }
+  const seen = new Set();
+  const walk = (value) => {
+    if (typeof value === 'string') return value;
+    if (typeof value === 'bigint') return String(value);
+    if (value !== null && (typeof value === 'object' || typeof value === 'function')) {
+      if (seen.has(value)) return '[circular]';
+      seen.add(value);
+      return `{${Object.getOwnPropertyNames(value).map((key) => {
+        let entry;
+        try {
+          entry = value[key];
+        } catch {
+          return `${key}:<unreadable>`;
+        }
+        return `${key}:${walk(entry)}`;
+      }).join(' ')}}`;
+    }
+    return '';
+  };
+  parts.push(walk(error));
+  return parts.join('\n');
+}
+
+/**
  * @param {{adapter: any, harness: any, secrets: {value: string}, model?: string}} options
  * @returns {Promise<Array<{name: string, pass: boolean, detail: string}>>}
  */
@@ -112,21 +150,24 @@ export async function runLlmAdapterKit(options) {
   });
 
   await check('no-key-leak', async () => {
-    // Every failure the kit can provoke, stringified whole: the secret
+    // Every failure the kit can provoke, serialized whole: the secret
     // value appears nowhere — not in the code, not in the message, not in
-    // a nested detail.
+    // a nested detail. `JSON.stringify` alone cannot prove that: error
+    // `message` and `stack` are non-enumerable (dropped), and a replacer
+    // array allowlists away nested keys. The walker below reads every own
+    // property, enumerable or not, so a probe that cannot observe a leak
+    // — a measurement that cannot fail — never ships here.
     for (const mode of ['transient', 'auth', 'limited']) {
       harness.faults.failNext(mode);
       try {
         await harness.generate({ messages: messages('leak probe'), model, maxTokens: 64 });
         fail(`mode ${mode} should have thrown`);
       } catch (error) {
-        const whole = JSON.stringify(error, Object.getOwnPropertyNames(error));
-        if (whole.includes(secretValue)) fail(`mode ${mode} leaks the secret value`);
+        if (serializeErrorWhole(error).includes(secretValue)) fail(`mode ${mode} leaks the secret value`);
       }
     }
     const ok = await harness.generate({ messages: messages('clean probe'), model, maxTokens: 64 });
-    if (JSON.stringify(ok).includes(secretValue)) fail('the completion carries the secret value');
+    if (serializeErrorWhole(ok).includes(secretValue)) fail('the completion carries the secret value');
     return 'secret value in neither errors nor completions';
   });
 

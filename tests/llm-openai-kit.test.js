@@ -82,3 +82,42 @@ test('the openai adapter names the cheapest model exactly once by default', () =
   const { definition } = createOpenAiLlmAdapter({ fetchImpl: async () => ({ status: 200, json: async () => ({}) }) });
   assert.equal(definition.config.model, 'gpt-5.6-luna');
 });
+
+test('a mistyped model refuses instead of silently running the default', async () => {
+  const { definition } = createOpenAiLlmAdapter({
+    fetchImpl: async () => ({
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: 'x' } }], usage: {} }),
+    }),
+  });
+  const base = { secret: SECRET, messages: [{ role: 'user', content: 'hi' }], maxTokens: 16 };
+  await assert.rejects(
+    definition.generate({ ...base, model: 123 }),
+    (error) => error?.name === 'ValidationError' || /bounded non-blank/.test(String(error?.message)),
+  );
+  await assert.rejects(
+    definition.generate({ ...base, model: '' }),
+    (error) => error?.name === 'ValidationError' || /bounded non-blank/.test(String(error?.message)),
+  );
+  const out = await definition.generate({ ...base, model: undefined });
+  assert.equal(out.model, 'gpt-5.6-luna', 'only an absent model falls back to the default');
+});
+
+test('the kit leak probe observes secrets in messages and nested details', async () => {
+  // A measurement that cannot fail is no measurement: an adapter echoing
+  // the secret in its error message and nested details must fail the kit.
+  const leaky = { name: 'leaky-llm', version: 1 };
+  const harness = {
+    generate: async () => {
+      const error = new Error(`refused: ${SECRET}`);
+      error.code = 'LLM_AUTH_FAILED';
+      error.details = { provider: { nested: { token: SECRET } } };
+      throw error;
+    },
+    faults: { failNext: () => {} },
+    secrets: { value: SECRET },
+  };
+  const results = await runLlmAdapterKit({ adapter: leaky, harness, secrets: { value: SECRET }, model: MODEL });
+  const leak = results.find((result) => result.name === 'no-key-leak');
+  assert.equal(leak?.pass, false, 'the probe missed a secret in the message and nested details');
+});
