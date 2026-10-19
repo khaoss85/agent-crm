@@ -323,6 +323,20 @@ export function createChannelsPackage(options = {}) {
       },
       {
         operationContract: 1,
+        name: 'read-sync-state',
+        label: 'Read space sync state',
+        appMethod: 'readSyncState',
+        description: 'Read the sync state of every connection in one space: one entry per connection with its first-import progress, plus the connected/completed totals. A connection whose import never started reads sync null.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.readSyncState(params);
+        },
+      },
+      {
+        operationContract: 1,
         name: 'requeue-channel-letter',
         label: 'Requeue dead letter',
         appMethod: 'requeueChannelLetter',
@@ -354,7 +368,6 @@ export function createChannelsPackage(options = {}) {
           'the per-space HTTP route — the pilot owns it and passes spaceId from the verified path',
           'secret custody and rotation flow — the deployment owns it via resolveSecret',
           'reconciliation against provider truth — redelivery resumes unprocessed rows',
-          'per-connection observability aggregates',
         ],
       };
     },

@@ -1386,6 +1386,43 @@ export function createChannelOperations(deps) {
   }
 
   /**
+   * Read the sync state of every connection in one space (backlog:f815763b7aa5):
+   * one entry per connection — its binding and, when its first import
+   * started, the same progress surface `readInitialImport` returns — plus
+   * the connected/completed totals the pilot's banner reads. Only `active`
+   * connections count as connected: a pending, suspended or revoked binding
+   * cannot sync, so it never holds the banner back. A connection whose
+   * import never started reads `sync: null`: not finished, never an
+   * invented report. Entries sort by connection key, so two reads of one
+   * space always agree. Read-only like the other progress surface: no
+   * actor, no mutation, no secret material — the entry carries the binding
+   * identity and the adapter, never the secret reference.
+   */
+  function readSyncState(params) {
+    const spaceId = assertSpaceId(params?.spaceId);
+    const entries = connections().listWhere({ spaceId }).map((connection) => {
+      const row = findImportState(spaceId, connection.sourceKey);
+      return Object.freeze({
+        connectionKey: connection.sourceKey,
+        channel: connection.channel,
+        adapter: connection.adapter,
+        adapterVersion: connection.adapterVersion,
+        status: connection.status,
+        sync: row ? importStateSummary(row) : null,
+      });
+    }).sort((left, right) => (left.connectionKey < right.connectionKey ? -1
+      : left.connectionKey > right.connectionKey ? 1 : 0));
+    const connected = entries.filter((entry) => entry.status === 'active').length;
+    const completed = entries.filter((entry) => entry.status === 'active' && entry.sync?.status === 'done').length;
+    return Object.freeze({
+      spaceId,
+      connectors: Object.freeze(entries),
+      connected,
+      completed,
+    });
+  }
+
+  /**
    * Resolve the service-window observation server-side for adapters that
    * declare `outboundWindow`: the latest applied customer-message instant
    * recorded in the inbox for the recipient's conversation — the provider
@@ -1755,5 +1792,6 @@ export function createChannelOperations(deps) {
     startInitialImport,
     advanceInitialImport,
     readInitialImport,
+    readSyncState,
   });
 }
