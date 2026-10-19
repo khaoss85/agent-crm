@@ -135,6 +135,35 @@ test('misconfigured listini fail closed with the field path', () => {
   assert.throws(() => provider(GYM_PRICE_LIST, { version: 0 }), /positive integer/);
 });
 
+test('a too-long listino name is rejected at registration, naming the name', async () => {
+  const tooLong = 'a'.repeat(100);
+  // Before, a long but otherwise valid slug failed later and unclearly: with
+  // the derived label the registry blamed the label ("at most 80
+  // characters") instead of the name, and with an explicit short label it
+  // registered at all. Both paths now fail up front with an error that names
+  // the name and its bound, label or no label.
+  assert.throws(
+    () => provider(GYM_PRICE_LIST, { name: tooLong }),
+    /name must be a non-empty string of at most \d+ characters/,
+  );
+  assert.throws(
+    () => provider(GYM_PRICE_LIST, { name: tooLong, label: 'short' }),
+    /name must be a non-empty string of at most \d+ characters/,
+  );
+  // Boundary: the longest name whose derived label still fits the registry
+  // limit registers and syncs end to end; one character more does not.
+  const longest = 'b'.repeat(80 - 'Workspace price list ()'.length);
+  const built = provider(GYM_PRICE_LIST, { name: longest });
+  assert.ok(built.label.length <= 80, `derived label is ${built.label.length} characters`);
+  assert.doesNotThrow(() => validateCatalogProvider(built));
+  const catalog = normalizeCatalog(await built.fetchCatalog({}));
+  assert.ok(
+    catalog.priceBooks[0].sourceKey === `pricelist.${longest}.book`,
+    'the longest accepted name still produces a canonical source key',
+  );
+  assert.throws(() => provider(GYM_PRICE_LIST, { name: `${longest}x` }), /name must be/);
+});
+
 test('the normalized listino is frozen in depth: nested amounts cannot drift', async () => {
   const normalized = validatePriceListConfig(GYM_PRICE_LIST);
   assert.ok(Object.isFrozen(normalized.priceBook), 'price book is frozen');
