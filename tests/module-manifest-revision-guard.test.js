@@ -11,7 +11,6 @@ import {
   manifestRevision,
 } from '../packages/core/src/module-evolution.js';
 import {
-  MODULE_BORN_AT_REVISION,
   assertRevisionHistoryContract,
 } from '../packages/core/src/record-module-history.js';
 
@@ -41,9 +40,12 @@ const sha = (sql) => createHash('sha256').update(sql).digest('hex');
  * history fails even when RECORDED matches the new current-manifest SQL —
  * that combination is exactly the b8266ea recurrence (old databases fail
  * while the guard stays green). Seven revision-2 modules predate the history
- * mechanism and are declared born at revision 2 in
- * `MODULE_BORN_AT_REVISION` (same registry file); the declaration excuses
- * exactly revision 2, and the next bump of any of them ships history.
+ * mechanism and are declared born at revision 2 in `BORN_AT_REVISION_2`
+ * below — the declaration lives here, in the test, because the kernel
+ * (`packages/core/src`) may not name a domain module in either direction.
+ * The walk passes the declaration to `assertRevisionHistoryContract` as
+ * `bornAtRevision`; it excuses exactly revision 2, and the next bump of any
+ * of them ships history.
  */
 const RECORDED = Object.freeze({
   "appointment": { revision: 1, sqlite: "25bb4a8a4a505db484177c20992dbe0923716706538e4b08ef2a086fdf5b34a8", pg: "50b43a7c22f935eb30f645d91b100f6d471a360988e8f29a2326969ea9a4edb1" },
@@ -150,6 +152,21 @@ const RECORDED = Object.freeze({
   "work-task": { revision: 1, sqlite: "42f2f15c58bfebce0e745d9090e23461202d0aba60df85446688f7a99b1085a3", pg: "3c3114ed031a0208c2c1abeb12026ef8502086923d88f87ef8d27bbc3e88c887" },
 });
 
+// The seven revision-2 modules that predate the history mechanism (accordo
+// 61c450a2a1b1): declared born at revision 2 here — the kernel may not name
+// them, so this guard holds the declaration and passes it to the contract
+// check as `bornAtRevision`. Widening it is a visible test change, never a
+// silent one.
+const BORN_AT_REVISION_2 = Object.freeze({
+  'commercial-contract': 2,
+  'contract-activation': 2,
+  'contract-version': 2,
+  'service-obligation': 2,
+  'delivery-milestone': 2,
+  'delivery-project': 2,
+  'delivery-work-package': 2,
+});
+
 function walkModuleManifests(directory) {
   const manifests = [];
   for (const name of readdirSync(directory).sort()) {
@@ -207,7 +224,11 @@ test('every manifest-selected module renders its recorded migration SQL at its r
       continue;
     }
     try {
-      assertRevisionHistoryContract(normalized.name, revision);
+      // The born-at declaration excuses exactly its revision; anything
+      // undeclared stays fail-closed (bornAtRevision defaults to 1).
+      assertRevisionHistoryContract(normalized.name, revision, {
+        bornAtRevision: BORN_AT_REVISION_2[normalized.name] ?? 1,
+      });
     } catch (error) {
       failures.push(
         `${relative}: revision ${revision} breaks the history contract — `
@@ -247,21 +268,6 @@ test('the guard proves its own premise: changed SQL with the same revision fails
     || sha(generateModuleMigration(edited).sql) !== recorded.sqlite;
   assert.equal(drifted, true, 'the probe edit should change the rendered SQL');
 });
-
-// The seven revision-2 modules that predate the history mechanism (accordo
-// 61c450a2a1b1): declared born at revision 2 in MODULE_BORN_AT_REVISION, so
-// the walk above stays green — and only exactly there. Pinned here as well,
-// so widening the declaration is a visible test change, never a silent one.
-const BORN_AT_REVISION_2 = Object.freeze({
-  'commercial-contract': 2,
-  'contract-activation': 2,
-  'contract-version': 2,
-  'service-obligation': 2,
-  'delivery-milestone': 2,
-  'delivery-project': 2,
-  'delivery-work-package': 2,
-});
-
 test('a revision bump without history fails the history contract', () => {
   // The P2 hole from the #247 review: a bump that only updates RECORDED to
   // the new current-manifest SQL passes the SQL check, so the contract
@@ -285,15 +291,32 @@ test('a revision bump without history fails the history contract', () => {
 });
 
 test('born-at-revision-2 modules are covered exactly at revision 2', () => {
-  assert.deepEqual({ ...MODULE_BORN_AT_REVISION }, { ...BORN_AT_REVISION_2 });
+  // Pinned: exactly these seven, each at exactly 2. Widening the declaration
+  // is a visible test change, never a silent one.
+  assert.deepEqual(Object.keys(BORN_AT_REVISION_2).sort(), [
+    'commercial-contract',
+    'contract-activation',
+    'contract-version',
+    'delivery-milestone',
+    'delivery-project',
+    'delivery-work-package',
+    'service-obligation',
+  ]);
   for (const name of Object.keys(BORN_AT_REVISION_2)) {
-    assertRevisionHistoryContract(name, 2);
+    assertRevisionHistoryContract(name, 2, { bornAtRevision: 2 });
   }
   // The declaration excuses nothing above: the next bump ships history.
   for (const name of Object.keys(BORN_AT_REVISION_2)) {
     assert.throws(
-      () => assertRevisionHistoryContract(name, 3),
+      () => assertRevisionHistoryContract(name, 3, { bornAtRevision: 2 }),
       new RegExp(`${name}".*at revision 3 without history`),
+    );
+  }
+  // And without the declaration the same modules stay fail-closed.
+  for (const name of Object.keys(BORN_AT_REVISION_2)) {
+    assert.throws(
+      () => assertRevisionHistoryContract(name, 2),
+      new RegExp(`${name}".*at revision 2 without history`),
     );
   }
 });
