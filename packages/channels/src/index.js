@@ -416,6 +416,13 @@ export {
   createWhatsAppChannelAdapter,
 } from './whatsapp.js';
 export {
+  META_CUSTOMER_SERVICE_WINDOW_MS,
+  checkMetaServiceWindow,
+  isMetaSelfEcho,
+  iterateMetaBatchItems,
+  parseMetaWebhookBody,
+} from './meta-webhook.js';
+export {
   GMAIL_ADAPTER_NAME,
   GMAIL_ADAPTER_VERSION,
   GMAIL_HISTORY_WINDOW_MS,

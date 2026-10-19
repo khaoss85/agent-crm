@@ -3,6 +3,15 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { AppError } from '../../core/index.js';
 import { verifyHmacWebhook } from './crypto.js';
+// Batch iteration, echo detection and the window rule live once in the
+// shared Meta module both Meta adapters delegate to (backlog:87d4769dde7e).
+import {
+  META_CUSTOMER_SERVICE_WINDOW_MS,
+  checkMetaServiceWindow,
+  isMetaSelfEcho,
+  iterateMetaBatchItems,
+  parseMetaWebhookBody,
+} from './meta-webhook.js';
 
 /**
  * Instagram (Meta Graph) channel adapter (backlog:8e7f99e7).
@@ -59,7 +68,7 @@ export const INSTAGRAM_ADAPTER_NAME = 'instagram-graph';
 export const INSTAGRAM_ADAPTER_VERSION = 1;
 export const INSTAGRAM_HUMAN_AGENT_TAG = 'HUMAN_AGENT';
 /** Standard replies ride the 24-hour window after the user's message. */
-export const INSTAGRAM_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const INSTAGRAM_REPLY_WINDOW_MS = META_CUSTOMER_SERVICE_WINDOW_MS;
 /** Human-agent-tagged replies ride 7 days (the provider enforces the rest). */
 export const INSTAGRAM_TAG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_ID = 256;
@@ -282,30 +291,22 @@ export function createInstagramChannelAdapter(options = {}) {
        * with nothing listable refuses as malformed and writes nothing.
        */
       normalizeInbound(event) {
-        let parsed;
-        try {
-          parsed = JSON.parse(String(event));
-        } catch {
-          malformed('event is not JSON');
-        }
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          malformed('event is not an object');
-        }
+        const parsed = parseMetaWebhookBody(event, 'Instagram');
         if (Array.isArray(parsed.entry)) {
           if (parsed.object !== undefined && parsed.object !== 'instagram') {
             malformed(`unexpected webhook object "${String(parsed.object).slice(0, 64)}"`);
           }
           const candidates = [];
-          for (const entry of parsed.entry) {
-            const messaging = Array.isArray(entry?.messaging) ? entry.messaging : [];
-            for (const item of messaging) {
-              if (!item || typeof item !== 'object') continue;
-              if (item.is_echo === true) continue;
-              if (item.read && typeof item.read === 'object') continue;
-              const message = item.message && typeof item.message === 'object' ? item.message : null;
-              if (!message || typeof message.mid !== 'string' || message.mid === '') continue;
-              candidates.push(item);
-            }
+          // Batch iteration and echo detection are the shared Meta rule:
+          // every messaging item of every entry in document order, minus
+          // our own account's echoes (the is_echo flag).
+          for (const { dialect, item } of iterateMetaBatchItems(parsed)) {
+            if (dialect !== 'graph') continue;
+            if (isMetaSelfEcho(item, pageId)) continue;
+            if (item.read && typeof item.read === 'object') continue;
+            const message = item.message && typeof item.message === 'object' ? item.message : null;
+            if (!message || typeof message.mid !== 'string' || message.mid === '') continue;
+            candidates.push(item);
           }
           if (candidates.length === 0) {
             malformed('no message in this webhook delivery (receipts and echoes stay out of the inbox)');
@@ -344,12 +345,16 @@ export function createInstagramChannelAdapter(options = {}) {
         }
         const bound = tag === INSTAGRAM_HUMAN_AGENT_TAG ? INSTAGRAM_TAG_WINDOW_MS : INSTAGRAM_REPLY_WINDOW_MS;
         const observed = windowCtx && typeof windowCtx === 'object' ? windowCtx.lastInboundAt : undefined;
-        if (observed === undefined || observed === null) templateRequired();
-        if (typeof observed !== 'string' || !isCanonicalInstant(observed)) {
+        // The window verdict is the shared Meta rule (missing/future/stale
+        // refuse with CHANNEL_TEMPLATE_REQUIRED, a non-canonical
+        // observation is malformed). No skew here on purpose: a
+        // future-dated provider instant travels through as data and the
+        // ingest path quarantines it centrally instead.
+        const verdict = checkMetaServiceWindow(observed, { nowMs, windowMs: bound, skewMs: 0 });
+        if (verdict === 'missing' || verdict === 'future' || verdict === 'stale') templateRequired();
+        if (verdict === 'invalid') {
           malformedMessage('"lastInboundAt" must be a canonical ISO-8601 instant');
         }
-        const at = Date.parse(observed);
-        if (at > nowMs() || nowMs() - at > bound) templateRequired();
         return tag === undefined ? { to, text } : { to, text, tag };
       },
 
