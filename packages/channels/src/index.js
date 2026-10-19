@@ -434,7 +434,18 @@ export {
   isMetaSelfEcho,
   iterateMetaBatchItems,
   parseMetaWebhookBody,
+  verifyMetaHubSignature,
 } from './meta-webhook.js';
+export {
+  createMessengerChannelAdapter,
+  messengerEventBody,
+  messengerWebhookHeaders,
+  MESSENGER_ADAPTER_NAME,
+  MESSENGER_ADAPTER_VERSION,
+  MESSENGER_HUMAN_AGENT_TAG,
+  MESSENGER_REPLY_WINDOW_MS,
+  MESSENGER_TAG_WINDOW_MS,
+} from './messenger.js';
 export {
   GMAIL_ADAPTER_NAME,
   GMAIL_ADAPTER_VERSION,

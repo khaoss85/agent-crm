@@ -1,14 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 
 import {
   META_CUSTOMER_SERVICE_WINDOW_MS,
   checkMetaServiceWindow,
   createInstagramChannelAdapter,
+  createMessengerChannelAdapter,
   createWhatsAppChannelAdapter,
   isMetaSelfEcho,
   iterateMetaBatchItems,
   parseMetaWebhookBody,
+  verifyMetaHubSignature,
 } from '../packages/channels/src/index.js';
 
 /**
@@ -196,4 +199,40 @@ test('Instagram normalizes through the shared module: batches, echo skip, dialec
     [['ig.1', 'ig:ig-user-1'], ['ig.2', 'ig:ig-user-2']],
     'every message lands in order, the echo stays out, Cloud API items stay out',
   );
+});
+
+test('Messenger normalizes through the shared module: batches, echo skip, dialect filter', () => {
+  const definition = createMessengerChannelAdapter({ pageId: PAGE_ID, nowMs: () => NOW }).definition;
+  const body = JSON.stringify({
+    object: 'page',
+    entry: [
+      {
+        id: PAGE_ID,
+        messaging: [
+          { sender: { id: 'fb-user-1' }, recipient: { id: PAGE_ID }, timestamp: 1760097600000, message: { mid: 'fb.1', text: 'one' } },
+          { sender: { id: PAGE_ID }, recipient: { id: 'fb-user-1' }, timestamp: 1760097600000, is_echo: true, message: { mid: 'fb.echo', text: 'our reply' } },
+          { sender: { id: 'fb-user-2' }, recipient: { id: PAGE_ID }, timestamp: 1760097600000, message: { mid: 'fb.2', text: 'two' } },
+        ],
+      },
+      { id: 'waba-1', changes: [{ value: { messaging_product: 'whatsapp', messages: [{ id: 'wamid.x', from: '1', timestamp: '1' }] } }] },
+    ],
+  });
+  const events = definition.normalizeInbound(body);
+  assert.deepEqual(
+    events.map((event) => [event.providerEventId, event.subject]),
+    [['fb.1', 'fb:fb-user-1'], ['fb.2', 'fb:fb-user-2']],
+    'every message lands in order, the echo stays out, Cloud API items stay out',
+  );
+});
+
+test('verifyMetaHubSignature is the one forgery check every Meta adapter uses', () => {
+  const body = JSON.stringify({ object: 'page', entry: [] });
+  const secret = 'meta-app-secret-1';
+  const good = `sha256=${createHmac('sha256', secret).update(Buffer.from(body, 'utf8')).digest('hex')}`;
+  assert.equal(verifyMetaHubSignature(body, good, secret), true);
+  assert.equal(verifyMetaHubSignature(body, good, 'wrong-secret'), false);
+  assert.equal(verifyMetaHubSignature(body, 'sha256=00', secret), false);
+  assert.equal(verifyMetaHubSignature(body, 'plain-hex-without-prefix', secret), false);
+  assert.equal(verifyMetaHubSignature(body, good, ''), false);
+  assert.equal(verifyMetaHubSignature(body, null, secret), false);
 });
