@@ -31,10 +31,12 @@ import { createMemoryMagicLinkStore } from './store.js';
  * a known address is sent a single-use link valid for ten minutes, and the
  * link redeems exactly once. Unknown addresses get the byte-identical
  * receipt — the response never says whether an address is registered — and
- * both branches do the same store work. Timing is explicitly OUT of the
- * guarantee: the known branch awaits a persistent enqueue while the unknown
- * branch awaits an in-process spend, so a latency oracle remains until
- * per-address throttling lands (follow-up).
+ * both branches do the same work: mint, save, then one outbox enqueue under
+ * the row's own key. The unknown branch spends its row BEFORE the enqueue,
+ * so its dummy job is never delivered (the deployment worker skips spent
+ * rows by protocol) and an enqueue failure throws the same stable code on
+ * both branches. Timing is explicitly OUT of the guarantee: a latency
+ * oracle remains until per-address throttling lands (follow-up).
  *
  * Actor custody: the request is unauthenticated, so `actor` is a
  * server-controlled key — a caller-supplied actor is never read, only the
@@ -136,6 +138,60 @@ function notConfigured(edge) {
 }
 
 /**
+ * The store is a deployment-owned driver (connection, SQL, constraint): it
+ * can throw raw internals at every touch. Every touch is wrapped so the
+ * future HTTP route only ever sees the stable `MAGIC_LINK_STORE_FAILED`
+ * code (502) — never a driver message, SQL text or stack. The edge name and
+ * the driver error's NAME ride along so the route can log the cause (the
+ * review rule: a 5xx without a logged cause is a failure nobody can
+ * diagnose); the row, the address and the token never do. A `false` from
+ * `spend` is not a failure: it is the normal lost-the-race answer the
+ * callers handle themselves.
+ *
+ * @param {unknown} error
+ */
+function storeCause(error) {
+  const name = error instanceof Error ? error.name : typeof error;
+  return typeof name === 'string' && name !== '' ? name : 'unknown';
+}
+
+/** @param {MagicLinkStore | undefined} store */
+async function storeSave(store, record) {
+  try {
+    await /** @type {MagicLinkStore} */ (store).save(record);
+  } catch (error) {
+    throw new AppError('magic-link store is unavailable', {
+      code: MAGIC_LINK_REASON.STORE_FAILED, status: 502,
+      details: { edge: 'store.save', cause: storeCause(error) },
+    });
+  }
+}
+
+/** @param {MagicLinkStore | undefined} store @param {string} tokenId */
+async function storeFind(store, tokenId) {
+  try {
+    return await /** @type {MagicLinkStore} */ (store).find(tokenId);
+  } catch (error) {
+    throw new AppError('magic-link store is unavailable', {
+      code: MAGIC_LINK_REASON.STORE_FAILED, status: 502,
+      details: { edge: 'store.find', cause: storeCause(error) },
+    });
+  }
+}
+
+/** @param {MagicLinkStore | undefined} store @param {string} tokenId */
+async function storeSpend(store, tokenId) {
+  try {
+    return await /** @type {MagicLinkStore} */ (store).spend(tokenId);
+  } catch (error) {
+    throw new AppError('magic-link store is unavailable', {
+      code: MAGIC_LINK_REASON.STORE_FAILED, status: 502,
+      details: { edge: 'store.spend', cause: storeCause(error) },
+    });
+  }
+}
+
+/**
  * The send runs under the deployment's `sendActor`, or under this named
  * unattended service actor when the deployment names none. The request
  * itself is unauthenticated, so a caller-supplied actor is never read here
@@ -174,10 +230,10 @@ async function resolveEmailHashSecret(resolveSecret, emailHashSecretRef) {
 /**
  * Request one link. Always resolves to the identical receipt — known and
  * unknown addresses are indistinguishable in the response, and both
- * branches do the same store work (mint, save, then enqueue for a known
- * address or spend-and-discard for an unknown one). The receipt BODY cannot
- * enumerate; timing can (see the package header), and throttling is the
- * follow-up that closes it.
+ * branches do the same work: mint, save, then one outbox enqueue under the
+ * row's own key. The receipt BODY cannot enumerate, even when the enqueue
+ * fails — both branches throw the same stable code then; timing can (see
+ * the package header), and throttling is the follow-up that closes it.
  *
  * A caller-supplied `actor` is never read: the request is unauthenticated,
  * so the send runs under the deployment's `sendActor` (validated at wiring,
@@ -192,6 +248,14 @@ async function resolveEmailHashSecret(resolveSecret, emailHashSecretRef) {
  * never leaves a live orphan: the retry mints the only live token.
  * Each request mints its own row; earlier pending rows for the same address
  * stay valid until they expire.
+ *
+ * The unknown branch enqueues a dummy job under its own key with the same
+ * call shape, AFTER spending its row: the deployment worker re-reads the
+ * row before sending and skips spent rows by protocol, so the dummy is
+ * never delivered — but an outbox outage throws the same
+ * `MAGIC_LINK_DELIVERY_FAILED` there as on the known branch. The
+ * spend-before-enqueue order is load-bearing: reversing it could deliver a
+ * live link to a stranger on a crash between the two steps.
  *
  * @param {{ directory?: MagicLinkDirectory, outbox?: MagicLinkOutbox, store?: MagicLinkStore, clock: () => number, sendActor?: { type: string, id: string }, emailHashSecretRef?: string, resolveSecret?: MagicLinkSecretCustody['resolveSecret'] }} edges
  * @param {{ email: unknown }} input
@@ -221,13 +285,12 @@ export async function requestMagicLink(edges, input) {
     expiresAtMs: magicLinkExpiry(nowMs),
     spent: false,
   };
-  await /** @type {MagicLinkStore} */ (store).save(record);
+  await storeSave(store, record);
   if (hit === null || hit === undefined) {
-    // Same store work as the known branch, then discard: the dummy row is
-    // spent before anyone could redeem it, so an unknown address leaves no
-    // live token behind.
-    await /** @type {MagicLinkStore} */ (store).spend(record.tokenId);
-    return magicLinkRequestReceipt();
+    // Discard first: the row dies before the dummy enqueue below, so the
+    // job the unknown branch claims can never deliver — and an unknown
+    // address leaves no live token behind either way.
+    await storeSpend(store, record.tokenId);
   }
   try {
     await /** @type {MagicLinkOutbox} */ (outbox).enqueue({
@@ -241,8 +304,9 @@ export async function requestMagicLink(edges, input) {
     });
   } catch (error) {
     // No live orphan: the row this enqueue belonged to dies here, and the
-    // retry mints the only live token.
-    await /** @type {MagicLinkStore} */ (store).spend(record.tokenId);
+    // retry mints the only live token. The compensating spend stays wrapped
+    // too: a store outage then surfaces as MAGIC_LINK_STORE_FAILED, never raw.
+    await storeSpend(store, record.tokenId);
     throw new AppError('magic-link delivery failed after the link was recorded', {
       code: 'MAGIC_LINK_DELIVERY_FAILED', status: 502,
     });
@@ -262,7 +326,9 @@ export async function requestMagicLink(edges, input) {
  * either way.
  *
  * Returns the subject the directory named at issue time. Never the token,
- * never the address.
+ * never the address, never the address-derived hash: the hash stays
+ * row-internal for audit, so one intercepted link cannot correlatably name
+ * its mailbox across tokens or sessions.
  *
  * @param {{ store?: MagicLinkStore, clock: () => number }} edges
  * @param {{ token: unknown }} input
@@ -272,7 +338,7 @@ export async function consumeMagicLink(edges, input) {
   const { store, clock } = edges ?? {};
   if (!store) notConfigured('store');
   const tick = /** @type {() => number} */ (clock);
-  const row = await /** @type {MagicLinkStore} */ (store).find(tokenId);
+  const row = await storeFind(store, tokenId);
   if (!row || row.spent) {
     throw new AppError('magic link is unknown or already used', {
       code: MAGIC_LINK_REASON.INVALID, status: 401,
@@ -283,7 +349,7 @@ export async function consumeMagicLink(edges, input) {
       code: MAGIC_LINK_REASON.EXPIRED, status: 401,
     });
   }
-  const won = await /** @type {MagicLinkStore} */ (store).spend(tokenId);
+  const won = await storeSpend(store, tokenId);
   if (!won) {
     throw new AppError('magic link is unknown or already used', {
       code: MAGIC_LINK_REASON.INVALID, status: 401,
@@ -294,7 +360,7 @@ export async function consumeMagicLink(edges, input) {
       code: MAGIC_LINK_REASON.EXPIRED, status: 401,
     });
   }
-  return { subject: requireSubject(row.subject), emailHash: row.emailHash };
+  return { subject: requireSubject(row.subject) };
 }
 
 /**

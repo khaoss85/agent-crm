@@ -11,14 +11,19 @@
  * - a link redeems exactly once: the second use is refused (test);
  * - a link dies ten minutes after issue, on both sides of the claim (test);
  * - known and unknown addresses get the byte-identical receipt with the
- *   same store work: the receipt BODY cannot enumerate (test). Timing is
- *   out of the guarantee — throttling is the follow-up;
+ *   same work — mint, save, one enqueue under the row's own key — even when
+ *   the enqueue fails (test). The unknown row is spent before its dummy
+ *   enqueue, so the dummy job can never deliver (test). Timing is out of
+ *   the guarantee — throttling is the follow-up;
  * - a caller-supplied actor is stripped, never trusted: the send runs under
  *   the deployment send actor (test);
  * - an async store cannot fail open: interleaved consumes still elect one
  *   winner (test);
  * - malformed tokens are refused before any store is touched (test);
  * - a failed enqueue leaves no live orphan behind (test);
+ * - a store outage surfaces one stable code, never driver internals (test);
+ * - the consume response carries the subject only: no token, no address,
+ *   no address-derived hash (test);
  * - a miswired clock fails closed, never with a receipt (test);
  * - missing email-hash secret custody fails closed, never with a row (test);
  * - Google sign-in is untouched: the framework owns no OAuth client and
@@ -157,27 +162,52 @@ test('known and unknown addresses get the byte-identical receipt', async () => {
   const unknown = await requestMagicLink(s.edges, { email: UNKNOWN });
   assert.deepEqual(known, unknown);
   assert.deepEqual(known, { status: 'link-requested', message: known.message });
-  assert.equal(s.jobs.length, 1, 'only the known address enqueues anything');
-  assert.equal(s.jobs[0].message.to, KNOWN);
+  assert.equal(s.jobs.length, 2, 'both branches enqueue under their own key');
+  const byTo = new Map(s.jobs.map((job) => [job.message.to, job]));
+  assert.ok(byTo.has(KNOWN), 'the known job carries the delivery');
+  assert.ok(byTo.has(UNKNOWN), 'the unknown branch claims a dummy job too');
   assert.ok(!JSON.stringify(known).includes(KNOWN), 'the receipt names nobody');
 });
 
-test('an unknown address leaves no live row; the store work is documented, timing is not promised', async () => {
+test('an unknown address leaves no live row and its dummy job can never deliver', async () => {
   const s = scene();
   s.resetStoreCalls();
   const receipt = await requestMagicLink(s.edges, { email: UNKNOWN });
   const unknownCalls = s.storeCalls.filter((call) => call !== 'find');
-  assert.deepEqual(unknownCalls, ['save', 'spend'], 'unknown: mint, save, then spend-and-discard');
+  assert.deepEqual(unknownCalls, ['save', 'spend'], 'unknown: save, then spend BEFORE the dummy enqueue');
   s.resetStoreCalls();
   await requestMagicLink(s.edges, { email: KNOWN });
   const knownCalls = s.storeCalls.filter((call) => call !== 'find');
-  assert.deepEqual(knownCalls, ['save'], 'known: mint, save, then the outbox enqueue (not a store write)');
+  assert.deepEqual(knownCalls, ['save'], 'known: save, then the outbox enqueue (not a store write)');
   assert.equal(receipt.status, 'link-requested');
-  assert.equal(s.jobs.length, 1, 'the unknown address enqueues nothing');
+  assert.equal(s.jobs.length, 2, 'both branches enqueue');
   assert.deepEqual(s.lookups, [UNKNOWN, KNOWN]);
+  // The deployment worker re-reads the row and sends only while it is live:
+  // the dummy row is already spent, so the unknown job is never delivered.
   for (const job of s.jobs) {
-    assert.ok(!job.message.to.includes('stranger'), 'no unknown mailbox ever reaches the outbox');
+    const row = await s.store.find(job.message.token);
+    assert.ok(row, 'every claimed job names its row');
+    if (job.message.to === UNKNOWN) {
+      assert.equal(row.spent, true, 'the dummy row dies before its enqueue: the worker must skip it');
+    } else {
+      assert.equal(row.spent, false, 'the known row stays live until redeemed');
+    }
   }
+});
+
+test('an outbox outage answers known and unknown addresses identically', async () => {
+  const failing = (/** @type {string} */ email) => {
+    const s = scene({ failEnqueue: 1 });
+    return requestMagicLink(s.edges, { email }).then(
+      () => { throw new Error('must refuse'); },
+      (error) => ({ code: codeOf(error), status: error?.status }),
+    );
+  };
+  const known = await failing(KNOWN);
+  const unknown = await failing(UNKNOWN);
+  assert.deepEqual(unknown, known, 'status alone must not enumerate the directory');
+  assert.equal(known.code, 'MAGIC_LINK_DELIVERY_FAILED');
+  assert.equal(known.status, 502);
 });
 
 test('malformed tokens are refused before any store is touched', async () => {
@@ -249,6 +279,9 @@ test('raw addresses are never stored and never returned; the job payload carries
     'the outbox payload is delivery material only: no extra copy of anything');
   const receipt = await consumeMagicLink(s.edges, { token: s.jobs[0].message.token });
   assert.ok(!JSON.stringify(receipt).includes('@'), 'the receipt names no address');
+  assert.deepEqual(Object.keys(receipt).sort(), ['subject'], 'the receipt carries the subject only');
+  assert.ok(!('emailHash' in receipt), 'no address-derived hash leaves the package');
+  assert.ok(!/[0-9a-f]{32,}/.test(JSON.stringify(receipt)), 'no hash-shaped material in the response');
 });
 
 test('a miswired clock fails closed, never with a receipt', async () => {
@@ -377,6 +410,66 @@ test('a directory outage fails closed, never as a fake success', async () => {
   );
   assert.equal(codeOf(failure), 'MAGIC_LINK_DIRECTORY_FAILED');
   assert.equal(s.jobs.length, 0);
+});
+
+test('a store outage surfaces one stable code, never driver internals', async () => {
+  // A durable driver throws its own dialect: connection, SQL text, stack.
+  // None of it may reach the future HTTP route.
+  const rawFailure = () => {
+    const error = new Error("SQLITE_BUSY: database is locked: UPDATE magic_link SET spent WHERE tokenId = 'ml1.abc'");
+    error.name = 'SqliteError';
+    throw error;
+  };
+  // The request path touches save on both branches (plus spend on the
+  // unknown one); the consume path touches find then spend. Break each touch
+  // where its path actually makes it.
+  const brokenRequest = scene();
+  brokenRequest.edges.store.save = rawFailure;
+  const requestFailure = await requestMagicLink(brokenRequest.edges, { email: KNOWN }).then(
+    () => { throw new Error('must refuse'); },
+    (error) => error,
+  );
+  assert.equal(codeOf(requestFailure), 'MAGIC_LINK_STORE_FAILED', 'request store.save');
+  assert.equal(requestFailure?.status, 502);
+  assert.ok(!JSON.stringify(requestFailure).includes('SQLITE_BUSY'), 'no driver text leaks');
+  assert.ok(!JSON.stringify(requestFailure).includes('ml1.abc'), 'no token material leaks');
+  assert.deepEqual(requestFailure?.details, { edge: 'store.save', cause: 'SqliteError' },
+    'the cause name rides along for the route logs');
+  const brokenUnknown = scene();
+  brokenUnknown.edges.store.spend = rawFailure;
+  const unknownFailure = await requestMagicLink(brokenUnknown.edges, { email: UNKNOWN }).then(
+    () => { throw new Error('must refuse'); },
+    (error) => error,
+  );
+  assert.equal(codeOf(unknownFailure), 'MAGIC_LINK_STORE_FAILED', 'request store.spend on the unknown branch');
+  const s = scene();
+  await requestMagicLink(s.edges, { email: KNOWN });
+  const { token } = s.jobs[0].message;
+  s.edges.store.find = rawFailure;
+  const findFailure = await consumeMagicLink(s.edges, { token }).then(
+    () => { throw new Error('must refuse'); },
+    (error) => error,
+  );
+  assert.equal(codeOf(findFailure), 'MAGIC_LINK_STORE_FAILED');
+  s.edges.store.find = (/** @type {string} */ id) => s.store.find(id);
+  s.edges.store.spend = rawFailure;
+  const spendFailure = await consumeMagicLink(s.edges, { token }).then(
+    () => { throw new Error('must refuse'); },
+    (error) => error,
+  );
+  assert.equal(codeOf(spendFailure), 'MAGIC_LINK_STORE_FAILED');
+  assert.equal(spendFailure?.status, 502);
+});
+
+test('a store outage during the compensating spend stays a stable code', async () => {
+  const s = scene({ failEnqueue: 1 });
+  s.edges.store.spend = () => { throw Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }); };
+  const failure = await requestMagicLink(s.edges, { email: KNOWN }).then(
+    () => { throw new Error('must refuse'); },
+    (error) => error,
+  );
+  assert.equal(codeOf(failure), 'MAGIC_LINK_STORE_FAILED', 'the deeper outage wins, still wrapped');
+  assert.equal(failure?.status, 502);
 });
 
 test('the package declares itself honestly', async () => {

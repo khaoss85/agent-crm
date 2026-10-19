@@ -15,9 +15,11 @@ Two operations over injected edges:
   actor is never read: the request is unauthenticated, so `actor` is a
   server-controlled key — forgery in the request is stripped, never trusted.
   The receipt is byte-identical for known and unknown addresses, and both
-  branches do the same store work. The receipt BODY cannot enumerate; timing
-  can — the known branch awaits a persistent enqueue while the unknown
-  branch awaits an in-process spend — so a latency oracle remains until
+  branches do the same work: mint, save, then one enqueue under the row's
+  own key. The unknown branch spends its row BEFORE the enqueue, so its
+  dummy job is never delivered (the worker below skips spent rows) — but an
+  enqueue failure throws the same stable code on both branches. The receipt
+  BODY cannot enumerate; timing can, so a latency oracle remains until
   per-address throttling lands (follow-up).
 - `consume-magic-link` (`app.consumeMagicLink({ token })`) — redeems one link
   exactly once within ten minutes of issue. A second use, an expired link and
