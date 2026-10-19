@@ -60,8 +60,8 @@ import { createLlmPackage } from './packages/llm/src/index.js';
 const llm = createLlmPackage({
   adapters: [createOpenAiLlmAdapter({}).definition],
   resolveSecret: async (ref) => vault.read(ref),
-  secretRef: 'secret://presti/openai',
-  spaces: { presti: { enabled: true, dailyTokenCap: 200000 } },
+  secretRef: 'secret://example/openai',
+  spaces: { example: { enabled: true, dailyTokenCap: 200000 } },
 });
 ```
 
