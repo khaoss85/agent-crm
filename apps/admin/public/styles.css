@@ -248,3 +248,119 @@ button[aria-busy="true"] { opacity: .6; }
 .quote-fact { margin: 0; font-size: 13px; }
 .quote-line, .quote-version-row, .quote-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; overflow-wrap: anywhere; }
 .quote-approved { margin: 12px 0; padding: 10px 12px; background: var(--accent-soft); border-radius: 6px; font-size: 13px; }
+
+/*
+ * Backoffice shell (BO-F0-02): sidebar on every screen plus topbar with the
+ * path and the AI bar entry. Same tokens as the Admin (BO-F0-01): the
+ * Impostazioni badge uses the pending pair — "things to fix" are a
+ * deterministic rule holding the gate — and the AI option uses the agent
+ * pair. No new hues. Disabled voices are ink on soft, never red.
+ */
+.bo-shell { display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: 24px; align-items: start; }
+.bo-main { min-width: 0; display: flex; flex-direction: column; }
+.bo-sidebar {
+  position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px 12px; display: flex; flex-direction: column; gap: 4px;
+}
+.bo-space {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--surface); font-size: 14px; font-weight: 750; text-align: left;
+}
+.bo-space-badge {
+  width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
+  font-size: 11px; font-weight: 800; flex: none; background: var(--accent-soft); color: var(--accent);
+}
+.bo-space-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bo-space-chevron { color: var(--dim); }
+.bo-space-menu, .bo-add-menu {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--shadow); padding: 6px; display: flex; flex-direction: column; gap: 2px;
+}
+.bo-space-pick, .bo-add-option, .bo-space-manage {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: 9px; border: none; background: transparent; font-size: 13px;
+  font-weight: 600; text-align: left;
+}
+.bo-space-pick:hover, .bo-add-option:hover, .bo-space-manage:hover { background: var(--surface-soft); }
+.bo-space-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bo-space-key { font-family: var(--mono); font-size: 10px; color: var(--dim); }
+.bo-space-check { color: var(--accent); font-weight: 800; }
+.bo-space-manage { color: var(--accent); }
+.bo-nav { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; overflow-y: auto; }
+.bo-nav-header {
+  padding: 14px 10px 6px; font-family: var(--mono); font-size: 10px; font-weight: 600;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
+}
+.bo-nav-item {
+  display: flex; align-items: center; gap: 11px; padding: 9px 10px; border-radius: 10px;
+  font-size: 14px; font-weight: 600; color: var(--ink); text-decoration: none;
+}
+a.bo-nav-item:hover { background: var(--surface-soft); }
+.bo-nav-item.active { background: var(--ink); color: var(--paper); }
+.bo-nav-item.disabled { color: var(--muted); background: transparent; cursor: default; }
+.bo-nav-label { flex: 1; }
+.bo-badge {
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 99px;
+  display: grid; place-items: center; font-size: 11px; font-weight: 700;
+  background: var(--pending); color: var(--pending-ink);
+}
+.bo-add { margin-top: 6px; }
+.bo-add-button {
+  display: flex; align-items: center; justify-content: center; width: 100%;
+  padding: 8px 10px; border-radius: 10px; border: 1px dashed var(--line);
+  background: transparent; color: var(--muted); font-size: 13px; font-weight: 600;
+}
+.bo-spacer { flex: 1; min-height: 12px; }
+.bo-user {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 8px 4px; border-top: 1px solid var(--line); margin-top: 8px;
+}
+.bo-user-badge {
+  width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; flex: none;
+  background: var(--human-soft); color: var(--human-ink);
+}
+.bo-user-who { flex: 1; min-width: 0; }
+.bo-user-name { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bo-user-email { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bo-logout {
+  padding: 7px 10px; border-radius: 8px; border: none; background: transparent;
+  color: var(--muted); font-size: 12px; font-weight: 700;
+}
+.bo-logout:hover { background: var(--surface-soft); }
+.bo-topbar {
+  position: sticky; top: 0; z-index: 10; background: var(--paper);
+  display: flex; align-items: center; gap: 16px; padding: 10px 4px;
+}
+.bo-crumb { font-family: var(--mono); font-size: 12px; color: var(--dim); white-space: nowrap; }
+.bo-ai { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bo-ai-input {
+  flex: 1; min-width: 0; padding: 9px 12px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px;
+}
+.bo-ai-key {
+  font-family: var(--mono); font-size: 11px; color: var(--dim);
+  border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; background: var(--surface);
+}
+.bo-kicker { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; color: var(--accent); }
+.bo-muted { color: var(--muted); font-size: 13px; }
+.bo-settings { display: grid; gap: 10px; margin-top: 14px; }
+.bo-setting-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px;
+}
+.bo-setting-label { font-size: 14px; font-weight: 700; }
+.bo-setting-link { font-size: 13px; font-weight: 700; color: var(--accent); }
+.bo-setting-coming { font-size: 12px; color: var(--dim); }
+
+@media (max-width: 700px) {
+  .bo-shell { grid-template-columns: minmax(0, 1fr); }
+  .bo-sidebar { position: static; max-height: none; }
+  .bo-nav { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .bo-nav-header { display: none; }
+  .bo-nav-item { white-space: nowrap; flex: none; }
+  .bo-topbar { flex-direction: column; align-items: stretch; gap: 8px; }
+  .bo-crumb { white-space: normal; }
+}

@@ -7,7 +7,10 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="shell">
+    <main class="shell bo-shell">
+      <aside class="bo-sidebar" id="boSidebar" aria-label="Navigazione backoffice"></aside>
+      <div class="bo-main">
+      <div class="bo-topbar" id="boTopbar"></div>
       <header class="topbar">
         <div>
           <div class="eyebrow">AGENT-NATIVE CRM FRAMEWORK</div>
@@ -105,6 +108,7 @@
         <span>Accordo v0.1.0</span>
         <span>Same services behind Admin · REST · CLI · MCP</span>
       </footer>
+      </div>
     </main>
 
     <div class="toast hidden" id="toast"></div>

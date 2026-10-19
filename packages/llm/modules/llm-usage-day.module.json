@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "name": "llm-usage-day",
+  "table": "llm_usage_days",
+  "description": "One LLM spending row per space per UTC day: the running input/output token totals, the estimated cost in cents and the call count the daily ceiling reads before any provider is touched. Every field is managed: a row exists only through the llm package's complete operation, which creates it on first use and adds each attempt's actuals. (backlog:6e54d6a7988a)",
+  "fields": [
+    { "name": "dayKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "day", "type": "string", "writable": "managed" },
+    { "name": "inputTokens", "type": "integer", "writable": "managed" },
+    { "name": "outputTokens", "type": "integer", "writable": "managed" },
+    { "name": "estimatedCostCents", "type": "integer", "writable": "managed" },
+    { "name": "calls", "type": "integer", "writable": "managed" }
+  ]
+}

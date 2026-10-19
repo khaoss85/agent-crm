@@ -114,6 +114,7 @@ async function refresh() {
     renderOpportunities(opportunities.items);
     renderApprovals(approvals.items);
     renderTraces(traces.items);
+    await refreshShellBadge();
     const unacked = Array.isArray(pendingWrites?.items) ? pendingWrites.items.length : 0;
     if (unacked > 0) {
       toast(`${unacked} unacknowledged submission${unacked === 1 ? '' : 's'} recovered.`);
@@ -327,6 +328,14 @@ elements.closeTrace.addEventListener('click', () => elements.traceDetail.classLi
 
 // ---- Hash routing + generated-module navigation -------------------------
 
+import {
+  ACTIVE_SPACE_KEY,
+  buildShellNav,
+  createShellView,
+  loadFixCount,
+  readSpaces,
+  renderSettingsPanel,
+} from './admin-shell.js';
 import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
@@ -411,10 +420,127 @@ const spineView = createSpineView({
   submissions,
 });
 
+// ---- Backoffice shell (BO-F0-02) ------------------------------------------
+// Sidebar + topbar chrome on every screen: Italian voices from the approved
+// prototype, space selector (⌘1/2/3), Impostazioni badge from the real
+// data-quality count, AI bar entry (⌘K; the assistant itself is BO-F0-04).
+// Spaces are local shell state until space records exist (BO-F0-06).
+
+function guardedStorage() {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) return window.localStorage;
+  } catch {
+    // Private mode: shell state simply does not persist.
+  }
+  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+}
+
+const shellStorage = guardedStorage();
+const shellSpaces = readSpaces(shellStorage);
+let shellActiveSpace = null;
+try {
+  const stored = shellStorage.getItem(ACTIVE_SPACE_KEY);
+  if (typeof stored === 'string' && shellSpaces.some((space) => space.id === stored)) shellActiveSpace = stored;
+} catch {
+  // Keep the default space.
+}
+
+let shellView = null;
+const boSidebar = document.querySelector('#boSidebar');
+const boTopbar = document.querySelector('#boTopbar');
+if (boSidebar && boTopbar) {
+  shellView = createShellView({
+    doc: document,
+    sidebar: boSidebar,
+    topbar: boTopbar,
+    spaces: shellSpaces,
+    user: { name: 'Operatore locale', email: 'sviluppo locale' },
+    navigate: (hash) => { window.location.hash = hash; },
+    notify: (message) => toast(message),
+    onLogout: () => {
+      try { shellStorage.removeItem(ACTIVE_SPACE_KEY); } catch {
+        // Logout still lands home without persistence.
+      }
+      shellActiveSpace = null;
+      if (shellView) shellView.setSpaces(shellSpaces, shellSpaces[0].id);
+      window.location.hash = '#/';
+      toast('Spazio locale reimpostato.');
+    },
+    onPickSpace: (id) => {
+      try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
+        // The switch still applies to this tab.
+      }
+    },
+    win: typeof window !== 'undefined' ? window : null,
+  });
+  if (shellActiveSpace) shellView.setSpaces(shellSpaces, shellActiveSpace);
+}
+
+let shellItems = buildShellNav();
+let shellFixCount = null;
+let shellCustomerData = false;
+
+function shellScreenFor(target) {
+  switch (target.view) {
+    case 'dashboard': return { id: 'oggi', label: 'Oggi' };
+    case 'customer-data':
+    case 'customer-profile': return { id: 'clienti', label: 'Clienti' };
+    case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
+    case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
+    case 'list':
+    case 'new':
+    case 'detail':
+      return target.moduleName
+        ? { id: `module-${target.moduleName}`, label: target.moduleName }
+        : { id: null, label: 'Modulo' };
+    // Admin views outside the backoffice prototype: an honest crumb with no
+    // sidebar highlight, never the previous screen left stale.
+    case 'spine': return { id: null, label: 'Identità e accessi' };
+    case 'work': return { id: null, label: 'Lavoro' };
+    case 'work-task': return { id: null, label: 'Attività' };
+    case 'marketing': return { id: null, label: 'Proposte' };
+    case 'marketing-proposal': return { id: null, label: 'Proposta' };
+    case 'quotes': return { id: null, label: 'Preventivi' };
+    case 'quote-detail': return { id: null, label: 'Preventivo' };
+    case 'invalid': return { id: null, label: 'Percorso non valido' };
+    default: return { id: null, label: 'Vista' };
+  }
+}
+
+function syncShell(target) {
+  if (!shellView) return;
+  const screen = shellScreenFor(target);
+  shellView.update({
+    fixCount: shellFixCount,
+    items: shellItems,
+    activeScreenId: typeof screen?.id === 'string' ? screen.id : '',
+    screenLabel: typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista',
+  });
+}
+
+async function refreshShellBadge() {
+  if (!shellView || !shellCustomerData) return;
+  shellFixCount = await loadFixCount(moduleClient);
+  shellView.update({ fixCount: shellFixCount });
+}
+
 async function populateNav() {
   try {
     const schema = await moduleClient.request('/api/schema');
     const { supported, modules } = selectGeneratedModules(schema);
+    // Backoffice shell (BO-F0-02): generated modules are the
+    // "personalizzati" group; the first composed pipeline backs Pipeline.
+    shellCustomerData = schema?.domains?.['customer-data']?.metadata?.customerDataContract === 1
+      || schema?.domains?.['customer-data']?.customerDataContract === 1;
+    shellItems = buildShellNav({
+      pipelines: schema?.pipelineContract === 1 && Array.isArray(schema.pipelines) ? schema.pipelines : [],
+      customModules: modules,
+      customerDataAvailable: shellCustomerData,
+    });
+    // The route owns screen state: re-sync to the current hash after the
+    // shell items update, so a cold deep link keeps its screen.
+    syncShell(targetForHash(window.location.hash || '#/'));
+    await refreshShellBadge();
     while (generatedNav.firstChild) generatedNav.removeChild(generatedNav.firstChild);
     if (!supported) {
       const note = document.createElement('span');
@@ -490,8 +616,30 @@ async function populateNav() {
   }
 }
 
+function targetForHash(hash) {
+  // Backoffice shell (BO-F0-02): the Impostazioni entry. Its tabs land in
+  // BO-F0-03; today Stato sync links to the existing quality queue.
+  if (/^#\/impostazioni\/?$/.test(String(hash || '').split('?')[0])) return { view: 'settings' };
+  return parseModuleRoute(hash);
+}
+
 async function route() {
-  const target = parseModuleRoute(window.location.hash || '#/');
+  const hash = window.location.hash || '#/';
+  if (targetForHash(hash).view === 'settings') {
+    dashboardView.classList.add('hidden');
+    moduleView.classList.remove('hidden');
+    renderSettingsPanel({
+      doc: document,
+      mount: moduleView,
+      fixCount: shellFixCount,
+      navigate: (next) => { window.location.hash = next; },
+      customerDataAvailable: shellCustomerData,
+    });
+    syncShell({ view: 'settings' });
+    return;
+  }
+  const target = targetForHash(hash);
+  syncShell(target);
   const onDashboard = target.view === 'dashboard';
   dashboardView.classList.toggle('hidden', !onDashboard);
   moduleView.classList.toggle('hidden', onDashboard);
