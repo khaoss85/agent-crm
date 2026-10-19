@@ -25,6 +25,9 @@
 #   without --apply prints the { measuredAgainst } block (CI redirects it
 #   into the measurement artifact); with --apply writes site/claims.json.
 #   MEASURE_SHARDS sets the piece count (default 6).
+# Stdout carries ONLY the combined record: every progress line and every
+# heavy child (check included) is redirected to stderr, so a redirected
+# stdout stays parsable JSON for apply-ci-measurement.js.
 set -euo pipefail
 
 APPLY=0
@@ -44,9 +47,9 @@ fi
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/accordo-measure-pieces-XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
-echo "measure-pieces: check piece under its own lock (max 600s)…"
+echo "measure-pieces: check piece under its own lock (max 600s)…" >&2
 HEAVY_JOB_WAIT_SEC="${HEAVY_JOB_WAIT_SEC:-5400}" HEAVY_JOB_MAX_SEC=600 \
-  scripts/ci-heavy.sh measure-check -- npm run check
+  scripts/ci-heavy.sh measure-check -- npm run check >&2
 
 node scripts/measure-suite.js --plan "$SHARDS" > "$scratch/plan.json"
 for (( i = 1; i <= SHARDS; i++ )); do
@@ -58,12 +61,12 @@ for (( i = 1; i <= SHARDS; i++ )); do
     max=600
     why="normal piece"
   fi
-  echo "measure-pieces: piece $i of $SHARDS ($why, lock max ${max}s)…"
+  echo "measure-pieces: piece $i of $SHARDS ($why, lock max ${max}s)…" >&2
   start="$(date +%s)"
   HEAVY_JOB_WAIT_SEC="${HEAVY_JOB_WAIT_SEC:-5400}" HEAVY_JOB_MAX_SEC="$max" \
     scripts/ci-heavy.sh "measure-$i-of-$SHARDS" -- \
-    node scripts/measure-suite.js --shard "$i/$SHARDS" --out "$scratch/shard-$i.json"
-  echo "measure-pieces: piece $i of $SHARDS green in $(( $(date +%s) - start ))s; lock released."
+    node scripts/measure-suite.js --shard "$i/$SHARDS" --out "$scratch/shard-$i.json" >&2
+  echo "measure-pieces: piece $i of $SHARDS green in $(( $(date +%s) - start ))s; lock released." >&2
 done
 
 if [ "$APPLY" = 1 ]; then

@@ -11,6 +11,10 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gitIn } from './helpers/isolated-git.js';
 
@@ -182,6 +186,51 @@ test('malformed piece reports refuse', () => {
   assert.throws(() => combineShards([{ ...makeReport(1, 1, files), shards: 0 }], files), /no piece count/);
   assert.throws(() => combineShards([{ ...makeReport(1, 1, files), sha: 'zzz' }], files), /no measured commit/);
   assert.throws(() => combineShards([{ ...makeReport(1, 1, files), files: {} }], files), /names no files/);
+});
+
+test('the wrapper keeps stdout parsable: progress and heavy children go to stderr', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const script = readFileSync(join(root, 'scripts', 'measure-pieces.sh'), 'utf8');
+  // Join backslash continuations: a redirect at the end of a wrapped command
+  // covers every physical line of it.
+  const logical = script.replace(/\\\n/g, ' ');
+  for (const line of logical.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#') || trimmed === '') continue;
+    if (/(^|[;\s])echo(\s|$)/.test(line)) {
+      assert.ok(line.includes('>&2'), `stdout leak: progress echo without >&2: ${trimmed}`);
+    }
+    if (line.includes('ci-heavy.sh')) {
+      assert.ok(line.includes('>&2'), `stdout leak: heavy child without >&2: ${trimmed}`);
+    }
+  }
+});
+
+test('a refused shard leaves no joinable report: a seeded --out is removed', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const scratch = mkdtempSync(join(tmpdir(), 'accordo-measure-pieces-test-'));
+  try {
+    for (const shard of ['7/6', '0/6']) {
+      const outPath = join(scratch, `shard-${shard.replace('/', '-')}.json`);
+      writeFileSync(outPath, `${JSON.stringify(makeReport(1, 6, fileNames(2)))}\n`);
+      let status = 0;
+      try {
+        execFileSync(process.execPath, ['scripts/measure-suite.js', '--shard', shard, '--out', outPath], {
+          cwd: root,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (error) {
+        status = /** @type {{ status?: number }} */ (error).status ?? 1;
+      }
+      assert.notEqual(status, 0, `shard ${shard} must refuse`);
+      assert.ok(!existsSync(outPath), `a refused shard ${shard} left a joinable report at ${outPath}`);
+      const leftovers = readdirSync(scratch).filter((name) => name.startsWith('shard-') && name.includes('.tmp-'));
+      assert.deepEqual(leftovers, [], `a refused shard ${shard} left a pending report: ${leftovers.join(',')}`);
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });
 
 test('the combined record keeps the ledger shape and names the piecemeal runner', () => {

@@ -82,7 +82,7 @@
  *   arithmetic rests on green runs, same as the full record.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { spawnGit } from './git-env.js';
@@ -115,7 +115,7 @@ async function main() {
     process.exit(2);
   }
   if (shard !== undefined && out === undefined) {
-    process.stderr.write('measure-suite: --shard needs --out <file>: a red piece writes nothing, a green piece writes its report there.\n');
+    process.stderr.write('measure-suite: --shard needs --out <file>: a red piece leaves no report there, a green piece writes its report there.\n');
     process.exit(2);
   }
   if (plan !== undefined && (apply || refresh || combine || shard !== undefined || out !== undefined || positionals.length > 0)) {
@@ -393,13 +393,20 @@ function printPlan(text) {
  * (`--test-concurrency=2`, proven on the shared runner), restricted to the
  * piece's explicit file list, with the measurement reporter writing the
  * machine summary beside stdout. A red piece, an unparsable report, or a
- * HEAD that moved mid-piece writes NOTHING and exits 1: the combine then
- * finds no report and refuses, so one red piece reddens the whole measure.
+ * HEAD that moved mid-piece leaves NO joinable report and exits non-zero:
+ * any stale report already at the output path is removed before the piece
+ * runs, so the combine finds no report and refuses — one red piece reddens
+ * the whole measure.
  *
  * @param {string} text the `--shard` value
  * @param {string} outPath where the green piece report is written
  */
 function runShard(text, outPath) {
+  // Fail closed first: a green report left at outPath by an earlier run must
+  // never survive a run that does not go green (re-run of one shard after
+  // editing code, manual reuse of the path). Removing before any exit keeps
+  // every refusal — bad piece bounds, dirty tree, red tests — report-free.
+  rmSync(outPath, { force: true });
   const { index, total } = parsePieceCount(text, '--shard');
   const sha = git(['rev-parse', 'HEAD']).stdout;
   const testsTree = git(['rev-parse', 'HEAD:tests']).stdout;
@@ -458,7 +465,11 @@ function runShard(text, outPath) {
       failures: measured.fail,
       files: measured.files,
     };
-    writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`);
+    // Atomic publish: a crash between write and combine must never leave a
+    // half-written file the combine would join as this run's green report.
+    const pending = `${outPath}.tmp-${process.pid}`;
+    writeFileSync(pending, `${JSON.stringify(report, null, 2)}\n`);
+    renameSync(pending, outPath);
     process.stderr.write(`measure-suite: piece ${index} of ${total} green: ${measured.pass} tests over ${piece.length} files.\n`);
   } catch (error) {
     throw new MeasurementError(/** @type {Error} */ (error).message);
