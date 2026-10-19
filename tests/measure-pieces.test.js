@@ -11,8 +11,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { gitIn } from './helpers/isolated-git.js';
 
 import {
   HEAVY_MEASURE_FILE,
@@ -103,7 +103,7 @@ test('no piece is heavy when the oracle file is absent from the corpus', () => {
 
 test('the 6-piece dealing covers exactly the committed corpus: same files, none lost, none doubled', () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
-  const listed = spawnSync('git', ['ls-tree', '-r', '--name-only', 'HEAD', 'tests/'], { cwd: root, encoding: 'utf8' });
+  const listed = gitIn(root)(['ls-tree', '-r', '--name-only', 'HEAD', 'tests/']);
   assert.equal(listed.status, 0, 'the corpus list must read from the commit');
   const files = String(listed.stdout).split('\n').filter((path) => path.endsWith('.test.js'));
   assert.ok(files.length > 6, 'the corpus must exceed the piece count');
