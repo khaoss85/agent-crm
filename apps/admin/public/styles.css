@@ -120,6 +120,23 @@ td small { color: var(--muted); }
 .badge.completed, .badge.approved, .badge.auto_approve, .badge.active { background: var(--accent-soft); color: var(--accent); }
 .badge.failed { background: var(--danger-soft); color: var(--danger); }
 
+/*
+ * Authority badges (BO-F0-01): one badge variant per authority colour, so new
+ * backoffice views read the same tokens with the same meaning as the Admin.
+ * Each variant reuses the exact pair its matching state badges already render
+ * above — the same pairs the backoffice prototype paints for that authority —
+ * so this adds no new hues and changes no pixel on existing screens. The
+ * accord variant renders the prototype's agreement pill (accent pair); the
+ * --accord token itself stays the seal/flow green shared with site/brand.json.
+ * Red stays fault-only: the one state no authority owns.
+ */
+.badge[data-authority="agent"] { background: var(--agent-soft); color: var(--agent-ink); }
+.badge[data-authority="policy"] { background: var(--pending-soft); color: var(--pending-ink); }
+.badge[data-authority="human"] { background: var(--human-soft); color: var(--human-ink); }
+.badge[data-authority="evidence"] { background: var(--data-soft); color: var(--data-ink); }
+.badge[data-authority="accord"] { background: var(--accent-soft); color: var(--accent); }
+.badge[data-authority="fault"] { background: var(--danger-soft); color: var(--danger); }
+
 .stack { display: grid; gap: 10px; }
 .card { border: 1px solid var(--line); border-radius: 9px; padding: 14px; background: var(--surface); }
 .card-row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
