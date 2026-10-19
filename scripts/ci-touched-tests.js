@@ -154,10 +154,14 @@ const STEP_BUDGET_SEC = 300;
  * spine-v2-m2-final-raw-boundary ~9.8 s,
  * agent-tool-selection-contract ~0.7 s, spine-v2-m2f-entry-wiring ~6.5 s,
  * agent-tool-selection-docs-ids ~1 s, ci-touched-tests ~1 s — about 25 s
- * added to the fast step in total. Deliberately NOT here: the three
- * characterization suites (~80 s together) and the fixed-directory
- * listers (e.g. the `*-package-absence` kernel reads) — same bug class,
- * separate follow-up voices with their own budget strategy. The one
+ * added to the fast step in total. Deliberately NOT always-run: the three
+ * characterization suites (~80 s together) join conditionally instead —
+ * only when the diff touches a file their baseline digests (see
+ * `CHARACTERIZATION_SUITES` and `withCharacterizationTests`), so a
+ * docs-only PR never pays for them while a PR that would redden their
+ * staleness check on `main` runs them here first. The fixed-directory
+ * listers (e.g. the `*-package-absence` kernel reads) stay out — same bug
+ * class, separate follow-up voices with their own budget strategy. The one
  * guard-shaped file that stays out by name is declared in
  * `REPO_WIDE_GUARD_EXCLUSIONS` below, with its reason.
  */
@@ -557,6 +561,126 @@ export function withKernelBoundaryTests(
 }
 
 /**
+ * The characterization staleness suites: each `tests/characterization/*-baseline.json`
+ * freezes the behaviour of the source files its `source` map digests, and the
+ * paired `*-characterization.test.js` fails red when a digested file moves
+ * without a deliberate baseline regeneration. The import mapping above never
+ * selects them — a characterization suite relatively imports almost none of
+ * the files it digests — so twice `main` turned red within a day after
+ * green-alone PRs (S99, S116) that changed a digested file.
+ *
+ * They join conditionally, on top of a mapped or fallback selection: whenever
+ * the diff touches a file some baseline's `source` map digests. A docs-only
+ * diff touches no digested path, so — unlike `REPO_WIDE_GUARDS` — it never
+ * selects them. They are not always-run guards: the three suites cost ~80 s
+ * together on the shared Mac, and an unconditional join would tax every
+ * docs-only PR for a check that cannot flip it. Pure join, impure index:
+ * `loadCharacterizationDigests` reads the checked-in baselines once per run
+ * (see `main()`), `withCharacterizationTests` is unit-tested, including both
+ * acceptance directions.
+ */
+export const CHARACTERIZATION_SUITES = Object.freeze([
+  { baseline: 'tests/characterization/commercial-baseline.json', test: 'tests/characterization/commercial-characterization.test.js' },
+  { baseline: 'tests/characterization/intelligence-baseline.json', test: 'tests/characterization/intelligence-characterization.test.js' },
+  { baseline: 'tests/characterization/signature-baseline.json', test: 'tests/characterization/signature-characterization.test.js' },
+]);
+
+/** Every characterization staleness suite, for run reporting (see `main()`). */
+export const CHARACTERIZATION_TESTS = Object.freeze(
+  CHARACTERIZATION_SUITES.map((suite) => suite.test),
+);
+
+/**
+ * Read every declared characterization baseline's `source` digest map and
+ * invert it: repository-relative source path to the staleness suite(s) whose
+ * baseline digests it. A source file digested by several baselines (today
+ * `packages/commercial/src/registry.js`, digested by the commercial and the
+ * signature baselines) maps to every suite, in suite-declaration order.
+ * Throws naming the baseline(s) when one is missing, unreadable, or carries
+ * no `source` digest map: a PR deleting or reshaping a baseline updates
+ * `CHARACTERIZATION_SUITES` in the same PR, or the step fails red instead of
+ * passing with a stale list — the way `withRepoWideGuards` treats a deleted
+ * guard.
+ * @param {string} repoRoot
+ * @param {readonly {baseline: string, test: string}[]} suites
+ * @returns {Map<string, string[]>}
+ */
+export function loadCharacterizationDigests(
+  repoRoot,
+  suites = CHARACTERIZATION_SUITES,
+) {
+  const index = new Map();
+  const unreadable = [];
+  for (const { baseline, test: suite } of suites) {
+    let document;
+    try {
+      document = JSON.parse(readFileSync(join(repoRoot, baseline), 'utf8'));
+    } catch {
+      unreadable.push(baseline);
+      continue;
+    }
+    const source = document !== null && typeof document === 'object' ? document.source : undefined;
+    if (source === undefined || source === null || typeof source !== 'object' || Array.isArray(source)) {
+      unreadable.push(baseline);
+      continue;
+    }
+    for (const file of Object.keys(source)) {
+      const key = normalize(file).replace(/\\/g, '/');
+      const tests = index.get(key);
+      if (tests === undefined) index.set(key, [suite]);
+      else if (!tests.includes(suite)) tests.push(suite);
+    }
+  }
+  if (unreadable.length > 0) {
+    throw new Error(
+      'characterization baseline(s) missing or without a source digest map: '
+      + `${unreadable.join(', ')}. A PR deleting or reshaping a baseline updates CHARACTERIZATION_SUITES in the same PR.`,
+    );
+  }
+  return index;
+}
+
+/**
+ * Add the characterization staleness suite(s) (`CHARACTERIZATION_SUITES`) on
+ * top of a mapped or fallback selection when the diff touches a file their
+ * baselines digest.
+ *
+ * - a diff touching no digested path (docs-only included) returns the
+ *   selection unchanged — but only after the missing check below, so a PR
+ *   deleting a listed suite without digesting anything still fails red
+ *   naming it instead of passing with a stale list;
+ * - an empty diff stays empty;
+ * - a listed suite missing from `testContents` throws instead of silently
+ *   shrinking the gate, the way `withKernelBoundaryTests` does;
+ * - duplicates collapse: a suite the mapping already selected runs once.
+ */
+export function withCharacterizationTests(
+  /** @type {string[]} */ selectedTests,
+  /** @type {Map<string, string>} */ testContents,
+  /** @type {string[]} */ changedFiles,
+  /** @type {Map<string, string[]>} */ digestIndex = new Map(),
+  /** @type {readonly {baseline: string, test: string}[]} */ suites = CHARACTERIZATION_SUITES,
+) {
+  if (changedFiles.length === 0) return [...selectedTests].sort();
+  const missing = suites
+    .map((suite) => suite.test)
+    .filter((suite) => !testContents.has(suite));
+  if (missing.length > 0) {
+    throw new Error(
+      'characterization test(s) listed in CHARACTERIZATION_SUITES but absent from tests/: '
+      + `${missing.join(', ')}. A PR deleting a characterization suite updates the list in the same PR.`,
+    );
+  }
+  const matched = new Set();
+  for (const file of changedFiles) {
+    const key = normalize(file).replace(/\\/g, '/');
+    for (const suite of digestIndex.get(key) ?? []) matched.add(suite);
+  }
+  if (matched.size === 0) return [...selectedTests].sort();
+  return [...new Set([...selectedTests, ...matched])].sort();
+}
+
+/**
  * The bound for the test run once the selection phase is over: the
  * configured run timeout, reduced by the selection's elapsed time so
  * select-plus-run always fits the step wrapper's budget, and never below
@@ -776,10 +900,15 @@ async function main() {
   const preGuardTests = plan.kind === 'skip' || plan.kind === 'refuse' ? [] : plan.tests;
   if (plan.kind !== 'refuse') {
     try {
-      plan.tests = withKernelBoundaryTests(
-        withRepoWideGuards(preGuardTests, contents, allChanged),
+      plan.tests = withCharacterizationTests(
+        withKernelBoundaryTests(
+          withRepoWideGuards(preGuardTests, contents, allChanged),
+          contents,
+          allChanged,
+        ),
         contents,
         allChanged,
+        loadCharacterizationDigests(root),
       );
     } catch (error) {
       process.stderr.write(`ci-touched-tests: ${error instanceof Error ? error.message : error}\n`);
@@ -793,6 +922,11 @@ async function main() {
     ? []
     : plan.tests.filter(
       (test) => !preGuardTests.includes(test) && KERNEL_BOUNDARY_TESTS.includes(test),
+    );
+  const addedCharacterization = plan.kind === 'refuse'
+    ? []
+    : plan.tests.filter(
+      (test) => !preGuardTests.includes(test) && CHARACTERIZATION_TESTS.includes(test),
     );
 
   // Selected tests the plan does not run, after the guards joined: a
@@ -857,6 +991,11 @@ async function main() {
   if (addedBoundary.length > 0) {
     process.stdout.write(
       `ci-touched-tests: plus ${addedBoundary.length} kernel boundary test(s): ${addedBoundary.join(', ')}.\n`,
+    );
+  }
+  if (addedCharacterization.length > 0) {
+    process.stdout.write(
+      `ci-touched-tests: plus ${addedCharacterization.length} characterization test(s): ${addedCharacterization.join(', ')}.\n`,
     );
   }
 

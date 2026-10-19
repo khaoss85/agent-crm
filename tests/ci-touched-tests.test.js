@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 
 import { spawnGit } from './helpers/isolated-git.js';
 import {
+  CHARACTERIZATION_SUITES,
+  CHARACTERIZATION_TESTS,
   KERNEL_BOUNDARY_TESTS,
   REPO_WIDE_GUARDS,
   REPO_WIDE_GUARD_EXCLUSIONS,
@@ -27,11 +29,13 @@ import {
   fallbackPlan,
   hasCodeChange,
   listChangedFiles,
+  loadCharacterizationDigests,
   parseArgs,
   planGate,
   relativeImportsOf,
   runBudgetSec,
   selectTouchedTests,
+  withCharacterizationTests,
   withKernelBoundaryTests,
   withRepoWideGuards,
 } from '../scripts/ci-touched-tests.js';
@@ -850,6 +854,218 @@ test('a missing boundary test throws even on a docs-only diff', () => {
     ),
     /tests\/contracts-activation-e2e\.test\.js/,
   );
+});
+
+// ------------------------------------------ characterization staleness suites
+//
+// Twice `main` turned red within a day after green-alone PRs (S99, S116):
+// a PR changed a file a characterization baseline digests
+// (`tests/characterization/*-baseline.json`, `source` map) without running
+// that baseline's staleness test, and the import mapping never selects it —
+// the characterization suites relatively import almost none of the files
+// they digest. A diff touching a digested file now runs every suite whose
+// baseline digests it (see `withCharacterizationTests`); a docs-only diff
+// selects none of them; these tests hold both acceptance directions.
+
+/** @param {Record<string, string[]>} entries */
+const digestIndex = (entries) => new Map(Object.entries(entries));
+
+const CHARACTERIZATION_HAVE = () => contents({
+  'tests/characterization/signature-characterization.test.js': "import test from 'node:test';\n",
+  'tests/characterization/commercial-characterization.test.js': "import test from 'node:test';\n",
+  'tests/characterization/intelligence-characterization.test.js': "import test from 'node:test';\n",
+});
+
+const CHARACTERIZATION_INDEX = () => digestIndex({
+  'packages/commercial/src/registry.js': [
+    'tests/characterization/commercial-characterization.test.js',
+    'tests/characterization/signature-characterization.test.js',
+  ],
+  'packages/intelligence/src/scoring.js': [
+    'tests/characterization/intelligence-characterization.test.js',
+  ],
+});
+
+test('the declared suites pair each characterization baseline with its staleness test', () => {
+  for (const { baseline, test: suite } of CHARACTERIZATION_SUITES) {
+    assert.match(baseline, /^tests\/characterization\/.+-baseline\.json$/);
+    assert.match(suite, /^tests\/characterization\/.+-characterization\.test\.js$/);
+    assert.ok(
+      CHARACTERIZATION_TESTS.includes(suite),
+      `${suite} is paired but missing from CHARACTERIZATION_TESTS`,
+    );
+  }
+  assert.deepEqual(
+    [...new Set(CHARACTERIZATION_TESTS)].sort(),
+    [...CHARACTERIZATION_TESTS].sort(),
+    'a suite listed twice runs once but reads as two promises — list it once',
+  );
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  for (const { baseline, test: suite } of CHARACTERIZATION_SUITES) {
+    assert.ok(existsSync(join(repoRoot, baseline)), `${baseline} is listed but missing on disk`);
+    assert.ok(existsSync(join(repoRoot, suite)), `${suite} is listed but missing on disk`);
+  }
+});
+
+test('a diff on a digested file selects every suite that digests it', () => {
+  assert.deepEqual(
+    withCharacterizationTests(
+      ['tests/commercial-price-list.test.js'],
+      CHARACTERIZATION_HAVE(),
+      ['packages/commercial/src/registry.js'],
+      CHARACTERIZATION_INDEX(),
+    ),
+    [
+      'tests/characterization/commercial-characterization.test.js',
+      'tests/characterization/signature-characterization.test.js',
+      'tests/commercial-price-list.test.js',
+    ],
+  );
+});
+
+test('a diff on a single-suite file selects only that suite', () => {
+  assert.deepEqual(
+    withCharacterizationTests(
+      [],
+      CHARACTERIZATION_HAVE(),
+      ['packages/intelligence/src/scoring.js'],
+      CHARACTERIZATION_INDEX(),
+    ),
+    ['tests/characterization/intelligence-characterization.test.js'],
+  );
+});
+
+test('a docs-only diff never selects the characterization tests', () => {
+  assert.deepEqual(
+    withCharacterizationTests(
+      [],
+      CHARACTERIZATION_HAVE(),
+      ['docs/QUALITY_GATES.md', 'README.md'],
+      CHARACTERIZATION_INDEX(),
+    ),
+    [],
+  );
+});
+
+test('a non-digested code diff never selects the characterization tests', () => {
+  assert.deepEqual(
+    withCharacterizationTests(
+      ['tests/payments-checkout.test.js'],
+      CHARACTERIZATION_HAVE(),
+      ['packages/payments/src/operations.js'],
+      CHARACTERIZATION_INDEX(),
+    ),
+    ['tests/payments-checkout.test.js'],
+  );
+});
+
+test('an empty diff stays empty of characterization tests', () => {
+  assert.deepEqual(
+    withCharacterizationTests([], CHARACTERIZATION_HAVE(), [], CHARACTERIZATION_INDEX()),
+    [],
+  );
+});
+
+test('a characterization test the mapping already selected runs once', () => {
+  assert.deepEqual(
+    withCharacterizationTests(
+      ['tests/characterization/signature-characterization.test.js'],
+      CHARACTERIZATION_HAVE(),
+      ['packages/commercial/src/registry.js'],
+      CHARACTERIZATION_INDEX(),
+    ),
+    [
+      'tests/characterization/commercial-characterization.test.js',
+      'tests/characterization/signature-characterization.test.js',
+    ],
+  );
+});
+
+test('a listed characterization test missing from the corpus throws instead of shrinking the gate', () => {
+  assert.throws(
+    () => withCharacterizationTests(
+      [],
+      contents({}),
+      ['packages/commercial/src/registry.js'],
+      CHARACTERIZATION_INDEX(),
+    ),
+    /tests\/characterization\/signature-characterization\.test\.js/,
+  );
+});
+
+test('a missing characterization test throws even on a docs-only diff', () => {
+  assert.throws(
+    () => withCharacterizationTests(
+      [],
+      contents({
+        'tests/characterization/signature-characterization.test.js': "import test from 'node:test';\n",
+      }),
+      ['docs/QUALITY_GATES.md'],
+      CHARACTERIZATION_INDEX(),
+    ),
+    /tests\/characterization\/commercial-characterization\.test\.js/,
+  );
+});
+
+test('loadCharacterizationDigests inverts baseline source maps', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ci-touched-char-'));
+  try {
+    mkdirSync(join(root, 'tests', 'characterization'), { recursive: true });
+    writeFileSync(
+      join(root, 'tests', 'characterization', 'a-baseline.json'),
+      JSON.stringify({ source: { 'packages/x/a.js': '0'.repeat(64), 'packages/shared/b.js': '1'.repeat(64) } }),
+    );
+    writeFileSync(
+      join(root, 'tests', 'characterization', 'b-baseline.json'),
+      JSON.stringify({ source: { 'packages/shared/b.js': '2'.repeat(64) } }),
+    );
+    const index = loadCharacterizationDigests(root, [
+      { baseline: 'tests/characterization/a-baseline.json', test: 'tests/a-characterization.test.js' },
+      { baseline: 'tests/characterization/b-baseline.json', test: 'tests/b-characterization.test.js' },
+    ]);
+    assert.deepEqual(index.get('packages/x/a.js'), ['tests/a-characterization.test.js']);
+    assert.deepEqual(index.get('packages/shared/b.js'), [
+      'tests/a-characterization.test.js',
+      'tests/b-characterization.test.js',
+    ]);
+    assert.equal(index.get('docs/QUALITY_GATES.md'), undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('loadCharacterizationDigests names a baseline it cannot read', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ci-touched-char-'));
+  try {
+    assert.throws(
+      () => loadCharacterizationDigests(root, [
+        { baseline: 'tests/characterization/gone-baseline.json', test: 'tests/gone.test.js' },
+      ]),
+      /tests\/characterization\/gone-baseline\.json/,
+    );
+    mkdirSync(join(root, 'tests', 'characterization'), { recursive: true });
+    writeFileSync(
+      join(root, 'tests', 'characterization', 'shapeless-baseline.json'),
+      JSON.stringify({ observations: [] }),
+    );
+    assert.throws(
+      () => loadCharacterizationDigests(root, [
+        { baseline: 'tests/characterization/shapeless-baseline.json', test: 'tests/gone.test.js' },
+      ]),
+      /tests\/characterization\/shapeless-baseline\.json/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the checked-in baselines digest packages/commercial/src/registry.js twice', () => {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const index = loadCharacterizationDigests(repoRoot);
+  assert.deepEqual(index.get('packages/commercial/src/registry.js'), [
+    'tests/characterization/commercial-characterization.test.js',
+    'tests/characterization/signature-characterization.test.js',
+  ]);
 });
 
 test('REPO_WIDE_GUARDS names existing test files, once each', () => {
