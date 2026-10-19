@@ -17,13 +17,13 @@ import { recordActivity } from '../packages/work/src/follow-up.js';
  * appointments per-member booking chain, keyed by task), so the waiter
  * re-reads after the winner's insert and takes the next `seq`.
  *
- * The first test below races twenty `add-note` actions on one task at one
- * frozen instant through the real action runtime and the real store: every
- * write ties on `occurredAt` and `createdAt`, so only distinct, contiguous
- * `seq` values put the timeline right. The second proves tasks do not contend
- * with each other. The third pins the unit that makes it true — racing
- * `recordActivity` calls straight at the service, with no awaits between
- * them — against the fake the fix was reproduced with.
+ * The first test below races twenty writers on one task at one frozen
+ * instant against the real service and the real store: every write ties on
+ * `occurredAt` and `createdAt`, so only distinct, contiguous `seq` values put
+ * the timeline right. The second proves tasks do not contend with each other.
+ * The third is the same race in its smallest form — ten same-tick
+ * `recordActivity` calls with no awaits between them — the interleaving that
+ * stored the same `seq` twice before the fix (reproduced as 1, 1).
  */
 
 const ACTOR = { type: 'user', id: 'activity-seq' };
@@ -72,18 +72,32 @@ async function openTask(app, index) {
 test('parallel notes on one task take distinct seqs in commit order', async (t) => {
   const { context } = await frozenProject(t, 'activity-seq-race.sqlite');
   const { app } = context;
+  // A real task, so `task_created` holds seq 1 before the race starts.
   const task = await openTask(app, 0);
   const activities = app.modules.get('work-activity').service;
+  const note = (n) => ({
+    sourceKey: null,
+    kind: 'note',
+    subject: { resource: 'lead', id: 'race-lead' },
+    taskId: task.id,
+    body: `parallel note ${n}`,
+    occurredAt: FROZEN,
+    source: { package: 'host', action: 'add-note' },
+  });
 
+  // Twenty racing writers, no await between the calls. Actions on one
+  // connection cannot overlap by platform design (the action envelope refuses
+  // a nested outer transaction), so the race lives one level down, where
+  // every writer in this repository actually meets: `recordActivity` on the
+  // real service and the real store.
   const COUNT = 20;
-  const results = await Promise.all(Array.from({ length: COUNT }, (_, n) =>
-    run(app, 'work-task', 'add-note', task.id, { body: `parallel note ${n}` })));
-  assert.ok(results.every((result) => result.activity.taskId === task.id));
+  const rows = await Promise.all(Array.from({ length: COUNT }, (_, n) =>
+    recordActivity({ activities, actor: ACTOR }, note(n))));
 
   // `task_created` took 1, so twenty racing notes must hold exactly 2..21:
   // distinct (no two share one) and contiguous (no gap claims a lost write).
-  const seqs = results.map((result) => result.activity.seq).sort((a, b) => a - b);
-  assert.deepEqual(seqs, Array.from({ length: COUNT }, (_, n) => n + 2));
+  assert.deepEqual(rows.map((row) => row.seq).sort((a, b) => a - b),
+    Array.from({ length: COUNT }, (_, n) => n + 2));
 
   const timeline = sortTimeline(activities.listWhere({ taskId: task.id }));
   assert.deepEqual(timeline.map((row) => row.seq),
@@ -96,16 +110,25 @@ test('racing tasks do not contend: each keeps its own sequence', async (t) => {
   const { app } = context;
   const first = await openTask(app, 1);
   const second = await openTask(app, 2);
+  const activities = app.modules.get('work-activity').service;
+  const note = (taskId, n) => ({
+    sourceKey: null,
+    kind: 'note',
+    subject: { resource: 'lead', id: 'race-lead' },
+    taskId,
+    body: `task note ${n}`,
+    occurredAt: FROZEN,
+    source: { package: 'host', action: 'add-note' },
+  });
 
   const COUNT = 5;
   await Promise.all([
     ...Array.from({ length: COUNT }, (_, n) =>
-      run(app, 'work-task', 'add-note', first.id, { body: `first ${n}` })),
+      recordActivity({ activities, actor: ACTOR }, note(first.id, n))),
     ...Array.from({ length: COUNT }, (_, n) =>
-      run(app, 'work-task', 'add-note', second.id, { body: `second ${n}` })),
+      recordActivity({ activities, actor: ACTOR }, note(second.id, n))),
   ]);
 
-  const activities = app.modules.get('work-activity').service;
   for (const task of [first, second]) {
     const seqs = activities.listWhere({ taskId: task.id })
       .map((row) => row.seq).sort((a, b) => a - b);
