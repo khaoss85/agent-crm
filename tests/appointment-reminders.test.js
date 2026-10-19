@@ -656,6 +656,8 @@ function reminderOutboundDriver() {
   return {
     label: 'appointment reminders',
     now: { queue: REMIND_AT, confirm: CONFORMANCE_CONFIRM_AT },
+    expectedSweepFailedCode: 'APPOINTMENTS_REMINDER_SWEEP_FAILED',
+    expectedSkipReason: 'not-sendable',
     createRacingStacks: async () => {
       // Two stacks over two connections to one file database, like two
       // dynos: one sqlite handle cannot interleave two transactions, so the
@@ -743,16 +745,9 @@ function reminderOutboundDriver() {
 }
 
 test('a booking cancelled between the list and the fire never queues', async () => {
+  // The shared check asserts the zero-counts and the recorded `not-sendable`
+  // skip (via the driver's expectedSkipReason) on its own run.
   await checkCancelledRowNeverQueues(reminderOutboundDriver());
-  // The row names itself: a cancel is `not-sendable`, never a silent skip.
-  const driver = reminderOutboundDriver();
-  const { stack, cleanup } = await driver.createStack();
-  try {
-    const fired = await driver.dispatchWithCancelledRow(stack, driver.now.queue);
-    assert.deepEqual(fired.skipped.map((entry) => entry.reason), ['not-sendable']);
-  } finally {
-    await cleanup();
-  }
 });
 
 test('a booking rescheduled between the list and the fire never queues', async (t) => {

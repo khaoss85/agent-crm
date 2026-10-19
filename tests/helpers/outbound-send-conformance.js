@@ -34,8 +34,12 @@ import assert from 'node:assert/strict';
  *   dispatchWithCancelledRow: async (stack, at) => ({ queued, sent }),
  *     // the due row dies between the list and the fire (cancel, reschedule)
  *   dispatchWithCrashingConfirm: async (stack, at) => { throw ... },
- *     // the confirm writes history, then crashes before the marker: rejects,
- *     // history stays, the marker stays empty
+ *     // the confirm writes history, then crashes before the marker: rejects
+ *     // with `expectedSweepFailedCode`, history stays, the marker stays empty
+ *   expectedSweepFailedCode: '<the sweep-failure code, kept by the package>',
+ *   expectedSkipReason: '<the skip reason for a row refused mid-sweep>',
+ *     // optional: when present the cancel check pins the recorded reason,
+ *     // so a silent drop or a mislabeled skip cannot pass
  *   settleJob: async (stack, jobId) => undefined,
  *     // run the outbox worker until the job settles (sends through the real handler)
  *   providerSendCalls: (stack) => 1, // how many provider bytes left this stack
@@ -97,15 +101,23 @@ export async function checkConcurrentSweepsQueueOneJob(driver) {
 export async function checkCrashBetweenSendAndConfirmSendsOnce(driver) {
   const { stack, cleanup } = await driver.createStack();
   try {
+    assert.equal(
+      typeof driver.expectedSweepFailedCode, 'string',
+      `${driver.label}: the driver names its sweep-failure code`,
+    );
     const queued = await driver.dispatch(stack, driver.now.queue);
     assert.equal(queued.queued.length, 1, `${driver.label}: the sweep queues one job`);
     await driver.settleJob(stack, queued.queued[0].jobId);
     assert.equal(driver.providerSendCalls(stack), 1, `${driver.label}: the provider is called once`);
 
     // The confirm writes history, then crashes before the marker: the sweep
-    // fails, the history row stays, the marker stays empty.
+    // fails with the package's own failure code (never a raw leak), the
+    // history row stays, the marker stays empty. The predicate checks the
+    // code: a bare string here would only match the message and let a
+    // wrong-code throw pass.
     await assert.rejects(
       driver.dispatchWithCrashingConfirm(stack, driver.now.queue),
+      (error) => error?.code === driver.expectedSweepFailedCode,
       `${driver.label}: a crash between history and marker fails the sweep`,
     );
     assert.equal(await driver.historyCount(stack), 1, `${driver.label}: the crashed confirm keeps its history row`);
@@ -134,11 +146,25 @@ export async function checkCancelledRowNeverQueues(driver) {
   try {
     // The due list is only a snapshot: a row that died between the list
     // and the fire is skipped on its fresh re-read, and nothing is queued.
+    // The skip is recorded with a reason: a silent drop would pass the
+    // zero-counts above while losing the row without a trace.
     const fired = await driver.dispatchWithCancelledRow(stack, driver.now.queue);
     assert.equal(fired.sent.length, 0, `${driver.label}: a row cancelled mid-sweep sends nothing`);
     assert.equal(fired.queued.length, 0, `${driver.label}: a row cancelled mid-sweep queues nothing`);
     assert.equal(driver.providerSendCalls(stack), 0, `${driver.label}: a row cancelled mid-sweep calls no provider`);
     assert.equal(await driver.outboxJobCount(stack), 0, `${driver.label}: a row cancelled mid-sweep leaves no job`);
+    assert.equal(fired.skipped.length, 1, `${driver.label}: a row refused mid-sweep is recorded skipped, never dropped silently`);
+    for (const entry of fired.skipped) {
+      assert.equal(typeof entry?.reason, 'string', `${driver.label}: every recorded skip names its reason`);
+      assert.ok(entry.reason.length > 0, `${driver.label}: every recorded skip reason is non-empty`);
+    }
+    if (driver.expectedSkipReason !== undefined) {
+      assert.deepEqual(
+        fired.skipped.map((entry) => entry.reason),
+        [driver.expectedSkipReason],
+        `${driver.label}: the recorded skip carries the package's reason`,
+      );
+    }
   } finally {
     await cleanup();
   }
