@@ -65,7 +65,8 @@ test('Google sign-in stays deployment-owned: the framework adds no Google machin
   assert.match(page, /href="\/auth\/google"/, 'the Google button targets the deployment entry');
   // The whole framework surface, not just the login files: a Google OAuth
   // client, handler or secret added under any other package or app must fail
-  // this test, not slip past it.
+  // this test, not slip past it. Shipped markup and styles count too — a
+  // client can hide in a page as easily as in a script.
   const roots = ['packages', 'apps'].map((dir) => join(root, dir));
   /** @type {string[]} */
   const sources = [];
@@ -76,18 +77,51 @@ test('Google sign-in stays deployment-owned: the framework adds no Google machin
       if (entry.isDirectory()) {
         if (entry.name === 'node_modules' || entry.name === 'fixtures') continue;
         walk(full);
-      } else if (entry.isFile() && full.endsWith('.js') && !full.endsWith('.test.js')) {
+      } else if (entry.isFile() && /\.(js|mjs|cjs|html|css)$/.test(entry.name) && !full.endsWith('.test.js')) {
         // Only shipped sources: tests may name Google freely.
-        const parts = full.split(sep);
-        if (parts.includes('src') || parts.includes('scripts')) sources.push(full);
+        sources.push(full);
       }
     }
   };
   for (const dir of roots) walk(dir);
   assert.ok(sources.length >= 100, `the whole surface is read, not just the login files (saw ${sources.length})`);
+  assert.ok(sources.some((file) => file.endsWith('.html')), 'shipped markup is scanned, not just scripts');
+  assert.ok(
+    sources.some((file) => {
+      const parts = file.split(sep);
+      return !parts.includes('src') && !parts.includes('scripts');
+    }),
+    'files outside src/scripts are scanned too',
+  );
+  // The deny-list a Google OAuth client cannot dodge: library imports,
+  // client identifiers, token endpoints, identity scopes, service-account
+  // material. Deliberately NOT in this list: the bare word "Google" (the
+  // login page names the deployment button) and the Gmail API hostname
+  // (the fake-backed Gmail adapter calls gmail.googleapis.com with no
+  // OAuth client of its own).
+  const GOOGLE_MACHINERY_RE = /from\s+['"]googleapis['"]|require\(\s*['"]googleapis['"]|google-auth|client_id|client_secret|clientSecret|token_endpoint|token_uri|tokenEndpoint|openid|service_account|serviceAccount|authorized_user|accounts\.google|oauth2\/v\d/i;
+  // Positive control: the scanner flags every known-bad shape, so narrowing
+  // this pattern — or the file set above — fails HERE, and a reappearing
+  // Google client can never land with this test still green.
+  for (const offender of [
+    "import { google } from 'googleapis'",
+    "const { google } = require('googleapis')",
+    "import { OAuth2Client } from 'google-auth-library'",
+    '"client_id": "123.apps.googleusercontent.com"',
+    'token_endpoint: "https://oauth2.googleapis.com/token"',
+    "scope: 'openid email profile'",
+    '"type": "service_account"',
+    'serviceAccountKey = readFileSync(keyFile)',
+    '"authorized_user"',
+    'accounts.google.com',
+    'https://www.googleapis.com/oauth2/v3/userinfo',
+    'clientSecret = process.env.GOOGLE_SECRET',
+  ]) {
+    assert.ok(GOOGLE_MACHINERY_RE.test(offender), `the scan flags a reappearing client: ${offender.slice(0, 44)}`);
+  }
   for (const file of sources) {
     const body = readFileSync(file, 'utf8');
-    assert.ok(!/accounts\.google|oauth2\/v\d|client_secret|clientSecret/i.test(body),
+    assert.ok(!GOOGLE_MACHINERY_RE.test(body),
       `${file} must not grow a Google client`);
   }
 });

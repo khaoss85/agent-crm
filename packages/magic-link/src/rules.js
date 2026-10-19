@@ -21,11 +21,12 @@ import { AppError, ValidationError } from '../../core/index.js';
  *    a second consume of the same token is refused, never replayed.
  * 4. **No enumeration in the receipt body** — the request receipt is
  *    byte-identical for a known and an unknown email, and both branches do
- *    the same store work (mint, save, then enqueue for a known address or
- *    spend-and-discard for an unknown one). Timing is explicitly OUT of this
- *    guarantee: the known branch awaits a persistent enqueue while the
- *    unknown branch awaits an in-process spend, so a latency oracle remains
- *    until per-address throttling lands (follow-up). The token travels only
+ *    the same work (mint, save, then one enqueue under the row's own key).
+ *    The unknown branch spends its row BEFORE the enqueue, so its dummy job
+ *    is never delivered — the worker skips spent rows by protocol — and an
+ *    enqueue failure throws the same stable code on both branches. Timing is
+ *    explicitly OUT of this guarantee: a latency oracle remains until
+ *    per-address throttling lands (follow-up). The token travels only
  *    through the deployment's outbox edge, never in the API response.
  * 4b. **No brute-forceable mailbox artifact** — token rows carry an HMAC of
  *    the address under a deployment-held secret (same secret-by-reference
@@ -64,6 +65,7 @@ export const MAGIC_LINK_REASON = Object.freeze({
   NOT_CONFIGURED: 'MAGIC_LINK_NOT_CONFIGURED',
   CLOCK_FAILED: 'MAGIC_LINK_CLOCK_FAILED',
   SECRET_UNAVAILABLE: 'MAGIC_LINK_SECRET_UNAVAILABLE',
+  STORE_FAILED: 'MAGIC_LINK_STORE_FAILED',
 });
 
 /** A deployment-held secret locator, never the value. Same locator shape as
