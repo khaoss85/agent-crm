@@ -129,7 +129,14 @@ webhooks and sends keep working standalone.
   now conflicts refines toward unresolved, reaching the same human
   confirm queue. Quarantined rows stay evidence and invent no
   contact. Progress is the `channel-import-state` row (cursor, phase, error
-  code) plus the outcome COUNTs, readable with `readInitialImport`.
+  code) plus the outcome COUNTs, readable per connection with
+  `readInitialImport` and per space with `readSyncState`
+  (backlog:f815763b7aa5): one entry per connection with its first-import
+  progress plus the connected/completed totals. Only `active` connections
+  whose adapter keeps a readable history count as connected
+  (`importable: true`); an adapter without `historyImport` stays listed
+  with `sync: null` and never holds the totals back. A connection whose
+  import never started reads `sync: null`.
 - `npm run crm -- package validate packages/channels` and
   `npm run crm -- package test packages/channels` (DX4 conformance).
 
@@ -147,8 +154,7 @@ webhooks and sends keep working standalone.
   at call time; rotation replaces the referenced value without touching
   CRM data.
 - No reconciliation against provider truth beyond the initial history
-  import, and no per-connection observability aggregates yet (follow-ups).
-  No automatic re-import of a completed connection, no calendar initial
+  import. No automatic re-import of a completed connection, no calendar initial
   window, no Meta history adapters yet: those are the follow-up voices.
 - No automatic retry of dead letters: every retry is a human-approved
   requeue of one open letter, never a silent loop.
