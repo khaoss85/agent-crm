@@ -142,6 +142,20 @@ test('buildShellNav resolves Pipeline from the schema and leaves future screens 
   assert.deepEqual(custom.map((item) => item.route), ['#/modules/partner']);
 });
 
+test('Clienti is available only when the customer-data package is composed', () => {
+  const on = buildShellNav({ customerDataAvailable: true }).find((item) => item.id === 'clienti');
+  assert.equal(on.available, true);
+  assert.equal(on.route, '#/customer-data');
+
+  for (const nav of [buildShellNav(), buildShellNav({ customerDataAvailable: false })]) {
+    const off = nav.find((item) => item.id === 'clienti');
+    assert.equal(off.available, false);
+    assert.equal(off.route, null);
+    assert.match(off.disabledReason, /non composto/);
+    assert.equal(off.story, 'BO-F1');
+  }
+});
+
 test('AI entry placeholder is per screen, in Italian, with a fallback', () => {
   assert.equal(aiPlaceholder('oggi'), 'Chiedi: «cosa è più urgente oggi?»');
   assert.equal(aiPlaceholder('calendario'), 'Scrivi: «trova 45 minuti con Marco e Sara»');
@@ -248,7 +262,7 @@ test('settings panel lists the four areas with honest availability', () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const navigated = [];
-  renderSettingsPanel({ doc, mount, fixCount: 2, navigate: (hash) => navigated.push(hash) });
+  renderSettingsPanel({ doc, mount, fixCount: 2, navigate: (hash) => navigated.push(hash), customerDataAvailable: true });
   const text = mount.textContent;
   for (const area of ['Personalizzazione', 'Catalogo prodotti', 'Stato sync', 'Spazi e accessi']) {
     assert.ok(text.includes(area), `settings lists ${area}`);
@@ -267,6 +281,19 @@ test('settings panel lists the four areas with honest availability', () => {
   renderSettingsPanel({ doc, mount: unknown, fixCount: null });
   assert.ok(unknown.textContent.includes('Non è stato possibile leggerle'));
   assert.ok(!unknown.textContent.includes('Niente da sistemare.'));
+});
+
+test('Stato sync links only when the customer-data package is composed', () => {
+  const doc = createFakeDocument();
+  const off = createMount();
+  renderSettingsPanel({ doc, mount: off, fixCount: 2, customerDataAvailable: false });
+  assert.equal(off.findAll('a').length, 0);
+  assert.ok(off.textContent.includes('Stato sync'));
+  assert.ok(off.textContent.includes('non composto'));
+
+  const implicit = createMount();
+  renderSettingsPanel({ doc, mount: implicit, fixCount: 2 });
+  assert.equal(implicit.findAll('a').length, 0);
 });
 
 test('shell stylesheet stays fluid under 700px', () => {

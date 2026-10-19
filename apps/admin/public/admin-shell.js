@@ -57,6 +57,12 @@ export const SETTINGS_AREAS = Object.freeze([
   { id: 'spazi-accessi', label: 'Spazi e accessi', route: null, story: 'BO-F0-06' },
 ]);
 
+/**
+ * Reason shown when the customer-data package is not composed in the space:
+ * Clienti and Stato sync stay disabled instead of opening a blank screen.
+ */
+export const CUSTOMER_DATA_UNAVAILABLE_REASON = 'Clienti non composto in questo spazio';
+
 /** AI-bar entry placeholder per screen, in Italian, from the prototype. */
 const AI_PLACEHOLDERS = Object.freeze({
   oggi: 'Chiedi: «cosa è più urgente oggi?»',
@@ -211,14 +217,23 @@ export function spaceMenuItems(spaces, activeId) {
  * Build the sidebar model: fixed prototype voices plus the user's custom
  * modules (generated modules are the "personalizzati" group). The Pipeline
  * voice resolves to the first composed pipeline; every other not-yet
- * delivered voice stays disabled with its story named.
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown }> }} input
+ * delivered voice stays disabled with its story named. Clienti is available
+ * only when the customer-data package is composed in the space
+ * (customerDataAvailable): otherwise it stays disabled with its story,
+ * like Pipeline/Calendario, never as a dead link to a blank screen.
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown }>, customerDataAvailable?: boolean }} input
  */
-export function buildShellNav({ pipelines = [], customModules = [] } = {}) {
+export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false } = {}) {
   const firstPipeline = pipelines.find(
     (pipeline) => typeof pipeline?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(pipeline.name),
   );
   const items = SHELL_ITEMS.map((item) => {
+    if (item.id === 'clienti') {
+      if (customerDataAvailable) {
+        return { ...item, available: true, disabledReason: '' };
+      }
+      return { ...item, route: null, available: false, disabledReason: CUSTOMER_DATA_UNAVAILABLE_REASON };
+    }
     if (item.id === 'pipeline') {
       if (firstPipeline) {
         return { ...item, route: `#/pipelines/${firstPipeline.name}`, available: true, disabledReason: '' };
@@ -521,9 +536,9 @@ export function createShellView({
  * Render the Impostazioni screen: the four areas from the prototype. Areas
  * backed by an existing view link there; the rest name the story that
  * delivers them (BO-F0-03 owns the tabs).
- * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void }} options
+ * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void, customerDataAvailable?: boolean }} options
  */
-export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {} } = {}) {
+export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
   mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
   mount.appendChild(el(doc, 'h2', undefined, 'Impostazioni'));
@@ -543,7 +558,11 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
   for (const area of SETTINGS_AREAS) {
     const row = el(doc, 'div', 'bo-setting-row');
     row.appendChild(el(doc, 'span', 'bo-setting-label', area.label));
-    if (area.route !== null) {
+    // Stato sync opens the customer-data quality queue: without the package
+    // composed it stays an honest note, never a link to a blank screen.
+    if (area.id === 'stato-sync' && !customerDataAvailable) {
+      row.appendChild(el(doc, 'span', 'bo-setting-coming', CUSTOMER_DATA_UNAVAILABLE_REASON));
+    } else if (area.route !== null) {
       const link = el(doc, 'a', 'bo-setting-link', 'Apri');
       link.setAttribute('href', area.route);
       link.addEventListener('click', (event) => {

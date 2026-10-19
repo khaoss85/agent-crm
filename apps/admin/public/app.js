@@ -535,6 +535,7 @@ async function populateNav() {
     shellItems = buildShellNav({
       pipelines: schema?.pipelineContract === 1 && Array.isArray(schema.pipelines) ? schema.pipelines : [],
       customModules: modules,
+      customerDataAvailable: shellCustomerData,
     });
     // The route owns screen state: re-sync to the current hash after the
     // shell items update, so a cold deep link keeps its screen.
@@ -632,6 +633,7 @@ async function route() {
       mount: moduleView,
       fixCount: shellFixCount,
       navigate: (next) => { window.location.hash = next; },
+      customerDataAvailable: shellCustomerData,
     });
     syncShell({ view: 'settings' });
     return;
