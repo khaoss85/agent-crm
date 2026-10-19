@@ -521,7 +521,10 @@ function isKernelPath(/** @type {string} */ file) {
  * or fallback selection when the diff touches the kernel or its app.
  *
  * - a diff with no `packages/core/**` or `packages/app/**` path (docs-only
- *   included) returns the selection unchanged;
+ *   included) returns the selection unchanged — but only after the missing
+ *   check below, so a PR deleting a listed boundary test without touching
+ *   the kernel still fails red naming it instead of passing with a stale
+ *   list;
  * - an empty diff stays empty;
  * - a listed boundary test missing from `testContents` throws instead of
  *   silently shrinking the gate, the way `withRepoWideGuards` does;
@@ -535,7 +538,6 @@ export function withKernelBoundaryTests(
   /** @type {readonly string[]} */ boundaryTests = KERNEL_BOUNDARY_TESTS,
 ) {
   if (changedFiles.length === 0) return [...selectedTests].sort();
-  if (!changedFiles.some(isKernelPath)) return [...selectedTests].sort();
   const missing = boundaryTests.filter((boundary) => !testContents.has(boundary));
   if (missing.length > 0) {
     throw new Error(
@@ -543,6 +545,7 @@ export function withKernelBoundaryTests(
       + `${missing.join(', ')}. A PR deleting a boundary test updates the list in the same PR.`,
     );
   }
+  if (!changedFiles.some(isKernelPath)) return [...selectedTests].sort();
   return [...new Set([...selectedTests, ...boundaryTests])].sort();
 }
 

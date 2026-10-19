@@ -841,6 +841,17 @@ test('a listed boundary test missing from the corpus throws instead of shrinking
   );
 });
 
+test('a missing boundary test throws even on a docs-only diff', () => {
+  assert.throws(
+    () => withKernelBoundaryTests(
+      [],
+      contents({ 'tests/package-contract.test.js': "import test from 'node:test';\n" }),
+      ['docs/QUALITY_GATES.md'],
+    ),
+    /tests\/contracts-activation-e2e\.test\.js/,
+  );
+});
+
 test('REPO_WIDE_GUARDS names existing test files, once each', () => {
   assert.deepEqual(
     [...new Set(REPO_WIDE_GUARDS)].sort(),
