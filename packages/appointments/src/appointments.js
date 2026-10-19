@@ -32,10 +32,12 @@ import {
  * - The reminder is a work follow-up. The work package "schedules nothing,
  *   reminds nobody": its primitive is a deterministic follow-up task with
  *   evidence-only `dueAt`, which this package opens through the declared
- *   `follow-up@1` capability inside the booking transaction. A spine
- *   scheduled-ask timer may later open that follow-up at the instant; the
- *   timer owns *when*, this package owns *what is asked* — the division of
- *   labour `packages/core/src/domain-timers.js` states.
+ *   `follow-up@1` capability inside the booking transaction. A booking that
+ *   also names `reminderChannel` is sent at that instant by the reminder
+ *   sweep (`./reminder-dispatch.js`): the durable-job timer owns *when*,
+ *   this package owns *what is asked*, the channels seam owns the send and
+ *   the interactions seam owns the history — the division of labour
+ *   `packages/core/src/domain-timers.js` states, extended to the send.
  */
 
 export const APPOINTMENT_MODULE = 'appointment';
@@ -82,6 +84,22 @@ const PACKAGE_RE = /^[a-z][a-z0-9-]*$/;
 const SOURCE_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9:._@/-]*$/;
 const SERVICE_KEY_RE = /^[a-z][a-z0-9-]{0,47}$/;
 const CURRENCY_RE = /^[A-Z]{3}$/;
+// The reminder channel coordinates, mirrored from the packages that own
+// them (a cross-package source import is forbidden, so the shapes are
+// restated here and re-proved by the owner at send time): the space slug
+// follows channels' `assertSpaceId`, the template name and language follow
+// the WhatsApp adapter's `TEMPLATE_NAME`/`TEMPLATE_LANGUAGE`, and the
+// recipient is an E.164 number the adapter canonicalizes strictly.
+const SPACE_ID_RE = /^[a-z][a-z0-9-]{0,62}$/;
+const TEMPLATE_NAME_RE = /^[a-z0-9_]{1,64}$/;
+const TEMPLATE_LANGUAGE_RE = /^[a-z]{2}(?:_[A-Z]{2})?$/;
+const RECIPIENT_RE = /^\+[0-9][0-9 .\-()/]{3,}$/;
+const MAX_CONNECTION_KEY = 200;
+const MAX_RECIPIENT = 64;
+const MAX_TEMPLATE_VARIABLES = 32;
+const MAX_VARIABLE_CHARS = 1024;
+// (The history-identity fit is checked through reminderThreadKey and
+// reminderMessageKey themselves at booking time: one bound, one place.)
 
 export const bounds = Object.freeze({
   sourceKey: MAX_SOURCE_KEY,
@@ -353,8 +371,16 @@ export function validateAppointmentRequest(request) {
   if (remindAt !== null && Date.parse(remindAt) >= startsAt.ms) {
     throw new ValidationError('remindAt must be before startsAt: a reminder at or after the slot reminds nobody', { field: 'remindAt' });
   }
+  const sourceKey = validateSourceKey(value.sourceKey, 'sourceKey');
+  const reminderChannel = validateReminderChannel(value.reminderChannel, remindAt);
+  if (reminderChannel !== null) {
+    // One bound, one place: the derivation throws naming it when the
+    // booking key leaves no room for the history identities.
+    reminderThreadKey(sourceKey);
+    reminderMessageKey(sourceKey);
+  }
   return {
-    sourceKey: validateSourceKey(value.sourceKey, 'sourceKey'),
+    sourceKey,
     subject: validateSubject(value.subject),
     // The team member is an opaque team identity — the same convention as the
     // interactions package's teamAuthorId. No roster is read and none is
@@ -372,6 +398,7 @@ export function validateAppointmentRequest(request) {
     endMs: endsAt.ms,
     notes: optionalSafeText(value.notes, 'notes', MAX_NOTES),
     remindAt,
+    reminderChannel,
     source: validateSource(value.source),
   };
 }
@@ -533,6 +560,119 @@ export function reminderSourceKey(sourceKey) {
 }
 
 /**
+ * Where the reminder goes, named at booking time: the space and connection
+ * that send it, the customer's WhatsApp number, and the approved template
+ * with its variables. A channel without an instant is a send that never
+ * fires, so it is refused — `remindAt` carries the instant, this carries
+ * the address. The shapes are checked here and re-proved by the channels
+ * seam at booking time (`checkSendable`) and again at send time, so a
+ * stored row always names a target the adapter accepts.
+ *
+ * @param {unknown} value @param {string|null} remindAt
+ */
+export function validateReminderChannel(value, remindAt) {
+  if (value === undefined || value === null) return null;
+  if (remindAt === null) {
+    throw new ValidationError('reminderChannel needs remindAt: a send with no instant sends never', {
+      field: 'reminderChannel',
+    });
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new ValidationError('reminderChannel must be an object {spaceId, connectionKey, to, template}', {
+      field: 'reminderChannel',
+    });
+  }
+  const channel = /** @type {any} */ (value);
+  const spaceId = safeText(channel.spaceId, 'reminderChannel.spaceId', 63);
+  if (!SPACE_ID_RE.test(spaceId)) {
+    throw new ValidationError('reminderChannel.spaceId must be a lowercase slug (letters, digits, hyphens, starting with a letter)', {
+      field: 'reminderChannel.spaceId',
+    });
+  }
+  const connectionKey = safeText(channel.connectionKey, 'reminderChannel.connectionKey', MAX_CONNECTION_KEY);
+  const to = safeText(channel.to, 'reminderChannel.to', MAX_RECIPIENT);
+  if (!RECIPIENT_RE.test(to)) {
+    throw new ValidationError('reminderChannel.to must be an E.164 number ("+" followed by digits)', {
+      field: 'reminderChannel.to',
+    });
+  }
+  const template = channel.template;
+  if (!template || typeof template !== 'object' || Array.isArray(template)) {
+    throw new ValidationError('reminderChannel.template must be an object {name, language?, variables?}', {
+      field: 'reminderChannel.template',
+    });
+  }
+  const name = safeText(template.name, 'reminderChannel.template.name', 64);
+  if (!TEMPLATE_NAME_RE.test(name)) {
+    throw new ValidationError('reminderChannel.template.name must be a Meta template name (lowercase letters, digits, underscores)', {
+      field: 'reminderChannel.template.name',
+    });
+  }
+  const language = template.language === undefined || template.language === null || template.language === ''
+    ? null
+    : safeText(template.language, 'reminderChannel.template.language', 16);
+  if (language !== null && !TEMPLATE_LANGUAGE_RE.test(language)) {
+    throw new ValidationError('reminderChannel.template.language must look like "it" or "it_IT"', {
+      field: 'reminderChannel.template.language',
+    });
+  }
+  const variables = template.variables === undefined || template.variables === null ? [] : template.variables;
+  if (!Array.isArray(variables) || variables.length > MAX_TEMPLATE_VARIABLES
+    || variables.some((entry) => typeof entry !== 'string' || entry === '' || entry.length > MAX_VARIABLE_CHARS
+      || CONTROL_RE.test(entry))) {
+    throw new ValidationError(
+      'reminderChannel.template.variables must be a bounded list of non-empty single-line text '
+      + `(at most ${MAX_TEMPLATE_VARIABLES}, at most ${MAX_VARIABLE_CHARS} chars each)`,
+      { field: 'reminderChannel.template.variables' },
+    );
+  }
+  return {
+    spaceId,
+    connectionKey,
+    to,
+    template: { name, language, variables: [...variables] },
+  };
+}
+
+/**
+ * The deterministic business identities of the reminder send: the history
+ * thread the send is recorded in and the outbound message row. One booking
+ * owns at most one of each, and a retried sweep replays them rather than
+ * duplicating them. Derived from the booking source key, like the
+ * follow-up identity above — and for the same reason the booking key stays
+ * short enough to fit them, checked at booking time.
+ *
+ * @param {string} sourceKey
+ */
+export function reminderThreadKey(sourceKey) {
+  // The interaction sourceKey bound: the history thread row must satisfy
+  // it, and this package owns the derivation. Checked again at booking
+  // time through this same function, so a stored booking always fits.
+  const derived = `appointment:${sourceKey}:reminder:thread`;
+  if (derived.length > 200) {
+    throw new ValidationError(
+      'a booking with reminderChannel needs a sourceKey of at most 171 characters, '
+      + 'so the derived history identities fit the interaction bound',
+      { field: 'sourceKey' },
+    );
+  }
+  return derived;
+}
+
+/** @param {string} sourceKey */
+export function reminderMessageKey(sourceKey) {
+  const derived = `appointment:${sourceKey}:reminder:send`;
+  if (derived.length > 200) {
+    throw new ValidationError(
+      'a booking with reminderChannel needs a sourceKey of at most 171 characters, '
+      + 'so the derived history identities fit the interaction bound',
+      { field: 'sourceKey' },
+    );
+  }
+  return derived;
+}
+
+/**
  * The follow-up request a booking's reminder is made of, derived once so the
  * fresh path and the replay path cannot describe two different reminders: the
  * same booking always names the same reminder identity, title, instant,
@@ -618,9 +758,19 @@ export async function bookAppointment(context, request) {
     // The reminder intent IS the booking's identity: the same source key with
     // a different reminder (added, removed or moved) is a different claim
     // behind the same key and is refused 409 rather than replayed into a
-    // booking whose reminder row says something else.
+    // booking whose reminder row says something else. The send target rides
+    // the same identity: a retry that moves the channel, the recipient or
+    // the template is a different claim, not a replay. Stored as given and
+    // validated — the adapter canonicalizes deterministically at send time,
+    // so a retry compares exactly what the first booking stored.
     reminderSourceKey: reminderKey,
     reminderDueAt: input.remindAt,
+    reminderSpaceId: input.reminderChannel?.spaceId ?? null,
+    reminderConnectionKey: input.reminderChannel?.connectionKey ?? null,
+    reminderTo: input.reminderChannel?.to ?? null,
+    reminderTemplateName: input.reminderChannel?.template.name ?? null,
+    reminderTemplateLanguage: input.reminderChannel?.template.language ?? null,
+    reminderTemplateVars: input.reminderChannel ? JSON.stringify(input.reminderChannel.template.variables) : null,
     sourcePackage: source.package,
     sourceAction: source.action,
   };
@@ -663,6 +813,16 @@ export async function bookAppointment(context, request) {
       );
     }
 
+    // The send target is proven before the first write: a fresh booking that
+    // names a channel that cannot send (unknown connection, unapproved
+    // template, malformed recipient) is refused here, not at the instant.
+    // A replay answers the stable shape without re-proving: the stored row
+    // already fixed the target, and the sweep enforces it again at fire
+    // time — so a revoked connection fails the send, never the replay.
+    if (input.reminderChannel !== null) {
+      await checkReminderSendable(context, { input });
+    }
+
     let appointment;
     try {
       appointment = await appointments.createManaged({
@@ -672,6 +832,7 @@ export async function bookAppointment(context, request) {
         status: APPOINTMENT_INITIAL,
         reminderSourceKey: reminderKey,
         reminderDueAt: input.remindAt,
+        reminderSentAt: null,
         bookedAt: now,
         decidedAt: null,
         cancelReason: null,
@@ -719,6 +880,45 @@ function requireFollowUps(context) {
     );
   }
   return followUps;
+}
+
+/**
+ * The opened channels template-send handle, or a named refusal: a fresh
+ * booking that names a send target cannot prove it without the handle. The
+ * edge is optional — bookings without `reminderChannel` never touch it, so
+ * a composition without channels books exactly as before.
+ */
+function requireTemplateSend(context) {
+  const templateSend = context.templateSend;
+  if (!templateSend || typeof templateSend.checkSendable !== 'function' || typeof templateSend.sendTemplate !== 'function') {
+    throw new AppError(
+      'The appointments package is composed without an opened channels channel-template-send@1 capability, '
+      + 'so a booking with reminderChannel cannot prove its send target',
+      { code: 'APPOINTMENTS_REMINDER_UNAVAILABLE', status: 500 },
+    );
+  }
+  return templateSend;
+}
+
+/**
+ * Prove the reminder send target before the booking row exists: the
+ * connection is active and the template is approved for it. Proof only —
+ * nothing is sent, and the stored row keeps the validated as-given values.
+ */
+async function checkReminderSendable(context, { input }) {
+  const templateSend = requireTemplateSend(context);
+  const channel = /** @type {any} */ (input.reminderChannel);
+  const template = channel.template;
+  await templateSend.checkSendable({
+    spaceId: channel.spaceId,
+    connectionKey: channel.connectionKey,
+    to: channel.to,
+    template: {
+      name: template.name,
+      ...(template.language ? { language: template.language } : {}),
+      variables: [...template.variables],
+    },
+  });
 }
 
 /**
@@ -900,7 +1100,7 @@ export function createAppointmentScheduleCapability({ moduleNames } = {}) {
  *
  * @param {Record<string, string>} [moduleNames]
  */
-export function createAppointmentBookCapability({ moduleNames, provider, followUps } = {}) {
+export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend } = {}) {
   const names = resolvedNames(moduleNames);
   /**
    * Open the reminder handle for this opener: an explicitly injected handle
@@ -920,6 +1120,17 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
       consumer: APPOINTMENTS_PACKAGE,
     });
   };
+  /**
+   * Open the template-send handle for this opener: same handover shape as
+   * the follow-up handle above. The handle only proves the send target at
+   * booking time; the sweep opens its own handle on the composition
+   * modules. No handle is fine until a booking names reminderChannel.
+   */
+  const openTemplateSend = (context) => {
+    if (templateSend ?? context.templateSend) return templateSend ?? context.templateSend;
+    if (!templateSendProvider || typeof templateSendProvider.create !== 'function') return null;
+    return templateSendProvider.create({ modules: context.modules });
+  };
   const scoped = (context) => ({
     modules: {
       get: (name) => context.modules.get(name === APPOINTMENT_MODULE ? names.appointment : name),
@@ -929,6 +1140,7 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
     now: context.now,
     consumer: context.consumer,
     followUps: openFollowUps(context),
+    templateSend: openTemplateSend(context),
   });
   return {
     name: 'appointment-book',
@@ -937,7 +1149,7 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
       'Book one appointment per call — validated, overlap-checked against the team member\'s held slots, stored as booked — '
       + 'and advance it along the booking lifecycle. A booking with remindAt also opens exactly one work follow-up reminder '
       + 'in the same transaction. Every write is idempotent by source key. Grants no read beyond the written row and the exact id lookup, no update and no delete.',
-    /** @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string, followUps?: any}} context */
+    /** @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string, followUps?: any, templateSend?: any}} context */
     create(context = {}) {
       const modules = context?.modules;
       if (!modules || typeof modules.get !== 'function') {
