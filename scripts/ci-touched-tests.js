@@ -487,6 +487,69 @@ export function withRepoWideGuards(
 }
 
 /**
+ * The kernel boundary tests: `tests/package-contract.test.js` («the kernel
+ * never depends on a package») and `tests/contracts-activation-e2e.test.js`
+ * («the contracts domain is optional»). Both judge `packages/core/src` (and
+ * `packages/app/src`) file by file, but the mapping cannot reach them from
+ * a core change: the e2e test relatively imports no package at all, and the
+ * contract test imports only `packages/core/index.js`, so a core file the
+ * index does not re-export selects nothing. #258 put domain names into
+ * `packages/core` and the fast gate stayed green (S109).
+ * They run conditionally, on top of a mapped or fallback selection: whenever
+ * the diff touches `packages/core/**` or `packages/app/**`. A docs-only
+ * diff never touches those paths, so — unlike `REPO_WIDE_GUARDS` — it never
+ * selects them. Pure: unit-tested, including both acceptance directions.
+ */
+export const KERNEL_BOUNDARY_TESTS = Object.freeze([
+  'tests/package-contract.test.js',
+  'tests/contracts-activation-e2e.test.js',
+]);
+
+/** Whether a repository-relative path lives under the kernel or its app. */
+function isKernelPath(/** @type {string} */ file) {
+  const normalized = normalize(file).replace(/\\/g, '/');
+  return (
+    normalized === 'packages/core'
+    || normalized.startsWith('packages/core/')
+    || normalized === 'packages/app'
+    || normalized.startsWith('packages/app/')
+  );
+}
+
+/**
+ * Add the kernel boundary tests (`KERNEL_BOUNDARY_TESTS`) on top of a mapped
+ * or fallback selection when the diff touches the kernel or its app.
+ *
+ * - a diff with no `packages/core/**` or `packages/app/**` path (docs-only
+ *   included) returns the selection unchanged — but only after the missing
+ *   check below, so a PR deleting a listed boundary test without touching
+ *   the kernel still fails red naming it instead of passing with a stale
+ *   list;
+ * - an empty diff stays empty;
+ * - a listed boundary test missing from `testContents` throws instead of
+ *   silently shrinking the gate, the way `withRepoWideGuards` does;
+ * - duplicates collapse: a boundary test the mapping already selected runs
+ *   once.
+ */
+export function withKernelBoundaryTests(
+  /** @type {string[]} */ selectedTests,
+  /** @type {Map<string, string>} */ testContents,
+  /** @type {string[]} */ changedFiles,
+  /** @type {readonly string[]} */ boundaryTests = KERNEL_BOUNDARY_TESTS,
+) {
+  if (changedFiles.length === 0) return [...selectedTests].sort();
+  const missing = boundaryTests.filter((boundary) => !testContents.has(boundary));
+  if (missing.length > 0) {
+    throw new Error(
+      'kernel boundary test(s) listed in KERNEL_BOUNDARY_TESTS but absent from tests/: '
+      + `${missing.join(', ')}. A PR deleting a boundary test updates the list in the same PR.`,
+    );
+  }
+  if (!changedFiles.some(isKernelPath)) return [...selectedTests].sort();
+  return [...new Set([...selectedTests, ...boundaryTests])].sort();
+}
+
+/**
  * The bound for the test run once the selection phase is over: the
  * configured run timeout, reduced by the selection's elapsed time so
  * select-plus-run always fits the step wrapper's budget, and never below
@@ -706,7 +769,11 @@ async function main() {
   const preGuardTests = plan.kind === 'skip' || plan.kind === 'refuse' ? [] : plan.tests;
   if (plan.kind !== 'refuse') {
     try {
-      plan.tests = withRepoWideGuards(preGuardTests, contents, allChanged);
+      plan.tests = withKernelBoundaryTests(
+        withRepoWideGuards(preGuardTests, contents, allChanged),
+        contents,
+        allChanged,
+      );
     } catch (error) {
       process.stderr.write(`ci-touched-tests: ${error instanceof Error ? error.message : error}\n`);
       process.exit(1);
@@ -715,6 +782,11 @@ async function main() {
   const addedGuards = plan.kind === 'refuse'
     ? []
     : plan.tests.filter((test) => !preGuardTests.includes(test));
+  const addedBoundary = plan.kind === 'refuse'
+    ? []
+    : plan.tests.filter(
+      (test) => !preGuardTests.includes(test) && KERNEL_BOUNDARY_TESTS.includes(test),
+    );
 
   // Selected tests the plan does not run, after the guards joined: a
   // non-empty set here is always reported — a `::warning::` annotation
@@ -773,6 +845,11 @@ async function main() {
   if (addedGuards.length > 0) {
     process.stdout.write(
       `ci-touched-tests: plus ${addedGuards.length} repo-wide guard(s): ${addedGuards.join(', ')}.\n`,
+    );
+  }
+  if (addedBoundary.length > 0) {
+    process.stdout.write(
+      `ci-touched-tests: plus ${addedBoundary.length} kernel boundary test(s): ${addedBoundary.join(', ')}.\n`,
     );
   }
 

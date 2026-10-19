@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import { spawnGit } from './helpers/isolated-git.js';
 import {
+  KERNEL_BOUNDARY_TESTS,
   REPO_WIDE_GUARDS,
   REPO_WIDE_GUARD_EXCLUSIONS,
   buildFileImports,
@@ -31,6 +32,7 @@ import {
   relativeImportsOf,
   runBudgetSec,
   selectTouchedTests,
+  withKernelBoundaryTests,
   withRepoWideGuards,
 } from '../scripts/ci-touched-tests.js';
 
@@ -727,6 +729,126 @@ test('a listed guard missing from the corpus throws instead of shrinking the gat
   assert.throws(
     () => withRepoWideGuards([], contents({}), ['packages/payments/src/operations.js'], ['tests/gone.test.js']),
     /tests\/gone\.test\.js/,
+  );
+});
+
+// ------------------------------------------------------- kernel boundary tests
+//
+// Once the kernel boundary went unguarded: #258 put domain names into
+// `packages/core` and the fast gate stayed green (S109), because
+// `tests/contracts-activation-e2e.test.js` relatively imports no package at
+// all and `tests/package-contract.test.js` imports only the kernel index.
+// The mapping cannot reach them from a core change, so they join
+// conditionally — on any `packages/core/**` or `packages/app/**` diff —
+// never on a docs-only diff; these tests hold both acceptance directions.
+
+test('the declared list holds the kernel boundary tests', () => {
+  assert.ok(
+    KERNEL_BOUNDARY_TESTS.includes('tests/package-contract.test.js'),
+    'a packages/core diff must run the kernel-never-depends-on-a-package boundary',
+  );
+  assert.ok(
+    KERNEL_BOUNDARY_TESTS.includes('tests/contracts-activation-e2e.test.js'),
+    'a packages/core diff must run the contracts-domain-is-optional boundary',
+  );
+});
+
+test('a packages/core change runs the kernel boundary tests on top of its selection', () => {
+  const have = contents({
+    'tests/package-contract.test.js': "import test from 'node:test';\n",
+    'tests/contracts-activation-e2e.test.js': "import test from 'node:test';\n",
+    'tests/core-other.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(
+    withKernelBoundaryTests(
+      ['tests/core-other.test.js'],
+      have,
+      ['packages/core/src/record-module-runtime.js'],
+    ),
+    [
+      'tests/contracts-activation-e2e.test.js',
+      'tests/core-other.test.js',
+      'tests/package-contract.test.js',
+    ],
+  );
+});
+
+test('a packages/app change runs the kernel boundary tests too', () => {
+  const have = contents({
+    'tests/package-contract.test.js': "import test from 'node:test';\n",
+    'tests/contracts-activation-e2e.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(
+    withKernelBoundaryTests([], have, ['packages/app/src/create-app.js']),
+    ['tests/contracts-activation-e2e.test.js', 'tests/package-contract.test.js'],
+  );
+});
+
+test('a docs-only diff never selects the kernel boundary tests', () => {
+  const have = contents({
+    'tests/package-contract.test.js': "import test from 'node:test';\n",
+    'tests/contracts-activation-e2e.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(
+    withKernelBoundaryTests([], have, ['docs/QUALITY_GATES.md', 'README.md']),
+    [],
+  );
+});
+
+test('a non-kernel code diff never selects the kernel boundary tests', () => {
+  const have = contents({
+    'tests/package-contract.test.js': "import test from 'node:test';\n",
+    'tests/contracts-activation-e2e.test.js': "import test from 'node:test';\n",
+    'tests/payments-checkout.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(
+    withKernelBoundaryTests(
+      ['tests/payments-checkout.test.js'],
+      have,
+      ['packages/payments/src/operations.js'],
+    ),
+    ['tests/payments-checkout.test.js'],
+  );
+});
+
+test('an empty diff stays empty of kernel boundary tests', () => {
+  const have = contents({
+    'tests/package-contract.test.js': "import test from 'node:test';\n",
+    'tests/contracts-activation-e2e.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(withKernelBoundaryTests([], have, []), []);
+});
+
+test('a boundary test the mapping already selected runs once', () => {
+  const have = contents({
+    'tests/package-contract.test.js': "import test from 'node:test';\n",
+    'tests/contracts-activation-e2e.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(
+    withKernelBoundaryTests(
+      ['tests/package-contract.test.js'],
+      have,
+      ['packages/core/index.js'],
+    ),
+    ['tests/contracts-activation-e2e.test.js', 'tests/package-contract.test.js'],
+  );
+});
+
+test('a listed boundary test missing from the corpus throws instead of shrinking the gate', () => {
+  assert.throws(
+    () => withKernelBoundaryTests([], contents({}), ['packages/core/src/x.js'], ['tests/gone.test.js']),
+    /tests\/gone\.test\.js/,
+  );
+});
+
+test('a missing boundary test throws even on a docs-only diff', () => {
+  assert.throws(
+    () => withKernelBoundaryTests(
+      [],
+      contents({ 'tests/package-contract.test.js': "import test from 'node:test';\n" }),
+      ['docs/QUALITY_GATES.md'],
+    ),
+    /tests\/contracts-activation-e2e\.test\.js/,
   );
 });
 
