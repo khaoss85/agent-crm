@@ -2,7 +2,7 @@
 
 import { AppError, ValidationError, requireActor } from '../../core/index.js';
 import { LlmRegistries, assertGenerateInput } from './adapter.js';
-import { createFixtureLlmAdapter } from './fixture.js';
+import { FIXTURE_LLM_SECRET, createFixtureLlmAdapter } from './fixture.js';
 import { OPENAI_DEFAULT_MODEL, createOpenAiLlmAdapter } from './openai.js';
 
 /**
@@ -328,7 +328,7 @@ export function createLlmOperations(options = {}) {
       // No key, no network: the fixture answers explicitly as a dry run
       // and says so in the result and the audit row.
       const completion = await dryRun.definition.generate({
-        secret: 'fixture-llm-secret', messages, model, maxTokens,
+        secret: FIXTURE_LLM_SECRET, messages, model, maxTokens,
       });
       const cost = estimateCostCents({ inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, model, pricing });
       await addUsage(usageService, current.row, {

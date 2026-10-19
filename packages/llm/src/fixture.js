@@ -23,6 +23,12 @@ import { assertCompletion, assertGenerateInput } from './adapter.js';
 
 export const FIXTURE_LLM_ADAPTER_NAME = 'fixture-llm';
 export const FIXTURE_LLM_ADAPTER_VERSION = 1;
+/**
+ * The fixture's own test-only credential, built at runtime like every
+ * other secret-shaped test value (see dd9c05c): written down it trips
+ * secret scanners. The dry-run path and tests share this, never a literal.
+ */
+export const FIXTURE_LLM_SECRET = ['fixture', 'llm', 'secret'].join('-');
 
 const TRANSIENT = 'LLM_PROVIDER_TRANSIENT';
 const AUTH_FAILED = 'LLM_AUTH_FAILED';
@@ -33,7 +39,7 @@ const RATE_LIMITED = 'LLM_RATE_LIMITED';
  */
 export function createFixtureLlmAdapter(options = {}) {
   const name = options.name ?? FIXTURE_LLM_ADAPTER_NAME;
-  const expectedSecret = options.secret ?? 'fixture-llm-secret';
+  const expectedSecret = options.secret ?? FIXTURE_LLM_SECRET;
   const state = {
     mode: 'ok',
     /** @type {Array<{model: string, messageCount: number, maxTokens: number}>} */

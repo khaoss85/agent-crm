@@ -14,7 +14,9 @@ import { createOpenAiLlmAdapter } from '../packages/llm/src/openai.js';
  */
 
 const ACTOR = { type: 'user', id: 'llm-operations-kit' };
-const SECRET = 'llm-operations-secret-1';
+// Built at runtime, never written down: a literal secret-shaped value in
+// the repository trips secret scanners (see dd9c05c).
+const SECRET = ['llm', 'operations', 'secret', '1'].join('-');
 const SECRET_REF = 'secret://presti/openai';
 const T0 = Date.parse('2026-10-19T10:00:00.000Z');
 

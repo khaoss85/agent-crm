@@ -2,7 +2,7 @@
 
 import { AppError, ValidationError, definePackage, selectPackageGraph } from '../../core/index.js';
 import { LlmRegistries } from './adapter.js';
-import { createFixtureLlmAdapter, FIXTURE_LLM_ADAPTER_NAME, FIXTURE_LLM_ADAPTER_VERSION } from './fixture.js';
+import { createFixtureLlmAdapter, FIXTURE_LLM_ADAPTER_NAME, FIXTURE_LLM_ADAPTER_VERSION, FIXTURE_LLM_SECRET } from './fixture.js';
 import { createOpenAiLlmAdapter, OPENAI_ADAPTER_NAME, OPENAI_ADAPTER_VERSION, OPENAI_DEFAULT_MODEL } from './openai.js';
 import {
   LLM_AUDIT_LIMIT,
@@ -44,6 +44,7 @@ import {
 export {
   FIXTURE_LLM_ADAPTER_NAME,
   FIXTURE_LLM_ADAPTER_VERSION,
+  FIXTURE_LLM_SECRET,
   LLM_AUDIT_LIMIT,
   LLM_CAPABILITY,
   LLM_CAPABILITY_VERSION,
