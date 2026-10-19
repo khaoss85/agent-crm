@@ -211,6 +211,29 @@ test('the timeline shows every thread with its latest entry, every booking, ever
   ], 'one contact point per channel, from the same identities the card reads');
 });
 
+test('every passage carries its channel, direction and sync state', async (t) => {
+  const { app, contact } = await seedCustomer(t, 'hub-timeline-entries.sqlite');
+
+  const timeline = await app.readCustomerTimeline({ resource: 'contact', id: contact.id });
+  assert.equal(timeline.entries.available, true);
+  // Four seeded channel passages: two WhatsApp messages, one Instagram
+  // message, one phone call — oldest first, work notes excluded by shape.
+  assert.deepEqual(
+    timeline.entries.items.map((item) => [item.entry, item.channel, item.direction, item.sync]),
+    [
+      ['message', 'whatsapp', 'inbound', 'received'],
+      ['message', 'whatsapp', 'outbound', 'sent'],
+      ['message', 'instagram', 'inbound', 'received'],
+      ['call', 'phone', 'outbound', 'completed'],
+    ],
+    'each passage names its channel, direction and delivery/sync state',
+  );
+  assert.equal(timeline.entries.count, timeline.entries.items.length);
+  for (const item of timeline.entries.items) {
+    assert.ok(item.occurredAt, `${item.id} carries its timestamp for day grouping`);
+  }
+});
+
 test('reading the timeline creates no record anywhere', async (t) => {
   const { app, contact } = await seedCustomer(t, 'hub-timeline-no-write.sqlite');
 

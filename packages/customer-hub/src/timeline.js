@@ -87,12 +87,14 @@ export function shapeCustomerTimeline({ profile, threads, history, schedule, sub
   }
   const contactPoints = shapeContactPoints(profile);
   const conversations = shapeConversations(threads ?? [], history?.entries ?? []);
+  const entries = shapeEntries(history?.entries ?? []);
   const appointments = shapeAppointments(schedule ?? []);
 
   return Object.freeze({
     customerTimelineContract: CUSTOMER_TIMELINE_CONTRACT,
     subject: Object.freeze({ ...subject }),
     conversations,
+    entries,
     appointments,
     contactPoints,
     timelineNote:
@@ -168,6 +170,54 @@ function shapeConversations(threads, entries) {
     items: Object.freeze(items),
     unthreadedMessages,
     unthreadedCalls,
+  });
+}
+
+/**
+ * Every channel passage as its own row, oldest first: the flat list the
+ * scheda cliente filters per channel. Each row names its channel, its
+ * direction and its sync state — the message delivery lifecycle
+ * (`received`, `sent`, `delivered`, `read`, `failed`) or, for a call that
+ * already happened, its immutable outcome. Work notes riding the same
+ * timeline read are excluded on purpose: they belong to the work views, and
+ * counting them here would invent conversations that never happened.
+ */
+function shapeEntries(entries) {
+  const items = [];
+  for (const row of entries ?? []) {
+    if (row?.entry === 'message') {
+      items.push(Object.freeze({
+        entry: 'message',
+        id: row.id,
+        conversationId: row.conversationId ?? null,
+        channel: row.channel ?? null,
+        direction: row.direction ?? null,
+        sync: row.status ?? null,
+        body: row.body ?? null,
+        remoteHandle: row.remoteHandle ?? null,
+        errorCode: row.errorCode ?? null,
+        occurredAt: row.occurredAt ?? null,
+      }));
+    } else if (row?.entry === 'call') {
+      items.push(Object.freeze({
+        entry: 'call',
+        id: row.id,
+        conversationId: row.conversationId ?? null,
+        channel: row.channel ?? null,
+        direction: row.direction ?? null,
+        sync: row.outcome ?? null,
+        durationSec: row.durationSec ?? null,
+        remoteHandle: row.remoteHandle ?? null,
+        errorCode: row.errorCode ?? null,
+        occurredAt: row.occurredAt ?? null,
+      }));
+    }
+  }
+  return Object.freeze({
+    available: true,
+    count: items.length,
+    truncated: false,
+    items: Object.freeze(items),
   });
 }
 
