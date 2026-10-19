@@ -12,11 +12,17 @@ import { OPENAI_DEFAULT_MODEL, createOpenAiLlmAdapter } from './openai.js';
  * demands: the space opts in explicitly (absent or disabled refuses with
  * `LLM_SPACE_DISABLED` before any provider is touched), the day's token
  * and cost ceilings refuse with `LLM_DAILY_CAP_EXCEEDED` before any
- * provider is touched, and without a key the call runs as an explicit
- * dry-run on the fixture adapter — announced in the result and the audit,
- * with no network behind it. Every attempt writes one audit row with the
- * space, the purpose, the adapter, the model, the token counts and the
- * estimated cost: never the prompt text, never the key.
+ * provider is touched, and the spend section serializes per space-day so
+ * racing calls re-read fresh totals. With no `secretRef` configured
+ * anywhere the call runs as an explicit dry-run on the fixture adapter —
+ * announced in the result and the audit, with no network behind it. With
+ * a key expected but custody failing or unwired the call refuses with
+ * `LLM_SECRET_UNAVAILABLE` instead of serving canned text. The model
+ * surface is closed (the default model plus the space allowlist) and every
+ * allowed model needs a valid price, or the call refuses before the
+ * provider is touched. Every attempt writes one audit row with the space,
+ * the purpose, the adapter, the model, the token counts and the estimated
+ * cost: never the prompt text, never the key.
  *
  * State lives in two managed record modules, like every sibling package:
  * `llm-usage-day` (one row per space per UTC day, the running totals the
@@ -45,6 +51,37 @@ const SPACE_ID = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
 const SECRET_REF = /^secret:\/\/[^\/\s]+\/[^\/\s]+$/;
 const HOSTILE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 const RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/;
+
+/**
+ * Same-process serialization for one space's daily spend, one FIFO chain
+ * per space-day: two completions racing the same day re-read the winner's
+ * totals instead of overwriting them with a stale snapshot, and the loser
+ * of a filled cap refuses instead of spending past it. Cross-process
+ * writers still serialize on the managed row. (MEM_ACC_REUSE: the tail
+ * pattern of channels' import commits — a package imports only core, so
+ * the helper lives here rather than crossing the boundary.)
+ */
+const daySpendChains = new Map();
+
+/** @param {string} key @param {() => Promise<any>} critical */
+function withDaySpend(key, critical) {
+  const previous = daySpendChains.get(key) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise((resolve) => { release = resolve; });
+  const tail = previous.then(() => current, () => current);
+  daySpendChains.set(key, tail);
+  // Synchronous until here: two callers racing in the same tick still
+  // order. Tails never reject, so a refused call never wedges the chain.
+  return (async () => {
+    await previous;
+    try {
+      return await critical();
+    } finally {
+      if (daySpendChains.get(key) === tail) daySpendChains.delete(key);
+      release();
+    }
+  })();
+}
 
 /**
  * Estimated provider price, US cents per 1000 tokens, by model. Estimates
@@ -101,11 +138,44 @@ function todayKey(nowMs) {
   return new Date(nowMs).toISOString().slice(0, 10);
 }
 
+function assertRateEntry(tableName, model, rate) {
+  if (!rate || typeof rate !== 'object' || Array.isArray(rate)
+    || typeof rate.input !== 'number' || typeof rate.output !== 'number'
+    || !Number.isFinite(rate.input) || !Number.isFinite(rate.output)
+    || rate.input < 0 || rate.output < 0) {
+    throw new ValidationError(
+      `llm ${tableName} needs finite non-negative input/output numbers for model "${model}"`, { field: 'pricing' });
+  }
+  return rate;
+}
+
+function assertPricingTable(pricing, defaultModel) {
+  if (!pricing || typeof pricing !== 'object' || Array.isArray(pricing)) {
+    throw new ValidationError('llm pricing must be a plain object of model rates', { field: 'pricing' });
+  }
+  for (const [model, rate] of Object.entries(pricing)) {
+    assertRateEntry('pricing', model, rate);
+  }
+  if (!Object.hasOwn(pricing, defaultModel)) {
+    throw new ValidationError(`llm pricing is missing the default model "${defaultModel}"`, { field: 'pricing' });
+  }
+  return pricing;
+}
+
 /** @param {{inputTokens: number, outputTokens: number, model: string, pricing: any}} options */
 export function estimateCostCents({ inputTokens, outputTokens, model, pricing }) {
   const table = pricing ?? LLM_ESTIMATED_PRICING_CENTS_PER_1K;
-  const rate = table?.[model] ?? table?.[OPENAI_DEFAULT_MODEL];
-  if (!rate || typeof rate.input !== 'number' || typeof rate.output !== 'number') return 0;
+  const rate = table?.[model];
+  // No cheapest-model fallback: pricing an unknown model at the Luna rate
+  // would accrue pennies while the provider bills the premium tier, so the
+  // cost ceiling refuses instead of capping against zero.
+  if (!rate || typeof rate.input !== 'number' || typeof rate.output !== 'number'
+    || !Number.isFinite(rate.input) || !Number.isFinite(rate.output)
+    || rate.input < 0 || rate.output < 0) {
+    throw new AppError(`llm has no valid price for model "${model}": refusing rather than capping against zero`, {
+      code: 'LLM_PRICING_UNAVAILABLE', status: 500,
+    });
+  }
   return Math.max(0, Math.ceil((inputTokens / 1000) * rate.input + (outputTokens / 1000) * rate.output));
 }
 
@@ -151,9 +221,13 @@ export function createLlmOperations(options = {}) {
   const registries = new LlmRegistries({ llmAdapters: options.adapters ?? [] });
   const defaultAdapter = options.defaultAdapter ?? { name: 'openai', version: 1 };
   const defaultModel = options.defaultModel ?? OPENAI_DEFAULT_MODEL;
+  if (typeof defaultModel !== 'string' || defaultModel.trim() === '' || defaultModel.length > 128) {
+    throw new ValidationError('llm defaultModel must be a bounded non-blank name', { field: 'defaultModel' });
+  }
   const defaultDailyTokenCap = options.defaultDailyTokenCap ?? 200000;
   assertPositiveInt(defaultDailyTokenCap, 'defaultDailyTokenCap', 100000000);
-  const pricing = options.pricing ?? LLM_ESTIMATED_PRICING_CENTS_PER_1K;
+  // A typo'd table must fail here, not silently zero every cost ceiling.
+  const pricing = assertPricingTable(options.pricing ?? LLM_ESTIMATED_PRICING_CENTS_PER_1K, defaultModel);
   const clock = options.clock ?? Date.now;
   const randomId = options.randomId ?? (() => /** @type {any} */ (crypto).randomUUID());
   const { resolveSecret } = options;
@@ -188,14 +262,39 @@ export function createLlmOperations(options = {}) {
     return registries.getAdapter(name, version);
   };
 
+  // The model surface is closed: the default model plus the space's
+  // explicit allowlist, nothing else. An unknown model priced at the
+  // cheapest-model rate would accrue pennies while the provider bills the
+  // premium tier, so unknown and unpriced models refuse fail-closed.
+  const allowedModelsFor = (space) => {
+    const extra = space.models ?? [];
+    if (!Array.isArray(extra)
+      || extra.some((name) => typeof name !== 'string' || name.trim() === '' || name.length > 128)) {
+      throw new ValidationError('llm space models must be an array of bounded non-blank names', {
+        field: 'space.models',
+      });
+    }
+    return new Set([defaultModel, ...extra]);
+  };
+
   const modelFor = (space, request) => {
+    const allowed = allowedModelsFor(space);
     if (request?.model !== undefined) {
       if (typeof request.model !== 'string' || request.model.trim() === '' || request.model.length > 128) {
         throw new ValidationError('llm model must be a bounded non-blank name', { field: 'model' });
       }
+      if (!allowed.has(request.model)) {
+        throw new ValidationError(`llm model "${request.model}" is not enabled for this space`, { field: 'model' });
+      }
       return request.model;
     }
-    return space.model ?? defaultModel;
+    const configured = space.model ?? defaultModel;
+    if (!allowed.has(configured)) {
+      throw new AppError(`llm space model "${configured}" is not in the space model allowlist`, {
+        code: 'LLM_MODEL_UNAVAILABLE', status: 500,
+      });
+    }
+    return configured;
   };
 
   const capsFor = (space) => ({
@@ -264,7 +363,9 @@ export function createLlmOperations(options = {}) {
       refused: entry.refused ?? '',
       errorCode: entry.errorCode ?? '',
       sourceCount: sources.length,
-      sources: sources.slice(0, 8).join(','),
+      // Every validated id is persisted: the result and the audit row agree,
+      // so readAudit can always reconstruct which records an answer cited.
+      sources: sources.join(','),
     }, { actor });
   }
 
@@ -301,97 +402,132 @@ export function createLlmOperations(options = {}) {
       throw new ValidationError('llm timeoutMs must be 1000-300000 ms', { field: 'timeoutMs' });
     }
 
-    const current = await usageToday(usageService, spaceId, actor);
-    const usedTokens = current.row.inputTokens + current.row.outputTokens;
-    if (usedTokens >= caps.dailyTokenCap
-      || (caps.dailyCostCentsCap !== null && current.row.estimatedCostCents >= caps.dailyCostCentsCap)) {
-      await audit(auditService, {
-        spaceId, purpose, adapter: '', model, inputTokens: 0, outputTokens: 0,
-        estimatedCostCents: 0, dryRun: false, refused: 'daily-cap', sources,
-      }, actor);
-      throw new AppError('the space spent its daily AI budget: the call is refused with its reason', {
-        code: 'LLM_DAILY_CAP_EXCEEDED', status: 429,
+    const secretRef = space.secretRef ?? options.secretRef;
+    if (secretRef !== undefined) assertSecretRef(secretRef);
+    // The price must exist before the provider is touched: spending first
+    // and refusing to account after would leave real money unaudited.
+    try {
+      assertRateEntry('pricing', model, pricing[model]);
+    } catch {
+      throw new AppError(`llm has no valid price for model "${model}": refusing before the provider is touched`, {
+        code: 'LLM_PRICING_UNAVAILABLE', status: 500,
       });
     }
 
-    const secretRef = space.secretRef ?? options.secretRef;
-    if (secretRef !== undefined) assertSecretRef(secretRef);
-    let secret = null;
-    if (typeof resolveSecret === 'function' && secretRef !== undefined) {
-      try {
-        secret = await resolveSecret(secretRef, { spaceId, purpose: 'llm-complete' });
-      } catch {
-        secret = null;
+    // One serialized spend section per space-day: the ceiling re-reads
+    // fresh totals and every usage write lands on the winner's row, so
+    // racing calls neither bypass the cap nor lose each other's tokens.
+    // Computed synchronously so same-tick racers still order on the chain.
+    const spendKey = `${spaceId}:${todayKey(clock())}`;
+    return withDaySpend(spendKey, async () => {
+      const current = await usageToday(usageService, spaceId, actor);
+      const usedTokens = current.row.inputTokens + current.row.outputTokens;
+      if (usedTokens >= caps.dailyTokenCap
+        || (caps.dailyCostCentsCap !== null && current.row.estimatedCostCents >= caps.dailyCostCentsCap)) {
+        await audit(auditService, {
+          spaceId, purpose, adapter: '', model, inputTokens: 0, outputTokens: 0,
+          estimatedCostCents: 0, dryRun: false, refused: 'daily-cap', sources,
+        }, actor);
+        throw new AppError('the space spent its daily AI budget: the call is refused with its reason', {
+          code: 'LLM_DAILY_CAP_EXCEEDED', status: 429,
+        });
       }
-    }
-    if (typeof secret !== 'string' || secret === '') {
-      // No key, no network: the fixture answers explicitly as a dry run
-      // and says so in the result and the audit row.
-      const completion = await dryRun.definition.generate({
-        secret: FIXTURE_LLM_SECRET, messages, model, maxTokens,
+
+      if (secretRef === undefined) {
+        // No key configured anywhere, no network: the fixture answers
+        // explicitly as a dry run and says so in the result and the audit.
+        const completion = await dryRun.definition.generate({
+          secret: FIXTURE_LLM_SECRET, messages, model, maxTokens,
+        });
+        const cost = estimateCostCents({ inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, model, pricing });
+        await addUsage(usageService, current.row, {
+          inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, estimatedCostCents: cost,
+        }, actor);
+        await audit(auditService, {
+          spaceId, purpose, adapter: dryRun.definition.name, model,
+          inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
+          estimatedCostCents: cost, dryRun: true, sources,
+        }, actor);
+        return Object.freeze({
+          text: completion.text,
+          model: completion.model,
+          adapter: dryRun.definition.name,
+          dryRun: true,
+          dryRunReason: 'missing-key',
+          inputTokens: completion.inputTokens,
+          outputTokens: completion.outputTokens,
+          estimatedCostCents: cost,
+          sources,
+        });
+      }
+
+      // A key is expected: resolve it or refuse. A vault outage, an empty
+      // value, or custody never wired must never degrade to a fixture
+      // dry-run with canned text — channels refuses
+      // CHANNEL_SECRET_UNAVAILABLE and calendar-sync
+      // CALENDAR_SECRET_UNAVAILABLE on the same shape, because a consumer
+      // that does not branch on dryRun would present fabricated text as
+      // the model answer.
+      let secret = null;
+      if (typeof resolveSecret === 'function') {
+        try {
+          secret = await resolveSecret(secretRef, { spaceId, purpose: 'llm-complete' });
+        } catch {
+          secret = null;
+        }
+      }
+      if (typeof secret !== 'string' || secret === '') {
+        await audit(auditService, {
+          spaceId, purpose, adapter: '', model,
+          inputTokens: 0, outputTokens: 0, estimatedCostCents: 0,
+          dryRun: false, errorCode: 'LLM_SECRET_UNAVAILABLE', sources,
+        }, actor);
+        throw new AppError('the llm key is unavailable: no text was sent anywhere', {
+          code: 'LLM_SECRET_UNAVAILABLE', status: 500,
+        });
+      }
+
+      const { definition } = adapterFor(space);
+      let completion;
+      try {
+        completion = await definition.generate({ secret, messages, model, maxTokens, timeoutMs });
+      } catch (error) {
+        // The adapter's typed error travels intact — its text carries no key
+        // and no prompt by construction — with the failure audited.
+        const code = error && typeof error === 'object' && typeof /** @type {any} */ (error).code === 'string'
+          ? /** @type {any} */ (error).code : 'LLM_PROVIDER_FAILED';
+        await audit(auditService, {
+          spaceId, purpose, adapter: definition.name, model,
+          inputTokens: 0, outputTokens: 0, estimatedCostCents: 0,
+          dryRun: false, errorCode: code, sources,
+        }, actor);
+        throw error;
+      }
+      const cost = estimateCostCents({
+        inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, model, pricing,
       });
-      const cost = estimateCostCents({ inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, model, pricing });
-      await addUsage(usageService, current.row, {
+      const updated = await addUsage(usageService, current.row, {
         inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, estimatedCostCents: cost,
       }, actor);
       await audit(auditService, {
-        spaceId, purpose, adapter: dryRun.definition.name, model,
+        spaceId, purpose, adapter: definition.name, model,
         inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
-        estimatedCostCents: cost, dryRun: true, sources,
+        estimatedCostCents: cost, dryRun: false, sources,
       }, actor);
       return Object.freeze({
         text: completion.text,
         model: completion.model,
-        adapter: dryRun.definition.name,
-        dryRun: true,
-        dryRunReason: 'missing-key',
+        adapter: definition.name,
+        dryRun: false,
         inputTokens: completion.inputTokens,
         outputTokens: completion.outputTokens,
         estimatedCostCents: cost,
         sources,
+        usage: Object.freeze({
+          dayTokens: updated.inputTokens + updated.outputTokens,
+          dayCostCents: updated.estimatedCostCents,
+        }),
       });
-    }
-
-    const { definition } = adapterFor(space);
-    let completion;
-    try {
-      completion = await definition.generate({ secret, messages, model, maxTokens, timeoutMs });
-    } catch (error) {
-      // The adapter's typed error travels intact — its text carries no key
-      // and no prompt by construction — with the failure audited.
-      const code = error && typeof error === 'object' && typeof /** @type {any} */ (error).code === 'string'
-        ? /** @type {any} */ (error).code : 'LLM_PROVIDER_FAILED';
-      await audit(auditService, {
-        spaceId, purpose, adapter: definition.name, model,
-        inputTokens: 0, outputTokens: 0, estimatedCostCents: 0,
-        dryRun: false, errorCode: code, sources,
-      }, actor);
-      throw error;
-    }
-    const cost = estimateCostCents({
-      inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, model, pricing,
-    });
-    const updated = await addUsage(usageService, current.row, {
-      inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, estimatedCostCents: cost,
-    }, actor);
-    await audit(auditService, {
-      spaceId, purpose, adapter: definition.name, model,
-      inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
-      estimatedCostCents: cost, dryRun: false, sources,
-    }, actor);
-    return Object.freeze({
-      text: completion.text,
-      model: completion.model,
-      adapter: definition.name,
-      dryRun: false,
-      inputTokens: completion.inputTokens,
-      outputTokens: completion.outputTokens,
-      estimatedCostCents: cost,
-      sources,
-      usage: Object.freeze({
-        dayTokens: updated.inputTokens + updated.outputTokens,
-        dayCostCents: updated.estimatedCostCents,
-      }),
     });
   }
 

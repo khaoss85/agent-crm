@@ -141,6 +141,7 @@ export function createLlmPackage(options = {}) {
           { name: 'spaceId', type: 'string', hint: 'The Accordo space slug — always explicit, never inferred.' },
           { name: 'purpose', type: 'string', hint: `One of: ${LLM_PURPOSES.join(', ')}.` },
           { name: 'messages', type: 'json', hint: '1-64 {role, content} messages; content is bounded text.' },
+          { name: 'model', type: 'string', hint: `Optional: ${OPENAI_DEFAULT_MODEL} unless the space allowlists more.` },
         ],
         create(runtime) {
           const modules = runtime.modules;

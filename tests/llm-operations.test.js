@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createLlmOperations } from '../packages/llm/src/operations.js';
+import { createLlmOperations, estimateCostCents } from '../packages/llm/src/operations.js';
 import { createFixtureLlmAdapter } from '../packages/llm/src/fixture.js';
 import { createOpenAiLlmAdapter } from '../packages/llm/src/openai.js';
 
@@ -10,7 +10,11 @@ import { createOpenAiLlmAdapter } from '../packages/llm/src/openai.js';
  * names — explicit dry-run without a key and no network, daily ceiling
  * refused with its reason, nothing to the provider for a space without
  * AI, one audit row per attempt with usage but never the prompt text,
- * and the key in neither storage nor errors.
+ * and the key in neither storage nor errors. Plus the review-hardened
+ * guards: a failing or unwired custody refuses instead of dry-running,
+ * racing calls serialize on the day row, the model surface is closed to
+ * the default plus the space allowlist with a price for each, and the
+ * audit keeps every cited source id.
  */
 
 const ACTOR = { type: 'user', id: 'llm-operations-kit' };
@@ -71,13 +75,22 @@ function setup(options = {}) {
   const seen = [];
   const fetchImpl = options.fetchImpl ?? stubFetchOk(seen);
   const openai = createOpenAiLlmAdapter({ fetchImpl });
-  const ops = createLlmOperations({
+  const packageOptions = {
     adapters: options.adapters ?? [openai.definition],
-    resolveSecret: options.resolveSecret ?? (async () => SECRET),
-    secretRef: SECRET_REF,
     spaces: options.spaces ?? { presti: { enabled: true } },
     clock: () => T0,
-  });
+  };
+  if (!options.noKey) {
+    packageOptions.secretRef = options.secretRef ?? SECRET_REF;
+  }
+  if (options.resolveSecret !== undefined) {
+    packageOptions.resolveSecret = options.resolveSecret;
+  } else if (!options.noKey && !options.omitResolver) {
+    packageOptions.resolveSecret = async () => SECRET;
+  }
+  if (options.pricing !== undefined) packageOptions.pricing = options.pricing;
+  if (options.defaultModel !== undefined) packageOptions.defaultModel = options.defaultModel;
+  const ops = createLlmOperations(packageOptions);
   const dump = () => JSON.stringify([...usage.rows, ...audit.rows]);
   return { ops, modules, usage, audit, seen, dump, openai };
 }
@@ -155,7 +168,7 @@ test('past the daily ceiling the call refuses with its reason', async () => {
 });
 
 test('without a key the call is an explicit dry-run with no network', async () => {
-  const { ops, modules, seen, dump } = setup({ resolveSecret: async () => null });
+  const { ops, modules, seen, dump } = setup({ noKey: true });
   const out = await call(ops, modules, { tag: 'dry' });
   assert.equal(out.dryRun, true);
   assert.equal(out.dryRunReason, 'missing-key');
@@ -165,6 +178,116 @@ test('without a key the call is an explicit dry-run with no network', async () =
   assert.equal(audit.length, 1);
   assert.equal(audit[0].dryRun, true);
   assert.ok(!dump().includes(PROMPT('dry')), 'the prompt text reached storage');
+});
+
+test('a key expected but the vault failing refuses with no canned text', async () => {
+  const { ops, modules, seen, dump } = setup({ resolveSecret: async () => { throw new Error('vault down'); } });
+  const code = await codeOf(() => call(ops, modules, { tag: 'vault' }));
+  assert.equal(code, 'LLM_SECRET_UNAVAILABLE');
+  assert.equal(seen.length, 0, 'the provider ran without a key');
+  const audit = await ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].errorCode, 'LLM_SECRET_UNAVAILABLE');
+  assert.equal(audit[0].dryRun, false);
+  assert.ok(!dump().includes(PROMPT('vault')), 'the prompt text reached storage');
+});
+
+test('a key expected but custody unwired refuses', async () => {
+  const { definition, api } = createFixtureLlmAdapter({ secret: SECRET });
+  const { ops, modules } = setup({
+    adapters: [definition],
+    omitResolver: true,
+    spaces: { presti: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1 } },
+  });
+  assert.equal(await codeOf(() => call(ops, modules, { tag: 'unwired' })), 'LLM_SECRET_UNAVAILABLE');
+  assert.equal(api.calls(), 0, 'the adapter ran without custody');
+});
+
+test('racing calls serialize: the loser of a filled cap refuses', async () => {
+  const { definition, api } = createFixtureLlmAdapter({ secret: SECRET });
+  const { ops, modules } = setup({
+    adapters: [definition],
+    spaces: { presti: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1, dailyTokenCap: 10 } },
+  });
+  const results = await Promise.allSettled([
+    call(ops, modules, { tag: 'race-a' }),
+    call(ops, modules, { tag: 'race-b' }),
+  ]);
+  assert.equal(results[0].status, 'fulfilled');
+  assert.equal(results[1].status, 'rejected');
+  assert.equal(results[1].reason?.code, 'LLM_DAILY_CAP_EXCEEDED');
+  assert.equal(api.calls(), 1, 'the adapter ran past the ceiling');
+  const usage = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(usage.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[12, 3, 1]]);
+});
+
+test('racing calls keep both spends: no update is lost', async () => {
+  const { definition, api } = createFixtureLlmAdapter({ secret: SECRET });
+  const { ops, modules } = setup({
+    adapters: [definition],
+    spaces: { presti: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1, dailyTokenCap: 100 } },
+  });
+  const results = await Promise.allSettled([
+    call(ops, modules, { tag: 'race-c' }),
+    call(ops, modules, { tag: 'race-d' }),
+  ]);
+  assert.deepEqual(results.map((result) => result.status), ['fulfilled', 'fulfilled']);
+  assert.equal(api.calls(), 2);
+  const usage = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(usage.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[24, 6, 2]]);
+});
+
+test('an unknown request model refuses before the adapter runs', async () => {
+  const { definition, api } = createFixtureLlmAdapter({ secret: SECRET });
+  const { ops, modules } = setup({
+    adapters: [definition],
+    spaces: { presti: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1 } },
+  });
+  assert.equal(await codeOf(() => call(ops, modules, { tag: 'model', model: 'gpt-5-most-expensive' })), 'VALIDATION_ERROR');
+  assert.equal(api.calls(), 0, 'the adapter ran for an unlisted model');
+});
+
+test('an allowlisted and priced model runs, the rest refuse fail-closed', async () => {
+  const priced = {
+    'gpt-5.6-luna': { input: 0.02, output: 0.08 },
+    'pro-model': { input: 1, output: 2 },
+  };
+  const space = (overrides) => ({
+    enabled: true, adapter: 'fixture-llm', adapterVersion: 1, models: ['pro-model'], model: 'pro-model', ...overrides,
+  });
+  const first = createFixtureLlmAdapter({ secret: SECRET });
+  const allowed = setup({ adapters: [first.definition], pricing: priced, spaces: { presti: space({}) } });
+  const out = await call(allowed.ops, allowed.modules, { tag: 'pro' });
+  assert.equal(out.model, 'pro-model');
+  assert.equal(out.dryRun, false);
+  assert.equal(first.api.calls(), 1);
+
+  const second = createFixtureLlmAdapter({ secret: SECRET });
+  const unpriced = setup({
+    adapters: [second.definition],
+    pricing: { 'gpt-5.6-luna': { input: 0.02, output: 0.08 } },
+    spaces: { presti: space({}) },
+  });
+  assert.equal(await codeOf(() => call(unpriced.ops, unpriced.modules, { tag: 'unpriced' })), 'LLM_PRICING_UNAVAILABLE');
+  assert.equal(second.api.calls(), 0, 'the provider ran without a price');
+
+  const third = createFixtureLlmAdapter({ secret: SECRET });
+  const unlisted = setup({
+    adapters: [third.definition],
+    pricing: priced,
+    spaces: { presti: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1, model: 'pro-model' } },
+  });
+  assert.equal(await codeOf(() => call(unlisted.ops, unlisted.modules, { tag: 'unlisted' })), 'LLM_MODEL_UNAVAILABLE');
+  assert.equal(third.api.calls(), 0, 'the provider ran for an unlisted space model');
+});
+
+test('a malformed pricing table refuses at composition', () => {
+  assert.throws(() => createLlmOperations({ pricing: { 'gpt-5.6-luna': { input: 'cheap' } } }), /pricing/);
+  assert.throws(() => createLlmOperations({ pricing: {} }), /pricing/);
+  assert.throws(
+    () => estimateCostCents({ inputTokens: 10, outputTokens: 4, model: 'no-such-model' }),
+    (error) => error?.code === 'LLM_PRICING_UNAVAILABLE',
+  );
 });
 
 test('the key reaches neither storage nor errors', async () => {
@@ -197,6 +320,16 @@ test('answers carry their record sources, ids only', async () => {
   assert.equal(audit[0].sourceCount, 2);
   assert.equal(audit[0].sources, 'contact:7,conversation:9');
   assert.ok(!dump().includes(PROMPT('sources')), 'the prompt text reached storage');
+});
+
+test('the audit keeps every cited source id, not the first few', async () => {
+  const { ops, modules } = setup();
+  const ids = Array.from({ length: 20 }, (_, index) => `contact:${index + 1}`);
+  const out = await call(ops, modules, { tag: 'many-sources', sources: ids });
+  assert.deepEqual([...out.sources], ids);
+  const audit = await ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.equal(audit[0].sourceCount, 20);
+  assert.equal(audit[0].sources, ids.join(','));
 });
 
 test('requests validate fail-closed before any provider is touched', async () => {

@@ -37,13 +37,23 @@ same kit.
   adapter is touched — the fixture's call count stays zero.
 - Past the daily token or cost ceiling the call refuses with
   `LLM_DAILY_CAP_EXCEEDED`, with its reason, before any adapter is touched.
-- Without a key the call is a dry-run (`dryRun: true`,
-  `dryRunReason: 'missing-key'`): the fixture answers, the audit says so,
-  no network happens.
+- With no `secretRef` configured anywhere the call is a dry-run
+  (`dryRun: true`, `dryRunReason: 'missing-key'`): the fixture answers,
+  the audit says so, no network happens. With a key expected but custody
+  failing or unwired the call refuses with `LLM_SECRET_UNAVAILABLE`
+  instead of serving canned text.
+- The spend section serializes per space-day, so racing calls re-read
+  fresh totals: the loser of a filled cap refuses, and no spend update is
+  lost.
+- The model surface is closed: the default model plus the space's explicit
+  `models` allowlist. Every allowed model needs a valid price, or the call
+  refuses with `LLM_PRICING_UNAVAILABLE` before the provider is touched.
 - The key arrives only through the deployment's `resolveSecret` edge from
   a `secret://<space>/<name>` locator. It is held for one request, never
   stored, never logged; provider errors map to typed codes whose text
   carries neither the key nor the prompt.
+- The audit row keeps every cited source id, so the result and the audit
+  always agree on which records an answer cited.
 
 ## Costs
 
