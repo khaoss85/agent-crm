@@ -19,8 +19,10 @@ import {
   bookAppointment,
   bounds,
   createAppointmentBookCapability,
+  createAppointmentScheduleCapability,
   findOverlap,
   readAppointment,
+  readSchedule,
   reminderSourceKey,
   validateAppointmentRequest,
   validateSubject,
@@ -68,6 +70,7 @@ export {
   bounds,
   findOverlap,
   readAppointment,
+  readSchedule,
   reminderSourceKey,
   validateAppointmentRequest,
   validateSubject,
@@ -109,7 +112,10 @@ export function createAppointmentsPackage(options = {}) {
     // here, so commercial is a host-record-style input, not a dependency.
     requires: [{ package: 'work', capability: 'follow-up', version: 1 }],
 
-    capabilities: [createAppointmentBookCapability({ moduleNames: options.config, provider: offered })],
+    capabilities: [
+      createAppointmentBookCapability({ moduleNames: options.config, provider: offered }),
+      createAppointmentScheduleCapability({ moduleNames: options.config }),
+    ],
     actions: [],
 
     // None. A versioned policy earns its fingerprint when two consumers share
@@ -166,4 +172,4 @@ export function createAppointmentsPackageV2(options = {}) {
   return createAppointmentsPackage({ ...options, packageContract: 2 });
 }
 
-export { createAppointmentBookCapability };
+export { createAppointmentBookCapability, createAppointmentScheduleCapability };
