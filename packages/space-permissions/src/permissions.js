@@ -81,19 +81,21 @@ export function checkPermissionKey(value) {
 }
 
 /**
- * Read the stored override for one switch. `overrideRows` are the stored
- * `space-permission-override` rows of one space; rows of another space must
- * never be passed in — every reader filters by spaceId first, which is what
- * keeps one space's switches invisible from the others.
+ * Read the stored override for one switch of one space. `overrideRows` are
+ * stored `space-permission-override` rows; only rows carrying this space's id
+ * are honored — a row of another space is ignored even when a caller passes
+ * it in by mistake, which is what keeps one space's switches invisible from
+ * the others.
  *
+ * @param {string} spaceId the opaque space id
  * @param {string} permission one of the five keys
- * @param {Array<{permission?: unknown, enabled?: unknown}>} [overrideRows]
+ * @param {Array<{spaceId?: unknown, permission?: unknown, enabled?: unknown}>} [overrideRows]
  * @returns {boolean} the effective value
  */
-export function effectivePermission(permission, overrideRows = []) {
+export function effectivePermission(spaceId, permission, overrideRows = []) {
   const key = checkPermissionKey(permission);
   for (const row of overrideRows) {
-    if (row && typeof row === 'object' && row.permission === key) {
+    if (row && typeof row === 'object' && row.spaceId === spaceId && row.permission === key) {
       return row.enabled === true;
     }
   }
@@ -103,14 +105,16 @@ export function effectivePermission(permission, overrideRows = []) {
 /**
  * Resolve all five effective values for one space.
  *
- * @param {Array<{permission?: unknown, enabled?: unknown}>} [overrideRows]
+ * @param {unknown} spaceId the opaque space id
+ * @param {Array<{spaceId?: unknown, permission?: unknown, enabled?: unknown}>} [overrideRows]
  * @returns {Record<string, boolean>} frozen key → effective value
  */
-export function resolveSpacePermissions(overrideRows = []) {
+export function resolveSpacePermissions(spaceId, overrideRows = []) {
+  const id = checkSpaceId(spaceId);
   const rows = Array.isArray(overrideRows) ? overrideRows : [];
   const resolved = {};
   for (const key of SPACE_AI_PERMISSIONS) {
-    resolved[key] = effectivePermission(key, rows);
+    resolved[key] = effectivePermission(id, key, rows);
   }
   return Object.freeze(resolved);
 }
@@ -122,14 +126,14 @@ export function resolveSpacePermissions(overrideRows = []) {
  * is never executed by this path. The caller that receives `proposal` records
  * the proposal and stops; there is no third outcome.
  *
- * @param {{spaceId: unknown, permission: unknown, overrideRows?: Array<{permission?: unknown, enabled?: unknown}>}} input
+ * @param {{spaceId: unknown, permission: unknown, overrideRows?: Array<{spaceId?: unknown, permission?: unknown, enabled?: unknown}>}} input
  * @returns {{decision: 'allow' | 'proposal', spaceId: string, permission: string, enabled: boolean}} frozen
  */
 export function evaluateAiPermission(input) {
   const record = input && typeof input === 'object' ? input : {};
   const spaceId = checkSpaceId(record.spaceId);
   const permission = checkPermissionKey(record.permission);
-  const enabled = effectivePermission(permission, record.overrideRows);
+  const enabled = effectivePermission(spaceId, permission, record.overrideRows);
   return Object.freeze({
     decision: enabled ? 'allow' : 'proposal',
     spaceId,

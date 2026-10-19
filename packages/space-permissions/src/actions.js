@@ -162,7 +162,7 @@ export function buildProposeAction(config) {
       const spaceId = checkSpaceId(record.spaceId);
       const permission = checkPermissionKey(record.permission);
       const stored = await overrides.listWhere({ spaceId });
-      if (effectivePermission(permission, Array.isArray(stored) ? stored : [])) {
+      if (effectivePermission(spaceId, permission, Array.isArray(stored) ? stored : [])) {
         throw new AppError(`Permission "${permission}" is on in this space: act, do not propose`, {
           code: 'SPACE_PERMISSION_ENABLED', status: 409,
         });

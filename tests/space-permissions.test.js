@@ -53,7 +53,7 @@ test('five permission keys, send-without-approval off by default', () => {
     if (key === 'send-without-approval') continue;
     assert.equal(SPACE_AI_PERMISSION_DEFAULTS[key], true, `${key} defaults on`);
   }
-  const resolved = resolveSpacePermissions([]);
+  const resolved = resolveSpacePermissions(SPACE_A, []);
   assert.equal(resolved['send-without-approval'], false);
   assert.equal(Object.keys(resolved).length, 5);
 });
@@ -63,7 +63,7 @@ for (const permission of SPACE_AI_PERMISSIONS) {
     const verdict = evaluateAiPermission({
       spaceId: SPACE_A,
       permission,
-      overrideRows: [{ permission, enabled: false }],
+      overrideRows: [{ spaceId: SPACE_A, permission, enabled: false }],
     });
     assert.equal(verdict.decision, 'proposal');
     assert.equal(verdict.enabled, false);
@@ -75,7 +75,7 @@ for (const permission of SPACE_AI_PERMISSIONS) {
     const verdict = evaluateAiPermission({
       spaceId: SPACE_A,
       permission,
-      overrideRows: [{ permission, enabled: true }],
+      overrideRows: [{ spaceId: SPACE_A, permission, enabled: true }],
     });
     assert.equal(verdict.decision, 'allow');
     assert.equal(verdict.enabled, true);
@@ -266,7 +266,7 @@ test('set-permission creates on first flip, patches after, names the actor', asy
 
 test('propose-action refuses when the switch is on: act, do not propose', async () => {
   const stub = stubModules();
-  stub.rows.overrides.push({ id: 'row-0', spaceId: SPACE_A, permission: 'drafts', enabled: true });
+  stub.rows.overrides.push({ id: 'row-0', spaceId: SPACE_A, scopeKey: `${SPACE_A}:drafts`, permission: 'drafts', enabled: true });
   const action = buildProposeAction();
   const { ctx } = actionCtx(stub, {
     input: {
@@ -329,15 +329,19 @@ test('concurrent proposals replay the open winner, refuse after decision', async
     actionKey: 'quote-9', summary: 'Send the follow-up for quote 9.',
   };
   const realService = stub.modules.get('space-ai-proposal').service;
-  let reads = 0;
+  let preCheckBlanked = false;
   const racing = {
     ...realService,
-    // First read sees nothing (both connections passed the pre-check); later
-    // reads see the winner. The create path enforces the unique sourceKey
-    // like the real store: a clash is a ConflictError, never a second row.
+    // Only the loser's pre-check sees nothing (both connections passed it
+    // before either insert); every later read, including the loser's
+    // re-read after the clash, sees the winner. The create path enforces
+    // the unique sourceKey like the real store: a clash is a ConflictError,
+    // never a second row.
     async listWhere(where) {
-      reads += 1;
-      if (reads <= 2) return [];
+      if (!preCheckBlanked) {
+        preCheckBlanked = true;
+        return [];
+      }
       return realService.listWhere(where);
     },
     async createManaged(row) {
@@ -360,7 +364,8 @@ test('concurrent proposals replay the open winner, refuse after decision', async
   assert.equal(stub.rows.proposals.filter((row) => row.sourceKey === winner.sourceKey).length, 1);
 
   // After a human decided it, the same action key ends with a code.
-  winner.status = 'approved';
+  // (Mutate the stored row: createManaged returns a copy.)
+  stub.rows.proposals.find((row) => row.id === winner.id).status = 'approved';
   const late = actionCtx(stub, { input: draft });
   late.ctx.modules = racingModules;
   await assert.rejects(() => action.execute(late.ctx), (error) => error.code === 'SPACE_PROPOSAL_DECIDED');
@@ -371,6 +376,7 @@ test('approve and refuse are human-only; decided rows go terminal', async () => 
   const approve = buildDecideAction('approved');
   const refuse = buildDecideAction('refused');
   const proposal = { id: 'row-1', status: 'proposed' };
+  stub.rows.proposals.push(proposal);
 
   const agent = actionCtx(stub, { record: proposal, actor: SYSTEM });
   await assert.rejects(() => approve.execute(agent.ctx), (error) => error.code === 'HUMAN_APPROVAL_REQUIRED');
@@ -388,8 +394,8 @@ test('approve and refuse are human-only; decided rows go terminal', async () => 
 test('capability gate reads stored overrides and keeps spaces apart', async () => {
   const stub = stubModules();
   stub.rows.overrides.push(
-    { id: 'row-1', spaceId: SPACE_A, permission: 'send-without-approval', enabled: true },
-    { id: 'row-2', spaceId: SPACE_B, permission: 'drafts', enabled: false },
+    { id: 'row-1', spaceId: SPACE_A, scopeKey: `${SPACE_A}:send-without-approval`, permission: 'send-without-approval', enabled: true },
+    { id: 'row-2', spaceId: SPACE_B, scopeKey: `${SPACE_B}:drafts`, permission: 'drafts', enabled: false },
   );
   stub.rows.proposals.push(
     { id: 'row-9', spaceId: SPACE_B, permission: 'drafts', status: 'proposed', sourceKey: `${SPACE_B}:drafts:k` },

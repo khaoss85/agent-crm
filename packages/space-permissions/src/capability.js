@@ -79,7 +79,7 @@ export function createSpacePermissionGateCapability(config) {
         effective(spaceId) {
           const id = checkSpaceId(spaceId);
           return mapValue(service(modules, names.override).listWhere({ spaceId: id }),
-            (rows) => resolveSpacePermissions(Array.isArray(rows) ? rows : []));
+            (rows) => resolveSpacePermissions(id, Array.isArray(rows) ? rows : []));
         },
 
         /**
