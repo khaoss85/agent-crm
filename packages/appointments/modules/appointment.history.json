@@ -1,0 +1,36 @@
+{
+  "module": "appointment",
+  "previousManifests": [
+    {
+      "manifestVersion": 1,
+      "name": "appointment",
+      "table": "appointments",
+      "description": "One booked appointment between a customer and one team member: the service from the commercial listino (key plus the price snapshot taken at booking time), the start and end instants, notes, and the booking lifecycle (booked -> confirmed -> done, with no-show and cancelled as the other terminal states). Every field is managed: an appointment exists only through the appointments package's book capability, moves only through its advance path, and no client can create, forge or rewrite one. The customer is an opaque subject envelope pointing at the host contact or company record — no customer table is created here. The team member is an opaque team identity string, the same convention as the interactions package's teamAuthorId — no staff table is created here. The service price is a snapshot: the booking path resolves the service and its amount from the commercial listino and stores what was agreed, so a later listino change never rewrites a booked price.",
+      "fields": [
+        { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+        { "name": "subjectResource", "type": "string", "index": true, "writable": "managed" },
+        { "name": "subjectId", "type": "string", "index": true, "writable": "managed" },
+        { "name": "subjectOwner", "type": "enum", "values": ["host", "package"], "writable": "managed" },
+        { "name": "subjectOwnerPackage", "type": "string", "writable": "managed" },
+        { "name": "subjectLabel", "type": "string", "writable": "managed" },
+        { "name": "teamMemberId", "type": "string", "index": true, "writable": "managed" },
+        { "name": "serviceKey", "type": "string", "index": true, "writable": "managed" },
+        { "name": "priceCents", "type": "integer", "writable": "managed" },
+        { "name": "currency", "type": "string", "writable": "managed" },
+        { "name": "startsAt", "type": "timestamp", "index": true, "writable": "managed" },
+        { "name": "endsAt", "type": "timestamp", "writable": "managed" },
+        { "name": "notes", "type": "string", "writable": "managed" },
+        { "name": "status", "type": "enum", "values": ["booked", "confirmed", "done", "no-show", "cancelled"], "index": true, "writable": "managed" },
+        { "name": "reminderSourceKey", "type": "string", "writable": "managed" },
+        { "name": "reminderDueAt", "type": "timestamp", "writable": "managed" },
+        { "name": "bookedAt", "type": "timestamp", "writable": "managed" },
+        { "name": "decidedAt", "type": "timestamp", "writable": "managed" },
+        { "name": "cancelReason", "type": "string", "writable": "managed" },
+        { "name": "actorType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+        { "name": "actorId", "type": "string", "writable": "managed" },
+        { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
+        { "name": "sourceAction", "type": "string", "writable": "managed" }
+      ]
+    }
+  ]
+}

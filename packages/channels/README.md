@@ -69,7 +69,8 @@ webhooks and sends keep working standalone.
   signature, out-of-order) plus no-secrets and space isolation. The
   fixture adapter passes it; every real adapter must pass it before it
   ships. The WhatsApp (`tests/channels-whatsapp.test.js`), Instagram
-  (`tests/channels-instagram.test.js`) and Gmail
+  (`tests/channels-instagram.test.js`), Messenger
+  (`tests/channels-messenger.test.js`) and Gmail
   (`tests/channels-gmail.test.js`) adapters pass it; for adapters
   behind a service window the kit seeds one windowed inbound before
   its send check, so the send proves the seeded window rather than an
@@ -93,15 +94,25 @@ webhooks and sends keep working standalone.
   with the 24-hour reply window (7 days with the `HUMAN_AGENT` tag)
   read from the inbox per space and connection — against a fake
   transport, no credentials.
+- The Messenger Graph adapter (`src/messenger.js`,
+  `tests/channels-messenger.test.js`): Page webhook bodies
+  (`object: 'page'` with `entry[].messaging[]`) with hub
+  signatures, on the same Meta app and the same shared module as
+  Instagram — no copied rule. Subjects carry the `fb:` prefix on the
+  `facebook` channel; echoes off our own page stay out of the inbox;
+  replies ride the same 24-hour window (7 days with the
+  `HUMAN_AGENT` tag) — against a fake transport, no credentials.
 - The shared Meta webhook module (`src/meta-webhook.js`,
   `tests/channels-meta-webhook.test.js`): the one batch/echo/window
-  logic both Meta adapters delegate to — full iteration of every
+  logic every Meta adapter delegates to — full iteration of every
   `entry` in document order (Cloud API `changes[].value` and Graph
   `messaging[]`, so mixed deliveries never truncate to the first
   item), echo detection off the bound account (WhatsApp quarantines
-  the echo as evidence, Instagram leaves it out of the inbox), and
-  the 24-hour window verdict over the server-resolved observation
-  (absent/future/stale refuse, non-canonical is malformed).
+  the echo as evidence, Instagram and Messenger leave it out of the
+  inbox), the 24-hour window verdict over the server-resolved
+  observation (absent/future/stale refuse, non-canonical is malformed),
+  and the one hub-signature check every Meta adapter verifies before
+  parsing.
 - The Gmail API adapter (`src/gmail.js`,
   `tests/channels-gmail.test.js`): Gmail push notifications
   (`message.data` with the message id and thread id) with the channel
