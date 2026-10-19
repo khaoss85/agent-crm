@@ -137,10 +137,11 @@ test('misconfigured listini fail closed with the field path', () => {
 
 test('a too-long listino name is rejected at registration, naming the name', async () => {
   const tooLong = 'a'.repeat(100);
-  // A long but otherwise valid slug used to fail later: with the derived
-  // label it blamed the label, with an explicit label it registered and then
-  // failed in sync with PROVIDER_INVALID on a source key. Both paths now fail
-  // up front with an error that names the name.
+  // Before, a long but otherwise valid slug failed later and unclearly: with
+  // the derived label the registry blamed the label ("at most 80
+  // characters") instead of the name, and with an explicit short label it
+  // registered at all. Both paths now fail up front with an error that names
+  // the name and its bound, label or no label.
   assert.throws(
     () => provider(GYM_PRICE_LIST, { name: tooLong }),
     /name must be a non-empty string of at most \d+ characters/,
