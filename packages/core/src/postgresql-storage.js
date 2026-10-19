@@ -750,27 +750,30 @@ export async function createPostgresqlDatabase(options = {}) {
       try { await admin.end(); } catch { /* ignore */ }
     }
   };
-  // Set once CREATE SCHEMA has committed: a later setup statement can still
-  // time out, and since creation then rejects without a handle the caller
-  // could never close() the orphan schema away.
-  let schemaCreated = false;
   try {
     setup = await withDeadline(setupPending, setupDeadlineMs, 'acquisition');
     // Every setup statement is bounded: an unbounded DDL wait on a half-dead
     // connection never settles, and the file reads as stuck-idle (no CPU,
     // idle PG) instead of failing fast with STORAGE_TIMEOUT
-    // (backlog:b705667ad23b).
-    await withDeadline(setup.query(`CREATE SCHEMA ${quoted}`), setupDeadlineMs, 'acquisition');
-    schemaCreated = true;
-    await withDeadline(setup.query(`SET search_path TO ${quoted}`), setupDeadlineMs, 'acquisition');
+    // (backlog:b705667ad23b). The kind names the setup phase, so a timeout
+    // here reads "setup", not "acquisition" (backlog:a23d9cd02b8f).
+    await withDeadline(setup.query(`CREATE SCHEMA ${quoted}`), setupDeadlineMs, 'setup');
+    await withDeadline(setup.query(`SET search_path TO ${quoted}`), setupDeadlineMs, 'setup');
     for (const sql of options.ddl ?? []) {
-      await withDeadline(setup.query(sql), setupDeadlineMs, 'acquisition');
+      await withDeadline(setup.query(sql), setupDeadlineMs, 'setup');
     }
   } catch (error) {
     setupTimedOut = isPoolCheckoutTimeout(error);
     try { if (setup) setup.release(); } catch { /* ignore */ }
     try { await pool.end(); } catch { /* ignore */ }
-    if (schemaCreated) await dropSchemaBestEffort();
+    // A CREATE SCHEMA that times out on the client may still have committed
+    // on the server: the client then sees a timeout for a schema that
+    // exists, and since creation rejects without a handle the caller could
+    // never close() the orphan schema away. Cleanup therefore runs whenever
+    // setup got far enough to hand out a client, not only when the CREATE
+    // was observed succeeding — DROP SCHEMA IF EXISTS checks server-side
+    // whether there is anything to drop (backlog:a23d9cd02b8f).
+    if (setup) await dropSchemaBestEffort();
     throw error instanceof AppError ? error : sanitizePgError(error);
   }
   setup.release();
