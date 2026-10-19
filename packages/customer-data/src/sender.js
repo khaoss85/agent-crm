@@ -91,11 +91,15 @@ export function normalizeChannelHandle(channel, handle) {
     return /** @type {string} */ (shaped.value);
   }
   if (channel === 'whatsapp' || channel === 'phone') {
-    const digits = /** @type {string} */ (trimmed).replace(PHONE_SEPARATOR_RE, '');
-    if (digits === '') {
-      throw new ValidationError('the phone handle names nobody once separators are removed', { field: 'handle' });
+    const compact = /** @type {string} */ (trimmed).replace(PHONE_SEPARATOR_RE, '');
+    // A channel phone identity is a phone number: without at least one digit
+    // past the separators and the optional leading `+` it names nobody, so
+    // it is refused instead of being stored as a linkable `phone:+` identity.
+    const withoutPlus = compact.startsWith('+') ? compact.slice(1) : compact;
+    if (!/[0-9]/.test(withoutPlus)) {
+      throw new ValidationError('the phone handle names nobody without at least one digit', { field: 'handle' });
     }
-    return digits;
+    return compact;
   }
   return /** @type {string} */ (trimmed);
 }
@@ -467,11 +471,11 @@ export function createChannelSenderResolution({
         ownerPackage: result.subject.ownerPackage ?? null,
         label: result.subject.label ?? sender.email,
       };
-      const identity = await database.transactionAsync(async () => {
+      const linked = await database.transactionAsync(async () => {
         const raced = await reader.externalIdentity(sender.system, sender.externalId);
         // A concurrent resolution won: replay it. A non-contact winner is
         // not a contact — the next call takes the known-identity path.
-        if (raced && raced.subjectResource !== 'contact') return 'non-contact';
+        if (raced && raced.subjectResource !== 'contact') return { nonContact: true };
         const winner = raced
           ? {
             resource: 'contact',
@@ -482,23 +486,52 @@ export function createChannelSenderResolution({
           }
           : subject;
         // recordExternalIdentityRow links a first sighting and refreshes
-        // lastObserved on a replayed one — never a second row.
-        return recordExternalIdentityRow({
-          modules, names, system: sender.system, externalId: sender.externalId,
-          subject: winner, runId: SENDER_RUN_ID, actor,
-        });
+        // lastObserved on a replayed one — never a second row. A uniqueness
+        // conflict means a concurrent resolution committed the same handle
+        // after the re-check above: replay the winner with the same
+        // discipline the company and creation paths use instead of
+        // surfacing the raw conflict.
+        try {
+          const identity = await recordExternalIdentityRow({
+            modules, names, system: sender.system, externalId: sender.externalId,
+            subject: winner, runId: SENDER_RUN_ID, actor,
+          });
+          return { identity, contactId: winner.id, wonByRace: Boolean(raced) };
+        } catch (error) {
+          return replayRaceLoser(error);
+        }
       });
-      if (identity === 'non-contact') {
+      if (linked.nonContact) {
         return decide({ ...request, handle: sender.externalId });
+      }
+      if ((linked.replayed || linked.wonByRace) && linked.contactId) {
+        // A replayed handle — whether it lost a uniqueness conflict or the
+        // in-transaction re-check already found the winner — reports the
+        // winner with the replay receipt, never the pre-read policy that
+        // matched somebody else. The race-won link already refreshed the
+        // sighting inside its transaction, so its identity is reused.
+        const identity = linked.wonByRace
+          ? linked.identity
+          : await database.transactionAsync(async () => refreshReplayed(linked.contactId));
+        return Object.freeze({
+          system: sender.system,
+          outcome: 'matched',
+          rule: 'external-identity',
+          contact: Object.freeze({ resource: 'contact', id: linked.contactId }),
+          candidates: [],
+          candidatesWritten: 0,
+          identity,
+          evidence: `channel handle ${sender.system} already names this contact`,
+        });
       }
       return Object.freeze({
         system: sender.system,
         outcome: 'matched',
         rule: result.rule,
-        contact: Object.freeze({ resource: 'contact', id: result.subject.id }),
+        contact: Object.freeze({ resource: 'contact', id: /** @type {string} */ (linked.contactId) }),
         candidates: [],
         candidatesWritten: 0,
-        identity,
+        identity: linked.identity,
         evidence: result.evidence,
       });
     }

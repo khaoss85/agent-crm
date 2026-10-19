@@ -172,6 +172,10 @@ export function shapeCustomerCard(profile, subject) {
   // the active list is filtered from the profile's first-50 slice: when that
   // slice is truncated and holds no active record, the card must not report a
   // definitive "no active package" — the active record may sit past the slice.
+  // The same holds for a floor count (countIsComplete:false): the bounded page
+  // is not the whole evidence, so "no active in hand" is unavailable-with-a-
+  // reason, never a definitive "none" — mirroring the status absenceIsProven
+  // guard two screens above.
   const packageCountIsComplete = subscriptions ? subscriptions.countIsComplete !== false : true;
   const packageTruncated = subscriptions ? subscriptions.truncated === true : false;
   const packageActive = Object.freeze((subscriptions?.items ?? []).filter((item) => item.status === 'active'));
@@ -186,7 +190,7 @@ export function shapeCustomerCard(profile, subject) {
       reason: profile.subscriptions?.reason
         ?? 'subscriptions are not composed in this application — this is not a claim the customer holds no package',
     })
-    : (packageActive.length > 0 || !packageTruncated)
+    : (packageActive.length > 0 || (!packageTruncated && packageCountIsComplete))
       ? Object.freeze({
         available: true,
         count: subscriptions.count,
@@ -202,12 +206,16 @@ export function shapeCustomerCard(profile, subject) {
         count: subscriptions.count,
         countIsComplete: packageCountIsComplete,
         countNote: subscriptions.countNote ?? null,
-        truncated: true,
+        truncated: packageTruncated,
         active: Object.freeze([]),
         items: subscriptions.items ?? Object.freeze([]),
-        reason: 'the subscriptions page is truncated and holds no active record in hand: '
-          + 'an active package may exist past the readable slice, so this is not a claim none exists'
-          + (packageQualifier ? ` (${packageQualifier})` : ''),
+        reason: packageTruncated
+          ? 'the subscriptions page is truncated and holds no active record in hand: '
+            + 'an active package may exist past the readable slice, so this is not a claim none exists'
+            + (packageQualifier ? ` (${packageQualifier})` : '')
+          : 'the subscriptions count is a floor from a bounded page and the page holds no active record in hand: '
+            + 'an active package may sit outside the readable evidence, so this is not a claim none exists'
+            + (packageQualifier ? ` (${packageQualifier})` : ''),
       });
 
   const notes = Object.freeze({
