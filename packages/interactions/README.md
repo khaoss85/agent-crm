@@ -96,10 +96,14 @@ outbound:  sent → delivered → read
   same payload returns the stored row; a divergent payload — including a
   subject moved from host-owned to package-owned — is refused `409`, never
   adopted.
-- **An advance re-reads before writing.** The action re-reads the authoritative
-  status inside its transaction and refuses a move the message no longer
-  allows, so a concurrent branch that committed first wins and the loser names
-  it instead of silently writing last.
+- **Concurrent advances serialize.** Every advance runs through one chain:
+  the authoritative status is re-read inside the chain slot (and the
+  transaction), so a concurrent branch that committed first wins and the loser
+  is refused `409` naming it, instead of silently writing last.
+- **A chat message keeps its line breaks.** The body is bounded plain text
+  without control characters, LF kept as written (CRLF arrives as LF): a
+  WhatsApp or Instagram message over several lines is stored and read back
+  unchanged.
 
 ## The Call record
 

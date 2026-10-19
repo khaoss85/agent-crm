@@ -91,42 +91,86 @@ test('an outbound message without a team author is refused, and an inbound one w
   );
 });
 
+test('a chat message keeps its line breaks: stored and read back unchanged', () => {
+  const body = 'Ciao, sono Maria.\nConfermi per domani alle 18?\n\nFammi sapere, grazie!';
+  const validated = validateMessageRequest(message({ body }));
+  assert.equal(validated.body, body);
+  const windows = validateMessageRequest(message({ body: 'Riga uno.\r\nRiga due.' }));
+  assert.equal(windows.body, 'Riga uno.\nRiga due.');
+});
+
+test('a message body keeps the length and control-character limits, minus line breaks', () => {
+  assert.throws(() => validateMessageRequest(message({ body: 'con un\ttab' })), /control characters/);
+  assert.throws(() => validateMessageRequest(message({ body: 'con un\ra capo vecchio' })), /control characters/);
+  assert.throws(() => validateMessageRequest(message({ body: 'con un\u0000null' })), /control characters/);
+  assert.throws(() => validateMessageRequest(message({ body: '   \n  ' })), /body is required/);
+  assert.throws(
+    () => validateMessageRequest(message({ body: `${'x'.repeat(1990)}\n${'y'.repeat(20)}` })),
+    /at most 2000 characters/,
+  );
+  assert.equal(validateMessageRequest(message({ body: `${'x'.repeat(1990)}\n${'y'.repeat(9)}` })).body.length, 2000);
+});
+
 test('a fresh message never carries a failure, and a failure is a validated move', async () => {
   assert.throws(() => validateMessageRequest(message({ errorCode: 'PROVIDER_500' })), /only when a message advances to failed/);
   const applied = [];
-  const service = { applyManaged: async (id, patch) => { applied.push([id, patch]); return { id, ...patch }; } };
+  const stored = { id: 'm1', status: 'sent' };
+  const service = {
+    get: async (id) => ({ ...stored, id }),
+    applyManaged: async (id, patch) => {
+      applied.push([id, patch]);
+      Object.assign(stored, patch);
+      return { id, ...stored };
+    },
+  };
   const moved = await advanceMessage({ messages: service, actor: { type: 'user', id: 'e2e' } }, { id: 'm1', status: 'sent' }, 'delivered');
   assert.equal(moved.status, 'delivered');
   assert.equal(applied.length, 1);
   await assert.rejects(
-    advanceMessage({ messages: service, actor: { type: 'user', id: 'e2e' } }, { id: 'm1', status: 'sent' }, 'failed'),
+    advanceMessage({ messages: service, actor: { type: 'user', id: 'e2e' } }, { id: 'm1', status: 'delivered' }, 'failed'),
     (error) => error.code === 'ValidationError' || /errorCode is required/.test(error.message),
   );
   const failed = await advanceMessage(
-    { messages: service, actor: { type: 'user', id: 'e2e' } }, { id: 'm1', status: 'sent' }, 'failed', 'PROVIDER_500',
+    { messages: service, actor: { type: 'user', id: 'e2e' } }, { id: 'm1', status: 'delivered' }, 'failed', 'PROVIDER_500',
   );
   assert.equal(failed.status, 'failed');
   assert.equal(failed.errorCode, 'PROVIDER_500');
 });
 
+test('an advance decided on a stale record names the move that beat it', async () => {
+  const service = {
+    get: async () => ({ id: 'm1', status: 'read' }),
+    applyManaged: async (id, patch) => ({ id, ...patch }),
+  };
+  await assert.rejects(
+    advanceMessage({ messages: service, actor: { type: 'user', id: 'e2e' } }, { id: 'm1', status: 'sent' }, 'delivered'),
+    (error) => error.code === 'INTERACTIONS_INVALID_STATE'
+      && error.status === 409
+      && /moved while this action ran/.test(error.message),
+  );
+});
+
 test('terminal message states never regress, and skipping a step is refused', async () => {
-  const service = { applyManaged: async (id, patch) => ({ id, ...patch }) };
+  const serviceFor = (status) => ({
+    get: async (id) => ({ id, status }),
+    applyManaged: async (id, patch) => ({ id, ...patch }),
+  });
   const actor = { type: 'user', id: 'e2e' };
   for (const status of ['received', 'read', 'failed']) {
     await assert.rejects(
-      advanceMessage({ messages: service, actor }, { id: 'm1', status }, 'delivered'),
+      advanceMessage({ messages: serviceFor(status), actor }, { id: 'm1', status }, 'delivered'),
       (error) => error.code === 'INTERACTIONS_INVALID_STATE' && error.status === 409,
       `from ${status}`,
     );
   }
   // sent -> read skips delivered: refused, naming the allowed moves.
   await assert.rejects(
-    advanceMessage({ messages: service, actor }, { id: 'm1', status: 'sent' }, 'read'),
+    advanceMessage({ messages: serviceFor('sent'), actor }, { id: 'm1', status: 'sent' }, 'read'),
     (error) => error.code === 'INTERACTIONS_INVALID_STATE' && /delivered or failed/.test(error.message),
   );
   // delivered -> delivered is not a move either.
   await assert.rejects(
-    advanceMessage({ messages: service, actor }, { id: 'm1', status: 'delivered' }, 'delivered'),
+    advanceMessage({ messages: serviceFor('delivered'), actor }, { id: 'm1', status: 'delivered' }, 'delivered'),
     (error) => error.code === 'INTERACTIONS_INVALID_STATE',
   );
 });

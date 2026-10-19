@@ -138,6 +138,30 @@ function optionalSafeText(value, field, max) {
   return safeText(value, field, max);
 }
 
+// The message-body fence: the CONTROL_RE fence safeText enforces, minus the
+// line feed. A chat message spans lines — WhatsApp and Instagram send them —
+// so LF is kept as written and a Windows CRLF arrives as the LF the row
+// stores. Every other control stays refused, including the lone carriage
+// return and the tab: the length and control-character limits are the ones
+// safeText already enforced, with line breaks the single exception.
+
+/** @param {string} text */
+function withoutLineFeeds(text) {
+  return text.replace(/\n/g, '');
+}
+
+/** @param {unknown} value @param {string} field @param {number} max */
+function safeMessageBody(value, field, max) {
+  if (typeof value !== 'string') throw new ValidationError(`${field} is required`, { field });
+  const normalized = value.replace(/\r\n/g, '\n').trim();
+  if (normalized === '') throw new ValidationError(`${field} is required`, { field });
+  if (normalized.length > max) throw new ValidationError(`${field} must be at most ${max} characters`, { field });
+  if (CONTROL_RE.test(withoutLineFeeds(normalized))) {
+    throw new ValidationError(`${field} must not contain control characters`, { field });
+  }
+  return normalized;
+}
+
 /**
  * The ADR-030 opaque subject envelope, same shape `packages/work` stores.
  * SQLite cannot enforce a foreign key whose target table varies per row; what
@@ -672,7 +696,7 @@ export function validateMessageRequest(request) {
     conversationId: safeText(value.conversationId, 'conversationId', MAX_ID),
     direction,
     channel: validateChannel(value.channel, 'channel'),
-    body: safeText(value.body, 'body', MAX_BODY),
+    body: safeMessageBody(value.body, 'body', MAX_BODY),
     teamAuthorId,
     remoteHandle: optionalSafeText(value.remoteHandle, 'remoteHandle', MAX_HANDLE),
     subject: validateSubject(value.subject),
@@ -741,29 +765,96 @@ export async function logMessage(context, request) {
  * including any move from `received`, `read` or `failed` — is a 409 naming the
  * moves the current state allows. A failure without a reason code is refused:
  * a failed delivery nobody can diagnose is not evidence.
+ *
+ * The single choke point for every advance, action path included: concurrent
+ * branches serialize on one chain, the authoritative status is re-read inside
+ * the chain slot, and the loser is refused 409 instead of writing last.
  */
+/**
+ * Same-process serialization for every message advance, one global FIFO
+ * chain: the re-read below must see a branch that committed first, so two
+ * advances racing in the same tick still order. Acquisition attaches
+ * synchronously — no `await` before the chain is extended — and tails never
+ * reject, so a refused move never wedges the chain. Across connections the
+ * storage transaction serializes writers on real storage. Same discipline as
+ * the payments package chain; kept here because a domain package reaches
+ * another package only through a declared capability, never a file import.
+ */
+const messageAdvanceChain = { tail: Promise.resolve() };
+
+/** @param {() => Promise<any>} critical */
+function withMessageAdvance(critical) {
+  const previous = messageAdvanceChain.tail;
+  let release = () => {};
+  const current = new Promise((resolve) => { release = resolve; });
+  const tail = previous.then(() => current, () => current);
+  messageAdvanceChain.tail = tail;
+  // Synchronous until here: two callers racing in the same tick still order.
+  return previous.then(critical).finally(release);
+}
+
+/**
+ * Open the transaction the single advance runs in, or null when the move
+ * must run unwrapped: no storage handle, or a transaction already open (a
+ * nested BEGIN would roll back the outer unit — record actions already run
+ * inside one). The wrapped body is storage work only (one fresh read plus
+ * one write), so on one connection a second move cannot interleave inside
+ * it: it re-reads the winner and takes the loser's contract instead.
+ *
+ * @param {any} messages
+ */
+function messageTransact(messages) {
+  const database = messages?.database ?? null;
+  if (!database || typeof database.transactionAsync !== 'function') return null;
+  let proof;
+  try {
+    proof = proveCallerTransaction([messages]);
+  } catch {
+    return null;
+  }
+  if (proof !== TRANSACTION_PROOF.NO_TRANSACTION) return null;
+  return (/** @type {() => Promise<any>} */ critical) => database.transactionAsync(critical);
+}
+
 export async function advanceMessage({ messages, actor }, record, to, errorCode) {
-  const target = typeof to === 'string' ? to.trim() : to;
-  const allowed = MESSAGE_TRANSITIONS[record.status] ?? [];
-  if (!MESSAGE_STATES.includes(target) || !allowed.includes(target)) {
-    throw new AppError(
-      `An interaction message in state "${record.status}" cannot advance to "${target}"`
-        + (allowed.length > 0 ? `; it may advance to ${allowed.join(' or ')}` : '; it is terminal and advances nowhere'),
-      { code: 'INTERACTIONS_INVALID_STATE', status: 409, details: { from: record.status, to: target, allowed } },
-    );
-  }
-  const code = target === 'failed'
-    ? safeText(errorCode, 'errorCode', MAX_ERROR_CODE)
-    : null;
-  if (target !== 'failed' && errorCode !== undefined && errorCode !== null && errorCode !== '') {
-    throw new ValidationError('errorCode is recorded only when a message advances to failed', { field: 'errorCode' });
-  }
-  if (!messages?.applyManaged) {
+  if (!messages?.applyManaged || typeof messages?.get !== 'function') {
     throw new AppError('The interactions package is installed without a managed "interaction-message" record module', {
       code: 'INTERACTIONS_STORAGE_INVALID', status: 500,
     });
   }
-  return messages.applyManaged(record.id, { status: target, errorCode: code }, { actor });
+  return withMessageAdvance(async () => {
+    const run = async () => {
+      // The authoritative state, read inside the chain slot (and inside the
+      // transaction when the caller is not already in one): a concurrent
+      // branch that committed first is seen here, never decided over. The
+      // record the caller hands in names the row; only its id is trusted.
+      const fresh = await messages.get(record.id);
+      const from = fresh?.status;
+      const target = typeof to === 'string' ? to.trim() : to;
+      const allowed = MESSAGE_TRANSITIONS[from] ?? [];
+      if (!MESSAGE_STATES.includes(target) || !allowed.includes(target)) {
+        const moved = record && typeof record.status === 'string' && record.status !== from;
+        throw new AppError(
+          moved
+            ? `An interaction message in state "${from}" cannot advance to "${target}": `
+              + 'the message moved while this action ran'
+              + (allowed.length > 0 ? `; it may advance to ${allowed.join(' or ')}` : '; it is terminal and advances nowhere')
+            : `An interaction message in state "${from}" cannot advance to "${target}"`
+              + (allowed.length > 0 ? `; it may advance to ${allowed.join(' or ')}` : '; it is terminal and advances nowhere'),
+          { code: 'INTERACTIONS_INVALID_STATE', status: 409, details: { from, to: target, allowed } },
+        );
+      }
+      const code = target === 'failed'
+        ? safeText(errorCode, 'errorCode', MAX_ERROR_CODE)
+        : null;
+      if (target !== 'failed' && errorCode !== undefined && errorCode !== null && errorCode !== '') {
+        throw new ValidationError('errorCode is recorded only when a message advances to failed', { field: 'errorCode' });
+      }
+      return messages.applyManaged(record.id, { status: target, errorCode: code }, { actor });
+    };
+    const transact = messageTransact(messages);
+    return transact ? transact(run) : run();
+  });
 }
 
 /** @param {unknown} request */
@@ -1644,25 +1735,13 @@ export function buildAdvanceMessageAction(moduleNames) {
       }
       // The runtime gates the entry state before this code runs, but a
       // concurrent advance can commit between that gate and this write: the
-      // record handed here may already be stale. Re-read the authoritative
-      // status immediately before writing, inside the same transaction, and
-      // refuse a move the current state no longer allows — so two branches
+      // record handed here may already be stale. advanceMessage is the single
+      // choke point — it serializes concurrent branches on one chain, re-reads
+      // the authoritative status inside the chain slot (and the transaction),
+      // and refuses a move the current state no longer allows, so two branches
       // from one state cannot both commit, and the loser names the move that
       // beat it instead of silently deciding the final state last.
-      // (Residual: the framework's managed update is unconditional once
-      // issued; a row lock or compare-and-set primitive in core would close
-      // the remaining window between this read and the write.)
-      const current = await service.get(record.id);
-      if (current.status !== record.status) {
-        const allowed = MESSAGE_TRANSITIONS[current.status] ?? [];
-        throw new AppError(
-          `An interaction message in state "${current.status}" cannot advance to "${input.to}": `
-            + 'the message moved while this action ran'
-            + (allowed.length > 0 ? `; it may advance to ${allowed.join(' or ')}` : '; it is terminal and advances nowhere'),
-          { code: 'INTERACTIONS_INVALID_STATE', status: 409, details: { from: current.status, to: input.to, allowed } },
-        );
-      }
-      return { message: await advanceMessage({ messages: service, actor }, current, input.to, input.errorCode) };
+      return { message: await advanceMessage({ messages: service, actor }, record, input.to, input.errorCode) };
     },
   };
 }
