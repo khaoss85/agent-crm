@@ -43,6 +43,7 @@ const MODULE_HISTORY_FILES = Object.freeze({
   'work-activity': join(HERE, '../../work/modules/work-activity.history.json'),
   'data-quality-issue': join(HERE, '../../customer-data/modules/data-quality-issue.history.json'),
   'calendar-sync-state': join(HERE, '../../calendar-sync/modules/calendar-sync-state.history.json'),
+  'appointment': join(HERE, '../../appointments/modules/appointment.history.json'),
 });
 
 /**
