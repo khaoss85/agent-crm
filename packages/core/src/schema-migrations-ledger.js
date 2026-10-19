@@ -25,7 +25,7 @@ export const PINNED_CORE_MIGRATION_CHECKSUMS = Object.freeze({
  * (2026-09-20) widened the data-quality-issue `kind` enum with
  * `identity_conflict_windowed_scope` without raising the manifest revision,
  * so revision 1 shipped two released bootstrap identities: the original
- * (`6d601a00…` on PostgreSQL, recorded by presti-group) and the widened one
+ * (`6d601a00…` on PostgreSQL, recorded by the first production database) and the widened one
  * (`44aec90d…`, recorded by every database bootstrapped from b8266ea until
  * the revision-2 fix). The revision-2 history renders the original bootstrap
  * plus `pg_evolve_data_quality_issues_r2`, whose `DROP CONSTRAINT IF EXISTS`

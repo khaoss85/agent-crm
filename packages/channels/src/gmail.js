@@ -6,7 +6,7 @@ import { verifyHmacWebhook } from './crypto.js';
 /**
  * Gmail API channel adapter (backlog:2f621c1d81b0).
  *
- * The Presti Group mailbox on the shared channel base: inbound mail lands
+ * The space's linked mailbox on the shared channel base: inbound mail lands
  * in the right conversation, and a reply from the card stays in the same
  * Gmail thread — on the exact adapter contract, registries, inbox, outbox
  * and kit the channels package already ships.
@@ -149,7 +149,7 @@ function fromBase64Url(value) {
 /** Build one provider-native Gmail push body (tests only). */
 export function gmailPushBody({
   id, threadId, from, to, subject = '', snippet = '',
-  internalDateMs = null, historyId = 'history-fake-1', subscription = 'projects/presti/subscriptions/accordo-gmail',
+  internalDateMs = null, historyId = 'history-fake-1', subscription = 'projects/example/subscriptions/accordo-gmail',
   publishTime = null,
 }) {
   const at = internalDateMs ?? Date.now();
@@ -343,7 +343,7 @@ function assertAdapterConfig(input = {}) {
  *
  * @param {{
  *   secret?: string, mailbox?: string, baseUrl?: string, testOnly?: boolean,
- * }} options `mailbox` is the bound Presti Group address: the kit/self-test
+ * }} options `mailbox` is the bound space address: the kit/self-test
  * loopback address.
  */
 export function createGmailChannelAdapter(options = {}) {

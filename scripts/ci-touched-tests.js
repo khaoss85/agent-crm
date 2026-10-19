@@ -196,6 +196,13 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // changes SQL without raising the revision fails here on every PR
   // (seed on presti-group failed after b8266ea widened an enum unbumped).
   'tests/module-manifest-revision-guard.test.js',
+  // Client-name scan of packages/ (backlog:4c63c9dc): the framework
+  // ships no customer name, so a name entering packages/ fails here on
+  // every PR. Test fixtures may name one (the declared exception); the
+  // walk lives in scripts/framework-neutrality.js, behind the test file,
+  // so the unlisted-guard audit below does not see its shape — it is
+  // listed here by audit, like the raw-driver boundary.
+  'tests/framework-neutrality.test.js',
   // This gate's own audit (the unlisted-guard test walks tests/ itself):
   // a PR adding a guard-shaped file anywhere must run the audit that
   // requires it listed.
