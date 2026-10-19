@@ -41,7 +41,9 @@ import assert from 'node:assert/strict';
  *   providerSendCalls: (stack) => 1, // how many provider bytes left this stack
  *   outboxJobCount: async (stack) => 1, // channel-send jobs stored
  *   historyCount: async (stack) => 1, // recorded outbound history rows
- *   isMarkedSent: async (stack) => true, // the row's sent marker landed
+ *   markerValue: async (stack) => '<the row\'s sent marker, empty until confirmed>',
+ *     // the confirm stamps the instant the job was queued for (`now.queue`),
+ *     // never the confirming beat's clock
  * }
  * ```
  */
@@ -75,7 +77,10 @@ export async function checkConcurrentSweepsQueueOneJob(driver) {
     // row, one marker, no second job, no second send.
     const confirmed = await driver.dispatch(first, driver.now.confirm);
     assert.equal(confirmed.sent.length, 1, `${driver.label}: the confirm records the finished job`);
-    assert.ok(await driver.isMarkedSent(first), `${driver.label}: the sent marker lands on confirm`);
+    assert.equal(
+      await driver.markerValue(first), driver.now.queue,
+      `${driver.label}: the marker stamps the queued-for instant, never the confirming beat's clock`,
+    );
     const replayed = await driver.dispatch(first, driver.now.confirm);
     assert.equal(replayed.sent.length, 0, `${driver.label}: a replay after the confirm sends nothing`);
     assert.equal(replayed.queued.length, 0, `${driver.label}: a replay after the confirm queues nothing`);
@@ -104,14 +109,17 @@ export async function checkCrashBetweenSendAndConfirmSendsOnce(driver) {
       `${driver.label}: a crash between history and marker fails the sweep`,
     );
     assert.equal(await driver.historyCount(stack), 1, `${driver.label}: the crashed confirm keeps its history row`);
-    assert.equal(await driver.isMarkedSent(stack), false, `${driver.label}: the crashed confirm leaves the marker empty`);
+    assert.ok(!await driver.markerValue(stack), `${driver.label}: the crashed confirm leaves the marker empty`);
 
     // The next beat, on another clock, replays the identical history row
     // instead of conflicting, and the marker lands: one send, one row.
     const retried = await driver.dispatch(stack, driver.now.confirm);
     assert.equal(retried.sent.length, 1, `${driver.label}: the retry after the crash confirms once`);
     assert.equal(await driver.historyCount(stack), 1, `${driver.label}: the retry replays the same history row`);
-    assert.ok(await driver.isMarkedSent(stack), `${driver.label}: the marker lands on retry`);
+    assert.equal(
+      await driver.markerValue(stack), driver.now.queue,
+      `${driver.label}: the marker stamps the queued-for instant, never the retry's clock`,
+    );
     assert.equal(driver.providerSendCalls(stack), 1, `${driver.label}: the retry sends nothing again`);
   } finally {
     await cleanup();

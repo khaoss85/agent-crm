@@ -735,15 +735,24 @@ function reminderOutboundDriver() {
     providerSendCalls: (stack) => stack.api.state.sendCalls,
     outboxJobCount: async (stack) => (await channelSendJobs(stack)).length,
     historyCount: async (stack) => (await services(stack).messages.listWhere({})).length,
-    isMarkedSent: async (stack) => {
+    markerValue: async (stack) => {
       const row = (await services(stack).appointments.listWhere({ sourceKey: CONFORMANCE_KEY }))[0] ?? null;
-      return !!row?.reminderSentAt;
+      return row?.reminderSentAt ?? null;
     },
   };
 }
 
 test('a booking cancelled between the list and the fire never queues', async () => {
   await checkCancelledRowNeverQueues(reminderOutboundDriver());
+  // The row names itself: a cancel is `not-sendable`, never a silent skip.
+  const driver = reminderOutboundDriver();
+  const { stack, cleanup } = await driver.createStack();
+  try {
+    const fired = await driver.dispatchWithCancelledRow(stack, driver.now.queue);
+    assert.deepEqual(fired.skipped.map((entry) => entry.reason), ['not-sendable']);
+  } finally {
+    await cleanup();
+  }
 });
 
 test('a booking rescheduled between the list and the fire never queues', async (t) => {
