@@ -24,7 +24,12 @@ import { reminderMessageKey, reminderThreadKey } from './appointments.js';
  * 2. **Confirm.** A later beat re-queues (returning the same row, now with
  *    its current state) and, only for jobs the outbox reports `succeeded`,
  *    records the send in the customer's thread and marks the booking sent.
- *    The marker is written from the job's confirmation, never before a send.
+ *    Both halves stamp the booking's own due instant (`reminderDueAt`),
+ *    never the sweep clock: a crash-retry or a later beat replays the
+ *    identical history row instead of conflicting with its own stamp, and
+ *    the marker is filled only when still empty, always with that same
+ *    value. The marker is written from the job's confirmation, never before
+ *    a send.
  *
  * What this does NOT promise: the provider-side dedup rides the idempotency
  * key the outbox hands every adapter — the fake honors it, and every real
@@ -51,6 +56,20 @@ export const APPOINTMENT_REMINDER_SWEEP_MAX_ATTEMPTS = 5;
 
 /** Bookings that still hold their slot and may still remind. */
 const SENDABLE_STATES = Object.freeze(['booked', 'confirmed']);
+
+/**
+ * Queue-time refusals that belong to one row, never to the sweep: a
+ * suspended or revoked connection, an unknown adapter, or a target the
+ * channel no longer accepts. The row is recorded skipped with its reason
+ * and the sweep stays green for every other due reminder. Anything else
+ * (storage, transient) still fails the sweep and retries.
+ */
+const QUEUE_REFUSAL_SKIPS = Object.freeze(new Set([
+  'CHANNEL_CONNECTION_NOT_ACTIVE',
+  'CHANNEL_CONNECTION_UNKNOWN',
+  'CHANNEL_ADAPTER_UNKNOWN',
+  'CHANNEL_MESSAGE_MALFORMED',
+]));
 /** The interaction message body bound (`packages/interactions`), restated: no cross-package import. */
 const MAX_HISTORY_BODY = 2000;
 
@@ -227,6 +246,11 @@ function queueSkipFor(fresh, row, instant) {
   if (fresh.reminderSentAt !== null && fresh.reminderSentAt !== undefined && fresh.reminderSentAt !== '') {
     return 'already-sent';
   }
+  // The due instant is the confirm stamp below: without it there is
+  // nothing stable to record, so the row is not sendable.
+  if (fresh.reminderDueAt === null || fresh.reminderDueAt === undefined || fresh.reminderDueAt === '') {
+    return 'not-sendable';
+  }
   if (fresh.startsAt !== row.startsAt) return 'rescheduled';
   // The slot already began: a *pre*-appointment reminder is stale. The
   // follow-up stays open for the human; the sweep records the skip.
@@ -273,21 +297,31 @@ async function fireOneReminder({ appointments, tasks, templateQueue, interaction
   // crash-retry) queue the byte-identical job and get the same row back.
   // The due instant schedules the job — stable per booking, so every beat
   // computes the identical enqueue and dedups on it.
-  const queued = await templateQueue.queueTemplate({
-    spaceId: fresh.reminderSpaceId,
-    connectionKey: fresh.reminderConnectionKey,
-    to: fresh.reminderTo,
-    template,
-    messageKey,
-    scheduleAt: fresh.reminderDueAt,
-    actor: TIMER_ACTOR,
-  });
+  let queued;
+  try {
+    queued = await templateQueue.queueTemplate({
+      spaceId: fresh.reminderSpaceId,
+      connectionKey: fresh.reminderConnectionKey,
+      to: fresh.reminderTo,
+      template,
+      messageKey,
+      scheduleAt: fresh.reminderDueAt,
+      actor: TIMER_ACTOR,
+    });
+  } catch (error) {
+    // A terminal refusal names this row, not the sweep: a revoked
+    // connection must not keep every later beat red for the other rows.
+    if (error && typeof error === 'object' && QUEUE_REFUSAL_SKIPS.has(/** @type {any} */ (error).code)) {
+      return { status: 'dead', sourceKey: fresh.sourceKey, reason: 'send-refused' };
+    }
+    throw error;
+  }
   if (queued.state === 'succeeded') {
     // The send already went out under the claim above: re-read before
-    // recording, and skip a booking that died or moved meanwhile. The
-    // outbox job keeps the provider proof; the follow-up stays open for
-    // the human. No lateness gate here: an on-time send confirmed late is
-    // still truthful history.
+    // recording, and skip a booking that died, moved, or already confirmed
+    // meanwhile. The outbox job keeps the provider proof; the follow-up
+    // stays open for the human. No lateness gate here: an on-time send
+    // confirmed late is still truthful history.
     const current = await readFreshBooking(appointments, fresh);
     if (!SENDABLE_STATES.includes(current.status)) {
       return { status: 'skipped', sourceKey: fresh.sourceKey, reason: 'not-sendable' };
@@ -295,7 +329,12 @@ async function fireOneReminder({ appointments, tasks, templateQueue, interaction
     if (current.startsAt !== fresh.startsAt) {
       return { status: 'skipped', sourceKey: fresh.sourceKey, reason: 'rescheduled' };
     }
-    const conversationId = await confirmOneReminder({ appointments, interactionLog, instant }, current);
+    if (current.reminderSentAt !== null && current.reminderSentAt !== undefined && current.reminderSentAt !== '') {
+      return { status: 'skipped', sourceKey: fresh.sourceKey, reason: 'already-sent' };
+    }
+    // The confirm stamp is the due instant this job was queued for —
+    // stable across beats, so a retry replays the identical history row.
+    const conversationId = await confirmOneReminder({ appointments, interactionLog }, current, fresh.reminderDueAt);
     return { status: 'sent', sourceKey: fresh.sourceKey, jobId: queued.jobId, conversationId };
   }
   // A send the outbox settled terminally (or cancelled) never fires on its
@@ -311,11 +350,15 @@ async function fireOneReminder({ appointments, tasks, templateQueue, interaction
 }
 
 /**
- * Record a confirmed send in the thread and mark the booking sent. Both
- * halves replay: the thread and the message re-resolve by their
- * deterministic source keys, and the marker is the same instant twice.
+ * Record a confirmed send in the thread and mark the booking sent.
+ * Idempotent per message key, never per sweep clock: history and marker
+ * both stamp the due instant the send was queued for, so a crash between
+ * the two halves — or two beats confirming the same job on different
+ * clocks — replays the identical row instead of conflicting with it. A
+ * conflicting replay of the same key is the other half already recorded:
+ * the marker is matched, not failed.
  */
-async function confirmOneReminder({ appointments, interactionLog, instant }, row) {
+async function confirmOneReminder({ appointments, interactionLog }, row, stamp) {
   const messageKey = reminderMessageKey(row.sourceKey);
   const threadKey = reminderThreadKey(row.sourceKey);
   const body = reminderHistoryBody(row);
@@ -336,23 +379,43 @@ async function confirmOneReminder({ appointments, interactionLog, instant }, row
   // No remote handle: the provider id belongs to the outbox job, and this
   // package never copies provider truth into history — the thread proves
   // the send happened, the jobs table proves the provider answered.
-  await interactionLog.logMessage({
-    sourceKey: messageKey,
-    conversationId,
-    direction: 'outbound',
-    channel: 'whatsapp',
-    body,
-    teamAuthorId: row.teamMemberId,
-    subject,
-    occurredAt: instant,
-    source,
-  });
+  try {
+    await interactionLog.logMessage({
+      sourceKey: messageKey,
+      conversationId,
+      direction: 'outbound',
+      channel: 'whatsapp',
+      body,
+      teamAuthorId: row.teamMemberId,
+      subject,
+      occurredAt: stamp,
+      source,
+    });
+  } catch (error) {
+    // Same key, same payload replays inside logMessage; a 409 of the same
+    // key is the recorded half of a crashed confirm — match the marker
+    // below instead of failing the sweep on our own stamp.
+    if (!error || typeof error !== 'object' || /** @type {any} */ (error).code !== 'INTERACTIONS_LOG_CONFLICT') {
+      throw error;
+    }
+  }
   if (typeof appointments.applyManaged !== 'function') {
     throw new AppError('The appointments package is installed without a managed write on its "appointment" records', {
       code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
     });
   }
-  await appointments.applyManaged(row.id, { reminderSentAt: instant }, { actor: TIMER_ACTOR });
+  // Conditional in value: fill the marker only when still empty, always
+  // with the same stamp — concurrent confirms converge on one value.
+  const latest = (await appointments.listWhere({ id: row.id }))[0] ?? null;
+  if (!latest) {
+    throw new AppError(
+      `Booking "${row.sourceKey}" vanished between the reminder send and its record: refusing to mark a missing booking`,
+      { code: 'APPOINTMENTS_REMINDER_UNAVAILABLE', status: 500 },
+    );
+  }
+  if (latest.reminderSentAt === null || latest.reminderSentAt === undefined || latest.reminderSentAt === '') {
+    await appointments.applyManaged(row.id, { reminderSentAt: stamp }, { actor: TIMER_ACTOR });
+  }
   return conversationId;
 }
 

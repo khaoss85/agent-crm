@@ -729,6 +729,185 @@ test('a due reminder for a concluded slot is skipped, never sent', async (t) => 
   assert.equal((await channelSendJobs(composed)).length, 0);
 });
 
+test('a crash between history and marker confirms once on the next beat, on another clock', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const now = () => NOW_BOOK;
+  const connectionKey = await activeConnection(composed);
+  await book(composed, now, bookingRequest(connectionKey, { sourceKey: 'gym:reminder:9' }));
+  const queued = await dispatch(composed, () => REMIND_AT);
+  assert.equal(queued.queued.length, 1);
+  const { worker } = workerKit(composed, () => REMIND_AT);
+  worker.start();
+  t.after(() => worker.close());
+  const settled = await worker.run(queued.queued[0].jobId);
+  assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
+
+  // The confirm writes history, then crashes before the marker: the sweep
+  // fails, the history row stays, the marker stays empty.
+  const service = composed.modules.get('appointment').service;
+  let crashOnce = true;
+  const crashing = new Proxy(service, {
+    get(target, prop) {
+      if (prop === 'applyManaged') {
+        return async (...args) => {
+          if (crashOnce) {
+            crashOnce = false;
+            const error = new Error('simulated crash between history and marker');
+            error.code = 'CRASH_SIMULATED';
+            throw error;
+          }
+          return target.applyManaged(...args);
+        };
+      }
+      const value = target[prop];
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const { interactionLog } = seams(composed, () => REMIND_AT);
+  await assert.rejects(
+    dispatchDueReminders({
+      appointments: crashing,
+      tasks: composed.modules.get('work-task').service,
+      templateQueue: templateQueue(composed),
+      interactionLog,
+      now: () => REMIND_AT,
+    }),
+    (error) => error?.code === 'APPOINTMENTS_REMINDER_SWEEP_FAILED',
+  );
+  const { messages, appointments } = services(composed);
+  assert.equal((await messages.listWhere({})).length, 1);
+  const unmarked = (await appointments.listWhere({ sourceKey: 'gym:reminder:9' }))[0];
+  assert.ok(!unmarked.reminderSentAt);
+
+  // The next beat runs on another clock: the same due instant replays the
+  // identical history row instead of conflicting, and the marker lands.
+  // Stamping the sweep clock here retried with a new instant and 409d.
+  const retried = await dispatch(composed, () => '2026-10-19T18:00:00.000Z');
+  assert.equal(retried.sent.length, 1);
+  assert.equal((await messages.listWhere({})).length, 1);
+  const marked = (await appointments.listWhere({ sourceKey: 'gym:reminder:9' }))[0];
+  assert.equal(marked.reminderSentAt, REMIND_AT);
+  assert.equal(composed.api.state.sendCalls, 1);
+});
+
+test('a stale confirm on another clock skips instead of rewriting history', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const now = () => NOW_BOOK;
+  const connectionKey = await activeConnection(composed);
+  await book(composed, now, bookingRequest(connectionKey, { sourceKey: 'gym:reminder:10' }));
+  const queued = await dispatch(composed, () => REMIND_AT);
+  assert.equal(queued.queued.length, 1);
+  const { worker } = workerKit(composed, () => REMIND_AT);
+  worker.start();
+  t.after(() => worker.close());
+  const settled = await worker.run(queued.queued[0].jobId);
+  assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
+  const confirmed = await dispatch(composed, () => REMIND_AT);
+  assert.equal(confirmed.sent.length, 1);
+
+  // A beat that listed before the confirm (stale snapshot) but fires after
+  // it: the succeeded-path re-read sees the marker and skips, on another
+  // clock, without touching history.
+  const service = composed.modules.get('appointment').service;
+  let idReads = 0;
+  const stale = new Proxy(service, {
+    get(target, prop) {
+      if (prop === 'listWhere') {
+        return async (filters) => {
+          const rows = await target.listWhere(filters);
+          const scrub = (row) => (row?.sourceKey === 'gym:reminder:10' ? { ...row, reminderSentAt: null } : row);
+          if (filters && typeof filters === 'object' && 'status' in filters) return rows.map(scrub);
+          if (filters && typeof filters === 'object' && 'id' in filters && idReads === 0) {
+            idReads += 1;
+            return rows.map(scrub);
+          }
+          return rows;
+        };
+      }
+      const value = target[prop];
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const { interactionLog } = seams(composed, () => '2026-10-19T18:30:00.000Z');
+  const fired = await dispatchDueReminders({
+    appointments: stale,
+    tasks: composed.modules.get('work-task').service,
+    templateQueue: templateQueue(composed),
+    interactionLog,
+    now: () => '2026-10-19T18:30:00.000Z',
+  });
+  assert.equal(fired.sent.length, 0);
+  assert.equal(fired.queued.length, 0);
+  assert.deepEqual(fired.skipped.map((entry) => entry.reason), ['already-sent']);
+  const { messages, appointments } = services(composed);
+  assert.equal((await messages.listWhere({})).length, 1);
+  const marked = (await appointments.listWhere({ sourceKey: 'gym:reminder:10' }))[0];
+  assert.equal(marked.reminderSentAt, REMIND_AT);
+  assert.equal(composed.api.state.sendCalls, 1);
+});
+
+test('a suspended connection skips its row without failing the other reminders', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const now = () => NOW_BOOK;
+  const firstKey = await activeConnection(composed);
+  // A second live connection for the booking that must still fire.
+  const reg = await composed.ops.registerChannelConnection({
+    spaceId: SPACE,
+    channel: 'whatsapp',
+    account: '+390200000077',
+    adapter: WHATSAPP_ADAPTER_NAME,
+    adapterVersion: WHATSAPP_ADAPTER_VERSION,
+    secretRef: SECRET_REF,
+    actor: USER,
+  });
+  const actions = Object.fromEntries(
+    buildChannelConnectionActions().map((action) => [action.name, action]),
+  );
+  const connectionService = () => composed.modules.get('channel-connection').service;
+  const managed = (id, patch) => connectionService().applyManaged(id, patch, { actor: USER });
+  await actions['activate-connection'].execute({
+    record: reg.connection,
+    input: { reason: 'second reminder line' },
+    actor: USER,
+    modules: composed.modules,
+    managed,
+    now,
+  });
+  const secondKey = reg.connection.sourceKey;
+
+  await book(composed, now, bookingRequest(firstKey, { sourceKey: 'gym:reminder:12' }));
+  await book(composed, now, bookingRequest(secondKey, {
+    sourceKey: 'gym:reminder:13',
+    startsAt: '2026-10-21T17:00:00.000Z',
+    endsAt: '2026-10-21T18:00:00.000Z',
+  }));
+  // The first line is suspended after booking: its queue refuses, the
+  // other reminder still queues, and the sweep stays green.
+  const first = (await connectionService().listWhere({ sourceKey: firstKey }))[0];
+  await actions['suspend-connection'].execute({
+    record: first,
+    input: { reason: 'line suspended before the sweep' },
+    actor: USER,
+    modules: composed.modules,
+    managed,
+    now,
+  });
+
+  const fired = await dispatch(composed, () => REMIND_AT);
+  assert.equal(fired.sent.length, 0);
+  assert.equal(fired.queued.length, 1);
+  assert.equal(fired.queued[0].sourceKey, 'gym:reminder:13');
+  assert.deepEqual(
+    fired.skipped.map((entry) => [entry.sourceKey, entry.reason]),
+    [['gym:reminder:12', 'send-refused']],
+  );
+  assert.equal(composed.api.state.sendCalls, 0);
+  assert.equal((await channelSendJobs(composed)).length, 1);
+});
+
 test('the history body names the template and stays within the message bound', async (t) => {
   const body = reminderHistoryBody({
     serviceKey: 'pt-single',
