@@ -74,6 +74,7 @@ const MANIFESTS = [
   ['channels', 'channel-connection'],
   ['interactions', 'conversation'],
   ['interactions', 'interaction-message'],
+  ['interactions', 'interaction-call'],
   ['interactions', 'conversation-thread-key'],
 ];
 
@@ -426,9 +427,15 @@ test('the package handover proves the target; without channels the booking fails
   const bare = bareCapability.create({
     modules: composed.modules, actor: USER, now, consumer: 'handover-probe',
   });
+  // A free slot: the probe isolates the channels handover, not the
+  // overlap guard (covered by the booking tests).
   await assert.rejects(
     composed.database.transactionAsync(() => bare.bookAppointment({
-      ...bookingRequest(connectionKey, { sourceKey: 'gym:reminder:4' }),
+      ...bookingRequest(connectionKey, {
+        sourceKey: 'gym:reminder:4',
+        startsAt: '2026-10-20T19:00:00.000Z',
+        endsAt: '2026-10-20T20:00:00.000Z',
+      }),
       source: { package: 'handover-probe', action: 'book' },
     })),
     (error) => error?.code === 'APPOINTMENTS_REMINDER_UNAVAILABLE',
