@@ -6,6 +6,15 @@ import { verifyHmacWebhook } from './crypto.js';
 // the adapter never carries its own margin, so a message the ingest path
 // accepts as in-window evidence always opens the window here too.
 import { CHANNEL_INGEST_FUTURE_SKEW_MS } from './operations.js';
+// Batch iteration, echo detection and the window rule live once in the
+// shared Meta module both Meta adapters delegate to (backlog:87d4769dde7e).
+import {
+  META_CUSTOMER_SERVICE_WINDOW_MS,
+  checkMetaServiceWindow,
+  isMetaSelfEcho,
+  iterateMetaBatchItems,
+  parseMetaWebhookBody,
+} from './meta-webhook.js';
 
 /**
  * WhatsApp Business Cloud adapter (backlog:ecbd24753610).
@@ -52,7 +61,7 @@ import { CHANNEL_INGEST_FUTURE_SKEW_MS } from './operations.js';
 export const WHATSAPP_ADAPTER_NAME = 'whatsapp-cloud';
 export const WHATSAPP_ADAPTER_VERSION = 1;
 /** The Meta customer-service window: free text only within 24h of the last inbound. */
-export const WHATSAPP_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const WHATSAPP_WINDOW_MS = META_CUSTOMER_SERVICE_WINDOW_MS;
 const MAX_TEXT = 4096;
 const MAX_TEMPLATE_VARIABLES = 32;
 const MAX_VARIABLE_CHARS = 1024;
@@ -109,51 +118,18 @@ function unixToParts(timestamp) {
 }
 
 /**
- * Every Meta item of one delivery, in document order. The ingest path
- * stores exactly one inbox row per normalized event, so every item of a
- * batched delivery lands — nothing is truncated to the first item.
- */
-function collectMetaItems(payload) {
-  const entries = payload?.entry;
-  if (!Array.isArray(entries)) return [];
-  const found = [];
-  for (const entry of entries) {
-    const changes = entry?.changes;
-    if (!Array.isArray(changes)) continue;
-    for (const change of changes) {
-      const value = change?.value;
-      if (!value || typeof value !== 'object') continue;
-      if (value.messaging_product !== undefined && value.messaging_product !== 'whatsapp') continue;
-      for (const item of Array.isArray(value.messages) ? value.messages : []) {
-        if (item && typeof item === 'object') found.push({ kind: 'message', item });
-      }
-      for (const item of Array.isArray(value.statuses) ? value.statuses : []) {
-        if (item && typeof item === 'object') found.push({ kind: 'status', item });
-      }
-    }
-  }
-  return found;
-}
-
-/**
  * Normalize one verified webhook body to a LIST of channel events, one per
  * Meta item in document order. Accepts the Meta Cloud API shape and the
  * kit's minimal envelope (`{id, subject?, seq?, at?}`) the fake speaks on
  * the kit path (a single-element list). The ingest path stores one inbox
  * row per event, so a batched delivery (two messages, a message plus its
- * statuses) never loses an item.
+ * statuses) never loses an item. Batch iteration lives in the shared Meta
+ * module; only Cloud API items are normalized here.
  */
 function normalizeWhatsAppInbound(event, config) {
-  let parsed;
-  try {
-    parsed = JSON.parse(String(event));
-  } catch {
-    malformedEvent('body is not JSON');
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    malformedEvent('body is not an object');
-  }
-  const items = collectMetaItems(parsed);
+  const parsed = parseMetaWebhookBody(event, 'WhatsApp');
+  const items = iterateMetaBatchItems(parsed, { messagingProduct: 'whatsapp' })
+    .filter((entry) => entry.dialect === 'cloud');
   if (items.length === 0) {
     // The kit/fake minimal envelope: the provider id and subject directly.
     const providerEventId = typeof parsed.id === 'string' && parsed.id !== '' && parsed.id.length <= 256
@@ -185,8 +161,8 @@ function normalizeMetaItem(meta, config) {
     // Coexistence with the WhatsApp Business app: the API number and the
     // app number are different lines, but an echo off our own line must
     // never become a customer. No peer, no subject: the operations layer
-    // quarantines it as evidence.
-    if (config.businessNumber && peer === config.businessNumber) {
+    // quarantines it as evidence. Echo detection is the shared Meta rule.
+    if (config.businessNumber && isMetaSelfEcho({ from: peer }, config.businessNumber)) {
       return { providerEventId: item.id, subject: '', sequence: null, occurredAt: null };
     }
     const parts = unixToParts(item.timestamp);
@@ -213,7 +189,7 @@ function normalizeMetaItem(meta, config) {
   }
   // The echo quarantine covers statuses too: a delivery report addressed
   // to our own line is evidence, never a customer conversation.
-  if (config.businessNumber && peer === config.businessNumber) {
+  if (config.businessNumber && isMetaSelfEcho({ from: peer }, config.businessNumber)) {
     return { providerEventId: `${item.id}:${item.status}`, subject: '', sequence: null, occurredAt: null };
   }
   const parts = unixToParts(item.timestamp);
@@ -287,17 +263,16 @@ function normalizeWhatsAppOutbound(message, config, nowMs, windowCtx) {
     malformedMessage('message needs non-empty "text" (at most 4096 chars) or an approved "template"');
   }
   const observed = windowCtx && typeof windowCtx === 'object' ? windowCtx.lastInboundAt : undefined;
-  if (observed === undefined || observed === null) templateRequired();
-  if (typeof observed !== 'string') malformedMessage('"lastInboundAt" must be an ISO-8601 instant');
-  const at = Date.parse(observed);
-  if (!Number.isFinite(at) || new Date(observed).toISOString() !== observed) {
-    malformedMessage('"lastInboundAt" must be an ISO-8601 instant');
-  }
-  // The package skew rule, not a second margin: an observation the ingest
-  // path kept as in-window evidence (up to now + skew) opens the window
-  // here too — only beyond the same skew does free text refuse.
-  if (at > nowMs() + CHANNEL_INGEST_FUTURE_SKEW_MS) templateRequired();
-  if (nowMs() - at > WHATSAPP_WINDOW_MS) templateRequired();
+  // The window verdict is the shared Meta rule (missing/future/stale refuse
+  // with CHANNEL_TEMPLATE_REQUIRED, a non-canonical observation is
+  // malformed). The package skew is passed in, not a second margin: an
+  // observation the ingest path kept as in-window evidence (up to now +
+  // skew) opens the window here too.
+  const verdict = checkMetaServiceWindow(observed, {
+    nowMs, windowMs: WHATSAPP_WINDOW_MS, skewMs: CHANNEL_INGEST_FUTURE_SKEW_MS,
+  });
+  if (verdict === 'missing' || verdict === 'future' || verdict === 'stale') templateRequired();
+  if (verdict === 'invalid') malformedMessage('"lastInboundAt" must be an ISO-8601 instant');
   return { to, kind: 'text', text };
 }
 
