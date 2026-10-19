@@ -14,7 +14,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 const root = join(import.meta.dirname, '..');
 const page = readFileSync(join(root, 'apps/admin/public/login.html'), 'utf8');
@@ -63,11 +63,28 @@ test('the page stacks on narrow viewports like the prototype', () => {
 
 test('Google sign-in stays deployment-owned: the framework adds no Google machinery', () => {
   assert.match(page, /href="\/auth\/google"/, 'the Google button targets the deployment entry');
-  const sources = [
-    ...readdirSync(join(root, 'packages/magic-link/src')).map((file) => join(root, 'packages/magic-link/src', file)),
-    ...readdirSync(join(root, 'apps/server/src')).map((file) => join(root, 'apps/server/src', file)),
-  ];
-  assert.ok(sources.length >= 5, 'the login surface files are all read');
+  // The whole framework surface, not just the login files: a Google OAuth
+  // client, handler or secret added under any other package or app must fail
+  // this test, not slip past it.
+  const roots = ['packages', 'apps'].map((dir) => join(root, dir));
+  /** @type {string[]} */
+  const sources = [];
+  /** @param {string} dir */
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === 'fixtures') continue;
+        walk(full);
+      } else if (entry.isFile() && full.endsWith('.js') && !full.endsWith('.test.js')) {
+        // Only shipped sources: tests may name Google freely.
+        const parts = full.split(sep);
+        if (parts.includes('src') || parts.includes('scripts')) sources.push(full);
+      }
+    }
+  };
+  for (const dir of roots) walk(dir);
+  assert.ok(sources.length >= 100, `the whole surface is read, not just the login files (saw ${sources.length})`);
   for (const file of sources) {
     const body = readFileSync(file, 'utf8');
     assert.ok(!/accounts\.google|oauth2\/v\d|client_secret|clientSecret/i.test(body),

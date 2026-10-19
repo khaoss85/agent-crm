@@ -1,7 +1,7 @@
 // @ts-check
 
 import { createHash, randomBytes } from 'node:crypto';
-import { ValidationError } from '../../core/index.js';
+import { AppError, ValidationError } from '../../core/index.js';
 
 /**
  * Magic-link login rules (backlog:0cbae947, BO-F0-05).
@@ -11,7 +11,7 @@ import { ValidationError } from '../../core/index.js';
  * everything decidable is decided here so the tests pin the rule without a
  * database.
  *
- * Four rules:
+ * Six rules:
  * 1. **Closed token** — `ml1.<32-hex>`: 128 bits of CSPRNG material. Anything
  *    else is refused before a store is touched, so junk can never grow rows.
  * 2. **Ten minutes** — a link dies 10 minutes after issue, the backoffice
@@ -20,8 +20,19 @@ import { ValidationError } from '../../core/index.js';
  * 3. **Single use** — consuming marks the row spent in one conditional step;
  *    a second consume of the same token is refused, never replayed.
  * 4. **No enumeration** — the request receipt is byte-identical for a known
- *    and an unknown email. The token travels only through the deployment's
- *    delivery edge, never in the API response.
+ *    and an unknown email, and both branches do the same store work (mint,
+ *    save, then enqueue for a known address or spend-and-discard for an
+ *    unknown one). The token travels only through the deployment's outbox
+ *    edge, never in the API response.
+ * 5. **Claim first, send second** — the link email goes out only through the
+ *    deployment's persistent outbox edge, enqueued under the deterministic
+ *    key `magic-link:<tokenId>` with an actor. The persistent enqueue IS the
+ *    cross-process claim: a re-enqueue under the same key returns the same
+ *    job, never a second send. There is no second send path.
+ * 6. **Fail-closed clock** — every clock reading the operations use must be
+ *    finite integer milliseconds >= 0. A miswired clock refuses with
+ *    `MAGIC_LINK_CLOCK_FAILED` (502), never a receipt: a non-finite clock
+ *    must never mint an immortal link.
  */
 
 export const MAGIC_LINK_CONTRACT = 1;
@@ -43,6 +54,7 @@ export const MAGIC_LINK_REASON = Object.freeze({
   INVALID: 'MAGIC_LINK_INVALID',
   EXPIRED: 'MAGIC_LINK_EXPIRED',
   NOT_CONFIGURED: 'MAGIC_LINK_NOT_CONFIGURED',
+  CLOCK_FAILED: 'MAGIC_LINK_CLOCK_FAILED',
 });
 
 /**
@@ -111,6 +123,36 @@ export function magicLinkExpiry(issuedAtMs) {
  */
 export function isMagicLinkExpired(record, nowMs) {
   return nowMs >= record.expiresAtMs;
+}
+
+/**
+ * The deterministic idempotency key for one link email: derived from the
+ * token it belongs to (the M11 pattern). The token is closed-format
+ * (`ml1.<32-hex>`), so the key is always bounded. A re-enqueue under the
+ * same key returns the same outbox job, never a second send.
+ *
+ * @param {string} tokenId
+ */
+export function magicLinkSendKey(tokenId) {
+  return `magic-link:${requireMagicLinkToken(tokenId)}`;
+}
+
+/**
+ * Require a usable clock reading: finite integer milliseconds >= 0. A
+ * non-finite clock (NaN, Infinity, a non-number) would silently disable
+ * expiry — `now >= expiresAt` is false for NaN — minting an immortal link.
+ * Refuse fail-closed (502, never a receipt) instead.
+ *
+ * @param {unknown} value
+ * @param {string} [field]
+ */
+export function requireClockMs(value, field = 'clock') {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    throw new AppError('magic-link clock must read finite integer milliseconds >= 0', {
+      code: MAGIC_LINK_REASON.CLOCK_FAILED, status: 502, details: { field },
+    });
+  }
+  return value;
 }
 
 /**

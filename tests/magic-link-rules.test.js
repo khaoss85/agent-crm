@@ -17,8 +17,10 @@ import {
   isMagicLinkExpired,
   magicLinkExpiry,
   magicLinkRequestReceipt,
+  magicLinkSendKey,
   mintMagicLinkToken,
   normalizeLoginEmail,
+  requireClockMs,
   requireMagicLinkToken,
 } from '../packages/magic-link/src/rules.js';
 
@@ -84,5 +86,29 @@ test('refusal codes are stable', () => {
     INVALID: 'MAGIC_LINK_INVALID',
     EXPIRED: 'MAGIC_LINK_EXPIRED',
     NOT_CONFIGURED: 'MAGIC_LINK_NOT_CONFIGURED',
+    CLOCK_FAILED: 'MAGIC_LINK_CLOCK_FAILED',
   });
+});
+
+test('the send key is deterministic per token and refuses junk', () => {
+  const token = `ml1.${'a'.repeat(32)}`;
+  assert.equal(magicLinkSendKey(token), `magic-link:${token}`);
+  assert.throws(() => magicLinkSendKey('not-a-token'), /ml1\.<32-hex>/);
+  assert.throws(() => magicLinkSendKey(''), /ml1\.<32-hex>/);
+});
+
+test('clock readings fail closed: only finite integer ms >= 0 pass', () => {
+  assert.equal(requireClockMs(0), 0);
+  assert.equal(requireClockMs(1_700_000_000_000), 1_700_000_000_000);
+  /** @param {any} error */
+  const isClockFailure = (error) => error?.code === 'MAGIC_LINK_CLOCK_FAILED' && error?.status === 502;
+  for (const broken of [NaN, Infinity, -Infinity, -1, 1.5, 'now', null, undefined, {}, true]) {
+    assert.throws(() => requireClockMs(broken), isClockFailure, `clock ${String(broken)} must refuse`);
+  }
+  try {
+    requireClockMs(NaN);
+    assert.fail('must refuse');
+  } catch (error) {
+    assert.ok(isClockFailure(error), 'the refusal carries the clock code with a 502, never a receipt');
+  }
 });

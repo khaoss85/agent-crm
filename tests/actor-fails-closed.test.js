@@ -261,6 +261,13 @@ test('framework self-authority stays at its reviewed named outbox boundary', asy
     "packages/payments/src/operations.js:<line>:const SYSTEM = () => trustedSystemActor('payment package internal write');",
     "packages/core/src/domain-timers.js:<line>:const TIMER_ACTOR = trustedSystemActor('presenting a human-written scheduled ask at its instant');",
     "packages/core/src/transactional-outbox.js:<line>:const OUTBOX_ACTOR = trustedSystemActor('dispatching committed transactional outbox effects');",
+    // Magic-link login. The request is visitor-triggered and unauthenticated:
+    // there is no human actor yet, because logging in is what creates the
+    // session. The unattended send runs under this named service actor, and
+    // the deployment may override it with its own (validated with
+    // requireActor, never anonymous). The provider bytes belong to the
+    // outbox job queued under the token key, never to this actor.
+    "packages/magic-link/src/index.js:<line>:  if (actor === undefined || actor === null) return trustedSystemActor('magic-link login delivery');",
     // Appointments. The due-reminder sweep fires at the instant the booking
     // named: queueing the outbox send and confirming it into history is not
     // a human decision — the follow-up stays open for the human, and only
