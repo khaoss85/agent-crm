@@ -265,11 +265,15 @@ while the guard stays green.
 Seven revision-2 modules predate the history mechanism (August 2026 bumps in
 `contracts` and `delivery` with real SQL changes and no history file) and no
 released database is evidenced to hold their revision-1 bootstraps, so they
-are declared born at revision 2 in `MODULE_BORN_AT_REVISION` in
-`packages/core/src/record-module-history.js` instead of shipping reconstructed
-histories with invented bridge checksums. The declaration excuses exactly
-revision 2; the next bump of any of them ships its full revision-1-based
-history (git retains every revision 1 manifest) and removes its entry.
+are declared born at revision 2 in `BORN_AT_REVISION_2` in
+`tests/module-manifest-revision-guard.test.js` instead of shipping
+reconstructed histories with invented bridge checksums. The declaration lives
+in the guard because the kernel (`packages/core/src`) may not name a domain
+module in either direction; the guard passes it to
+`assertRevisionHistoryContract` as `bornAtRevision`. The declaration excuses
+exactly revision 2; the next bump of any of them ships its full
+revision-1-based history (git retains every revision 1 manifest) and removes
+its entry.
 
 ## Related
 

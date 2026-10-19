@@ -21,8 +21,8 @@ import {
   recordModuleMigrations,
 } from '../packages/core/src/record-module-runtime.js';
 import {
-  MODULE_BORN_AT_REVISION,
   assertCallerHistoryMatchesRegistry,
+  assertRevisionHistoryContract,
   recordModuleHistoryFor,
   recordModuleHistoryPath,
 } from '../packages/core/src/record-module-history.js';
@@ -578,14 +578,31 @@ const BORN_AT_MANIFEST_PATHS = {
 };
 
 test('born-at-revision declarations name real modules at exactly that revision with no history', () => {
-  assert.deepEqual(Object.keys(BORN_AT_MANIFEST_PATHS).sort(), Object.keys(MODULE_BORN_AT_REVISION).sort());
+  // Pinned: exactly the seven modules the manifest guard declares born at
+  // revision 2 (the kernel may not name them, so each side pins its own
+  // literal — drift between the two tables fails here or in the guard).
+  assert.deepEqual(Object.keys(BORN_AT_MANIFEST_PATHS).sort(), [
+    'commercial-contract',
+    'contract-activation',
+    'contract-version',
+    'delivery-milestone',
+    'delivery-project',
+    'delivery-work-package',
+    'service-obligation',
+  ]);
   for (const [name, relative] of Object.entries(BORN_AT_MANIFEST_PATHS)) {
     const manifest = loadJson(relative);
     assert.equal(manifest.name, name);
     assert.equal(
       manifest.revision,
-      MODULE_BORN_AT_REVISION[name],
+      2,
       `${name} moved past its declared born-at revision: ship its history and remove the declaration`,
+    );
+    // The contract excuses the declared revision and nothing above it.
+    assertRevisionHistoryContract(name, 2, { bornAtRevision: 2 });
+    assert.throws(
+      () => assertRevisionHistoryContract(name, 3, { bornAtRevision: 2 }),
+      new RegExp(`${name}".*at revision 3 without history`),
     );
     assert.equal(
       recordModuleHistoryFor(name),
