@@ -51,6 +51,29 @@ customer-data composition keeps serving the card with no change here. Without
 the provider composed, the application refuses to start naming the unmet edge;
 without the handle, the card operation fails closed at composition.
 
+## Timeline
+
+`readCustomerTimeline` needs the same hub composed with the two timeline
+providers beside customer-data:
+
+```js
+const interactions = createInteractionsPackage();
+const appointments = createAppointmentsPackage({ work });
+export const generatedDomains = [
+  customerData,
+  work,
+  interactions,
+  appointments,
+  createCustomerHubPackage({ customerData, interactions, appointments }),
+];
+```
+
+The threads and bookings providers stay out of `requires` on purpose: without
+them the application still boots and serves the card, and opening the timeline
+fails closed naming the missing edge. There is no contract-2 twin of this
+package: every provider it reads is capabilityContract 1 with a synchronous
+`create`.
+
 ## Rendering
 
 `renderCustomerCardHtml(card)` returns one self-contained HTML document (no

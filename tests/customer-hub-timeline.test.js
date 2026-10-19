@@ -18,9 +18,9 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
  * one contact point per channel from the same identities the card reads —
  * all from records the owning packages already hold. Reading it creates
  * nothing: no table appears, no row count moves, and the hub still declares
- * zero owned resources. A composition missing any one provider refuses to
- * start or to open the operation naming that edge, never a silent partial
- * timeline.
+ * zero owned resources. A composition missing any one provider still boots
+ * and serves the card; the timeline read itself refuses naming that edge,
+ * never a silent partial timeline.
  */
 
 const ACTOR = { type: 'user', id: 'timeline-reader' };
@@ -227,17 +227,16 @@ test('reading the timeline creates no record anywhere', async (t) => {
   assert.deepEqual(counts(db), countsBefore, 'a timeline read adds no row anywhere');
 });
 
-test('the hub declares all three provider edges instead of reaching into their source', async () => {
+test('the hub declares the card edge and opens the timeline edges at operation time', async () => {
   const { createCustomerHubPackage } = await import('../packages/customer-hub/src/index.js');
   const definition = createCustomerHubPackage();
   assert.deepEqual(definition.requires, [
     { package: 'customer-data', capability: 'customer-profile', version: 1 },
-    { package: 'interactions', capability: 'interaction-timeline', version: 1 },
-    { package: 'appointments', capability: 'appointment-schedule', version: 1 },
-  ], 'threads, bookings and the profile all arrive through declared capabilities sharing one name resolution each');
+  ], 'only the card profile is a startup edge, so card-only compositions keep booting; '
+    + 'threads and bookings fail closed when the timeline operation opens, never at startup');
 });
 
-test('a composition missing any timeline provider fails closed naming the edge', async () => {
+test('a timeline read missing any provider fails closed naming the edge', async () => {
   const { createCustomerHubPackage } = await import('../packages/customer-hub/src/index.js');
   const profile = { name: 'customer-profile', version: 1, create: () => ({}) };
   const threads = { name: 'interaction-timeline', version: 1, create: () => ({}) };
@@ -245,21 +244,24 @@ test('a composition missing any timeline provider fails closed naming the edge',
   const runtime = { modules: { get() { return null; } }, core: {}, database: {}, events: {}, config: {} };
   const operation = (options) => createCustomerHubPackage(options)
     .operations.find((entry) => entry.name === 'read-customer-timeline');
-  assert.throws(
-    () => operation({}).create(runtime),
+  // Opening never throws: the framework opens every operation at boot, and a
+  // card-only composition must keep booting. The read itself refuses instead.
+  const subject = { resource: 'contact', id: 'card-only' };
+  await assert.rejects(
+    operation({}).create(runtime)(subject),
     /customer-data.*customer-profile@1/,
     'no profile handle means no timeline stitched from the wrong tables',
   );
-  assert.throws(
-    () => operation({ customerData: { capabilities: [profile] } }).create(runtime),
+  await assert.rejects(
+    operation({ customerData: { capabilities: [profile] } }).create(runtime)(subject),
     /interactions.*interaction-timeline@1/,
     'no threads handle means no timeline without conversations',
   );
-  assert.throws(
-    () => operation({
+  await assert.rejects(
+    operation({
       customerData: { capabilities: [profile] },
       interactions: { capabilities: [threads] },
-    }).create(runtime),
+    }).create(runtime)(subject),
     /appointments.*appointment-schedule@1/,
     'no schedule handle means no timeline without bookings',
   );

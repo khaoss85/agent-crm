@@ -77,18 +77,17 @@ export function createCustomerHubPackage(options = {}) {
     // asserts this list stays empty.
     resources: [],
 
-    // The declared reaches into other packages: the consolidated profile the
-    // card is shaped from, the interaction threads and entries the timeline
-    // groups into conversations, and the appointment bookings the timeline
-    // lists. Without any one of them composed, the application refuses to
-    // start naming the missing edge — never a missing-module stack trace at
-    // read time. Everything beyond the host contact and these three reads
-    // stays optional and reads "not available" with a reason.
-    requires: [
-      { package: 'customer-data', capability: 'customer-profile', version: 1 },
-      { package: 'interactions', capability: 'interaction-timeline', version: 1 },
-      { package: 'appointments', capability: 'appointment-schedule', version: 1 },
-    ],
+    // The one declared reach into another package: the consolidated profile
+    // the card is shaped from. Without customer-data composed, the
+    // application refuses to start naming this edge — never a missing-module
+    // stack trace at card-read time. The timeline's threads and bookings stay
+    // out of `requires` on purpose: a card-only composition (customer-data
+    // plus the hub, no interactions, no appointments) must keep booting and
+    // serving the card, and the timeline operation fails closed at open
+    // naming its own missing edge instead. Everything beyond the host
+    // contact and these reads stays optional and reads "not available" with
+    // a reason.
+    requires: [{ package: 'customer-data', capability: 'customer-profile', version: 1 }],
 
     capabilities: [],
     actions: [],
@@ -146,44 +145,60 @@ export function createCustomerHubPackage(options = {}) {
           { name: 'id', type: 'string', hint: 'The record id.' },
         ],
         create(runtime) {
-          // Same closed-context opening as the card above: one created
-          // handle per provider, opened once with the caller's modules, each
-          // missing handle failing closed at composition with its edge named.
-          if (!offered || typeof offered.create !== 'function') {
-            throw new AppError(
-              'The customer-hub package requires the customer-data package capability customer-profile@1: '
-              + 'compose it with the provider definition, e.g. createCustomerHubPackage({ customerData }) '
-              + 'beside createCustomerDataPackage()',
-              { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
-            );
-          }
-          if (!timelineOffered || typeof timelineOffered.create !== 'function') {
-            throw new AppError(
-              'The customer-hub timeline requires the interactions package capability interaction-timeline@1: '
-              + 'compose it with the provider definition, e.g. createCustomerHubPackage({ customerData, interactions }) '
-              + 'beside createInteractionsPackage()',
-              { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
-            );
-          }
-          if (!scheduleOffered || typeof scheduleOffered.create !== 'function') {
-            throw new AppError(
-              'The customer-hub timeline requires the appointments package capability appointment-schedule@1: '
-              + 'compose it with the provider definition, e.g. createCustomerHubPackage({ customerData, appointments }) '
-              + 'beside createAppointmentsPackage()',
-              { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
-            );
-          }
-          const profile = offered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN });
-          const threads = timelineOffered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN });
-          const schedule = scheduleOffered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN });
-          return (request) => readCustomerTimeline({
-            core: runtime.core,
-            subject: { resource: request?.resource, id: request?.id },
-            readProfile: (input) => profile.readProfile(input),
-            readConversations: (subject) => threads.conversations(subject),
-            readTimeline: (subject) => threads.timeline(subject),
-            readSchedule: (subject) => schedule.scheduleFor(subject),
-          });
+          // Opened lazily on first read, NOT at composition: the framework
+          // opens every operation's `create()` at boot, so throwing here
+          // would refuse startup to card-only compositions. The timeline's
+          // providers stay out of `requires` for the same reason, and a
+          // timeline read without its providers fails closed here, on first
+          // use, naming the missing edge — never a silent partial timeline.
+          // One created handle per provider, opened once with the caller's
+          // modules and memoized; the declared card edge above still keeps a
+          // missing customer-data fail-closed at startup.
+          let opened = null;
+          const open = () => {
+            if (opened) return opened;
+            if (!offered || typeof offered.create !== 'function') {
+              throw new AppError(
+                'The customer-hub package requires the customer-data package capability customer-profile@1: '
+                + 'compose it with the provider definition, e.g. createCustomerHubPackage({ customerData }) '
+                + 'beside createCustomerDataPackage()',
+                { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+              );
+            }
+            if (!timelineOffered || typeof timelineOffered.create !== 'function') {
+              throw new AppError(
+                'The customer-hub timeline requires the interactions package capability interaction-timeline@1: '
+                + 'compose it with the provider definition, e.g. createCustomerHubPackage({ customerData, interactions }) '
+                + 'beside createInteractionsPackage()',
+                { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+              );
+            }
+            if (!scheduleOffered || typeof scheduleOffered.create !== 'function') {
+              throw new AppError(
+                'The customer-hub timeline requires the appointments package capability appointment-schedule@1: '
+                + 'compose it with the provider definition, e.g. createCustomerHubPackage({ customerData, appointments }) '
+                + 'beside createAppointmentsPackage()',
+                { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+              );
+            }
+            opened = {
+              profile: offered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN }),
+              threads: timelineOffered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN }),
+              schedule: scheduleOffered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN }),
+            };
+            return opened;
+          };
+          return async (request) => {
+            const { profile, threads, schedule } = open();
+            return readCustomerTimeline({
+              core: runtime.core,
+              subject: { resource: request?.resource, id: request?.id },
+              readProfile: (input) => profile.readProfile(input),
+              readConversations: (subject) => threads.conversations(subject),
+              readTimeline: (subject) => threads.timeline(subject),
+              readSchedule: (subject) => schedule.scheduleFor(subject),
+            });
+          };
         },
       },
     ],
@@ -195,10 +210,10 @@ export function createCustomerHubPackage(options = {}) {
         reuses: ['contact', 'company', 'read-customer-profile', 'interaction-timeline', 'appointment-schedule'],
       };
     },
-  }), options.packageContract === 2 ? 2 : 1);
+  }));
 }
-
-/** Distinct awaited contract-2 graph. Existing `createCustomerHubPackage()` callers keep v1. */
-export function createCustomerHubPackageV2(options = {}) {
-  return createCustomerHubPackage({ ...options, packageContract: 2 });
-}
+// No contract-2 twin here: every provider this hub reads
+// (customer-profile, interaction-timeline, appointment-schedule) is
+// capabilityContract 1 with a synchronous `create`, so a v2 hub graph could
+// neither compose against them nor settle their handles — the twin arrives
+// with the first contract-2 provider, not before.

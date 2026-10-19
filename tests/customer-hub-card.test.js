@@ -163,16 +163,13 @@ test('the hub package owns no records by declaration', async (t) => {
   assert.equal(definition.metadata().ownsRecords, false, 'the published metadata repeats the guarantee');
 });
 
-test('the hub declares every provider edge instead of reaching into their source', async (t) => {
+test('the hub declares the card edge and opens the timeline edges at operation time', async (t) => {
   const { createCustomerHubPackage } = await import('../packages/customer-hub/src/index.js');
   const definition = createCustomerHubPackage();
   assert.deepEqual(definition.requires,
-    [
-      { package: 'customer-data', capability: 'customer-profile', version: 1 },
-      { package: 'interactions', capability: 'interaction-timeline', version: 1 },
-      { package: 'appointments', capability: 'appointment-schedule', version: 1 },
-    ],
-    'threads, bookings and the profile all arrive through declared capabilities sharing one name resolution each');
+    [{ package: 'customer-data', capability: 'customer-profile', version: 1 }],
+    'only the card profile is a startup edge, so card-only compositions keep booting; '
+    + 'threads and bookings fail closed when the timeline operation opens, never at startup');
 });
 
 test('without customer-data composed the application refuses to start naming the edge', async (t) => {
@@ -198,6 +195,31 @@ test('a space without the hub has no card operation', async (t) => {
   t.after(() => context.close());
   assert.equal(typeof context.app.readCustomerCard, 'undefined',
     'enablement is composition: no package, no operation');
+});
+
+test('a card-only composition boots and serves the card without the timeline providers', async (t) => {
+  const root = project(t, {});
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
+    "import { createCustomerDataPackage } from '../../customer-data/src/index.js';",
+    "import { createCustomerHubPackage } from '../../customer-hub/src/index.js';",
+    'const customerData = createCustomerDataPackage();',
+    'export const generatedDomains = [',
+    '  customerData,',
+    '  createCustomerHubPackage({ customerData }),',
+    '];',
+    '',
+  ].join('\n'));
+  const context = await boot(root, join(root, 'data', 'hub-card-only.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+
+  await app.applyCustomerImport({ actor: ACTOR, system: 'whatsapp', rows: [row('+39 333 1234567')] });
+  const contacts = await app.services.contacts.list();
+  assert.equal(contacts.length, 1, 'one contact imported with no timeline provider composed');
+  const card = await app.readCustomerCard({ resource: 'contact', id: contacts[0].id });
+  assert.equal(card.customerCardContract, 1);
+  assert.equal(card.name, 'Guido Presti');
+  assert.equal(card.phone.value, '+39 333 1234567');
 });
 
 test('signed business promotes the card to cliente', () => {
