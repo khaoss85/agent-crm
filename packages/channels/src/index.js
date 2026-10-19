@@ -4,6 +4,7 @@ import { AppError, ValidationError, definePackage, selectPackageGraph } from '..
 import { CHANNELS, ChannelRegistries } from './adapter.js';
 import { CONNECTION_STATUSES, assertConnectionTransition, assertSecretReference } from './connection.js';
 import { createChannelOperations } from './operations.js';
+import { createTemplateSendCapability } from './template-send.js';
 
 /**
  * The Channels domain package (backlog:e5532d1c9146).
@@ -229,6 +230,18 @@ export function createChannelsPackage(options = {}) {
     // never a missing-package refusal at boot, never a new requirement.
     // Everything (inbox, outbox, connections, import state and outcomes)
     // stays inside this package.
+
+    // The one seam another package may send through: approved templates
+    // only, resolved against this package's own registries and custody edge.
+    // Consumed as the handed-over created object (the `follow-up@1` shape
+    // appointments uses for work), never re-instantiated by the consumer.
+    capabilities: [
+      createTemplateSendCapability({
+        registries,
+        resolveSecret: resolveSecret ?? null,
+        moduleNames: options.modules,
+      }),
+    ],
 
     actions: buildChannelConnectionActions(options.modules),
     operations: [

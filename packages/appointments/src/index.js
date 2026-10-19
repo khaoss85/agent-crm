@@ -23,10 +23,24 @@ import {
   findOverlap,
   readAppointment,
   readSchedule,
+  reminderMessageKey,
   reminderSourceKey,
+  reminderThreadKey,
   validateAppointmentRequest,
+  validateReminderChannel,
   validateSubject,
 } from './appointments.js';
+import {
+  APPOINTMENT_REMINDER_SEND_ACTION,
+  APPOINTMENT_REMINDER_SWEEP_HANDLER,
+  APPOINTMENT_REMINDER_SWEEP_KIND,
+  APPOINTMENT_REMINDER_SWEEP_MAX_ATTEMPTS,
+  APPOINTMENT_REMINDER_SWEEP_VERSION,
+  dispatchDueReminders,
+  registerAppointmentReminderSweep,
+  reminderHistoryBody,
+  seedReminderSweep,
+} from './reminder-dispatch.js';
 
 /**
  * **Appointments v1 — the native booking record.**
@@ -40,15 +54,21 @@ import {
  * member holds one slot at a time: an overlapping booking for the same member
  * is refused 409 unless the held booking is cancelled. A booking that names
  * `remindAt` also opens exactly one work follow-up reminder in the same
- * transaction, due at the named instant.
+ * transaction, due at the named instant. A booking that also names
+ * `reminderChannel` is sent automatically at that instant: the reminder
+ * sweep queues one channel-outbox job per due reminder under its
+ * deterministic key (the cross-process claim, never a provider call) and,
+ * once the outbox confirms the send, records it in the customer's thread
+ * through `interaction-log@1`.
  *
  * What it deliberately is **not**: a customer system (the customer stays the
  * host contact); a service catalog or pricing authority (the service key and
  * the amount are resolved by the booking path from the commercial listino and
  * snapshotted here); a staff roster; a calendar sync (Google Calendar
  * two-way sync is the consuming project's adapter work, against these rows);
- * a scheduler, a notifier or a credit ledger (package credits scaled by
- * appointments are commercial's accounting, read from these rows).
+ * a free-text notifier (only the booking's own approved template sends, and
+ * only to the booking's own recipient) or a credit ledger (package credits
+ * scaled by appointments are commercial's accounting, read from these rows).
  */
 
 export const APPOINTMENTS_DOMAIN = APPOINTMENTS_PACKAGE;
@@ -65,24 +85,46 @@ export {
   APPOINTMENT_STATES,
   APPOINTMENT_TERMINAL,
   APPOINTMENT_TRANSITIONS,
+  APPOINTMENT_REMINDER_SEND_ACTION,
+  APPOINTMENT_REMINDER_SWEEP_HANDLER,
+  APPOINTMENT_REMINDER_SWEEP_KIND,
+  APPOINTMENT_REMINDER_SWEEP_MAX_ATTEMPTS,
+  APPOINTMENT_REMINDER_SWEEP_VERSION,
   advanceAppointment,
   bookAppointment,
   bounds,
+  dispatchDueReminders,
   findOverlap,
   readAppointment,
   readSchedule,
+  registerAppointmentReminderSweep,
+  reminderHistoryBody,
+  reminderMessageKey,
   reminderSourceKey,
+  reminderThreadKey,
+  seedReminderSweep,
   validateAppointmentRequest,
+  validateReminderChannel,
   validateSubject,
 };
 
 /**
- * @param {{ work?: { capabilities?: Array<any> }, config?: Record<string, string> }} [options]
+ * @param {{
+ *   work?: { capabilities?: Array<any> },
+ *   channels?: { capabilities?: Array<any> },
+ *   config?: Record<string, string>
+ * }} [options]
  *   `work` is the composed work package definition — the same object the
  *   composition lists beside this package. The appointments package takes the
  *   created `follow-up@1` capability object from it, so the reminder is always
  *   written with the provider's own name resolution and never with a second
- *   resolution from this package's options.
+ *   resolution from this package's options. `channels` is the same handover
+ *   for the optional send edge: the created `channel-template-send@1`
+ *   object, used only to prove the target of bookings that name
+ *   `reminderChannel` (the sweep opens its own handle, and the history seam
+ *   with it, on the composition modules). A composition without it books
+ *   exactly as before — the edge is optional, like channels' own
+ *   `channel-sender@1` edge, so no `requires` names it.
  */
 export function createAppointmentsPackage(options = {}) {
   // The offered capability object, created once by the provider factory with
@@ -92,6 +134,9 @@ export function createAppointmentsPackage(options = {}) {
   const offered = Array.isArray(options.work?.capabilities)
     ? options.work.capabilities.find((entry) => entry?.name === 'follow-up' && entry?.version === 1) ?? null
     : null;
+  const offeredTemplateSend = Array.isArray(options.channels?.capabilities)
+    ? options.channels.capabilities.find((entry) => entry?.name === 'channel-template-send' && entry?.version === 1) ?? null
+    : null;
 
   return selectPackageGraph(definePackage({
     packageContract: 1,
@@ -100,8 +145,9 @@ export function createAppointmentsPackage(options = {}) {
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
-      + 'with the agreed price snapshotted and the booking lifecycle (booked, confirmed, done, no-show, cancelled). '
-      + 'One member holds one slot at a time; a booking with remindAt opens one work follow-up reminder.',
+      + 'with the agreed price snapshotted and the booking lifecycle. One member holds one slot at a time; '
+      + 'a booking with remindAt opens one work follow-up reminder, and a booking with reminderChannel is sent '
+      + 'at that instant as an approved WhatsApp template and recorded in history.',
     resources: [...APPOINTMENTS_RESOURCES],
 
     // The one declared reach into another package: the follow-up the reminder
@@ -113,7 +159,7 @@ export function createAppointmentsPackage(options = {}) {
     requires: [{ package: 'work', capability: 'follow-up', version: 1 }],
 
     capabilities: [
-      createAppointmentBookCapability({ moduleNames: options.config, provider: offered }),
+      createAppointmentBookCapability({ moduleNames: options.config, provider: offered, templateSendProvider: offeredTemplateSend }),
       createAppointmentScheduleCapability({ moduleNames: options.config }),
     ],
     actions: [],
@@ -150,18 +196,24 @@ export function createAppointmentsPackage(options = {}) {
           serviceKey: 'the commercial listino product key, resolved by the booking path — not a catalog read from this package',
         },
         reminder: {
-          mechanism: 'one work follow-up per booking with remindAt, opened through follow-up@1 in the booking transaction, due at the named instant; dueAt is evidence only — nothing schedules on it',
-          identity: 'the reminder source key is derived from the booking source key, so a retried booking replays its reminder',
+          mechanism: 'one work follow-up per booking with remindAt, opened through follow-up@1 in the booking transaction, due at the named instant; '
+            + 'a booking with reminderChannel is queued at that instant by the reminder sweep into the channel outbox '
+            + 'under the reminder message key and, once the outbox confirms the send, recorded in the customer thread through interaction-log@1',
+          identity: 'the reminder source key is derived from the booking source key, so a retried booking replays its reminder; '
+            + 'the send target rides the same identity, so a retry that moves it is refused 409',
+          sweep: 'the deployment beats seedReminderSweep on its own interval (each beat its own sweep) and the worker fires due sweeps; '
+            + 'the dispatch queues (then confirms) only due, open, unsent reminders of held bookings — cancelled, closed and already-sent ones never fire',
         },
         limitations: [
           'The customer is an opaque envelope on the host contact or company: no customer table is created and none is read beyond the envelope.',
           'The team member is an opaque team identity string: no roster is read and none is created.',
           'The price is a caller-resolved snapshot: this package never reads the commercial catalog and never re-prices a booking.',
-          'The reminder is a follow-up row, not a notification: nothing sends it and nothing fires at the instant.',
+          'The reminder send is the booking\'s own approved template to the booking\'s own recipient, and nothing else: no free text ever sends from this path.',
+          'A failed automatic send leaves the follow-up open: the human still owes the reminder, and the jobs table shows why the try failed.',
         ],
         notModeled: ['customer master data', 'staff roster or shifts', 'service catalog or pricing', 'calendar synchronization',
-          'notifications or sends', 'package credits or payments', 'recurrence or series', 'waitlists'],
-        reuses: ['contact', 'follow-up@1'],
+          'free-text notifications or sends', 'package credits or payments', 'recurrence or series', 'waitlists'],
+        reuses: ['contact', 'follow-up@1', 'channel-template-send@1', 'channel outbox (channel-send)', 'interaction-log@1'],
       };
     },
   }), options.packageContract === 2 ? 2 : 1);

@@ -261,6 +261,12 @@ test('framework self-authority stays at its reviewed named outbox boundary', asy
     "packages/payments/src/operations.js:<line>:const SYSTEM = () => trustedSystemActor('payment package internal write');",
     "packages/core/src/domain-timers.js:<line>:const TIMER_ACTOR = trustedSystemActor('presenting a human-written scheduled ask at its instant');",
     "packages/core/src/transactional-outbox.js:<line>:const OUTBOX_ACTOR = trustedSystemActor('dispatching committed transactional outbox effects');",
+    // Appointments. The due-reminder sweep fires at the instant the booking
+    // named: queueing the outbox send and confirming it into history is not
+    // a human decision — the follow-up stays open for the human, and only
+    // a person moves it. The provider bytes belong to the channel outbox
+    // job queued under the reminder key, never to this actor.
+    "packages/appointments/src/reminder-dispatch.js:<line>:const TIMER_ACTOR = trustedSystemActor('sending due appointment reminders');",
     // Channels. Provider-driven inbox writes and dead-letter rows are not a
     // human decision: the caller-supplied actor is ignored and the package
     // system actor attributes the write, while sends and connection changes

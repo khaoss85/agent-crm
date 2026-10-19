@@ -1551,6 +1551,74 @@ export function createChannelOperations(deps) {
     return { jobId: job.id, idempotencyKey, attempts: job.attempt, state: job.state };
   }
 
+  /**
+   * Queue one APPROVED TEMPLATE through the durable-jobs outbox under the
+   * caller's deterministic message key (backlog:fe0fe10b85d1). The timer
+   * half of automatic reminder sends: the appointment sweep calls this
+   * instead of sending, so the persistent enqueue IS the cross-process
+   * claim — two sweeps racing queue the identical job and the second gets
+   * the first's row back, never a second send. Retries, the execution-time
+   * window re-check and the dead-letter queue are the outbox's own, shared
+   * with human-queued sends: there is no second send path (MEM_ACC_REUSE).
+   *
+   * Template-only by construction, like the `channel-template-send@1` seam:
+   * there is no text field, an unapproved template is refused by the adapter
+   * before anything is queued, and the payload carries routing and content
+   * only (the secret resolves at execution time). The caller's actor is
+   * recorded for audit: automatic sends arrive under the timer's system
+   * actor, human ones under their user actor.
+   */
+  async function queueTemplateSend(params) {
+    const actor = params?.actor;
+    const spaceId = assertSpaceId(params?.spaceId);
+    const connectionKey = typeof params?.connectionKey === 'string' ? params.connectionKey : '';
+    const connection = requireActiveConnection(spaceId, connectionKey);
+    const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
+    const template = params?.template;
+    const rawMessage = {
+      to: params?.to,
+      template: {
+        name: template?.name,
+        ...(template?.language === undefined || template?.language === null || template?.language === ''
+          ? {} : { language: template.language }),
+        ...(template?.variables === undefined ? { variables: [] } : { variables: template.variables }),
+      },
+    };
+    const message = normalizeOutboundMessage(adapter, spaceId, connection, rawMessage);
+    if (message.kind !== 'template') {
+      throw new AppError('This queue sends approved templates only', {
+        code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
+      });
+    }
+    const messageKey = typeof params?.messageKey === 'string' && params.messageKey !== ''
+      ? params.messageKey : null;
+    if (!messageKey) {
+      throw new ValidationError('queueTemplateSend needs a deterministic messageKey', { field: 'messageKey' });
+    }
+    const idempotencyKey = channelSendIdempotencyKey({ spaceId, connectionKey: connection.sourceKey, messageKey });
+    let job;
+    try {
+      job = await jobs().enqueue({
+        kind: CHANNEL_SEND_KIND,
+        handler: { name: CHANNEL_SEND_HANDLER, contract: CHANNEL_SEND_CONTRACT, version: CHANNEL_SEND_VERSION },
+        payload: { spaceId, connectionKey: connection.sourceKey, idempotencyKey, message },
+        idempotencyRoot: idempotencyKey,
+        outcomeReference: idempotencyKey,
+        recoveryPolicy: 'reconcilable_at_least_once',
+        ...(typeof params?.scheduleAt === 'string' && params.scheduleAt !== '' ? { scheduleAt: params.scheduleAt } : {}),
+        maxAttempts: maxSendAttempts,
+      }, { actor });
+    } catch (error) {
+      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'DURABLE_JOB_PAYLOAD_INVALID') {
+        throw new AppError('Channel message is not well-formed: message refused by the outbox payload controls', {
+          code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
+        });
+      }
+      throw error;
+    }
+    return { jobId: job.id, idempotencyKey, attempts: job.attempt, state: job.state };
+  }
+
   /** Record one terminal send failure. Never the raw payload, never a secret. */
   async function recordDeadLetter({ spaceId, connectionKey, idempotencyKey, jobId, errorCode, payloadFingerprint, attempts }) {
     const now = nowIso();
@@ -1807,6 +1875,7 @@ export function createChannelOperations(deps) {
     registerChannelConnection,
     ingestChannelEvent,
     queueChannelSend,
+    queueTemplateSend,
     requeueChannelLetter,
     registerChannelSendHandlers,
     startInitialImport,
