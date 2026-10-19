@@ -285,6 +285,18 @@ export function parseModuleRoute(hash) {
     if (subjectId === null || subjectId === '') return { view: 'invalid' };
     return { view: 'customer-profile', resource, subjectId };
   }
+  // Customer scheda route: #/customer-card/<resource>/<id> (BO-F1-06). The
+  // three-column customer view, a read-only projection over the hub. Same
+  // canonical discipline as the profile route above.
+  if (rawParts.length && rawParts[0] === 'customer-card') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length !== 3) return { view: 'invalid' };
+    const resource = safeDecode(rawParts[1]);
+    const subjectId = safeDecode(rawParts[2]);
+    if (resource === null || !/^[a-z][a-z0-9-]*$/.test(resource)) return { view: 'invalid' };
+    if (subjectId === null || subjectId === '') return { view: 'invalid' };
+    return { view: 'customer-card', resource, subjectId };
+  }
   // Quote builder routes: #/quotes and #/quotes/<id> (ADR-016). Same
   // canonical discipline; anything else is invalid, not a lookup.
   if (rawParts.length && rawParts[0] === 'quotes') {

@@ -341,6 +341,7 @@ import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
 import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
+import { createCustomerCardView } from './admin-customer-card.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createSpineView } from './admin-spine.js';
 import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
@@ -395,6 +396,16 @@ const marketingView = createMarketingView({
   mount: moduleView,
   client: moduleClient,
   submissions,
+  navigate: (hash) => { window.location.hash = hash; },
+});
+
+// Customer scheda (BO-F1-06): the three-column customer view, a read-only
+// projection over the hub. Renders only while the server publishes the
+// customer-hub package; otherwise the view itself says so.
+const customerCardView = createCustomerCardView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -484,7 +495,8 @@ function shellScreenFor(target) {
   switch (target.view) {
     case 'dashboard': return { id: 'oggi', label: 'Oggi' };
     case 'customer-data':
-    case 'customer-profile': return { id: 'clienti', label: 'Clienti' };
+    case 'customer-profile':
+    case 'customer-card': return { id: 'clienti', label: 'Clienti' };
     case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
     case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
     case 'list':
@@ -652,7 +664,7 @@ async function route() {
       ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
-      ((target.view === 'customer-data' || target.view === 'customer-profile') && link.getAttribute('href') === '#/customer-data')
+      ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card') && link.getAttribute('href') === '#/customer-data')
       || (target.view === 'spine' && link.getAttribute('href') === '#/spine')
     );
     link.classList.toggle('active', active);
@@ -679,6 +691,7 @@ async function route() {
     else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') await customerDataView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
+    else if (target.view === 'customer-card') await customerCardView.renderCard(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();
     else if (target.view === 'work-task') await workView.renderTask(target.taskId);
     else if (target.view === 'marketing') await marketingView.renderProposalList();

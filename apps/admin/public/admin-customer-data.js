@@ -373,6 +373,12 @@ export function createCustomerDataView(deps) {
     const panel = el('div', 'customer-profile');
     panel.setAttribute('data-subject', `${resource}:${id}`);
     panel.appendChild(el('h3', undefined, 'Customer profile'));
+    // BO-F1-06: the scheda cliente is the three-column customer view; the
+    // package-scoped profile stays, and links there.
+    const schedaLink = el('a', undefined, 'Apri la scheda cliente →');
+    schedaLink.setAttribute('href', `#/customer-card/${encodeURIComponent(resource)}/${encodeURIComponent(id)}`);
+    schedaLink.setAttribute('data-action', 'open-customer-card');
+    panel.appendChild(schedaLink);
     panel.appendChild(el('p', 'muted customer-profile-timeline', profile.timelineNote ?? ''));
 
     panel.appendChild(fact('Company', profile.identity?.company?.name ?? null));

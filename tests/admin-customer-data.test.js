@@ -257,6 +257,11 @@ test('the profile renders an absent package as "not available", never as zero', 
 
   // And it does not claim to be a timeline.
   assert.ok(text.includes('not a cross-channel customer timeline'));
+
+  // BO-F1-06: the profile links to the three-column scheda, same subject.
+  const schedaLink = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'open-customer-card');
+  assert.ok(schedaLink, 'the profile links to the scheda cliente');
+  assert.equal(schedaLink.getAttribute('href'), '#/customer-card/contact/c1');
 });
 
 test('hostile server text renders as text, never as markup', async () => {
