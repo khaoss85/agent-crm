@@ -35,8 +35,11 @@ import { reminderMessageKey, reminderThreadKey } from './appointments.js';
  * Fail-closed throughout: a booking that left the open states
  * (`booked`/`confirmed`), a reminder whose follow-up is no longer open, or
  * a row whose stored target no longer parses is skipped or refused — never
- * sent on a guess. A failed send leaves the follow-up open: the human still
- * owes the reminder, and the jobs table (then the dead-letter queue a human
+ * sent on a guess. The due list is only a snapshot: every fire re-reads the
+ * booking by id and skips a row that was cancelled, resent, or rescheduled
+ * meanwhile, and never queues once the slot already began (`past-slot`).
+ * A failed send leaves the follow-up open: the human still owes the
+ * reminder, and the jobs table (then the dead-letter queue a human
  * requeues) shows why the automatic try failed.
  */
 
@@ -202,33 +205,68 @@ export async function dispatchDueReminders(handles) {
 }
 
 /**
+ * Read the booking fresh by id: the due list is a snapshot, and a cancel or
+ * a reschedule between the list and the fire must not send. A missing row is
+ * a sweep failure (never a send on a guess); a row that left the sendable
+ * states, moved its slot, fired already, or whose slot already began is a
+ * recorded skip.
+ */
+async function readFreshBooking(appointments, row) {
+  const fresh = (await appointments.listWhere({ id: row.id }))[0] ?? null;
+  if (!fresh) {
+    throw new AppError(
+      `Booking "${row.sourceKey}" vanished between the reminder list and the fire: refusing to send on a missing booking`,
+      { code: 'APPOINTMENTS_REMINDER_UNAVAILABLE', status: 500 },
+    );
+  }
+  return fresh;
+}
+
+function queueSkipFor(fresh, row, instant) {
+  if (!SENDABLE_STATES.includes(fresh.status)) return 'not-sendable';
+  if (fresh.reminderSentAt !== null && fresh.reminderSentAt !== undefined && fresh.reminderSentAt !== '') {
+    return 'already-sent';
+  }
+  if (fresh.startsAt !== row.startsAt) return 'rescheduled';
+  // The slot already began: a *pre*-appointment reminder is stale. The
+  // follow-up stays open for the human; the sweep records the skip.
+  if (instant >= fresh.startsAt) return 'past-slot';
+  return null;
+}
+
+/**
  * Queue one due reminder's outbox send and confirm it when the outbox
  * reports it finished. Answers null on the closed skip (a human-closed
  * reminder stays closed — the sweep never overrides it).
  */
 async function fireOneReminder({ appointments, tasks, templateQueue, interactionLog, instant }, row) {
-  const followUps = await tasks.listWhere({ sourceKey: row.reminderSourceKey });
+  const fresh = await readFreshBooking(appointments, row);
+  const queueSkip = queueSkipFor(fresh, row, instant);
+  if (queueSkip !== null) {
+    return { status: 'skipped', sourceKey: row.sourceKey, reason: queueSkip };
+  }
+  const followUps = await tasks.listWhere({ sourceKey: fresh.reminderSourceKey });
   const followUp = followUps[0] ?? null;
   if (!followUp) {
     throw new AppError(
-      `Booking "${row.sourceKey}" names a reminder follow-up that is not stored: refusing to send on a missing reminder`,
+      `Booking "${fresh.sourceKey}" names a reminder follow-up that is not stored: refusing to send on a missing reminder`,
       { code: 'APPOINTMENTS_REMINDER_UNAVAILABLE', status: 500 },
     );
   }
   if (followUp.status !== 'open') return null;
-  if (row.reminderSpaceId === null || row.reminderSpaceId === undefined
-    || row.reminderConnectionKey === null || row.reminderConnectionKey === undefined
-    || row.reminderTemplateName === null || row.reminderTemplateName === undefined) {
-    throw new AppError(`Booking "${row.sourceKey}" names a channel without a stored target`, {
+  if (fresh.reminderSpaceId === null || fresh.reminderSpaceId === undefined
+    || fresh.reminderConnectionKey === null || fresh.reminderConnectionKey === undefined
+    || fresh.reminderTemplateName === null || fresh.reminderTemplateName === undefined) {
+    throw new AppError(`Booking "${fresh.sourceKey}" names a channel without a stored target`, {
       code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
     });
   }
-  const variables = parseTemplateVars(row);
-  const messageKey = reminderMessageKey(row.sourceKey);
+  const variables = parseTemplateVars(fresh);
+  const messageKey = reminderMessageKey(fresh.sourceKey);
   const template = {
-    name: row.reminderTemplateName,
-    ...(row.reminderTemplateLanguage !== null && row.reminderTemplateLanguage !== undefined
-      && row.reminderTemplateLanguage !== '' ? { language: row.reminderTemplateLanguage } : {}),
+    name: fresh.reminderTemplateName,
+    ...(fresh.reminderTemplateLanguage !== null && fresh.reminderTemplateLanguage !== undefined
+      && fresh.reminderTemplateLanguage !== '' ? { language: fresh.reminderTemplateLanguage } : {}),
     variables,
   };
   // The persistent claim, before any provider bytes: racing sweeps (or a
@@ -236,28 +274,40 @@ async function fireOneReminder({ appointments, tasks, templateQueue, interaction
   // The due instant schedules the job — stable per booking, so every beat
   // computes the identical enqueue and dedups on it.
   const queued = await templateQueue.queueTemplate({
-    spaceId: row.reminderSpaceId,
-    connectionKey: row.reminderConnectionKey,
-    to: row.reminderTo,
+    spaceId: fresh.reminderSpaceId,
+    connectionKey: fresh.reminderConnectionKey,
+    to: fresh.reminderTo,
     template,
     messageKey,
-    scheduleAt: row.reminderDueAt,
+    scheduleAt: fresh.reminderDueAt,
     actor: TIMER_ACTOR,
   });
   if (queued.state === 'succeeded') {
-    const conversationId = await confirmOneReminder({ appointments, interactionLog, instant }, row);
-    return { status: 'sent', sourceKey: row.sourceKey, jobId: queued.jobId, conversationId };
+    // The send already went out under the claim above: re-read before
+    // recording, and skip a booking that died or moved meanwhile. The
+    // outbox job keeps the provider proof; the follow-up stays open for
+    // the human. No lateness gate here: an on-time send confirmed late is
+    // still truthful history.
+    const current = await readFreshBooking(appointments, fresh);
+    if (!SENDABLE_STATES.includes(current.status)) {
+      return { status: 'skipped', sourceKey: fresh.sourceKey, reason: 'not-sendable' };
+    }
+    if (current.startsAt !== fresh.startsAt) {
+      return { status: 'skipped', sourceKey: fresh.sourceKey, reason: 'rescheduled' };
+    }
+    const conversationId = await confirmOneReminder({ appointments, interactionLog, instant }, current);
+    return { status: 'sent', sourceKey: fresh.sourceKey, jobId: queued.jobId, conversationId };
   }
   // A send the outbox settled terminally (or cancelled) never fires on its
   // own again: the dead-letter queue owns the human requeue, and the
   // follow-up stays open for the human.
   if (queued.state === 'failed_terminal') {
-    return { status: 'dead', sourceKey: row.sourceKey, reason: 'send-failed' };
+    return { status: 'dead', sourceKey: fresh.sourceKey, reason: 'send-failed' };
   }
   if (queued.state === 'cancelled') {
-    return { status: 'dead', sourceKey: row.sourceKey, reason: 'send-cancelled' };
+    return { status: 'dead', sourceKey: fresh.sourceKey, reason: 'send-cancelled' };
   }
-  return { status: 'queued', sourceKey: row.sourceKey, jobId: queued.jobId, jobState: queued.state };
+  return { status: 'queued', sourceKey: fresh.sourceKey, jobId: queued.jobId, jobState: queued.state };
 }
 
 /**

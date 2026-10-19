@@ -4,6 +4,7 @@ import {
   AppError,
   ValidationError,
   normalizeError,
+  requireActor,
   withTimeout,
 } from '../../core/index.js';
 import { assertSpaceId } from './connection.js';
@@ -27,6 +28,10 @@ import { CHANNEL_SEND_TIMEOUT_MS, CHANNEL_SECRET_PURPOSE_OUTBOUND } from './oper
  * the caller (the reminder sweep job owns its attempts). Terminal failures
  * throw typed codes — the caller's follow-up stays open as the human
  * fallback, exactly like a queued send whose dead letter a human requeues.
+ *
+ * Every call carries its actor (`requireActor`, like the other write
+ * capabilities): no anonymous sends. Automatic sends arrive under the
+ * timer's system actor, human ones under their user actor.
  */
 
 const TEMPLATE_NAME_RE = /^[a-z0-9_]{1,64}$/;
@@ -198,6 +203,7 @@ export function createTemplateSendCapability(options = {}) {
          * instead of learning it at the instant.
          */
         checkSendable: async (request) => {
+          requireActor(request?.actor);
           const target = await resolveTarget(modules, request);
           return Object.freeze({
             channel: target.connection.channel,
@@ -212,6 +218,7 @@ export function createTemplateSendCapability(options = {}) {
          * must be the same send on every adapter.
          */
         sendTemplate: async (request) => {
+          requireActor(request?.actor);
           const target = await resolveTarget(modules, request);
           const messageKey = boundedLine(
             /** @type {any} */ (request)?.messageKey, 'messageKey', MAX_CONNECTION_KEY,

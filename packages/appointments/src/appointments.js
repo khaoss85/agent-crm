@@ -910,6 +910,7 @@ async function checkReminderSendable(context, { input }) {
   const channel = /** @type {any} */ (input.reminderChannel);
   const template = channel.template;
   await templateSend.checkSendable({
+    actor: context.actor,
     spaceId: channel.spaceId,
     connectionKey: channel.connectionKey,
     to: channel.to,

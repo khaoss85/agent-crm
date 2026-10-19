@@ -432,7 +432,7 @@ test('the template seam never sends free text and refuses without custody', asyn
   // There is no text field to reach for: a request without a template is
   // malformed before any connection is read.
   await assert.rejects(
-    templateSend.sendTemplate({ spaceId: SPACE, connectionKey, to: TO, messageKey: 'kit:no-template' }),
+    templateSend.sendTemplate({ actor: USER, spaceId: SPACE, connectionKey, to: TO, messageKey: 'kit:no-template' }),
     /template must be an object/,
   );
   // A pending connection is not an active one.
@@ -447,7 +447,7 @@ test('the template seam never sends free text and refuses without custody', asyn
   });
   await assert.rejects(
     templateSend.checkSendable({
-      spaceId: SPACE, connectionKey: pending.connection.sourceKey, to: TO, template: { name: 'presti_reminder' },
+      actor: USER, spaceId: SPACE, connectionKey: pending.connection.sourceKey, to: TO, template: { name: 'presti_reminder' },
     }),
     (error) => error?.code === 'CHANNEL_CONNECTION_NOT_ACTIVE',
   );
@@ -457,7 +457,7 @@ test('the template seam never sends free text and refuses without custody', asyn
   });
   await assert.rejects(
     unwired.sendTemplate({
-      spaceId: SPACE, connectionKey, to: TO, template: { name: 'presti_reminder' }, messageKey: 'kit:unwired',
+      actor: USER, spaceId: SPACE, connectionKey, to: TO, template: { name: 'presti_reminder' }, messageKey: 'kit:unwired',
     }),
     (error) => error?.code === 'CHANNEL_SECRET_UNAVAILABLE',
   );
@@ -606,6 +606,127 @@ test('racing sweeps and a crash-retry queue one job and send once', async (t) =>
   assert.equal(first.api.state.sendCalls, 1);
   const { messages } = services(first);
   assert.equal((await messages.listWhere({})).length, 1);
+});
+
+test('the template seam refuses anonymous calls: every send carries an actor', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const { templateSend } = seams(composed, () => NOW_BOOK);
+  const connectionKey = await activeConnection(composed);
+  await assert.rejects(
+    templateSend.sendTemplate({
+      spaceId: SPACE, connectionKey, to: TO, template: { name: 'presti_reminder' }, messageKey: 'kit:no-actor',
+    }),
+    /actor/,
+  );
+  await assert.rejects(
+    templateSend.checkSendable({
+      spaceId: SPACE, connectionKey, to: TO, template: { name: 'presti_reminder' },
+    }),
+    /actor/,
+  );
+  assert.equal(composed.api.state.sendCalls, 0);
+});
+
+/**
+ * A writer that lands after the due-list snapshot and before the fire: the
+ * sweep must read the booking fresh by id and skip it. The proxy fires once,
+ * on the first due-list read, then behaves like the real service.
+ */
+function racingAppointments(service, onFirstList) {
+  let raced = false;
+  return new Proxy(service, {
+    get(target, prop) {
+      if (prop === 'listWhere') {
+        return async (filters) => {
+          const rows = await target.listWhere(filters);
+          if (!raced) {
+            raced = true;
+            await onFirstList();
+          }
+          return rows;
+        };
+      }
+      const value = target[prop];
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+async function channelSendJobs(composed) {
+  const probe = createDurableJobStore({ storage: composed.database.storage, tenantId: TENANT });
+  return (await probe.list(100)).filter((job) => job.kind === 'channel-send');
+}
+
+test('a booking cancelled between the list and the fire never queues', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const now = () => NOW_BOOK;
+  const connectionKey = await activeConnection(composed);
+  const booked = await book(composed, now, bookingRequest(connectionKey, { sourceKey: 'gym:reminder:6' }));
+  const service = composed.modules.get('appointment').service;
+  const appointments = racingAppointments(service, () => advanceAppointment(
+    { appointments: service, actor: USER, now },
+    booked.appointment,
+    'cancelled',
+    'the customer called it off between list and fire',
+  ));
+  const { interactionLog } = seams(composed, () => REMIND_AT);
+  const fired = await dispatchDueReminders({
+    appointments,
+    tasks: composed.modules.get('work-task').service,
+    templateQueue: templateQueue(composed),
+    interactionLog,
+    now: () => REMIND_AT,
+  });
+  assert.equal(fired.sent.length, 0);
+  assert.equal(fired.queued.length, 0);
+  assert.deepEqual(fired.skipped.map((entry) => entry.reason), ['not-sendable']);
+  assert.equal(composed.api.state.sendCalls, 0);
+  assert.equal((await channelSendJobs(composed)).length, 0);
+});
+
+test('a booking rescheduled between the list and the fire never queues', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const now = () => NOW_BOOK;
+  const connectionKey = await activeConnection(composed);
+  const booked = await book(composed, now, bookingRequest(connectionKey, { sourceKey: 'gym:reminder:7' }));
+  const service = composed.modules.get('appointment').service;
+  const appointments = racingAppointments(service, () => service.applyManaged(
+    booked.appointment.id,
+    { startsAt: '2026-10-21T17:00:00.000Z', endsAt: '2026-10-21T18:00:00.000Z' },
+    { actor: USER },
+  ));
+  const { interactionLog } = seams(composed, () => REMIND_AT);
+  const fired = await dispatchDueReminders({
+    appointments,
+    tasks: composed.modules.get('work-task').service,
+    templateQueue: templateQueue(composed),
+    interactionLog,
+    now: () => REMIND_AT,
+  });
+  assert.equal(fired.sent.length, 0);
+  assert.equal(fired.queued.length, 0);
+  assert.deepEqual(fired.skipped.map((entry) => entry.reason), ['rescheduled']);
+  assert.equal(composed.api.state.sendCalls, 0);
+  assert.equal((await channelSendJobs(composed)).length, 0);
+});
+
+test('a due reminder for a concluded slot is skipped, never sent', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const now = () => NOW_BOOK;
+  const connectionKey = await activeConnection(composed);
+  await book(composed, now, bookingRequest(connectionKey, { sourceKey: 'gym:reminder:8' }));
+  // The worker was down: the first sweep runs after the slot began. The
+  // reminder is due but stale — skip with a reason, queue nothing.
+  const fired = await dispatch(composed, () => '2026-10-21T00:00:00.000Z');
+  assert.equal(fired.sent.length, 0);
+  assert.equal(fired.queued.length, 0);
+  assert.deepEqual(fired.skipped.map((entry) => entry.reason), ['past-slot']);
+  assert.equal(composed.api.state.sendCalls, 0);
+  assert.equal((await channelSendJobs(composed)).length, 0);
 });
 
 test('the history body names the template and stays within the message bound', async (t) => {
