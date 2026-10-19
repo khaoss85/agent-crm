@@ -428,8 +428,12 @@ function runShard(text, outPath) {
     const reportPath = join(scratch, 'summary.jsonl');
     const reporter = fileURLToPath(new URL('./measurement-reporter.js', import.meta.url));
     const run = spawnSync(process.execPath,
-      ['--no-warnings', '--test', '--test-concurrency=2', `--test-reporter=${reporter}`,
-        '--test-reporter-destination=stdout', `--test-reporter-destination=${reportPath}`, ...piece], {
+      // Reporters and destinations pair positionally (node refuses a
+      // mismatch): spec to the log, the measurement reporter to the file —
+      // the same two channels the monolith's npm forwarding produces.
+      ['--no-warnings', '--test', '--test-concurrency=2',
+        '--test-reporter=spec', '--test-reporter-destination=stdout',
+        `--test-reporter=${reporter}`, `--test-reporter-destination=${reportPath}`, ...piece], {
         cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: standaloneEnv(),
       });
     if (run.status !== 0 || run.error || run.signal) {
