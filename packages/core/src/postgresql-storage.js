@@ -738,39 +738,77 @@ export async function createPostgresqlDatabase(options = {}) {
     () => {},
   );
   const setupDeadlineMs = options.acquisitionDeadlineMs ?? DEFAULT_ACQUISITION_MS;
-  const dropSchemaBestEffort = async () => {
+  const withSetupAdmin = async (work) => {
     const { Client } = await loadPgDriver();
     const admin = new Client({ connectionString: connection, connectionTimeoutMillis: 2000 });
     try {
       await withDeadline(admin.connect(), 2000, 'acquisition');
-      await withDeadline(admin.query(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`), 10_000, 'query');
-    } catch {
-      /* teardown is best-effort */
+      return await work(admin);
     } finally {
       try { await admin.end(); } catch { /* ignore */ }
     }
   };
-  // Set once CREATE SCHEMA has committed: a later setup statement can still
-  // time out, and since creation then rejects without a handle the caller
-  // could never close() the orphan schema away.
-  let schemaCreated = false;
+  const dropSchemaBestEffort = async () => {
+    try {
+      await withSetupAdmin((admin) => withDeadline(
+        admin.query(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`), 10_000, 'query',
+      ));
+    } catch {
+      /* teardown is best-effort */
+    }
+  };
+  // Cleanup after a setup failure only removes a schema this setup may have
+  // created — never a pre-existing schema with live data. The probe below
+  // records whether the schema already exists before CREATE runs; a failed
+  // probe fails closed (hands off). An observed CREATE success proves this
+  // setup created the schema (a pre-existing schema fails fast with
+  // duplicate_schema instead); a CREATE timeout leaves the outcome unknown,
+  // so only a schema that was absent before this setup is treated as ours
+  // (backlog:a23d9cd02b8f).
+  let schemaPreexisted = true;
+  try {
+    schemaPreexisted = await withSetupAdmin(async (admin) => {
+      const found = await withDeadline(
+        admin.query('SELECT 1 FROM pg_namespace WHERE nspname = $1', [schema]),
+        10_000, 'query',
+      );
+      return (found?.rowCount ?? 0) > 0;
+    });
+  } catch {
+    schemaPreexisted = true;
+  }
+  let mayDropSchema = false;
   try {
     setup = await withDeadline(setupPending, setupDeadlineMs, 'acquisition');
     // Every setup statement is bounded: an unbounded DDL wait on a half-dead
     // connection never settles, and the file reads as stuck-idle (no CPU,
     // idle PG) instead of failing fast with STORAGE_TIMEOUT
-    // (backlog:b705667ad23b).
-    await withDeadline(setup.query(`CREATE SCHEMA ${quoted}`), setupDeadlineMs, 'acquisition');
-    schemaCreated = true;
-    await withDeadline(setup.query(`SET search_path TO ${quoted}`), setupDeadlineMs, 'acquisition');
+    // (backlog:b705667ad23b). The kind names the setup phase, so a timeout
+    // here reads "setup", not "acquisition" (backlog:a23d9cd02b8f).
+    try {
+      await withDeadline(setup.query(`CREATE SCHEMA ${quoted}`), setupDeadlineMs, 'setup');
+      mayDropSchema = true;
+    } catch (createError) {
+      if (isPoolCheckoutTimeout(createError) && !schemaPreexisted) mayDropSchema = true;
+      throw createError;
+    }
+    await withDeadline(setup.query(`SET search_path TO ${quoted}`), setupDeadlineMs, 'setup');
     for (const sql of options.ddl ?? []) {
-      await withDeadline(setup.query(sql), setupDeadlineMs, 'acquisition');
+      await withDeadline(setup.query(sql), setupDeadlineMs, 'setup');
     }
   } catch (error) {
     setupTimedOut = isPoolCheckoutTimeout(error);
     try { if (setup) setup.release(); } catch { /* ignore */ }
     try { await pool.end(); } catch { /* ignore */ }
-    if (schemaCreated) await dropSchemaBestEffort();
+    // A CREATE SCHEMA that times out on the client may still have committed
+    // on the server: the client then sees a timeout for a schema that
+    // exists, and since creation rejects without a handle the caller could
+    // never close() the orphan schema away. The DROP is still gated on this
+    // setup possibly owning the schema (flag above plus the pre-probe): a
+    // fast CREATE failure (duplicate schema, permission denied) or a schema
+    // that pre-existed never drops — DROP SCHEMA IF EXISTS then only checks
+    // server-side whether our own orphan is there to drop.
+    if (mayDropSchema && !schemaPreexisted) await dropSchemaBestEffort();
     throw error instanceof AppError ? error : sanitizePgError(error);
   }
   setup.release();

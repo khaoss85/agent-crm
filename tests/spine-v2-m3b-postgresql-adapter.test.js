@@ -450,6 +450,158 @@ test('M3B timed-out setup drops the schema it already created', { timeout: 15_00
   }
 });
 
+test('M3B timed-out CREATE SCHEMA leaves no orphan schema behind', { timeout: 15_000 }, async (t) => {
+  // A CREATE SCHEMA can time out on the client after committing on the
+  // server: the client sees STORAGE_TIMEOUT for a schema that exists. The
+  // old cleanup ran only when the CREATE was observed succeeding and left
+  // that schema orphaned (backlog:a23d9cd02b8f). Delay the CREATE response
+  // past the setup deadline while the server commits immediately, then prove
+  // the setup path still drops the schema and names the setup phase.
+  const schema = `accordo_setup_create_${Date.now().toString(36)}`;
+  const originalQuery = pg.Client.prototype.query;
+  pg.Client.prototype.query = /** @type {any} */ (function (/** @type {any} */ queryText, /** @type {any[]} */ ...rest) {
+    const sql = typeof queryText === 'string' ? queryText : queryText?.text;
+    const result = originalQuery.apply(this, [queryText, ...rest]);
+    if (typeof sql === 'string' && sql.startsWith('CREATE SCHEMA')) {
+      return result.then(
+        (value) => new Promise((resolve) => { setTimeout(() => resolve(value), 600); }),
+        (error) => new Promise((resolve, reject) => { setTimeout(() => reject(error), 600); }),
+      );
+    }
+    return result;
+  });
+  let outcome;
+  try {
+    outcome = await createPostgresqlDatabase({
+      schema,
+      ddl: [], acquisitionDeadlineMs: 150, max: 1,
+    }).then(
+      async (db) => { await db.close().catch(() => {}); return 'opened'; },
+      (error) => error,
+    );
+  } finally {
+    pg.Client.prototype.query = originalQuery;
+  }
+  if (outcome === 'opened') assert.fail('CREATE SCHEMA outlived the setup deadline');
+  if (outcome.code === 'STORAGE_UNAVAILABLE') {
+    if (!PG_REQUIRED) { t.skip('PostgreSQL 16 is not reachable locally'); return; }
+    throw outcome;
+  }
+  assert.equal(outcome.code, 'STORAGE_TIMEOUT');
+  assert.match(String(outcome.message), /setup deadline exceeded/);
+  const admin = new pg.Client({ connectionString: PG_TEST_URL, connectionTimeoutMillis: 2000 });
+  await admin.connect();
+  try {
+    const found = await admin.query('SELECT 1 AS orphan FROM pg_namespace WHERE nspname = $1', [schema]);
+    assert.equal(found.rowCount, 0, `timed-out CREATE left schema ${schema} behind`);
+  } finally {
+    await admin.end();
+  }
+});
+
+test('M3B setup failure never drops a pre-existing schema', { timeout: 30_000 }, async (t) => {
+  // Cleanup once dropped any schema the setup touched: after a fast CREATE
+  // failure on a pre-existing schema (duplicate_schema) the catch still ran
+  // DROP SCHEMA CASCADE and deleted live data (review of #273 head c695163,
+  // P1). Cleanup now only removes a schema this setup may have created, so a
+  // failure at any setup step must leave a pre-existing schema and its rows
+  // alone, while a fresh schema that fails later is still removed
+  // (backlog:a23d9cd02b8f).
+  const admin = new pg.Client({ connectionString: PG_TEST_URL, connectionTimeoutMillis: 2000 });
+  try {
+    await admin.connect();
+  } catch (error) {
+    if (!PG_REQUIRED) { t.skip('PostgreSQL 16 is not reachable locally'); return; }
+    throw error;
+  }
+  const stamp = Date.now().toString(36);
+  const lived = `accordo_setup_pre_${stamp}`;
+  const fresh = `accordo_setup_fresh_${stamp}`;
+  const rowCount = async (name) => {
+    const found = await admin.query(`SELECT COUNT(*)::int AS n FROM "${name}".keep`);
+    return Number(found.rows[0].n);
+  };
+  const schemaExists = async (name) => {
+    const found = await admin.query('SELECT 1 FROM pg_namespace WHERE nspname = $1', [name]);
+    return (found.rowCount ?? 0) > 0;
+  };
+  try {
+    await admin.query(`CREATE SCHEMA "${lived}"`);
+    await admin.query(`CREATE TABLE "${lived}".keep (id int PRIMARY KEY)`);
+    await admin.query(`INSERT INTO "${lived}".keep (id) VALUES (1)`);
+    // Step 1, fast CREATE failure: the schema already exists, so CREATE
+    // fails with duplicate_schema and cleanup must stay hands-off.
+    const duplicate = await createPostgresqlDatabase({
+      schema: lived, ddl: [], acquisitionDeadlineMs: 300, max: 1,
+    }).then(
+      async (db) => { await db.close().catch(() => {}); return 'opened'; },
+      (error) => error,
+    );
+    assert.notEqual(duplicate, 'opened', 'CREATE on a pre-existing schema must fail');
+    assert.equal(await rowCount(lived), 1, 'fast CREATE failure dropped a live row');
+    // Step 1, CREATE timeout on a pre-existing schema: the outcome is
+    // unknown to the client, but the pre-probe saw the schema, so cleanup
+    // still stays hands-off.
+    const originalQuery = pg.Client.prototype.query;
+    pg.Client.prototype.query = /** @type {any} */ (function (/** @type {any} */ queryText, /** @type {any[]} */ ...rest) {
+      const sql = typeof queryText === 'string' ? queryText : queryText?.text;
+      const result = originalQuery.apply(this, [queryText, ...rest]);
+      if (typeof sql === 'string' && sql.startsWith('CREATE SCHEMA')) {
+        return result.then(
+          (value) => new Promise((resolve) => { setTimeout(() => resolve(value), 600); }),
+          (error) => new Promise((resolve, reject) => { setTimeout(() => reject(error), 600); }),
+        );
+      }
+      return result;
+    });
+    let timedOut;
+    try {
+      timedOut = await createPostgresqlDatabase({
+        schema: lived, ddl: [], acquisitionDeadlineMs: 150, max: 1,
+      }).then(
+        async (db) => { await db.close().catch(() => {}); return 'opened'; },
+        (error) => error,
+      );
+    } finally {
+      pg.Client.prototype.query = originalQuery;
+    }
+    if (timedOut === 'opened') assert.fail('CREATE SCHEMA outlived the setup deadline');
+    if (timedOut.code === 'STORAGE_UNAVAILABLE') {
+      if (!PG_REQUIRED) { t.skip('PostgreSQL 16 is not reachable locally'); return; }
+      throw timedOut;
+    }
+    assert.equal(timedOut.code, 'STORAGE_TIMEOUT');
+    assert.equal(await rowCount(lived), 1, 'timed-out CREATE dropped a live row');
+    // Step 2, later failure on a fresh schema: this schema IS ours, so the
+    // injected SET failure must still clean it up (no over-correction).
+    const originalSetQuery = pg.Client.prototype.query;
+    pg.Client.prototype.query = /** @type {any} */ (function (/** @type {any} */ queryText, /** @type {any[]} */ ...rest) {
+      const sql = typeof queryText === 'string' ? queryText : queryText?.text;
+      if (typeof sql === 'string' && sql.startsWith('SET search_path')) {
+        throw new Error('injected SET search_path failure');
+      }
+      return originalSetQuery.apply(this, [queryText, ...rest]);
+    });
+    let setFailed;
+    try {
+      setFailed = await createPostgresqlDatabase({
+        schema: fresh, ddl: [], acquisitionDeadlineMs: 300, max: 1,
+      }).then(
+        async (db) => { await db.close().catch(() => {}); return 'opened'; },
+        (error) => error,
+      );
+    } finally {
+      pg.Client.prototype.query = originalSetQuery;
+    }
+    assert.notEqual(setFailed, 'opened', 'injected SET failure must fail setup');
+    assert.equal(await schemaExists(fresh), false, `failed setup left fresh schema ${fresh} behind`);
+  } finally {
+    await admin.query(`DROP SCHEMA IF EXISTS "${lived}" CASCADE`).catch(() => {});
+    await admin.query(`DROP SCHEMA IF EXISTS "${fresh}" CASCADE`).catch(() => {});
+    await admin.end();
+  }
+});
+
 test('M3B query deadline destroys a black-holed client and recovers', { timeout: 15_000 }, async (t) => {
   const db = await openPostgresqlFixture(t, { queryDeadlineMs: 80, max: 2 });
   if (!db) return;
@@ -459,28 +611,24 @@ test('M3B query deadline destroys a black-holed client and recovers', { timeout:
     return true;
   });
   // Recovery runs on the same 80ms-deadline handle that just destroyed a
-  // client: under load the deadline can fire on the recovery COMMIT
-  // (COMMIT_OUTCOME_UNKNOWN — the write may have applied) or on the statement
-  // (STORAGE_TIMEOUT). Both are deadline artifacts, not a dead pool, so retry
-  // with a fresh id per attempt and confirm unknown outcomes by reading back.
-  // Anything else rethrows: real defects must stay red.
-  let recoveredId = null;
-  for (let attempt = 0; attempt < 10 && recoveredId === null; attempt += 1) {
-    const id = `after-timeout-${attempt}`;
-    try {
-      await db.storage.execute(insertCompany(id, 'Alive'));
-      recoveredId = id;
-    } catch (error) {
-      if (error.code === 'COMMIT_OUTCOME_UNKNOWN') {
-        const row = await db.storage.maybeOne(selectName(id)).catch(() => null);
-        if (row && row.name === 'Alive') recoveredId = id;
-      } else if (error.code !== 'STORAGE_TIMEOUT') {
-        throw error;
-      }
-    }
+  // client. The pool must serve the very next write: one fixed id, one
+  // attempt, no retry loop with a fresh id per attempt (backlog:a23d9cd02b8f).
+  // A fresh id per attempt passes as long as any of ten writes succeeds and
+  // can hide a pool that never recovers. COMMIT_OUTCOME_UNKNOWN is the only
+  // acceptable ambiguity — the write may have applied, so confirm it by
+  // reading the same id back instead of writing again. Anything else
+  // rethrows: real defects must stay red.
+  const recoveredId = 'after-timeout';
+  try {
+    await db.storage.execute(insertCompany(recoveredId, 'Alive'));
+  } catch (error) {
+    if (error?.code !== 'COMMIT_OUTCOME_UNKNOWN') throw error;
   }
-  assert.ok(recoveredId, 'pool did not recover after the black-holed client was destroyed');
-  assert.equal((await db.storage.maybeOne(selectName(recoveredId))).name, 'Alive');
+  assert.equal(
+    (await db.storage.maybeOne(selectName(recoveredId)))?.name,
+    'Alive',
+    'pool did not recover after the black-holed client was destroyed',
+  );
 });
 
 test('M3B lock_timeout maps to STORAGE_TIMEOUT without leaking the URL', { timeout: 15_000 }, async (t) => {
