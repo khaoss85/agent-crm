@@ -591,10 +591,26 @@ export const closingKey = (taskId, state) => `work-activity:task-${state}:${task
  * `createdAt` both have millisecond precision, so two writes in the same
  * millisecond tie on both and the tie used to fall through to the random row
  * id — which is why a note written after a close sometimes sorted before it.
- * The sequence is read inside the caller's transaction, so it sees the writes
- * this transaction already made. Two writers racing in the same millisecond on
- * the same task can still store the same `seq`; that pair degrades to the old
- * `createdAt`-then-`id` fallback, never to a wrong order claimed as right.
+ *
+ * The read-max-and-insert below is a read-then-write: two writers interleaved
+ * on one process both read the same maximum and both commit with it, storing
+ * the same `seq` twice. The chain below serializes assignments per task — a
+ * process-local advisory lock, one FIFO chain per task id. Acquisition
+ * attaches synchronously (no `await` before the chain is extended), so two
+ * callers racing in the same tick still order; the waiter re-reads after the
+ * winner's insert and takes the next `seq`. Different tasks never contend.
+ * Entries are removed when their chain drains, so the map holds only tasks
+ * with a write in flight. The shape is the appointments package's
+ * per-member booking chain, keyed by task instead of member.
+ *
+ * This closes the same-process window, which is where every writer in this
+ * repository runs today: all three action paths in `index.js` and the service
+ * package's follow-up calls funnel through this one function, in this
+ * process, inside the caller's transaction. Across connections the caller's
+ * transaction is the serializer, as for every other read-then-write here
+ * (task creation leans on the `sourceKey` unique constraint instead, which
+ * module manifests cannot express for a `(taskId, seq)` pair — they allow
+ * only per-field `unique`).
  *
  * @param {{activities: any, actor?: unknown}} deps
  * @param {{sourceKey: string|null, kind: string, subject: {resource: string, id: string},
@@ -606,25 +622,57 @@ export async function recordActivity({ activities, actor }, entry) {
     throw new ValidationError(`kind must be one of ${ACTIVITY_KINDS.join(', ')}`, { field: 'kind' });
   }
   const who = normalizeWorkActor(actor);
-  const siblings = await activities.listWhere({ taskId: entry.taskId });
-  let seq = 1;
-  for (const sibling of siblings) {
-    if (Number.isInteger(sibling.seq) && sibling.seq >= seq) seq = sibling.seq + 1;
+  // A null taskId has no sequence to share; those writes still serialize
+  // together rather than interleaving with each other.
+  const taskKey = typeof entry.taskId === 'string' ? entry.taskId : '∅-no-task';
+  return withTaskSeq(taskKey, async () => {
+    const siblings = await activities.listWhere({ taskId: entry.taskId });
+    let seq = 1;
+    for (const sibling of siblings) {
+      if (Number.isInteger(sibling.seq) && sibling.seq >= seq) seq = sibling.seq + 1;
+    }
+    return activities.createManaged({
+      sourceKey: entry.sourceKey,
+      kind: entry.kind,
+      subjectResource: entry.subject.resource,
+      subjectId: entry.subject.id,
+      taskId: entry.taskId,
+      body: entry.body,
+      occurredAt: entry.occurredAt,
+      actorType: who.type,
+      actorId: who.id,
+      sourcePackage: entry.source.package,
+      sourceAction: entry.source.action,
+      seq,
+    }, { actor });
+  });
+}
+
+/** Tasks with a `seq` write in flight, each holding its FIFO tail. @type {Map<string, Promise<void>>} */
+const taskSeqChains = new Map();
+
+/**
+ * One task, one `seq` writer at a time — in this process.
+ * @param {string} taskKey @param {() => Promise<any>} critical
+ */
+async function withTaskSeq(taskKey, critical) {
+  const previous = taskSeqChains.get(taskKey) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise((resolve) => { release = resolve; });
+  // Tails never reject (the second handler joins even after a refusal), so a
+  // refused write never wedges the task's chain — but the join is kept
+  // explicit rather than assumed.
+  const tail = previous.then(() => current, () => current);
+  taskSeqChains.set(taskKey, tail);
+  // Synchronous until here: two callers racing in the same tick still order.
+  await previous;
+  try {
+    return await critical();
+  } finally {
+    // Remove only our own tail: a waiter queued behind us owns the slot now.
+    if (taskSeqChains.get(taskKey) === tail) taskSeqChains.delete(taskKey);
+    release();
   }
-  return activities.createManaged({
-    sourceKey: entry.sourceKey,
-    kind: entry.kind,
-    subjectResource: entry.subject.resource,
-    subjectId: entry.subject.id,
-    taskId: entry.taskId,
-    body: entry.body,
-    occurredAt: entry.occurredAt,
-    actorType: who.type,
-    actorId: who.id,
-    sourcePackage: entry.source.package,
-    sourceAction: entry.source.action,
-    seq,
-  }, { actor });
 }
 
 /**
