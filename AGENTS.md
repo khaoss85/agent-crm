@@ -120,6 +120,38 @@ Sequenced in `docs/QUALITY_GATES.md` §1.11.
 - Use ISO-8601 UTC timestamps.
 - Log MCP diagnostics only to stderr; stdout is reserved for JSON-RPC.
 
+## Invii verso canali esterni (outbound sends to external channels)
+
+Learned from the WhatsApp reminder (`packages/appointments`, three review
+rounds on race conditions): a package that sends to an external channel
+follows these six rules, before writing code:
+
+1. Every send goes through the existing channels outbox (`queueTemplateSend`
+   / `channel-send`): one job per message under a deterministic idempotent
+   key. There is no second send path.
+2. No provider call before a persistent claim: the sweep (or action) only
+   enqueues; the persistent enqueue IS the cross-process claim. Retries, the
+   execution-time window re-check and dead-letter/requeue belong to the
+   outbox.
+3. Every send carries an actor (`requireActor`): automatic sends run under
+   the timer's system actor, human ones under their user actor. No anonymous
+   sends.
+4. Re-read the row fresh by id before queueing and skip when it left the
+   sendable state, moved, already fired, or its slot already began. The due
+   list is only a snapshot.
+5. Confirm idempotently per message key, never per sweep clock: history and
+   the sent marker both stamp the instant the job was queued for, and the
+   marker fills only when still empty (a conditional write with the same
+   value). A crash between history and marker replays identically.
+6. Terminal refusals (a revoked connection, an unapproved template) become
+   the single row's state (`skipped` with a reason), never the sweep's
+   failure.
+
+Prove it with `tests/helpers/outbound-send-conformance.js`: two racing
+sweeps queue one job and send once, a crash between send and confirm
+records once, a row cancelled between list and fire never queues. A package
+with outbound sends calls it from its own suite with its own driver.
+
 ## Definition of done
 
 - behavior works end-to-end;
@@ -157,6 +189,7 @@ answer these in the PR. Canonical rule and full rationale:
 - Flag domain-specific business behavior added to `packages/core` without the ADR-018 justification.
 - Flag a JTBD row promoted without linked evidence, or a document claiming a capability the tests do not prove.
 - Flag a new agent-facing command, tool or contract that does not clear the DX Simplicity Gate above.
+- Flag an outbound send to an external channel that bypasses the channels outbox, sends without an actor, or confirms per sweep clock instead of per message key («Invii verso canali esterni» above).
 
 ## Review guidelines
 
