@@ -1,0 +1,22 @@
+{
+  "manifestVersion": 1,
+  "name": "llm-call-audit",
+  "table": "llm_call_audits",
+  "description": "One row per LLM attempt — completed, refused or failed: when, for which space and purpose, through which adapter and model, with how many tokens at what estimated cost. The prompt text is never a column, so it can never be a row; the key never appears. Every field is managed: rows exist only through the llm package's complete operation. (backlog:6e54d6a7988a)",
+  "fields": [
+    { "name": "callKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "at", "type": "timestamp", "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "purpose", "type": "string", "writable": "managed" },
+    { "name": "adapter", "type": "string", "writable": "managed" },
+    { "name": "model", "type": "string", "writable": "managed" },
+    { "name": "inputTokens", "type": "integer", "writable": "managed" },
+    { "name": "outputTokens", "type": "integer", "writable": "managed" },
+    { "name": "estimatedCostCents", "type": "integer", "writable": "managed" },
+    { "name": "dryRun", "type": "boolean", "writable": "managed" },
+    { "name": "refused", "type": "string", "writable": "managed" },
+    { "name": "errorCode", "type": "string", "writable": "managed" },
+    { "name": "sourceCount", "type": "integer", "writable": "managed" },
+    { "name": "sources", "type": "string", "writable": "managed" }
+  ]
+}
