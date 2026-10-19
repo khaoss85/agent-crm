@@ -1,0 +1,40 @@
+{
+  "manifestVersion": 1,
+  "name": "space-permission-override",
+  "description": "One flipped AI switch of one space: which of the five permissions this space set explicitly, who flipped it and when. A space with no rows runs on the package defaults. Keyed by opaque control-plane space id; no spaces table exists in this package.",
+  "fields": [
+    {
+      "name": "spaceId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "scopeKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "permission",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "enabled",
+      "type": "boolean",
+      "writable": "managed"
+    },
+    {
+      "name": "updatedBy",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "updatedAt",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    }
+  ]
+}
