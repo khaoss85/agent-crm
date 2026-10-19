@@ -328,6 +328,8 @@ test('a matched-contact race reports the contact that was actually linked', asyn
   });
   assert.equal(answer.outcome, 'matched');
   assert.equal(answer.contact.id, winnerId, 'the outcome names the linked winner, not the pre-read match');
+  assert.equal(answer.rule, 'external-identity', 'the race-won link reports the replay receipt, not the pre-read email rule');
+  assert.match(answer.evidence, /already names this contact/, 'the evidence describes the handle replay, not the pre-read match');
   const stored = app.modules.get('external-identity').service
     .listWhere({ sourceKey: 'whatsapp:+393337771111', status: 'active' });
   assert.equal(stored.length, 1);

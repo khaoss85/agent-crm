@@ -496,7 +496,7 @@ export function createChannelSenderResolution({
             modules, names, system: sender.system, externalId: sender.externalId,
             subject: winner, runId: SENDER_RUN_ID, actor,
           });
-          return { identity, contactId: winner.id };
+          return { identity, contactId: winner.id, wonByRace: Boolean(raced) };
         } catch (error) {
           return replayRaceLoser(error);
         }
@@ -504,8 +504,15 @@ export function createChannelSenderResolution({
       if (linked.nonContact) {
         return decide({ ...request, handle: sender.externalId });
       }
-      if (linked.replayed && linked.contactId) {
-        const identity = await database.transactionAsync(async () => refreshReplayed(linked.contactId));
+      if ((linked.replayed || linked.wonByRace) && linked.contactId) {
+        // A replayed handle — whether it lost a uniqueness conflict or the
+        // in-transaction re-check already found the winner — reports the
+        // winner with the replay receipt, never the pre-read policy that
+        // matched somebody else. The race-won link already refreshed the
+        // sighting inside its transaction, so its identity is reused.
+        const identity = linked.wonByRace
+          ? linked.identity
+          : await database.transactionAsync(async () => refreshReplayed(linked.contactId));
         return Object.freeze({
           system: sender.system,
           outcome: 'matched',
