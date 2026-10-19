@@ -26,11 +26,35 @@ function scratch(t, prefix = 'accordo-package-test-') {
   return directory;
 }
 
-function run(command, args, { cwd = repoRoot } = {}) {
+/**
+ * Isolated npm cache for one test workspace.
+ *
+ * Every npm a test spawns inherits the ambient user cache (`~/.npm`) unless
+ * told otherwise, so two suites sharing a Mac — or one suite beside any
+ * other npm on the machine — read and write the same `_cacache`. On
+ * 2026-10-19 the full `npm test` run on this Mac failed exactly there:
+ * `npm pack` died with EPERM inside the shared cache, `packA` came back
+ * undefined, and the byte-identity test fell over reading `filename` — while
+ * the same head was green in CI, which runs with a clean home. Nothing about
+ * the product was red; the test was coupled to machine-global mutable state.
+ *
+ * Every `run('npm', ...)` below therefore passes `env: npmCacheEnv(workspace)`,
+ * which points the cache at a fresh directory inside the test's own scratch
+ * workspace. Assertions are unchanged and Linux behaviour is identical: the
+ * only thing that moved is where npm keeps its scratch bytes.
+ * @param {string} workspace scratch directory owned by the calling test
+ */
+function npmCacheEnv(workspace) {
+  const cache = join(workspace, 'npm-cache');
+  mkdirSync(cache, { recursive: true });
+  return { npm_config_cache: cache };
+}
+
+function run(command, args, { cwd = repoRoot, env: extraEnv = {} } = {}) {
   const { NODE_TEST_CONTEXT: _ignored, ...env } = process.env;
   try {
     const stdout = execFileSync(command, args, {
-      cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+      cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
     });
     return { exitCode: 0, stdout, stderr: '' };
   } catch (error) {
@@ -112,7 +136,7 @@ test('the release workflow redirects JSON-only assembly output', (t) => {
   const target = join(workspace, 'candidate');
   const assembled = run('npm', [
     'run', '--silent', 'distribution:assemble-create', '--', target, '--apply', '--json',
-  ]);
+  ], { env: npmCacheEnv(workspace) });
   assert.equal(assembled.exitCode, 0, assembled.stderr);
   const report = JSON.parse(assembled.stdout);
   assert.equal(report.ok, true);
@@ -173,8 +197,10 @@ test('two assemblies pack byte-identically, install offline and create a working
   const secondPackDir = join(workspace, 'pack-b');
   mkdirSync(firstPackDir);
   mkdirSync(secondPackDir);
-  const packA = JSON.parse(run('npm', ['pack', first, '--json', '--pack-destination', firstPackDir]).stdout)[0];
-  const packB = JSON.parse(run('npm', ['pack', second, '--json', '--pack-destination', secondPackDir]).stdout)[0];
+  const packA = JSON.parse(run('npm', ['pack', first, '--json', '--pack-destination', firstPackDir], { env: npmCacheEnv(workspace) }).stdout)[0];
+  const packB = JSON.parse(run('npm', ['pack', second, '--json', '--pack-destination', secondPackDir], { env: npmCacheEnv(workspace) }).stdout)[0];
+  assert.ok(packA?.filename, `npm pack of the first assembly failed: ${first}`);
+  assert.ok(packB?.filename, `npm pack of the second assembly failed: ${second}`);
   const tarA = join(firstPackDir, packA.filename);
   const tarB = join(secondPackDir, packB.filename);
 
@@ -195,7 +221,7 @@ test('two assemblies pack byte-identically, install offline and create a working
   writeFileSync(join(consumer, 'package.json'), '{"private":true,"type":"module"}\n');
   const install = run('npm', [
     'install', tarA, '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--package-lock=false',
-  ], { cwd: consumer });
+  ], { cwd: consumer, env: npmCacheEnv(workspace) });
   assert.equal(install.exitCode, 0, install.stderr);
 
   const installedBin = join(consumer, 'node_modules/create-accordo/bin/create-accordo.js');
@@ -256,11 +282,11 @@ test('two assemblies pack byte-identically, install offline and create a working
   const doctor = run(process.execPath, [generatedBin, 'project', 'doctor', '--json', '--root', project], { cwd: project });
   assert.equal(doctor.exitCode, 0, doctor.stderr);
   assert.equal(JSON.parse(doctor.stdout).status, 'passed');
-  const tests = run('npm', ['test'], { cwd: project });
+  const tests = run('npm', ['test'], { cwd: project, env: npmCacheEnv(workspace) });
   assert.equal(tests.exitCode, 0, tests.stderr);
   assert.match(tests.stdout, /pass 3/);
   assert.match(tests.stdout, /fail 0/);
-  const smoke = run('npm', ['run', 'smoke'], { cwd: project });
+  const smoke = run('npm', ['run', 'smoke'], { cwd: project, env: npmCacheEnv(workspace) });
   assert.equal(smoke.exitCode, 0, smoke.stderr);
   assert.match(smoke.stdout, /"ok": true/);
 });
