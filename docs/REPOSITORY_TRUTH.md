@@ -500,8 +500,9 @@ speak for the new tree.
 
 That full run now belongs to CI, not to a developer machine. On schedule — at most
 once per 6-hour window, and only when the head moved since the last recording —
-the `verify` flow runs `measure-suite.js` on `main` and uploads the record as the
-`claims-measurement` artifact; in the same flow it binds the record to its own
+the `verify` flow runs `npm run measure` (`scripts/measure-pieces.sh`: the corpus
+in short pieces, one lock acquisition per piece) on `main` and uploads the record
+as the `claims-measurement` artifact; in the same flow it binds the record to its own
 checkout with `scripts/apply-ci-measurement.js` (HEAD, the `tests/` fingerprint,
 a clean tree, a green run — anything else refuses), and regenerates the truth
 document from the re-anchored ledger before running `--check --require-current`.
