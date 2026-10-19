@@ -29,12 +29,6 @@
       "type": "string",
       "writable": "managed",
       "required": false
-    },
-    {
-      "name": "updatedAt",
-      "type": "string",
-      "writable": "managed",
-      "required": false
     }
   ]
 }

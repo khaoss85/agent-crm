@@ -89,7 +89,7 @@ export function buildSetPermissionAction(config) {
       { name: 'enabled', type: 'enum', values: ['on', 'off'], required: true, hint: 'on lets the agent act alone; off turns the action into a proposal.' },
     ],
     /** @param {any} ctx */
-    async execute({ input, actor, modules, managed, now, step }) {
+    async execute({ input, actor, modules, managed, step }) {
       const by = requireIdentifiedActor(actor, 'Flipping a space AI switch');
       const spaceId = checkSpaceId(input?.spaceId);
       const permission = checkPermissionKey(input?.permission);
@@ -98,20 +98,19 @@ export function buildSetPermissionAction(config) {
       }
       const enabled = input.enabled === 'on';
       const store = trusted(modules, names.override, 'SPACE_PERMISSIONS_STORAGE_INVALID');
-      const at = now();
       const scopeKey = `${spaceId}:${permission}`;
       const existing = await store.listWhere({ spaceId });
       const current = Array.isArray(existing)
         ? existing.find((row) => row && (row.scopeKey === scopeKey || row.permission === permission))
         : null;
       if (current) {
-        await managed(current.id, { enabled, updatedBy: by, updatedAt: at });
+        await managed(current.id, { enabled, updatedBy: by });
         step('space-permission.updated', { spaceId, permission, enabled });
         return { spaceId, permission, enabled, created: false };
       }
       try {
         const created = await store.createManaged({
-          spaceId, scopeKey, permission, enabled, updatedBy: by, updatedAt: at,
+          spaceId, scopeKey, permission, enabled, updatedBy: by,
         }, { actor });
         step('space-permission.created', { spaceId, permission, enabled });
         return { spaceId, permission, enabled, created: true, id: created.id };
@@ -123,7 +122,7 @@ export function buildSetPermissionAction(config) {
           ? raced.find((row) => row && (row.scopeKey === scopeKey || row.permission === permission))
           : null;
         if (!winner) throw error;
-        await managed(winner.id, { enabled, updatedBy: by, updatedAt: at });
+        await managed(winner.id, { enabled, updatedBy: by });
         step('space-permission.raced', { spaceId, permission, enabled });
         return { spaceId, permission, enabled, created: false };
       }
