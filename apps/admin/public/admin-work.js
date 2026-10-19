@@ -418,17 +418,36 @@ export function createWorkView(deps) {
 }
 
 /**
- * Oldest first, deterministically — the same rule the package publishes.
- * Ties are broken by created stamp then id so two readers see the same list;
- * that is determinism, not chronology.
+ * Oldest first, deterministically — the same rule the work package publishes
+ * (`sortTimeline` in packages/work/src/follow-up.js).
+ *
+ * A deliberate copy, not an import: the Admin app ships its own `public/`
+ * files with no bundler seam for package code, and importing the package
+ * would drag the framework's core into the browser. The copy is kept
+ * identical by the shared test in tests/admin-work.test.js ("admin and the
+ * work package order the same timeline identically"), which runs both
+ * functions over the same row sets — including the `seq` write-order step
+ * and the locale-sensitive pairs `localeCompare` gets wrong.
  * @param {any[]} rows
  */
 export function sortTimelineRows(rows) {
-  return [...rows].sort((a, b) => {
-    const byOccurred = String(a.occurredAt ?? '').localeCompare(String(b.occurredAt ?? ''));
-    if (byOccurred !== 0) return byOccurred;
-    const byCreated = String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? ''));
-    if (byCreated !== 0) return byCreated;
-    return String(a.id ?? '').localeCompare(String(b.id ?? ''));
-  });
+  /** @param {unknown} a @param {unknown} b */
+  const lexical = (a, b) => {
+    const left = String(a ?? '');
+    const right = String(b ?? '');
+    if (left < right) return -1;
+    return left > right ? 1 : 0;
+  };
+  /** Write order, but only inside one task's own append sequence. */
+  const byWriteOrder = (a, b) => {
+    if (!Number.isInteger(a.seq) || !Number.isInteger(b.seq)) return 0;
+    if (a.taskId !== b.taskId) return 0;
+    return a.seq - b.seq;
+  };
+  return [...rows].sort((a, b) => (
+    lexical(a.occurredAt, b.occurredAt)
+    || byWriteOrder(a, b)
+    || lexical(a.createdAt, b.createdAt)
+    || lexical(a.id, b.id)
+  ));
 }
