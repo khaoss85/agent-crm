@@ -376,6 +376,10 @@ function printPlan(text) {
     process.exit(2);
   }
   const total = Number(text);
+  if (git(['rev-parse', 'HEAD']).status !== 0) {
+    process.stderr.write('measure-suite: this is not a git checkout, so there is no commit to plan against.\n');
+    process.exit(2);
+  }
   const sha = git(['rev-parse', 'HEAD']).stdout;
   const testsTree = git(['rev-parse', 'HEAD:tests']).stdout;
   const testFiles = git(['ls-tree', '-r', '--name-only', 'HEAD', 'tests/']).stdout
@@ -512,12 +516,6 @@ function combineReports(shardPaths, apply) {
   }
 
   assertMeasurementUnchanged(git, combined.sha);
-  const head = git(['rev-parse', 'HEAD']).stdout;
-  if (head !== combined.sha) {
-    throw new MeasurementError(
-      `HEAD moved past the measured commit ${combined.sha.slice(0, 12)}; nothing recorded`,
-    );
-  }
   const source = readFileSync(claimsPath, 'utf8');
   const ledger = JSON.parse(source);
   ledger.measuredAgainst = record;
