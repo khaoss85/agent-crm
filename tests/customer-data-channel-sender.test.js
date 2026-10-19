@@ -295,6 +295,94 @@ test('two senders racing on the same email converge on one contact', async (t) =
   assert.ok(systems.includes('whatsapp'), 'the loser handle was linked to the winner contact');
 });
 
+test('a matched-contact race reports the contact that was actually linked', async (t) => {
+  const { app } = await scene(t, 'sender-matched-race-winner');
+
+  const anna = await app.resolveChannelSender({
+    channel: 'email', handle: 'anna@prestigroup.example',
+    firstName: 'Anna', lastName: 'Bianchi', companyName: 'Presti Group', domain: 'prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(anna.outcome, 'created');
+
+  // Deterministic stand-in for the interleaving the in-transaction re-check
+  // closes: a concurrent resolution links this handle to its own winner
+  // between this resolution's pre-transaction reads and its transaction.
+  const realTransactionAsync = app.database.transactionAsync.bind(app.database);
+  let armed = true;
+  let winnerId = null;
+  app.database.transactionAsync = async (fn) => {
+    if (armed) {
+      armed = false;
+      const winner = await app.resolveChannelSender({
+        channel: 'whatsapp', handle: '+393337771111', email: 'winner@prestigroup.example',
+        firstName: 'Win', lastName: 'Ner', companyName: 'Race Srl', domain: 'race.example', actor: ACTOR,
+      });
+      winnerId = winner.contact.id;
+    }
+    return realTransactionAsync(fn);
+  };
+  t.after(() => { app.database.transactionAsync = realTransactionAsync; });
+
+  const answer = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393337771111', email: 'anna@prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(answer.outcome, 'matched');
+  assert.equal(answer.contact.id, winnerId, 'the outcome names the linked winner, not the pre-read match');
+  const stored = app.modules.get('external-identity').service
+    .listWhere({ sourceKey: 'whatsapp:+393337771111', status: 'active' });
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].subjectId, winnerId);
+  assert.equal(answer.contact.id, stored[0].subjectId, 'reported and stored subjects agree');
+  assert.equal(contactsCount(app), 2, 'the loser replayed instead of duplicating a contact');
+});
+
+test('a matched-contact insert losing the uniqueness race replays the winner', async (t) => {
+  const { app } = await scene(t, 'sender-matched-race-conflict');
+
+  const anna = await app.resolveChannelSender({
+    channel: 'email', handle: 'anna@prestigroup.example',
+    firstName: 'Anna', lastName: 'Bianchi', companyName: 'Presti Group', domain: 'prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(anna.outcome, 'created');
+  const winner = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393337772222', email: 'winner@prestigroup.example',
+    firstName: 'Win', lastName: 'Ner', companyName: 'Race Srl', domain: 'race.example', actor: ACTOR,
+  });
+  assert.equal(winner.outcome, 'created');
+
+  // Snapshot-isolation stand-in: the winner commits between the loser's
+  // in-transaction re-check (which saw nothing) and its insert, so the
+  // insert throws a uniqueness conflict instead of linking.
+  const service = app.modules.get('external-identity').service;
+  const origCreate = service.createManaged.bind(service);
+  let injected = false;
+  service.createManaged = async (row, opts) => {
+    if (!injected && row.sourceKey === 'whatsapp:+393337773333') {
+      injected = true;
+      await origCreate({
+        ...row,
+        subjectResource: 'contact',
+        subjectId: winner.contact.id,
+        subjectOwner: 'host',
+        subjectOwnerPackage: null,
+        subjectLabel: 'winner@prestigroup.example',
+      }, opts);
+    }
+    return origCreate(row, opts);
+  };
+  t.after(() => { service.createManaged = origCreate; });
+
+  const answer = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393337773333', email: 'anna@prestigroup.example', actor: ACTOR,
+  });
+  assert.equal(answer.outcome, 'matched');
+  assert.equal(answer.contact.id, winner.contact.id, 'the loser replays the stored winner instead of throwing');
+  const stored = service.listWhere({ sourceKey: 'whatsapp:+393337773333', status: 'active' });
+  assert.equal(stored.length, 1, 'the handle names the winner exactly once');
+  assert.equal(stored[0].subjectId, winner.contact.id);
+  assert.equal(contactsCount(app), 2, 'no duplicate contact was created');
+});
+
 test('malformed sender requests are refused before anything is read or written', async (t) => {
   const { app } = await scene(t, 'sender-validation');
 
@@ -304,6 +392,9 @@ test('malformed sender requests are refused before anything is read or written',
     { channel: 'email', handle: 'not-an-address' },
     { channel: 'instagram', handle: 'luca.rossi', email: 'not-an-address' },
     { channel: 'phone', handle: '  - ( ) . ' },
+    { channel: 'phone', handle: '+' },
+    { channel: 'phone', handle: 'abc' },
+    { channel: 'whatsapp', handle: '+' },
     null,
   ];
   for (const request of refusals) {
