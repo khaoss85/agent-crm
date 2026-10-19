@@ -7,6 +7,9 @@ Stripe payments for commercial packages (backlog:1972e16d33f2).
 - `payment-connection` — one Stripe account bound to one space (provider,
   account, status, secret *reference*). The secret itself is never stored:
   the deployment resolves it at call time through `resolveSecret`.
+  A revoked binding returns only through the explicit `rebind-connection`
+  action (new secret, back to pending, then activate): re-registering the
+  same account is refused.
 - `payment-request` — one payment intent from a quote (proposal) or an
   offer to its provider outcome: `open` (intent) → `pending` (checkout or
   payment link minted) → `paid` | `failed`; `open` | `pending` →
@@ -39,6 +42,11 @@ Every payment-request state change goes through one function
 and its connection inside one transaction and derives the move from the
 lifecycle table, so a mint racing another mint resolves to the same
 checkout and a suspend racing a delivery quarantines instead of applying.
+A suspend racing a mint holds the minted checkout reference on the open
+intent instead of dropping it: the retry with the same key resumes that
+session (no second mint), and a webhook arriving before the retry
+promotes the held intent through mint first — a minted session is never
+left orphaned on either ordering.
 
 A deployment that renamed the record modules maps the canonical record
 names to its own; anything else is refused, never silently ignored:

@@ -19,7 +19,7 @@ import {
 } from './connection.js';
 import { fingerprintPayload } from './crypto.js';
 import { STRIPE_FINAL_TYPES } from './stripe.js';
-import { REQUEST_TERMINAL, advancePaymentRequest, withPaymentWrite } from './transitions.js';
+import { REQUEST_STATUSES, REQUEST_TERMINAL, advancePaymentRequest, withPaymentWrite } from './transitions.js';
 
 /**
  * Payment operations (backlog:1972e16d33f2).
@@ -215,7 +215,13 @@ export function createPaymentOperations(deps) {
         && existing.secretRef === normalized.secretRef) {
         return { duplicate: true, connection: existing };
       }
-      throw new AppError('A connection already binds this account differently — revoke it before rebinding', {
+      // A revoked-then-reregistered account is refused here on purpose:
+      // the explicit rebind-connection action is the only way back, so the
+      // refusal names it instead of a revoke that could never unblock this.
+      const guidance = existing.status === 'revoked'
+        ? 'rebind it with the rebind-connection action'
+        : 'rotate its secret with rotate-connection-secret, or revoke it and rebind it with rebind-connection';
+      throw new AppError(`A connection already binds this account differently — ${guidance}`, {
         code: 'PAYMENT_CONNECTION_CONFLICT', status: 409,
         details: { connectionKey: existing.sourceKey, status: existing.status },
       });
@@ -320,6 +326,24 @@ export function createPaymentOperations(deps) {
     return mintExternal(intent);
 
     async function mintExternal(row) {
+      // A held checkout from a suspended mint is never minted twice: an
+      // open row already carrying a provider reference resumes it below,
+      // so a retry after reactivation moves the same session to pending
+      // instead of minting a second one. Only the hold path below ever
+      // sets a reference on an open row, so a non-empty reference here
+      // always means a held checkout for this same intent.
+      if (typeof row.providerRef === 'string' && row.providerRef !== '') {
+        const resumed = await advancePaymentRequest(requestStores(), row.id, {
+          event: 'mint',
+          patch: {
+            providerRef: row.providerRef, providerUrl: row.providerUrl ?? '',
+            statusReason: 'held provider checkout resumed after suspension',
+          },
+          actor: SYSTEM(),
+          requireActiveConnection: true,
+        });
+        return { duplicate: false, request: resumed.request };
+      }
       let secret;
       try {
         secret = await resolveSecret(connection.secretRef, { spaceId, purpose: PAYMENT_SECRET_PURPOSE_OUTBOUND });
@@ -375,6 +399,29 @@ export function createPaymentOperations(deps) {
           requireActiveConnection: true,
         });
       } catch (error) {
+        // A suspend landed after the provider minted but before the move
+        // committed: the live session is held on the intent instead of
+        // dropped, so its later webhook still matches this row and a retry
+        // with the same key resumes it (see above) instead of minting a
+        // second session. The refusal still surfaces, so the caller knows
+        // to retry after reactivation. First holder wins: the conditional
+        // write never overwrites a reference another mint already held.
+        if (error && typeof error === 'object' && error.code === 'PAYMENT_CONNECTION_NOT_ACTIVE') {
+          await withPaymentWrite(async () => {
+            const current = await service.get(row.id);
+            if (!current) throw error;
+            if (typeof current.providerRef === 'string' && current.providerRef !== '') return;
+            // A concurrent cancel moved the row terminal while this call
+            // was at the provider: terminal rows are never mutated outside
+            // the single state path, so the hold is skipped and the refusal
+            // surfaces for a retry that now reads the terminal row.
+            if (current.status !== 'open') throw error;
+            await service.applyManaged(row.id, {
+              providerRef, providerUrl,
+              statusReason: 'provider checkout minted while the connection suspended: held for resume, never dropped',
+            }, { actor: SYSTEM() });
+          });
+        }
         // A concurrent mint won the same open intent while this call was at
         // the provider: the single path read the winner, so this call
         // resolves against the winner instead of erroring the retry — the
@@ -571,6 +618,40 @@ export function createPaymentOperations(deps) {
     }
 
     /**
+     * Promote a held intent (open with a held checkout reference) through
+     * mint, so a webhook that beats the outbound retry still finalizes the
+     * matching checkout instead of refusing open → paid. The row was found
+     * by its provider reference above, so an open row here always carries
+     * the held checkout for this same intent — only the hold path ever
+     * sets a reference on an open row. A concurrent retry that promoted
+     * first is followed onto the winner; anything else rethrows for the
+     * caller's own mapping (a suspend still quarantines there).
+     */
+    async function promoteHeldIntent(held, item) {
+      if (held.status !== 'open') return held;
+      try {
+        const promoted = await advancePaymentRequest(stores, held.id, {
+          event: 'mint',
+          patch: {
+            providerRef: held.providerRef, providerUrl: held.providerUrl ?? '',
+            statusReason: `held provider checkout resumed by webhook ${item.providerEventId}`,
+          },
+          actor,
+          requireActiveConnection: true,
+        });
+        return promoted.request;
+      } catch (error) {
+        if (error && typeof error === 'object' && error.code === 'PAYMENT_TRANSITION_INVALID') {
+          const current = await requestService.get(held.id);
+          if (current && (current.status === 'pending' || REQUEST_TERMINAL.includes(current.status))) {
+            return current;
+          }
+        }
+        throw error;
+      }
+    }
+
+    /**
      * Resume a delivery quarantined only because its connection was not
      * active: the binding is active again, so the same Stripe retry bytes
      * are re-evaluated instead of replaying the old quarantine forever.
@@ -588,9 +669,25 @@ export function createPaymentOperations(deps) {
       if (REQUEST_TERMINAL.includes(request.status)) {
         return storeTerminalEvent(request, item, outcome, stored);
       }
+      // The promotion runs under the same inactive-connection mapping as
+      // the finalize below: a suspend that landed between reactivation and
+      // the promotion move leaves the stored quarantine standing — and the
+      // request untouched — instead of throwing at the provider.
+      let minted;
+      try {
+        minted = await promoteHeldIntent(request, item);
+      } catch (error) {
+        if (error && typeof error === 'object' && error.code === 'PAYMENT_CONNECTION_NOT_ACTIVE') {
+          return { duplicate: true, eventId: stored.id, effect: stored.effect };
+        }
+        throw error;
+      }
+      if (REQUEST_TERMINAL.includes(minted.status)) {
+        return storeTerminalEvent(minted, item, outcome, stored);
+      }
       let finalized;
       try {
-        finalized = await advancePaymentRequest(stores, request.id, {
+        finalized = await advancePaymentRequest(stores, minted.id, {
           event: outcome,
           patch: outcome === 'pay'
             ? { paidAt: now, statusReason: `provider webhook ${item.providerEventId}: checkout completed` }
@@ -615,7 +712,7 @@ export function createPaymentOperations(deps) {
         // A concurrent delivery finalized the request first: the redelivery
         // follows the terminal contract instead of erroring the provider.
         if (error && typeof error === 'object' && error.code === 'PAYMENT_TRANSITION_INVALID') {
-          const current = await requestService.get(request.id);
+          const current = await requestService.get(minted.id);
           if (current && REQUEST_TERMINAL.includes(current.status)) {
             return storeTerminalEvent(current, item, outcome, stored);
           }
@@ -712,9 +809,28 @@ export function createPaymentOperations(deps) {
       if (REQUEST_TERMINAL.includes(request.status)) {
         return storeTerminalEvent(request, item, outcome);
       }
+      // A held intent (open with a held checkout) is promoted through mint
+      // first: a webhook that beats the outbound retry finalizes the held
+      // session instead of refusing open → paid. The promotion runs under
+      // the same inactive-connection mapping as the finalize below: a
+      // suspend that landed between the live-connection read and the
+      // promotion move quarantines the delivery instead of throwing at
+      // the provider, and the redelivery resumes after reactivation.
+      let minted;
+      try {
+        minted = await promoteHeldIntent(request, item);
+      } catch (error) {
+        if (error && typeof error === 'object' && error.code === 'PAYMENT_CONNECTION_NOT_ACTIVE') {
+          return quarantineInactive(item, request.id);
+        }
+        throw error;
+      }
+      if (REQUEST_TERMINAL.includes(minted.status)) {
+        return storeTerminalEvent(minted, item, outcome);
+      }
       let finalized;
       try {
-        finalized = await advancePaymentRequest(stores, request.id, {
+        finalized = await advancePaymentRequest(stores, minted.id, {
           event: outcome,
           patch: outcome === 'pay'
             ? { paidAt: now, statusReason: `provider webhook ${item.providerEventId}: checkout completed` }
@@ -725,7 +841,7 @@ export function createPaymentOperations(deps) {
           // loser's rollback can never swallow the winner's row.
           write: () => insertEvent({
             sourceKey: item.sourceKey, spaceId, connectionKey: live.sourceKey,
-            providerEventId: item.providerEventId, paymentRequestId: request.id,
+            providerEventId: item.providerEventId, paymentRequestId: minted.id,
             eventType: item.eventType, payloadFingerprint,
             occurredAt: item.occurredAt, receivedAt: now,
             processed: true, effect: 'applied',
@@ -737,12 +853,12 @@ export function createPaymentOperations(deps) {
         // single path saw the fresh inactive binding, so this delivery
         // quarantines instead of finalizing on a dead binding.
         if (error && typeof error === 'object' && error.code === 'PAYMENT_CONNECTION_NOT_ACTIVE') {
-          return quarantineInactive(item, request.id);
+          return quarantineInactive(item, minted.id);
         }
         // A concurrent delivery finalized the request first: the redelivery
         // follows the terminal contract instead of erroring the provider.
         if (error && typeof error === 'object' && error.code === 'PAYMENT_TRANSITION_INVALID') {
-          const current = await requestService.get(request.id);
+          const current = await requestService.get(minted.id);
           if (current && REQUEST_TERMINAL.includes(current.status)) {
             return storeTerminalEvent(current, item, outcome);
           }
@@ -779,9 +895,16 @@ export function createPaymentOperations(deps) {
     });
   }
 
-  /** Every request of one space, newest intent first (insertion order). */
+  /**
+   * Every request of one space, newest intent first (insertion order). An
+   * unknown status filter is refused here — where every caller lands, not
+   * only the composed wrapper — never answered with a silent empty list.
+   */
   function listPayments(spaceId, { status = null } = {}) {
     const space = assertSpaceId(spaceId);
+    if (status !== null && status !== undefined && !REQUEST_STATUSES.includes(status)) {
+      throw new ValidationError(`payment status filter must be one of: ${REQUEST_STATUSES.join(', ')}`, { field: 'status' });
+    }
     const rows = requests().listWhere({ spaceId: space });
     const filtered = status === null ? rows : rows.filter((row) => row.status === status);
     return Object.freeze(filtered.map((row) => getPaymentStatus(space, row.id)));
