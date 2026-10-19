@@ -23,11 +23,31 @@ The module now appears under **Generated modules** in the Admin nav — no page 
 ## Routes (hash-based)
 
 ```text
-#/                          dashboard (unchanged)
+#/                          dashboard (shell: Oggi)
+#/impostazioni               settings entry (BO-F0-02; tabs land in BO-F0-03)
 #/modules/:module           collection / list
 #/modules/:module/new       create form
 #/modules/:module/:id       detail / edit
 ```
+
+## Backoffice shell (BO-F0-02)
+
+Sidebar on every screen plus topbar, with the prototype's Italian voices
+(`apps/admin/public/admin-shell.js`, unit-tested in `tests/admin-shell.test.js`):
+
+- Oggi, the Moduli nativi / Moduli personalizzati groups, + Nuovo modulo, the
+  Impostazioni entry and a user row with logout. Generated modules are the
+  "personalizzati" group; voices whose screen lands later render disabled and
+  name their story, never as dead links. Clienti and the Stato sync entry stay
+  disabled the same way when the customer-data package is not composed in the
+  space, instead of opening a blank screen.
+- Space selector with ⌘1/2/3 switching among the user's spaces. Spaces are
+  local shell state (localStorage) until space records exist (BO-F0-06).
+- Impostazioni badge from the real count of open data-quality issues plus
+  unresolved duplicate candidates; zero or unknown renders no badge.
+- Topbar with the "<spazio> / <schermata>" path and the AI bar entry (⌘K).
+  The bar is an entry only — the assistant is BO-F0-04.
+- Fluid under 700px: single column, horizontal nav strip, stacked topbar.
 
 ## How it works
 
