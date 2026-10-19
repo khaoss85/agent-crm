@@ -369,6 +369,24 @@ test('the profile follows canonical identity across the whole cluster', async (t
   assert.equal(profile.canonicalIdentity.members.length, 2);
   assert.equal(profile.canonicalIdentity.canonical.id, first.id);
   assert.match(profile.canonicalIdentity.note, /every record below still exists/i);
+
+  // BO-F1-06: every linked identity carries its human motivation, so the
+  // scheda cliente can show why the records were united and by whom.
+  for (const member of profile.canonicalIdentity.members) {
+    assert.equal(member.reason, 'one company', `${member.id} carries the link reason`);
+    assert.deepEqual(member.decidedBy, { type: 'user', id: 'cdf' });
+    assert.equal(typeof member.decidedAt, 'string');
+  }
+
+  // An unlinked record stands for itself with the same member shape, the
+  // motivation fields explicitly null rather than absent.
+  const lone = await app.services.companies.create({ name: 'Lone Srl', domain: 'lone.example' }, { actor: ACTOR });
+  const loneProfile = await app.readCustomerProfile({ resource: 'company', id: lone.id });
+  assert.equal(loneProfile.canonicalIdentity.linked, false);
+  assert.deepEqual(
+    loneProfile.canonicalIdentity.members.map((member) => [member.reason, member.decidedBy]),
+    [[null, null]],
+  );
 });
 
 /* ------------------------------------------------------- hostile and bounds */

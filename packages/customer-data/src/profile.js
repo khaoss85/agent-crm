@@ -59,13 +59,30 @@ export async function canonicalClusterFor({ modules, names, subject }) {
     return Object.freeze({
       clusterKey: null,
       canonical: Object.freeze({ ...subject, role: 'canonical' }),
-      members: Object.freeze([Object.freeze({ ...subject, role: 'canonical' })]),
+      // Same member shape as a linked cluster, with the motivation fields
+      // explicitly null: no decision was ever recorded for this record.
+      members: Object.freeze([Object.freeze({
+        ...subject, role: 'canonical',
+        decisionId: null, decidedAt: null, reason: null, decidedBy: null,
+      })]),
       linked: false,
       note: 'no canonical identity decision has been recorded for this record; it stands for itself',
     });
   }
+  // The human motivation travels with the member: the scheda cliente shows
+  // every linked identity with the reason its decider recorded, and a member
+  // without that decision row carries an explicit null — never a guess.
   const members = (await deciding(links, { clusterKey: mine.clusterKey, status: 'active' }))
-    .map((row) => Object.freeze({ ...subjectOf(row), role: row.role, decisionId: row.decisionId, decidedAt: row.decidedAt }))
+    .map((row) => Object.freeze({
+      ...subjectOf(row),
+      role: row.role,
+      decisionId: row.decisionId,
+      decidedAt: row.decidedAt,
+      reason: typeof row.reason === 'string' && row.reason !== '' ? row.reason : null,
+      decidedBy: typeof row.decidedById === 'string' && row.decidedById !== ''
+        ? Object.freeze({ type: row.decidedByType ?? null, id: row.decidedById })
+        : null,
+    }))
     .sort((a, b) => (a.role === b.role ? subjectKey(a).localeCompare(subjectKey(b)) : a.role === 'canonical' ? -1 : 1));
   return Object.freeze({
     clusterKey: mine.clusterKey,
