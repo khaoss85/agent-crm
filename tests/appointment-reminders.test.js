@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,10 +45,15 @@ import {
  *
  * A booking with `remindAt` + `reminderChannel` is sent automatically at
  * the instant as an approved WhatsApp template and recorded in the
- * customer's thread — the history the card reads. Real sqlite, real module
- * services, the real follow-up seam, the real template-send seam, the real
- * history seam and the fake-backed WhatsApp adapter; the only doubles are
- * the adapter itself and the secret resolver, like the channel kit.
+ * customer's thread — the history the card reads. Queue-then-confirm: the
+ * sweep queues one channel-outbox job per due reminder under its
+ * deterministic key (the cross-process claim, never a provider call), the
+ * worker sends it through the real channel-send handler, and the next sweep
+ * confirms the finished job into history and the sent marker. Real sqlite,
+ * real module services, the real follow-up seam, the real template queue,
+ * the real history seam and the fake-backed WhatsApp adapter; the only
+ * doubles are the adapter itself and the secret resolver, like the channel
+ * kit.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -72,13 +78,14 @@ const MANIFESTS = [
   ['work', 'work-task'],
   ['work', 'work-activity'],
   ['channels', 'channel-connection'],
+  ['channels', 'channel-inbox-event'],
   ['interactions', 'conversation'],
   ['interactions', 'interaction-message'],
   ['interactions', 'interaction-call'],
   ['interactions', 'conversation-thread-key'],
 ];
 
-function compose() {
+function compose(dbPath = ':memory:', migrate = true, busyTimeoutMs = undefined) {
   const { definition, api } = createWhatsAppChannelAdapter({
     phoneNumberId: '15550001111',
     approvedTemplates: [{ name: 'presti_reminder', language: 'it' }],
@@ -87,9 +94,16 @@ function compose() {
     nowMs: () => Date.parse(NOW_BOOK),
   });
   const registries = new ChannelRegistries({ channelAdapters: [definition] });
-  const database = createDatabase({ path: ':memory:' });
-  for (const { sql } of recordModuleMigrations(MANIFESTS.map(([pkg, name]) => ({ name, manifest: manifest(pkg, name) })))) {
-    database.raw.exec(sql);
+  const database = createDatabase({
+    path: dbPath,
+    ...(busyTimeoutMs === undefined ? {} : { busyTimeoutMs }),
+  });
+  // Module DDL runs once per database: a second stack on the same file (a
+  // second dyno) opens and builds services without re-emitting it.
+  if (migrate) {
+    for (const { sql } of recordModuleMigrations(MANIFESTS.map(([pkg, name]) => ({ name, manifest: manifest(pkg, name) })))) {
+      database.raw.exec(sql);
+    }
   }
   const audit = new AuditLog(database);
   const events = new EventBus();
@@ -212,19 +226,45 @@ function services(composed) {
   };
 }
 
+function templateQueue(composed) {
+  return {
+    queueTemplate: (request) => composed.ops.queueTemplateSend({ ...request, actor: SYSTEM }),
+  };
+}
+
 function dispatch(composed, now) {
   const { modules } = composed;
-  const { templateSend, interactionLog } = seams(composed, now);
+  const { interactionLog } = seams(composed, now);
   return dispatchDueReminders({
     appointments: modules.get('appointment').service,
     tasks: modules.get('work-task').service,
-    templateSend,
+    templateQueue: templateQueue(composed),
     interactionLog,
     now,
   });
 }
 
-test('a due reminder sends at the instant as an approved template and is recorded in the thread', async (t) => {
+function workerKit(composed, clock) {
+  // The store clock rides the test instant: outbox jobs schedule at the due
+  // instant, and the worker only claims what is due.
+  const store = createDurableJobStore({ storage: composed.database.storage, tenantId: TENANT, clock });
+  const registry = createDurableJobHandlerRegistry();
+  const { interactionLog } = seams(composed, clock);
+  registerAppointmentReminderSweep(registry, {
+    appointments: composed.modules.get('appointment').service,
+    tasks: composed.modules.get('work-task').service,
+    templateQueue: templateQueue(composed),
+    interactionLog,
+    clock,
+  });
+  composed.ops.registerChannelSendHandlers(registry);
+  const worker = createDurableJobWorker({
+    store, registry, workerId: 'reminder-kit', actor: SYSTEM, backoff: () => 0, pollIntervalMs: 60000,
+  });
+  return { store, registry, worker };
+}
+
+test('a due reminder queues at the instant, sends through the outbox, and is recorded in the thread', async (t) => {
   const composed = compose();
   t.after(() => composed.database.close());
   const now = () => NOW_BOOK;
@@ -233,18 +273,34 @@ test('a due reminder sends at the instant as an approved template and is recorde
   assert.equal(booked.replayed, false);
   assert.equal(booked.appointment.reminderTo, TO);
 
-  // Before the instant the sweep runs and sends nothing: the timer owns
+  // Before the instant the sweep runs and queues nothing: the timer owns
   // when, and early is not when.
   const early = await dispatch(composed, () => BEFORE_DUE);
   assert.equal(early.sent.length, 0);
+  assert.equal(early.queued.length, 0);
   assert.equal(composed.api.state.sendCalls, 0);
 
-  const fired = await dispatch(composed, () => REMIND_AT);
-  assert.equal(fired.sent.length, 1);
-  assert.equal(fired.sent[0].sourceKey, 'gym:reminder:1');
-  assert.equal(fired.sent[0].providerMessageId, 'wamid.fake-1');
+  // At the instant the sweep queues exactly one outbox job and sends
+  // nothing itself: the provider bytes belong to the outbox, and the sent
+  // marker waits for the job's confirmation.
+  const queued = await dispatch(composed, () => REMIND_AT);
+  assert.equal(queued.sent.length, 0);
+  assert.equal(queued.queued.length, 1);
+  assert.equal(queued.queued[0].sourceKey, 'gym:reminder:1');
+  assert.ok(typeof queued.queued[0].jobId === 'string');
+  assert.equal(composed.api.state.sendCalls, 0);
+  const { messages, conversations, tasks, appointments } = services(composed);
+  const unmarked = (await appointments.listWhere({ sourceKey: 'gym:reminder:1' }))[0];
+  assert.ok(!unmarked.reminderSentAt);
 
-  // The provider received exactly the approved template for the recipient.
+  // The worker sends the queued job: exactly the approved template for the
+  // recipient, through the outbox handler production runs.
+  const { worker } = workerKit(composed, () => REMIND_AT);
+  worker.start();
+  t.after(() => worker.close());
+  const settled = await worker.run(queued.queued[0].jobId);
+  assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
+  assert.equal(composed.api.state.sendCalls, 1);
   const bodies = composed.api.sentMessages();
   assert.equal(bodies.length, 1);
   assert.equal(bodies[0].type, 'template');
@@ -252,9 +308,14 @@ test('a due reminder sends at the instant as an approved template and is recorde
   assert.equal(bodies[0].template.name, 'presti_reminder');
   assert.equal(bodies[0].template.language.code, 'it');
 
-  // The send is recorded in the customer's thread: one open thread, one
-  // outbound WhatsApp message carrying the provider id.
-  const { messages, conversations, tasks, appointments } = services(composed);
+  // The next sweep confirms the finished job: one open thread, one
+  // outbound WhatsApp message naming the template. No provider id is
+  // copied into history — the thread proves the send happened, the jobs
+  // table proves the provider answered.
+  const fired = await dispatch(composed, () => REMIND_AT);
+  assert.equal(fired.sent.length, 1);
+  assert.equal(fired.sent[0].sourceKey, 'gym:reminder:1');
+  assert.equal(fired.sent[0].jobId, queued.queued[0].jobId);
   const threads = await conversations.listWhere({ subjectId: 'c-presti' });
   assert.equal(threads.length, 1);
   assert.equal(threads[0].status, 'open');
@@ -263,7 +324,7 @@ test('a due reminder sends at the instant as an approved template and is recorde
   assert.equal(logged[0].direction, 'outbound');
   assert.equal(logged[0].channel, 'whatsapp');
   assert.equal(logged[0].teamAuthorId, 'coach-guido');
-  assert.equal(logged[0].remoteHandle, 'wamid.fake-1');
+  assert.equal(logged[0].remoteHandle ?? null, null);
   assert.equal(logged[0].sourcePackage, 'appointments');
   assert.match(logged[0].body, /presti_reminder/);
 
@@ -274,9 +335,11 @@ test('a due reminder sends at the instant as an approved template and is recorde
   const task = (await tasks.listWhere({ sourceKey: 'appointment:gym:reminder:1:reminder' }))[0];
   assert.equal(task.status, 'open');
 
-  // A second sweep replays: no second provider call, no second row.
+  // A further sweep replays: no second job, no second provider call, no
+  // second row.
   const again = await dispatch(composed, () => REMIND_AT);
   assert.equal(again.sent.length, 0);
+  assert.equal(again.queued.length, 0);
   assert.equal(composed.api.state.sendCalls, 1);
   assert.equal((await messages.listWhere({})).length, 1);
 });
@@ -299,6 +362,7 @@ test('a cancelled booking never sends', async (t) => {
   );
   const fired = await dispatch(composed, () => REMIND_AT);
   assert.equal(fired.sent.length, 0);
+  assert.equal(fired.queued.length, 0);
   assert.equal(composed.api.state.sendCalls, 0);
 });
 
@@ -442,43 +506,105 @@ test('the package handover proves the target; without channels the booking fails
   );
 });
 
-test('a seeded sweep fires through the real worker; a double beat stacks nothing', async (t) => {
+test('sweep beats are scoped: the next beat seeds after the first succeeds', async (t) => {
   const composed = compose();
   t.after(() => composed.database.close());
   const now = () => NOW_BOOK;
   const connectionKey = await activeConnection(composed);
   await book(composed, now, bookingRequest(connectionKey, { sourceKey: 'gym:reminder:5' }));
 
-  const store = createDurableJobStore({ storage: composed.database.storage, tenantId: TENANT });
-  const registry = createDurableJobHandlerRegistry();
   const clock = () => REMIND_AT;
-  const { templateSend, interactionLog } = seams(composed, clock);
-  registerAppointmentReminderSweep(registry, {
-    appointments: composed.modules.get('appointment').service,
-    tasks: composed.modules.get('work-task').service,
-    templateSend,
-    interactionLog,
-    clock,
-  });
+  const { store, worker } = workerKit(composed, clock);
+  worker.start();
+  t.after(() => worker.close());
   // The seed instant is the worker's business, in the past so the test
   // worker can claim it; the dispatch instant comes from the frozen
   // registration clock, never from the seed.
   const first = await seedReminderSweep({ store, actor: USER, at: '2026-10-19T04:01:00.000Z' });
   assert.equal(first.seeded, true);
-  const second = await seedReminderSweep({ store, actor: USER, at: '2026-10-19T04:02:00.000Z' });
-  assert.equal(second.seeded, false);
 
-  const worker = createDurableJobWorker({
-    store, registry, workerId: 'reminder-kit', actor: SYSTEM, backoff: () => 0, pollIntervalMs: 60000,
-  });
+  const settled = await worker.run(first.job.id);
+  assert.ok(settled && settled.state === 'succeeded', 'the sweep job settles');
+  // The sweep itself queued the outbox job and sent nothing: the provider
+  // bytes wait for the outbox worker, even through the real sweep handler.
+  assert.equal(composed.api.state.sendCalls, 0);
+
+  // The next beat seeds its own sweep: reminders booked after the first
+  // sweep still fire. A fixed idempotency root made every later beat
+  // collide with the finished row and mismatch — the one-shot sweep.
+  const second = await seedReminderSweep({ store, actor: USER, at: '2026-10-19T04:02:00.000Z' });
+  assert.equal(second.seeded, true);
+  assert.notEqual(second.job.id, first.job.id);
+
+  // The same beat replays its own finished row instead of mismatching it:
+  // the handler answers the seed's own reference back.
+  const replay = await seedReminderSweep({ store, actor: USER, at: '2026-10-19T04:01:00.000Z' });
+  assert.equal(replay.seeded, true);
+  assert.equal(replay.job.id, first.job.id);
+
+  // A double beat of the same pending instant still stacks nothing.
+  const pending = await seedReminderSweep({ store, actor: USER, at: '2026-10-19T04:02:00.000Z' });
+  assert.equal(pending.seeded, true);
+  assert.equal(pending.job.id, second.job.id);
+});
+
+test('racing sweeps and a crash-retry queue one job and send once', async (t) => {
+  // Two stacks over two connections to one file database, like two dynos:
+  // one sqlite handle cannot interleave two transactions, so the race is
+  // only real across connections.
+  const dir = mkdtempSync(join(tmpdir(), 'reminder-twoproc-'));
+  t.after(() => { rmSync(dir, { recursive: true, force: true }); });
+  const dbPath = join(dir, 'shared.sqlite');
+  const first = compose(dbPath, true, 250);
+  t.after(() => first.database.close());
+  const second = compose(dbPath, false, 250);
+  t.after(() => second.database.close());
+  const now = () => NOW_BOOK;
+  const connectionKey = await activeConnection(first);
+  await book(first, now, bookingRequest(connectionKey));
+
+  // Two sweeps racing queue the same job: the enqueue is the claim, so the
+  // loser either gets the winner's row or takes the framework's transient
+  // conflict and retries into it — like the worker retrying a failed sweep
+  // in production — and no second send exists to make either way.
+  const race = async (stack) => {
+    try {
+      return await dispatch(stack, () => REMIND_AT);
+    } catch (error) {
+      const failed = error?.details?.failed ?? [];
+      if (error?.code === 'APPOINTMENTS_REMINDER_SWEEP_FAILED'
+        && failed.length === 1 && failed[0]?.code === 'CONFLICT') {
+        return await dispatch(stack, () => REMIND_AT);
+      }
+      throw error;
+    }
+  };
+  const [one, two] = await Promise.all([race(first), race(second)]);
+  assert.equal(one.queued.length, 1);
+  assert.equal(two.queued.length, 1);
+  assert.equal(one.queued[0].jobId, two.queued[0].jobId);
+  const probe = createDurableJobStore({ storage: first.database.storage, tenantId: TENANT });
+  const sends = (await probe.list(100)).filter((job) => job.kind === 'channel-send');
+  assert.equal(sends.length, 1);
+
+  // The worker sends once under the reminder key ...
+  const { worker } = workerKit(first, () => REMIND_AT);
   worker.start();
   t.after(() => worker.close());
-  const settled = await worker.run(first.job.id);
-  assert.ok(settled && (settled.state === 'succeeded' || settled.status === 'succeeded'), 'the sweep job settles');
-  assert.equal(composed.api.state.sendCalls, 1);
-  const bodies = composed.api.sentMessages();
-  assert.equal(bodies[0].template.name, 'presti_reminder');
-  const { messages } = services(composed);
+  const settled = await worker.run(one.queued[0].jobId);
+  assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
+  assert.equal(first.api.state.sendCalls, 1);
+
+  // ... and a retry after the send (the crash between send and confirm)
+  // confirms without sending again: one history row, one marker, and the
+  // replay after that changes nothing.
+  const confirmed = await dispatch(first, () => REMIND_AT);
+  assert.equal(confirmed.sent.length, 1);
+  const replayed = await dispatch(first, () => REMIND_AT);
+  assert.equal(replayed.sent.length, 0);
+  assert.equal(replayed.queued.length, 0);
+  assert.equal(first.api.state.sendCalls, 1);
+  const { messages } = services(first);
   assert.equal((await messages.listWhere({})).length, 1);
 });
 

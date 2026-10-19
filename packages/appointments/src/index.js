@@ -56,9 +56,10 @@ import {
  * `remindAt` also opens exactly one work follow-up reminder in the same
  * transaction, due at the named instant. A booking that also names
  * `reminderChannel` is sent automatically at that instant: the reminder
- * sweep fires due reminders through the composed `channel-template-send@1`
- * seam as an approved WhatsApp template and records the send in the
- * customer's thread through `interaction-log@1`.
+ * sweep queues one channel-outbox job per due reminder under its
+ * deterministic key (the cross-process claim, never a provider call) and,
+ * once the outbox confirms the send, records it in the customer's thread
+ * through `interaction-log@1`.
  *
  * What it deliberately is **not**: a customer system (the customer stays the
  * host contact); a service catalog or pricing authority (the service key and
@@ -196,12 +197,12 @@ export function createAppointmentsPackage(options = {}) {
         },
         reminder: {
           mechanism: 'one work follow-up per booking with remindAt, opened through follow-up@1 in the booking transaction, due at the named instant; '
-            + 'a booking with reminderChannel is sent at that instant by the reminder sweep through channel-template-send@1 '
-            + 'as an approved template and recorded in the customer thread through interaction-log@1',
+            + 'a booking with reminderChannel is queued at that instant by the reminder sweep into the channel outbox '
+            + 'under the reminder message key and, once the outbox confirms the send, recorded in the customer thread through interaction-log@1',
           identity: 'the reminder source key is derived from the booking source key, so a retried booking replays its reminder; '
             + 'the send target rides the same identity, so a retry that moves it is refused 409',
-          sweep: 'the deployment beats seedReminderSweep on its own interval and the worker fires due sweeps; '
-            + 'the dispatch sends only due, open, unsent reminders of held bookings — cancelled, closed and already-sent ones never fire',
+          sweep: 'the deployment beats seedReminderSweep on its own interval (each beat its own sweep) and the worker fires due sweeps; '
+            + 'the dispatch queues (then confirms) only due, open, unsent reminders of held bookings — cancelled, closed and already-sent ones never fire',
         },
         limitations: [
           'The customer is an opaque envelope on the host contact or company: no customer table is created and none is read beyond the envelope.',
@@ -212,7 +213,7 @@ export function createAppointmentsPackage(options = {}) {
         ],
         notModeled: ['customer master data', 'staff roster or shifts', 'service catalog or pricing', 'calendar synchronization',
           'free-text notifications or sends', 'package credits or payments', 'recurrence or series', 'waitlists'],
-        reuses: ['contact', 'follow-up@1', 'channel-template-send@1', 'interaction-log@1'],
+        reuses: ['contact', 'follow-up@1', 'channel-template-send@1', 'channel outbox (channel-send)', 'interaction-log@1'],
       };
     },
   }), options.packageContract === 2 ? 2 : 1);
