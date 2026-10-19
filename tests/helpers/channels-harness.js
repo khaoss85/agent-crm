@@ -49,7 +49,7 @@ export const CHANNEL_MANIFEST_NAMES = Object.freeze([
  *   secretRef?: string, secretValue?: string,
  *   tenantId?: string, config?: Record<string, any>,
  *   resolveSender?: ((request: any) => Promise<any>) | null,
- *   dbPath?: string, nowMs?: () => number,
+ *   dbPath?: string, nowMs?: () => number, extraAdapters?: any[],
  * }} options `nowMs` is the single clock the harness hands to both the
  *   package operations and (via the caller) the adapter, so ingest receive
  *   time and window checks never mix a frozen clock with the wall clock.
@@ -76,7 +76,9 @@ export function createChannelsHarness(options) {
     modules.set(name, { service: built.service });
   }
 
-  const registries = new ChannelRegistries({ channelAdapters: [options.adapterDefinition] });
+  const registries = new ChannelRegistries({
+    channelAdapters: [options.adapterDefinition, ...(options.extraAdapters ?? [])],
+  });
   const resolveSecret = async (ref) => {
     if (ref !== secretRef) {
       const error = new Error('unknown secret reference');

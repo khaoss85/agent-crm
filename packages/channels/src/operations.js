@@ -942,6 +942,22 @@ export function createChannelOperations(deps) {
     return importStates().listWhere({ sourceKey: importSourceKey(spaceId, connectionKey) })[0] ?? null;
   }
 
+  /**
+   * Whether a connection can ever contribute to the sync totals: its
+   * adapter resolves and declares `historyImport`. An unresolvable
+   * adapter reads as not importable — the read stays available for the
+   * whole space instead of refusing it — and the entry still lists the
+   * binding status, so the broken wiring stays visible.
+   */
+  function isHistoryImportable(connection) {
+    try {
+      const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
+      return Boolean(adapter.historyImport);
+    } catch {
+      return false;
+    }
+  }
+
   function requireHistoryAdapter(connection) {
     const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
     if (!adapter.historyImport) {
@@ -1386,6 +1402,47 @@ export function createChannelOperations(deps) {
   }
 
   /**
+   * Read the sync state of every connection in one space (backlog:f815763b7aa5):
+   * one entry per connection — its binding and, when its first import
+   * started, the same progress surface `readInitialImport` returns — plus
+   * the connected/completed totals the pilot's banner reads. Only `active`
+   * connections whose adapter keeps a readable history count as connected:
+   * a pending, suspended or revoked binding cannot sync, and an adapter
+   * without `historyImport` (WhatsApp, Instagram) can never start one —
+   * `startInitialImport` refuses it with CHANNEL_HISTORY_UNAVAILABLE — so
+   * neither ever holds the banner back. Such entries stay listed with
+   * `importable: false` and `sync: null`: not finished, never an invented
+   * report. Entries sort by connection key, so two reads of one space
+   * always agree. Read-only like the other progress surface: no actor, no
+   * mutation, no secret material — the entry carries the binding identity
+   * and the adapter, never the secret reference.
+   */
+  function readSyncState(params) {
+    const spaceId = assertSpaceId(params?.spaceId);
+    const entries = connections().listWhere({ spaceId }).map((connection) => {
+      const row = findImportState(spaceId, connection.sourceKey);
+      return Object.freeze({
+        connectionKey: connection.sourceKey,
+        channel: connection.channel,
+        adapter: connection.adapter,
+        adapterVersion: connection.adapterVersion,
+        status: connection.status,
+        importable: isHistoryImportable(connection),
+        sync: row ? importStateSummary(row) : null,
+      });
+    }).sort((left, right) => (left.connectionKey < right.connectionKey ? -1
+      : left.connectionKey > right.connectionKey ? 1 : 0));
+    const connected = entries.filter((entry) => entry.status === 'active' && entry.importable).length;
+    const completed = entries.filter((entry) => entry.status === 'active' && entry.importable && entry.sync?.status === 'done').length;
+    return Object.freeze({
+      spaceId,
+      connectors: Object.freeze(entries),
+      connected,
+      completed,
+    });
+  }
+
+  /**
    * Resolve the service-window observation server-side for adapters that
    * declare `outboundWindow`: the latest applied customer-message instant
    * recorded in the inbox for the recipient's conversation — the provider
@@ -1755,5 +1812,6 @@ export function createChannelOperations(deps) {
     startInitialImport,
     advanceInitialImport,
     readInitialImport,
+    readSyncState,
   });
 }
