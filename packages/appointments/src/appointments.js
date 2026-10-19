@@ -819,6 +819,79 @@ export async function readAppointment({ appointments }, id) {
 }
 
 /**
+ * Every appointment row naming this subject, soonest slot first. The read the
+ * customer scheda renders as its Appuntamenti section: the same complete
+ * exact-match query the booking path re-reads before every write, so a
+ * booking the overlap check saw is a booking this read shows. Cancelled rows
+ * stay listed — a cancelled slot is still evidence the customer once held it,
+ * and the status names it.
+ *
+ * @param {{appointments: any}} storage
+ * @param {unknown} subject the ADR-030 envelope pointing at the host record
+ */
+export async function readSchedule({ appointments }, subject) {
+  const envelope = validateSubject(subject);
+  if (!appointments || typeof appointments.listWhere !== 'function') {
+    throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
+      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
+    });
+  }
+  const rows = await appointments.listWhere({
+    subjectResource: envelope.resource,
+    subjectId: envelope.id,
+  });
+  const bySlot = [...rows].sort((a, b) => (
+    String(a.startsAt ?? '').localeCompare(String(b.startsAt ?? ''))
+    || String(a.endsAt ?? '').localeCompare(String(b.endsAt ?? ''))
+    || String(a.id ?? '').localeCompare(String(b.id ?? ''))
+  ));
+  return Object.freeze(bySlot.map((row) => Object.freeze({
+    id: row.id,
+    status: row.status,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    serviceKey: row.serviceKey,
+    teamMemberId: row.teamMemberId,
+    priceCents: row.priceCents,
+    currency: row.currency,
+    notes: row.notes ?? null,
+  })));
+}
+
+/**
+ * `appointment-schedule@1` — the read the customer scheda renders: every
+ * appointment naming one subject, soonest slot first. Read-only by
+ * construction: frozen rows, no storage handle, no write path of any kind.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function createAppointmentScheduleCapability({ moduleNames } = {}) {
+  const names = resolvedNames(moduleNames);
+  return {
+    name: 'appointment-schedule',
+    version: 1,
+    description:
+      'Read one subject\'s appointments — every booking naming it, soonest slot first, cancelled rows included '
+      + 'with their status. Read-only: frozen rows, no storage handle, no write path.',
+    /** @param {{modules: any}} context */
+    create(context = {}) {
+      const modules = context?.modules;
+      if (!modules || typeof modules.get !== 'function') {
+        throw new AppError('appointment-schedule@1 requires the caller\'s modules view', {
+          code: 'CAPABILITY_CONTEXT_INVALID', status: 500,
+        });
+      }
+      const service = resolveModule(modules, names.appointment)?.service;
+      return Object.freeze({
+        capabilityContract: 1,
+        /** @param {{resource: string, id: string, owner: string, ownerPackage?: string|null, label?: string|null}} subject */
+        scheduleFor: (subject) => readSchedule({ appointments: service }, subject),
+      });
+    },
+  };
+}
+
+/**
  * `appointment-book@1` — the only write path: book appointments and advance
  * them along the lifecycle. It is created with the caller's runtime handles
  * and writes through them; every booking is one row, idempotent by source

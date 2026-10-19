@@ -121,7 +121,7 @@ const fakeFollowUps = (calls = []) => {
   };
 };
 
-test('the package conforms: identity, one owned record, one declared reach, one offered capability', () => {
+test('the package conforms: identity, one owned record, one declared reach, write plus read-only capabilities', () => {
   const definition = createAppointmentsPackage();
   assertPackageConforms({
     definition,
@@ -131,7 +131,7 @@ test('the package conforms: identity, one owned record, one declared reach, one 
       version: 1,
       resources: ['appointment'],
       requires: ['work/follow-up@1'],
-      provides: ['appointment-book@1'],
+      provides: ['appointment-book@1', 'appointment-schedule@1'],
     },
     forbiddenImports: [/from\s+['"]node:(https?|net|dgram|tls|dns)['"]/, /\bfetch\s*\(/, /child_process/],
   });
