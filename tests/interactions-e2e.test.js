@@ -280,6 +280,63 @@ test('a concurrent move beats a stale advance: the loser names the winner', asyn
   assert.equal((await messages.get(message.id)).status, 'read');
 });
 
+test('a multiline chat message is stored and read back unchanged', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'multiline.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, readConversationThread } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:multiline', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const body = 'Ciao, sono Maria.\nConfermi per domani alle 18?\n\nFammi sapere, grazie!';
+  const { message } = await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:multiline:1', conversationId: conversation.id, direction: 'inbound',
+    channel: 'whatsapp', body, remoteHandle: '+3902000001',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:01.000Z', source: SOURCE,
+  });
+  assert.equal(message.body, body);
+  const thread = await readConversationThread({ modules: app.modules, actor: ACTOR }, conversation.id);
+  assert.equal(thread.entries.find((row) => row.id === message.id).body, body);
+});
+
+test('two concurrent advances serialize: one wins and the other is refused', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'race.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, advanceMessage } = await interactionsFrom(root);
+
+  const { conversation } = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:race', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const { message } = await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:race:1', conversationId: conversation.id, direction: 'outbound',
+    channel: 'whatsapp', body: 'Ci vediamo domani.', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:00:01.000Z', source: SOURCE,
+  });
+  const stale = { ...message };
+  assert.equal(stale.status, 'sent');
+
+  // Both branches read `sent`; they race the same move. The chain inside
+  // advanceMessage orders them: the first call commits delivered, the second
+  // re-reads the winner and is refused instead of writing last.
+  const service = app.modules.get('interaction-message').service;
+  const outcomes = await Promise.allSettled([
+    advanceMessage({ messages: service, actor: ACTOR }, stale, 'delivered'),
+    advanceMessage({ messages: service, actor: ACTOR }, stale, 'delivered'),
+  ]);
+  const won = outcomes.filter((outcome) => outcome.status === 'fulfilled');
+  const refused = outcomes.filter((outcome) => outcome.status === 'rejected');
+  assert.equal(won.length, 1);
+  assert.equal(refused.length, 1);
+  assert.equal(won[0].value.status, 'delivered');
+  assert.equal(refused[0].reason.code, 'INTERACTIONS_INVALID_STATE');
+  assert.equal(refused[0].reason.status, 409);
+  assert.equal((await service.get(message.id)).status, 'delivered');
+});
+
 // ---------------------------------------------------------------------------
 // Calls: outcome and duration logged once, with the team author on outbound
 // ---------------------------------------------------------------------------
