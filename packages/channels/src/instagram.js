@@ -1,16 +1,18 @@
 // @ts-check
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { AppError } from '../../core/index.js';
 import { verifyHmacWebhook } from './crypto.js';
-// Batch iteration, echo detection and the window rule live once in the
-// shared Meta module both Meta adapters delegate to (backlog:87d4769dde7e).
+// Batch iteration, echo detection, the window rule and the hub-signature
+// check live once in the shared Meta module every Meta adapter delegates
+// to (backlog:87d4769dde7e, backlog:23d5b455cb3a).
 import {
   META_CUSTOMER_SERVICE_WINDOW_MS,
   checkMetaServiceWindow,
   isMetaSelfEcho,
   iterateMetaBatchItems,
   parseMetaWebhookBody,
+  verifyMetaHubSignature,
 } from './meta-webhook.js';
 
 /**
@@ -88,26 +90,6 @@ function malformedMessage(reason) {
   throw new AppError(`Instagram message is not well-formed: ${reason}`, {
     code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
   });
-}
-
-/** Constant-time check of Meta's `sha256=<hex>` hub signature over the raw body. */
-function verifyHubSignature(rawBody, signature, secret) {
-  if (typeof secret !== 'string' || secret === '') return false;
-  if (typeof signature !== 'string' || !signature.startsWith('sha256=')) return false;
-  const body = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody ?? ''), 'utf8');
-  let expected;
-  try {
-    expected = createHmac('sha256', secret).update(body).digest();
-  } catch {
-    return false;
-  }
-  let provided;
-  try {
-    provided = Buffer.from(signature.slice('sha256='.length), 'hex');
-  } catch {
-    return false;
-  }
-  return provided.length === expected.length && timingSafeEqual(provided, expected);
 }
 
 /** Headers a fake Graph client sends for a signed body (tests only). */
@@ -264,7 +246,7 @@ export function createInstagramChannelAdapter(options = {}) {
       config: { testOnly, pageId },
 
       verifyInbound({ rawBody, headers, secret }) {
-        if (verifyHubSignature(rawBody, headers?.[HUB_SIGNATURE_HEADER], secret)) {
+        if (verifyMetaHubSignature(rawBody, headers?.[HUB_SIGNATURE_HEADER], secret)) {
           return { ok: true, event: Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody ?? '') };
         }
         // The kit drives the adapter through the fixture's signed scheme;

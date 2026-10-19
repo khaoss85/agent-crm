@@ -1,16 +1,19 @@
 // @ts-check
 
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { AppError } from '../../core/index.js';
 
 /**
- * The one Meta webhook logic WhatsApp and Instagram share (backlog:87d4769dde7e).
+ * The one Meta webhook logic WhatsApp, Instagram and Messenger share
+ * (backlog:87d4769dde7e, backlog:23d5b455cb3a).
  *
  * Both Meta adapters fixed the same three defects in separate reviews
  * (#232 WhatsApp, #233 Instagram): batched webhook deliveries truncated to
  * the first message, echoes off our own account applied as customer
  * inbound, and the 24-hour service window read from caller time or
  * adapter-global memory. Each fix landed in its own adapter first; this
- * module holds the common rule once, and both adapters delegate to it:
+ * module holds the common rule once, and every Meta adapter delegates to
+ * it — Messenger adds no copy, including for the hub-signature check:
  *
  * - batches: {@link iterateMetaBatchItems} walks every `entry` of a
  *   verified webhook body in document order — the Cloud API dialect
@@ -29,6 +32,10 @@ import { AppError } from '../../core/index.js';
  *   absent, non-canonical, beyond-skew future, or stale. The adapters map
  *   the verdict to their own errors, so messages stay provider-specific
  *   while the policy lives here once.
+ * - auth: {@link verifyMetaHubSignature} checks Meta's
+ *   `x-hub-signature-256` HMAC over the exact bytes before parsing — one
+ *   copy for every Meta adapter, so the forgery decision cannot drift
+ *   between WhatsApp, Instagram and Messenger.
  *
  * Provider time is never trusted here beyond classification: a skewed or
  * forged instant travels through as data and the ingest path quarantines
@@ -37,6 +44,37 @@ import { AppError } from '../../core/index.js';
 
 /** The Meta customer-service window: free replies only within 24h of the last inbound. */
 export const META_CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Constant-time check of Meta's `sha256=<hex>` hub signature over the raw
+ * body — the one production authentication every Meta adapter verifies
+ * before parsing (`x-hub-signature-256`, shared by the Meta app WhatsApp,
+ * Instagram and Messenger all ride). One copy on purpose: two copies of
+ * an authentication check drift, and the drift decides forgeries.
+ *
+ * @param {unknown} rawBody the exact bytes the provider signed
+ * @param {unknown} signature the `x-hub-signature-256` header value
+ * @param {unknown} secret the app secret (compared in memory, never stored)
+ * @returns {boolean} true only on a valid `sha256=<hex>` HMAC
+ */
+export function verifyMetaHubSignature(rawBody, signature, secret) {
+  if (typeof secret !== 'string' || secret === '') return false;
+  if (typeof signature !== 'string' || !signature.startsWith('sha256=')) return false;
+  const body = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody ?? ''), 'utf8');
+  let expected;
+  try {
+    expected = createHmac('sha256', secret).update(body).digest();
+  } catch {
+    return false;
+  }
+  let provided;
+  try {
+    provided = Buffer.from(signature.slice('sha256='.length), 'hex');
+  } catch {
+    return false;
+  }
+  return provided.length === expected.length && timingSafeEqual(provided, expected);
+}
 
 function malformedEvent(providerLabel, reason) {
   throw new AppError(`${providerLabel} event is not well-formed: ${reason}`, {

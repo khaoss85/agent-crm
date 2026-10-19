@@ -421,6 +421,7 @@ export {
   isMetaSelfEcho,
   iterateMetaBatchItems,
   parseMetaWebhookBody,
+  verifyMetaHubSignature,
 } from './meta-webhook.js';
 export {
   createMessengerChannelAdapter,

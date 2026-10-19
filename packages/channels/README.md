@@ -109,8 +109,10 @@ webhooks and sends keep working standalone.
   `messaging[]`, so mixed deliveries never truncate to the first
   item), echo detection off the bound account (WhatsApp quarantines
   the echo as evidence, Instagram and Messenger leave it out of the
-  inbox), and the 24-hour window verdict over the server-resolved
-  observation (absent/future/stale refuse, non-canonical is malformed).
+  inbox), the 24-hour window verdict over the server-resolved
+  observation (absent/future/stale refuse, non-canonical is malformed),
+  and the one hub-signature check every Meta adapter verifies before
+  parsing.
 - The Gmail API adapter (`src/gmail.js`,
   `tests/channels-gmail.test.js`): Gmail push notifications
   (`message.data` with the message id and thread id) with the channel
