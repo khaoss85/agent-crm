@@ -605,8 +605,8 @@ export const closingKey = (taskId, state) => `work-activity:task-${state}:${task
  *
  * This closes the same-process window, which is where every writer in this
  * repository runs today: all three action paths in `index.js` and the service
- * package's follow-up calls funnel through this one function, in this
- * process, inside the caller's transaction. Across connections the caller's
+ * package's `follow-up@1` capability calls funnel through this one function,
+ * in this process, inside the caller's transaction. Across connections the caller's
  * transaction is the serializer, as for every other read-then-write here
  * (task creation leans on the `sourceKey` unique constraint instead, which
  * module manifests cannot express for a `(taskId, seq)` pair — they allow
@@ -623,8 +623,9 @@ export async function recordActivity({ activities, actor }, entry) {
   }
   const who = normalizeWorkActor(actor);
   // A null taskId has no sequence to share; those writes still serialize
-  // together rather than interleaving with each other.
-  const taskKey = typeof entry.taskId === 'string' ? entry.taskId : '∅-no-task';
+  // together rather than interleaving with each other. The prefix keeps the
+  // sentinel out of the task namespace, whatever task ids look like.
+  const taskKey = typeof entry.taskId === 'string' ? `task:${entry.taskId}` : 'task:∅-no-task';
   return withTaskSeq(taskKey, async () => {
     const siblings = await activities.listWhere({ taskId: entry.taskId });
     let seq = 1;
