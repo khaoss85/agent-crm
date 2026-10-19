@@ -48,7 +48,7 @@ const sha = (sql) => createHash('sha256').update(sql).digest('hex');
  * of them ships history.
  */
 const RECORDED = Object.freeze({
-  "appointment": { revision: 1, sqlite: "25bb4a8a4a505db484177c20992dbe0923716706538e4b08ef2a086fdf5b34a8", pg: "50b43a7c22f935eb30f645d91b100f6d471a360988e8f29a2326969ea9a4edb1" },
+  "appointment": { revision: 2, sqlite: "64010d7ce093f774d18ed20c1ecb8afb407d7847f306ac4df3620ba90e0755ab", pg: "f0810edf2dcd053df71885516e95943df2749a06633224251f5a84daaab80f3e" },
   "calendar-link": { revision: 1, sqlite: "0833adb4ddf2a25a5232c66f768ea091da8f682072dbccd2045803ab4d6fcc99", pg: "537b281541bbe59a4423bf40c3c4af28cb12170c5e4d848ef2f235cf171c7592" },
   "calendar-sync-state": { revision: 2, sqlite: "9a07b39afe234be4acb2f910752cd359082628b3794ad9a89bb279f580f37d09", pg: "eca193443a3dcfe428760b31761f66ab1d5cd35125c53ee549ff23b80642111b" },
   "channel-connection": { revision: 1, sqlite: "4882dd77f6d0b40d4172ab012cc388a1d97d0a473f7ec02452b7c7e1ce3dc9bb", pg: "cba90b7a3c66048710e150f00dec12fb69cc0c12e2a05228aa4c2f68eca0fc42" },
