@@ -364,10 +364,19 @@ test('a floor package count reads as "at least N", never as an exact total', () 
     orders: off, contracts: off,
   }, { resource: 'contact', id: 'c1' });
   assert.equal(floor.status.value, 'cliente');
+  assert.equal(floor.activePackage.available, false,
+    'a floor count with no active record in hand is not a definitive "none"');
   assert.equal(floor.activePackage.countIsComplete, false);
   assert.equal(floor.activePackage.countNote, 'subscriptions were read from a bounded page');
+  assert.equal(floor.activePackage.truncated, false, 'the page itself was not truncated — only the count is a floor');
+  assert.match(floor.activePackage.reason, /not a claim none exists/,
+    'the reason refuses the definitive negative');
+  assert.match(floor.activePackage.reason, /bounded page/,
+    'the floor qualifier travels with the refusal');
   const floorHtml = renderCustomerCardHtml({ ...floor, name: 'A B', email: 'a@b.it' });
-  assert.ok(floorHtml.includes('(record: almeno 500)'), 'a floor count reads as a floor');
+  assert.ok(!floorHtml.includes('nessun pacchetto attivo'),
+    'a floor count never renders the definitive "no active package"');
+  assert.ok(floorHtml.includes('bounded page'), 'the page shows the floor reason instead');
 
   const exact = shapeCustomerCard({
     identity, externalIdentities: [],
@@ -378,6 +387,27 @@ test('a floor package count reads as "at least N", never as an exact total', () 
   const exactHtml = renderCustomerCardHtml({ ...exact, name: 'A B', email: 'a@b.it' });
   assert.ok(exactHtml.includes('(record: 2)'), 'a complete count keeps its exact reading');
   assert.ok(!exactHtml.includes('almeno'), 'no floor qualifier leaks into an exact count');
+});
+
+test('read-customer-card keeps the profile\u2019s no-RBAC posture: any caller reads the same card', async () => {
+  const { readCustomerCard } = await import('../packages/customer-hub/src/card.js');
+  const profile = {
+    identity: { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null },
+    externalIdentities: [],
+    subscriptions: { available: false, count: 0, items: [] },
+    orders: { available: false, count: 0, items: [] },
+    contracts: { available: false, count: 0, items: [] },
+  };
+  const readProfile = async () => profile;
+  const subject = { resource: 'contact', id: 'c1' };
+  const anonymous = await readCustomerCard({ subject, readProfile });
+  const asOwner = await readCustomerCard({ subject, readProfile, actor: { type: 'user', id: 'owner' } });
+  const asStranger = await readCustomerCard({ subject, readProfile, actor: { type: 'user', id: 'stranger' } });
+  assert.deepEqual(asOwner, anonymous, 'no caller check: an actor reads what an anonymous read returns');
+  assert.deepEqual(asStranger, asOwner,
+    'no RBAC, like read-customer-profile states in its limitations '
+    + '("No RBAC exists; the Production Spine is absent, so this is local-development posture"): '
+    + 'the card is identical for every caller');
 });
 
 test('a truncated subscriptions page without an active record in hand refuses the definitive "none"', () => {
