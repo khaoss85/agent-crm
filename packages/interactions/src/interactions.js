@@ -1412,6 +1412,36 @@ export async function readTimeline({ modules, moduleNames }, subject) {
 }
 
 /**
+ * Every conversation row naming this subject, oldest first. The threads the
+ * timeline entries arrived on — including threads with no message or call
+ * logged yet, which a read grouped from timeline entries alone cannot see.
+ * The same complete exact-match query the timeline uses, so a thread is never
+ * lost once its table outgrows a page.
+ */
+export async function readSubjectConversations({ modules, moduleNames }, subject) {
+  const names = resolvedNames(moduleNames);
+  const envelope = validateSubject(subject);
+  const conversations = resolveModule(modules, names.conversation)?.service;
+  if (!conversations?.listWhere) {
+    throw new AppError('The interactions package is installed without its conversation records', {
+      code: 'INTERACTIONS_STORAGE_INVALID', status: 500,
+    });
+  }
+  const rows = await conversations.listWhere({
+    subjectResource: envelope.resource,
+    subjectId: envelope.id,
+  });
+  return Object.freeze(sortByStamp(rows).map((row) => Object.freeze({
+    id: row.id,
+    channel: row.channel,
+    status: row.status,
+    openedAt: row.openedAt ?? null,
+    closedAt: row.closedAt ?? null,
+    remoteHandle: row.remoteHandle ?? null,
+  })));
+}
+
+/**
  * One conversation as a thread: the conversation row with its messages and
  * calls, oldest first. An unknown conversation id answers null — absence,
  * never an empty thread presented as a quiet one.
@@ -1541,7 +1571,8 @@ export function createInteractionTimelineCapability(moduleNames) {
     version: 1,
     description:
       'Read one subject\'s interaction history — its messages and calls plus the work-activity entries on the same '
-      + 'subject, oldest first — one thread with its ownership trail, and one member\'s unread on a thread. '
+      + 'subject, oldest first — every thread row naming the subject, one thread with its ownership trail, '
+      + 'and one member\'s unread on a thread. '
       + 'Read-only: frozen rows, no storage handle, no write path.',
     /** @param {{modules: any}} context */
     create(context = {}) {
@@ -1566,6 +1597,8 @@ export function createInteractionTimelineCapability(moduleNames) {
         capabilityContract: 1,
         /** @param {{resource: string, id: string, owner?: string, ownerPackage?: string|null, label?: string|null}} subject */
         timeline: (subject) => readTimeline(fullScope, subject),
+        /** @param {{resource: string, id: string, owner?: string, ownerPackage?: string|null, label?: string|null}} subject */
+        conversations: (subject) => readSubjectConversations(fullScope, subject),
         /** @param {string} conversationId */
         conversationThread: (conversationId) => readConversationThread(fullScope, conversationId),
         /** @param {string} conversationId */
