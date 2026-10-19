@@ -46,9 +46,17 @@ same kit.
   totals (same-process calls also serialize on a per-space chain): the
   loser of a filled cap refuses with `LLM_DAILY_CAP_EXCEEDED`, and no
   spend update is lost — cross-process racers retry on the winner's
-  totals. A spend that lands after racers filled the ceiling is still
+  totals. The claim, its framework audit row and the re-read land in one
+  atomic unit: an audit failure rolls the spend back instead of landing
+  it silently. A spend that lands after racers filled the ceiling is still
   recorded and annotated (`capExceeded: true` in the result), never
   hidden; the next call refuses.
+- Dry-run and live results expose the same shape, including `usage`
+  with the day totals (`dayTokens`, `dayCostCents`).
+- Absent audit text (unknown adapter/model, no refusal, no error, no
+  sources) persists as null and reads back as `''` on every backend.
+  The result carries `sources` as an array of record ids; `readAudit`
+  returns the same ids as one comma-joined string (`''` when none).
 - The model surface is closed: the default model plus the space's explicit
   `models` allowlist. Every allowed model needs a valid price, or the call
   refuses with `LLM_PRICING_UNAVAILABLE` before the provider is touched.

@@ -15,7 +15,9 @@ import { OPENAI_DEFAULT_MODEL } from './openai.js';
  * provider is touched, and every spend lands through one conditional
  * storage claim on fresh totals, so racing calls — same process through
  * the per-space chain, another process through the claim retry — neither
- * bypass the cap nor lose each other's tokens. A spend that lands after
+ * bypass the cap nor lose each other's tokens. The claim, its framework
+ * audit row and the re-read land in one atomic unit, so an audit failure
+ * rolls the spend back instead of landing it silently. A spend that lands after
  * racers filled the ceiling is still recorded and annotated
  * (`capExceeded`), never hidden. With no `secretRef` configured
  * anywhere the call runs as an explicit dry-run on the fixture adapter —
@@ -197,8 +199,12 @@ function overCap(row, caps) {
  * The storage seam a spend claim needs: the managed service's own
  * manifest (field names to physical columns, resolved at runtime so no
  * backend's naming is hardcoded here), its storage `execute` with the
- * `affectedRows` verdict from the storage contract, a managed read, and
- * the audit/events mirrors `applyManaged` performs. Missing seam refuses
+ * `affectedRows` verdict from the storage contract, a managed read, the
+ * audit/events mirrors `applyManaged` performs, and the service's own
+ * atomic-mutation entry point (`mutationSync` on sync storage,
+ * `mutationAsync` otherwise — the same ones `applyManaged` uses, so the
+ * claim, its framework audit row and the re-read land in one unit with
+ * no new seam and no cross-package import). Missing seam refuses
  * fail-closed: a totals update that cannot prove atomicity never runs.
  */
 function spendSeam(usageService) {
@@ -213,17 +219,40 @@ function spendSeam(usageService) {
     estimatedCostCents: columnOf('estimatedCostCents'),
     calls: columnOf('calls'),
   };
+  const syncApi = storage?.sync;
+  const syncMutation = syncApi
+    && typeof syncApi.execute === 'function'
+    && typeof syncApi.savepoint === 'function'
+    && typeof usageService.mutationSync === 'function';
+  const asyncMutation = typeof usageService.mutationAsync === 'function';
   if (!manifest || typeof manifest.table !== 'string' || typeof manifest.name !== 'string'
     || Object.values(columns).some((column) => typeof column !== 'string' || column === '')
     || !storage || typeof storage.execute !== 'function'
     || typeof usageService.get !== 'function'
     || typeof usageService.audit?.record !== 'function'
-    || typeof usageService.events?.emit !== 'function') {
+    || typeof usageService.events?.emit !== 'function'
+    || (!syncMutation && !asyncMutation)) {
     throw new AppError('llm usage storage cannot prove an atomic spend claim', {
       code: 'LLM_STORAGE_INVALID', status: 500,
     });
   }
-  return { manifest, storage, columns };
+  return { manifest, columns, syncApi: syncMutation ? syncApi : null };
+}
+
+/**
+ * Map a physical usage-day row read inside the claim transaction back to
+ * the managed entity shape: the same field loop `applyManaged` maps with
+ * (`record-module-runtime.js`), local because that mapper is not public.
+ */
+function mapClaimedRow(manifest, raw) {
+  const entity = { id: raw.id };
+  for (const field of manifest.fields ?? []) {
+    const value = raw[field.column ?? field.name];
+    entity[field.name] = field.type === 'boolean' ? (value === null ? null : value === 1) : value;
+  }
+  entity.createdAt = raw.created_at;
+  entity.updatedAt = raw.updated_at;
+  return entity;
 }
 
 /**
@@ -232,9 +261,15 @@ function spendSeam(usageService) {
  * atomic on every backend, so a cross-process racer either wins the
  * claim first — and this call retries on the winner's totals — or loses
  * it, and no update is ever lost. Bounded retries, then a retriable
- * refusal, never a silent overwrite. The managed audit row and the
- * `updated` event mirror `applyManaged` (`record-module-runtime.js`),
- * and the row is re-read through the managed `get`.
+ * refusal, never a silent overwrite.
+ *
+ * The claim, the framework audit row and the re-read land in one atomic
+ * unit — the service's own `mutationSync`/`mutationAsync`, the same
+ * entry points `applyManaged` uses (`record-module-runtime.js`). A crash
+ * or an audit failure between the claim and its receipt rolls the spend
+ * back instead of landing money no row explains; the retry then claims
+ * once, never twice. The `updated` event still emits after the commit,
+ * like `applyManaged`.
  *
  * Returns `{ row, capExceeded }`: when racers filled the ceiling while
  * this call was at the provider, the spend still lands — real money is
@@ -242,7 +277,8 @@ function spendSeam(usageService) {
  * the caller slows down; the next call refuses before any provider.
  */
 export async function claimSpend(usageService, dayKey, delta, actor, caps, clock = Date.now) {
-  const { manifest, storage, columns } = spendSeam(usageService);
+  const { manifest, columns, syncApi } = spendSeam(usageService);
+  const action = `${manifest.name}.updated`;
   for (let attempt = 1; attempt <= 8; attempt += 1) {
     const fresh = (await usageService.listWhere({ dayKey }))[0] ?? null;
     if (!fresh) {
@@ -258,7 +294,7 @@ export async function claimSpend(usageService, dayKey, delta, actor, caps, clock
       calls: fresh.calls + 1,
     };
     const at = new Date(clock()).toISOString();
-    const claimed = await storage.execute({
+    const statement = {
       kind: 'update',
       table: manifest.table,
       values: [
@@ -277,13 +313,36 @@ export async function claimSpend(usageService, dayKey, delta, actor, caps, clock
         { column: columns.estimatedCostCents, op: 'eq', value: fresh.estimatedCostCents },
         { column: columns.calls, op: 'eq', value: fresh.calls },
       ],
-    });
-    if (Number(claimed?.affectedRows ?? 0) === 1) {
-      const action = `${manifest.name}.updated`;
-      await usageService.audit.record({
-        actor, entityType: manifest.name, entityId: fresh.id, data: totals, action,
+    };
+    const auditEvent = {
+      actor, entityType: manifest.name, entityId: fresh.id, data: totals, action,
+    };
+    let row = null;
+    if (syncApi) {
+      row = usageService.mutationSync(() => {
+        const claimed = syncApi.execute(statement);
+        if (Number(claimed?.affectedRows ?? 0) !== 1) return null;
+        usageService.audit.record(auditEvent, syncApi);
+        return usageService.get(fresh.id);
       });
-      const row = await usageService.get(fresh.id);
+    } else {
+      row = await usageService.mutationAsync(async (tx) => {
+        const claimed = await tx.execute(statement);
+        if (Number(claimed?.affectedRows ?? 0) !== 1) return null;
+        await usageService.audit.record(auditEvent, tx);
+        const raw = await tx.maybeOne({
+          kind: 'select', table: manifest.table, columns: '*',
+          where: [{ column: columns.id, op: 'eq', value: fresh.id }],
+        });
+        if (!raw) {
+          throw new AppError('llm usage day row vanished mid-claim: retry the call', {
+            code: 'LLM_USAGE_CONFLICT', status: 503,
+          });
+        }
+        return mapClaimedRow(manifest, raw);
+      });
+    }
+    if (row) {
       await usageService.events.emit(action, row);
       return { row, capExceeded };
     }
@@ -445,6 +504,15 @@ export function createLlmOperations(options = {}) {
   }
 
   /**
+   * Absent audit text (unknown adapter/model, no refusal, no error, no
+   * sources) persists as null, never '': real storage coerces '' to null
+   * through the optional-string field (`validation.js`), so writing ''
+   * would prove one shape on the stub and store another in production.
+   * `readAudit` maps null back to '', so both backends read the same row.
+   */
+  const absentText = (value) => (value === undefined || value === null || value === '' ? null : value);
+
+  /**
    * One audit row per attempt — refused or completed — with the space, the
    * purpose, the adapter, the model, the token counts and the estimated
    * cost. The prompt text is never a column, so it can never be a row.
@@ -456,18 +524,21 @@ export function createLlmOperations(options = {}) {
       at: new Date(clock()).toISOString(),
       spaceId: entry.spaceId,
       purpose: entry.purpose,
-      adapter: entry.adapter,
-      model: entry.model,
+      adapter: absentText(entry.adapter),
+      model: absentText(entry.model),
       inputTokens: entry.inputTokens,
       outputTokens: entry.outputTokens,
       estimatedCostCents: entry.estimatedCostCents,
       dryRun: entry.dryRun,
-      refused: entry.refused ?? '',
-      errorCode: entry.errorCode ?? '',
+      refused: absentText(entry.refused),
+      errorCode: absentText(entry.errorCode),
       sourceCount: sources.length,
       // Every validated id is persisted: the result and the audit row agree,
       // so readAudit can always reconstruct which records an answer cited.
-      sources: sources.join(','),
+      // Stored as one comma-joined string (null when none) — `readAudit`
+      // returns the same ids in that form, while `complete` returns them
+      // as an array.
+      sources: sources.length > 0 ? sources.join(',') : null,
     }, { actor });
   }
 
@@ -549,6 +620,10 @@ export function createLlmOperations(options = {}) {
           inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
           estimatedCostCents: cost, dryRun: true, sources,
         }, actor);
+        // The dry-run result exposes the same shape as the live one,
+        // including `usage` from the claimed row: every production call
+        // today takes this path, and a consumer reading
+        // `result.usage.dayTokens` must not depend on which path answered.
         return Object.freeze({
           text: completion.text,
           model: completion.model,
@@ -560,6 +635,10 @@ export function createLlmOperations(options = {}) {
           estimatedCostCents: cost,
           capExceeded: claimed.capExceeded,
           sources,
+          usage: Object.freeze({
+            dayTokens: claimed.row.inputTokens + claimed.row.outputTokens,
+            dayCostCents: claimed.row.estimatedCostCents,
+          }),
         });
       }
 
@@ -658,19 +737,22 @@ export function createLlmOperations(options = {}) {
     }
     const rows = await auditService.listWhere({ spaceId });
     const ordered = [...rows].sort((a, b) => String(a.at ?? '').localeCompare(String(b.at ?? '')));
+    // Absent text reads back as '' on every backend: real storage persists
+    // it as null (see `absentText`), so the read normalizes instead of
+    // exposing the backend's null.
     return Object.freeze(ordered.slice(-limit).map((row) => Object.freeze({
       at: row.at,
       purpose: row.purpose,
-      adapter: row.adapter,
-      model: row.model,
+      adapter: row.adapter ?? '',
+      model: row.model ?? '',
       inputTokens: row.inputTokens,
       outputTokens: row.outputTokens,
       estimatedCostCents: row.estimatedCostCents,
       dryRun: row.dryRun,
-      refused: row.refused,
-      errorCode: row.errorCode,
+      refused: row.refused ?? '',
+      errorCode: row.errorCode ?? '',
       sourceCount: row.sourceCount,
-      sources: row.sources,
+      sources: row.sources ?? '',
     })));
   }
 

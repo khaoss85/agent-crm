@@ -14,7 +14,7 @@ import {
 } from '../packages/core/src/record-module-runtime.js';
 import { claimSpend, createLlmOperations, estimateCostCents } from '../packages/llm/src/operations.js';
 import { createFixtureLlmAdapter } from '../packages/llm/src/fixture.js';
-import { createOpenAiLlmAdapter } from '../packages/llm/src/openai.js';
+import { OPENAI_DEFAULT_MODEL, createOpenAiLlmAdapter } from '../packages/llm/src/openai.js';
 
 /**
  * LLM operations tests (backlog:6e54d6a7988a): the guards the acceptance
@@ -44,6 +44,9 @@ const T0 = Date.parse('2026-10-19T10:00:00.000Z');
  * Single-threaded like the real single statement: `execute` runs to
  * completion with no awaits inside, so a stale claim deterministically
  * reports zero affected rows and the retry path is exercised for real.
+ * `mutationAsync` emulates the savepoint the real service offers: the
+ * callback runs on a transaction handle, and a throw restores the rows
+ * and the audit collector, so the rollback path is exercised for real.
  */
 const USAGE_MANIFEST = {
   name: 'llm-usage-day',
@@ -61,24 +64,43 @@ function stubService(uniqueKey, manifest = null) {
     if (predicate.op !== 'eq') throw new Error(`stub storage supports only eq (got ${predicate.op})`);
     return row[predicate.column] === predicate.value;
   });
+  const storage = {
+    execute: async (statement) => {
+      if (statement?.kind !== 'update') throw new Error(`stub storage supports only update (got ${statement?.kind})`);
+      const targets = rows.filter((row) => matchWhere(row, statement.where));
+      for (const target of targets) {
+        for (const assignment of statement.values ?? []) {
+          target[assignment.column] = assignment.value;
+        }
+      }
+      return { affectedRows: targets.length };
+    },
+  };
+  const tx = {
+    execute: (statement) => storage.execute(statement),
+    maybeOne: async (statement) => {
+      if (statement?.kind !== 'select') throw new Error(`stub storage supports only update/select (got ${statement?.kind})`);
+      const found = rows.find((row) => matchWhere(row, statement.where));
+      return found ? { ...found } : null;
+    },
+  };
   return {
     rows,
     auditRecords,
     emitted,
     manifest,
-    database: manifest ? {
-      storage: {
-        execute: async (statement) => {
-          if (statement?.kind !== 'update') throw new Error(`stub storage supports only update (got ${statement?.kind})`);
-          const targets = rows.filter((row) => matchWhere(row, statement.where));
-          for (const target of targets) {
-            for (const assignment of statement.values ?? []) {
-              target[assignment.column] = assignment.value;
-            }
-          }
-          return { affectedRows: targets.length };
-        },
-      },
+    database: manifest ? { storage } : undefined,
+    mutationAsync: manifest ? async (fn) => {
+      const snapshot = rows.map((row) => ({ ...row }));
+      const audits = auditRecords.length;
+      try {
+        return await fn(tx);
+      } catch (error) {
+        rows.length = 0;
+        for (const row of snapshot) rows.push(row);
+        auditRecords.length = audits;
+        throw error;
+      }
     } : undefined,
     audit: manifest ? { record: async (entry) => { auditRecords.push(entry); } } : undefined,
     events: manifest ? { emit: async (name, payload) => { emitted.push({ name, payload }); } } : undefined,
@@ -235,6 +257,21 @@ test('without a key the call is an explicit dry-run with no network', async () =
   assert.equal(audit.length, 1);
   assert.equal(audit[0].dryRun, true);
   assert.ok(!dump().includes(PROMPT('dry')), 'the prompt text reached storage');
+});
+
+test('dry-run and live results expose identical usage keys', async () => {
+  const dry = setup({ noKey: true });
+  const dryOut = await call(dry.ops, dry.modules, { tag: 'dry-usage' });
+  const live = setup();
+  const liveOut = await call(live.ops, live.modules, { tag: 'live-usage' });
+  assert.deepEqual(Object.keys(dryOut.usage ?? {}).sort(), Object.keys(liveOut.usage ?? {}).sort());
+  assert.deepEqual(dryOut.usage, {
+    dayTokens: dryOut.inputTokens + dryOut.outputTokens,
+    dayCostCents: dryOut.estimatedCostCents,
+  });
+  const totals = await dry.ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, dry.modules);
+  assert.equal(dryOut.usage.dayTokens, totals[0].inputTokens + totals[0].outputTokens);
+  assert.equal(dryOut.usage.dayCostCents, totals[0].estimatedCostCents);
 });
 
 test('a key expected but the vault failing refuses with no canned text', async () => {
@@ -426,6 +463,28 @@ test('a spend landing past a filled ceiling is recorded and annotated', async ()
     'real spend is recorded, never hidden by the refusal');
 });
 
+test('an audit failure rolls the spend claim back instead of landing it silently', async () => {
+  const { ops, modules, usage } = setup();
+  const first = await call(ops, modules, { tag: 'rollback-first' });
+  assert.equal(first.dryRun, false);
+  const realRecord = usage.audit.record;
+  usage.audit.record = () => { throw new Error('audit disk full'); };
+  try {
+    await assert.rejects(() => call(ops, modules, { tag: 'rollback-second' }), /audit disk full/);
+  } finally {
+    usage.audit.record = realRecord;
+  }
+  const totals = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(totals.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[10, 4, 1]],
+    'the rolled-back spend left no totals behind');
+  assert.equal(usage.auditRecords.length, 1, 'only the first claim kept its receipt');
+  const retry = await call(ops, modules, { tag: 'rollback-retry' });
+  assert.equal(retry.dryRun, false);
+  const after = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(after.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[20, 8, 2]],
+    'the retry claims once, never twice');
+});
+
 test('requests validate fail-closed before any provider is touched', async () => {
   const { definition, api } = createFixtureLlmAdapter({ secret: SECRET });
   const { ops, modules } = setup({
@@ -507,4 +566,72 @@ test('two writers on real storage keep every spend: claims are conditional', asy
       perWriter * 2 * delta.estimatedCostCents, perWriter * 2],
     'every concurrent spend landed exactly once',
   );
+});
+
+test('a failing audit rolls the spend back on real storage', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-llm-rollback-'));
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* test litter */ } });
+  const writer = realLlmWriter(join(dir, 'llm-rollback.sqlite'));
+  t.after(() => { writer.close(); });
+  const service = writer.modules.get('llm-usage-day').service;
+  const dayKey = 'presti:2026-10-19';
+  await service.createManaged({
+    dayKey, spaceId: 'presti', day: '2026-10-19',
+    inputTokens: 0, outputTokens: 0, estimatedCostCents: 0, calls: 0,
+  }, { actor: ACTOR });
+  const caps = { dailyTokenCap: 1000000, dailyCostCentsCap: null };
+  const delta = { inputTokens: 10, outputTokens: 4, estimatedCostCents: 1 };
+  const realAudit = service.audit;
+  service.audit = { record: () => { throw new Error('audit disk full'); } };
+  try {
+    await assert.rejects(() => claimSpend(service, dayKey, delta, ACTOR, caps, () => T0), /audit disk full/);
+  } finally {
+    service.audit = realAudit;
+  }
+  const rows = await service.listWhere({ dayKey });
+  assert.deepEqual([rows[0].inputTokens, rows[0].outputTokens, rows[0].calls], [0, 0, 0],
+    'the savepoint undid the claim with its missing receipt');
+  const kept = await claimSpend(service, dayKey, delta, ACTOR, caps, () => T0);
+  assert.deepEqual([kept.row.inputTokens, kept.row.outputTokens, kept.row.calls], [10, 4, 1]);
+});
+
+test('real storage round-trips the exact audit sentinels', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-llm-sentinels-'));
+  t.after(() => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* test litter */ } });
+  const writer = realLlmWriter(join(dir, 'llm-sentinels.sqlite'));
+  t.after(() => { writer.close(); });
+  const { definition } = createFixtureLlmAdapter({ secret: SECRET });
+  const request = (tag) => ({
+    actor: ACTOR, spaceId: 'presti', purpose: 'free-question',
+    messages: [{ role: 'user', content: PROMPT(tag) }], maxTokens: 64,
+  });
+  const ops = createLlmOperations({
+    adapters: [definition],
+    spaces: { presti: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1 } },
+    secretRef: SECRET_REF,
+    resolveSecret: async () => SECRET,
+    clock: () => T0,
+  });
+  const out = await ops.complete(request('real-live'), writer.modules);
+  assert.equal(out.dryRun, false);
+  const denied = createLlmOperations({
+    adapters: [definition],
+    spaces: { presti: { enabled: false } },
+    clock: () => T0,
+  });
+  await assert.rejects(() => denied.complete(request('real-denied'), writer.modules),
+    (error) => error?.code === 'LLM_SPACE_DISABLED');
+  const rows = await ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, writer.modules);
+  assert.equal(rows.length, 2);
+  const live = rows.find((row) => row.refused === '');
+  assert.equal(live.errorCode, '');
+  assert.equal(live.adapter, 'fixture-llm');
+  assert.equal(live.model, OPENAI_DEFAULT_MODEL);
+  assert.equal(live.sources, '');
+  const refusal = rows.find((row) => row.refused === 'space-disabled');
+  assert.equal(refusal.adapter, '');
+  assert.equal(refusal.model, '');
+  assert.equal(refusal.errorCode, '');
+  assert.equal(refusal.sources, '');
+  assert.deepEqual([refusal.inputTokens, refusal.outputTokens], [0, 0]);
 });
