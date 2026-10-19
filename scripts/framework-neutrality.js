@@ -57,7 +57,13 @@ export function scanClientNameViolations(scopeDir) {
     for (const name of readdirSync(directory)) {
       if (SKIPPED_DIRECTORIES.has(name)) continue;
       const path = join(directory, name);
-      if (statSync(path).isDirectory()) {
+      let isDirectory = false;
+      try {
+        isDirectory = statSync(path).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDirectory) {
         walk(path);
         continue;
       }
