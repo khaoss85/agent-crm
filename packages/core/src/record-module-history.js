@@ -46,42 +46,17 @@ const MODULE_HISTORY_FILES = Object.freeze({
 });
 
 /**
- * Module name → revision the framework adopts as its original migration
- * identity, for modules that reached that revision before any history file
- * existed. The composition renders a module with no checked-in history from
- * its current manifest alone, so a revision above 1 without history silently
- * re-renders every bootstrap databases may have recorded at an earlier
- * revision (accordo 61c450a2a1b1: seven modules reached revision 2 in August
- * 2026 with real SQL changes and no history — delivery-milestone,
- * delivery-project and delivery-work-package in 4a1815c, service-obligation
- * in 9d16f01, commercial-contract, contract-activation and contract-version
- * in 0217469 — while their revision 1 existed only before those commits).
- *
- * No released database is evidenced to hold an earlier bootstrap for these
- * seven: the first LIVE customer database (presti-group) dates from October
- * 2026, and the only evidenced revision-1 recordings in this repository are
- * work-activity's b48b09e checksums and data-quality-issue's presti-group
- * recording, which both ship history files above. So no bridge predecessor
- * is pinned for them: shipping history now would change what every database
- * created since the bump recorded, and inventing bridge checksums no
- * database evidenced would widen the ledger's acceptance for nothing.
- *
- * This excuses exactly the declared revision — the manifest guard
- * (tests/module-manifest-revision-guard.test.js) refuses any revision above
- * it without history, and refuses a history chain that does not start at
- * revision 1 and step by one. The next bump of a listed module ships its
- * full revision-1-based history (git retains every revision 1 manifest), at
- * which point its entry here is removed.
+ * Why no born-at table lives here: the kernel never names a domain module,
+ * in either direction (tests/package-contract.test.js and
+ * tests/contracts-activation-e2e.test.js scan this directory for domain
+ * concepts). A module that reached its current revision before any history
+ * file existed is therefore declared where domain names are allowed — the
+ * repo-wide manifest guard (tests/module-manifest-revision-guard.test.js)
+ * holds the declaration and passes it to `assertRevisionHistoryContract` as
+ * `options.bornAtRevision`. The declaration excuses exactly that revision;
+ * anything above it needs the full revision-1-based history (git retains
+ * every revision 1 manifest), and the guard refuses the bump without it.
  */
-export const MODULE_BORN_AT_REVISION = Object.freeze({
-  'commercial-contract': 2,
-  'contract-activation': 2,
-  'contract-version': 2,
-  'service-obligation': 2,
-  'delivery-milestone': 2,
-  'delivery-project': 2,
-  'delivery-work-package': 2,
-});
 
 /** @type {Map<string, unknown[]>} */
 const historyCache = new Map();
@@ -169,14 +144,18 @@ export function recordModuleHistoryFor(moduleName) {
  *
  * Throws a ValidationError naming the missing history or the malformed
  * chain; returns undefined when the revision is covered. Revision 1 needs
- * nothing. A module declared born above 1 in MODULE_BORN_AT_REVISION is
- * covered exactly at its declared revision; anything above it needs the
- * full history from revision 1.
+ * nothing. A caller that knows the module reached its current revision
+ * before any history file existed declares that revision in
+ * `options.bornAtRevision`: the declaration excuses exactly that revision,
+ * and anything above it needs the full history from revision 1. The default
+ * is fail-closed: a revision above 1 without checked-in history and without
+ * a declaration refuses.
  *
  * @param {string} moduleName
  * @param {number} revision
+ * @param {{ bornAtRevision?: number }} [options]
  */
-export function assertRevisionHistoryContract(moduleName, revision) {
+export function assertRevisionHistoryContract(moduleName, revision, options = {}) {
   if (revision <= 1) return;
   const history = recordModuleHistoryFor(moduleName);
   if (history !== undefined) {
@@ -202,7 +181,7 @@ export function assertRevisionHistoryContract(moduleName, revision) {
     }
     return;
   }
-  const bornAt = /** @type {Record<string, number>} */ (MODULE_BORN_AT_REVISION)[moduleName] ?? 1;
+  const bornAt = options.bornAtRevision ?? 1;
   if (bornAt !== revision) {
     throw new ValidationError(
       `Selected record module "${moduleName}" is at revision ${revision} without history. `

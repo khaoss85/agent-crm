@@ -7,7 +7,7 @@
    "jtbdId": "ACC-JTBD-CRM-ADMIN-003",
    "jobName": "Configurare entità, campi, relazioni e layout",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "eded8506ecc369350419e6ed1396b3c9919db53c",
+   "verifiedAtSha": "a23d67c2c8e5c5602db2548e43da2a1e54d01421",
    "evidence": [
     {
      "kind": "TEST",
@@ -50,7 +50,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-008",
    "jobName": "Instradare approvazioni",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "eded8506ecc369350419e6ed1396b3c9919db53c",
+   "verifiedAtSha": "a23d67c2c8e5c5602db2548e43da2a1e54d01421",
    "evidence": [
     {
      "kind": "TEST",
@@ -88,7 +88,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-009",
    "jobName": "Generare quote e documenti",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "eded8506ecc369350419e6ed1396b3c9919db53c",
+   "verifiedAtSha": "a23d67c2c8e5c5602db2548e43da2a1e54d01421",
    "evidence": [
     {
      "kind": "TEST",
@@ -124,7 +124,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-012",
    "jobName": "Portare contratto a firma e close",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "eded8506ecc369350419e6ed1396b3c9919db53c",
+   "verifiedAtSha": "a23d67c2c8e5c5602db2548e43da2a1e54d01421",
    "evidence": [
     {
      "kind": "TEST",
@@ -136,7 +136,7 @@
      "kind": "TEST",
      "path": "tests/signature-contract.test.js",
      "claim": "the envelope state machine has an explicit transition table, terminal states never regress, and a replayed webhook creates no second effect",
-     "sha256": "94c313a1eacdfc4bc915a150557244797f76d93c38abc45a22de06673504ffae"
+     "sha256": "baccf952f760af45134cb54c01dff4a1b8f0defc460f186e4ecaa239b121a910"
     }
    ],
    "factIds": [
@@ -154,7 +154,7 @@
    "jtbdId": "ACC-JTBD-DATA-SCI-005",
    "jobName": "Costruire lead e account scoring",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "eded8506ecc369350419e6ed1396b3c9919db53c",
+   "verifiedAtSha": "a23d67c2c8e5c5602db2548e43da2a1e54d01421",
    "evidence": [
     {
      "kind": "TEST",
