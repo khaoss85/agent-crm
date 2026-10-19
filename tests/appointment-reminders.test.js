@@ -39,6 +39,11 @@ import {
   reminderHistoryBody,
   seedReminderSweep,
 } from '../packages/appointments/src/reminder-dispatch.js';
+import {
+  checkCancelledRowNeverQueues,
+  checkConcurrentSweepsQueueOneJob,
+  checkCrashBetweenSendAndConfirmSendsOnce,
+} from './helpers/outbound-send-conformance.js';
 
 /**
  * Appointment reminders, sent and recorded (backlog:fe0fe10b85d1).
@@ -54,6 +59,12 @@ import {
  * the real history seam and the fake-backed WhatsApp adapter; the only
  * doubles are the adapter itself and the secret resolver, like the channel
  * kit.
+ *
+ * The three concurrency cases below run through the reusable
+ * `tests/helpers/outbound-send-conformance.js` checks, driven by
+ * `reminderOutboundDriver()`: the helper owns the orchestration and the
+ * assertions, this suite only supplies the reminder composition, so the next
+ * package with outbound sends reuses the same checks with its own driver.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -548,64 +559,10 @@ test('sweep beats are scoped: the next beat seeds after the first succeeds', asy
   assert.equal(pending.job.id, second.job.id);
 });
 
-test('racing sweeps and a crash-retry queue one job and send once', async (t) => {
-  // Two stacks over two connections to one file database, like two dynos:
-  // one sqlite handle cannot interleave two transactions, so the race is
-  // only real across connections.
-  const dir = mkdtempSync(join(tmpdir(), 'reminder-twoproc-'));
-  t.after(() => { rmSync(dir, { recursive: true, force: true }); });
-  const dbPath = join(dir, 'shared.sqlite');
-  const first = compose(dbPath, true, 250);
-  t.after(() => first.database.close());
-  const second = compose(dbPath, false, 250);
-  t.after(() => second.database.close());
-  const now = () => NOW_BOOK;
-  const connectionKey = await activeConnection(first);
-  await book(first, now, bookingRequest(connectionKey));
-
-  // Two sweeps racing queue the same job: the enqueue is the claim, so the
-  // loser either gets the winner's row or takes the framework's transient
-  // conflict and retries into it — like the worker retrying a failed sweep
-  // in production — and no second send exists to make either way.
-  const race = async (stack) => {
-    try {
-      return await dispatch(stack, () => REMIND_AT);
-    } catch (error) {
-      const failed = error?.details?.failed ?? [];
-      if (error?.code === 'APPOINTMENTS_REMINDER_SWEEP_FAILED'
-        && failed.length === 1 && failed[0]?.code === 'CONFLICT') {
-        return await dispatch(stack, () => REMIND_AT);
-      }
-      throw error;
-    }
-  };
-  const [one, two] = await Promise.all([race(first), race(second)]);
-  assert.equal(one.queued.length, 1);
-  assert.equal(two.queued.length, 1);
-  assert.equal(one.queued[0].jobId, two.queued[0].jobId);
-  const probe = createDurableJobStore({ storage: first.database.storage, tenantId: TENANT });
-  const sends = (await probe.list(100)).filter((job) => job.kind === 'channel-send');
-  assert.equal(sends.length, 1);
-
-  // The worker sends once under the reminder key ...
-  const { worker } = workerKit(first, () => REMIND_AT);
-  worker.start();
-  t.after(() => worker.close());
-  const settled = await worker.run(one.queued[0].jobId);
-  assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
-  assert.equal(first.api.state.sendCalls, 1);
-
-  // ... and a retry after the send (the crash between send and confirm)
-  // confirms without sending again: one history row, one marker, and the
-  // replay after that changes nothing.
-  const confirmed = await dispatch(first, () => REMIND_AT);
-  assert.equal(confirmed.sent.length, 1);
-  const replayed = await dispatch(first, () => REMIND_AT);
-  assert.equal(replayed.sent.length, 0);
-  assert.equal(replayed.queued.length, 0);
-  assert.equal(first.api.state.sendCalls, 1);
-  const { messages } = services(first);
-  assert.equal((await messages.listWhere({})).length, 1);
+test('racing sweeps and a crash-retry queue one job and send once', async () => {
+  // The orchestration and the assertions live in the reusable conformance
+  // helper; this suite only supplies the reminder composition behind it.
+  await checkConcurrentSweepsQueueOneJob(reminderOutboundDriver());
 });
 
 test('the template seam refuses anonymous calls: every send carries an actor', async (t) => {
@@ -658,32 +615,135 @@ async function channelSendJobs(composed) {
   return (await probe.list(100)).filter((job) => job.kind === 'channel-send');
 }
 
-test('a booking cancelled between the list and the fire never queues', async (t) => {
-  const composed = compose();
-  t.after(() => composed.database.close());
-  const now = () => NOW_BOOK;
-  const connectionKey = await activeConnection(composed);
-  const booked = await book(composed, now, bookingRequest(connectionKey, { sourceKey: 'gym:reminder:6' }));
-  const service = composed.modules.get('appointment').service;
-  const appointments = racingAppointments(service, () => advanceAppointment(
-    { appointments: service, actor: USER, now },
-    booked.appointment,
-    'cancelled',
-    'the customer called it off between list and fire',
-  ));
-  const { interactionLog } = seams(composed, () => REMIND_AT);
-  const fired = await dispatchDueReminders({
-    appointments,
-    tasks: composed.modules.get('work-task').service,
-    templateQueue: templateQueue(composed),
-    interactionLog,
-    now: () => REMIND_AT,
-  });
-  assert.equal(fired.sent.length, 0);
-  assert.equal(fired.queued.length, 0);
-  assert.deepEqual(fired.skipped.map((entry) => entry.reason), ['not-sendable']);
-  assert.equal(composed.api.state.sendCalls, 0);
-  assert.equal((await channelSendJobs(composed)).length, 0);
+/**
+ * The outbound-send conformance driver for appointment reminders: the
+ * composition and fault injection behind the three shared concurrency
+ * checks in `tests/helpers/outbound-send-conformance.js`. The mechanics are
+ * the ones this suite already proved; the helper owns the orchestration and
+ * the assertions.
+ */
+const CONFORMANCE_KEY = 'gym:reminder:conformance';
+const CONFORMANCE_CONFIRM_AT = '2026-10-19T18:00:00.000Z';
+
+function reminderOutboundDriver() {
+  const raceAt = async (stack, at) => {
+    try {
+      return await dispatch(stack, () => at);
+    } catch (error) {
+      // The enqueue is the claim: the loser takes the framework's transient
+      // conflict and retries into the winner's row, like the worker retrying
+      // a failed sweep in production.
+      const failed = error?.details?.failed ?? [];
+      if (error?.code === 'APPOINTMENTS_REMINDER_SWEEP_FAILED'
+        && failed.length === 1 && failed[0]?.code === 'CONFLICT') {
+        return await dispatch(stack, () => at);
+      }
+      throw error;
+    }
+  };
+  const settleJob = async (stack, jobId) => {
+    // The store clock rides the queue instant: outbox jobs schedule at the
+    // due instant, and the worker only claims what is due.
+    const { worker } = workerKit(stack, () => REMIND_AT);
+    worker.start();
+    try {
+      const settled = await worker.run(jobId);
+      assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
+    } finally {
+      worker.close();
+    }
+  };
+  return {
+    label: 'appointment reminders',
+    now: { queue: REMIND_AT, confirm: CONFORMANCE_CONFIRM_AT },
+    createRacingStacks: async () => {
+      // Two stacks over two connections to one file database, like two
+      // dynos: one sqlite handle cannot interleave two transactions, so the
+      // race is only real across connections.
+      const dir = mkdtempSync(join(tmpdir(), 'reminder-twoproc-'));
+      const dbPath = join(dir, 'shared.sqlite');
+      const first = compose(dbPath, true, 250);
+      const second = compose(dbPath, false, 250);
+      const connectionKey = await activeConnection(first);
+      await book(first, () => NOW_BOOK, bookingRequest(connectionKey, { sourceKey: CONFORMANCE_KEY }));
+      return {
+        first,
+        second,
+        cleanup: () => {
+          first.database.close();
+          second.database.close();
+          rmSync(dir, { recursive: true, force: true });
+        },
+      };
+    },
+    createStack: async () => {
+      const stack = compose();
+      const connectionKey = await activeConnection(stack);
+      await book(stack, () => NOW_BOOK, bookingRequest(connectionKey, { sourceKey: CONFORMANCE_KEY }));
+      return { stack, cleanup: () => stack.database.close() };
+    },
+    dispatch: (stack, at) => raceAt(stack, at),
+    dispatchWithCancelledRow: async (stack, at) => {
+      const service = stack.modules.get('appointment').service;
+      const booked = (await service.listWhere({ sourceKey: CONFORMANCE_KEY }))[0] ?? null;
+      assert.ok(booked, 'the conformance booking is stored before the race');
+      const appointments = racingAppointments(service, () => advanceAppointment(
+        { appointments: service, actor: USER, now: () => NOW_BOOK },
+        booked,
+        'cancelled',
+        'the customer called it off between list and fire',
+      ));
+      const { interactionLog } = seams(stack, () => at);
+      return dispatchDueReminders({
+        appointments,
+        tasks: stack.modules.get('work-task').service,
+        templateQueue: templateQueue(stack),
+        interactionLog,
+        now: () => at,
+      });
+    },
+    dispatchWithCrashingConfirm: async (stack, at) => {
+      const service = stack.modules.get('appointment').service;
+      let crashOnce = true;
+      const crashing = new Proxy(service, {
+        get(target, prop) {
+          if (prop === 'applyManaged') {
+            return async (...args) => {
+              if (crashOnce) {
+                crashOnce = false;
+                const error = new Error('simulated crash between history and marker');
+                error.code = 'CRASH_SIMULATED';
+                throw error;
+              }
+              return target.applyManaged(...args);
+            };
+          }
+          const value = target[prop];
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const { interactionLog } = seams(stack, () => at);
+      return dispatchDueReminders({
+        appointments: crashing,
+        tasks: stack.modules.get('work-task').service,
+        templateQueue: templateQueue(stack),
+        interactionLog,
+        now: () => at,
+      });
+    },
+    settleJob,
+    providerSendCalls: (stack) => stack.api.state.sendCalls,
+    outboxJobCount: async (stack) => (await channelSendJobs(stack)).length,
+    historyCount: async (stack) => (await services(stack).messages.listWhere({})).length,
+    isMarkedSent: async (stack) => {
+      const row = (await services(stack).appointments.listWhere({ sourceKey: CONFORMANCE_KEY }))[0] ?? null;
+      return !!row?.reminderSentAt;
+    },
+  };
+}
+
+test('a booking cancelled between the list and the fire never queues', async () => {
+  await checkCancelledRowNeverQueues(reminderOutboundDriver());
 });
 
 test('a booking rescheduled between the list and the fire never queues', async (t) => {
@@ -729,66 +789,8 @@ test('a due reminder for a concluded slot is skipped, never sent', async (t) => 
   assert.equal((await channelSendJobs(composed)).length, 0);
 });
 
-test('a crash between history and marker confirms once on the next beat, on another clock', async (t) => {
-  const composed = compose();
-  t.after(() => composed.database.close());
-  const now = () => NOW_BOOK;
-  const connectionKey = await activeConnection(composed);
-  await book(composed, now, bookingRequest(connectionKey, { sourceKey: 'gym:reminder:9' }));
-  const queued = await dispatch(composed, () => REMIND_AT);
-  assert.equal(queued.queued.length, 1);
-  const { worker } = workerKit(composed, () => REMIND_AT);
-  worker.start();
-  t.after(() => worker.close());
-  const settled = await worker.run(queued.queued[0].jobId);
-  assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
-
-  // The confirm writes history, then crashes before the marker: the sweep
-  // fails, the history row stays, the marker stays empty.
-  const service = composed.modules.get('appointment').service;
-  let crashOnce = true;
-  const crashing = new Proxy(service, {
-    get(target, prop) {
-      if (prop === 'applyManaged') {
-        return async (...args) => {
-          if (crashOnce) {
-            crashOnce = false;
-            const error = new Error('simulated crash between history and marker');
-            error.code = 'CRASH_SIMULATED';
-            throw error;
-          }
-          return target.applyManaged(...args);
-        };
-      }
-      const value = target[prop];
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
-  const { interactionLog } = seams(composed, () => REMIND_AT);
-  await assert.rejects(
-    dispatchDueReminders({
-      appointments: crashing,
-      tasks: composed.modules.get('work-task').service,
-      templateQueue: templateQueue(composed),
-      interactionLog,
-      now: () => REMIND_AT,
-    }),
-    (error) => error?.code === 'APPOINTMENTS_REMINDER_SWEEP_FAILED',
-  );
-  const { messages, appointments } = services(composed);
-  assert.equal((await messages.listWhere({})).length, 1);
-  const unmarked = (await appointments.listWhere({ sourceKey: 'gym:reminder:9' }))[0];
-  assert.ok(!unmarked.reminderSentAt);
-
-  // The next beat runs on another clock: the same due instant replays the
-  // identical history row instead of conflicting, and the marker lands.
-  // Stamping the sweep clock here retried with a new instant and 409d.
-  const retried = await dispatch(composed, () => '2026-10-19T18:00:00.000Z');
-  assert.equal(retried.sent.length, 1);
-  assert.equal((await messages.listWhere({})).length, 1);
-  const marked = (await appointments.listWhere({ sourceKey: 'gym:reminder:9' }))[0];
-  assert.equal(marked.reminderSentAt, REMIND_AT);
-  assert.equal(composed.api.state.sendCalls, 1);
+test('a crash between history and marker confirms once on the next beat, on another clock', async () => {
+  await checkCrashBetweenSendAndConfirmSendsOnce(reminderOutboundDriver());
 });
 
 test('a stale confirm on another clock skips instead of rewriting history', async (t) => {

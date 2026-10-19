@@ -54,6 +54,10 @@ The package contract itself is enforced by a command, not by a document: `npm ru
 3. Offer the smallest interface that does the job — methods, never a service, table or query handle. Version it; a new shape is a new version.
 4. Never deep-import another package's source. An undeclared reach is refused at runtime and a cycle is refused at startup, but the rule is the design, not the guardrail.
 
+## Sends to external channels («Invii verso canali esterni»)
+
+If your package sends to an external channel (WhatsApp, Instagram, SMS, email), it follows the outbound-send rule in `AGENTS.md` («Invii verso canali esterni»): queue every send through the existing channels outbox under a deterministic idempotent key, never call the provider before the persistent claim, carry an actor on every send, re-read the row fresh before queueing, confirm idempotently per message key, and record terminal refusals on the row. Prove it with `tests/helpers/outbound-send-conformance.js` — the same three concurrency cases the appointment reminder suite runs — with your own driver.
+
 ## Register, validate, prove
 
 1. Registration is one static import in `packages/domains/generated/index.js`. No dynamic import, no `eval`, no remote install, no marketplace, no hot loading.
