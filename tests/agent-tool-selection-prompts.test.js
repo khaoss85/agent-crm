@@ -590,6 +590,44 @@ const HEREDOC_DELIMITER_SPELLINGS = [
   'É', 'e#f', "''",
 ];
 
+/** The `<<` against `<<-` axis of the heredoc cross-product. */
+const HEREDOC_DASHES = ['', '-'];
+/** The optional gap between the operator and the delimiter word. */
+const HEREDOC_GAPS = ['', ' '];
+/**
+ * Every placement the generator must emit for one delimiter spelling: where
+ * the invocation sits relative to the terminator. The size guard checks each
+ * name against the emitted labels and counts them, so a placement removed
+ * from the generator fails there instead of quietly shrinking the corpus;
+ * a placement added to the generator fails the count until it is listed here.
+ */
+const HEREDOC_PLACEMENT_NAMES = ['body', 'after', 'nearMiss', 'unterminated', 'spaceIndent'];
+/**
+ * The delimiter-quoting paths the sample must cover, one spelling each: bare,
+ * single-quoted, double-quoted, backslash-escaped, and expansion-shaped bare
+ * and quoted. The size guard checks every path is represented in the active
+ * sample, so removing half the samples fails instead of quietly shrinking
+ * what is checked.
+ */
+const HEREDOC_QUOTING_PATHS = [
+  'bare',
+  'single-quoted',
+  'double-quoted',
+  'backslash-escaped',
+  'bare-expansion',
+  'quoted-expansion',
+];
+
+/** Which delimiter-quoting path a spelling exercises. */
+function heredocQuotingPath(spelling) {
+  const quoted = spelling.includes("'") || spelling.includes('"') || spelling.includes('\\');
+  if (spelling.includes('$')) return quoted ? 'quoted-expansion' : 'bare-expansion';
+  if (spelling.includes("'")) return 'single-quoted';
+  if (spelling.includes('"')) return 'double-quoted';
+  if (spelling.includes('\\')) return 'backslash-escaped';
+  return 'bare';
+}
+
 /**
  * @param {string[]} [spellings] delimiter spellings to cross; the whole list by
  * default, the local sample in the default oracle run.
@@ -600,8 +638,8 @@ function heredocCrossProduct(spellings = HEREDOC_DELIMITER_SPELLINGS) {
   const run = ORACLE_INVOCATION;
   for (const spelling of spellings) {
     const terminator = removeQuotes(spelling);
-    for (const dash of ['', '-']) {
-      for (const gap of ['', ' ']) {
+    for (const dash of HEREDOC_DASHES) {
+      for (const gap of HEREDOC_GAPS) {
         // `<<` immediately followed by `-` *is* the `<<-` operator, so this one cell of the
         // product spells `cat <<- > notes.md`, which is a syntax error rather than a text
         // about a delimiter. Skipped where the spelling is ambiguous, kept everywhere else.
@@ -927,13 +965,46 @@ test('the shell classifier agrees with bash over the active oracle corpus', () =
   );
   // The heredoc sample rides on top of the axis product, so the bound above cannot
   // see it go missing: a dropped heredoc wiring still clears `>=`. The sample list
-  // is validated against the full list at load; this pins the carried count to the
-  // active list, so removing the sample fails here too.
+  // is validated against the full list at load; the two pins below hold the rest.
+  // First, every delimiter-quoting path stays represented in the active sample,
+  // so removing half the samples fails instead of quietly shrinking the bound
+  // along with the corpus. Second, the carried cell count is exactly the
+  // cross-product of the active axes, so dropping cells (or the wiring that
+  // adds them) fails too.
+  const activeHeredocSpellings = SHELL_ORACLE_FULL
+    ? HEREDOC_DELIMITER_SPELLINGS
+    : SHELL_ORACLE_HEREDOC_SPELLINGS;
+  const coveredQuotingPaths = new Set(activeHeredocSpellings.map(heredocQuotingPath));
+  for (const path of HEREDOC_QUOTING_PATHS) {
+    assert.ok(
+      coveredQuotingPaths.has(path),
+      `the heredoc sample no longer covers the ${path} delimiter path; the min-corpus has been cut`,
+    );
+  }
+  const emittedPlacements = new Set(
+    corpus
+      .filter((entry) => entry.label.startsWith('heredoc-delim/'))
+      .map((entry) => entry.label.split('/').slice(-1)[0]),
+  );
+  for (const placement of HEREDOC_PLACEMENT_NAMES) {
+    assert.ok(
+      emittedPlacements.has(placement),
+      `the corpus emits no ${placement} heredoc cells; a placement has been dropped from the generator`,
+    );
+  }
+  // One dash-gap cell is skipped per spelling that starts with `-` (it would
+  // spell the `<<-` operator, a syntax error rather than a delimiter text).
+  const expectedHeredocCells = activeHeredocSpellings.reduce(
+    (total, spelling) => total
+      + HEREDOC_DASHES.length * HEREDOC_GAPS.length * HEREDOC_PLACEMENT_NAMES.length
+      - (spelling.startsWith('-') ? HEREDOC_PLACEMENT_NAMES.length : 0),
+    0,
+  );
   const heredocCells = corpus.filter((entry) => entry.label.startsWith('heredoc-delim/')).length;
-  const minHeredocCells = (SHELL_ORACLE_FULL ? HEREDOC_DELIMITER_SPELLINGS : SHELL_ORACLE_HEREDOC_SPELLINGS).length;
-  assert.ok(
-    heredocCells >= minHeredocCells,
-    `the corpus carries ${heredocCells} heredoc cells against a ${minHeredocCells}-entry delimiter list; the heredoc wiring has been dropped`,
+  assert.equal(
+    heredocCells,
+    expectedHeredocCells,
+    `the corpus carries ${heredocCells} heredoc cells against a ${expectedHeredocCells}-cell cross-product; the heredoc wiring has been cut`,
   );
 
   const root = mkdtempSync(join(tmpdir(), 'ts-shell-oracle-'));

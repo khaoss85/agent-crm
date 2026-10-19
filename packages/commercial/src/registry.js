@@ -27,7 +27,7 @@ import { requireCurrency, MAX_DISCOUNT_BPS } from './money.js';
  */
 
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
-const MAX_LABEL = 80;
+export const MAX_LABEL = 80;
 const MAX_VERSION = 1_000_000;
 export const DISCOUNT_DECISIONS = Object.freeze(['auto_approve', 'approval_required', 'reject']);
 

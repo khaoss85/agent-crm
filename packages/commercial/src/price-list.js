@@ -6,7 +6,7 @@ import {
   PRICING_MODELS,
 } from '../../core/index.js';
 import { requireCurrency, validatePriceComponent } from './money.js';
-import { validateCatalogProvider } from './registry.js';
+import { validateCatalogProvider, MAX_LABEL as MAX_PROVIDER_LABEL } from './registry.js';
 
 /**
  * Workspace price lists (accordo D1): a gym's listino — lesson packs,
@@ -31,6 +31,15 @@ import { validateCatalogProvider } from './registry.js';
 const WORKSPACE_KEY_RE = /^[a-z][a-z0-9-]{0,47}$/;
 const MAX_TEXT = 500;
 const MAX_COMPONENTS = 25;
+// The provider name feeds the derived label (`Workspace price list (<name>)`,
+// capped at MAX_PROVIDER_LABEL by the registry) and every
+// `pricelist.<name>.*` source key (capped by KEY_RE in catalog sync). A long
+// but otherwise valid name would only fail downstream, with an error that
+// names the label or the key instead of the name — so the name carries the
+// same limit up front, leaving room for the label wrapper.
+const DERIVED_LABEL_PREFIX = 'Workspace price list (';
+const DERIVED_LABEL_SUFFIX = ')';
+const MAX_PROVIDER_NAME = MAX_PROVIDER_LABEL - DERIVED_LABEL_PREFIX.length - DERIVED_LABEL_SUFFIX.length;
 
 /**
  * Freeze a normalized value in depth: the fingerprinted config must stay
@@ -60,6 +69,17 @@ function requireText(value, field, max = MAX_TEXT) {
 function optionalText(value, field, max = MAX_TEXT) {
   if (value === undefined || value === null) return null;
   return requireText(value, field, max);
+}
+
+/** @param {unknown} value */
+function requireProviderName(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_PROVIDER_NAME) {
+    throw new ValidationError(
+      `name must be a non-empty string of at most ${MAX_PROVIDER_NAME} characters, `
+      + `so the derived label stays within ${MAX_PROVIDER_LABEL} characters`,
+    );
+  }
+  return value;
 }
 
 /** @param {unknown} value @param {string} field */
@@ -270,21 +290,22 @@ export function validatePriceListConfig(input) {
  * @param {{name: string, version: number, label?: string, priceList: unknown, deactivateMissing?: boolean}} options
  */
 export function createPriceListCatalogProvider({ name, version, label, priceList, deactivateMissing = false }) {
+  const providerName = requireProviderName(name);
   const normalized = validatePriceListConfig(priceList);
   if (typeof deactivateMissing !== 'boolean') {
     throw new ValidationError('deactivateMissing must be a boolean when present');
   }
   const priceListRef = normalized;
   const fetchCatalog = async () => ({
-    sourceRef: `price-list:${name}`,
+    sourceRef: `price-list:${providerName}`,
     priceBooks: [{
-      sourceKey: `pricelist.${name}.book`,
+      sourceKey: `pricelist.${providerName}.book`,
       name: priceListRef.priceBook.name,
       currency: priceListRef.priceBook.currency,
       active: priceListRef.priceBook.active,
     }],
     products: priceListRef.products.map((product) => ({
-      sourceKey: `pricelist.${name}.product.${product.key}`,
+      sourceKey: `pricelist.${providerName}.product.${product.key}`,
       externalId: product.externalId,
       sku: product.sku,
       name: product.name,
@@ -293,9 +314,9 @@ export function createPriceListCatalogProvider({ name, version, label, priceList
       active: product.active,
     })),
     offers: priceListRef.offers.map((offer) => ({
-      sourceKey: `pricelist.${name}.offer.${offer.key}`,
-      priceBookSourceKey: `pricelist.${name}.book`,
-      productSourceKey: `pricelist.${name}.product.${offer.product}`,
+      sourceKey: `pricelist.${providerName}.offer.${offer.key}`,
+      priceBookSourceKey: `pricelist.${providerName}.book`,
+      productSourceKey: `pricelist.${providerName}.product.${offer.product}`,
       name: offer.name,
       externalOfferId: offer.externalOfferId,
       active: offer.active,
@@ -319,9 +340,9 @@ export function createPriceListCatalogProvider({ name, version, label, priceList
     })),
   });
   const provider = {
-    name,
+    name: providerName,
     version,
-    label: label ?? `Workspace price list (${name})`,
+    label: label ?? `${DERIVED_LABEL_PREFIX}${providerName}${DERIVED_LABEL_SUFFIX}`,
     config: Object.freeze({
       source: 'price-list',
       deactivateMissing,
