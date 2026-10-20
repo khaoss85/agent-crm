@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import {
   STUB_VERSION,
   countBadgeNodes,
+  findChromium,
   isHeadlessShell,
   startRootServer,
   stateBadgeGroups,
@@ -182,6 +183,40 @@ test('isHeadlessShell recognises both shell spellings, never a full browser', ()
   assert.equal(isHeadlessShell('/tmp/chrome-headless-shell'), true, 'bare hyphenated binary path');
   assert.equal(isHeadlessShell('/usr/bin/google-chrome'), false, 'full Chrome needs --headless=new');
   assert.equal(isHeadlessShell('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'), false, 'macOS Chrome bundle');
+});
+
+test('findChromium prefers a full browser over the headless shell', () => {
+  const CHROME_APP = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  const SHELL = '/Users/x/Library/Caches/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/chrome-headless-shell';
+  // CHROMIUM_BIN always wins, even over an installed full browser.
+  assert.equal(
+    findChromium({ env: { CHROMIUM_BIN: '/tmp/custom-chromium' }, exists: () => true }),
+    '/tmp/custom-chromium',
+    'explicit override wins',
+  );
+  // With both present, the full browser is picked: the macOS shell renders
+  // nothing (exit 143, no screenshot — CI run 39465652065).
+  assert.equal(
+    findChromium({ env: {}, exists: (path) => path === CHROME_APP || path === SHELL }),
+    CHROME_APP,
+    'full Chrome before headless shell',
+  );
+  // The shell is still the fallback where no full browser exists.
+  assert.equal(
+    findChromium({
+      env: {},
+      home: '/Users/x',
+      exists: (path) => path === SHELL,
+      readdir: (dir) => (dir === '/Users/x/Library/Caches/ms-playwright' ? ['chromium_headless_shell-1208'] : []),
+    }),
+    SHELL,
+    'shell fallback preserved',
+  );
+  assert.equal(
+    findChromium({ env: {}, exists: () => false, readdir: () => [] }),
+    null,
+    'null when no browser exists',
+  );
 });
 
 test('countBadgeNodes counts badge elements and their state classes', () => {

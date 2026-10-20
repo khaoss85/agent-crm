@@ -22,11 +22,13 @@
  * must render at least one `.badge` node, and the rendered badge classes must
  * cover every state-colour group of the working-tree stylesheet.
  *
- * Requires a Chromium binary (same discovery as `scripts/site-shots.js`).
- * Unlike site-shots — a publishing convenience that skips silently — this is
- * a proof tool: with no Chromium it exits 2 instead of writing a vacuous
- * proof. Run it where a browser exists (CI images with Playwright browsers,
- * a maintainer Mac): `npm run admin:shots`.
+ * Requires a Chromium binary (shared discovery in
+ * `scripts/admin-shots-harness.js`: full browsers first, then the Playwright
+ * locations `scripts/site-shots.js` uses). Unlike site-shots — a publishing
+ * convenience that skips silently — this is a proof tool: with no Chromium
+ * it exits 2 instead of writing a vacuous proof. Run it where a browser
+ * exists (CI images with Playwright browsers, a maintainer Mac):
+ * `npm run admin:shots`.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -38,16 +40,16 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { diffPng } from './admin-png-diff.js';
 import {
   STUB_VERSION,
   countBadgeNodes,
+  findChromium,
   isHeadlessShell,
   startRootServer,
   stateBadgeGroups,
@@ -69,47 +71,6 @@ function sha256(data) {
   return createHash('sha256').update(data).digest('hex');
 }
 
-function findChromium() {
-  // Mirrors scripts/site-shots.js: CHROMIUM_BIN first, then the Playwright
-  // locations the CI images provide, then system browsers.
-  const candidates = [
-    process.env.CHROMIUM_BIN,
-    '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell',
-    '/opt/pw-browsers/chromium/chrome-linux/headless_shell',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-  ].filter(Boolean);
-  for (const candidate of candidates) {
-    if (candidate && existsSync(candidate)) return candidate;
-  }
-  const bases = [
-    '/opt/pw-browsers',
-    join(homedir(), '.cache', 'ms-playwright'),
-    join(homedir(), 'Library', 'Caches', 'ms-playwright'),
-  ];
-  for (const base of bases) {
-    let entries = [];
-    try {
-      entries = readdirSync(base);
-    } catch {
-      entries = [];
-    }
-    for (const entry of entries) {
-      for (const suffix of [
-        ['chrome-linux', 'headless_shell'],
-        ['chrome-headless-shell-linux64', 'chrome-headless-shell'],
-        ['chrome-headless-shell-mac-arm64', 'chrome-headless-shell'],
-        ['chrome-headless-shell-mac-x64', 'chrome-headless-shell'],
-      ]) {
-        const path = join(base, entry, ...suffix);
-        if (existsSync(path)) return path;
-      }
-    }
-  }
-  return null;
-}
-
 /**
  * Render one URL to a PNG screenshot plus its serialized DOM (after the
  * app's own fetches settle). Either artifact missing is a capture failure.
@@ -117,11 +78,15 @@ function findChromium() {
  * @param {string} url
  * @param {{ width: number, height: number }} frame
  * @param {string} shotPath where to write the screenshot
+ * @param {string} profileDir fresh Chromium profile (never the user's own:
+ * without it a running desktop Chrome can swallow the request and exit
+ * without writing any screenshot)
  * @returns {{ dom: string } | { error: string }}
  */
-function capture(binary, url, frame, shotPath) {
+function capture(binary, url, frame, shotPath, profileDir) {
   const flags = [
     ...(isHeadlessShell(binary) ? [] : ['--headless=new']),
+    `--user-data-dir=${profileDir}`,
     '--no-sandbox',
     '--disable-gpu',
     '--no-first-run',
@@ -138,12 +103,14 @@ function capture(binary, url, frame, shotPath) {
   );
   if (!existsSync(shotPath)) {
     // The runner is the only machine with a browser: report WHY Chromium
-    // produced nothing (exit status/signal/stderr tail) instead of a bare
-    // sentence, so the next CI log names the cause directly.
+    // produced nothing (spawn error/exit status/signal/stderr tail) instead
+    // of a bare sentence, so the next CI log names the cause directly.
+    const spawnErr = /** @type {NodeJS.ErrnoException | undefined} */ (shot.error);
+    const spawnError = spawnErr ? ` spawn=${spawnErr.code ?? spawnErr.message}` : '';
     const signal = shot.signal ? ` signal=${shot.signal}` : '';
     const status = shot.status !== null && shot.status !== undefined ? ` exit=${shot.status}` : '';
     const stderr = typeof shot.stderr === 'string' ? shot.stderr.trim().split('\n').slice(-5).join(' | ') : '';
-    return { error: `chromium wrote no screenshot (${binary.split('/').pop()}${status}${signal}${stderr ? ` stderr: ${stderr}` : ' no stderr'})` };
+    return { error: `chromium wrote no screenshot (${binary.split('/').pop()}${spawnError}${status}${signal}${stderr ? ` stderr: ${stderr}` : ' no stderr'})` };
   }
   const dom = spawnSync(binary, [...flags, '--dump-dom', url], {
     encoding: 'utf8',
@@ -253,7 +220,7 @@ async function main() {
         const output = join(scratch, `${entry.side}-${target.file}`);
         const url =
           `http://127.0.0.1:${entry.port}/index.html` + (target.route === '#/' ? '' : target.route);
-        const result = capture(binary, url, target, output);
+        const result = capture(binary, url, target, output, join(scratch, 'chrome-profile'));
         if ('error' in result) {
           fail(`${entry.side}/${target.file}: ${result.error}`);
           break;

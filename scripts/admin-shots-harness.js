@@ -21,8 +21,9 @@
  *    rendered badge classes stop covering a state group.
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { homedir } from 'node:os';
 import { join, extname, sep } from 'node:path';
 
 /** Bump when the stub rows below change shape; recorded in the manifest. */
@@ -302,6 +303,57 @@ export function stateBadgeGroups(css) {
  */
 export function isHeadlessShell(binary) {
   return /headless[-_]shell/.test(binary);
+}
+
+/**
+ * Locate a Chromium binary for the capture. Full browsers come first:
+ * Playwright's macOS `chrome-headless-shell` renders nothing on the
+ * maintainer Mac (exit 143, no screenshot, no stderr — CI run 39465652065),
+ * while the installed Google Chrome screenshots with `--headless=new`.
+ * Otherwise the same discovery as `scripts/site-shots.js` (CHROMIUM_BIN
+ * override, then the Playwright cache locations), so Linux CI behaviour is
+ * unchanged.
+ * @param {{ env?: typeof process.env, exists?: (path: string) => boolean, home?: string, readdir?: (dir: string) => string[] }} [deps]
+ * @returns {string | null}
+ */
+export function findChromium({ env = process.env, exists = existsSync, home = homedir(), readdir = readdirSync } = {}) {
+  const candidates = [
+    env.CHROMIUM_BIN,
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell',
+    '/opt/pw-browsers/chromium/chrome-linux/headless_shell',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (candidate && exists(candidate)) return candidate;
+  }
+  const bases = [
+    '/opt/pw-browsers',
+    join(home, '.cache', 'ms-playwright'),
+    join(home, 'Library', 'Caches', 'ms-playwright'),
+  ];
+  for (const base of bases) {
+    let entries = [];
+    try {
+      entries = readdir(base);
+    } catch {
+      entries = [];
+    }
+    for (const entry of entries) {
+      for (const suffix of [
+        ['chrome-linux', 'headless_shell'],
+        ['chrome-headless-shell-linux64', 'chrome-headless-shell'],
+        ['chrome-headless-shell-mac-arm64', 'chrome-headless-shell'],
+        ['chrome-headless-shell-mac-x64', 'chrome-headless-shell'],
+      ]) {
+        const path = join(base, entry, ...suffix);
+        if (exists(path)) return path;
+      }
+    }
+  }
+  return null;
 }
 
 /**
