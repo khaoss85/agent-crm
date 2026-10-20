@@ -292,7 +292,19 @@ export function createPipelineBoard(deps) {
     search.value = state.q;
     search.addEventListener('input', () => {
       state.q = String(search.value ?? '');
+      const cursor = typeof search.selectionStart === 'number' ? search.selectionStart : search.value.length;
       renderAll(renderToken);
+      // The toolbar is rebuilt on every keystroke: hand focus back to the
+      // new search input so typing is not interrupted after one character.
+      const next = mount.findAll('input').find((node) => node.getAttribute('data-filter') === 'q');
+      if (next) {
+        if (typeof next.focus === 'function') next.focus();
+        try {
+          if (typeof next.setSelectionRange === 'function') next.setSelectionRange(cursor, cursor);
+        } catch {
+          // Non-text inputs or test doubles: caret restore is best-effort.
+        }
+      }
     });
     toolbar.appendChild(search);
 
