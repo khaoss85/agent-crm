@@ -1,15 +1,15 @@
 # `customer-data` — governed customer identity, import provenance and data quality
 
-Eight records, three human actions, five application operations and three declared
+Ten records, three human actions, eight application operations and three declared
 capabilities. It **requires nothing**.
 
 | | |
 |---|---|
-| Owns | `customer-import-run`, `customer-import-row`, `external-identity`, `duplicate-candidate`, `canonical-link`, `data-quality-issue`, `customer-bulk-run`, `customer-bulk-item` |
+| Owns | `customer-import-run`, `customer-import-row`, `external-identity`, `duplicate-candidate`, `canonical-link`, `data-quality-issue`, `customer-bulk-run`, `customer-bulk-item`, `enriched-field`, `enrichment-opt-out` |
 | Requires | **nothing** |
 | Offers | `customer-identity@1`, `customer-profile@1`, `channel-sender@1` |
 | Actions | `duplicate-candidate.link-canonical-identity`, `duplicate-candidate.dismiss-duplicate-candidate`, `data-quality-issue.govern-data-quality-issue` |
-| Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile` (ADR-032) |
+| Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile`, `apply-contact-enrichment`, `import-google-contacts`, `opt-out-contact-enrichment` (ADR-032) |
 | Policies | `deterministic-customer-match@1` |
 | ADR | ADR-037 · ExecPlan `docs/plans/customer-data-foundation-v1.md` |
 
@@ -52,7 +52,8 @@ not a description of this package anywhere.
 ```bash
 for m in customer-import-run customer-import-row external-identity \
          duplicate-candidate canonical-link data-quality-issue \
-         customer-bulk-run customer-bulk-item; do
+         customer-bulk-run customer-bulk-item enriched-field \
+         enrichment-opt-out; do
   npm run crm -- module create packages/customer-data/modules/$m.module.json --apply
 done
 ```
@@ -138,6 +139,42 @@ sender  →  matched      the handle already names a contact, or the evidence ma
   its contact (when it carries an email) or stays unresolved — a sender is
   never matched to a company.
 
+## Enrichment: free sources fill gaps, manual data always wins
+
+`apply-contact-enrichment`, `import-google-contacts` and
+`opt-out-contact-enrichment` fill contact gaps from free sources — the
+space's Google Contacts (People API) and email signatures parsed locally.
+No paid enrichment service is wired, called or referenced anywhere.
+
+```text
+enrich  →  stored beside the contact with source and date — the record itself is never written
+        →  candidate    evidence naming two different contacts, for a human
+        →  refused      opted-out subject, or Google source with its flag off
+```
+
+- **Manual wins by construction.** Enrichment has no write path to the
+  contact (or company) record, so a manually entered value cannot be
+  overwritten — there is nothing that overwrites. Enriched attributes live
+  in `enriched-field` rows beside the record, each with its `source` and
+  `observedAt`; consumers read the record first and the enriched rows as
+  fallback.
+- **The Google source is behind its flag.** `import-google-contacts` and the
+  `google-contacts` source refuse with
+  `ENRICHMENT_GOOGLE_CONTACTS_DISABLED` unless the composition enables
+  `enrichmentGoogleContacts` — off until the Google verification approves
+  the `contacts.readonly` scope, which must also sit on the space's Google
+  grant (control plane, not here). Tests drive the in-memory fake People
+  API; the deployment wires the real client through the same adapter seam.
+- **One person, one contact.** A Google id already naming one contact with
+  an email naming another becomes an unresolved `duplicate-candidate`
+  (`contact-enrichment` rule) — never a merge, never a second contact. A
+  person with no usable email and no linked identity is skipped, never
+  invented.
+- **Opt-out is final.** `opt-out-contact-enrichment` records the refusal
+  and purges the subject's active enriched fields (status `purged`, value
+  cleared). Afterwards no new field is stored for the subject. Channel
+  identities stay: they route messages, they are not enrichment.
+
 ## Canonical identity: a human decision, and a logical link
 
 ```text
@@ -186,9 +223,10 @@ bulk  →  one transaction per item, one receipt per item, one run row
 
 ## Export: counted first, refused rather than truncated
 
-`export-customer-records` exports one of this package's eight managed record
+`export-customer-records` exports one of this package's ten managed record
 sets — the import log and its receipts, the identities, the candidates, the
-links, the findings, and the bulk runs with their receipts.
+links, the findings, the bulk runs with their receipts, the enriched fields,
+and the opt-outs.
 
 ```text
 export  →  count, then rows — or a refusal, never a short file
@@ -274,6 +312,7 @@ Legal or Finance role enforcement, and this README does not pretend otherwise.
 - `tests/customer-data-foundation.test.js` — the v1 claims against a real composed application
 - `tests/customer-data-operations-v2.test.js` — bulk actions and export at scale: per-record receipts, partial honesty, resume and replay, truncation refusal
 - `tests/customer-data-faults.test.js` — faults, two-connection races, restart, detach and old-database upgrade
+- `tests/contact-enrichment.test.js` — free-source enrichment: flag, source and date on every field, manual-wins, candidates, opt-out purge
 - `tests/admin-customer-data.test.js` — the Admin section, including the failure states
 - `examples/scenarios/customer-identity-governance.scenario.json` — the DX6 journey and what it does *not* establish
 - `docs/ADMIN_SMOKE.md` — the 32-check real-Chromium matrix

@@ -19,6 +19,8 @@ export const CUSTOMER_DATA_MANIFESTS = [
   'data-quality-issue.module.json',
   'customer-bulk-run.module.json',
   'customer-bulk-item.module.json',
+  'enriched-field.module.json',
+  'enrichment-opt-out.module.json',
 ];
 
 /** Commercial + signature + contracts, for the "profile spans packages" proof. */
@@ -42,7 +44,7 @@ function cli(root, args) {
  * the profile has a second package to read across.
  *
  * @param {{after: (fn: () => void) => void}} t
- * @param {{withCommercial?: boolean}} [options]
+ * @param {{withCommercial?: boolean, googleContacts?: boolean}} [options]
  */
 export function project(t, options = {}) {
   const root = mkdtempSync(join(tmpdir(), 'accordo-customer-data-'));
@@ -70,7 +72,9 @@ export function project(t, options = {}) {
       "import { fixtureSaasCatalogProvider, standardSalesDiscountV1 } from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
     ] : []),
     'export const generatedDomains = [',
-    '  createCustomerDataPackage(),',
+    options.googleContacts
+      ? "  createCustomerDataPackage({ config: { enrichmentGoogleContacts: 'enabled' } }),"
+      : '  createCustomerDataPackage(),',
     ...(options.withCommercial
       ? ['  createCommercialDomain({ catalogProviders: [fixtureSaasCatalogProvider], discountPolicies: [standardSalesDiscountV1] }),']
       : []),

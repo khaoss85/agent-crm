@@ -147,6 +147,10 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   // The signed-term verifier (ADR-036): it decides whether a snapshot may be
   // treated as signed at all, so it is behaviour-bearing by definition.
   'packages/commercial/src/verify-terms.js',
+  // The frozen-version quote PDF renderer (BO-F2-03): it decides the exact
+  // amounts, refusal strings and document hash a quote preview shows, so it
+  // is behaviour-bearing by definition.
+  'packages/commercial/src/quote-pdf.js',
   'packages/commercial/modules/quote-term.module.json',
   'packages/commercial/modules/quote-version-term.module.json',
   'packages/core/src/money.js',
