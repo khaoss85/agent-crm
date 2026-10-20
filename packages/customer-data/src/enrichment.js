@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
-import { emailShape, safeString } from './normalize.js';
+import { emailShape, requireExternalId, safeString } from './normalize.js';
 import {
   createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow,
 } from './sender.js';
@@ -101,11 +101,15 @@ function requireFields(input) {
     ? safeString(input.phone, 'phone')
     : 'refused';
   if (rawPhone !== null && rawPhone !== 'refused') {
-    provided += 1;
     fields.phone = canonicalPhone(rawPhone);
-  } else if (rawPhone === 'refused') {
-    provided += 1;
+    // Only a dialable phone counts: an undialable string is a refused
+    // field, not a provided one.
+    if (fields.phone !== null) provided += 1;
   }
+  // A refused phone (wrong type, or undialable) counts for nothing: a call
+  // carrying only a malformed phone has zero storable fields and refuses
+  // here, before any contact is created — a skipped-only receipt must never
+  // invent a customer.
   if (provided === 0) {
     throw new ValidationError('enrichment needs at least one field to fill', { field: 'fields' });
   }
@@ -265,13 +269,30 @@ export function createContactEnrichment({
       const applied = [];
       let candidatesWritten = 0;
 
+      // Every read first, every write after: the identity lookups below
+      // write nothing, so a concurrent opt-out committing between them and
+      // the writes below is still observed by the re-check.
+      const knownGoogle = googleResourceName
+        ? await reader.externalIdentity(GOOGLE_CONTACTS_SYSTEM, googleResourceName)
+        : null;
+      const knownEmail = email ? await reader.externalIdentity('email', email) : null;
+      const knownPhone = fields.phone ? await reader.externalIdentity('phone', fields.phone) : null;
+
+      // The opt-out is re-checked inside the same transaction immediately
+      // before the first write: an opt-out that committed after the fast
+      // check above refuses here, so no fresh active row can land after a
+      // purge. Throwing rolls this transaction back, leaving the purge won.
+      if (await optOutRow(id)) {
+        throw refusal('ENRICHMENT_OPTED_OUT', 409,
+          'this contact opted out of enrichment: no new field is stored and the enriched fields are purged on opt-out');
+      }
+
       if (googleResourceName) {
-        const known = await reader.externalIdentity(GOOGLE_CONTACTS_SYSTEM, googleResourceName);
-        if (known && known.subjectId !== id) {
+        if (knownGoogle && knownGoogle.subjectId !== id) {
           // The evidence names the opaque provider id, never PII: the
           // handles themselves travel in the candidate subjects' labels.
           candidatesWritten += await recordEnrichmentCandidate(
-            subject, candidateOf(known),
+            subject, candidateOf(knownGoogle),
             'this Google contact already names another record: a human decides',
             runId, actor);
         } else {
@@ -283,7 +304,6 @@ export function createContactEnrichment({
       }
 
       if (email) {
-        const knownEmail = await reader.externalIdentity('email', email);
         if (knownEmail && knownEmail.subjectId !== id) {
           candidatesWritten += await recordEnrichmentCandidate(
             subject, candidateOf(knownEmail),
@@ -296,7 +316,6 @@ export function createContactEnrichment({
       }
 
       if (fields.phone) {
-        const knownPhone = await reader.externalIdentity('phone', fields.phone);
         if (knownPhone && knownPhone.subjectId !== id) {
           candidatesWritten += await recordEnrichmentCandidate(
             subject, candidateOf(knownPhone),
@@ -396,8 +415,21 @@ export function createContactEnrichment({
     const givenName = providerString(name.givenName);
     const familyName = providerString(name.familyName);
     const org = orgs[0] !== null && typeof orgs[0] === 'object' && !Array.isArray(orgs[0]) ? orgs[0] : {};
+    // The provider mints this id, but it is stored verbatim as an
+    // external-identity id and as enriched sourceDetail — so it faces the
+    // same bounded, control-safe discipline as every caller handle. A bad
+    // one refuses the person (counted skipped-malformed by the caller),
+    // never lands in a row.
+    let resourceName = null;
+    if (typeof person.resourceName === 'string') {
+      try {
+        resourceName = requireExternalId(person.resourceName);
+      } catch {
+        throw refusal('ENRICHMENT_SOURCE_MALFORMED', 500, 'a Google person carries an unusable resource name');
+      }
+    }
     return {
-      resourceName: typeof person.resourceName === 'string' ? person.resourceName : null,
+      resourceName,
       email,
       fields: {
         firstName: safeString(givenName, 'firstName'),
@@ -522,7 +554,8 @@ export function createContactEnrichment({
         ? request.runId
         : `enrichment:google-contacts:${randomUUID()}`;
       const counts = {
-        people: 0, enriched: 0, created: 0, candidates: 0, skippedOptOut: 0, skippedNoIdentity: 0,
+        people: 0, enriched: 0, created: 0, candidates: 0,
+        skippedOptOut: 0, skippedNoIdentity: 0, skippedMalformed: 0,
       };
       let pageToken = null;
       for (;;) {
@@ -536,7 +569,22 @@ export function createContactEnrichment({
           if (counts.people > MAX_IMPORT_PEOPLE) {
             throw refusal('ENRICHMENT_IMPORT_TOO_LARGE', 409, 'a Google Contacts import covers at most 5000 people per run');
           }
-          const receipt = await enrichGooglePerson(person, { actor, runId });
+          // One bad person can never abort the run: provider strings that
+          // fail validation (overlong, control characters, unusable ids)
+          // throw AppError out of personFields, and the person is counted
+          // skipped-malformed while the page continues. Anything else —
+          // storage errors, programming errors — still aborts loudly.
+          let receipt;
+          try {
+            receipt = await enrichGooglePerson(person, { actor, runId });
+          } catch (error) {
+            if (!(error instanceof AppError)) throw error;
+            // An opt-out that committed mid-person still refuses through
+            // the re-check: it counts as opted-out, not malformed.
+            if (error.code === 'ENRICHMENT_OPTED_OUT') counts.skippedOptOut += 1;
+            else counts.skippedMalformed += 1;
+            continue;
+          }
           if (receipt.outcome === 'created') {
             counts.created += 1;
             counts.enriched += 1;

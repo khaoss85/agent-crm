@@ -46,6 +46,9 @@ export function exportableResources(config) {
     'data-quality-issue': names.issue,
     'customer-bulk-run': names.bulkRun,
     'customer-bulk-item': names.bulkItem,
+    // The enrichment record sets the package metadata and README promise.
+    'enriched-field': names.enriched,
+    'enrichment-opt-out': names.optOut,
   });
 }
 

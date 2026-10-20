@@ -86,7 +86,8 @@ test('a Google import creates the contact and stores every field with source and
   const summary = await app.importGoogleContacts({ actor: ACTOR, adapter: fake });
   assert.equal(summary.outcome, 'imported');
   assert.deepEqual(summary.counts, {
-    people: 1, enriched: 1, created: 1, candidates: 0, skippedOptOut: 0, skippedNoIdentity: 0,
+    people: 1, enriched: 1, created: 1, candidates: 0,
+    skippedOptOut: 0, skippedNoIdentity: 0, skippedMalformed: 0,
   });
 
   const contact = contactRow(app, 'luca@prestigroup.example');
@@ -313,4 +314,151 @@ test('an email signature parses to contact fields and hostile text refuses', asy
   assert.equal(answer.outcome, 'created');
   const rows = enrichedRows(app, answer.contact.id).filter((row) => row.status === 'active');
   assert.ok(rows.every((row) => row.source === 'email-signature'));
+});
+
+test('a person whose provider strings fail validation is skipped while the run continues', async (t) => {
+  const { app } = await scene(t, 'enrichment-poison-throws', { googleContacts: true });
+  const fake = createFakeGoogleContacts();
+  fake.seedPerson({
+    resourceName: 'people/good',
+    names: [{ givenName: 'Buono', familyName: 'Socio' }],
+    emailAddresses: [{ value: 'buono2@prestigroup.example' }],
+  });
+  // An overlong org title throws out of personFields; a control character
+  // in the only email throws out of emailShape; an unusable resource name
+  // refuses the person. None of them aborts the run.
+  fake.seedPerson({
+    resourceName: 'people/overlong',
+    names: [{ givenName: 'Lungo', familyName: 'Titolo' }],
+    emailAddresses: [{ value: 'lungo@prestigroup.example' }],
+    organizations: [{ name: 'Presti Group', title: 'x'.repeat(400) }],
+  });
+  fake.seedPerson({
+    resourceName: 'people/control',
+    names: [{ givenName: 'Ctrl', familyName: 'Char' }],
+    emailAddresses: [{ value: 'ctrl\x07@prestigroup.example' }],
+  });
+  fake.seedPerson({
+    resourceName: `people/${'y'.repeat(300)}`,
+    names: [{ givenName: 'Lungo', familyName: 'Id' }],
+    emailAddresses: [{ value: 'lungoid@prestigroup.example' }],
+  });
+
+  const summary = await app.importGoogleContacts({ actor: ACTOR, adapter: fake });
+  assert.equal(summary.counts.people, 4);
+  assert.equal(summary.counts.enriched, 1);
+  assert.equal(summary.counts.created, 1);
+  assert.equal(summary.counts.skippedMalformed, 3);
+  assert.equal(contactsCount(app), 1, 'only the valid person became a contact');
+});
+
+test('a provider resource name outside the handle discipline refuses the person, never the run', async (t) => {
+  const { app } = await scene(t, 'enrichment-resource-name', { googleContacts: true });
+  const fake = createFakeGoogleContacts();
+  fake.seedPerson({
+    resourceName: `people/${'z'.repeat(300)}`,
+    names: [{ givenName: 'Lungo', familyName: 'Id' }],
+    emailAddresses: [{ value: 'lungoid@prestigroup.example' }],
+  });
+  const summary = await app.importGoogleContacts({ actor: ACTOR, adapter: fake });
+  assert.equal(summary.counts.skippedMalformed, 1);
+  assert.equal(
+    app.modules.get('external-identity').service.listWhere({ status: 'active' }).length,
+    0, 'no overlong or control-carrying id landed in a stored row');
+});
+
+test('a malformed-phone-only call refuses before creating any contact', async (t) => {
+  const { app } = await scene(t, 'enrichment-phone-only');
+  const before = contactsCount(app);
+  await assert.rejects(
+    app.applyContactEnrichment({
+      actor: ACTOR, email: 'solo@prestigroup.example',
+      fields: { phone: 'not-a-phone' }, source: 'email-signature',
+    }),
+    (error) => error.message === 'enrichment needs at least one field to fill');
+  await assert.rejects(
+    app.applyContactEnrichment({
+      actor: ACTOR, email: 'solo@prestigroup.example',
+      fields: { phone: 42 }, source: 'email-signature',
+    }),
+    (error) => error.message === 'enrichment needs at least one field to fill');
+  assert.equal(contactsCount(app), before, 'a skipped-only receipt invents no customer');
+  assert.equal(
+    app.modules.get('external-identity').service
+      .listWhere({ sourceKey: 'email:solo@prestigroup.example' }).length,
+    0, 'not even the email identity is linked');
+});
+
+test('signature dates, VAT numbers and fax lines never become phones', () => {
+  const dated = parseEmailSignature(['Luca Rossi', 'Riunione 12/05/2024', 'luca@prestigroup.example'].join('\n'));
+  assert.equal(dated.phone, null, 'a date is not a phone');
+  const vat = parseEmailSignature(['Luca Rossi', 'P.IVA 01234567890', 'luca@prestigroup.example'].join('\n'));
+  assert.equal(vat.phone, null, 'a VAT number is not a phone');
+  const fax = parseEmailSignature(['Luca Rossi', 'Fax: +39 02 1234567', 'luca@prestigroup.example'].join('\n'));
+  assert.equal(fax.phone, null, 'a fax line is not a phone');
+  const intl = parseEmailSignature(['Luca Rossi', '+39 333 123 4567', 'luca@prestigroup.example'].join('\n'));
+  assert.equal(intl.phone, '+393331234567', 'an explicitly international number still parses');
+});
+
+test('the two enrichment record sets export like the metadata and README promise', async (t) => {
+  const { app } = await scene(t, 'enrichment-export');
+  await app.applyContactEnrichment({
+    actor: ACTOR, email: 'exa@prestigroup.example',
+    fields: { firstName: 'Exa' }, source: 'email-signature', sourceDetail: 'msg-x',
+  });
+  const fields = await app.exportCustomerRecords({ resource: 'enriched-field' });
+  assert.equal(fields.complete, true);
+  assert.ok(fields.rows.length >= 1, 'the stored enriched field exports');
+  await app.optOutContactEnrichment({ actor: ACTOR, email: 'exa@prestigroup.example', reason: 'test' });
+  const optOuts = await app.exportCustomerRecords({ resource: 'enrichment-opt-out' });
+  assert.equal(optOuts.complete, true);
+  assert.equal(optOuts.rows.length, 1, 'the recorded refusal exports');
+});
+
+test('an opt-out racing an in-flight enrichment leaves no active enriched field', async (t) => {
+  const root = project(t, {});
+  const dbPath = join(root, 'data', 'enrichment-optout-race.sqlite');
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const one = createAccordoApp({ dbPath, busyTimeoutMs: 15000 });
+  const two = createAccordoApp({ dbPath, busyTimeoutMs: 15000 });
+  t.after(() => { one.close(); two.close(); });
+
+  async function raceOnce(tag) {
+    const email = `${tag}@prestigroup.example`;
+    await one.applyContactEnrichment({
+      actor: ACTOR, email, fields: { firstName: 'Corsa' }, source: 'email-signature', runId: `seed-${tag}`,
+    });
+    const contactId = one.modules.get('external-identity').service
+      .listWhere({ sourceKey: `email:${email}` })[0].subjectId;
+    const ops = [
+      () => one.applyContactEnrichment({
+        actor: ACTOR, email, fields: { role: 'Socio' }, source: 'email-signature', runId: `race-${tag}`,
+      }),
+      () => two.optOutContactEnrichment({ actor: ACTOR, email, reason: 'race' }),
+    ];
+    const results = await Promise.allSettled(ops.map((op) => op()));
+    for (let i = 0; i < results.length; i += 1) {
+      // A transient busy conflict retries once: the invariant below must
+      // hold for the settled outcome, never for a half-run race.
+      if (results[i].status === 'rejected' && results[i].reason?.code === 'CONFLICT') {
+        results[i] = await ops[i]().then(
+          (value) => ({ status: 'fulfilled', value }),
+          (reason) => ({ status: 'rejected', reason }),
+        );
+      }
+      if (results[i].status === 'rejected') {
+        assert.equal(results[i].reason?.code, 'ENRICHMENT_OPTED_OUT',
+          `a race ends in refusal, never a raw storage error: ${results[i].reason?.message}`);
+      }
+    }
+    const optOuts = one.modules.get('enrichment-opt-out').service
+      .listWhere({ subjectResource: 'contact', subjectId: contactId });
+    assert.equal(optOuts.length, 1, 'the refusal is recorded whichever side won');
+    const active = one.modules.get('enriched-field').service
+      .listWhere({ subjectResource: 'contact', subjectId: contactId, status: 'active' });
+    assert.equal(active.length, 0, 'the purge wins over the in-flight enrichment in every order');
+  }
+
+  await raceOnce('corsa-uno');
+  await raceOnce('corsa-due');
 });

@@ -13,9 +13,12 @@ import { CONTROL_RE, MAX_FIELD_LENGTH, emailShape, safeString } from './normaliz
  *
  * Deliberately conservative: it extracts only what a signature states
  * plainly. Labeled lines (`Ruolo:`, `Tel:`, …) win over position; the name
- * is the first name-shaped line near the top; the phone is the first
- * dialable token. Anything ambiguous is left absent rather than guessed —
- * enrichment fills gaps, it never invents a customer.
+ * is the first name-shaped line near the top; the phone comes from a
+ * phone-labeled line (with or without the colon) or, as a last resort,
+ * from an explicitly international (`+`-prefixed) token on a line naming
+ * no fax, VAT or date infrastructure. Dates, VAT numbers and fax lines
+ * never become phones. Anything ambiguous is left absent rather than
+ * guessed — enrichment fills gaps, it never invents a customer.
  */
 
 const MAX_SIGNATURE_CHARS = 8000;
@@ -91,9 +94,32 @@ export function parseEmailSignature(text, options = {}) {
   }
 
   if (!found.phone) {
+    // A phone label without the colon still names a phone (`Tel 02 1234`).
     for (const line of lines) {
-      const phoneMatch = PHONE_RE.exec(line);
+      const bare = /^(tel|telefono|phone|cell|cellulare|mobile|telephone)\b\s*(.+)$/i.exec(line);
+      if (!bare) continue;
+      const phoneMatch = PHONE_RE.exec(bare[2]);
       if (!phoneMatch) continue;
+      const phone = canonicalPhone(phoneMatch[0]);
+      if (phone) {
+        found.phone = phone;
+        break;
+      }
+    }
+  }
+
+  if (!found.phone) {
+    // Last resort, explicit evidence only: a leading `+` on a line that
+    // names no other infrastructure. Dates (`12/05/2024`), VAT numbers
+    // (`P.IVA 01234567890`) and fax lines never start with `+` on a clean
+    // line, and anything carrying a `/` is a date, not a number — so an
+    // unlabeled fallback number can never be a date, a tax id or a fax.
+    // A bare national number without a label stays absent rather than
+    // guessed: enrichment fills gaps, it never invents a customer.
+    for (const line of lines) {
+      if (/fax|p\.?\s*iva|vat|partita\s*iva/i.test(line)) continue;
+      const phoneMatch = PHONE_RE.exec(line);
+      if (!phoneMatch || !phoneMatch[0].startsWith('+') || phoneMatch[0].includes('/')) continue;
       const phone = canonicalPhone(phoneMatch[0]);
       if (phone) {
         found.phone = phone;
