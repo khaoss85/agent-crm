@@ -92,19 +92,51 @@ export function assertGenerateInput(input) {
 }
 
 /**
- * Validate one completion the way every adapter returns it: bounded text,
- * the model that produced it, non-negative token counts. Throws
- * fail-closed; returns the frozen completion the package audits.
- *
- * @param {unknown} completion @param {string} expectedModel
+ * Characters one output token can plausibly carry. The working estimate
+ * elsewhere is ~4 per token; the acceptance ceiling doubles it, covering
+ * whitespace- and code-heavy text, while staying bounded by the request:
+ * a completion can never be longer than its own token ceiling allows.
  */
-export function assertCompletion(completion, expectedModel) {
+export const LLM_MAX_CHARS_PER_TOKEN = 8;
+
+/**
+ * Floor for a request-bound completion ceiling. The per-token estimate
+ * above is a heuristic, not a tokenizer bound: single dense tokens longer
+ * than 8 characters exist (a leading-space adjective like ' expensive' is
+ * one token), so without a floor the tightest maxTokens values would
+ * false-reject valid paid responses main accepted under its flat 32000
+ * bound. 256 still fails absurd output far below any real completion.
+ */
+export const LLM_MIN_COMPLETION_CHARS = 256;
+
+/** Absolute text bound when the caller names no token ceiling. */
+const LLM_MAX_COMPLETION_CHARS = 32000;
+
+/**
+ * Validate one completion the way every adapter returns it: text within
+ * the request's token ceiling, the model that produced it, non-negative
+ * token counts. Throws fail-closed; returns the frozen completion the
+ * package audits.
+ *
+ * @param {unknown} completion @param {string} expectedModel @param {{maxTokens?: number}} [options]
+ */
+export function assertCompletion(completion, expectedModel, options = {}) {
   if (!completion || typeof completion !== 'object' || Array.isArray(completion)) {
     throw new ValidationError('llm completion must be a plain object', { field: 'completion' });
   }
   const value = /** @type {Record<string, any>} */ (completion);
-  if (typeof value.text !== 'string' || value.text === '' || value.text.length > 32000) {
-    throw new ValidationError('llm completion text must be bounded non-empty text (at most 32000 characters)', {
+  const maxTokens = options?.maxTokens;
+  if (maxTokens !== undefined
+    && (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 32000)) {
+    throw new ValidationError('llm completion maxTokens must be an integer between 1 and 32000', {
+      field: 'completion.maxTokens',
+    });
+  }
+  const ceiling = maxTokens === undefined
+    ? LLM_MAX_COMPLETION_CHARS
+    : Math.max(LLM_MIN_COMPLETION_CHARS, maxTokens * LLM_MAX_CHARS_PER_TOKEN);
+  if (typeof value.text !== 'string' || value.text === '' || value.text.length > ceiling) {
+    throw new ValidationError(`llm completion text must be bounded non-empty text (at most ${ceiling} characters)`, {
       field: 'completion.text',
     });
   }
