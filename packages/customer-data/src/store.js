@@ -22,6 +22,8 @@ export function resolvedNames(config = {}) {
     issue: config.dataQualityIssueModule ?? 'data-quality-issue',
     bulkRun: config.bulkRunModule ?? 'customer-bulk-run',
     bulkItem: config.bulkItemModule ?? 'customer-bulk-item',
+    enriched: config.enrichedFieldModule ?? 'enriched-field',
+    optOut: config.enrichmentOptOutModule ?? 'enrichment-opt-out',
   };
 }
 

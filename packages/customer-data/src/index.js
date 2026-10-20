@@ -8,6 +8,7 @@ import { createCustomerProfileCapability } from './capability-profile.js';
 import { createChannelSenderCapability } from './sender-capability.js';
 import { EXPORT_MAX_ROWS } from './export.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
+import { createContactEnrichment } from './enrichment.js';
 import { createCustomerDataOperations, LIMITATIONS } from './operations.js';
 import { MATCH_POLICY_KIND, MATCH_RULES, defineCustomerMatchPolicy } from './policy.js';
 import { CHANNEL_SYSTEMS, createChannelSenderResolution } from './sender.js';
@@ -19,11 +20,12 @@ import { resolvedNames } from './store.js';
  *
  * What it does: brings bounded external customer rows in, keeps their source
  * and provenance, finds *deterministic* duplicates or leaves them unresolved,
- * resolves one channel sender to its contact, lets a human govern canonical
- * identity, surfaces data-quality findings, applies one human decision across
- * many records with per-record receipts, exports a managed record set
- * completely or not at all, and reads one consolidated profile across
- * whatever packages are composed.
+ * resolves one channel sender to its contact, fills contact gaps from free
+ * enrichment sources without ever touching the contact record, lets a human
+ * govern canonical identity, surfaces data-quality findings, applies one
+ * human decision across many records with per-record receipts, exports a
+ * managed record set completely or not at all, and reads one consolidated
+ * profile across whatever packages are composed.
  *
  * What it deliberately is **not**: a CDP, a warehouse, real-time activation, a
  * probabilistic identity graph, ML entity resolution, arbitrary ETL, global
@@ -46,8 +48,9 @@ export const CUSTOMER_DATA_DOMAIN = 'customer-data';
 /**
  * The records this package owns. None of them duplicates a business record:
  * they are an import log, its receipts, external identifiers, duplicate
- * evidence, canonical decisions, quality findings, and the bulk runs with
- * their per-item receipts.
+ * evidence, canonical decisions, quality findings, the bulk runs with
+ * their per-item receipts, enriched contact fields with their provenance,
+ * and enrichment opt-outs.
  */
 export const CUSTOMER_DATA_RESOURCES = Object.freeze([
   'customer-import-run',
@@ -58,6 +61,8 @@ export const CUSTOMER_DATA_RESOURCES = Object.freeze([
   'data-quality-issue',
   'customer-bulk-run',
   'customer-bulk-item',
+  'enriched-field',
+  'enrichment-opt-out',
 ]);
 
 /**
@@ -69,6 +74,10 @@ export const CUSTOMER_DATA_RESOURCES = Object.freeze([
 export function createCustomerDataPackage(options = {}) {
   const config = options.config;
   const names = resolvedNames(config);
+  // Build-time flag, like the module names above: the Google Contacts source
+  // stays off unless the composition explicitly enables it, until the Google
+  // verification approves the contacts.readonly scope.
+  const googleContacts = config?.enrichmentGoogleContacts === 'enabled';
   const policy = options.matchPolicy ?? defineCustomerMatchPolicy();
 
   return selectPackageGraph(definePackage({
@@ -79,8 +88,8 @@ export function createCustomerDataPackage(options = {}) {
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
       + 'identifiers held beside the records they name, deterministic duplicate candidates, channel senders, '
-      + 'human-decided canonical identity as a logical link, explainable data-quality findings, bulk decisions '
-      + 'with per-record receipts, scale-safe export, and one read-only consolidated profile.',
+      + 'free-source enrichment with opt-out, human-decided canonical identity, quality findings, bulk decisions, '
+      + 'scale-safe export, one read-only profile.',
     resources: [...CUSTOMER_DATA_RESOURCES],
 
     // Nothing is required. The foundation reads the host through the core
@@ -236,6 +245,70 @@ export function createCustomerDataPackage(options = {}) {
           return (request) => operations.readCustomerProfile(request);
         },
       },
+      {
+        operationContract: 1,
+        name: 'apply-contact-enrichment',
+        appMethod: 'applyContactEnrichment',
+        label: 'Enrich one contact from a free source',
+        description:
+          'Store free-source contact fields (Google Contacts, email signature) beside one contact with their source '
+          + 'and date. The contact record itself is never written, so manual data always wins; conflicting evidence '
+          + 'becomes an unresolved duplicate candidate; an opted-out contact refuses.',
+        input: [
+          { name: 'email', type: 'string', hint: 'The contact email that names the enrichment subject.' },
+          { name: 'fields', type: 'json', hint: 'First name, last name, role, company name and phone to store.' },
+          { name: 'source', type: 'enum', values: ['google-contacts', 'email-signature'], hint: 'Which free source the fields come from.' },
+          { name: 'sourceDetail', type: 'string', hint: 'Opaque source reference, e.g. the Google resource name or message id.' },
+        ],
+        create(runtime) {
+          const enrichment = createContactEnrichment({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names, googleContacts,
+          });
+          return (request) => enrichment.applyContactEnrichment(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'import-google-contacts',
+        appMethod: 'importGoogleContacts',
+        label: 'Import Google Contacts of the space',
+        description:
+          'Page through the space Google Contacts (People API through the caller-built adapter, the fake in tests) '
+          + 'and enrich at most one contact per person. Behind the enrichmentGoogleContacts flag until the Google '
+          + 'verification approves the contacts.readonly scope. Opted-out subjects are skipped with no writes.',
+        input: [
+          { name: 'adapter', type: 'json', hint: 'The source adapter answering listConnections (the fake in tests).' },
+          { name: 'pageSize', type: 'integer', hint: 'People per page, 1-500. Absent means 100.' },
+        ],
+        create(runtime) {
+          const enrichment = createContactEnrichment({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names, googleContacts,
+          });
+          return (request) => enrichment.importGoogleContacts(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'opt-out-contact-enrichment',
+        appMethod: 'optOutContactEnrichment',
+        label: 'Opt one contact out of enrichment',
+        description:
+          'Record one contact refusal of enrichment and purge its active enriched fields. Channel identities stay: '
+          + 'they route messages, they are not enrichment.',
+        input: [
+          { name: 'email', type: 'string', hint: 'The contact email opting out.' },
+          { name: 'reason', type: 'string', hint: 'Why the contact opted out, recorded with the refusal.' },
+        ],
+        create(runtime) {
+          const enrichment = createContactEnrichment({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names, googleContacts,
+          });
+          return (request) => enrichment.optOutContactEnrichment(request);
+        },
+      },
     ],
 
     /**
@@ -268,6 +341,16 @@ export function createCustomerDataPackage(options = {}) {
           creation: 'an unknown sender carrying an email creates its contact through the core adapters, like an accepted import row',
           ambiguity: 'conflicting or multi-record evidence becomes an unresolved duplicate candidate; nothing is ever merged automatically',
           noEmailNoContact: 'a sender that matches nothing and carries no email creates no contact and is reported unresolved',
+        },
+        enrichment: {
+          sources: ['google-contacts', 'email-signature'],
+          fields: ['firstName', 'lastName', 'role', 'companyName', 'phone'],
+          storage: 'one enriched-field row per subject, field and source beside the contact record, each with its source and observation date',
+          manualWins: 'the contact record is never written by enrichment: a manually entered value always wins by construction',
+          googleFlag: 'the Google Contacts source stays behind the enrichmentGoogleContacts flag until the Google verification approves the contacts.readonly scope',
+          paidServices: 'none: Google Contacts (free People API) and locally parsed email signatures only',
+          ambiguity: 'evidence naming two different contacts becomes an unresolved duplicate candidate; nothing is ever merged automatically',
+          optOut: 'an opted-out subject is never enriched again and its active enriched fields are purged; channel identities stay',
         },
         canonicalIdentity: {
           semantics: 'logical canonical merge — a link, never a deletion',
