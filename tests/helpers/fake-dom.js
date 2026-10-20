@@ -87,6 +87,32 @@ class FakeNode {
     return out;
   }
 
+  // Minimal real-DOM surface: production view code must use querySelector
+  // (present on a real Element), never findAll (which exists only here).
+  // Supports `tag`, `tag[attr="value"]` and `.class` — nothing more.
+  querySelector(selector) {
+    const match = String(selector).match(/^([a-zA-Z][a-zA-Z0-9]*)?(?:\[([a-zA-Z-]+)="([^"]*)"\])?$/) ?? null;
+    const classMatch = !match ? String(selector).match(/^\.([a-zA-Z0-9_-]+)$/) : null;
+    if (!match && !classMatch) return null;
+    const wantedTag = match?.[1]?.toUpperCase() ?? null;
+    const wantedAttr = match?.[2] ?? null;
+    const wantedValue = match?.[3] ?? null;
+    const wantedClass = classMatch?.[1] ?? null;
+    // Depth-first pre-order, like document order in a real Element.
+    const walk = (node) => {
+      for (const child of node.childNodes) {
+        const tagOk = !wantedTag || child.tagName === wantedTag;
+        const attrOk = !wantedAttr || child.getAttribute(wantedAttr) === wantedValue;
+        const classOk = !wantedClass || (child.getAttribute('class') ?? '').split(/\s+/).includes(wantedClass);
+        if (tagOk && attrOk && classOk) return child;
+        const found = walk(child);
+        if (found) return found;
+      }
+      return null;
+    };
+    return walk(this);
+  }
+
   findByText(tagName, text) {
     return this.findAll(tagName).find((node) => node.textContent.includes(text));
   }

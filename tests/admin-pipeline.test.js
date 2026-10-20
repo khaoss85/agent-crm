@@ -398,6 +398,83 @@ test('hostile owner names render as inert option text', async () => {
   assert.equal(option.childNodes.length, 0, 'no elements parsed out of the hostile owner');
 });
 
+test('search typing restores focus through the real-DOM query API only', async () => {
+  const doc = createFakeDocument();
+  const rawCreate = doc.createElement;
+  const focused = [];
+  doc.createElement = (tag) => {
+    const node = rawCreate(tag);
+    if (String(tag).toLowerCase() === 'input') {
+      node.focus = () => { focused.push(node); };
+      node.setSelectionRange = (start, end) => { node.__selection = [start, end]; };
+    }
+    return node;
+  };
+  const mount = createMount();
+  // The test-double-only API is hidden: production code must never call it
+  // (a real Element has no findAll — typing broke in production while the
+  // suite stayed green because the fake provided it).
+  mount.findAll = undefined;
+  const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
+  await board.renderBoard('b2b-sales');
+
+  const search = mount.querySelector('input[data-filter="q"]');
+  assert.ok(search, 'the search input is reachable through querySelector');
+  search.value = 'anna';
+  search.dispatch('input');
+
+  const current = mount.querySelector('input[data-filter="q"]');
+  assert.equal(focused.length, 1, 'focus is handed back after the toolbar rebuild');
+  assert.equal(focused[0], current, 'focus lands on the rebuilt search input');
+  assert.deepEqual(current.__selection, [4, 4], 'the caret is restored at the end of the typed text');
+  assert.equal(current.value, 'anna', 'the typed text survives the rebuild');
+  const summary = mount.querySelector('.pipeline-summary');
+  assert.match(summary.textContent, /1 record/, 'the filter narrows to the matching card');
+});
+
+test('switching pipelines resets the previous board’s filters', async () => {
+  const pipelineB = {
+    ...PIPELINE,
+    name: 'b2b-enterprise',
+    label: 'B2B Enterprise',
+    stages: [
+      { key: 'qualify', label: 'Qualify', order: 10, type: 'open', probability: 20 },
+      { key: 'won', label: 'Won', order: 50, type: 'won', probability: 100 },
+    ],
+  };
+  const records = [
+    record('a', 'discovery', { owner: 'alice', pipelineKey: 'b2b-sales' }),
+    { ...record('z', 'qualify', { owner: 'bob' }), pipelineKey: 'b2b-enterprise' },
+  ];
+  const client = {
+    calls: [],
+    async request(path, options = {}) {
+      if (path === '/api/schema') return { pipelineContract: 1, pipelines: [PIPELINE, pipelineB] };
+      if (options.method === 'POST') return { ok: true };
+      return { items: records };
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client });
+  await board.renderBoard('b2b-sales');
+
+  filterInput(mount, 'owner').value = 'alice';
+  filterInput(mount, 'owner').dispatch('change');
+  filterInput(mount, 'stage').value = 'discovery';
+  filterInput(mount, 'stage').dispatch('change');
+  assert.match(summaryText(mount), /1 record/, 'board A is filtered to one card');
+
+  await board.renderBoard('b2b-enterprise');
+  assert.match(summaryText(mount), /1 record/, 'board B shows its own healthy record');
+  assert.ok(mount.textContent.includes('B2B Enterprise'), 'board B is rendered');
+  assert.equal(filterInput(mount, 'q').value, '', 'search does not leak across pipelines');
+  assert.equal(filterInput(mount, 'owner').value, '', 'Referente does not leak across pipelines');
+  assert.equal(filterInput(mount, 'stage').value, '', 'Stato does not leak across pipelines');
+  const enterpriseCard = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'z');
+  assert.ok(enterpriseCard, 'the enterprise card is visible, not silently filtered out');
+});
+
 test('pipeline routes parse canonically; hostile routes are invalid', () => {
   assert.deepEqual(parseModuleRoute('#/pipelines/b2b-sales'), { view: 'pipeline', pipelineName: 'b2b-sales' });
   for (const bad of ['#/pipelines/__proto__', '#/pipelines/B2B', '#/pipelines/a%2Fb', '#/pipelines/', '#/pipelines/a/b', '#/pipelines/%zz']) {

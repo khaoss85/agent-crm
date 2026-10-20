@@ -83,6 +83,9 @@ export function createPipelineBoard(deps) {
   const state = { view: 'kanban', q: '', owner: '', stage: '', closeFrom: '', closeTo: '' };
   /** @type {{pipeline: any, records: Array<Record<string, any>>}} */
   let cached = { pipeline: null, records: [] };
+  /** Name of the pipeline the current filter state belongs to. A filter set
+   * on pipeline A must never silently empty pipeline B after a switch. */
+  let filteredPipeline = null;
   /** Record id → live card controls (reason reveal on drops to lost). */
   const cardNodes = new Map();
 
@@ -188,6 +191,16 @@ export function createPipelineBoard(deps) {
       return;
     }
     if (token !== renderToken) return;
+    if (filteredPipeline !== pipeline.name) {
+      // New pipeline: drop the previous board's filters so a stage, owner
+      // or date bound from pipeline A cannot silently empty pipeline B.
+      filteredPipeline = pipeline.name;
+      state.q = '';
+      state.owner = '';
+      state.stage = '';
+      state.closeFrom = '';
+      state.closeTo = '';
+    }
     cached = { pipeline, records };
     return renderAll(token);
   }
@@ -296,7 +309,11 @@ export function createPipelineBoard(deps) {
       renderAll(renderToken);
       // The toolbar is rebuilt on every keystroke: hand focus back to the
       // new search input so typing is not interrupted after one character.
-      const next = mount.findAll('input').find((node) => node.getAttribute('data-filter') === 'q');
+      // mount is a real Element in production (no findAll — that exists only
+      // on the fake-dom test double), so query the real DOM API with a guard.
+      const next = typeof mount.querySelector === 'function'
+        ? mount.querySelector('input[data-filter="q"]')
+        : null;
       if (next) {
         if (typeof next.focus === 'function') next.focus();
         try {
