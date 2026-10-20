@@ -26,6 +26,7 @@ import {
   REPO_WIDE_GUARD_EXCLUSIONS,
   buildFileImports,
   changedTestFiles,
+  digestDirectorySuites,
   fallbackPlan,
   hasCodeChange,
   listChangedFiles,
@@ -865,7 +866,12 @@ test('a missing boundary test throws even on a docs-only diff', () => {
 // the characterization suites relatively import almost none of the files
 // they digest. A diff touching a digested file now runs every suite whose
 // baseline digests it (see `withCharacterizationTests`); a docs-only diff
-// selects none of them; these tests hold both acceptance directions.
+// selects none of them; these tests hold both acceptance directions. A
+// third reddening (#293) added a brand-new file inside a digested package:
+// never a digest key yet, so key matching alone missed it, and the
+// ownership guard failed only on `main`. A diff ADDING a source file under
+// a digest-owned directory now runs the suite too; the tests below hold
+// that direction as well.
 
 /** @param {Record<string, string[]>} entries */
 const digestIndex = (entries) => new Map(Object.entries(entries));
@@ -882,6 +888,9 @@ const CHARACTERIZATION_INDEX = () => digestIndex({
     'tests/characterization/signature-characterization.test.js',
   ],
   'packages/intelligence/src/scoring.js': [
+    'tests/characterization/intelligence-characterization.test.js',
+  ],
+  'packages/intelligence/modules/assignment.module.json': [
     'tests/characterization/intelligence-characterization.test.js',
   ],
 });
@@ -957,6 +966,156 @@ test('a non-digested code diff never selects the characterization tests', () => 
     ),
     ['tests/payments-checkout.test.js'],
   );
+});
+
+test('an added file inside a digested package runs its characterization (#293)', () => {
+  // The #293 shape: packages/commercial/src/quote-pdf.js is brand-new, so it
+  // is in the diff but in no baseline's source map yet — key matching alone
+  // selects nothing, and the ownership guard would fail only on `main`.
+  assert.deepEqual(
+    withCharacterizationTests(
+      ['tests/commercial-quote-pdf.test.js'],
+      CHARACTERIZATION_HAVE(),
+      ['packages/commercial/src/quote-pdf.js', 'tests/commercial-quote-pdf.test.js'],
+      CHARACTERIZATION_INDEX(),
+      CHARACTERIZATION_SUITES,
+      ['packages/commercial/src/quote-pdf.js'],
+    ),
+    [
+      'tests/characterization/commercial-characterization.test.js',
+      'tests/characterization/signature-characterization.test.js',
+      'tests/commercial-quote-pdf.test.js',
+    ],
+  );
+});
+
+test('an added file outside digested directories selects nothing', () => {
+  assert.deepEqual(
+    withCharacterizationTests(
+      ['tests/payments-checkout.test.js'],
+      CHARACTERIZATION_HAVE(),
+      ['packages/payments/src/operations.js', 'tests/payments-checkout.test.js'],
+      CHARACTERIZATION_INDEX(),
+      CHARACTERIZATION_SUITES,
+      ['packages/payments/src/operations.js'],
+    ),
+    ['tests/payments-checkout.test.js'],
+  );
+});
+
+test('an added non-source file under a digest directory selects nothing', () => {
+  assert.deepEqual(
+    withCharacterizationTests(
+      [],
+      CHARACTERIZATION_HAVE(),
+      ['packages/commercial/src/README.md'],
+      CHARACTERIZATION_INDEX(),
+      CHARACTERIZATION_SUITES,
+      ['packages/commercial/src/README.md'],
+    ),
+    [],
+  );
+});
+
+test('an added file in a brand-new subdirectory still runs its characterization', () => {
+  assert.deepEqual(
+    withCharacterizationTests(
+      [],
+      CHARACTERIZATION_HAVE(),
+      ['packages/commercial/src/pdf/quote-pdf.js'],
+      CHARACTERIZATION_INDEX(),
+      CHARACTERIZATION_SUITES,
+      ['packages/commercial/src/pdf/quote-pdf.js'],
+    ),
+    [
+      'tests/characterization/commercial-characterization.test.js',
+      'tests/characterization/signature-characterization.test.js',
+    ],
+  );
+});
+
+test('an added manifest under a digested modules directory runs its suite', () => {
+  assert.deepEqual(
+    withCharacterizationTests(
+      [],
+      CHARACTERIZATION_HAVE(),
+      ['packages/intelligence/modules/new-signal.module.json'],
+      CHARACTERIZATION_INDEX(),
+      CHARACTERIZATION_SUITES,
+      ['packages/intelligence/modules/new-signal.module.json'],
+    ),
+    ['tests/characterization/intelligence-characterization.test.js'],
+  );
+});
+
+test('a modified file outside the digest selects nothing new, even under a digest directory', () => {
+  // Editing an existing file never changes the owned/unowned set: only an
+  // added path can arrive unowned, so only added paths take the directory
+  // rule. A modification that moves a digest fingerprint is still caught by
+  // exact-key matching above.
+  assert.deepEqual(
+    withCharacterizationTests(
+      [],
+      CHARACTERIZATION_HAVE(),
+      ['packages/commercial/src/quote-pdf.js'],
+      CHARACTERIZATION_INDEX(),
+      CHARACTERIZATION_SUITES,
+      [],
+    ),
+    [],
+  );
+});
+
+test('digestDirectorySuites maps each digest directory to its suites', () => {
+  const directories = digestDirectorySuites(CHARACTERIZATION_INDEX());
+  assert.deepEqual(directories.get('packages/commercial/src'), [
+    'tests/characterization/commercial-characterization.test.js',
+    'tests/characterization/signature-characterization.test.js',
+  ]);
+  assert.deepEqual(directories.get('packages/intelligence/src'), [
+    'tests/characterization/intelligence-characterization.test.js',
+  ]);
+  assert.equal(directories.get('packages/payments/src'), undefined);
+});
+
+test('listChangedFiles reports added paths, including rename destinations', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'touched-added-'));
+  try {
+    const git = (/** @type {string[]} */ args) =>
+      spawnGit(args, { cwd: directory });
+    const write = (/** @type {string} */ path, /** @type {string} */ body) => {
+      const full = join(directory, path);
+      mkdirSync(join(full, '..'), { recursive: true });
+      writeFileSync(full, body);
+    };
+
+    git(['init']);
+    git(['config', 'user.email', 'touched@example.invalid']);
+    git(['config', 'user.name', 'touched']);
+    write('packages/app/src/keep.js', 'export const keep = 1;\n');
+    write('packages/app/src/move.js', 'export const move = 1;\n');
+    git(['add', '.']);
+    git(['commit', '-m', 'base']);
+    git(['branch', 'base']);
+
+    // A PR change: one edit, one brand-new file, one pure rename.
+    write('packages/app/src/keep.js', 'export const keep = 2;\n');
+    write('packages/app/src/new.js', 'export const added = 1;\n');
+    git(['mv', 'packages/app/src/move.js', 'packages/app/src/moved.js']);
+    git(['add', '.']);
+    git(['commit', '-m', 'pr']);
+
+    const { changed, added, deleted, allChanged } = listChangedFiles(git, 'base');
+    assert.deepEqual(changed, ['packages/app/src/keep.js', 'packages/app/src/moved.js', 'packages/app/src/new.js']);
+    assert.deepEqual(added, ['packages/app/src/moved.js', 'packages/app/src/new.js']);
+    assert.deepEqual(deleted, ['packages/app/src/move.js']);
+    assert.deepEqual(
+      [...allChanged].sort(),
+      ['packages/app/src/keep.js', 'packages/app/src/move.js', 'packages/app/src/moved.js', 'packages/app/src/new.js'],
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('an empty diff stays empty of characterization tests', () => {
