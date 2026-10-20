@@ -284,7 +284,8 @@ test('mutations go through the submission controller, never raw', async () => {
   await flush(10);
   assert.ok(enforcing.calls.some((call) => call.path === '/api/connectors/authorize'),
     'authorize reaches the server through the submission controller');
-  assert.ok(mount.textContent.includes('2 · Cosa sincronizzare'));
+  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Concludi il collegamento'),
+    'authorize lands on the sync choice');
 
   mount.findAll('button').find((node) => node.textContent === 'Concludi il collegamento').dispatch('click');
   await flush(10);
@@ -395,7 +396,7 @@ test('Completa il collegamento reactivates a pending row before the sync choice'
   });
   assert.ok(!client.calls.some((call) => call.path === '/api/connectors/finish'),
     'a non-active connection never finishes without activation');
-  assert.ok(mount.textContent.includes('2 · Cosa sincronizzare'),
+  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Concludi il collegamento'),
     'reactivation lands on the sync choice, not on fatto');
 });
 
@@ -430,7 +431,8 @@ test('Completa il collegamento refuses a revoked row clearly', async () => {
   assert.ok(client.calls.some((call) => call.path === '/api/connectors/authorize'));
   assert.ok(!client.calls.some((call) => call.path === '/api/connectors/finish'),
     'a revoked connection never finishes');
-  assert.ok(!mount.textContent.includes('2 · Cosa sincronizzare'));
+  assert.ok(!mount.findAll('button').some((node) => node.textContent === 'Concludi il collegamento'),
+    'no sync choice is offered for a revoked connection');
   assert.ok(mount.textContent.includes('revoked'),
     'the refusal names the revoked connection instead of failing with NOT_ACTIVE');
 });
