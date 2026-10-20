@@ -77,72 +77,18 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      # TEMPORARY DO-NOT-MERGE (backlog:65891147): diagnose why Chromium
-      # produced no screenshot on the runner (CI run 39487589615: full
-      # Chrome, 60 s spawn bound, updater noise only). Reverted before
-      # merge together with the capture step below.
-      - name: TEMPORARY diagnose Chromium on the runner (revert before merge)
-        run: |
-          CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-          "$CHROME" --version || true
-          echo "--- proxy env names (values redacted) ---"
-          env | cut -d= -f1 | grep -i proxy || echo "no proxy env names"
-          echo "--- running chrome processes ---"
-          ps aux | grep -i "[c]hrome" | head -5 || true
-          echo "--- playwright caches ---"
-          ls ~/Library/Caches/ms-playwright/ 2>/dev/null || true
-          ls ~/.cache/ms-playwright/ 2>/dev/null || true
-          echo "--- data-URL probe with the capture flags ---"
-          cat > "$RUNNER_TEMP/admin-probe.mjs" <<'PROBE_EOF'
-          import { spawnSync } from 'node:child_process';
-          import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
-          import { tmpdir } from 'node:os';
-          import { join } from 'node:path';
-          import { chromiumCaptureFlags, findChromium } from '${{ github.workspace }}/scripts/admin-shots-harness.js';
-          const binary = findChromium();
-          console.log('probe: binary=' + binary);
-          if (binary) {
-            const shotUrl = 'data:text/html,<html><body><h1>probe</h1></body></html>';
-            const jsUrl = 'data:text/html,<html><body><div id="t">cold</div><script>document.getElementById("t").textContent="sync";setTimeout(()=>{document.getElementById("t").textContent+="|late"},1000);</scr' + 'ipt></body></html>';
-            const variants = [
-              ['exact', chromiumCaptureFlags(binary)],
-              ['no-virtual-time', chromiumCaptureFlags(binary).filter((f) => !f.startsWith('--virtual-time-budget'))],
-            ];
-            for (const [name, flags] of variants) {
-              const dir = mkdtempSync(join(tmpdir(), 'admin-probe-'));
-              const shot = join(dir, 'probe.png');
-              let line = 'probe: ' + name + ': ';
-              try {
-                const t0 = Date.now();
-                const r = spawnSync(binary, [...flags, '--user-data-dir=' + join(dir, 'profile'), '--screenshot=' + shot, '--window-size=800,600', shotUrl], { encoding: 'utf8', timeout: 30000 });
-                const wrote = existsSync(shot);
-                const bytes = wrote ? statSync(shot).size : 0;
-                const stderr = String(r.stderr || '').trim().split('\n').slice(-3).join(' | ').slice(0, 400);
-                line += 'shotMs=' + (Date.now() - t0) + ' wrote=' + wrote + ' bytes=' + bytes + ' error=' + (r.error ? r.error.code || r.error.message : 'none') + ' status=' + r.status + ' signal=' + (r.signal || 'none') + ' stderr=' + JSON.stringify(stderr);
-              } catch (error) {
-                line += 'threw=' + (error instanceof Error ? error.message : String(error));
-              }
-              try {
-                const d = spawnSync(binary, [...flags, '--user-data-dir=' + join(dir, 'profile-dom'), '--dump-dom', jsUrl], { encoding: 'utf8', timeout: 30000, maxBuffer: 4 * 1024 * 1024 });
-                const out = String(d.stdout || '');
-                line += ' domSync=' + out.includes('>sync<') + ' domLate=' + out.includes('sync|late') + ' domBytes=' + out.length;
-              } catch (error) {
-                line += ' domThrew=' + (error instanceof Error ? error.message : String(error));
-              }
-              console.log(line);
-              rmSync(dir, { recursive: true, force: true });
-            }
-          }
-          PROBE_EOF
-          node "$RUNNER_TEMP/admin-probe.mjs" || true
       # TEMPORARY DO-NOT-MERGE (backlog:65891147): run the Admin AC-3 PNG
-      # capture on the runner, where a browser may exist, and upload the
-      # fixtures as an artifact. Reverted before merge; the committed
-      # fixtures come from the downloaded artifact, verified by hand.
+      # capture on the runner (the only machine with a browser) and upload
+      # the fixtures as an artifact. Reverted before merge; the committed
+      # fixtures are copied from the runner workdir and verified by hand
+      # (pixel check + manifest test) before that revert.
       - name: TEMPORARY capture Admin before/after PNGs (revert before merge)
         run: npm run admin:shots -- --before=strip-authority
       - uses: actions/upload-artifact@v4
         if: always()
+        # Artifact storage is quota-blocked: the upload fails but the
+        # fixtures stay on the runner disk for hand retrieval. Never red.
+        continue-on-error: true
         with:
           name: admin-shots-${{ github.sha }}
           path: tests/fixtures/admin-shots/
