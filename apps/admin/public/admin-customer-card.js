@@ -273,15 +273,29 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'bo-scheda-offer', `${first?.name ?? first?.id ?? 'offerta'}${first?.status ? ` · ${first.status}` : ''}`));
   }
 
+  // Terminal booking states, mirroring APPOINTMENT_TERMINAL in
+  // packages/appointments/src/appointments.js (this view ships as a static
+  // file, so it names the set instead of importing it).
+  const TERMINAL_APPOINTMENT = Object.freeze(['done', 'no-show', 'cancelled']);
+
   function nextAppointment(box, timeline) {
     box.appendChild(el('h4', undefined, 'Prossimo appuntamento'));
     const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
-    if (items.length === 0) {
+    // readSchedule lists every booking soonest-first, past and terminal rows
+    // included: the next appointment is the soonest booking that can still
+    // happen — a non-terminal row starting now or later.
+    const nowMs = Date.now();
+    const upcoming = items.filter((item) => {
+      if (TERMINAL_APPOINTMENT.includes(String(item?.status ?? ''))) return false;
+      const startsMs = Date.parse(String(item?.startsAt ?? ''));
+      return Number.isFinite(startsMs) && startsMs >= nowMs;
+    });
+    if (upcoming.length === 0) {
       box.appendChild(el('p', 'bo-muted', 'nessun appuntamento prenotato'));
       return;
     }
     // Soonest slot first, like the timeline projection.
-    const next = items[0];
+    const next = upcoming[0];
     const when = `${next?.startsAt ?? ''}${next?.endsAt ? `–${next.endsAt}` : ''}`;
     box.appendChild(el('p', 'bo-scheda-appt', `${when}${next?.teamMemberId ? ` · ${next.teamMemberId}` : ''}`));
   }

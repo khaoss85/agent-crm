@@ -70,7 +70,9 @@ const TIMELINE = {
     count: 1,
     truncated: false,
     items: [{
-      id: 'b1', status: 'booked', startsAt: '2026-10-23T16:00:00.000Z', endsAt: '2026-10-23T17:00:00.000Z',
+      // Far-future on purpose: the view shows the next *upcoming* booking, so
+      // the fixture booking must stay upcoming whatever day the test runs.
+      id: 'b1', status: 'booked', startsAt: '2099-10-23T16:00:00.000Z', endsAt: '2099-10-23T17:00:00.000Z',
       serviceKey: 'pt-single', teamMemberId: 'coach-guido', priceCents: 4000, currency: 'EUR', notes: null,
     }],
   },
@@ -186,6 +188,54 @@ test('the scheda renders three columns: actions, identities with motivation, tim
   assert.ok(!text.includes('Inviare il listino'), 'a done task is not a next step');
   assert.ok(text.includes('Preventivo 10 ingressi'), 'the offer is shown');
   assert.ok(text.includes('coach-guido'), 'the next appointment names its owner');
+});
+
+test('the next appointment skips cancelled, past and done bookings', async () => {
+  const row = (overrides) => ({
+    serviceKey: 'pt-single', priceCents: 4000, currency: 'EUR', notes: null, endsAt: null,
+    ...overrides,
+  });
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 4,
+        truncated: false,
+        // Soonest-first, like readSchedule: a cancelled past slot, a done
+        // past slot and a past booked slot all sort before the real booking.
+        items: [
+          row({ id: 'b0', status: 'cancelled', startsAt: '2000-01-01T10:00:00.000Z', teamMemberId: 'coach-old' }),
+          row({ id: 'b1', status: 'done', startsAt: '2000-02-01T10:00:00.000Z', teamMemberId: 'coach-old' }),
+          row({ id: 'b2', status: 'booked', startsAt: '2000-03-01T10:00:00.000Z', teamMemberId: 'coach-old' }),
+          row({ id: 'b3', status: 'booked', startsAt: '2099-10-23T16:00:00.000Z', endsAt: '2099-10-23T17:00:00.000Z', teamMemberId: 'coach-guido' }),
+        ],
+      },
+    },
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('coach-guido'), 'the future booked slot is the next appointment');
+  assert.ok(!text.includes('coach-old'), 'no cancelled, done or past slot is ever labelled next');
+});
+
+test('with no upcoming booking the scheda says none is booked', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'cancelled', startsAt: '2000-01-01T10:00:00.000Z', endsAt: '2000-01-01T11:00:00.000Z',
+            serviceKey: 'pt-single', teamMemberId: 'coach-old', priceCents: 4000, currency: 'EUR', notes: null,
+          },
+        ],
+      },
+    },
+  }));
+  assert.ok(mount.textContent.includes('nessun appuntamento prenotato'), 'a terminal-only schedule reads as none booked');
 });
 
 test('the channel filter narrows the timeline to one channel', async () => {

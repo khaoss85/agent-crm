@@ -33,6 +33,7 @@ export const CUSTOMER_TIMELINE_CONTRACT = 1;
 /** Display caps, mirroring the profile's own 50-row slices. */
 const CONVERSATION_LIMIT = 50;
 const APPOINTMENT_LIMIT = 50;
+const ENTRY_LIMIT = 50;
 
 /**
  * @param {{core?: any, subject: {resource: string, id: string, owner?: string, ownerPackage?: string|null}, readProfile: (input: any) => Promise<any>, readConversations: (subject: any) => Promise<any>, readTimeline: (subject: any) => Promise<any>, readSchedule: (subject: any) => Promise<any>}} input
@@ -183,10 +184,10 @@ function shapeConversations(threads, entries) {
  * counting them here would invent conversations that never happened.
  */
 function shapeEntries(entries) {
-  const items = [];
+  const shaped = [];
   for (const row of entries ?? []) {
     if (row?.entry === 'message') {
-      items.push(Object.freeze({
+      shaped.push(Object.freeze({
         entry: 'message',
         id: row.id,
         conversationId: row.conversationId ?? null,
@@ -200,7 +201,7 @@ function shapeEntries(entries) {
         occurredAt: row.occurredAt ?? null,
       }));
     } else if (row?.entry === 'call') {
-      items.push(Object.freeze({
+      shaped.push(Object.freeze({
         entry: 'call',
         id: row.id,
         conversationId: row.conversationId ?? null,
@@ -215,10 +216,13 @@ function shapeEntries(entries) {
       }));
     }
   }
+  // The provider read is oldest-first and complete; the scheda shows the
+  // first page and reports the cut, like the sibling sections above.
+  const items = shaped.slice(0, ENTRY_LIMIT);
   return Object.freeze({
     available: true,
-    count: items.length,
-    truncated: false,
+    count: shaped.length,
+    truncated: shaped.length > items.length,
     items: Object.freeze(items),
   });
 }

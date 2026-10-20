@@ -387,6 +387,27 @@ test('the 51st thread marks the conversations truncated with its exact count', (
   assert.equal(timeline.conversations.truncated, true, 'the rows left out mark the section truncated, like the profile');
 });
 
+test('the 51st passage marks the entries truncated with its exact count', () => {
+  const entries = Array.from({ length: 51 }, (_, index) => ({
+    entry: 'message', id: `m${index}`, conversationId: 't1', channel: 'whatsapp',
+    direction: 'inbound', status: 'received', body: `messaggio ${index}`,
+    teamAuthorId: null, remoteHandle: '+39 333 1234567', errorCode: null,
+    occurredAt: `2026-10-20T09:${String(index).padStart(2, '0')}:00.000Z`,
+  }));
+  const timeline = shapeCustomerTimeline({
+    profile: {
+      identity: { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null },
+      externalIdentities: [],
+    },
+    threads: [], history: { entries }, schedule: [],
+    subject: { resource: 'contact', id: 'c1' },
+  });
+  assert.equal(timeline.entries.count, 51);
+  assert.equal(timeline.entries.items.length, 50);
+  assert.equal(timeline.entries.truncated, true, 'the rows left out mark the section truncated, like the sibling sections');
+  assert.equal(timeline.entries.items[0].id, 'm0', 'the first page keeps the oldest passages first');
+});
+
 test('the schedule read refuses a bad subject and a missing store', async () => {
   const rootUrl = pathToFileURL(join(repoRoot, 'packages/appointments/src/appointments.js')).href;
   const { createAppointmentScheduleCapability } = await import(rootUrl);
