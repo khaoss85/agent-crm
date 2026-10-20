@@ -507,6 +507,32 @@ test('anonymous callers never propose or send', async (t) => {
   );
 });
 
+test('an unknown gate verdict refuses fail-closed, never sends', async (t) => {
+  const h = setupReplyHarness();
+  t.after(() => h.close());
+  const key = await h.register(SPACE_A);
+  await h.activate(SPACE_A, key);
+  const weird = {
+    gate: async () => ({ decision: 'maybe' }),
+    propose: (...args) => h.permissionGate.propose(...args),
+    proposal: (...args) => h.permissionGate.proposal(...args),
+  };
+  const { definition: sameFixture } = createFixtureChannelAdapter({ secret: CHANNEL_SECRET });
+  const ops = createChannelOperations({
+    database: h.database, modules: h.modules,
+    registries: new ChannelRegistries({ channelAdapters: [sameFixture] }),
+    resolveSecret: async () => CHANNEL_SECRET, tenantId: 'reply-kit',
+    permissionGate: weird, llm: null,
+  });
+  assert.equal(
+    await codeOf(() => ops.proposeReply({
+      spaceId: SPACE_A, connectionKey: key, to: ACCOUNT_A, text: 'Ciao.', actor: USER,
+    })),
+    'CHANNEL_REPLY_GATE_INVALID',
+  );
+  assert.equal((await h.jobs()).length, 0, 'an undecided gate enqueues nothing');
+});
+
 test('an unwired composition refuses the reply flow, never sends past it', async (t) => {
   const { definition, api } = createFixtureChannelAdapter({ secret: CHANNEL_SECRET });
   const database = createDatabase({ path: ':memory:' });
