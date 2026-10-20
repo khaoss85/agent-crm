@@ -1059,10 +1059,112 @@ export async function readSchedule({ appointments }, subject) {
   })));
 }
 
+const MAX_TEAM_WEEK_MEMBERS = 32;
+const MAX_TEAM_WEEK_MS = 31 * 24 * 60 * 60 * 1000;
+
 /**
- * `appointment-schedule@1` — the read the customer scheda renders: every
- * appointment naming one subject, soonest slot first. Read-only by
- * construction: frozen rows, no storage handle, no write path of any kind.
+ * One frozen week row for the BO-F3-01 team view: the same projection as
+ * `readSchedule`, plus the `sourceKey` (the join key the calendar detail
+ * reads the sync state through) and the subject envelope (who the slot is
+ * for — the detail links it to the customer). Cancelled rows stay listed
+ * with their status, like the scheda read: a cancelled slot is still
+ * evidence the member once held it.
+ */
+function projectTeamWeekRow(row) {
+  return Object.freeze({
+    id: row.id,
+    status: row.status,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    serviceKey: row.serviceKey,
+    teamMemberId: row.teamMemberId,
+    priceCents: row.priceCents,
+    currency: row.currency,
+    notes: row.notes ?? null,
+    sourceKey: row.sourceKey,
+    subject: Object.freeze({
+      resource: row.subjectResource,
+      id: row.subjectId,
+      owner: row.subjectOwner,
+      ownerPackage: row.subjectOwnerPackage ?? null,
+    }),
+  });
+}
+
+/**
+ * The team week (BO-F3-01, "07 Calendario"): every appointment overlapping
+ * `[from, to)` for each named team member, grouped per person, soonest slot
+ * first. The caller passes the person filter as the member list itself — a
+ * subset of members is a filtered week, and an empty list is refused rather
+ * than answered with the whole team: a week for nobody is a caller bug, and
+ * answering it with everyone's bookings would leak the roster it names.
+ *
+ * Reads are exact-match per member — the same reads the booking path
+ * overlap-checks against, so a booking the overlap check saw is a booking
+ * this week shows. No bounded page: a booking silently past a page boundary
+ * is a booking the team cannot see but the member still holds. Members are
+ * bounded instead (at most 32): the team is named per call, never scanned,
+ * because there is no roster to scan — the same opaque identities bookings
+ * already store.
+ *
+ * @param {{appointments: any}} storage
+ * @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown}} filter
+ */
+export async function readTeamWeek({ appointments }, filter) {
+  const value = filter && typeof filter === 'object' && !Array.isArray(filter) ? filter : {};
+  if (!Array.isArray(value.teamMemberIds) || value.teamMemberIds.length === 0) {
+    throw new ValidationError('teamMemberIds names at least one team member: a week for nobody books nothing to show', { field: 'teamMemberIds' });
+  }
+  if (value.teamMemberIds.length > MAX_TEAM_WEEK_MEMBERS) {
+    throw new ValidationError(`teamMemberIds names at most ${MAX_TEAM_WEEK_MEMBERS} team members per call`, { field: 'teamMemberIds' });
+  }
+  const seen = new Set();
+  const members = [];
+  value.teamMemberIds.forEach((member, index) => {
+    const id = safeText(member, `teamMemberIds[${index}]`, MAX_ID);
+    if (!seen.has(id)) {
+      seen.add(id);
+      members.push(id);
+    }
+  });
+  const from = realIsoInstant(value.from, 'from');
+  const to = realIsoInstant(value.to, 'to');
+  if (to.ms <= from.ms) {
+    throw new ValidationError('to must be after from: a week with no duration shows nothing', { field: 'to' });
+  }
+  if (to.ms - from.ms > MAX_TEAM_WEEK_MS) {
+    throw new ValidationError('a team week spans at most 31 days: a wider window is a report, not a week', { field: 'to' });
+  }
+  if (!appointments || typeof appointments.listWhere !== 'function') {
+    throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
+      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
+    });
+  }
+  const groups = [];
+  for (const teamMemberId of members) {
+    const held = await appointments.listWhere({ teamMemberId });
+    const overlapping = held.filter((row) => (
+      String(row.startsAt ?? '') < to.iso && String(row.endsAt ?? '') > from.iso
+    ));
+    overlapping.sort((a, b) => (
+      String(a.startsAt ?? '').localeCompare(String(b.startsAt ?? ''))
+      || String(a.endsAt ?? '').localeCompare(String(b.endsAt ?? ''))
+      || String(a.id ?? '').localeCompare(String(b.id ?? ''))
+    ));
+    groups.push(Object.freeze({
+      teamMemberId,
+      appointments: Object.freeze(overlapping.map(projectTeamWeekRow)),
+    }));
+  }
+  return Object.freeze({ from: from.iso, to: to.iso, members: Object.freeze(groups) });
+}
+
+/**
+ * `appointment-schedule@1` — the reads the customer scheda and the team
+ * calendar render: one subject's appointments (`scheduleFor`), and the team
+ * week (`teamWeekFor`). Read-only by construction: frozen rows, no storage
+ * handle, no write path of any kind. `teamWeekFor` is additive (BO-F3-01):
+ * it widens the read surface without changing `scheduleFor` or the contract.
  *
  * @param {Record<string, string>} [moduleNames]
  */
@@ -1073,7 +1175,8 @@ export function createAppointmentScheduleCapability({ moduleNames } = {}) {
     version: 1,
     description:
       'Read one subject\'s appointments — every booking naming it, soonest slot first, cancelled rows included '
-      + 'with their status. Read-only: frozen rows, no storage handle, no write path.',
+      + 'with their status — and the team week: every booking overlapping a window for each named member, '
+      + 'grouped per person. Read-only: frozen rows, no storage handle, no write path.',
     /** @param {{modules: any}} context */
     create(context = {}) {
       const modules = context?.modules;
@@ -1087,6 +1190,8 @@ export function createAppointmentScheduleCapability({ moduleNames } = {}) {
         capabilityContract: 1,
         /** @param {{resource: string, id: string, owner: string, ownerPackage?: string|null, label?: string|null}} subject */
         scheduleFor: (subject) => readSchedule({ appointments: service }, subject),
+        /** @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown}} filter */
+        teamWeekFor: (filter) => readTeamWeek({ appointments: service }, filter),
       });
     },
   };
