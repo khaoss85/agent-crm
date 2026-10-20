@@ -1,0 +1,26 @@
+{
+  "manifestVersion": 1,
+  "name": "sequence-enrollment",
+  "table": "sequence_enrollments",
+  "description": "One person in one sequence with their own state (BO-F3-03): the enrolled subject, the recipient the steps send to, the next step to fire and when, and the lifecycle active -> paused -> active, active -> stopped-replied at the first recorded reply, active -> completed after the last step. A paused enrollment fires nothing; a stopped or completed one never fires again. (backlog:22bb154a72ea)",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "sequenceSourceKey", "type": "string", "index": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectResource", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectLabel", "type": "string", "writable": "managed" },
+    { "name": "recipient", "type": "string", "writable": "managed" },
+    { "name": "connectionKey", "type": "string", "index": true, "writable": "managed" },
+    { "name": "vars", "type": "string", "writable": "managed" },
+    { "name": "status", "type": "enum", "values": ["active", "paused", "stopped-replied", "completed"], "index": true, "writable": "managed" },
+    { "name": "currentStep", "type": "integer", "writable": "managed" },
+    { "name": "nextDueAt", "type": "timestamp", "index": true, "writable": "managed" },
+    { "name": "enrolledAt", "type": "timestamp", "writable": "managed" },
+    { "name": "decidedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "actorType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "actorId", "type": "string", "writable": "managed" },
+    { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
+    { "name": "sourceAction", "type": "string", "writable": "managed" }
+  ]
+}

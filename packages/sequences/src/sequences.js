@@ -1,0 +1,831 @@
+// @ts-check
+
+import { createHash } from 'node:crypto';
+import { AppError, ConflictError, ValidationError } from '../../core/index.js';
+
+/**
+ * **Sequences — BO-F3-03, the backoffice follow-up sequences (backlog:22bb154a72ea).**
+ *
+ * Pure domain logic over managed record services. No provider is contacted
+ * here and no secret is resolved here: a due step is queued into the
+ * channels outbox through the composition-provided `queueTemplate` seam
+ * (the same durable enqueue as every channel send — MEM_ACC_REUSE), and the
+ * reply stop reads the channels inbox rows through the `inbox` record
+ * service with the connection's own reply window
+ * (`subjectForRecipient`/`isObservation` from the adapter definition the
+ * composition passes in). No import from any other domain package — the key
+ * helpers below are restated here on purpose, like every other package does.
+ *
+ * Four invariants, one per acceptance criterion:
+ *
+ * 1. **Stop on reply.** Every sweep looks for an applied inbox row from
+ *    each active enrollment's recipient recorded after the enrollment — due
+ *    or not. The first one stops the enrollment (`stopped-replied`) and no
+ *    further step fires — the sweep never consults a caller timestamp.
+ *    Completion means every step was attempted; a dead-lettered step stays
+ *    visible in metrics and the outbox dead-letter queue.
+ * 2. **Fail-closed permission.** Every fire passes the
+ *    `space-permission-gate@1` verdict for `send-without-approval`. On
+ *    `proposal` the sweep records the approval proposal (the permission
+ *    notice a human decides) and the step waits: nothing is queued, and the
+ *    step stays due until a human approves and the enrollment resumes.
+ * 3. **Pause/resume without doubles.** A send row is keyed by the
+ *    deterministic message key, unique in storage: a retry or a resume
+ *    replays the stored row instead of queueing a second job, and the
+ *    outbox's own idempotency returns the same job for the same key.
+ * 4. **Metrics from records.** Counts are computed from enrollment and send
+ *    rows on every read — no stored counters exist to drift after a crash
+ *    or a race.
+ */
+
+/** Enrollment lifecycle. Terminal states never fire again. */
+export const ENROLLMENT_STATES = Object.freeze(['active', 'paused', 'stopped-replied', 'completed']);
+export const ENROLLMENT_TERMINAL = Object.freeze(['stopped-replied', 'completed']);
+
+/** Sequence lifecycle. Only an active sequence fires its steps. */
+export const SEQUENCE_STATES = Object.freeze(['draft', 'active', 'paused']);
+
+/** Send-row lifecycle. `skipped` names a step the sweep refused row-locally. */
+export const SEND_STATES = Object.freeze(['queued', 'waiting-approval', 'sent', 'dead-letter', 'skipped']);
+
+/** The gated AI permission every sequence step sends under (BO-F0-06). */
+export const SEQUENCE_SEND_PERMISSION = 'send-without-approval';
+
+const SEQUENCES_DOMAIN_REF = 'sequences';
+
+export const SEQUENCE_TIMER_ACTOR = Object.freeze({ type: 'system', id: 'sequence-sweep' });
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const KEY_COMPONENT_MAX = 128;
+const KEY_TOTAL_MAX = 256;
+const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+const MAX_LINE = 1024;
+const MAX_NAME = 200;
+
+/** Restated from the channels key helper: no cross-package import. */
+function escapeKeyPart(value) {
+  return value.replace(/%/g, '%25').replace(/:/g, '%3A');
+}
+
+/** Deterministic, bounded, injective join — same contract as the channels `boundedKey`. */
+export function sequenceKey(...parts) {
+  if (parts.length === 0) {
+    throw new ValidationError('sequenceKey needs at least one part', { field: 'key' });
+  }
+  const texts = parts.map((part) => {
+    if (typeof part !== 'string' || part === '' || part.length > 1024 || CONTROL_RE.test(part)) {
+      throw new ValidationError('sequenceKey parts must be bounded single-line text', { field: 'key' });
+    }
+    return escapeKeyPart(part);
+  });
+  const safe = texts.map((text) => (
+    text.length <= KEY_COMPONENT_MAX
+      ? text
+      : `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`
+  ));
+  const joined = safe.join(':');
+  if (joined.length <= KEY_TOTAL_MAX) return joined;
+  const tailHash = createHash('sha256').update(safe.slice(1).join(':'), 'utf8').digest('hex');
+  return `${safe[0]}:${tailHash}`;
+}
+
+/** The deterministic send identity of one enrollment step. */
+export function sequenceMessageKey(enrollmentSourceKey, stepOrder) {
+  return sequenceKey('seq', enrollmentSourceKey, String(stepOrder));
+}
+
+/** @param {unknown} value @param {string} field */
+export function checkRecordKey(value, field, max = 256) {
+  return boundedLine(value, field, max);
+}
+
+/** @param {unknown} value @param {string} field */
+function boundedLine(value, field, max = MAX_LINE) {
+  if (typeof value !== 'string' || value.trim() === '' || value.length > max || CONTROL_RE.test(value)) {
+    throw new ValidationError(`${field} must be bounded single-line text`, { field });
+  }
+  return value;
+}
+
+/** @param {unknown} value */
+export function checkSpaceId(value) {
+  if (typeof value !== 'string') {
+    throw new ValidationError('spaceId must be a string issued by the control plane', { field: 'spaceId' });
+  }
+  const id = value.trim();
+  if (id === '' || id.length > 128 || CONTROL_RE.test(id)) {
+    throw new ValidationError('spaceId must be a non-empty id of at most 128 characters', { field: 'spaceId' });
+  }
+  return id;
+}
+
+/** Identified callers only — restated, never imported from space-permissions. @param {unknown} actor */
+export function requireSequenceActor(actor, what) {
+  if (!actor || typeof actor !== 'object'
+    || typeof /** @type {any} */ (actor).type !== 'string' || /** @type {any} */ (actor).type.trim() === ''
+    || typeof /** @type {any} */ (actor).id !== 'string' || /** @type {any} */ (actor).id.trim() === '') {
+    throw new AppError(`${what} requires an identified actor`, { code: 'SEQUENCE_ACTOR_REQUIRED', status: 403 });
+  }
+  return { type: /** @type {any} */ (actor).type.trim(), id: /** @type {any} */ (actor).id.trim() };
+}
+
+/** @param {unknown} value */
+function checkInstant(value, field) {
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+    throw new ValidationError(`${field} must be a canonical instant`, { field });
+  }
+  return value;
+}
+
+function isWinnerConflict(error) {
+  if (error instanceof ConflictError) return true;
+  if (error instanceof Error) {
+    if (error.message.includes('UNIQUE constraint failed')) return true;
+    if (error.message.includes('duplicate key value violates unique constraint')) return true;
+  }
+  if (error !== null && typeof error === 'object') {
+    const code = /** @type {any} */ (error).code;
+    if (code === '23505' || code === 'SQLITE_CONSTRAINT_UNIQUE') return true;
+  }
+  return false;
+}
+
+/** Managed-record handle; a CRUD-writable module is refused. */
+function trusted(modules, name) {
+  const service = modules.get(name)?.service;
+  if (!service || typeof service.createManaged !== 'function' || typeof service.applyManaged !== 'function') {
+    throw new AppError(`Module "${name}" is not a managed record module — apply its manifest first`, {
+      code: 'SEQUENCES_STORAGE_INVALID', status: 500,
+    });
+  }
+  return service;
+}
+
+/** Read-only record handle for the channels inbox rows the stop reads. */
+function trustedReadable(modules, name) {
+  const service = modules.get(name)?.service;
+  if (!service || typeof service.listWhere !== 'function') {
+    throw new AppError(`Module "${name}" is not readable — compose the channels package beside sequences`, {
+      code: 'SEQUENCES_INBOX_MISSING', status: 500,
+    });
+  }
+  return service;
+}
+
+/**
+ * Validate one step definition. `templateVars` is the JSON array of template
+ * variables with `{{placeholder}}` slots the sweep personalizes per person.
+ */
+export function checkStepInput(step, order) {
+  const record = step && typeof step === 'object' ? step : {};
+  const dayOffset = /** @type {any} */ (record).dayOffset;
+  if (!Number.isInteger(dayOffset) || dayOffset < 0 || dayOffset > 365) {
+    throw new ValidationError('step dayOffset must be an integer number of days, 0 to 365', { field: 'dayOffset' });
+  }
+  const channel = boundedLine(/** @type {any} */ (record).channel ?? '', 'channel', 64);
+  const templateName = boundedLine(/** @type {any} */ (record).templateName ?? '', 'templateName', 128);
+  const templateLanguage = boundedLine(/** @type {any} */ (record).templateLanguage ?? 'it', 'templateLanguage', 16);
+  let templateVars = /** @type {any} */ (record).templateVars ?? [];
+  if (typeof templateVars === 'string') {
+    try {
+      templateVars = JSON.parse(templateVars);
+    } catch {
+      throw new ValidationError('step templateVars must be a JSON array of strings', { field: 'templateVars' });
+    }
+  }
+  if (!Array.isArray(templateVars) || templateVars.some((entry) => typeof entry !== 'string' || entry.length > 1024)) {
+    throw new ValidationError('step templateVars must be an array of strings', { field: 'templateVars' });
+  }
+  return {
+    stepOrder: order,
+    dayOffset,
+    channel,
+    templateName,
+    templateLanguage,
+    templateVars: JSON.stringify(templateVars),
+  };
+}
+
+/** Substitute `{{key}}` slots from the enrolled person's vars. Unknown slots stay empty, never undefined. */
+export function personalizeVars(templateVarsJson, enrollment) {
+  let slots = [];
+  try {
+    const parsed = JSON.parse(templateVarsJson ?? '[]');
+    slots = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    slots = [];
+  }
+  let vars = {};
+  try {
+    const parsed = JSON.parse(enrollment?.vars ?? '{}');
+    vars = parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    vars = {};
+  }
+  const label = typeof enrollment?.subjectLabel === 'string' ? enrollment.subjectLabel : '';
+  const lookup = { ...vars };
+  if (lookup.name === undefined || lookup.name === null || lookup.name === '') lookup.name = label;
+  if (lookup.label === undefined || lookup.label === null || lookup.label === '') lookup.label = label;
+  return slots.map((slot) => {
+    if (typeof slot !== 'string') return '';
+    return slot.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_, key) => {
+      const value = lookup[key];
+      return value === undefined || value === null ? '' : String(value);
+    });
+  });
+}
+
+/**
+ * The first recorded reply of one enrollment: an applied inbox row for the
+ * recipient's conversation after the enrollment, where "the recipient's
+ * conversation" and "a reply" (not a delivery report) are the connection
+ * window's own rule. Without a window the subject must equal the recipient
+ * exactly — delivery reports never match a recipient address.
+ */
+export function findReply({ inboxRows, window, to, sinceMs }) {
+  const rows = Array.isArray(inboxRows) ? inboxRows : [];
+  let subject = null;
+  if (window && typeof window.subjectForRecipient === 'function') {
+    try {
+      subject = window.subjectForRecipient(to);
+    } catch {
+      return null;
+    }
+  } else {
+    subject = to;
+  }
+  if (typeof subject !== 'string' || subject === '') return null;
+  const isObservation = window && typeof window.isObservation === 'function'
+    ? (row) => {
+      try {
+        return window.isObservation(row) === true;
+      } catch {
+        return false;
+      }
+    }
+    : () => true;
+  let earliest = null;
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    if (row.subject !== subject || row.effect !== 'applied') continue;
+    if (!isObservation(row)) continue;
+    const at = typeof row.occurredAt === 'string' && row.occurredAt !== '' ? row.occurredAt : row.receivedAt;
+    if (typeof at !== 'string') continue;
+    const ms = Date.parse(at);
+    if (!Number.isFinite(ms) || ms <= sinceMs) continue;
+    if (earliest === null || ms < earliest.ms) earliest = { ms, row };
+  }
+  return earliest?.row ?? null;
+}
+
+/** Count-only metrics over enrollment and send rows — no stored counters. */
+export function computeSequenceMetrics({ enrollments, sends }) {
+  const people = Array.isArray(enrollments) ? enrollments : [];
+  const fires = Array.isArray(sends) ? sends : [];
+  const perStep = new Map();
+  for (const row of fires) {
+    if (!row || typeof row !== 'object') continue;
+    const order = /** @type {any} */ (row).stepOrder;
+    if (!Number.isInteger(order)) continue;
+    if (!perStep.has(order)) {
+      perStep.set(order, { stepOrder: order, queued: 0, waitingApproval: 0, sent: 0, deadLetter: 0, skipped: 0 });
+    }
+    const cell = perStep.get(order);
+    switch (/** @type {any} */ (row).status) {
+      case 'queued': cell.queued += 1; break;
+      case 'waiting-approval': cell.waitingApproval += 1; break;
+      case 'sent': cell.sent += 1; break;
+      case 'dead-letter': cell.deadLetter += 1; break;
+      case 'skipped': cell.skipped += 1; break;
+      default: break;
+    }
+  }
+  let active = 0;
+  let paused = 0;
+  let stoppedReplied = 0;
+  let completed = 0;
+  for (const row of people) {
+    switch (row?.status) {
+      case 'active': active += 1; break;
+      case 'paused': paused += 1; break;
+      case 'stopped-replied': stoppedReplied += 1; break;
+      case 'completed': completed += 1; break;
+      default: break;
+    }
+  }
+  return Object.freeze({
+    enrolled: people.length,
+    active,
+    paused,
+    stoppedReplied,
+    completed,
+    sends: fires.length,
+    perStep: Object.freeze([...perStep.values()].sort((a, b) => a.stepOrder - b.stepOrder).map((cell) => Object.freeze({ ...cell }))),
+  });
+}
+
+/** @param {string} from @param {string} event */
+function assertEnrollmentTransition(from, event) {
+  const allowed = {
+    pause: ['active'],
+    resume: ['paused'],
+    'stop-replied': ['active'],
+    complete: ['active'],
+  }[event];
+  if (!allowed || !allowed.includes(from)) {
+    throw new AppError(`Enrollment cannot ${event} from ${from}`, {
+      code: 'SEQUENCE_TRANSITION_INVALID', status: 409,
+    });
+  }
+}
+
+/** @param {string} from @param {string} event */
+function assertSequenceTransition(from, event) {
+  const allowed = { pause: ['active'], resume: ['paused'], activate: ['draft', 'paused'] }[event];
+  if (!allowed || !allowed.includes(from)) {
+    throw new AppError(`Sequence cannot ${event} from ${from}`, {
+      code: 'SEQUENCE_TRANSITION_INVALID', status: 409,
+    });
+  }
+}
+
+/** Queue-time refusals that belong to one row, never to the sweep. */
+const QUEUE_REFUSAL_SKIPS = new Set([
+  'CHANNEL_CONNECTION_NOT_ACTIVE',
+  'CHANNEL_CONNECTION_UNKNOWN',
+  'CHANNEL_ADAPTER_UNKNOWN',
+  'CHANNEL_MESSAGE_MALFORMED',
+  'CHANNEL_TEMPLATE_REQUIRED',
+]);
+
+function addDaysMs(baseMs, days) {
+  return new Date(baseMs + days * DAY_MS).toISOString();
+}
+
+/**
+ * Advance every due step of every active sequence: reply stop, permission
+ * gate, queue, then confirm. Returns the sweep summary; a refused row is
+ * recorded and the sweep stays green for every other due step.
+ */
+export async function advanceSequences({
+  modules, queueTemplate, permissionGate, replyWindows, now, actor, personalize,
+}) {
+  const timer = requireSequenceActor(actor ?? SEQUENCE_TIMER_ACTOR, 'Advancing sequences');
+  if (typeof queueTemplate !== 'function') {
+    throw new AppError('Sequence advance needs the channels template queue seam (queueTemplateSend)', {
+      code: 'SEQUENCES_QUEUE_MISSING', status: 500,
+    });
+  }
+  const nowIso = typeof now === 'function' ? now() : new Date().toISOString();
+  const nowMs = Date.parse(checkInstant(nowIso, 'now'));
+  const sequences = trusted(modules, 'sequence');
+  const steps = trusted(modules, 'sequence-step');
+  const enrollments = trusted(modules, 'sequence-enrollment');
+  const sends = trusted(modules, 'sequence-send');
+  const inbox = trustedReadable(modules, 'channel-inbox-event');
+  const summary = { advanced: 0, stoppedReplied: 0, waitingApproval: 0, confirmed: 0, skipped: 0 };
+
+  const gateFor = (spaceId) => {
+    if (!permissionGate || typeof permissionGate.gate !== 'function') {
+      throw new AppError('Sequence advance needs the space-permission-gate@1 capability', {
+        code: 'SEQUENCES_GATE_MISSING', status: 500,
+      });
+    }
+    return permissionGate.gate({ spaceId, permission: SEQUENCE_SEND_PERMISSION });
+  };
+
+  const rows = await sequences.listWhere({ status: 'active' });
+
+  /**
+   * The stop pass: the first recorded reply stops the enrollment, due or
+   * not. A reply that arrives between two steps must not wait for the next
+   * due instant — the stop is recorded as soon as the sweep sees it.
+   */
+  const stopIfReplied = async (enrollment) => {
+    let current = enrollment;
+    try {
+      const reread = await enrollments.get(enrollment.id);
+      if (reread) current = reread;
+    } catch {
+      current = enrollment;
+    }
+    if (!current || current.status !== 'active') return false;
+    let inboxRows = [];
+    try {
+      inboxRows = await inbox.listWhere({ spaceId: current.spaceId });
+    } catch {
+      inboxRows = [];
+    }
+    const window = replyWindows?.[current.connectionKey] ?? null;
+    const reply = findReply({
+      inboxRows,
+      window,
+      to: current.recipient,
+      sinceMs: Date.parse(current.enrolledAt),
+    });
+    if (!reply) return false;
+    await enrollments.applyManaged(current.id, { status: 'stopped-replied', decidedAt: nowIso }, { actor: timer });
+    summary.stoppedReplied += 1;
+    return true;
+  };
+
+  for (const sequence of Array.isArray(rows) ? rows : []) {
+    if (!sequence || typeof sequence !== 'object') continue;
+    const active = await enrollments.listWhere({
+      sequenceSourceKey: /** @type {any} */ (sequence).sourceKey, status: 'active',
+    });
+    for (const enrollment of Array.isArray(active) ? active : []) {
+      if (!enrollment || typeof enrollment !== 'object') continue;
+      await stopIfReplied(enrollment);
+    }
+  }
+
+  for (const sequence of Array.isArray(rows) ? rows : []) {
+    if (!sequence || typeof sequence !== 'object') continue;
+    const spaceId = /** @type {any} */ (sequence).spaceId;
+    const seqKey = /** @type {any} */ (sequence).sourceKey;
+    const ordered = (await steps.listWhere({ sequenceSourceKey: seqKey }))
+      .filter((row) => row && Number.isInteger(row.stepOrder))
+      .sort((a, b) => a.stepOrder - b.stepOrder);
+    if (ordered.length === 0) continue;
+    const due = (await enrollments.listWhere({ sequenceSourceKey: seqKey, status: 'active' }))
+      .filter((row) => row && typeof row.nextDueAt === 'string' && Date.parse(row.nextDueAt) <= nowMs);
+    for (const enrollment of due) {
+      // The due list is only a snapshot: re-read the row before firing, so a
+      // pause or a stop between the list and the fire is honored.
+      let current = null;
+      try {
+        current = await enrollments.get(enrollment.id);
+      } catch {
+        current = null;
+      }
+      if (!current || current.status !== 'active' || Date.parse(current.nextDueAt) > nowMs) continue;
+      if (current.sequenceSourceKey !== seqKey) continue;
+
+      const live = ordered.filter((row) => row.stepOrder >= current.currentStep);
+      if (live.length === 0) {
+        await enrollments.applyManaged(current.id, { status: 'completed', decidedAt: nowIso }, { actor: timer });
+        summary.confirmed += 1;
+        continue;
+      }
+      const step = live[0];
+
+      // 1. Stop on reply: the first recorded reply ends the enrollment.
+      const window = replyWindows?.[current.connectionKey] ?? replyWindows?.[step.channel] ?? null;
+      let inboxRows = [];
+      try {
+        inboxRows = await inbox.listWhere({ spaceId: current.spaceId });
+      } catch {
+        inboxRows = [];
+      }
+      const reply = findReply({
+        inboxRows,
+        window,
+        to: current.recipient,
+        sinceMs: Date.parse(current.enrolledAt),
+      });
+      if (reply) {
+        await enrollments.applyManaged(current.id, { status: 'stopped-replied', decidedAt: nowIso }, { actor: timer });
+        summary.stoppedReplied += 1;
+        continue;
+      }
+
+      // 2. Permission gate: without send-without-approval the step becomes
+      // a human-decided proposal and waits — never queued.
+      const verdict = await gateFor(current.spaceId);
+      if (!verdict || verdict.decision !== 'allow') {
+        const proposed = await permissionGate.propose({
+          spaceId: current.spaceId,
+          permission: SEQUENCE_SEND_PERMISSION,
+          actionKind: 'sequence-step-send',
+          actionKey: sequenceMessageKey(current.sourceKey, step.stepOrder),
+          summary: `Sequence step ${step.stepOrder + 1} for ${current.subjectLabel || current.subjectId} waits for send approval`,
+          actor: timer,
+        });
+        const proposalId = proposed.proposalId;
+        const messageKey = sequenceMessageKey(current.sourceKey, step.stepOrder);
+        const waiting = await sends.listWhere({ sourceKey: messageKey });
+        if (!waiting[0]) {
+          try {
+            await sends.createManaged({
+              sourceKey: messageKey,
+              enrollmentSourceKey: current.sourceKey,
+              sequenceSourceKey: seqKey,
+              stepOrder: step.stepOrder,
+              messageKey,
+              jobId: '',
+              status: 'waiting-approval',
+              queuedAt: nowIso,
+              decidedAt: nowIso,
+              detail: proposalId,
+              actorType: timer.type,
+              actorId: timer.id,
+            }, { actor: timer });
+          } catch (error) {
+            if (!isWinnerConflict(error)) throw error;
+          }
+        }
+        summary.waitingApproval += 1;
+        continue;
+      }
+
+      // 3. Allowed: personalize and queue through the channels outbox. The
+      // persistent enqueue IS the cross-process claim — two sweeps racing
+      // queue the byte-identical job and the second gets the first row back.
+      const messageKey = sequenceMessageKey(current.sourceKey, step.stepOrder);
+      const stored = await sends.listWhere({ sourceKey: messageKey });
+      if (stored[0] && stored[0].status !== 'skipped' && stored[0].status !== 'waiting-approval') {
+        // Already queued, sent or dead: replay, never a second job. A
+        // waiting-approval row whose permission is now allowed falls
+        // through and queues below, becoming queued on the same key.
+        continue;
+      }
+      let variables = personalizeVars(step.templateVars, current);
+      if (typeof personalize === 'function') {
+        const rewritten = await personalize({
+          channel: step.channel,
+          template: { name: step.templateName, language: step.templateLanguage },
+          variables,
+          enrollment: { ...current },
+        });
+        if (!Array.isArray(rewritten) || rewritten.some((entry) => typeof entry !== 'string')) {
+          throw new AppError('The personalize hook must return the template variables as strings', {
+            code: 'SEQUENCES_PERSONALIZE_INVALID', status: 500,
+          });
+        }
+        variables = rewritten;
+      }
+      let queued;
+      try {
+        queued = await queueTemplate({
+          spaceId: current.spaceId,
+          connectionKey: current.connectionKey,
+          to: current.recipient,
+          template: { name: step.templateName, language: step.templateLanguage, variables },
+          messageKey,
+        });
+      } catch (error) {
+        if (error && typeof error === 'object' && QUEUE_REFUSAL_SKIPS.has(/** @type {any} */ (error).code)) {
+          if (!stored[0]) {
+            try {
+              await sends.createManaged({
+                sourceKey: messageKey,
+                enrollmentSourceKey: current.sourceKey,
+                sequenceSourceKey: seqKey,
+                stepOrder: step.stepOrder,
+                messageKey,
+                jobId: '',
+                status: 'skipped',
+                queuedAt: nowIso,
+                decidedAt: nowIso,
+                detail: /** @type {any} */ (error).code,
+                actorType: timer.type,
+                actorId: timer.id,
+              }, { actor: timer });
+            } catch (nested) {
+              if (!isWinnerConflict(nested)) throw nested;
+            }
+          }
+          summary.skipped += 1;
+          continue;
+        }
+        throw error;
+      }
+      const jobId = typeof queued?.jobId === 'string' ? queued.jobId : '';
+      const jobState = typeof queued?.state === 'string' ? queued.state : '';
+      if (stored[0]) {
+        await sends.applyManaged(stored[0].id, {
+          jobId, status: 'queued', queuedAt: nowIso, decidedAt: nowIso,
+        }, { actor: timer });
+      } else {
+        try {
+          await sends.createManaged({
+            sourceKey: messageKey,
+            enrollmentSourceKey: current.sourceKey,
+            sequenceSourceKey: seqKey,
+            stepOrder: step.stepOrder,
+            messageKey,
+            jobId,
+            status: 'queued',
+            queuedAt: nowIso,
+            decidedAt: nowIso,
+            detail: '',
+            actorType: timer.type,
+            actorId: timer.id,
+          }, { actor: timer });
+        } catch (error) {
+          if (!isWinnerConflict(error)) throw error;
+        }
+      }
+      if (jobState === 'succeeded') {
+        const rows = await sends.listWhere({ sourceKey: messageKey });
+        if (rows[0] && rows[0].status === 'queued') {
+          await sends.applyManaged(rows[0].id, { status: 'sent', decidedAt: nowIso }, { actor: timer });
+        }
+      }
+      let cursor = current;
+      try {
+        const reread = await enrollments.get(current.id);
+        if (reread && reread.status === 'active') cursor = reread;
+      } catch {
+        cursor = current;
+      }
+      const next = ordered.find((row) => row.stepOrder === step.stepOrder + 1) ?? null;
+      await enrollments.applyManaged(cursor.id, {
+        currentStep: step.stepOrder + 1,
+        nextDueAt: next ? addDaysMs(fireMs(current, nowMs), next.dayOffset) : cursor.nextDueAt,
+        decidedAt: nowIso,
+      }, { actor: timer });
+      summary.advanced += 1;
+    }
+  }
+
+  // 4. Confirm: re-queue every queued row (the outbox replays the stored
+  // job with its current state) and record what the provider answered.
+  // No provider is contacted here — the re-enqueue is a storage read.
+  const queuedRows = [];
+  for (const sequence of Array.isArray(rows) ? rows : []) {
+    if (!sequence || typeof sequence !== 'object') continue;
+    const pending = await sends.listWhere({ sequenceSourceKey: /** @type {any} */ (sequence).sourceKey, status: 'queued' });
+    for (const row of Array.isArray(pending) ? pending : []) queuedRows.push(row);
+  }
+  for (const row of queuedRows) {
+    const enrollmentRows = await enrollments.listWhere({ sourceKey: row.enrollmentSourceKey });
+    const enrollment = enrollmentRows[0] ?? null;
+    if (!enrollment || enrollment.status !== 'active') continue;
+    const stepRows = await steps.listWhere({ sequenceSourceKey: row.sequenceSourceKey });
+    const step = (Array.isArray(stepRows) ? stepRows : []).find((entry) => entry && entry.stepOrder === row.stepOrder) ?? null;
+    if (!step) continue;
+    let requeue = null;
+    try {
+      requeue = await queueTemplate({
+        spaceId: enrollment.spaceId,
+        connectionKey: enrollment.connectionKey,
+        to: enrollment.recipient,
+        template: {
+          name: step.templateName,
+          language: step.templateLanguage,
+          variables: personalizeVars(step.templateVars, enrollment),
+        },
+        messageKey: row.messageKey,
+      });
+    } catch (error) {
+      if (error && typeof error === 'object' && QUEUE_REFUSAL_SKIPS.has(/** @type {any} */ (error).code)) continue;
+      throw error;
+    }
+    const state = requeue && typeof requeue.state === 'string' ? requeue.state : '';
+    const jobId = requeue && typeof requeue.jobId === 'string' ? requeue.jobId : row.jobId;
+    if (state === 'succeeded') {
+      const latest = await sends.listWhere({ sourceKey: row.sourceKey });
+      if (latest[0] && latest[0].status === 'queued') {
+        await sends.applyManaged(latest[0].id, { jobId, status: 'sent', decidedAt: nowIso }, { actor: timer });
+        summary.confirmed += 1;
+      }
+      const siblings = await steps.listWhere({ sequenceSourceKey: row.sequenceSourceKey });
+      const last = (Array.isArray(siblings) ? siblings : [])
+        .filter((entry) => entry && Number.isInteger(entry.stepOrder))
+        .sort((a, b) => b.stepOrder - a.stepOrder)[0] ?? null;
+      if (last && row.stepOrder >= last.stepOrder) {
+        const target = await enrollments.listWhere({ sourceKey: row.enrollmentSourceKey });
+        if (target[0] && target[0].status === 'active') {
+          await enrollments.applyManaged(target[0].id, { status: 'completed', decidedAt: nowIso }, { actor: timer });
+        }
+      }
+    } else if (state === 'failed_terminal' || state === 'cancelled') {
+      const latest = await sends.listWhere({ sourceKey: row.sourceKey });
+      if (latest[0] && latest[0].status === 'queued') {
+        await sends.applyManaged(latest[0].id, { jobId, status: 'dead-letter', decidedAt: nowIso }, { actor: timer });
+      }
+    }
+  }
+
+  return Object.freeze({ ...summary });
+}
+
+/** Fire instant of the current sweep (the re-read row may carry its own due instant). */
+function fireMs(current, nowMs) {
+  const due = Date.parse(current?.nextDueAt ?? '');
+  return Number.isFinite(due) ? due : nowMs;
+}
+
+/**
+ * Enroll one person in an active sequence. Idempotent by enrollment key: a
+ * retry replays the stored enrollment. The first step is due at once, so a
+ * same-day first step fires on the next advance.
+ */
+export async function enrollSequencePerson({ modules, input, at }) {
+  const record = input && typeof input === 'object' ? input : {};
+  const actor = requireSequenceActor(record.actor, 'Enrolling a person in a sequence');
+  const spaceId = checkSpaceId(record.spaceId);
+  const sequenceSourceKey = boundedLine(record.sequenceSourceKey ?? '', 'sequenceSourceKey');
+  const subject = record.subject && typeof record.subject === 'object' ? record.subject : {};
+  const subjectResource = boundedLine(subject.resource ?? '', 'subjectResource', 64);
+  const subjectId = boundedLine(subject.id ?? '', 'subjectId');
+  const subjectLabel = typeof record.subjectLabel === 'string' && record.subjectLabel !== ''
+    ? boundedLine(record.subjectLabel, 'subjectLabel') : subjectId;
+  const recipient = boundedLine(record.recipient ?? '', 'recipient');
+  const connectionKey = boundedLine(record.connectionKey ?? '', 'connectionKey');
+  let vars = {};
+  if (record.vars !== undefined && record.vars !== null) {
+    if (typeof record.vars !== 'object' || Array.isArray(record.vars)) {
+      throw new ValidationError('vars must be an object of strings', { field: 'vars' });
+    }
+    for (const [key, value] of Object.entries(record.vars)) {
+      if (!/^[A-Za-z0-9_]{1,64}$/.test(key) || typeof value !== 'string' || value.length > 1024) {
+        throw new ValidationError('vars must map names to bounded strings', { field: 'vars' });
+      }
+      vars[key] = value;
+    }
+  }
+  const key = sequenceKey('seq-enroll', sequenceSourceKey, subjectResource, subjectId);
+  const sequences = trusted(modules, 'sequence');
+  const found = await sequences.listWhere({ spaceId, sourceKey: sequenceSourceKey });
+  const sequence = found[0] ?? null;
+  if (!sequence) {
+    throw new AppError('Unknown sequence in this space', { code: 'SEQUENCE_UNKNOWN', status: 404 });
+  }
+  if (sequence.status !== 'active') {
+    throw new AppError(`Sequence is ${sequence.status}: enrollment needs an active sequence`, {
+      code: 'SEQUENCE_NOT_ACTIVE', status: 409,
+    });
+  }
+  const enrollments = trusted(modules, 'sequence-enrollment');
+  const atIso = checkInstant(at ?? new Date().toISOString(), 'at');
+  const existing = await enrollments.listWhere({ sourceKey: key });
+  if (existing[0]) return { enrollment: existing[0], replayed: true };
+  const row = {
+    sourceKey: key,
+    sequenceSourceKey,
+    spaceId,
+    subjectResource,
+    subjectId,
+    subjectLabel,
+    recipient,
+    connectionKey,
+    vars: JSON.stringify(vars),
+    status: 'active',
+    currentStep: 0,
+    nextDueAt: atIso,
+    enrolledAt: atIso,
+    decidedAt: atIso,
+    actorType: actor.type,
+    actorId: actor.id,
+    sourcePackage: SEQUENCES_DOMAIN_REF,
+    sourceAction: 'enroll-sequence-person',
+  };
+  try {
+    const enrollment = await enrollments.createManaged(row, { actor });
+    return { enrollment, replayed: false };
+  } catch (error) {
+    if (!isWinnerConflict(error)) throw error;
+    const winner = await enrollments.listWhere({ sourceKey: key });
+    if (!winner[0]) throw error;
+    return { enrollment: winner[0], replayed: true };
+  }
+}
+
+/** Move one sequence row through its lifecycle, re-reading the state first. */
+export async function transitionSequence({ sequences, sequence, event, at, actor }) {
+  assertSequenceTransition(sequence.status, event);
+  const target = event === 'activate' || event === 'resume' ? 'active' : 'paused';
+  let current = sequence;
+  try {
+    const reread = await sequences.listWhere({ sourceKey: sequence.sourceKey });
+    if (reread[0]) current = reread[0];
+  } catch {
+    current = sequence;
+  }
+  assertSequenceTransition(current.status, event);
+  await sequences.applyManaged(current.id, { status: target, decidedAt: at }, { actor });
+  const rows = await sequences.listWhere({ sourceKey: sequence.sourceKey });
+  return { sequence: rows[0] ?? { ...current, status: target }, event };
+}
+
+/**
+ * Move one enrollment through its lifecycle, re-reading the state first —
+ * the same pattern as every appointment advance. `resumeNow` makes an
+ * overdue step due at resume instead of waiting for a stored instant that
+ * already passed; steps already queued or sent still never fire twice.
+ */
+export async function transitionEnrollment({ enrollments, enrollment, event, at, actor, resumeNow = false }) {
+  assertEnrollmentTransition(enrollment.status, event);
+  let current = enrollment;
+  try {
+    const reread = await enrollments.listWhere({ sourceKey: enrollment.sourceKey });
+    if (reread[0]) current = reread[0];
+  } catch {
+    current = enrollment;
+  }
+  assertEnrollmentTransition(current.status, event);
+  const target = event === 'pause' ? 'paused'
+    : event === 'resume' ? 'active'
+      : event === 'stop-replied' ? 'stopped-replied' : 'completed';
+  const patch = { status: target, decidedAt: at };
+  if (event === 'resume' && resumeNow) {
+    const due = Date.parse(current.nextDueAt ?? '');
+    if (!Number.isFinite(due) || due < Date.parse(at)) patch.nextDueAt = at;
+  }
+  await enrollments.applyManaged(current.id, patch, { actor });
+  const rows = await enrollments.listWhere({ sourceKey: enrollment.sourceKey });
+  return { enrollment: rows[0] ?? { ...current, ...patch }, event };
+}
