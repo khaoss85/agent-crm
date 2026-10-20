@@ -48,6 +48,21 @@ handle's own otherwise — so writers serialize across connections too. A held
 row whose slot cannot be proven (unparseable or inverted) fails the booking
 closed instead of reading as a free slot.
 
+## Team week (BO-F3-01, backlog `3ec06fdee0e2`)
+
+`readTeamWeek` (also `teamWeekFor` on `appointment-schedule@1`) renders the
+"07 Calendario" team week: every appointment overlapping `[from, to)` for
+each named member, grouped per person, soonest slot first. The person
+filter is the member list itself — a subset is a filtered week, an empty
+list is refused 400 rather than answered with everyone's bookings. Reads
+are the same exact-match per-member `listWhere` the booking path
+overlap-checks against, so a booking the overlap check saw is a booking
+the week shows; members are bounded (32), never scanned, because there is
+no roster. Each row carries the `sourceKey` (the join key the calendar
+detail reads the sync state through) and the subject envelope (who the
+slot is for). `tests/appointment-team-week.test.js` proves it with no
+database.
+
 ## Enablement per space
 
 Composition, not a flag: a space whose project lists
