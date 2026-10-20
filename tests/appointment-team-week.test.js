@@ -129,6 +129,14 @@ test('hostile member ids are refused, not queried', async () => {
   await assert.rejects(weekOf(storage, { teamMemberIds: ['coach-guido\nx'] }), ValidationError);
 });
 
+test('more than 32 members are refused: the team is named, never scanned', async () => {
+  const storage = fakeAppointments();
+  const members = Array.from({ length: 33 }, (_, index) => `coach-${index}`);
+  await assert.rejects(weekOf(storage, { teamMemberIds: members }), (error) => (
+    error instanceof ValidationError && /at most 32/.test(error.message)
+  ));
+});
+
 test('a storage without the exact-match read fails closed', async () => {
   await assert.rejects(
     weekOf({}, { teamMemberIds: ['coach-guido'] }),
