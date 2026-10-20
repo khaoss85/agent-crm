@@ -436,6 +436,108 @@ test('probe: 404 o forma inattesa valgono dry-run, mai un errore', async () => {
   });
 });
 
+test('probe: dot-segment o suffissi sotto /api/assistant/ restano dry-run', async () => {
+  for (const endpoint of [
+    '/api/assistant/../modules/conversation/records/conv-1/actions/close',
+    '/api/assistant/ask/extra',
+    '/api/assistant/ask?x=1',
+    '/api/assistant/ask#frag',
+    '/api/assistant/',
+    '/api/assistant',
+  ]) {
+    const client = stubClient({ [ASSISTANT_STATUS_PATH]: { freeQuestions: 'enabled', endpoint } });
+    assert.equal((await probeAssistantBackend(client)).mode, 'dry-run', endpoint);
+    assert.equal(client.calls.length, 1, endpoint);
+  }
+});
+
+test('domanda libera: endpoint fuori contratto rifiuta senza richieste', async () => {
+  const client = stubClient({ '/api/assistant/ask': { lines: ['ok'], sources: [] } });
+  for (const endpoint of [
+    '/api/assistant/../modules/conversation/records/conv-1/actions/close',
+    '/api/modules/conversation/records/conv-1/actions/close',
+    '/api/outbox/send',
+    '/api/assistant/ask/extra',
+  ]) {
+    const outcome = await askFreeQuestion(client, { mode: 'live', endpoint }, 'chi devo ricontattare?');
+    assert.equal(outcome.disabled, true, endpoint);
+  }
+  assert.equal(client.calls.length, 0);
+});
+
+test('azione api fuori allowlist rifiuta anche con conferma, zero richieste', async () => {
+  const client = stubClient({
+    '/api/outbox/send': { ok: true },
+    '/api/modules/conversation/records/conv-2/actions/delete': { ok: true },
+  });
+  for (const request of [
+    { path: '/api/outbox/send', method: 'POST', body: {} },
+    { path: '/api/modules/conversation/records/conv-2/actions/delete', method: 'POST', body: {} },
+    { path: '/api/modules/conversation/records/..%2F..%2Fx/actions/close', method: 'POST', body: {} },
+    { path: '/api/modules/conversation/records/conv-2/actions/mark-read', method: 'GET', body: {} },
+    { path: '/api/modules/conversation/records/conv-2/actions/mark-read', method: 'POST', body: { text: 'ciao' } },
+  ]) {
+    await assert.rejects(
+      runAssistantAction(
+        client,
+        { id: 'evil', label: 'Evil', kind: 'api', request, customerFacing: true },
+        { confirmedActionId: 'evil' },
+      ),
+      /non consentita/,
+      request.path,
+    );
+  }
+  assert.equal(client.calls.length, 0);
+});
+
+test('titoli a tappo dicono la pagina, non il totale', async () => {
+  const callsAtCap = {
+    items: Array.from({ length: 100 }, (_, index) => ({
+      id: `call-${index}`, outcome: 'completed', teamAuthorId: 'guido', remoteHandle: '+39 333 000 0001',
+    })),
+  };
+  const chiamate = await runSuggestion(
+    stubClient({ '/api/modules/interaction-call/records?limit=100': callsAtCap }),
+    'bo04:oggi:chiamate',
+  );
+  assert.ok(chiamate.lines.some((line) => line.includes('(prime 100 lette)')), JSON.stringify(chiamate.lines));
+  const report = await runSuggestion(
+    stubClient({ '/api/modules/interaction-call/records?limit=100': callsAtCap }),
+    'bo04:reporting:call',
+  );
+  assert.ok(report.lines.some((line) => line.includes('(prime 100 lette)')), JSON.stringify(report.lines));
+  const signals = await runSuggestion(
+    stubClient({
+      '/api/modules/behavioral-signal/records?limit=100': {
+        items: Array.from({ length: 100 }, (_, index) => ({
+          id: `sig-${index}`, leadId: 'lead-a', signalType: 'pricing-page-visited',
+          observedAt: '2026-10-20T08:00:00.000Z',
+        })),
+      },
+    }),
+    'bo04:clienti:segnali',
+  );
+  assert.ok(signals.lines.some((line) => line.includes('(prime 100 lette)')), JSON.stringify(signals.lines));
+  const chiusura = await runSuggestion(
+    stubClient({
+      '/api/opportunities': {
+        items: Array.from({ length: 100 }, (_, index) => ({
+          id: `opp-${index}`, name: `Affare ${index}`, stage: 'proposal', valueCents: 10000, currency: 'EUR',
+        })),
+      },
+      '/api/schema': { pipelines: [{ name: 'b2b-sales', module: 'opportunity' }] },
+    }),
+    'bo04:pipeline:chiusura',
+  );
+  assert.ok(chiusura.lines.some((line) => line.includes('(prime 100 lette)')), JSON.stringify(chiusura.lines));
+  // Below the cap the headline stays bare: no page qualifier invented.
+  const few = await runSuggestion(
+    stubClient({ '/api/modules/interaction-call/records?limit=100': CALLS }),
+    'bo04:oggi:chiamate',
+  );
+  assert.ok(!few.lines.some((line) => line.includes('prime ')), JSON.stringify(few.lines));
+});
+
 test('probe: un endpoint arbitrario sotto /api/ resta dry-run', async () => {
   const sneaky = stubClient({
     [ASSISTANT_STATUS_PATH]: { freeQuestions: 'enabled', endpoint: '/api/modules/conversation/records/conv-1/actions/close' },

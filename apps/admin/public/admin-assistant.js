@@ -33,6 +33,13 @@ import { issueAdminKey } from './admin-submission.js';
 export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
 
 /**
+ * The only free-question contract: questions POST exactly here. The probe and
+ * the question path both check this constant — a status payload must never
+ * steer the question POST at another backend route.
+ */
+const ASSISTANT_ASK_PATH = '/api/assistant/ask';
+
+/**
  * Italian notice shown when free questions are unavailable: the panel stays
  * usable, only the free-question box is off, and the message says the
  * questions arrive with the key.
@@ -79,6 +86,17 @@ function shortText(text, max = 80) {
  * @typedef {{ id: string, title: string, detail: string }} Suggestion
  * @type {Record<string, ReadonlyArray<Suggestion>>}
  */
+/**
+ * Capped reads headline page bounds, never totals: reaching the cap means the
+ * server may hold more rows than the page shows (pipeline board honest-bounds
+ * rule, admin-pipeline.js BOARD_LIMIT). OPPORTUNITY_SERVER_DEFAULT_LIMIT is
+ * the /api/opportunities default when no limit is sent
+ * (opportunity-service.js:229).
+ */
+const CALL_READ_LIMIT = 100;
+const SIGNAL_READ_LIMIT = 100;
+const OPPORTUNITY_SERVER_DEFAULT_LIMIT = 100;
+
 export const SUGGESTION_CATALOG = Object.freeze({
   oggi: Object.freeze([
     { id: 'bo04:oggi:urgenti', title: 'Cosa è più urgente oggi?', detail: 'Thread aperti e problemi di qualità, dai record reali.' },
@@ -268,7 +286,7 @@ async function answerUrgenti(client) {
 /** Telefono: esiti delle chiamate registrate in interaction-call. */
 async function answerChiamate(client) {
   const answer = emptyAnswer('bo04:oggi:chiamate', 'Com’è andato il telefono?');
-  const calls = await readRecords(client, 'interaction-call', 100);
+  const calls = await readRecords(client, 'interaction-call', CALL_READ_LIMIT);
   if (calls === null) {
     answer.unavailable.push('Chiamate: modulo interaction-call non leggibile in questo spazio.');
     return answer;
@@ -279,7 +297,10 @@ async function answerChiamate(client) {
     const outcome = typeof row?.outcome === 'string' && row.outcome !== '' ? row.outcome : 'sconosciuto';
     byOutcome.set(outcome, (byOutcome.get(outcome) ?? 0) + 1);
   }
-  answer.lines.push(`${calls.length} chiamate registrate.`);
+  // Honest bounds: at the read cap the page may hide more rows — the
+  // headline says which page it counts, never a total.
+  const capped = calls.length >= CALL_READ_LIMIT;
+  answer.lines.push(`${calls.length} chiamate registrate${capped ? ` (prime ${calls.length} lette)` : ''}.`);
   for (const [outcome, count] of [...byOutcome.entries()].sort((a, b) => b[1] - a[1]).slice(0, SUGGESTION_MAX_LISTED)) {
     answer.lines.push(`• ${outcome}: ${count}`);
   }
@@ -356,7 +377,7 @@ async function answerRicontattare(client) {
 /** Segnali caldi: behavioral-signal di packages/intelligence, per lead. */
 async function answerSegnali(client) {
   const answer = emptyAnswer('bo04:clienti:segnali', 'Quali lead mostrano segnali caldi?');
-  const signals = await readRecords(client, 'behavioral-signal', 100);
+  const signals = await readRecords(client, 'behavioral-signal', SIGNAL_READ_LIMIT);
   if (signals === null) {
     answer.unavailable.push('Segnali: modulo behavioral-signal non leggibile in questo spazio.');
     return answer;
@@ -374,7 +395,10 @@ async function answerSegnali(client) {
     answer.lines.push('Nessun segnale registrato sui lead.');
     return answer;
   }
-  answer.lines.push(`${signals.length} segnali su ${byLead.size} lead:`);
+  // Honest bounds: at the read cap the page may hide more rows — the
+  // headline says which page it counts, never a total.
+  const capped = signals.length >= SIGNAL_READ_LIMIT;
+  answer.lines.push(`${signals.length} segnali su ${byLead.size} lead${capped ? ` (prime ${signals.length} lette)` : ''}:`);
   const sourceRows = [];
   for (const [leadId, list] of ranked) {
     const latest = newestFirst(list)[0];
@@ -463,9 +487,14 @@ async function answerChiusura(client) {
       }
     }
   }
+  // Honest bounds: /api/opportunities without a limit serves the server
+  // default page (OPPORTUNITY_SERVER_DEFAULT_LIMIT) — at the cap the headline
+  // says which page it counts, never a total.
+  const capped = items.length >= OPPORTUNITY_SERVER_DEFAULT_LIMIT;
+  const pageNote = capped ? ` (prime ${OPPORTUNITY_SERVER_DEFAULT_LIMIT} lette)` : '';
   answer.lines.push(open.length === 1
-    ? `1 opportunità aperta in pipeline${items.length !== 1 ? ` su ${items.length} lette` : ''}.`
-    : `${open.length} opportunità aperte in pipeline${items.length !== open.length ? ` su ${items.length} lette` : ''}.`);
+    ? `1 opportunità aperta in pipeline${items.length !== 1 ? ` su ${items.length} lette` : ''}${pageNote}.`
+    : `${open.length} opportunità aperte in pipeline${items.length !== open.length ? ` su ${items.length} lette` : ''}${pageNote}.`);
   const topStages = [...stageCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, SUGGESTION_MAX_LISTED);
   for (const [stage, count] of topStages) {
     answer.lines.push(`• ${shortText(stage, 30)}: ${count}`);
@@ -562,7 +591,7 @@ async function answerLeadSito(client) {
 /** Reporting call: chiamate registrate per operatore ed esito. */
 async function answerCallReport(client) {
   const answer = emptyAnswer('bo04:reporting:call', 'Chi ha gestito più call questo mese?');
-  const calls = await readRecords(client, 'interaction-call', 100);
+  const calls = await readRecords(client, 'interaction-call', CALL_READ_LIMIT);
   if (calls === null) {
     answer.unavailable.push('Chiamate: modulo interaction-call non leggibile in questo spazio.');
     return answer;
@@ -576,7 +605,10 @@ async function answerCallReport(client) {
     if (row?.outcome === 'completed') entry.completed += 1;
     byMember.set(member, entry);
   }
-  answer.lines.push(`${calls.length} chiamate registrate.`);
+  // Honest bounds: at the read cap the page may hide more rows — the
+  // headline says which page it counts, never a total.
+  const capped = calls.length >= CALL_READ_LIMIT;
+  answer.lines.push(`${calls.length} chiamate registrate${capped ? ` (prime ${calls.length} lette)` : ''}.`);
   for (const [member, entry] of [...byMember.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, SUGGESTION_MAX_LISTED)) {
     answer.lines.push(`• ${shortText(member, 30)}: ${entry.total} (${entry.completed} completate)`);
   }
@@ -645,13 +677,14 @@ export async function runSuggestion(client, suggestionId) {
 export async function probeAssistantBackend(client) {
   try {
     const status = await client.request(ASSISTANT_STATUS_PATH);
-    // Allowlist: only the documented assistant contract answers free
-    // questions. A status payload must never steer the question POST at an
-    // arbitrary backend route.
+    // Exact contract only: the question POST goes to ASSISTANT_ASK_PATH and
+    // nowhere else. A prefix allowlist would let a status payload steer the
+    // question text (potentially PII) at a dot-segment sibling such as
+    // '/api/assistant/../modules/.../actions/close', or at any other
+    // '/api/assistant/*' suffix, query or fragment — all stay dry-run.
     if (status !== null && typeof status === 'object'
       && status.freeQuestions === 'enabled'
-      && typeof status.endpoint === 'string'
-      && (status.endpoint === '/api/assistant/ask' || status.endpoint.startsWith('/api/assistant/'))) {
+      && status.endpoint === ASSISTANT_ASK_PATH) {
       return { mode: 'live', freeQuestions: 'enabled', endpoint: status.endpoint, notice: '' };
     }
   } catch {
@@ -674,6 +707,13 @@ export async function askFreeQuestion(client, status, question) {
     throw new Error(`La domanda è troppo lunga (massimo ${FREE_QUESTION_MAX_LENGTH} caratteri).`);
   }
   if (status?.mode !== 'live' || typeof status?.endpoint !== 'string') {
+    return { ok: false, disabled: true, notice: FREE_QUESTION_DISABLED_NOTICE };
+  }
+  // Re-validate the contract here instead of trusting status.endpoint: a
+  // direct caller passing { mode: 'live', endpoint: '/api/...' } must never
+  // steer the question text at an arbitrary route. Anything off-contract is
+  // dry-run, with zero requests.
+  if (status.endpoint !== ASSISTANT_ASK_PATH) {
     return { ok: false, disabled: true, notice: FREE_QUESTION_DISABLED_NOTICE };
   }
   // One fresh submission-owned key per question: keys come from the Admin
@@ -741,9 +781,34 @@ export async function runAssistantAction(client, action, options = {}) {
     navigate(action.href);
     return { ok: true, needsConfirmation: false };
   }
+  // Exact allowlist: the panel only builds the two input-free conversation
+  // record actions (mark-read, close). Any other /api/ path — outbox sends,
+  // destructive routes, future actions — is rejected before any request, so
+  // even a confirmed action can never execute a send path: outbound sends
+  // stay in the channels outbox flow.
   const request = action.request;
-  if (request === null || typeof request !== 'object' || typeof request.path !== 'string' || !request.path.startsWith('/api/')) {
-    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non valida.`);
+  const actionMatch = request !== null && typeof request === 'object' && typeof request.path === 'string'
+    ? /^\/api\/modules\/conversation\/records\/([^/]+)\/actions\/(mark-read|close)$/.exec(request.path)
+    : null;
+  if (actionMatch === null) {
+    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
+  }
+  let actionConversationId;
+  try {
+    actionConversationId = decodeURIComponent(actionMatch[1]);
+  } catch {
+    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
+  }
+  if (!isSafeRecordId(actionConversationId)) {
+    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
+  }
+  if ((request.method ?? 'POST') !== 'POST') {
+    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
+  }
+  if (request.body !== undefined
+    && (request.body === null || typeof request.body !== 'object'
+      || Array.isArray(request.body) || Object.keys(request.body).length !== 0)) {
+    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
   }
   // Mutations run on the real Admin client only with a submission-owned key
   // (admin-submission.js KEY_RE): an explicit caller key is honored, the
