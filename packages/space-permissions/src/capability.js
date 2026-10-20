@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ConflictError } from '../../core/index.js';
+import { AppError } from '../../core/index.js';
 import {
   SPACE_AI_PERMISSIONS,
   checkPermissionKey,
@@ -9,6 +9,7 @@ import {
   resolveSpacePermissions,
 } from './permissions.js';
 import { buildAiProposal } from './proposals.js';
+import { isUniqueConflict, requireIdentifiedActor } from './actions.js';
 
 /**
  * What Space Permissions offers to **other packages** — the gate every AI
@@ -66,9 +67,14 @@ export function createSpacePermissionGateCapability(config) {
     version: 1,
     description:
       'Gate AI actions per space: allow what the space switched on, propose what it switched off. Records proposals inside the caller\u2019s transaction; executes nothing, grants no cross-space read and no approval.',
-    /** @param {{modules?: any, consumer?: string}} context */
+    /**
+     * @param {{modules?: any, consumer?: string, now?: () => string}} context
+     * `now` is the server clock the capability stamps proposals with; without
+     * it the wall clock is used. The caller's clock is never trusted.
+     */
     create(context = {}) {
       const modules = requireModules(context, 'space-permission-gate@1');
+      const serverNow = typeof context.now === 'function' ? context.now : () => new Date().toISOString();
       return {
         capabilityContract: 1,
 
@@ -102,12 +108,20 @@ export function createSpacePermissionGateCapability(config) {
         /**
          * Record the proposal for a gated-off action inside the caller's
          * transaction. Replays the open proposal for the same action key.
-         * @param {{spaceId: unknown, permission: unknown, actionKind: unknown, actionKey: unknown, summary: unknown, proposedAt: unknown, actor?: unknown}} input
+         * The caller names who proposes (`actor`, identified, never
+         * anonymous — refused with `SPACE_ACTOR_REQUIRED`); the stamp comes
+         * from the server clock, never from the caller, so `proposedAt` is
+         * not an input field.
+         * @param {{spaceId: unknown, permission: unknown, actionKind: unknown, actionKey: unknown, summary: unknown, actor?: unknown}} input
          */
         propose(input) {
           const record = input && typeof input === 'object' ? input : {};
           const id = checkSpaceId(record.spaceId);
           const permission = checkPermissionKey(record.permission);
+          // Identified callers only: anonymous or malformed actors stop here,
+          // before any row is read or written. The canonical form (closed
+          // type set, trimmed id) is what the row and the audit log record.
+          requireIdentifiedActor(record.actor, 'Proposing a space AI action');
           const proposals = service(modules, names.proposal);
           const overrides = service(modules, names.override);
           const run = async () => {
@@ -120,7 +134,9 @@ export function createSpacePermissionGateCapability(config) {
                 code: 'SPACE_PERMISSION_ENABLED', status: 409,
               });
             }
-            const draft = buildAiProposal({ ...record, spaceId: id, permission });
+            const draft = buildAiProposal({
+              ...record, spaceId: id, permission, proposedAt: serverNow(),
+            });
             const siblings = await proposals.listWhere({ spaceId: id });
             const open = Array.isArray(siblings)
               ? siblings.find((row) => row && row.sourceKey === draft.sourceKey && row.status === 'proposed')
@@ -135,12 +151,16 @@ export function createSpacePermissionGateCapability(config) {
               const created = await proposals.createManaged({ ...draft }, { actor: record.actor ?? null });
               return Object.freeze({ proposalId: created.id, replayed: false });
             } catch (error) {
-              if (!(error instanceof ConflictError)) throw error;
+              if (!isUniqueConflict(error)) throw error;
               const raced = await proposals.listWhere({ spaceId: id });
               const winner = Array.isArray(raced)
                 ? raced.find((row) => row && row.sourceKey === draft.sourceKey)
                 : null;
-              if (!winner) throw error;
+              if (!winner) {
+                throw new AppError('This proposal raced a concurrent write; retry with the same action key', {
+                  code: 'SPACE_PROPOSAL_CONFLICT', status: 409,
+                });
+              }
               if (winner.status === 'proposed') {
                 return Object.freeze({ proposalId: winner.id, replayed: true });
               }

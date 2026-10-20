@@ -94,11 +94,15 @@ export {
   PROPOSAL_TERMINAL,
   buildAiProposal,
   decideAiProposal,
+  escapeKeyPart,
 } from './proposals.js';
 export {
   buildDecideAction,
   buildProposeAction,
   buildSetPermissionAction,
   buildSpacePermissionActions,
+  isUniqueConflict,
+  requireIdentifiedActor,
+  scopeKeyFor,
 } from './actions.js';
 export { createSpacePermissionGateCapability } from './capability.js';

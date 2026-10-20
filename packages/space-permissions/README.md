@@ -30,16 +30,21 @@ opened with `domains.capability(...)`):
 
 1. `gate({ spaceId, permission })` → `{ decision: 'allow' }` or
    `{ decision: 'proposal' }`.
-2. On `allow`, run. On `proposal`, call `propose(...)` inside the same
-   transaction and stop. There is no third outcome.
+2. On `allow`, run. On `proposal`, call
+   `propose({ spaceId, permission, actionKind, actionKey, summary, actor })`
+   inside the same transaction and stop. There is no third outcome.
+   `actor` must be identified (anonymous callers are refused with
+   `SPACE_ACTOR_REQUIRED`); the proposal stamp comes from the server clock,
+   never from the caller.
 3. Reads are space-scoped: `effective(spaceId)` and
    `proposal(spaceId, proposalId)` never reach another space's rows.
 
 Actions (same semantics over the record path): `set-permission`
-(input-driven upsert, identified actor recorded), `propose-action` (refuses
-with `SPACE_PERMISSION_ENABLED` when the switch is on — proposing what is
-allowed is a caller bug), `approved` / `refused` (human user actor only,
-`HUMAN_APPROVAL_REQUIRED` otherwise).
+(input-driven upsert, human user actor only — `HUMAN_APPROVAL_REQUIRED`
+otherwise, so a gated agent can never switch itself on), `propose-action`
+(refuses with `SPACE_PERMISSION_ENABLED` when the switch is on — proposing
+what is allowed is a caller bug), `approved` / `refused` (human user actor
+only, `HUMAN_APPROVAL_REQUIRED` otherwise).
 
 ## What it deliberately does not do
 

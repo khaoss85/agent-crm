@@ -1,23 +1,26 @@
 // @ts-check
 
-import { AppError, ConflictError, ValidationError } from '../../core/index.js';
+import { AppError, ConflictError, ValidationError, requireActor } from '../../core/index.js';
 import {
   SPACE_AI_PERMISSIONS,
   checkPermissionKey,
   checkSpaceId,
   effectivePermission,
 } from './permissions.js';
-import { buildAiProposal, decideAiProposal } from './proposals.js';
+import { buildAiProposal, decideAiProposal, escapeKeyPart } from './proposals.js';
 
 /**
  * The unique constraint picked a winner between two concurrent writers. The
  * loser re-reads the winner's row and answers from it instead of surfacing a
- * driver error — the work package's `createFollowUp` contract, reused here.
+ * driver error — the work package's `isUniqueConflict` contract, reused here
+ * (MEM_ACC_REUSE): a retryable transient busy conflict is explicitly not a
+ * unique winner, so it propagates for the caller to retry.
  *
  * @param {unknown} error
  */
-function isUniqueConflict(error) {
-  return error instanceof ConflictError;
+export function isUniqueConflict(error) {
+  if (!(error instanceof ConflictError)) return false;
+  return /** @type {any} */ (error).details?.transient !== true;
 }
 
 /**
@@ -26,7 +29,8 @@ function isUniqueConflict(error) {
  * `set-permission` flips one of the five switches of one space. It is
  * input-driven: the switch rows exist only once a space flips one, so the
  * first flip creates the row and later flips patch it. Every write names its
- * actor; an anonymous flip is refused.
+ * actor; an anonymous flip is refused, and a non-human flip is refused —
+ * only a human user flips a switch.
  *
  * `propose-action` records what a switched-off action wanted to do. The same
  * action proposed twice replays the first proposal — a retry never opens a
@@ -56,9 +60,16 @@ function trusted(modules, name, code) {
   return service;
 }
 
-/** An identified actor: user or system with an id. Anonymous writes stop here. */
-/** @param {unknown} actor @param {string} what */
-function requireIdentifiedActor(actor, what) {
+/**
+ * An identified actor, in canonical form. Anonymous writes stop here with
+ * `SPACE_ACTOR_REQUIRED`; a present-but-malformed actor is refused by the
+ * core actor authority, which also restricts `type` to the closed
+ * `user | agent | system` set and trims the id — so the `updatedBy` written
+ * to the row and the audit log always agree.
+ *
+ * @param {unknown} actor @param {string} what
+ */
+export function requireIdentifiedActor(actor, what) {
   if (!actor || typeof actor !== 'object'
     || typeof actor.type !== 'string' || actor.type.trim() === ''
     || typeof actor.id !== 'string' || actor.id.trim() === '') {
@@ -66,11 +77,26 @@ function requireIdentifiedActor(actor, what) {
       code: 'SPACE_ACTOR_REQUIRED', status: 403,
     });
   }
-  return `${actor.type}:${actor.id}`;
+  const normalized = requireActor(actor);
+  return `${normalized.type}:${normalized.id}`;
+}
+
+/**
+ * Scope identity for one switch of one space, escaped so two different
+ * (space, permission) pairs never stringify identically (see
+ * `escapeKeyPart`). Built in one place so the create path and the race
+ * re-read always agree.
+ */
+export function scopeKeyFor(spaceId, permission) {
+  return `${escapeKeyPart(spaceId)}:${permission}`;
 }
 
 /**
  * `space-permission-override.set-permission` — flip one switch of one space.
+ * Human-only: an agent may prepare and propose, it may never switch itself
+ * on — a gated agent flipping its own switch would bypass the BO-F0-06
+ * promise that a switched-off action is never executed. Non-human actors are
+ * refused with `HUMAN_APPROVAL_REQUIRED`, like `approve`/`refuse` below.
  *
  * @param {Record<string, string>} [config] module renames
  */
@@ -91,6 +117,11 @@ export function buildSetPermissionAction(config) {
     /** @param {any} ctx */
     async execute({ input, actor, modules, managed, step }) {
       const by = requireIdentifiedActor(actor, 'Flipping a space AI switch');
+      if (!actor || typeof actor !== 'object' || actor.type !== 'user') {
+        throw new AppError('Flipping a space AI switch requires a human user actor', {
+          code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+        });
+      }
       const spaceId = checkSpaceId(input?.spaceId);
       const permission = checkPermissionKey(input?.permission);
       if (input?.enabled !== 'on' && input?.enabled !== 'off') {
@@ -98,7 +129,7 @@ export function buildSetPermissionAction(config) {
       }
       const enabled = input.enabled === 'on';
       const store = trusted(modules, names.override, 'SPACE_PERMISSIONS_STORAGE_INVALID');
-      const scopeKey = `${spaceId}:${permission}`;
+      const scopeKey = scopeKeyFor(spaceId, permission);
       const existing = await store.listWhere({ spaceId });
       const current = Array.isArray(existing)
         ? existing.find((row) => row && (row.scopeKey === scopeKey || row.permission === permission))
@@ -121,7 +152,14 @@ export function buildSetPermissionAction(config) {
         const winner = Array.isArray(raced)
           ? raced.find((row) => row && (row.scopeKey === scopeKey || row.permission === permission))
           : null;
-        if (!winner) throw error;
+        // No same-space winner: the clash came from nowhere this space can
+        // see (never another space's row leaking in). A typed refusal, never
+        // the raw driver error.
+        if (!winner) {
+          throw new AppError('This switch flip raced a concurrent write; retry the flip', {
+            code: 'SPACE_PERMISSION_CONFLICT', status: 409,
+          });
+        }
         await managed(winner.id, { enabled, updatedBy: by });
         step('space-permission.raced', { spaceId, permission, enabled });
         return { spaceId, permission, enabled, created: false };
@@ -189,7 +227,13 @@ export function buildProposeAction(config) {
         const winner = Array.isArray(raced)
           ? raced.find((row) => row && row.sourceKey === draft.sourceKey)
           : null;
-        if (!winner) throw error;
+        // No same-space winner: the clash came from nowhere this space can
+        // see. A typed refusal, never the raw driver error.
+        if (!winner) {
+          throw new AppError('This proposal raced a concurrent write; retry with the same action key', {
+            code: 'SPACE_PROPOSAL_CONFLICT', status: 409,
+          });
+        }
         if (winner.status === 'proposed') {
           step('space-ai-proposal.raced', { proposalId: winner.id, sourceKey: draft.sourceKey });
           return { proposalId: winner.id, replayed: true, sourceKey: draft.sourceKey };

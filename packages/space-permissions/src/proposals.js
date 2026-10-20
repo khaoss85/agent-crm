@@ -37,9 +37,26 @@ function boundedKey(value, field) {
 }
 
 /**
+ * Escape one key tuple component so the joined identity stays injective: a
+ * separator inside a component (a space id or action key carrying `:`) can
+ * never collide with the real separator or with another tuple's split. The
+ * permission slot needs no escaping — it is one of the five fixed keys, and
+ * none of them carries `%` or `:`. Same shape as the channels package
+ * `boundedKey` (MEM_ACC_REUSE): `%` first, then `:`.
+ *
+ * @param {string} value an already-validated component
+ * @returns {string} the escaped component
+ */
+export function escapeKeyPart(value) {
+  return value.replace(/%/g, '%25').replace(/:/g, '%3A');
+}
+
+/**
  * Build the stored row for one proposal. Deterministic identity:
- * `spaceId:permission:actionKey` — proposing the same action twice replays
- * the first proposal instead of opening a second one.
+ * `spaceId:permission:actionKey` with each free-charset component escaped —
+ * proposing the same action twice replays the first proposal instead of
+ * opening a second one, and two different (space, permission, key) triples
+ * never stringify identically.
  *
  * @param {{spaceId: unknown, permission: unknown, actionKind: unknown, actionKey: unknown, summary: unknown, proposedAt: unknown}} input
  * @returns {{spaceId: string, permission: string, actionKind: string, actionKey: string, summary: string, sourceKey: string, status: string, proposedAt: string}} frozen
@@ -60,7 +77,7 @@ export function buildAiProposal(input) {
     actionKind,
     actionKey,
     summary,
-    sourceKey: `${spaceId}:${permission}:${actionKey}`,
+    sourceKey: `${escapeKeyPart(spaceId)}:${permission}:${escapeKeyPart(actionKey)}`,
     status: 'proposed',
     proposedAt: record.proposedAt,
   });

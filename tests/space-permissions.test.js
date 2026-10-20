@@ -251,17 +251,58 @@ test('set-permission creates on first flip, patches after, names the actor', asy
   });
   await assert.rejects(() => action.execute(anonymous.ctx), (error) => error.code === 'SPACE_ACTOR_REQUIRED');
 
-  const first = actionCtx(stub, { input: { spaceId: SPACE_A, permission: 'drafts', enabled: 'off' } });
+  const first = actionCtx(stub, {
+    input: { spaceId: SPACE_A, permission: 'drafts', enabled: 'off' },
+    actor: USER,
+  });
   const created = await action.execute(first.ctx);
   assert.equal(created.created, true);
   assert.equal(stub.rows.overrides.length, 1);
-  assert.equal(stub.rows.overrides[0].updatedBy, 'system:control-plane');
+  assert.equal(stub.rows.overrides[0].updatedBy, 'user:owner-1');
 
-  const second = actionCtx(stub, { input: { spaceId: SPACE_A, permission: 'drafts', enabled: 'on' } });
+  const second = actionCtx(stub, {
+    input: { spaceId: SPACE_A, permission: 'drafts', enabled: 'on' },
+    actor: USER,
+  });
   const updated = await action.execute(second.ctx);
   assert.equal(updated.created, false);
   assert.equal(stub.rows.overrides.length, 1);
   assert.equal(stub.rows.overrides[0].enabled, true);
+});
+
+test('set-permission is human-only: agent and system flips are refused', async () => {
+  const stub = stubModules();
+  const action = buildSetPermissionAction();
+  for (const actor of [SYSTEM, { type: 'agent', id: 'agent-9' }]) {
+    const { ctx } = actionCtx(stub, {
+      input: { spaceId: SPACE_A, permission: 'send-without-approval', enabled: 'on' },
+      actor,
+    });
+    await assert.rejects(() => action.execute(ctx), (error) => error.code === 'HUMAN_APPROVAL_REQUIRED');
+  }
+  // A gated agent cannot switch itself on: no row is written by the refusal.
+  assert.equal(stub.rows.overrides.length, 0);
+});
+
+test('actor identity is canonical: closed type set, trimmed id', async () => {
+  const stub = stubModules();
+  const action = buildSetPermissionAction();
+  const { ctx } = actionCtx(stub, {
+    input: { spaceId: SPACE_A, permission: 'drafts', enabled: 'off' },
+    actor: { type: 'user', id: '  owner-1  ' },
+  });
+  await action.execute(ctx);
+  assert.equal(stub.rows.overrides[0].updatedBy, 'user:owner-1');
+
+  const propose = buildProposeAction();
+  const hostile = actionCtx(stub, {
+    input: {
+      spaceId: SPACE_A, permission: 'send-without-approval', actionKind: 'send',
+      actionKey: 'k-1', summary: 'Send.',
+    },
+    actor: { type: 'admin', id: 'x' },
+  });
+  await assert.rejects(() => propose.execute(hostile.ctx), (error) => error.code === 'VALIDATION_ERROR');
 });
 
 test('propose-action refuses when the switch is on: act, do not propose', async () => {
@@ -313,7 +354,7 @@ test('concurrent first flips converge on one switch row', async () => {
     },
   };
   const racingModules = { get: (name) => (name === 'space-permission-override' ? { service: racing } : stub.modules.get(name)) };
-  const first = actionCtx(stub, { input: draft });
+  const first = actionCtx(stub, { input: draft, actor: USER });
   first.ctx.modules = racingModules;
   const won = await action.execute(first.ctx);
   assert.equal(won.created, false);
@@ -371,6 +412,92 @@ test('concurrent proposals replay the open winner, refuse after decision', async
   await assert.rejects(() => action.execute(late.ctx), (error) => error.code === 'SPACE_PROPOSAL_DECIDED');
 });
 
+test('transient busy conflicts propagate for retry, never replay', async () => {
+  const stub = stubModules();
+  const action = buildProposeAction();
+  const draft = {
+    spaceId: SPACE_A, permission: 'send-without-approval', actionKind: 'send follow-up',
+    actionKey: 'quote-7', summary: 'Send the follow-up for quote 7.',
+  };
+  // A decided row sits on the same key, but the failure is a retryable
+  // busy — the loser must see the retryable state, never the decided row's
+  // terminal code.
+  const decided = await action.execute(actionCtx(stub, { input: draft }).ctx);
+  assert.equal(decided.replayed, false);
+  stub.rows.proposals.find((row) => row.id === decided.proposalId).status = 'approved';
+  const realService = stub.modules.get('space-ai-proposal').service;
+  const busy = {
+    ...realService,
+    async createManaged() {
+      throw new ConflictError('The database is busy with a concurrent write; retry the request', { transient: true });
+    },
+  };
+  const loser = actionCtx(stub, { input: draft });
+  loser.ctx.modules = { get: (name) => (name === 'space-ai-proposal' ? { service: busy } : stub.modules.get(name)) };
+  await assert.rejects(
+    () => action.execute(loser.ctx),
+    (error) => error instanceof ConflictError && error.details?.transient === true,
+  );
+});
+
+test('a unique race with no same-space winner is a typed refusal, never a driver error', async () => {
+  const stub = stubModules();
+  const action = buildProposeAction();
+  const draft = {
+    spaceId: SPACE_A, permission: 'send-without-approval', actionKind: 'send follow-up',
+    actionKey: 'quote-7', summary: 'Send the follow-up for quote 7.',
+  };
+  const realService = stub.modules.get('space-ai-proposal').service;
+  const clashing = {
+    ...realService,
+    async listWhere() { return []; },
+    async createManaged() { throw new ConflictError('space-ai-proposal.sourceKey already exists'); },
+  };
+  const loser = actionCtx(stub, { input: draft });
+  loser.ctx.modules = { get: (name) => (name === 'space-ai-proposal' ? { service: clashing } : stub.modules.get(name)) };
+  await assert.rejects(
+    () => action.execute(loser.ctx),
+    (error) => error.code === 'SPACE_PROPOSAL_CONFLICT' && !(error instanceof ConflictError),
+  );
+
+  const flip = buildSetPermissionAction();
+  const realOverrides = stub.modules.get('space-permission-override').service;
+  const clashingOverrides = {
+    ...realOverrides,
+    async listWhere() { return []; },
+    async createManaged() { throw new ConflictError('space-permission-override.scopeKey already exists'); },
+  };
+  const flipLoser = actionCtx(stub, {
+    input: { spaceId: SPACE_A, permission: 'drafts', enabled: 'off' },
+    actor: USER,
+  });
+  flipLoser.ctx.modules = { get: (name) => (name === 'space-permission-override' ? { service: clashingOverrides } : stub.modules.get(name)) };
+  await assert.rejects(
+    () => flip.execute(flipLoser.ctx),
+    (error) => error.code === 'SPACE_PERMISSION_CONFLICT',
+  );
+});
+
+test('colon-bearing space and key triples never share an identity', async () => {
+  const { buildAiProposal: build, scopeKeyFor: scope } = await import('../packages/space-permissions/src/index.js');
+  const at = '2026-10-19T20:00:00.000Z';
+  const left = build({
+    spaceId: 'a', permission: 'drafts', actionKind: 'send',
+    actionKey: 'b:drafts:c', summary: 'Left.',
+    proposedAt: at,
+  });
+  const right = build({
+    spaceId: 'a:drafts:b', permission: 'drafts', actionKind: 'send',
+    actionKey: 'c', summary: 'Right.',
+    proposedAt: at,
+  });
+  assert.notEqual(left.sourceKey, right.sourceKey);
+  assert.notEqual(scope('a:b', 'drafts'), scope('a', 'b:drafts'));
+  // Plain ids keep their exact readable shape: no escaping noise.
+  assert.equal(left.sourceKey, 'a:drafts:b%3Adrafts%3Ac');
+  assert.equal(scope('presti-group', 'drafts'), 'presti-group:drafts');
+});
+
 test('approve and refuse are human-only; decided rows go terminal', async () => {
   const stub = stubModules();
   const approve = buildDecideAction('approved');
@@ -417,6 +544,74 @@ test('capability gate reads stored overrides and keeps spaces apart', async () =
   assert.equal(missing, null);
   const found = await gate.proposal(SPACE_B, 'row-9');
   assert.equal(found.id, 'row-9');
+});
+
+test('capability propose records with the server clock, never the caller clock', async () => {
+  const stub = stubModules();
+  const gate = createSpacePermissionGateCapability().create({
+    modules: stub.modules, consumer: 'test', now: () => '2026-10-20T00:00:00.000Z',
+  });
+  const first = await gate.propose({
+    spaceId: SPACE_A,
+    permission: 'send-without-approval',
+    actionKind: 'send follow-up',
+    actionKey: 'quote-7',
+    summary: 'Send the follow-up for quote 7.',
+    proposedAt: '1999-01-01T00:00:00.000Z',
+    actor: USER,
+  });
+  assert.equal(first.replayed, false);
+  // The caller-supplied instant is ignored: the row carries server time.
+  assert.equal(stub.rows.proposals[0].proposedAt, '2026-10-20T00:00:00.000Z');
+
+  const second = await gate.propose({
+    spaceId: SPACE_A,
+    permission: 'send-without-approval',
+    actionKind: 'send follow-up',
+    actionKey: 'quote-7',
+    summary: 'Send the follow-up for quote 7.',
+    actor: USER,
+  });
+  assert.equal(second.replayed, true);
+  assert.equal(second.proposalId, first.proposalId);
+  assert.equal(stub.rows.proposals.length, 1);
+});
+
+test('capability propose refuses anonymous callers and switched-on permissions', async () => {
+  const stub = stubModules();
+  const gate = createSpacePermissionGateCapability().create({
+    modules: stub.modules, consumer: 'test', now: () => '2026-10-20T00:00:00.000Z',
+  });
+  const draft = {
+    spaceId: SPACE_A,
+    permission: 'send-without-approval',
+    actionKind: 'send follow-up',
+    actionKey: 'quote-7',
+    summary: 'Send the follow-up for quote 7.',
+  };
+  for (const actor of [null, undefined, { type: 'agent' }, {}]) {
+    await assert.rejects(
+      async () => gate.propose({ ...draft, actionKey: `quote-anon-${String(actor?.type)}`, actor }),
+      (error) => error.code === 'SPACE_ACTOR_REQUIRED',
+    );
+  }
+  assert.equal(stub.rows.proposals.length, 0);
+
+  // An identified agent may propose: only the switch flip is human-only.
+  const agent = await gate.propose({ ...draft, actionKey: 'quote-agent', actor: { type: 'agent', id: 'agent-9' } });
+  assert.equal(agent.replayed, false);
+
+  // Proposing what the space already allows is a caller bug.
+  stub.rows.overrides.push({
+    id: 'row-1', spaceId: SPACE_A, scopeKey: `${SPACE_A}:drafts`, permission: 'drafts', enabled: true,
+  });
+  await assert.rejects(
+    () => gate.propose({
+      spaceId: SPACE_A, permission: 'drafts', actionKind: 'draft reply',
+      actionKey: 'conv-1', summary: 'Draft a reply.', actor: USER,
+    }),
+    (error) => error.code === 'SPACE_PERMISSION_ENABLED',
+  );
 });
 
 test('package definition composes: identity, resources, actions, capability', () => {
