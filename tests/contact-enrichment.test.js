@@ -213,14 +213,22 @@ test('opt-out stops every new enrichment and purges the enriched fields', async 
 test('paging walks the whole address book and a person without identity is skipped, never invented', async (t) => {
   const { app } = await scene(t, 'enrichment-pages', { googleContacts: true });
   const fake = createFakeGoogleContacts();
-  seedPerson(fake, { resourceName: 'people/c1', emailAddresses: [{ value: 'uno@prestigroup.example' }] });
+  seedPerson(fake, {
+    resourceName: 'people/c1',
+    emailAddresses: [{ value: 'uno@prestigroup.example' }],
+    phoneNumbers: [{ canonicalForm: '+393330000001' }],
+  });
   seedPerson(fake, {
     resourceName: 'people/c2',
     names: [{ givenName: 'Due', familyName: 'Senza' }],
     emailAddresses: [],
     phoneNumbers: [],
   });
-  seedPerson(fake, { resourceName: 'people/c3', emailAddresses: [{ value: 'tre@prestigroup.example' }] });
+  seedPerson(fake, {
+    resourceName: 'people/c3',
+    emailAddresses: [{ value: 'tre@prestigroup.example' }],
+    phoneNumbers: [{ canonicalForm: '+393330000003' }],
+  });
 
   const summary = await app.importGoogleContacts({ actor: ACTOR, adapter: fake, pageSize: 1 });
   assert.equal(summary.counts.people, 3);
@@ -520,6 +528,128 @@ test('a conflict naming an opted-out contact writes no candidate', async (t) => 
   assert.equal(summary.counts.candidates, 0, 'no row naming the opted-out contact is written after the purge');
   const candidates = app.modules.get('duplicate-candidate').service.listWhere({ status: 'unresolved' });
   assert.equal(candidates.length, 0, 'the opt-out stays final: no new row names that subject');
+});
+
+test('a conflict naming an opted-out contact on the email path writes no candidate', async (t) => {
+  const { app } = await scene(t, 'enrichment-optout-conflict-email-path');
+  // Contact A owns phone P through signature enrichment, then opts out.
+  await app.applyContactEnrichment({
+    actor: ACTOR, email: 'anna@prestigroup.example',
+    fields: { firstName: 'Anna', phone: '+393331111111' }, source: 'email-signature', sourceDetail: 'msg-a',
+  });
+  await app.optOutContactEnrichment({ actor: ACTOR, email: 'anna@prestigroup.example', reason: 'test' });
+  // Contact B exists independently.
+  const created = await app.resolveChannelSender({
+    channel: 'email', handle: 'bruno@prestigroup.example', email: 'bruno@prestigroup.example',
+    firstName: 'Bruno', lastName: 'Bianchi', companyName: 'Presti Group', actor: ACTOR,
+  });
+  assert.equal(created.outcome, 'created');
+  const before = app.modules.get('duplicate-candidate').service.listWhere({ status: 'unresolved' }).length;
+
+  // The same tainted request names B by email and opted-out A by phone.
+  await assert.rejects(
+    app.applyContactEnrichment({
+      actor: ACTOR, email: 'bruno@prestigroup.example',
+      fields: { firstName: 'X', phone: '+393331111111' }, source: 'email-signature', sourceDetail: 'msg-b',
+    }),
+    (error) => error.code === 'ENRICHMENT_OPTED_OUT');
+  const after = app.modules.get('duplicate-candidate').service.listWhere({ status: 'unresolved' }).length;
+  assert.equal(after, before, 'no candidate naming the opted-out contact is written after its purge');
+});
+
+test('a google id-vs-email conflict refuses when the email side opted out', async (t) => {
+  const { app } = await scene(t, 'enrichment-optout-conflict-email-side', { googleContacts: true });
+  const fake = createFakeGoogleContacts();
+  seedPerson(fake, { resourceName: 'people/c1', emailAddresses: [{ value: 'luca@prestigroup.example' }] });
+  await app.importGoogleContacts({ actor: ACTOR, adapter: fake });
+
+  // Contact B exists and opts out; the same Google id now carries B's email.
+  const socio = await app.resolveChannelSender({
+    channel: 'email', handle: 'socio@prestigroup.example', email: 'socio@prestigroup.example',
+    firstName: 'Socio', lastName: 'Altro', companyName: 'Altra Srl', actor: ACTOR,
+  });
+  assert.equal(socio.outcome, 'created');
+  await app.optOutContactEnrichment({ actor: ACTOR, email: 'socio@prestigroup.example', reason: 'test' });
+  const second = createFakeGoogleContacts();
+  second.seedPerson({
+    resourceName: 'people/c1',
+    names: [{ givenName: 'Luca', familyName: 'Rossi' }],
+    emailAddresses: [{ value: 'socio@prestigroup.example' }],
+  });
+  const summary = await app.importGoogleContacts({ actor: ACTOR, adapter: second });
+  assert.equal(summary.counts.skippedOptOut, 1, 'the opted-out email side refuses the candidate path');
+  assert.equal(summary.counts.candidates, 0, 'no row naming the opted-out contact is written after the purge');
+  const candidates = app.modules.get('duplicate-candidate').service.listWhere({ status: 'unresolved' });
+  assert.equal(candidates.length, 0, 'the opt-out stays final: no new row names that subject');
+});
+
+test('tainted evidence invents no contact: a new email with a claimed phone stays unresolved', async (t) => {
+  const { app } = await scene(t, 'enrichment-tainted-new-email');
+  // Contact A owns phone P through signature enrichment.
+  await app.applyContactEnrichment({
+    actor: ACTOR, email: 'anna@prestigroup.example',
+    fields: { firstName: 'Anna', phone: '+393331111111' }, source: 'email-signature', sourceDetail: 'msg-a',
+  });
+  const before = contactsCount(app);
+  const aRowsBefore = enrichedRows(app, app.modules.get('external-identity').service
+    .listWhere({ sourceKey: 'email:anna@prestigroup.example' })[0].subjectId).length;
+
+  // A brand-new email arrives carrying A's phone: ambiguous evidence.
+  const answer = await app.applyContactEnrichment({
+    actor: ACTOR, email: 'nuovo@prestigroup.example',
+    fields: { firstName: 'Nuovo', phone: '+393331111111' }, source: 'email-signature', sourceDetail: 'msg-n',
+  });
+  assert.equal(answer.outcome, 'unresolved', 'a conflict that stores nothing is never reported as created');
+  assert.equal(answer.contact, null, 'no contact is invented from tainted evidence');
+  assert.equal(answer.candidatesWritten, 0, 'no pair can name a subject that was never created');
+  assert.deepEqual(answer.applied, [], 'ambiguous evidence stores no field anywhere');
+  assert.equal(contactsCount(app), before, 'the contact count is byte-identical');
+  assert.equal(
+    app.modules.get('external-identity').service.listWhere({ sourceKey: 'email:nuovo@prestigroup.example' }).length,
+    0, 'not even the email identity is linked');
+  assert.equal(enrichedRows(app, app.modules.get('external-identity').service
+    .listWhere({ sourceKey: 'email:anna@prestigroup.example' })[0].subjectId).length,
+  aRowsBefore, 'A gains nothing from the ambiguous request');
+});
+
+test('a conflict between existing contacts reports candidate, never enriched', async (t) => {
+  const { app } = await scene(t, 'enrichment-conflict-outcome');
+  await app.applyContactEnrichment({
+    actor: ACTOR, email: 'anna@prestigroup.example',
+    fields: { firstName: 'Anna', phone: '+393331111111' }, source: 'email-signature', sourceDetail: 'msg-a',
+  });
+  await app.resolveChannelSender({
+    channel: 'email', handle: 'bruno@prestigroup.example', email: 'bruno@prestigroup.example',
+    firstName: 'Bruno', lastName: 'Bianchi', companyName: 'Presti Group', actor: ACTOR,
+  });
+  const answer = await app.applyContactEnrichment({
+    actor: ACTOR, email: 'bruno@prestigroup.example',
+    fields: { firstName: 'X', phone: '+393331111111' }, source: 'email-signature', sourceDetail: 'msg-b',
+  });
+  assert.equal(answer.outcome, 'candidate', 'a conflict that stores nothing is never reported as enriched');
+  assert.equal(answer.candidatesWritten, 1);
+  assert.deepEqual(answer.applied, []);
+});
+
+test('an import person with a new email but a claimed phone is skipped, never created', async (t) => {
+  const { app } = await scene(t, 'enrichment-tainted-import', { googleContacts: true });
+  await app.applyContactEnrichment({
+    actor: ACTOR, email: 'anna@prestigroup.example',
+    fields: { firstName: 'Anna', phone: '+393331111111' }, source: 'email-signature', sourceDetail: 'msg-a',
+  });
+  const before = contactsCount(app);
+  const fake = createFakeGoogleContacts();
+  fake.seedPerson({
+    resourceName: 'people/c9',
+    names: [{ givenName: 'Nuovo', familyName: 'Socio' }],
+    emailAddresses: [{ value: 'nuovo@prestigroup.example' }],
+    phoneNumbers: [{ canonicalForm: '+393331111111' }],
+  });
+  const summary = await app.importGoogleContacts({ actor: ACTOR, adapter: fake });
+  assert.equal(summary.counts.created, 0, 'no contact is invented from tainted evidence');
+  assert.equal(summary.counts.enriched, 0, 'a person that stores nothing is never counted as enriched');
+  assert.equal(summary.counts.candidates, 0, 'no pair can name a subject that was never created');
+  assert.equal(contactsCount(app), before, 'the contact count is byte-identical');
 });
 
 test('a busy database fails loudly instead of counting contention as malformed', async (t) => {

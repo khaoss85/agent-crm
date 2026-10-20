@@ -199,11 +199,13 @@ export function createContactEnrichment({
   }
 
   /**
-   * Enrich one resolved contact inside a single transaction. Creates the
-   * contact (through the core adapters, like sender and import) when the
-   * email names nobody yet; links the Google resource id, the email and the
-   * phone as external identities; stores one enriched-field row per filled
-   * attribute. The contact record itself is never written.
+   * Enrich one resolved contact inside a single transaction. Identity reads
+   * run before any write: ambiguous evidence returns unresolved (no contact
+   * invented) or candidate-only (no field stored). Only unambiguous evidence
+   * creates the contact (through the core adapters, like sender and import),
+   * links the Google resource id, the email and the phone as external
+   * identities, and stores one enriched-field row per filled attribute. The
+   * contact record itself is never written.
    */
   async function enrichSubject(input, retried = false) {
     try {
@@ -222,52 +224,14 @@ export function createContactEnrichment({
   }) {
     return database.transactionAsync(async () => {
       const reader = createPolicyReader({ modules, names, core });
+      // Resolve without creating: the identity reads below decide whether
+      // the evidence is ambiguous BEFORE any write exists to misattribute.
+      // A contact is created further down only for unambiguous evidence.
       let id = contactId;
-      let created = false;
-      if (!id) {
-        if (!email) {
-          throw refusal('ENRICHMENT_SUBJECT_UNKNOWN', 500, 'enrichment resolved no contact and carries no email');
-        }
+      if (!id && email) {
         const raced = await reader.contactByEmail(email);
-        if (raced) {
-          id = raced.id;
-        } else {
-          try {
-            const domain = email.slice(email.lastIndexOf('@') + 1);
-            const subject = await createSubjectForRow(core, {
-              email,
-              firstName: fields.firstName,
-              lastName: fields.lastName,
-              companyName: fields.companyName,
-              domain,
-            }, actor);
-            id = subject.id;
-            created = true;
-          } catch (error) {
-            // A concurrent enrichment won the email: replay the winner
-            // instead of duplicating it — or throwing on its constraint.
-            const winner = await reader.contactByEmail(email);
-            if (winner) {
-              id = winner.id;
-            } else {
-              throw error;
-            }
-          }
-        }
+        if (raced) id = raced.id;
       }
-      if (!id) {
-        throw refusal('ENRICHMENT_SUBJECT_UNKNOWN', 500, 'enrichment resolved no contact and created none');
-      }
-
-      if (await optOutRow(id)) {
-        throw refusal('ENRICHMENT_OPTED_OUT', 409,
-          'this contact opted out of enrichment: no new field is stored and the enriched fields are purged on opt-out');
-      }
-
-      const subject = subjectOf(id, email);
-      const now = new Date().toISOString();
-      const applied = [];
-      let candidatesWritten = 0;
 
       // Every read first, every write after: the identity lookups below
       // write nothing, so a concurrent opt-out committing between them and
@@ -278,15 +242,6 @@ export function createContactEnrichment({
       const knownEmail = email ? await reader.externalIdentity('email', email) : null;
       const knownPhone = fields.phone ? await reader.externalIdentity('phone', fields.phone) : null;
 
-      // The opt-out is re-checked inside the same transaction immediately
-      // before the first write: an opt-out that committed after the fast
-      // check above refuses here, so no fresh active row can land after a
-      // purge. Throwing rolls this transaction back, leaving the purge won.
-      if (await optOutRow(id)) {
-        throw refusal('ENRICHMENT_OPTED_OUT', 409,
-          'this contact opted out of enrichment: no new field is stored and the enriched fields are purged on opt-out');
-      }
-
       // Ambiguous evidence names two different subjects: the whole request
       // is tainted, so it becomes candidate(s) only — no identity link and
       // no enriched-field row lands on either side. This is the same
@@ -295,7 +250,32 @@ export function createContactEnrichment({
       const googleConflict = Boolean(googleResourceName && knownGoogle && knownGoogle.subjectId !== id);
       const emailConflict = Boolean(email && knownEmail && knownEmail.subjectId !== id);
       const phoneConflict = Boolean(fields.phone && knownPhone && knownPhone.subjectId !== id);
+      let subject = id ? subjectOf(id, email) : null;
+      const applied = [];
+      let candidatesWritten = 0;
       if (googleConflict || emailConflict || phoneConflict) {
+        if (!id) {
+          // The email names nobody yet while another field already names
+          // an existing subject: inventing a contact here would fabricate
+          // a customer from tainted evidence (sender discipline). Nothing
+          // is created, linked, stored or recorded — a human decides.
+          return { id: null, created: false, applied: [], candidatesWritten: 0, unresolved: true };
+        }
+        // OPT_OUT_IS_FINAL covers the other side too: a candidate naming
+        // an opted-out contact must never be written after its purge.
+        // Re-checked inside this transaction, immediately before the
+        // first write.
+        const others = [
+          googleConflict ? knownGoogle : null,
+          emailConflict ? knownEmail : null,
+          phoneConflict ? knownPhone : null,
+        ].filter((known) => known && known.subjectResource === 'contact' && known.subjectId !== id);
+        for (const other of others) {
+          if (await optOutRow(other.subjectId)) {
+            throw refusal('ENRICHMENT_OPTED_OUT', 409,
+              'a named contact opted out of enrichment: no candidate is written');
+          }
+        }
         if (googleConflict) {
           // The evidence names the opaque provider id, never PII: the
           // handles themselves travel in the candidate subjects' labels.
@@ -314,8 +294,54 @@ export function createContactEnrichment({
             subject, candidateOf(knownPhone),
             'this phone already names another record: a human decides', runId, actor);
         }
-        return { id, created, applied, candidatesWritten };
+        return { id, created: false, applied: [], candidatesWritten };
       }
+
+      // Unambiguous evidence only from here: the email names nobody yet,
+      // and no other field names an existing subject, so creating the
+      // contact cannot misattribute tainted evidence.
+      let created = false;
+      if (!id) {
+        if (!email) {
+          throw refusal('ENRICHMENT_SUBJECT_UNKNOWN', 500, 'enrichment resolved no contact and carries no email');
+        }
+        try {
+          const domain = email.slice(email.lastIndexOf('@') + 1);
+          const made = await createSubjectForRow(core, {
+            email,
+            firstName: fields.firstName,
+            lastName: fields.lastName,
+            companyName: fields.companyName,
+            domain,
+          }, actor);
+          id = made.id;
+          created = true;
+        } catch (error) {
+          // A concurrent enrichment won the email: replay the winner
+          // instead of duplicating it — or throwing on its constraint.
+          const winner = await reader.contactByEmail(email);
+          if (winner) {
+            id = winner.id;
+          } else {
+            throw error;
+          }
+        }
+      }
+      if (!id) {
+        throw refusal('ENRICHMENT_SUBJECT_UNKNOWN', 500, 'enrichment resolved no contact and created none');
+      }
+      subject = subjectOf(id, email);
+
+      // The opt-out is checked inside the same transaction immediately
+      // before the first write: an opt-out that committed after the reads
+      // above refuses here, so no fresh active row can land after a purge.
+      // Throwing rolls this transaction back, leaving the purge won.
+      if (await optOutRow(id)) {
+        throw refusal('ENRICHMENT_OPTED_OUT', 409,
+          'this contact opted out of enrichment: no new field is stored and the enriched fields are purged on opt-out');
+      }
+
+      const now = new Date().toISOString();
 
       if (googleResourceName) {
         await recordExternalIdentityRow({
@@ -470,16 +496,36 @@ export function createContactEnrichment({
       // subject must never be written after the purge (OPT_OUT_IS_FINAL).
       // This branch writes inside its own transaction without touching the
       // enrichment path, so it needs the same check that path enforces.
+      // The fast check below avoids opening a transaction for the common
+      // opted-out case; the authoritative re-check runs INSIDE the write
+      // transaction, so an opt-out committing between the two still refuses
+      // with no candidate row (no TOCTOU).
       const eitherOptedOut = await optOutRow(emailContact.id)
         || (knownSubject.resource === 'contact' ? await optOutRow(knownSubject.id) : null);
       if (eitherOptedOut) {
         return { outcome: 'skipped', reason: 'opted-out', evidence: 'a named contact opted out of enrichment: no candidate is written' };
       }
-      const written = await database.transactionAsync(async () => recordEnrichmentCandidate(
-        { resource: 'contact', id: emailContact.id, owner: 'host', ownerPackage: null, label: emailContact.email },
-        knownSubject,
-        `Google contact ${read.resourceName} already names another record: a human decides`,
-        runId, actor));
+      let written;
+      try {
+        written = await database.transactionAsync(async () => {
+          const racedOptOut = await optOutRow(emailContact.id)
+            || (knownSubject.resource === 'contact' ? await optOutRow(knownSubject.id) : null);
+          if (racedOptOut) {
+            throw refusal('ENRICHMENT_OPTED_OUT', 409,
+              'a named contact opted out of enrichment: no candidate is written');
+          }
+          return recordEnrichmentCandidate(
+            { resource: 'contact', id: emailContact.id, owner: 'host', ownerPackage: null, label: emailContact.email },
+            knownSubject,
+            `Google contact ${read.resourceName} already names another record: a human decides`,
+            runId, actor);
+        });
+      } catch (error) {
+        if (error instanceof AppError && error.code === 'ENRICHMENT_OPTED_OUT') {
+          return { outcome: 'skipped', reason: 'opted-out', evidence: 'a named contact opted out of enrichment: no candidate is written' };
+        }
+        throw error;
+      }
       return { outcome: 'candidate', candidatesWritten: written, evidence: 'google id and email name different contacts' };
     }
     if (known && known.subjectResource !== 'contact' && !emailContact) {
@@ -504,6 +550,21 @@ export function createContactEnrichment({
       actor,
       runId,
     });
+    if (result.unresolved) {
+      // The person email names nobody yet while another field already names
+      // a subject: no contact was invented from the tainted evidence, so the
+      // run skips the person instead of counting a phantom enrichment.
+      return {
+        outcome: 'skipped', reason: 'conflicting-evidence',
+        evidence: 'the person email names no contact yet while another field already names one: nothing was created or stored',
+      };
+    }
+    if (result.candidatesWritten > 0 && result.applied.length === 0) {
+      return {
+        outcome: 'candidate', candidatesWritten: result.candidatesWritten,
+        evidence: 'the person evidence names more than one record: nothing was stored — a human decides',
+      };
+    }
     return {
       outcome: result.created ? 'created' : 'enriched',
       contact: { resource: 'contact', id: result.id },
@@ -533,20 +594,31 @@ export function createContactEnrichment({
         contactId: null, email, fields, phoneRefused, source, sourceDetail,
         googleResourceName: null, actor, runId,
       });
+      // The receipt reports what the evidence decided, not just whether a
+      // contact was created: a conflict stores nothing, so it is never
+      // reported as created or enriched.
+      const outcome = result.unresolved ? 'unresolved'
+        : result.candidatesWritten > 0 && result.applied.length === 0 ? 'candidate'
+          : result.created ? 'created' : 'enriched';
+      const evidence = result.unresolved
+        ? 'the email names no contact yet while another field already names one: nothing was created, stored or recorded — a human decides'
+        : outcome === 'candidate'
+          ? 'conflicting evidence names more than one record: nothing was stored — a human decides'
+          : result.created
+            ? 'no contact matched, so the email created its contact and the fields were stored beside it'
+            : 'the fields were stored beside the contact with their source and date; the contact record is untouched';
       events.emit?.('customer-data.enrichment.applied', {
-        source, outcome: result.created ? 'created' : 'enriched',
+        source, outcome,
         applied: result.applied.length, candidates: result.candidatesWritten,
       });
       return Object.freeze({
         system: source,
-        outcome: result.created ? 'created' : 'enriched',
+        outcome,
         rule: 'contact-enrichment',
-        contact: Object.freeze({ resource: 'contact', id: result.id }),
+        contact: result.id ? Object.freeze({ resource: 'contact', id: result.id }) : null,
         applied: Object.freeze(result.applied.map((row) => Object.freeze({ ...row }))),
         candidatesWritten: result.candidatesWritten,
-        evidence: result.created
-          ? 'no contact matched, so the email created its contact and the fields were stored beside it'
-          : 'the fields were stored beside the contact with their source and date; the contact record is untouched',
+        evidence,
       });
     },
 
