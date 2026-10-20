@@ -1,0 +1,17 @@
+{
+  "manifestVersion": 1,
+  "name": "call-signal",
+  "table": "call_signals",
+  "description": "One buying signal read from a call transcript (BO-F1-08: budget, tempi, interesse, dubbi), extracted by the workspace LLM through the call-intelligence summarize operation. transcriptRef names the transcript row it was read from and excerpt quotes it word for word, so every signal carries its source in the transcript. Append-only and immutable. (backlog:588db7766206)",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectResource", "type": "string", "writable": "managed" },
+    { "name": "subjectId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "callRef", "type": "string", "index": true, "writable": "managed" },
+    { "name": "transcriptRef", "type": "string", "index": true, "writable": "managed" },
+    { "name": "signalType", "type": "enum", "values": ["budget", "timing", "interest", "doubt"], "index": true, "writable": "managed" },
+    { "name": "excerpt", "type": "string", "writable": "managed" },
+    { "name": "observedAt", "type": "timestamp", "writable": "managed" }
+  ]
+}

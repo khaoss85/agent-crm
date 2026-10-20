@@ -31,10 +31,11 @@ in its own process.
 
 | | |
 |---|---|
-| **Resources** | `enrichment-snapshot`, `behavioral-signal`, `score-run`, `score-contribution`, `routing-run`, `route-evaluation`, `assignment` — all `writable: "managed"` |
+| **Resources** | `enrichment-snapshot`, `behavioral-signal`, `score-run`, `score-contribution`, `routing-run`, `route-evaluation`, `assignment`, plus call intelligence (BO-F1-08): `call-notice`, `call-transcript`, `call-signal` — all `writable: "managed"` |
 | **Actions** | `enrich`, `record-signal`, `score`, `route`, on the project's `lead` |
+| **Operations** | `record-call-notice`, `save-call-transcript`, `summarize-call`, `purge-expired-transcripts`, `read-customer-calls` (app methods `recordCallNotice`, `saveCallTranscript`, `summarizeCall`, `purgeExpiredTranscripts`, `readCustomerCalls`) |
 | **Offers** | `intelligence@1` |
-| **Requires** | nothing |
+| **Requires** | nothing declared: the workspace LLM (`llm-complete@1`) arrives as a handed-over capability object at composition (like channels), used only by `summarize-call` |
 
 **It does not own the Lead.** The Lead is the project's record; Intelligence
 acts on it and writes its managed fields through the action runtime. That is a

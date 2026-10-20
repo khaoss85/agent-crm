@@ -127,12 +127,28 @@ const PROFILE = {
   limitations: [],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, failHub = false } = {}) {
-  const calls = [];
+const CALLS = {
+  calls: [
+    {
+      callRef: 'call-1', channel: 'phone', noticedAt: '2026-10-20T11:55:00.000Z',
+      recordedAt: '2026-10-20T12:00:00.000Z', expiresAt: '2027-10-20T12:00:00.000Z',
+      summary: 'Cliente con budget 800 euro, inizio a gennaio.',
+      summarized: true, purgedAt: null,
+      signals: [
+        { type: 'budget', excerpt: 'il budget massimo è 800 euro', transcriptRef: 'call-transcript:call-a:call-1' },
+        { type: 'timing', excerpt: 'vorrei iniziare a gennaio', transcriptRef: 'call-transcript:call-a:call-1' },
+      ],
+      transcript: { available: true, text: 'Operatrice: buongiorno.\nCliente: il budget massimo è 800 euro.' },
+    },
+  ],
+};
+
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, failHub = false, calls = null, failCalls = false } = {}) {
+  const requested = [];
   return {
-    calls,
+    calls: requested,
     async request(path) {
-      calls.push(path);
+      requested.push(path);
       if (path.startsWith('/api/customer-hub/')) {
         if (failHub) throw Object.assign(new Error('Not Found'), { status: 404 });
         if (path.includes('/card/')) return card;
@@ -142,15 +158,19 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, failH
         if (!profile) throw Object.assign(new Error('no profile'), { status: 404 });
         return profile;
       }
+      if (path.startsWith('/api/call-intelligence/calls/')) {
+        if (failCalls) throw Object.assign(new Error('Not Found'), { status: 404 });
+        return calls;
+      }
       throw new Error(`unexpected request ${path}`);
     },
   };
 }
 
-const renderCard = async (client) => {
+const renderCard = async (client, spaceId = undefined) => {
   const doc = createFakeDocument();
   const mount = createMount();
-  await createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+  await createCustomerCardView({ doc, mount, client, spaceId }).renderCard('contact', 'c1');
   return mount;
 };
 
@@ -275,4 +295,61 @@ test('hostile server text renders as text, never as markup', async () => {
   assert.ok(mount.textContent.includes(nasty), 'the value is shown as text');
   assert.deepEqual(mount.findAll('img'), [], 'and no element was created from it');
   assert.deepEqual(mount.findAll('script'), []);
+});
+
+test('BO-F1-08: the scheda shows the AI summary, the signals and the openable transcript', async () => {
+  const client = stubClient({ calls: CALLS });
+  const mount = await renderCard(client, 'call-a');
+  const text = mount.textContent;
+
+  const callsPath = client.calls.find((path) => path.startsWith('/api/call-intelligence/calls/'));
+  assert.ok(callsPath, 'the card reads the calls for this customer');
+  assert.ok(callsPath.includes('spaceId=call-a'), 'the space stays explicit in the read');
+
+  assert.ok(text.includes('Riepilogo AI'), 'the summary section exists');
+  assert.ok(text.includes('Cliente con budget 800 euro'), 'the AI summary is shown');
+  assert.ok(text.includes('Chiamate'), 'the calls section exists');
+  assert.ok(text.includes('Budget'), 'the budget signal label is shown');
+  assert.ok(text.includes('Tempi'), 'the timing signal label is shown');
+  assert.ok(text.includes('il budget massimo è 800 euro'), 'the signal excerpt quotes the transcript');
+
+  const details = mount.findAll('details');
+  assert.equal(details.length, 1, 'the transcript is openable');
+  assert.ok(details[0].textContent.includes('Trascrizione'), 'the opener names the transcript');
+  assert.ok(details[0].textContent.includes('Operatrice: buongiorno'), 'the transcript text is inside the opener');
+});
+
+test('BO-F1-08: a purged transcript reads as erased, never as missing, and hostile excerpts stay text', async () => {
+  const nasty = '<script>alert(1)</script>';
+  const purged = {
+    calls: [{
+      ...CALLS.calls[0],
+      summary: null,
+      summarized: false,
+      signals: [{ type: 'doubt', excerpt: nasty, transcriptRef: 'call-transcript:call-a:call-1' }],
+      transcript: { available: false, reason: 'cancellata il 2027-10-01 (retention scaduta)' },
+    }],
+  };
+  const mount = await renderCard(stubClient({ calls: purged }), 'call-a');
+  const text = mount.textContent;
+  assert.ok(text.includes('non disponibile: nessun riepilogo registrato'), 'no summary is invented after erasure');
+  assert.ok(text.includes('Dubbi'), 'the surviving signal label is shown');
+  assert.ok(text.includes(nasty), 'the excerpt is shown as text');
+  assert.deepEqual(mount.findAll('script'), [], 'and no element was created from it');
+  assert.deepEqual(mount.findAll('details'), [], 'an erased transcript has no opener');
+  assert.ok(text.includes('cancellata il 2027-10-01 (retention scaduta)'), 'the erasure reads as erased with its date');
+});
+
+test('BO-F1-08: without a space or without intelligence composed the card stays honest', async () => {
+  const nospace = stubClient({ calls: CALLS });
+  const mount = await renderCard(nospace);
+  assert.ok(mount.textContent.includes('non disponibile: nessun dato di chiamata registrato'),
+    'without a space the calls section stays unavailable');
+  assert.ok(!nospace.calls.some((path) => path.startsWith('/api/call-intelligence/')),
+    'without a space no calls read is attempted');
+
+  const uncomposed = await renderCard(stubClient({ failCalls: true }), 'call-a');
+  assert.ok(uncomposed.textContent.includes('Riepilogo AI'), 'the card still renders');
+  assert.ok(uncomposed.textContent.includes('non disponibile: nessun riepilogo registrato'),
+    'without intelligence composed no summary is shown');
 });

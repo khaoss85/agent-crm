@@ -447,6 +447,48 @@ function buildRouter(app) {
     return await app.readCustomerTimeline({ resource: params.resource, id: params.id });
   });
 
+  // Call intelligence (BO-F1-08): the notice, the transcript, its summary
+  // and the customer calls read for the scheda cliente. The same
+  // enumerated-adapter shape as the hub routes above: the kernel owns the
+  // path, gates the role boundary, and delegates to the composed
+  // application operations — without intelligence composed each answers an
+  // honest 404. The space stays explicit on every call, never inferred.
+  router.add('POST', '/api/call-intelligence/notice', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.recordCallNotice !== 'function') {
+      throw new NotFoundError('Operation', 'call notice');
+    }
+    return await app.recordCallNotice({ ...stripServerControlledKeys(body), actor });
+  });
+
+  router.add('POST', '/api/call-intelligence/transcript', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.saveCallTranscript !== 'function') {
+      throw new NotFoundError('Operation', 'call transcript');
+    }
+    return await app.saveCallTranscript({ ...stripServerControlledKeys(body), actor });
+  });
+
+  router.add('POST', '/api/call-intelligence/summarize', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.summarizeCall !== 'function') {
+      throw new NotFoundError('Operation', 'call summary');
+    }
+    return await app.summarizeCall({ ...stripServerControlledKeys(body), actor });
+  });
+
+  router.add('GET', '/api/call-intelligence/calls/:resource/:id', async ({ params, searchParams, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readCustomerCalls !== 'function') {
+      throw new NotFoundError('Operation', 'customer calls');
+    }
+    return await app.readCustomerCalls({
+      spaceId: searchParams.get('spaceId'),
+      subjectResource: params.resource,
+      subjectId: params.id,
+    });
+  });
+
   // Customer Data Operations v2: bulk decisions and scale-safe export. The
   // same enumerated-adapter shape as the import routes above: the kernel
   // owns the path, gates the role boundary, and delegates to the composed

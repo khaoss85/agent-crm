@@ -407,6 +407,9 @@ const customerCardView = createCustomerCardView({
   mount: moduleView,
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
+  // The shell's active space, read late: the calls read stays
+  // space-explicit and follows the space switcher (BO-F1-08).
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
 });
 
 // Customer Data Foundation (ADR-037): import, duplicate candidates, the data
@@ -478,6 +481,10 @@ if (boSidebar && boTopbar) {
       toast('Spazio locale reimpostato.');
     },
     onPickSpace: (id) => {
+      // The card's calls read follows the switcher through the spaceId
+      // thunk above (BO-F1-08): without this the card would keep reading
+      // the startup space after a switch.
+      shellActiveSpace = id;
       try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
         // The switch still applies to this tab.
       }
