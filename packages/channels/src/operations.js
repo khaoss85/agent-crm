@@ -25,7 +25,11 @@ import { advanceLetter, assertJobTransition, jobSendState, transitionInbox } fro
  * register a connection, ingest a verified webhook, queue a send through
  * the durable-jobs outbox, work the dead-letter queue, and run the
  * progressive initial history import (start one bounded page at a time,
- * read its progress) for adapters that declare readable past. Reads are
+ * read its progress) for adapters that declare readable past. The reply
+ * flow (BO-F1-07) proposes a human answer on the preferred channel —
+ * drafted by the caller or the workspace AI — gates it on the space's
+ * `send-without-approval` switch, sends the approved bytes through the
+ * outbox, and reads the reply lifecycle back. Reads are
  * plain functions over the same module services.
  *
  * What is deliberately NOT here: the per-space HTTP route (the pilot owns
@@ -65,6 +69,29 @@ export const CHANNEL_HISTORY_DEFAULT_PAGE = 50;
 /** A history page is provider I/O plus up to a hundred row writes: slower than a webhook verify. */
 export const CHANNEL_HISTORY_TIMEOUT_MS = 10000;
 export const CHANNEL_IMPORT_STATES = Object.freeze(['running', 'done']);
+/**
+ * The backoffice reply flow (BO-F1-07, "05 Scheda cliente"): a human writes
+ * an answer on the customer's preferred channel, optionally drafted by the
+ * workspace LLM ("Scrivi con AI"), and the send obeys the space's
+ * `send-without-approval` switch (BO-F0-06, off by default): with the switch
+ * off the reply waits for a human ok as a `space-ai-proposal` row and is
+ * never enqueued; the approval authorizes exactly the proposed bytes.
+ *
+ * Lifecycle, as the backoffice shows it: `pending-approval` (waiting for
+ * the ok) -> `approved` (ok recorded, send not yet requested) -> `queued`
+ * ("in consegna": the outbox job exists) -> `sent` ("consegnato": the
+ * provider accepted the message and proved its id) or `failed`; a refused
+ * proposal is `refused` and never sends. Provider delivered/read receipts
+ * keep arriving as inbox status events on the existing path; "consegnato"
+ * here is the provider's send receipt, guarded by CHANNEL_SEND_UNPROVEN.
+ */
+export const CHANNEL_REPLY_PERMISSION = 'send-without-approval';
+export const CHANNEL_REPLY_ACTION_KIND = 'channel-reply';
+export const CHANNEL_REPLY_STATES = Object.freeze([
+  'pending-approval', 'approved', 'queued', 'sent', 'failed', 'refused',
+]);
+/** A reply fits the proposal summary that carries it under approval. */
+export const CHANNEL_REPLY_TEXT_MAX = 2000;
 /**
  * The effect reason import-stored applied rows carry. It is provenance for
  * humans and the marker the webhook path trusts: the same provider message
@@ -329,6 +356,28 @@ export function createChannelOperations(deps) {
   if (resolveSender !== null && typeof resolveSender !== 'function') {
     throw new ValidationError('channel resolveSender must be a function opening the composed channel-sender@1 capability', {
       field: 'resolveSender',
+    });
+  }
+  // The handed-over `space-permission-gate@1` capability the composition
+  // creates (same hand-over shape as channel-sender@1). The reply flow
+  // refuses without it: an unwired composition must not send, nor silently
+  // skip the approval the roadmap promises.
+  const permissionGate = deps.permissionGate ?? null;
+  if (permissionGate !== null && (typeof permissionGate !== 'object'
+    || typeof permissionGate.gate !== 'function'
+    || typeof permissionGate.propose !== 'function'
+    || typeof permissionGate.proposal !== 'function')) {
+    throw new ValidationError('channel permissionGate must open the composed space-permission-gate@1 capability (gate, propose, proposal)', {
+      field: 'permissionGate',
+    });
+  }
+  // The opened `llm-complete@1` handle ("Scrivi con AI"). Optional: without
+  // it a caller-drafted reply still sends, but an AI draft refuses instead
+  // of reaching for another model.
+  const llm = deps.llm ?? null;
+  if (llm !== null && (typeof llm !== 'object' || typeof llm.complete !== 'function')) {
+    throw new ValidationError('channel llm must open the composed llm-complete@1 capability (complete)', {
+      field: 'llm',
     });
   }
   const sendTimeoutMs = Number.isSafeInteger(deps.config?.sendTimeoutMs) ? deps.config.sendTimeoutMs : CHANNEL_SEND_TIMEOUT_MS;
@@ -1619,6 +1668,307 @@ export function createChannelOperations(deps) {
     return { jobId: job.id, idempotencyKey, attempts: job.attempt, state: job.state };
   }
 
+  function requireReplyGate() {
+    if (!permissionGate) {
+      throw new AppError('Channel replies need the composed space-permission-gate@1 capability', {
+        code: 'CHANNEL_REPLY_GATE_MISSING', status: 500,
+      });
+    }
+    return permissionGate;
+  }
+
+  /**
+   * Resolve the connection a reply sends through. An explicit key wins and
+   * stays space-scoped (a key of another space is not found, never
+   * forbidden); otherwise the space's single active connection for the
+   * preferred channel answers. Zero or several matches refuse with a typed
+   * code so the caller names the connection instead of guessing.
+   */
+  function resolveReplyConnection(spaceId, { connectionKey = null, channel = null } = {}) {
+    if (typeof connectionKey === 'string' && connectionKey !== '') {
+      return requireActiveConnection(spaceId, connectionKey);
+    }
+    if (typeof channel !== 'string' || channel.trim() === '') {
+      throw new ValidationError('a reply names its connectionKey or its channel', { field: 'channel' });
+    }
+    const matches = connections()
+      .listWhere({ spaceId: assertSpaceId(spaceId) })
+      .filter((row) => row && row.channel === channel && row.status === 'active');
+    if (matches.length === 0) {
+      throw new AppError(`No active ${channel} connection in this space`, {
+        code: 'CHANNEL_REPLY_NO_CONNECTION', status: 404,
+      });
+    }
+    if (matches.length > 1) {
+      throw new AppError(`Several active ${channel} connections in this space: name the connectionKey`, {
+        code: 'CHANNEL_REPLY_AMBIGUOUS_CHANNEL', status: 409,
+      });
+    }
+    return matches[0];
+  }
+
+  /** Reverse `boundedKey` escaping for the reply action-key tuple. */
+  function unescapeKeyPart(value) {
+    return String(value).replace(/%3A/g, ':').replace(/%25/g, '%');
+  }
+
+  /**
+   * The reply identity the approval binds:
+   * `reply:<connection>:<to>:<key>:<text-hash>`, each free-charset
+   * component escaped so the join stays injective. The text fingerprint
+   * binds the approved bytes themselves: a summary changed after the human
+   * ok no longer reproduces the key, so the approved send refuses instead
+   * of sending something the human did not see.
+   */
+  function replyActionKey(connectionKey, to, replyKey, textHash) {
+    return boundedKey('reply', connectionKey, to, replyKey, textHash);
+  }
+
+  /** Split a reply action key back into its tuple. Fail-closed on drift. */
+  function parseReplyActionKey(actionKey) {
+    const parts = String(actionKey ?? '').split(':');
+    if (parts.length !== 5 || parts[0] !== 'reply'
+      || parts.some((part) => part === '')) {
+      throw new AppError('Channel reply key is not a reply the package proposed', {
+        code: 'CHANNEL_REPLY_KEY_INVALID', status: 500,
+      });
+    }
+    const [, connectionKey, to, replyKey, textHash] = parts.map(unescapeKeyPart);
+    return { connectionKey, to, replyKey, textHash };
+  }
+
+  /**
+   * The reply text: the caller's draft, or the workspace LLM's ("Scrivi con
+   * AI"). The adapter is used when present and refused when absent — a
+   * missing adapter never falls back to canned text.
+   */
+  async function replyText({ spaceId, channel, to, text, useAi, aiPrompt, actor }) {
+    if (typeof text === 'string' && text !== '') {
+      if (text.trim() === '' || text.length > CHANNEL_REPLY_TEXT_MAX) {
+        throw new ValidationError(`reply text must be non-empty text of at most ${CHANNEL_REPLY_TEXT_MAX} characters`, {
+          field: 'text',
+        });
+      }
+      return text;
+    }
+    if (useAi !== true) {
+      throw new ValidationError('a reply carries text or useAi, never neither', { field: 'text' });
+    }
+    if (!llm) {
+      throw new AppError('No workspace AI adapter is composed: draft the reply text instead', {
+        code: 'CHANNEL_LLM_UNAVAILABLE', status: 500,
+      });
+    }
+    const prompt = typeof aiPrompt === 'string' && aiPrompt.trim() !== ''
+      ? aiPrompt.trim().slice(0, 2000)
+      : `Draft a short customer-service reply for the ${channel} conversation with ${to}. Reply in the customer's language. Text only.`;
+    const completion = await llm.complete({
+      spaceId, purpose: 'write-assist', sources: [], actor,
+      messages: [{ role: 'user', content: prompt }],
+      maxTokens: 500,
+    });
+    const draft = completion && typeof completion.text === 'string' ? completion.text : '';
+    if (draft.trim() === '' || draft.length > CHANNEL_REPLY_TEXT_MAX) {
+      throw new AppError('The workspace AI returned no usable draft', {
+        code: 'CHANNEL_LLM_DRAFT_EMPTY', status: 500,
+      });
+    }
+    return draft;
+  }
+
+  /**
+   * Propose one human reply (BO-F1-07). With `send-without-approval` on in
+   * this space the reply queues through the outbox at once (`queued`); with
+   * the switch off (the default) the reply waits as a `space-ai-proposal`
+   * row (`pending-approval`) and nothing is enqueued — the provider sees
+   * nothing until a human approves and the approved send runs.
+   */
+  async function proposeReply(params) {
+    const actor = requireUser(params?.actor);
+    const spaceId = assertSpaceId(params?.spaceId);
+    const gate = requireReplyGate();
+    const connection = resolveReplyConnection(spaceId, {
+      connectionKey: params?.connectionKey ?? null,
+      channel: params?.channel ?? null,
+    });
+    const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
+    const draft = await replyText({
+      spaceId, channel: connection.channel, to: params?.to, text: params?.text,
+      useAi: params?.useAi, aiPrompt: params?.aiPrompt, actor,
+    });
+    const rawMessage = { to: params?.to, text: draft };
+    const message = normalizeOutboundMessage(adapter, spaceId, connection, rawMessage);
+    const replyKey = typeof params?.messageKey === 'string' && params.messageKey !== ''
+      ? params.messageKey
+      : fingerprintPayload(JSON.stringify(message));
+    const actionKey = replyActionKey(
+      connection.sourceKey, message.to, replyKey, fingerprintPayload(message.text),
+    );
+    const verdict = await gate.gate({ spaceId, permission: CHANNEL_REPLY_PERMISSION });
+    if (!verdict || verdict.decision === 'allow') {
+      const queued = await queueChannelSend({
+        spaceId, connectionKey: connection.sourceKey, message, messageKey: replyKey, actor,
+      });
+      return {
+        state: 'queued', proposalId: null, replayed: false,
+        connectionKey: connection.sourceKey, channel: connection.channel, to: message.to,
+        jobId: queued.jobId, idempotencyKey: queued.idempotencyKey,
+      };
+    }
+    if (!verdict || verdict.decision !== 'proposal') {
+      throw new AppError('The permission gate answered with an unknown verdict', {
+        code: 'CHANNEL_REPLY_GATE_INVALID', status: 500,
+      });
+    }
+    let proposed;
+    try {
+      proposed = await gate.propose({
+        spaceId, permission: CHANNEL_REPLY_PERMISSION,
+        actionKind: CHANNEL_REPLY_ACTION_KIND, actionKey, summary: message.text, actor,
+      });
+    } catch (error) {
+      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'SPACE_PERMISSION_ENABLED') {
+        // The switch flipped on between the gate read and the proposal
+        // write: the space now allows unattended sends, so send at once.
+        const queued = await queueChannelSend({
+          spaceId, connectionKey: connection.sourceKey, message, messageKey: replyKey, actor,
+        });
+        return {
+          state: 'queued', proposalId: null, replayed: false,
+          connectionKey: connection.sourceKey, channel: connection.channel, to: message.to,
+          jobId: queued.jobId, idempotencyKey: queued.idempotencyKey,
+        };
+      }
+      throw error;
+    }
+    return {
+      state: 'pending-approval', proposalId: proposed.proposalId, replayed: proposed.replayed === true,
+      connectionKey: connection.sourceKey, channel: connection.channel, to: message.to,
+      idempotencyKey: channelSendIdempotencyKey({
+        spaceId, connectionKey: connection.sourceKey, messageKey: replyKey,
+      }),
+    };
+  }
+
+  /**
+   * Send one approved reply. The proposal authorizes exactly the bytes it
+   * carries: the text sends verbatim from the approved row (re-normalized
+   * through the adapter, which must reproduce the approved text), and the
+   * recomputed action key must equal the proposal's — any drift refuses
+   * instead of sending something the human did not see.
+   */
+  async function sendApprovedReply(params) {
+    const actor = requireUser(params?.actor);
+    const spaceId = assertSpaceId(params?.spaceId);
+    const gate = requireReplyGate();
+    const proposalId = typeof params?.proposalId === 'string' && params.proposalId !== ''
+      ? params.proposalId
+      : null;
+    if (!proposalId) {
+      throw new ValidationError('sendApprovedReply needs the approved proposalId', { field: 'proposalId' });
+    }
+    const row = await gate.proposal(spaceId, proposalId);
+    if (!row) {
+      throw new AppError('Unknown reply proposal', { code: 'CHANNEL_REPLY_UNKNOWN', status: 404 });
+    }
+    if (row.permission !== CHANNEL_REPLY_PERMISSION || row.actionKind !== CHANNEL_REPLY_ACTION_KIND) {
+      throw new AppError('This proposal is not a channel reply', { code: 'CHANNEL_REPLY_MISMATCH', status: 409 });
+    }
+    if (row.status === 'refused') {
+      throw new AppError('This reply was refused: it never sends', { code: 'CHANNEL_REPLY_REFUSED', status: 409 });
+    }
+    if (row.status !== 'approved') {
+      throw new AppError('This reply still waits for a human ok', { code: 'CHANNEL_REPLY_NOT_APPROVED', status: 409 });
+    }
+    const routed = parseReplyActionKey(row.actionKey);
+    const connection = requireActiveConnection(spaceId, routed.connectionKey);
+    const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
+    const message = normalizeOutboundMessage(adapter, spaceId, connection, { to: routed.to, text: row.summary });
+    if (message.text !== row.summary || fingerprintPayload(message.text) !== routed.textHash) {
+      throw new AppError('The approved text changed after the human ok: re-propose the reply', {
+        code: 'CHANNEL_REPLY_TEXT_DRIFT', status: 409,
+      });
+    }
+    const recomputed = replyActionKey(
+      connection.sourceKey, message.to, routed.replyKey, fingerprintPayload(message.text),
+    );
+    if (recomputed !== row.actionKey) {
+      throw new AppError('The approved reply no longer addresses its connection: re-propose the reply', {
+        code: 'CHANNEL_REPLY_KEY_INVALID', status: 409,
+      });
+    }
+    const queued = await queueChannelSend({
+      spaceId, connectionKey: connection.sourceKey, message, messageKey: routed.replyKey, actor,
+    });
+    return {
+      state: 'queued', proposalId: row.id ?? proposalId,
+      connectionKey: connection.sourceKey, channel: connection.channel, to: message.to,
+      jobId: queued.jobId, idempotencyKey: queued.idempotencyKey,
+    };
+  }
+
+  /**
+   * Read one reply's lifecycle state for the backoffice card: waiting for
+   * the ok, approved, in consegna (the outbox job exists), consegnato (the
+   * provider receipt is in), failed, or refused. The job lookup reads the
+   * durable-jobs rows the outbox wrote — the same rows the worker settles.
+   */
+  async function readReply(params) {
+    const spaceId = assertSpaceId(params?.spaceId);
+    const gate = requireReplyGate();
+    const proposalId = typeof params?.proposalId === 'string' && params?.proposalId !== ''
+      ? params.proposalId
+      : null;
+    if (!proposalId) {
+      throw new ValidationError('readReply needs the proposalId', { field: 'proposalId' });
+    }
+    const row = await gate.proposal(spaceId, proposalId);
+    if (!row) {
+      throw new AppError('Unknown reply proposal', { code: 'CHANNEL_REPLY_UNKNOWN', status: 404 });
+    }
+    const routed = parseReplyActionKey(row.actionKey);
+    const connection = getConnection(spaceId, routed.connectionKey);
+    const base = {
+      proposalId: row.id ?? proposalId,
+      connectionKey: routed.connectionKey,
+      channel: connection?.channel ?? null,
+      to: routed.to,
+    };
+    if (row.status === 'refused') {
+      return {
+        ...base, state: 'refused',
+        decidedBy: row.decidedBy ?? null, decidedAt: row.decidedAt ?? null,
+        refusalReason: row.refusalReason ?? null,
+      };
+    }
+    if (row.status !== 'approved') {
+      return { ...base, state: 'pending-approval' };
+    }
+    const idempotencyKey = channelSendIdempotencyKey({
+      spaceId, connectionKey: routed.connectionKey, messageKey: routed.replyKey,
+    });
+    const stored = await jobs().list(500);
+    const job = Array.isArray(stored)
+      ? stored.find((entry) => entry
+        && (entry.idempotencyRoot === idempotencyKey || entry.outcomeReference === idempotencyKey))
+      : null;
+    if (!job) {
+      return { ...base, state: 'approved', idempotencyKey };
+    }
+    const letter = letters().listWhere({ spaceId, sourceKey: boundedKey('ch-dl', idempotencyKey) })[0] ?? null;
+    const sendState = jobSendState({ jobState: job.state, letterState: letter?.state ?? null });
+    if (sendState === 'sent') {
+      return {
+        ...base, state: 'sent', idempotencyKey,
+        jobId: job.id, attempts: job.attempt ?? 1,
+      };
+    }
+    if (sendState === 'failed' || sendState === 'dead-letter') {
+      return { ...base, state: 'failed', idempotencyKey, jobId: job.id };
+    }
+    return { ...base, state: 'queued', idempotencyKey, jobId: job.id };
+  }
+
   /** Record one terminal send failure. Never the raw payload, never a secret. */
   async function recordDeadLetter({ spaceId, connectionKey, idempotencyKey, jobId, errorCode, payloadFingerprint, attempts }) {
     const now = nowIso();
@@ -1877,6 +2227,9 @@ export function createChannelOperations(deps) {
     queueChannelSend,
     queueTemplateSend,
     requeueChannelLetter,
+    proposeReply,
+    sendApprovedReply,
+    readReply,
     registerChannelSendHandlers,
     startInitialImport,
     advanceInitialImport,

@@ -106,6 +106,60 @@ function openSenderResolution(channelSender, runtime) {
   return opened.resolveSender;
 }
 
+/**
+ * Open the handed-over `space-permission-gate@1` capability for one runtime
+ * (BO-F1-07). Absent until a reply proposes: the reply flow refuses
+ * CHANNEL_REPLY_GATE_MISSING then, never here, so compositions without the
+ * space-permissions package keep booting exactly as before.
+ */
+function openPermissionGate(gateCapability, runtime) {
+  if (gateCapability === undefined || gateCapability === null) return null;
+  if (typeof gateCapability.create !== 'function') {
+    throw new AppError(
+      'The channels package needs the space-permissions package capability space-permission-gate@1: '
+      + 'compose it with the provider definition, e.g. createChannelsPackage({ spacePermissions }) '
+      + 'beside createSpacePermissionsDomain()',
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+  const opened = gateCapability.create({ modules: runtime.modules, consumer: CHANNELS_PACKAGE });
+  if (!opened || typeof opened.gate !== 'function'
+    || typeof opened.propose !== 'function' || typeof opened.proposal !== 'function') {
+    throw new AppError(
+      'The channels package needs the space-permissions package capability space-permission-gate@1: '
+      + 'the created capability opens no gate/propose/proposal',
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+  return opened;
+}
+
+/**
+ * Open the handed-over `llm-complete@1` capability for one runtime
+ * ("Scrivi con AI", BO-F1-07). Absent until a reply asks for an AI draft:
+ * caller-drafted replies never touch it.
+ */
+function openLlmComplete(llmCapability, runtime) {
+  if (llmCapability === undefined || llmCapability === null) return null;
+  if (typeof llmCapability.create !== 'function') {
+    throw new AppError(
+      'The channels package needs the llm package capability llm-complete@1: '
+      + 'compose it with the provider definition, e.g. createChannelsPackage({ llm }) '
+      + 'beside createLlmPackage()',
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+  const opened = llmCapability.create({ modules: runtime.modules });
+  if (!opened || typeof opened.complete !== 'function') {
+    throw new AppError(
+      'The channels package needs the llm package capability llm-complete@1: '
+      + 'the created capability opens no complete',
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+  return opened;
+}
+
 /** @param {Record<string, string>} [config] */
 export function buildChannelConnectionActions(config = {}) {
   void config;
@@ -157,6 +211,8 @@ export function buildChannelConnectionActions(config = {}) {
  *   config?: Record<string, any>,
  *   modules?: Record<string, string>,
  *   customerData?: { capabilities?: Array<any> },
+ *   spacePermissions?: { capabilities?: Array<any> },
+ *   llm?: { capabilities?: Array<any> },
  * }} [options] `resolveSecret` is the deployment's custody edge; `tenantId`
  *   namespaces the jobs table inside the bound instance. Both are required
  *   because a package that sends without them would invent custody.
@@ -168,6 +224,11 @@ export function buildChannelConnectionActions(config = {}) {
  *   options. Without it the initial history import still stores
  *   conversations and messages and leaves senders pending, while webhooks
  *   and sends work standalone as before.
+ *   `spacePermissions` and `llm` are the composed space-permissions and llm
+ *   package definitions, same hand-over: the reply flow (BO-F1-07) gates on
+ *   `send-without-approval` through the former and drafts "Scrivi con AI"
+ *   text through the latter. Both stay optional at composition — the reply
+ *   flow refuses when it needs one that is missing, never at boot.
  */
 export function createChannelsPackage(options = {}) {
   const registries = new ChannelRegistries({ channelAdapters: options.channelAdapters ?? [] });
@@ -192,6 +253,21 @@ export function createChannelsPackage(options = {}) {
     ? options.customerData.capabilities.find((entry) => entry?.name === 'channel-sender' && entry?.version === 1) ?? null
     : null;
 
+  // The same hand-over for the reply approval gate (BO-F1-07): the
+  // space-permissions package definition composed beside channels. Absent
+  // is fine until a reply proposes — the reply flow refuses then, never at
+  // boot, so standalone compositions keep working exactly as before.
+  const gateOffered = Array.isArray(options.spacePermissions?.capabilities)
+    ? options.spacePermissions.capabilities.find((entry) => entry?.name === 'space-permission-gate' && entry?.version === 1) ?? null
+    : null;
+
+  // The workspace LLM ("Scrivi con AI", BO-F1-07): the llm package
+  // definition composed beside channels. Absent is fine until a reply asks
+  // for an AI draft — caller-drafted replies never need it.
+  const llmOffered = Array.isArray(options.llm?.capabilities)
+    ? options.llm.capabilities.find((entry) => entry?.name === 'llm-complete' && entry?.version === 1) ?? null
+    : null;
+
   // One composed instance PER APPLICATION runtime: operations close over
   // the registries and custody edge, and over the runtime's own database
   // and modules — the same per-runtime pattern the signature operations use,
@@ -208,6 +284,8 @@ export function createChannelsPackage(options = {}) {
         tenantId,
         config,
         resolveSender: openSenderResolution(offered, runtime),
+        permissionGate: openPermissionGate(gateOffered, runtime),
+        llm: openLlmComplete(llmOffered, runtime),
       });
       composedByRuntime.set(runtime, composed);
     }
@@ -287,6 +365,52 @@ export function createChannelsPackage(options = {}) {
         create(runtime) {
           const ops = operations(runtime);
           return (params) => ops.queueChannelSend(params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'propose-channel-reply',
+        label: 'Propose channel reply',
+        appMethod: 'proposeReply',
+        description: 'Propose one human reply on the space connection for the preferred channel (or the named connection), drafted by the caller or the workspace AI. With send-without-approval on the reply queues through the outbox at once; with the switch off (the default) the reply waits as a human proposal and nothing is enqueued.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+          { name: 'connectionKey', type: 'string', required: false, hint: 'The active connection source key in that space. Names the connection when the channel has several.' },
+          { name: 'channel', type: 'string', required: false, hint: 'Preferred channel (whatsapp, instagram, sms, email, ...): the space single active connection answers.' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.proposeReply(params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'send-approved-reply',
+        label: 'Send approved reply',
+        appMethod: 'sendApprovedReply',
+        description: 'Send one human-approved reply proposal through the durable-jobs outbox. Refuses unless the proposal is approved, and sends exactly the approved bytes: any drift between the proposal and the current connection or normalization refuses instead of sending.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+          { name: 'proposalId', type: 'string', required: true, hint: 'The approved space-ai-proposal row id.' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.sendApprovedReply(params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'read-channel-reply',
+        label: 'Read channel reply',
+        appMethod: 'readReply',
+        description: 'Read one reply lifecycle state: pending-approval, approved, queued (in consegna), sent (consegnato, provider receipt in), failed, or refused.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+          { name: 'proposalId', type: 'string', required: true, hint: 'The space-ai-proposal row id.' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.readReply(params);
         },
       },
       {
@@ -374,8 +498,8 @@ export function createChannelsPackage(options = {}) {
         sendRetry: 'bounded attempts on the durable job (default 5); transient failures ride the worker backoff; exhaustion writes a dead-letter row with phase, error code and payload fingerprint',
         secretDiscipline: 'connections store secretRef, never the secret; the deployment resolves it at call time; outbox payloads carry no secret-shaped keys',
         initialImport: 'one bounded history page per advance call through the deduped inbox path; every event writes one channel-import-outcome row and the progress counts those rows (one COUNT per state), never hand tallies; sender reconciliation arrives through the composed channel-sender@1 capability when present and stays pending otherwise; the cursor moves only on an owned transition',
-        reuses: ['channel-sender@1'],
-        humanApproval: 'register, status changes, sends and requeues require actor.type === "user"; provider-driven ingest runs under a system actor and ignores any caller-supplied actor',
+        reuses: ['channel-sender@1', 'space-permission-gate@1', 'llm-complete@1'],
+        humanApproval: 'register, status changes, sends, replies and requeues require actor.type === "user"; provider-driven ingest runs under a system actor and ignores any caller-supplied actor; channel replies obey send-without-approval (off by default): with the switch off a reply waits as a space-ai-proposal and nothing is enqueued until a human approves',
         notModeled: [
           'real provider adapters beyond WhatsApp (Instagram, Gmail, …) — fixture only until credentials exist',
           'the per-space HTTP route — the pilot owns it and passes spaceId from the verified path',
