@@ -15,6 +15,7 @@ import {
   assertSpaceId,
   boundedKey,
   channelSendIdempotencyKey,
+  connectionSecretRef,
 } from '../packages/channels/src/connection.js';
 import {
   fingerprintPayload,
@@ -116,6 +117,36 @@ test('secret references are locators, never values', () => {
     // its reference can never land in a row or an audit trail.
     'kit-secret-value-1', 'simplereference123', 'vault://', 'vault:// with space']) {
     assert.throws(() => assertSecretReference(bad), /secretRef must be a bounded reference locator/);
+  }
+});
+
+test('one space, channel and account maps to one vault slot', () => {
+  // BO-F1-02 finding: authorize stored every account of a channel in one
+  // vault slot, so two WhatsApp accounts in one space shared a credential.
+  const first = connectionSecretRef({ spaceId: 'presti', channel: 'whatsapp', account: '+390200000001' });
+  const second = connectionSecretRef({ spaceId: 'presti', channel: 'whatsapp', account: '+390200000002' });
+  assert.match(first, /^vault:\/\/presti\/whatsapp\/[0-9a-f]{64}$/);
+  assert.match(second, /^vault:\/\/presti\/whatsapp\/[0-9a-f]{64}$/);
+  assert.notEqual(first, second, 'two accounts never share one slot');
+  assert.equal(
+    connectionSecretRef({ spaceId: 'presti', channel: 'whatsapp', account: '  +390200000001 ' }),
+    first,
+    'padding resolves to the same slot, like the connection sourceKey',
+  );
+  assert.equal(
+    connectionSecretRef({ spaceId: 'presti', channel: 'instagram', account: 'Palestra.Esempio' }),
+    connectionSecretRef({ spaceId: 'presti', channel: 'instagram', account: 'palestra.esempio' }),
+    'case resolves to the same slot, like the connection sourceKey',
+  );
+  assert.ok(!first.includes('+390200000001'), 'the account travels as a fingerprint, never in clear');
+  assert.doesNotThrow(() => assertSecretReference(first), 'the derived slot stays a valid locator');
+  for (const bad of [
+    { spaceId: '', channel: 'whatsapp', account: '+390200000001' },
+    { spaceId: 'presti', channel: 'pager', account: '+390200000001' },
+    { spaceId: 'presti', channel: 'whatsapp', account: '' },
+    { spaceId: 'presti', channel: 'whatsapp', account: 'line\nbreak' },
+  ]) {
+    assert.throws(() => connectionSecretRef(bad), /(spaceId|channel|account)/);
   }
 });
 

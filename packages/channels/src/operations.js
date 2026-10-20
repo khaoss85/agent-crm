@@ -1464,7 +1464,9 @@ export function createChannelOperations(deps) {
    * report. Entries sort by connection key, so two reads of one space
    * always agree. Read-only like the other progress surface: no actor, no
    * mutation, no secret material — the entry carries the binding identity
-   * and the adapter, never the secret reference.
+   * (including the account, so the backoffice can resume an incomplete
+   * connection through authorize) and the adapter, never the secret
+   * reference.
    */
   function readSyncState(params) {
     const spaceId = assertSpaceId(params?.spaceId);
@@ -1473,6 +1475,7 @@ export function createChannelOperations(deps) {
       return Object.freeze({
         connectionKey: connection.sourceKey,
         channel: connection.channel,
+        account: connection.account,
         adapter: connection.adapter,
         adapterVersion: connection.adapterVersion,
         status: connection.status,
