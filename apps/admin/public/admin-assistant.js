@@ -351,8 +351,9 @@ async function answerRicontattare(client) {
     if (first?.status === 'open') {
       // Irreversible (CONVERSATION_TRANSITIONS has no reopen): single click
       // must never close a thread. customerFacing routes it through the
-      // two-step confirmation gate, and the label names the thread so the
-      // operator confirms exactly what closes.
+      // two-step confirmation gate, and the effect gate in
+      // actionNeedsConfirmation covers close even with the flag off; the
+      // label names the thread so the operator confirms exactly what closes.
       answer.actions.push({
         id: `bo04:chiudi:${conversationId}`,
         label: `Chiudi il thread di ${conversationLabel(first)}`,
@@ -414,15 +415,19 @@ async function answerSegnali(client) {
 }
 
 /**
- * Where opportunity records actually render: the pipeline board
- * (`#/pipelines/<name>`), never the generated-module detail route — core
- * modules are not served by the generic records surface (admin-modules.js
- * resolves schema.generatedModules only, so `#/modules/opportunity/<id>`
- * lands on 'Module not found'). Null when no board covers them.
+ * The pipeline board definition behind opportunity records
+ * (`#/pipelines/<name>`, admin-pipeline.js): name plus stage keys, labels
+ * and types. Records render there, never on the generated-module detail
+ * route — core modules are not served by the generic records surface
+ * (admin-modules.js resolves schema.generatedModules only, so
+ * `#/modules/opportunity/<id>` lands on 'Module not found').
+ * Null when no board covers opportunities, or when the schema entry carries
+ * no usable stage definition: then answers fall back to the legacy stage,
+ * never to an invented grouping.
  * @param {{ request: (path: string) => Promise<any> }} client
- * @returns {Promise<string | null>}
+ * @returns {Promise<{ name: string, stages: Array<{ key: string, label?: string, type?: string }> } | null>}
  */
-async function opportunityBoardHref(client) {
+async function opportunityBoard(client) {
   try {
     const schema = await client.request('/api/schema');
     const pipeline = Array.isArray(schema?.pipelines)
@@ -430,7 +435,8 @@ async function opportunityBoardHref(client) {
         && entry.module === 'opportunity'
         && typeof entry.name === 'string' && /^[a-z][a-z0-9-]*$/.test(entry.name))
       : undefined;
-    return pipeline ? `#/pipelines/${pipeline.name}` : null;
+    if (!pipeline || !Array.isArray(pipeline.stages)) return null;
+    return pipeline;
   } catch {
     return null;
   }
@@ -445,6 +451,54 @@ async function opportunityBoardHref(client) {
 function isOpenPipeline(row) {
   if (row?.stage === 'won' || row?.stage === 'lost') return false;
   return row?.closedAt === null || row?.closedAt === undefined;
+}
+
+/**
+ * Legacy stage of a row no board covers: the stored stage, then status.
+ * @param {any} row
+ */
+function legacyStageOf(row) {
+  return typeof row?.stage === 'string' && row.stage !== '' ? row.stage
+    : typeof row?.status === 'string' && row.status !== '' ? row.status : 'senza fase';
+}
+
+/**
+ * @param {any} row
+ * @param {Map<string, number>} stageCount
+ * @param {Map<string, { stage: string, currency: string, cents: number }>} stageTotals
+ * @param {(row: any) => string} stageOf
+ */
+function accumulateStage(row, stageCount, stageTotals, stageOf) {
+  const stage = stageOf(row);
+  stageCount.set(stage, (stageCount.get(stage) ?? 0) + 1);
+  if (Number.isSafeInteger(row?.valueCents)) {
+    const currency = typeof row?.currency === 'string' ? row.currency : '';
+    const key = JSON.stringify([stage, currency]);
+    const total = stageTotals.get(key) ?? { stage, currency, cents: 0 };
+    if (Number.isSafeInteger(total.cents + /** @type {number} */ (row.valueCents))) {
+      total.cents += /** @type {number} */ (row.valueCents);
+      stageTotals.set(key, total);
+    }
+  }
+}
+
+/**
+ * @param {{ lines: string[] }} answer
+ * @param {Map<string, number>} stageCount
+ * @param {Map<string, { stage: string, currency: string, cents: number }>} stageTotals
+ * @param {Map<string, string>} [stageLabels]
+ */
+function pushStageLines(answer, stageCount, stageTotals, stageLabels = new Map()) {
+  const topStages = [...stageCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, SUGGESTION_MAX_LISTED);
+  for (const [stage, count] of topStages) {
+    const shown = stageLabels.get(stage) ?? stage;
+    answer.lines.push(`• ${shortText(shown, 30)}: ${count}`);
+    for (const total of [...stageTotals.values()]
+      .filter((entry) => entry.stage === stage)
+      .sort((a, b) => (a.currency < b.currency ? -1 : a.currency > b.currency ? 1 : 0))) {
+      answer.lines.push(`• ${shortText(shown, 30)} — totale ${formatMinorUnits(total.cents, total.currency)}`);
+    }
+  }
 }
 
 /** Chiusura mese: opportunità aperte per fase, importi in centesimi interi. */
@@ -464,65 +518,93 @@ async function answerChiusura(client) {
     answer.unavailable.push('Opportunità: elenco non leggibile in questo spazio.');
     return answer;
   }
-  // Open pipeline only: won/lost/closed rows are archive, not closable.
-  const open = items.filter(isOpenPipeline);
-  // Counts per stage; money per (stage, currency) — currencies are never
-  // summed together, one formatMinorUnits line per currency like the
-  // pipeline board (admin-pipeline.js renderColumn).
-  /** @type {Map<string, number>} */
-  const stageCount = new Map();
-  /** @type {Map<string, { stage: string, currency: string, cents: number }>} */
-  const stageTotals = new Map();
-  for (const row of open) {
-    const stage = typeof row?.stage === 'string' && row.stage !== '' ? row.stage
-      : typeof row?.status === 'string' && row.status !== '' ? row.status : 'senza fase';
-    stageCount.set(stage, (stageCount.get(stage) ?? 0) + 1);
-    if (Number.isSafeInteger(row?.valueCents)) {
-      const currency = typeof row?.currency === 'string' ? row.currency : '';
-      const key = JSON.stringify([stage, currency]);
-      const total = stageTotals.get(key) ?? { stage, currency, cents: 0 };
-      if (Number.isSafeInteger(total.cents + /** @type {number} */ (row.valueCents))) {
-        total.cents += /** @type {number} */ (row.valueCents);
-        stageTotals.set(key, total);
-      }
-    }
-  }
+  const labelOf = (row) => shortText(row?.name ?? row?.companyName ?? row?.title, 60) || shortText(row?.id, 24);
   // Honest bounds: /api/opportunities without a limit serves the server
   // default page (OPPORTUNITY_SERVER_DEFAULT_LIMIT) — at the cap the headline
   // says which page it counts, never a total.
   const capped = items.length >= OPPORTUNITY_SERVER_DEFAULT_LIMIT;
   const pageNote = capped ? ` (prime ${OPPORTUNITY_SERVER_DEFAULT_LIMIT} lette)` : '';
-  answer.lines.push(open.length === 1
-    ? `1 opportunità aperta in pipeline${items.length !== 1 ? ` su ${items.length} lette` : ''}${pageNote}.`
-    : `${open.length} opportunità aperte in pipeline${items.length !== open.length ? ` su ${items.length} lette` : ''}${pageNote}.`);
-  const topStages = [...stageCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, SUGGESTION_MAX_LISTED);
-  for (const [stage, count] of topStages) {
-    answer.lines.push(`• ${shortText(stage, 30)}: ${count}`);
-    for (const total of [...stageTotals.values()]
-      .filter((entry) => entry.stage === stage)
-      .sort((a, b) => (a.currency < b.currency ? -1 : a.currency > b.currency ? 1 : 0))) {
-      answer.lines.push(`• ${shortText(stage, 30)} — totale ${formatMinorUnits(total.cents, total.currency)}`);
-    }
-  }
-  const labelOf = (row) => shortText(row?.name ?? row?.companyName ?? row?.title, 60) || shortText(row?.id, 24);
-  const boardHref = await opportunityBoardHref(client);
-  if (boardHref !== null) {
-    for (const row of open) {
-      if (answer.sources.length >= SUGGESTION_MAX_SOURCES) break;
-      if (!isSafeRecordId(row?.id)) continue;
-      const label = labelOf(row) || row.id;
-      answer.sources.push({ kind: 'record', module: 'opportunity', id: row.id, label, href: boardHref });
-    }
-    const first = answer.sources[0];
-    if (first) {
-      answer.actions.push({ id: 'bo04:apri-primo', label: `Apri: ${first.label}`, kind: 'navigate', href: first.href, customerFacing: false });
-    }
-  } else {
-    // No pipeline board renders opportunities in this space: name the
-    // records as text instead of linking a dead route.
+  const board = await opportunityBoard(client);
+  if (board === null) {
+    // No board covers opportunities in this space: legacy stage grouping,
+    // records named as text, never a link to a board that does not exist.
+    const open = items.filter(isOpenPipeline);
+    /** @type {Map<string, number>} */
+    const stageCount = new Map();
+    /** @type {Map<string, { stage: string, currency: string, cents: number }>} */
+    const stageTotals = new Map();
+    for (const row of open) accumulateStage(row, stageCount, stageTotals, legacyStageOf);
+    answer.lines.push(open.length === 1
+      ? `1 opportunità aperta in pipeline${items.length !== 1 ? ` su ${items.length} lette` : ''}${pageNote}.`
+      : `${open.length} opportunità aperte in pipeline${items.length !== open.length ? ` su ${items.length} lette` : ''}${pageNote}.`);
+    pushStageLines(answer, stageCount, stageTotals);
     for (const row of open.slice(0, SUGGESTION_MAX_LISTED)) {
       answer.lines.push(`• ${labelOf(row) || shortText(row?.id, 24)}`);
     }
+    return answer;
+  }
+  // Board-aware scope, like admin-pipeline.js renderAll: only rows placed on
+  // this pipeline (pipelineKey match) group by pipelineStage; open vs
+  // terminal comes from the pipeline definition stage types (won/lost), plus
+  // server-closed rows (closedAt). Rows no board covers keep the legacy
+  // stage, are named as text, and are never linked to a board that hides
+  // them; rows with a stage outside the definition are disclosed, never
+  // misclassified into a column.
+  const boardHref = `#/pipelines/${board.name}`;
+  const stageType = new Map(board.stages
+    .filter((stage) => stage !== null && typeof stage === 'object' && typeof stage.key === 'string')
+    .map((stage) => [stage.key, stage.type]));
+  const stageKeys = new Set(stageType.keys());
+  const stageLabels = new Map(board.stages
+    .filter((stage) => stage !== null && typeof stage === 'object'
+      && typeof stage.key === 'string' && typeof stage.label === 'string')
+    .map((stage) => [stage.key, stage.label]));
+  const isTerminalKey = (key) => stageType.get(key) === 'won' || stageType.get(key) === 'lost';
+  const onBoard = items.filter((row) => row?.pipelineKey === board.name);
+  const offBoard = items.filter((row) => row?.pipelineKey !== board.name);
+  const openPlaced = onBoard.filter((row) => stageKeys.has(row?.pipelineStage)
+    && !isTerminalKey(row?.pipelineStage)
+    && (row?.closedAt === null || row?.closedAt === undefined));
+  const drift = onBoard.filter((row) => !stageKeys.has(row?.pipelineStage));
+  const offOpen = offBoard.filter(isOpenPipeline);
+  /** @type {Map<string, number>} */
+  const stageCount = new Map();
+  /** @type {Map<string, { stage: string, currency: string, cents: number }>} */
+  const stageTotals = new Map();
+  // Counts per pipelineStage; money per (stage, currency) — currencies are
+  // never summed together, one formatMinorUnits line per currency like the
+  // pipeline board (admin-pipeline.js renderColumn).
+  for (const row of openPlaced) {
+    accumulateStage(row, stageCount, stageTotals, (candidate) => candidate?.pipelineStage);
+  }
+  answer.lines.push(openPlaced.length === 1
+    ? `1 opportunità aperta in pipeline ${board.name}${items.length !== 1 ? ` su ${items.length} lette` : ''}${pageNote}.`
+    : `${openPlaced.length} opportunità aperte in pipeline ${board.name}${items.length !== openPlaced.length ? ` su ${items.length} lette` : ''}${pageNote}.`);
+  pushStageLines(answer, stageCount, stageTotals, stageLabels);
+  if (drift.length > 0) {
+    answer.lines.push(`${drift.length} con fase fuori definizione${capped ? ' tra le lette' : ''} (la board le mostra a parte, mai in colonna).`);
+  }
+  if (offOpen.length > 0) {
+    /** @type {Map<string, number>} */
+    const offCount = new Map();
+    /** @type {Map<string, { stage: string, currency: string, cents: number }>} */
+    const offTotals = new Map();
+    for (const row of offOpen) accumulateStage(row, offCount, offTotals, legacyStageOf);
+    answer.lines.push(`${offOpen.length} fuori pipeline ${board.name}${capped ? ' tra le lette' : ''} (la board non le mostra, senza link).`);
+    pushStageLines(answer, offCount, offTotals);
+    for (const row of offOpen.slice(0, SUGGESTION_MAX_LISTED)) {
+      answer.lines.push(`• ${labelOf(row) || shortText(row?.id, 24)}`);
+    }
+  }
+  for (const row of openPlaced) {
+    if (answer.sources.length >= SUGGESTION_MAX_SOURCES) break;
+    if (!isSafeRecordId(row?.id)) continue;
+    const label = labelOf(row) || row.id;
+    answer.sources.push({ kind: 'record', module: 'opportunity', id: row.id, label, href: boardHref });
+  }
+  const first = answer.sources[0];
+  if (first) {
+    answer.actions.push({ id: 'bo04:apri-primo', label: `Apri: ${first.label}`, kind: 'navigate', href: first.href, customerFacing: false });
   }
   return answer;
 }
@@ -536,7 +618,10 @@ async function answerSlot(client) {
     answer.lines.push('Il pannello non sposta la calendarizzazione da solo: apri il thread e proponi gli slot al cliente.');
     return answer;
   }
-  const booked = appointments.filter((row) => row?.status === 'booked' || row?.status === undefined);
+  // Fissati means really fixed: booked plus confirmed (appointment module
+  // status enum). Done is history, not a slot to propose; cancelled and
+  // no-show are out; a missing status is never counted as booked.
+  const booked = appointments.filter((row) => row?.status === 'booked' || row?.status === 'confirmed');
   answer.lines.push(`${booked.length} appuntamenti fissati letti. Il blocco da 45 minuti si propone al cliente nel thread, dopo conferma.`);
   const labelOf = (row) => `${shortText(row?.startsAt ?? row?.date, 24) || 'appuntamento'} ${shortText(row?.subjectLabel, 40) || ''}`.trim();
   answer.sources.push(...takeSources(newestFirst(booked), 'appointment', labelOf));
@@ -748,8 +833,33 @@ export async function askFreeQuestion(client, status, question) {
 }
 
 /**
+ * Whether an action closes a conversation thread. Close is irreversible
+ * (CONVERSATION_TRANSITIONS has no reopen), so it always needs confirmation
+ * no matter what flag its builder set — the gate is per effect, never per
+ * caller-supplied flag.
+ * @param {AssistantAction} action
+ */
+function isCloseAction(action) {
+  const path = action?.request?.path;
+  if (action?.kind !== 'api' || typeof path !== 'string') return false;
+  const match = /^\/api\/modules\/conversation\/records\/([^/]+)\/actions\/(mark-read|close)$/.exec(path);
+  return match !== null && match[2] === 'close';
+}
+
+/**
+ * Whether an action needs the two-step confirmation: every customer-facing
+ * action, plus every close by effect even when a (forged or future) builder
+ * left customerFacing false. Mark-read stays single-step: internal
+ * bookkeeping, reversible, never customer-facing.
+ * @param {AssistantAction} action
+ */
+function actionNeedsConfirmation(action) {
+  return action?.customerFacing === true || isCloseAction(action);
+}
+
+/**
  * Execute one linked action for real. The confirmation gate is per action,
- * not per sweep: a customer-facing action runs only when confirmedActionId
+ * not per sweep: a gated action runs only when confirmedActionId
  * names exactly that action id. Without confirmation nothing is requested
  * and nothing navigates — the refusal carries the confirm label the panel
  * shows on the second step.
@@ -765,7 +875,7 @@ export async function runAssistantAction(client, action, options = {}) {
   if (action.kind !== 'navigate' && action.kind !== 'api') {
     throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: tipo sconosciuto.`);
   }
-  if (action.customerFacing === true && confirmedActionId !== action.id) {
+  if (actionNeedsConfirmation(action) && confirmedActionId !== action.id) {
     return {
       ok: false,
       needsConfirmation: true,
@@ -886,7 +996,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     wrap.appendChild(el(doc, 'p', 'bo-assistant-heading', 'Azioni collegate'));
     for (const action of answer.actions) {
       if (!action || typeof action.id !== 'string') continue;
-      const pending = state.pendingConfirmId === action.id && action.customerFacing === true;
+      const pending = state.pendingConfirmId === action.id && actionNeedsConfirmation(action);
       const button = el(
         doc,
         'button',
@@ -931,7 +1041,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
 
   async function executeAction(action) {
     if (state.busy) return;
-    if (action.customerFacing === true && state.pendingConfirmId !== action.id) {
+    if (actionNeedsConfirmation(action) && state.pendingConfirmId !== action.id) {
       state.pendingConfirmId = action.id;
       render();
       return;

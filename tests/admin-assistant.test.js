@@ -205,12 +205,22 @@ test('chiusura: somme intere per fase, mai float', async () => {
   const client = stubClient({
     '/api/opportunities': {
       items: [
-        { id: 'opp-1', name: 'Prova costume', stage: 'proposal', valueCents: 150000, currency: 'EUR' },
-        { id: 'opp-2', name: 'Annuale', stage: 'proposal', valueCents: 20000, currency: 'EUR' },
-        { id: 'opp-3', name: 'Senza importo', stage: 'new' },
+        { id: 'opp-1', name: 'Prova costume', pipelineKey: 'b2b-sales', pipelineStage: 'proposal', stage: 'proposal', valueCents: 150000, currency: 'EUR' },
+        { id: 'opp-2', name: 'Annuale', pipelineKey: 'b2b-sales', pipelineStage: 'proposal', stage: 'proposal', valueCents: 20000, currency: 'EUR' },
+        { id: 'opp-3', name: 'Senza importo', pipelineKey: 'b2b-sales', pipelineStage: 'new', stage: 'new' },
       ],
     },
-    '/api/schema': { pipelines: [{ name: 'b2b-sales', module: 'opportunity' }] },
+    '/api/schema': {
+      pipelines: [{
+        name: 'b2b-sales', module: 'opportunity',
+        stages: [
+          { key: 'new', type: 'open' },
+          { key: 'proposal', type: 'open' },
+          { key: 'won', type: 'won' },
+          { key: 'lost', type: 'lost' },
+        ],
+      }],
+    },
   });
   const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
   assert.ok(answer.lines.some((line) => line.includes('EUR 1,700.00')));
@@ -245,13 +255,22 @@ test('chiusura: vinte, perse e chiuse escluse dai conteggi', async () => {
   const client = stubClient({
     '/api/opportunities': {
       items: [
-        { id: 'opp-won', name: 'Vinta', stage: 'won', valueCents: 500000, currency: 'EUR' },
-        { id: 'opp-lost', name: 'Persa', stage: 'lost', valueCents: 300000, currency: 'EUR' },
-        { id: 'opp-closed', name: 'Chiusa', stage: 'proposal', valueCents: 200000, currency: 'EUR', closedAt: '2026-10-19T10:00:00.000Z' },
-        { id: 'opp-open', name: 'Aperta', stage: 'proposal', valueCents: 100000, currency: 'EUR' },
+        { id: 'opp-won', name: 'Vinta', pipelineKey: 'b2b-sales', pipelineStage: 'won', stage: 'won', valueCents: 500000, currency: 'EUR' },
+        { id: 'opp-lost', name: 'Persa', pipelineKey: 'b2b-sales', pipelineStage: 'lost', stage: 'lost', valueCents: 300000, currency: 'EUR' },
+        { id: 'opp-closed', name: 'Chiusa', pipelineKey: 'b2b-sales', pipelineStage: 'proposal', stage: 'proposal', valueCents: 200000, currency: 'EUR', closedAt: '2026-10-19T10:00:00.000Z' },
+        { id: 'opp-open', name: 'Aperta', pipelineKey: 'b2b-sales', pipelineStage: 'proposal', stage: 'proposal', valueCents: 100000, currency: 'EUR' },
       ],
     },
-    '/api/schema': { pipelines: [{ name: 'b2b-sales', module: 'opportunity' }] },
+    '/api/schema': {
+      pipelines: [{
+        name: 'b2b-sales', module: 'opportunity',
+        stages: [
+          { key: 'proposal', type: 'open' },
+          { key: 'won', type: 'won' },
+          { key: 'lost', type: 'lost' },
+        ],
+      }],
+    },
   });
   const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
   assert.ok(answer.lines.some((line) => line.includes('1 opportunità aperta in pipeline')));
@@ -694,4 +713,86 @@ test('pannello: chiudi svuota il mount', async () => {
   panel.close();
   assert.equal(mount.firstChild, null);
   assert.equal(panel.getState().open, false);
+});
+
+// Review findings rev-agent-crm-299-41143348c226: regression probes.
+
+test('chiudi con flag falso resta confermata per effetto, mai eseguita', async () => {
+  const client = stubClient({
+    '/api/modules/conversation/records/conv-2/actions/close': { ok: true, id: 'conv-2', status: 'closed' },
+  });
+  const forged = {
+    id: 'bo04:chiudi:conv-2', label: 'Chiudi', kind: 'api',
+    request: { path: '/api/modules/conversation/records/conv-2/actions/close', method: 'POST', body: {} },
+    customerFacing: false,
+  };
+  const refused = await runAssistantAction(client, forged, {});
+  assert.equal(refused.needsConfirmation, true);
+  assert.ok(!client.calls.some((call) => String(call.path).includes('/actions/close')));
+  const done = await runAssistantAction(client, forged, { confirmedActionId: forged.id });
+  assert.equal(done.ok, true);
+  assert.ok(client.calls.some(
+    (call) => call.path === '/api/modules/conversation/records/conv-2/actions/close',
+  ));
+});
+
+test('slot: fissati sono booked più confirmed, mai undefined', async () => {
+  const client = stubClient({
+    '/api/modules/appointment/records?limit=50': {
+      items: [
+        { id: 'appt-1', status: 'booked', startsAt: '2026-10-21T10:00:00.000Z' },
+        { id: 'appt-2', status: 'confirmed', startsAt: '2026-10-22T10:00:00.000Z' },
+        { id: 'appt-3', status: 'done', startsAt: '2026-10-19T10:00:00.000Z' },
+        { id: 'appt-4', status: 'cancelled', startsAt: '2026-10-23T10:00:00.000Z' },
+        { id: 'appt-5', startsAt: '2026-10-24T10:00:00.000Z' },
+        { id: 'appt-6', status: 'no-show', startsAt: '2026-10-20T10:00:00.000Z' },
+      ],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:calendario:slot');
+  assert.ok(answer.lines.some((line) => line.includes('2 appuntamenti fissati letti')), JSON.stringify(answer.lines));
+  assert.deepEqual([...sourceIds(answer)].sort(), ['appt-1', 'appt-2']);
+});
+
+test('chiusura: come la board (solo pipelineKey, gruppi per pipelineStage)', async () => {
+  const client = stubClient({
+    '/api/opportunities': {
+      items: [
+        { id: 'opp-off', name: 'Legacy diretta', pipelineKey: null, stage: 'proposal', valueCents: 100000, currency: 'EUR' },
+        { id: 'opp-demo', name: 'Demo vera', pipelineKey: 'b2b-sales', pipelineStage: 'demo', stage: 'qualification', valueCents: 200000, currency: 'EUR' },
+        { id: 'opp-won', name: 'Vinta', pipelineKey: 'b2b-sales', pipelineStage: 'won', stage: 'proposal', valueCents: 500000, currency: 'EUR' },
+        { id: 'opp-drift', name: 'Fase vecchia', pipelineKey: 'b2b-sales', pipelineStage: 'vecchia', valueCents: 50000, currency: 'EUR' },
+      ],
+    },
+    '/api/schema': {
+      pipelines: [{
+        name: 'b2b-sales', module: 'opportunity',
+        stages: [
+          { key: 'demo', label: 'Demo', type: 'open' },
+          { key: 'proposal', label: 'Proposta', type: 'open' },
+          { key: 'won', label: 'Vinta', type: 'won' },
+          { key: 'lost', label: 'Persa', type: 'lost' },
+        ],
+      }],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
+  // Headline counts only the placed open row, on the read page of 4.
+  assert.ok(
+    answer.lines.some((line) => line.includes('1 opportunità aperta in pipeline b2b-sales') && line.includes('su 4 lette')),
+    JSON.stringify(answer.lines),
+  );
+  // Grouped by pipelineStage (board label), never by the legacy stage.
+  assert.ok(answer.lines.some((line) => line.includes('Demo: 1')), JSON.stringify(answer.lines));
+  assert.ok(!answer.lines.some((line) => line.includes('qualification: 1')), JSON.stringify(answer.lines));
+  // Off-pipeline disclosed as text, terminal and drift excluded from totals.
+  assert.ok(answer.lines.some((line) => line.includes('fuori pipeline b2b-sales')), JSON.stringify(answer.lines));
+  assert.ok(answer.lines.some((line) => line.includes('fase fuori definizione')), JSON.stringify(answer.lines));
+  assert.deepEqual(sourceIds(answer), ['opp-demo']);
+  for (const source of answer.sources) {
+    assert.equal(source.href, '#/pipelines/b2b-sales');
+  }
+  assert.ok(answer.lines.some((line) => line.includes('EUR 2,000.00')), JSON.stringify(answer.lines));
+  assert.ok(!answer.lines.some((line) => line.includes('5,000.00')), JSON.stringify(answer.lines));
+  assert.ok(!answer.lines.some((line) => line.includes('500.00')), JSON.stringify(answer.lines));
 });
