@@ -15,19 +15,28 @@ import {
   APPOINTMENT_TERMINAL,
   APPOINTMENT_TRANSITIONS,
   APPOINTMENTS_PACKAGE,
+  BOOK_APPOINTMENTS_PERMISSION,
+  PROPOSE_ACTION_KIND,
+  SUGGEST_SLOT_MINUTES,
   advanceAppointment,
   bookAppointment,
+  bookFromLink,
   bounds,
+  confirmBooking,
   createAppointmentBookCapability,
   createAppointmentScheduleCapability,
   findOverlap,
+  parseBookingPhrase,
+  proposeBooking,
   readAppointment,
   readSchedule,
   readTeamWeek,
   reminderMessageKey,
   reminderSourceKey,
   reminderThreadKey,
+  suggestSlots,
   validateAppointmentRequest,
+  validateBookingLinkToken,
   validateReminderChannel,
   validateSubject,
 } from './appointments.js';
@@ -91,11 +100,18 @@ export {
   APPOINTMENT_REMINDER_SWEEP_KIND,
   APPOINTMENT_REMINDER_SWEEP_MAX_ATTEMPTS,
   APPOINTMENT_REMINDER_SWEEP_VERSION,
+  BOOK_APPOINTMENTS_PERMISSION,
+  PROPOSE_ACTION_KIND,
+  SUGGEST_SLOT_MINUTES,
   advanceAppointment,
   bookAppointment,
+  bookFromLink,
   bounds,
+  confirmBooking,
   dispatchDueReminders,
   findOverlap,
+  parseBookingPhrase,
+  proposeBooking,
   readAppointment,
   readSchedule,
   readTeamWeek,
@@ -105,7 +121,9 @@ export {
   reminderSourceKey,
   reminderThreadKey,
   seedReminderSweep,
+  suggestSlots,
   validateAppointmentRequest,
+  validateBookingLinkToken,
   validateReminderChannel,
   validateSubject,
 };
@@ -114,6 +132,8 @@ export {
  * @param {{
  *   work?: { capabilities?: Array<any> },
  *   channels?: { capabilities?: Array<any> },
+ *   spacePermissions?: { capabilities?: Array<any> },
+ *   llm?: { capabilities?: Array<any> },
  *   config?: Record<string, string>
  * }} [options]
  *   `work` is the composed work package definition — the same object the
@@ -126,7 +146,12 @@ export {
  *   `reminderChannel` (the sweep opens its own handle, and the history seam
  *   with it, on the composition modules). A composition without it books
  *   exactly as before — the edge is optional, like channels' own
- *   `channel-sender@1` edge, so no `requires` names it.
+ *   `channel-sender@1` edge, so no `requires` names it. `spacePermissions`
+ *   and `llm` are the same handover for the BO-F3-02 flow: the
+ *   `space-permission-gate@1` definition the propose/confirm steps gate on,
+ *   and the `llm-complete@1` definition the phrase parse drafts through.
+ *   Both absent is fine until a proposal or a phrase asks for them; the
+ *   direct booking path never touches them.
  */
 export function createAppointmentsPackage(options = {}) {
   // The offered capability object, created once by the provider factory with
@@ -161,7 +186,13 @@ export function createAppointmentsPackage(options = {}) {
     requires: [{ package: 'work', capability: 'follow-up', version: 1 }],
 
     capabilities: [
-      createAppointmentBookCapability({ moduleNames: options.config, provider: offered, templateSendProvider: offeredTemplateSend }),
+      createAppointmentBookCapability({
+        moduleNames: options.config,
+        provider: offered,
+        templateSendProvider: offeredTemplateSend,
+        spacePermissions: options.spacePermissions,
+        llm: options.llm,
+      }),
       createAppointmentScheduleCapability({ moduleNames: options.config }),
     ],
     actions: [],
