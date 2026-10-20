@@ -209,6 +209,7 @@ async function main() {
   const compared = [];
   let failed = false;
   let noScreenshot = false;
+  let undecodable = false;
   try {
     for (const target of ROUTES) {
       /** @type {Record<string, Buffer>} */
@@ -253,8 +254,10 @@ async function main() {
       try {
         verdict = diffPng(shots.before, shots.after);
       } catch (error) {
-        console.error(`  ✗ ${target.route}: cannot decode screenshots (${error.message})`);
+        const reason = error instanceof Error ? error.message : String(error);
+        console.error(`  ✗ ${target.route}: cannot decode screenshots (${reason})`);
         failed = true;
+        undecodable = true;
         break;
       }
       console.log(
@@ -281,7 +284,7 @@ async function main() {
   if (failed) {
     rmSync(scratch, { recursive: true, force: true });
     console.error(
-      noScreenshot
+      noScreenshot || undecodable
         ? 'admin-shots: capture failed — no fixtures written.'
         : 'admin-shots: before/after differ — no fixtures written.',
     );
