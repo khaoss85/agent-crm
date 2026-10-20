@@ -239,6 +239,17 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-drift { margin-top: 14px; padding: 12px; border: 1px dashed var(--danger); border-radius: 9px; }
 .pipeline-drift h3 { margin: 0 0 6px; font-size: 14px; }
 .pipeline-drift .drift-record { margin: 4px 0; font-size: 13px; overflow-wrap: anywhere; }
+.pipeline-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+.pipeline-toolbar input, .pipeline-toolbar select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: var(--surface); }
+.pipeline-summary { margin: 4px 0; font-size: 13px; font-weight: 700; }
+.pipeline-forecast { margin: 8px 0; padding: 10px 12px; background: var(--surface-soft); border-radius: 9px; }
+.pipeline-forecast h3 { margin: 0 0 4px; font-size: 14px; }
+.pipeline-forecast .forecast-total { margin: 2px 0; font-family: var(--mono); font-size: 13px; font-weight: 700; }
+.pipeline-list { overflow-x: auto; }
+.pipeline-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pipeline-table th, .pipeline-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.pipeline-table th { font-size: 11px; color: var(--dim); }
+.pipeline-card .card-owner, .pipeline-card .card-close { margin: 2px 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 
 /* Quote builder (ADR-016) */
 .quote-create, .quote-add-line, .quote-submit, .quote-decide, .quote-revise { margin: 14px 0; padding: 12px; background: var(--surface-soft); border-radius: 9px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

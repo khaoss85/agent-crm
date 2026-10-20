@@ -89,6 +89,10 @@ const EXEMPT = new Map([
   ['packages/commercial/src/package-credits.js',
     'reads only its own package-credit rows and the appointment rows; the quote-version-term name appears once in a comment '
     + 'about the optional-read shape, never as a term row read, and the file calls no term accessor'],
+  ['packages/commercial/src/quote-pdf.js',
+    'renders the frozen term snapshot into the hashed PDF, so it verifies the snapshot with the package\'s own verifier '
+    + '(verify-terms.js, the same check commercial-quotes@2 runs) before rendering, and refuses a corrupt or ambiguous '
+    + 'snapshot instead of presenting it as signed'],
 ]);
 
 /** Files that must contain a verifier call. */
