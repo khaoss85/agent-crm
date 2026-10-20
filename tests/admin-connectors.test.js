@@ -187,7 +187,10 @@ test('hostile server text stays text', async () => {
       channels: {
         metadata: {
           channelsContract: 1,
-          adapters: [{ name: 'x', version: 1, label: '<script>alert(1)</script>', channel: 'whatsapp' }],
+          adapters: [
+            { name: 'x', version: 1, label: '<script>alert(1)</script>', channel: 'whatsapp' },
+            { name: 'mail', version: 1, label: 'Email', channel: 'email' },
+          ],
         },
       },
     },
@@ -196,11 +199,13 @@ test('hostile server text stays text', async () => {
   const mount = createMount();
   const client = stubClient({
     schema: hostile,
-    sync: { connectors: [{ connectionKey: '"><img src=x>', channel: 'whatsapp', status: 'active', importable: false, sync: null }] },
+    sync: { connectors: [{ connectionKey: '"><img src=x>', channel: 'email', status: 'active', importable: false, sync: null }] },
   });
   await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
-  assert.ok(mount.textContent.includes('<script>alert(1)</script>'));
   assert.ok(mount.textContent.includes('"><img src=x>'));
+  mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('<script>alert(1)</script>'));
 });
 
 test('the wizard drives authorize, sync choice and finish', async () => {
