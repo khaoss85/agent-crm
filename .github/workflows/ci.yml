@@ -77,6 +77,55 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      # TEMPORARY DO-NOT-MERGE (backlog:65891147): diagnose why Chromium
+      # produced no screenshot on the runner (CI run 39487589615: full
+      # Chrome, 60 s spawn bound, updater noise only). Reverted before
+      # merge together with the capture step below.
+      - name: TEMPORARY diagnose Chromium on the runner (revert before merge)
+        run: |
+          CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          "$CHROME" --version || true
+          echo "--- proxy env names (values redacted) ---"
+          env | cut -d= -f1 | grep -i proxy || echo "no proxy env names"
+          echo "--- running chrome processes ---"
+          ps aux | grep -i "[c]hrome" | head -5 || true
+          echo "--- playwright caches ---"
+          ls ~/Library/Caches/ms-playwright/ 2>/dev/null || true
+          ls ~/.cache/ms-playwright/ 2>/dev/null || true
+          echo "--- data-URL probe with the capture flags ---"
+          cat > "$RUNNER_TEMP/admin-probe.mjs" <<'PROBE_EOF'
+          import { spawnSync } from 'node:child_process';
+          import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+          import { tmpdir } from 'node:os';
+          import { join } from 'node:path';
+          import { chromiumCaptureFlags, findChromium } from './scripts/admin-shots-harness.js';
+          const binary = findChromium();
+          console.log('probe: binary=' + binary);
+          if (binary) {
+            const url = 'data:text/html,<html><body><h1>probe</h1></body></html>';
+            const variants = [
+              ['exact', chromiumCaptureFlags(binary)],
+              ['no-virtual-time', chromiumCaptureFlags(binary).filter((f) => !f.startsWith('--virtual-time-budget'))],
+            ];
+            for (const [name, flags] of variants) {
+              const dir = mkdtempSync(join(tmpdir(), 'admin-probe-'));
+              const shot = join(dir, 'probe.png');
+              let line = 'probe: ' + name + ': ';
+              try {
+                const r = spawnSync(binary, [...flags, '--user-data-dir=' + join(dir, 'profile'), '--screenshot=' + shot, '--window-size=800,600', url], { encoding: 'utf8', timeout: 45000 });
+                const wrote = existsSync(shot);
+                const bytes = wrote ? statSync(shot).size : 0;
+                const stderr = String(r.stderr || '').trim().split('\n').slice(-3).join(' | ').slice(0, 400);
+                line += 'wrote=' + wrote + ' bytes=' + bytes + ' error=' + (r.error ? r.error.code || r.error.message : 'none') + ' status=' + r.status + ' signal=' + (r.signal || 'none') + ' stderr=' + JSON.stringify(stderr);
+              } catch (error) {
+                line += 'threw=' + (error instanceof Error ? error.message : String(error));
+              }
+              console.log(line);
+              rmSync(dir, { recursive: true, force: true });
+            }
+          }
+          PROBE_EOF
+          node "$RUNNER_TEMP/admin-probe.mjs" || true
       # TEMPORARY DO-NOT-MERGE (backlog:65891147): run the Admin AC-3 PNG
       # capture on the runner, where a browser may exist, and upload the
       # fixtures as an artifact. Reverted before merge; the committed

@@ -13,6 +13,7 @@ import { join } from 'node:path';
 
 import {
   STUB_VERSION,
+  chromiumCaptureFlags,
   countBadgeNodes,
   findChromium,
   isHeadlessShell,
@@ -217,6 +218,19 @@ test('findChromium prefers a full browser over the headless shell', () => {
     null,
     'null when no browser exists',
   );
+});
+
+test('chromiumCaptureFlags pins the runner-proof invocation', () => {
+  const full = chromiumCaptureFlags('/usr/bin/google-chrome');
+  assert.ok(full.includes('--headless=new'), 'full browser renders headless');
+  assert.ok(full.includes('--no-proxy-server'), 'runner proxy never touches loopback');
+  assert.ok(full.includes('--timeout=30000'), 'Chromium bounds its own wait (CI run 39487589615)');
+  assert.ok(full.includes('--virtual-time-budget=5000'), 'render settles before the shot');
+  assert.ok(!full.some((flag) => flag.startsWith('--user-data-dir=')), 'profile stays per-capture');
+  const shell = chromiumCaptureFlags('/x/chrome-headless-shell');
+  assert.ok(!shell.includes('--headless=new'), 'shell is headless by definition');
+  assert.ok(shell.includes('--no-proxy-server'), 'proxy bypass is not browser-specific');
+  assert.ok(shell.includes('--timeout=30000'), 'timeout bound is not browser-specific');
 });
 
 test('countBadgeNodes counts badge elements and their state classes', () => {

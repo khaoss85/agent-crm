@@ -357,6 +357,39 @@ export function findChromium({ env = process.env, exists = existsSync, home = ho
 }
 
 /**
+ * Chromium flags for the Admin visual-baseline capture (BO-F0-01 AC-3).
+ * Shared by `scripts/admin-shots.js` and its runner diagnostics so the two
+ * can never disagree on how the proof renders. Two flags exist because the
+ * self-hosted Mac runner is not a maintainer laptop:
+ * - `--no-proxy-server`: neither proxy env vars nor the system proxy may
+ *   touch the loopback capture servers; the captured pages are fully
+ *   self-contained (no external fonts, scripts or pixels).
+ * - `--timeout=30000`: bound Chromium's own render wait even if the virtual
+ *   time budget stalls (CI run 39487589615: full Chrome produced no
+ *   screenshot within the 60 s spawn bound). A page still unrendered after
+ *   30 s fails closed through the badge gate, with the cause in the log.
+ * `--user-data-dir` is NOT here: each capture gets a fresh profile so a
+ * lingering Chromium from an earlier capture can never swallow the next
+ * screenshot request and exit without writing.
+ * @param {string} binary chromium binary
+ */
+export function chromiumCaptureFlags(binary) {
+  return [
+    ...(isHeadlessShell(binary) ? [] : ['--headless=new']),
+    '--no-sandbox',
+    '--disable-gpu',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-background-networking',
+    '--no-proxy-server',
+    '--hide-scrollbars',
+    '--virtual-time-budget=5000',
+    '--timeout=30000',
+    '--force-device-scale-factor=1',
+  ];
+}
+
+/**
  * Count rendered badge nodes in serialized DOM: elements whose class list
  * contains the `badge` token.
  * @param {string} dom serialized document (e.g. Chromium --dump-dom)

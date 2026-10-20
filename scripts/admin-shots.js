@@ -48,6 +48,7 @@ import { join } from 'node:path';
 import { diffPng } from './admin-png-diff.js';
 import {
   STUB_VERSION,
+  chromiumCaptureFlags,
   countBadgeNodes,
   findChromium,
   isHeadlessShell,
@@ -84,18 +85,10 @@ function sha256(data) {
  * @returns {{ dom: string } | { error: string }}
  */
 function capture(binary, url, frame, shotPath, profileDir) {
-  const flags = [
-    ...(isHeadlessShell(binary) ? [] : ['--headless=new']),
-    `--user-data-dir=${profileDir}`,
-    '--no-sandbox',
-    '--disable-gpu',
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-background-networking',
-    '--hide-scrollbars',
-    '--virtual-time-budget=5000',
-    '--force-device-scale-factor=1',
-  ];
+  // Flag order is fixed by the shared harness (proxy bypass and Chromium's
+  // own render timeout included); the fresh per-capture profile is appended
+  // by the caller.
+  const flags = [...chromiumCaptureFlags(binary), `--user-data-dir=${profileDir}`];
   const shot = spawnSync(
     binary,
     [...flags, `--screenshot=${shotPath}`, `--window-size=${frame.width},${frame.height}`, url],
@@ -220,7 +213,8 @@ async function main() {
         const output = join(scratch, `${entry.side}-${target.file}`);
         const url =
           `http://127.0.0.1:${entry.port}/index.html` + (target.route === '#/' ? '' : target.route);
-        const result = capture(binary, url, target, output, join(scratch, 'chrome-profile'));
+        const profile = join(scratch, `profile-${entry.side}-${target.file}`);
+        const result = capture(binary, url, target, output, profile);
         if ('error' in result) {
           fail(`${entry.side}/${target.file}: ${result.error}`);
           break;
