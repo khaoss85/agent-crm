@@ -210,6 +210,194 @@ test('unsupported contract and unknown pipeline fail gracefully', async () => {
   assert.ok(mount.textContent.includes('Pipeline not found'));
 });
 
+function filterInput(mount, name) {
+  return mount.findAll('input').find((node) => node.getAttribute('data-filter') === name)
+    ?? mount.findAll('select').find((node) => node.getAttribute('data-filter') === name);
+}
+
+function boardRecords() {
+  return [
+    record('a', 'discovery', { owner: 'alice', expectedCloseDate: '2026-11-01T00:00:00.000Z', contactName: 'Anna' }),
+    record('b', 'discovery', { valueCents: 50_000, owner: 'bob', expectedCloseDate: '2026-12-15T00:00:00.000Z' }),
+    record('c', 'demo', { currency: 'USD', valueCents: 2_500, owner: 'alice', expectedCloseDate: '2026-10-20T00:00:00.000Z' }),
+    record('d', 'won', { owner: 'alice', expectedCloseDate: '2026-09-01T00:00:00.000Z' }),
+    record('e', 'lost', { owner: 'bob', closeReason: 'No budget' }),
+  ];
+}
+
+function summaryText(mount) {
+  return mount.findAll('p').find((node) => node.getAttribute('data-summary') !== null).textContent;
+}
+
+function forecastBox(mount) {
+  return mount.findAll('div').find((node) => node.getAttribute('data-forecast') === 'estimate');
+}
+
+test('Lista view renders the same filtered records as a read-only table', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
+  await board.renderBoard('b2b-sales');
+
+  const listaButton = mount.findAll('button').find((node) => node.getAttribute('data-view') === 'lista');
+  assert.ok(listaButton, 'a Lista toggle exists');
+  listaButton.dispatch('click');
+  const list = mount.findAll('div').find((node) => node.getAttribute('data-listview') === 'records');
+  assert.ok(list, 'the Lista table replaces the Kanban columns');
+  const rows = list.findAll('tr').filter((row) => row.getAttribute('data-record') !== null);
+  assert.equal(rows.length, 5, 'all placed records are listed');
+  assert.ok(rows[0].textContent.includes('Discovery'), 'stage renders as its label');
+  assert.ok(rows[0].textContent.includes('alice'), 'referente is visible');
+  assert.ok(rows[0].textContent.includes('2026-11-01'), 'expected close renders as a day');
+
+  const kanbanButton = mount.findAll('button').find((node) => node.getAttribute('data-view') === 'kanban');
+  kanbanButton.dispatch('click');
+  assert.ok(mount.findAll('div').some((node) => (node.getAttribute('class') ?? '').includes('pipeline-column')),
+    'Kanban columns come back');
+});
+
+test('search, Referente, Stato and close-date filters narrow both views', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
+  await board.renderBoard('b2b-sales');
+  assert.match(summaryText(mount), /5 records/);
+
+  const search = filterInput(mount, 'q');
+  search.value = 'acme';
+  search.dispatch('input');
+  assert.match(summaryText(mount), /5 records/, 'every fixture record matches its company');
+
+  search.value = 'anna';
+  search.dispatch('input');
+  assert.match(summaryText(mount), /1 record/, 'contact-name search narrows to one card');
+  search.value = '';
+  search.dispatch('input');
+
+  const owner = filterInput(mount, 'owner');
+  owner.value = 'bob';
+  owner.dispatch('change');
+  assert.match(summaryText(mount), /2 records/, 'Referente filter keeps only bob’s cards');
+
+  const stage = filterInput(mount, 'stage');
+  stage.value = 'discovery';
+  stage.dispatch('change');
+  assert.match(summaryText(mount), /1 record/, 'Stato filter intersects with Referente');
+
+  const from = filterInput(mount, 'closeFrom');
+  from.value = '2026-12-01';
+  from.dispatch('change');
+  assert.match(summaryText(mount), /1 record/, 'close-from keeps the December card');
+  const to = filterInput(mount, 'closeTo');
+  to.value = '2026-12-31';
+  to.dispatch('change');
+  assert.match(summaryText(mount), /1 record/, 'close-to still matches December');
+  to.value = '2026-12-01';
+  to.dispatch('change');
+  assert.match(summaryText(mount), /0 records/, 'a range excluding every date empties the board');
+});
+
+test('Azzera filtri resets search and every filter', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
+  await board.renderBoard('b2b-sales');
+
+  filterInput(mount, 'q').value = 'anna';
+  filterInput(mount, 'q').dispatch('input');
+  filterInput(mount, 'owner').value = 'alice';
+  filterInput(mount, 'owner').dispatch('change');
+  assert.match(summaryText(mount), /1 record/);
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'clear-filters').dispatch('click');
+  assert.match(summaryText(mount), /5 records/, 'every record is back');
+  assert.equal(filterInput(mount, 'q').value, '');
+  assert.equal(filterInput(mount, 'owner').value, '');
+  assert.equal(filterInput(mount, 'stage').value, '');
+});
+
+test('summary totals the filtered set per currency without mixing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
+  await board.renderBoard('b2b-sales');
+
+  const owner = filterInput(mount, 'owner');
+  owner.value = 'alice';
+  owner.dispatch('change');
+  const text = summaryText(mount);
+  assert.match(text, /3 records/);
+  assert.ok(text.includes('EUR 2,000.00'), `alice EUR total (${text})`);
+  assert.ok(text.includes('USD 25.00'), `alice USD total stays separate (${text})`);
+});
+
+test('forecast is labeled as a stima and weights open stages by probability', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
+  await board.renderBoard('b2b-sales');
+
+  const box = forecastBox(mount);
+  assert.ok(box, 'a forecast section exists');
+  assert.match(box.textContent, /stima/i, 'the forecast is labeled as an estimate');
+  assert.match(box.textContent, /not a commitment/i, 'no guaranteed outcome is promised');
+  // discovery 100_000 @10% = 10_000 plus 50_000 @10% = 5_000 → EUR 150.00;
+  // demo USD 2_500 @30% = 750 → USD 7.50; won/lost stages never forecast.
+  assert.ok(box.textContent.includes('EUR 150.00'), `EUR weighted total (${box.textContent})`);
+  assert.ok(box.textContent.includes('USD 7.50'), `USD weighted total (${box.textContent})`);
+});
+
+test('dropping a card posts the same move-stage action as the Move button', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const client = stubClient(boardRecords());
+  const board = createPipelineBoard({ doc, mount, client, toast: (message) => toasts.push(message) });
+  await board.renderBoard('b2b-sales');
+
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
+  assert.equal(card.getAttribute('draggable'), 'true', 'cards are draggable');
+  const demoColumn = mount.findAll('div').find((node) => node.getAttribute('data-stage') === 'demo');
+  await demoColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'discovery' }));
+
+  const post = client.calls.filter((call) => call.method === 'POST').at(-1);
+  assert.equal(post.path, '/api/modules/opportunity/records/a/actions/move-stage');
+  assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery' });
+  assert.ok(toasts.some((message) => message.includes('Moved to demo')), 'success is toasted');
+});
+
+test('same-stage drops post nothing; drops onto lost ask for a reason first', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient(boardRecords());
+  const board = createPipelineBoard({ doc, mount, client });
+  await board.renderBoard('b2b-sales');
+
+  const postsBefore = client.calls.filter((call) => call.method === 'POST').length;
+  const discoveryColumn = mount.findAll('div').find((node) => node.getAttribute('data-stage') === 'discovery');
+  await discoveryColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'discovery' }));
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'no stale same-stage move');
+
+  const lostColumn = mount.findAll('div').find((node) => node.getAttribute('data-stage') === 'lost');
+  await lostColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'discovery' }));
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'no move posted without a reason');
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
+  assert.equal(card.__reason.getAttribute('class'), '', 'the reason input is revealed');
+  assert.match(card.findAll('small')[0].textContent, /reason for Lost/i);
+});
+
+test('hostile owner names render as inert option text', async () => {
+  const hostile = '<img src=x onerror=alert(1)>';
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const records = [record('a', 'discovery', { owner: hostile })];
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+  const option = filterInput(mount, 'owner').findAll('option').find((node) => node.textContent === hostile);
+  assert.ok(option, 'the hostile owner is offered as plain text');
+  assert.equal(option.childNodes.length, 0, 'no elements parsed out of the hostile owner');
+});
+
 test('pipeline routes parse canonically; hostile routes are invalid', () => {
   assert.deepEqual(parseModuleRoute('#/pipelines/b2b-sales'), { view: 'pipeline', pipelineName: 'b2b-sales' });
   for (const bad of ['#/pipelines/__proto__', '#/pipelines/B2B', '#/pipelines/a%2Fb', '#/pipelines/', '#/pipelines/a/b', '#/pipelines/%zz']) {
