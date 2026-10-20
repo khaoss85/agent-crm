@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { boot, project } from './helpers/customer-data-project.js';
 import { createFakeGoogleContacts } from '../packages/customer-data/src/google-contacts-fake.js';
 import { parseEmailSignature } from '../packages/customer-data/src/signature-fields.js';
@@ -225,6 +226,57 @@ test('paging walks the whole address book and a person without identity is skipp
   assert.equal(summary.counts.created, 2);
   assert.equal(summary.counts.skippedNoIdentity, 1);
   assert.equal(contactsCount(app), 2, 'the identity-less person invented no contact');
+});
+
+test('two connections racing the same enrichment produce one contact and no raw error', async (t) => {
+  const root = project(t, {});
+  const dbPath = join(root, 'data', 'enrichment-race.sqlite');
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const one = createAccordoApp({ dbPath });
+  const two = createAccordoApp({ dbPath, busyTimeoutMs: 5000 });
+  t.after(() => { one.close(); two.close(); });
+
+  const input = (tag) => ({
+    actor: ACTOR, email: 'gara@prestigroup.example',
+    fields: { firstName: 'Gara', phone: '+393330000009' }, source: 'email-signature', runId: tag,
+  });
+  const results = await Promise.allSettled([
+    one.applyContactEnrichment(input('race-one')),
+    two.applyContactEnrichment(input('race-two')),
+  ]);
+
+  assert.equal(contactsCount(one), 1, 'the losing connection creates no duplicate contact');
+  const ids = results
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value.contact.id);
+  assert.ok(ids.length > 0, 'at least one connection enriched');
+  assert.ok(ids.every((id) => id === ids[0]), 'every winner names the same contact');
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      assert.doesNotMatch(String(result.reason?.message ?? ''), /SQLITE_|constraint failed/i,
+        'a race must not surface a raw storage error');
+    }
+  }
+  const rows = enrichedRows(one, ids[0]).filter((row) => row.status === 'active');
+  assert.equal(rows.filter((row) => row.field === 'firstName').length, 1, 'one row per field');
+});
+
+test('one poisoned person aborts nothing: garbage entries are skipped, not stored', async (t) => {
+  const { app } = await scene(t, 'enrichment-poison', { googleContacts: true });
+  const fake = createFakeGoogleContacts();
+  fake.seedPerson({
+    resourceName: 'people/c9',
+    names: [{ givenName: 42, familyName: null }],
+    emailAddresses: [{ value: 42 }, { value: 'buono@prestigroup.example' }],
+    phoneNumbers: [{ canonicalForm: 'not-a-phone' }],
+    organizations: 'not-an-object',
+  });
+  const summary = await app.importGoogleContacts({ actor: ACTOR, adapter: fake });
+  assert.equal(summary.counts.enriched, 1);
+  const rows = enrichedRows(app, app.modules.get('external-identity').service
+    .listWhere({ sourceKey: 'google-contacts:people/c9' })[0].subjectId);
+  assert.ok(rows.every((row) => typeof row.value === 'string'), 'no garbage value landed in a row');
+  assert.ok(!rows.some((row) => row.field === 'phone'), 'the undialable phone was skipped');
 });
 
 test('an email signature parses to contact fields and hostile text refuses', async (t) => {

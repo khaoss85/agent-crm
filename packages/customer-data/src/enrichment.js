@@ -97,10 +97,14 @@ function requireFields(input) {
     fields[field] = value;
     if (value !== null) provided += 1;
   }
-  const rawPhone = safeString(input.phone, 'phone');
-  if (rawPhone !== null) {
+  const rawPhone = input.phone === undefined || input.phone === null || typeof input.phone === 'string'
+    ? safeString(input.phone, 'phone')
+    : 'refused';
+  if (rawPhone !== null && rawPhone !== 'refused') {
     provided += 1;
     fields.phone = canonicalPhone(rawPhone);
+  } else if (rawPhone === 'refused') {
+    provided += 1;
   }
   if (provided === 0) {
     throw new ValidationError('enrichment needs at least one field to fill', { field: 'fields' });
@@ -110,6 +114,29 @@ function requireFields(input) {
 
 function refusal(code, status, message) {
   return new AppError(message, { code, status });
+}
+
+/**
+ * A uniqueness conflict means a concurrent enrichment won the race: the
+ * row this call was about to write is already stored. The caller re-reads
+ * and replays the winner instead of surfacing a raw constraint — the same
+ * discipline the sender resolution uses. Anything else is rethrown.
+ */
+function isUniqueConflict(error) {
+  if (error instanceof Error) {
+    if (error.message.includes('UNIQUE constraint failed')) return true;
+    if (error.message.includes('duplicate key value violates unique constraint')) return true;
+  }
+  if (error !== null && typeof error === 'object') {
+    const code = /** @type {any} */ (error).code;
+    if (code === '23505' || code === 'SQLITE_CONSTRAINT_UNIQUE') return true;
+  }
+  return false;
+}
+
+/** A stored string, or null when the provider value is not a string at all. */
+function providerString(value) {
+  return typeof value === 'string' ? value : null;
 }
 
 /** @param {any} runtime */
@@ -174,7 +201,19 @@ export function createContactEnrichment({
    * phone as external identities; stores one enriched-field row per filled
    * attribute. The contact record itself is never written.
    */
-  async function enrichSubject({
+  async function enrichSubject(input, retried = false) {
+    try {
+      return await enrichSubjectOnce(input);
+    } catch (error) {
+      // One retry: a concurrent enrichment committed the same row after
+      // the re-checks above. The second pass replays the winner instead
+      // of surfacing the raw constraint.
+      if (!retried && isUniqueConflict(error)) return enrichSubject(input, true);
+      throw error;
+    }
+  }
+
+  async function enrichSubjectOnce({
     contactId, email, fields, phoneRefused, source, sourceDetail, googleResourceName, actor, runId,
   }) {
     return database.transactionAsync(async () => {
@@ -229,9 +268,11 @@ export function createContactEnrichment({
       if (googleResourceName) {
         const known = await reader.externalIdentity(GOOGLE_CONTACTS_SYSTEM, googleResourceName);
         if (known && known.subjectId !== id) {
+          // The evidence names the opaque provider id, never PII: the
+          // handles themselves travel in the candidate subjects' labels.
           candidatesWritten += await recordEnrichmentCandidate(
             subject, candidateOf(known),
-            `Google contact ${googleResourceName} already names another record: a human decides`,
+            'this Google contact already names another record: a human decides',
             runId, actor);
         } else {
           await recordExternalIdentityRow({
@@ -246,7 +287,7 @@ export function createContactEnrichment({
         if (knownEmail && knownEmail.subjectId !== id) {
           candidatesWritten += await recordEnrichmentCandidate(
             subject, candidateOf(knownEmail),
-            `email ${email} already names another record: a human decides`, runId, actor);
+            'this email already names another record: a human decides', runId, actor);
         } else {
           await recordExternalIdentityRow({
             modules, names, system: 'email', externalId: email, subject, runId, actor,
@@ -259,7 +300,7 @@ export function createContactEnrichment({
         if (knownPhone && knownPhone.subjectId !== id) {
           candidatesWritten += await recordEnrichmentCandidate(
             subject, candidateOf(knownPhone),
-            `phone ${fields.phone} already names another record: a human decides`, runId, actor);
+            'this phone already names another record: a human decides', runId, actor);
         } else {
           await recordExternalIdentityRow({
             modules, names, system: 'phone', externalId: fields.phone, subject, runId, actor,
@@ -334,7 +375,9 @@ export function createContactEnrichment({
     const orgs = Array.isArray(person.organizations) ? person.organizations : [];
     let email = null;
     for (const entry of emails) {
-      const shaped = emailShape(entry?.value);
+      const raw = providerString(entry?.value);
+      if (!raw) continue;
+      const shaped = emailShape(raw);
       if (shaped.ok && shaped.value) {
         email = shaped.value;
         break;
@@ -342,21 +385,25 @@ export function createContactEnrichment({
     }
     let phone = null;
     for (const entry of phones) {
-      const candidate = canonicalPhone(entry?.canonicalForm ?? entry?.value ?? '');
+      const raw = providerString(entry?.canonicalForm ?? entry?.value);
+      if (!raw) continue;
+      const candidate = canonicalPhone(raw);
       if (candidate) {
         phone = candidate;
         break;
       }
     }
-    const org = orgs[0] ?? {};
+    const givenName = providerString(name.givenName);
+    const familyName = providerString(name.familyName);
+    const org = orgs[0] !== null && typeof orgs[0] === 'object' && !Array.isArray(orgs[0]) ? orgs[0] : {};
     return {
       resourceName: typeof person.resourceName === 'string' ? person.resourceName : null,
       email,
       fields: {
-        firstName: safeString(name.givenName, 'firstName'),
-        lastName: safeString(name.familyName, 'lastName'),
-        role: safeString(org.title, 'role'),
-        companyName: safeString(org.name, 'companyName'),
+        firstName: safeString(givenName, 'firstName'),
+        lastName: safeString(familyName, 'lastName'),
+        role: safeString(providerString(org.title), 'role'),
+        companyName: safeString(providerString(org.name), 'companyName'),
         phone,
       },
     };
@@ -483,6 +530,7 @@ export function createContactEnrichment({
         if (!page || !Array.isArray(page.connections)) {
           throw refusal('ENRICHMENT_SOURCE_MALFORMED', 500, 'the Google Contacts source must answer paged connections');
         }
+        if (page.connections.length === 0) break;
         for (const person of page.connections) {
           counts.people += 1;
           if (counts.people > MAX_IMPORT_PEOPLE) {
@@ -540,13 +588,19 @@ export function createContactEnrichment({
         const optOuts = trusted(modules, optOutName);
         const subject = subjectOf(contact.id, contact.email);
         if (!await optOutRow(contact.id)) {
-          await optOuts.createManaged({
-            sourceKey: `optout:contact:${contact.id}`,
-            ...subjectFields(subject),
-            reason,
-            optedOutAt: now,
-            optedOutByRunId: runId,
-          }, { actor });
+          try {
+            await optOuts.createManaged({
+              sourceKey: `optout:contact:${contact.id}`,
+              ...subjectFields(subject),
+              reason,
+              optedOutAt: now,
+              optedOutByRunId: runId,
+            }, { actor });
+          } catch (error) {
+            // A concurrent opt-out won the race: the refusal is recorded
+            // either way, and the purge below is idempotent.
+            if (!isUniqueConflict(error)) throw error;
+          }
         }
         const active = await deciding(rows, {
           subjectResource: 'contact', subjectId: contact.id, status: 'active',
