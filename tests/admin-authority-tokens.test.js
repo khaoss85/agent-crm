@@ -121,6 +121,45 @@ test('existing state badges keep their prototype pairs (visual baseline)', () =>
   }
 });
 
+test('the badge census is closed: base, five state rules, six authority rules', () => {
+  const noComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = [...noComments.matchAll(/([^{}]+)\{[^{}]*\}/g)].map((match) => match[1].trim());
+  const badgeRules = rules.filter((selector) => selector.includes('.badge'));
+  const base = badgeRules.filter((selector) => selector === '.badge');
+  const state = badgeRules.filter(
+    (selector) => selector.includes('.badge.') && !selector.includes('['),
+  );
+  const authority = badgeRules.filter((selector) => selector.includes('[data-authority='));
+  assert.equal(base.length, 1, 'one unpainted .badge base rule');
+  assert.equal(state.length, 5, 'exactly five state rules (the pinned visual baseline)');
+  assert.equal(authority.length, 6, 'exactly six authority variants, one per authority');
+  assert.deepEqual(
+    authority.sort(),
+    ['accord', 'agent', 'evidence', 'fault', 'human', 'policy']
+      .map((id) => `.badge[data-authority="${id}"]`)
+      .sort(),
+    'no seventh variant may appear without re-capturing the PNG proof',
+  );
+});
+
+test('no shipped markup or script can match an authority selector', () => {
+  // The six rules above paint only `.badge[data-authority="<id>"]`. That
+  // attribute appears in styles.css (the definitions) and nowhere else, so no
+  // existing Admin screen can ever match the new rules: the before/after PNGs
+  // must be identical for that reason, not by luck of the capture. When a new
+  // backoffice view starts using data-authority, allowlist its files here with
+  // the story id and re-capture the proof with `npm run admin:shots`.
+  const pub = join(root, 'apps/admin/public');
+  const producers = [];
+  const entries = readdirSync(pub);
+  for (const file of [...entries, 'index.html']) {
+    if (!file.endsWith('.js') && !file.endsWith('.html')) continue;
+    const source = readFileSync(join(pub, file), 'utf8');
+    if (source.includes('data-authority')) producers.push(file);
+  }
+  assert.deepEqual(producers, [], 'existing screens must not produce data-authority elements');
+});
+
 test('no literal colour outside :root: every paint reads a token', () => {
   const noComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
   const start = noComments.search(/:root\s*\{/);
