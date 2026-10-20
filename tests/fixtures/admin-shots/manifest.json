@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "backend": "stubbed-api",
+  "stubVersion": 1,
+  "baseRef": "strip-authority",
+  "baseStylesSha": "d5266fb16a37b9bda4c36e33d06aa85800e345de38899b574916fbb266590758",
+  "headStylesSha": "94cb79466aa74693b54e8654e21741e2eb821c0399f5731c8111b7e68a2fb5ab",
+  "capturedAt": "2026-10-20T21:38:48.873Z",
+  "renderer": "Google Chrome",
+  "command": "npm run admin:shots -- --before=strip-authority",
+  "stateGroupsCovered": 5,
+  "screens": [
+    {
+      "route": "#/",
+      "file": "dashboard.png",
+      "width": 1280,
+      "height": 800,
+      "badgeNodesBefore": 6,
+      "badgeNodesAfter": 6
+    },
+    {
+      "route": "#/work",
+      "file": "work.png",
+      "width": 1280,
+      "height": 800,
+      "badgeNodesBefore": 9,
+      "badgeNodesAfter": 9
+    }
+  ]
+}

@@ -77,23 +77,6 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      # TEMPORARY DO-NOT-MERGE (backlog:65891147): run the Admin AC-3 PNG
-      # capture on the runner (the only machine with a browser) and upload
-      # the fixtures as an artifact. Reverted before merge; the committed
-      # fixtures are copied from the runner workdir and verified by hand
-      # (pixel check + manifest test) before that revert.
-      - name: TEMPORARY capture Admin before/after PNGs (revert before merge)
-        run: npm run admin:shots -- --before=strip-authority
-      - uses: actions/upload-artifact@v4
-        if: always()
-        # Artifact storage is quota-blocked: the upload fails but the
-        # fixtures stay on the runner disk for hand retrieval. Never red.
-        continue-on-error: true
-        with:
-          name: admin-shots-${{ github.sha }}
-          path: tests/fixtures/admin-shots/
-          if-no-files-found: warn
-          retention-days: 90
       - name: Fetch the PR base for touched-file selection
         env:
           BASE_REF: ${{ github.base_ref }}

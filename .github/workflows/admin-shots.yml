@@ -40,6 +40,9 @@ jobs:
       - name: Print the manifest
         run: cat tests/fixtures/admin-shots/manifest.json
       - uses: actions/upload-artifact@v4
+        # Artifact storage can be quota-blocked: the fixtures then stay on
+        # the runner disk for hand retrieval (copy + verify + commit).
+        continue-on-error: true
         with:
           name: admin-shots-${{ github.sha }}
           path: tests/fixtures/admin-shots/
