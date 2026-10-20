@@ -151,9 +151,17 @@ export {
  *   `space-permission-gate@1` definition the propose/confirm steps gate on,
  *   and the `llm-complete@1` definition the phrase parse drafts through.
  *   Both absent is fine until a proposal or a phrase asks for them; the
- *   direct booking path never touches them.
+ *   direct booking path never touches them. Both stay out of `requires` on
+ *   purpose (a composition without them must keep booting and booking); what
+ *   keeps a wrong handover fail-closed is the open-time check that the
+ *   opened handle settles on this graph's contract, refusing otherwise with
+ *   PACKAGE_DEPENDENCY_MISMATCH naming the edge.
  */
 export function createAppointmentsPackage(options = {}) {
+  // The graph contract the handed-over flow edges (space-permissions, llm)
+  // must settle on: a handover opening another contract is refused at open
+  // with PACKAGE_DEPENDENCY_MISMATCH naming the edge.
+  const graphContract = options.packageContract === 2 ? 2 : 1;
   // The offered capability object, created once by the provider factory with
   // the provider's config. Held here by reference — never re-instantiated, so
   // a remapped work composition cannot leave the reminder writing the wrong
@@ -192,6 +200,7 @@ export function createAppointmentsPackage(options = {}) {
         templateSendProvider: offeredTemplateSend,
         spacePermissions: options.spacePermissions,
         llm: options.llm,
+        packageContract: graphContract,
       }),
       createAppointmentScheduleCapability({ moduleNames: options.config }),
     ],
@@ -249,7 +258,7 @@ export function createAppointmentsPackage(options = {}) {
         reuses: ['contact', 'follow-up@1', 'channel-template-send@1', 'channel outbox (channel-send)', 'interaction-log@1', 'space-permission-gate@1', 'llm-complete@1'],
       };
     },
-  }), options.packageContract === 2 ? 2 : 1);
+  }), graphContract);
 }
 
 /** Distinct awaited contract-2 graph. Existing `createAppointmentsPackage()` callers keep v1. */

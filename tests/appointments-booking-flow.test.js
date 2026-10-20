@@ -30,7 +30,7 @@ const SUBJECT = { resource: 'contact', id: 'c-presti', owner: 'host' };
 const SOURCE = { package: 'host', action: 'book' };
 const ACTOR = { type: 'user', id: 'flow-probe' };
 const SPACE = 'spazio-1';
-const TOKEN = 'AbC123-def456_GH7890';
+const TOKEN = 'booking-link-flow-probe-0001';
 
 const booking = (overrides = {}) => ({
   sourceKey: 'gym:flow:1',
@@ -546,4 +546,198 @@ test('the flow is exposed on appointment-book@1 with the direct path unchanged',
   assert.equal(typeof cap.bookAppointment, 'function');
   assert.equal(typeof cap.advanceAppointment, 'function');
   assert.equal(PROPOSE_ACTION_KIND, 'book-appointment');
+});
+
+test('a resubmitted proposal with a changed claim opens a distinct proposal', async () => {
+  const service = fakeAppointments();
+  const { gate, proposalRows } = fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
+  });
+  const cap = capabilityFor({ service, gate });
+  const first = await cap.proposeBooking({ ...booking(), spaceId: SPACE });
+  assert.equal(first.decision, 'proposal');
+  assert.equal(first.replayed, false);
+  const changed = await cap.proposeBooking({ ...booking(), spaceId: SPACE, teamMemberId: 'coach-maria' });
+  assert.equal(changed.decision, 'proposal');
+  assert.equal(changed.replayed, false, 'a changed claim is a new proposal, never the old one replayed');
+  assert.notEqual(changed.proposalId, first.proposalId);
+  assert.equal(proposalRows.length, 2, 'the changed claim is recorded, not folded into the old proposal');
+  const again = await cap.proposeBooking({ ...booking(), spaceId: SPACE });
+  assert.equal(again.proposalId, first.proposalId);
+  assert.equal(again.replayed, true, 'the unchanged claim still replays its own proposal');
+  assert.equal(proposalRows.length, 2);
+  assert.equal(service.rows.length, 0, 'no appointment row on the proposal path');
+});
+
+test('two confirms racing one source key advance once: the loser replays the winner', async () => {
+  const service = fakeAppointments();
+  // The yields force the interleave the lifecycle serialization must close:
+  // both re-reads land before either write. Without the per-appointment
+  // chain both racers read `booked` and both write `confirmed`.
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  const innerGet = service.get.bind(service);
+  service.get = async (id) => {
+    await tick();
+    return innerGet(id);
+  };
+  let applies = 0;
+  const innerApply = service.applyManaged.bind(service);
+  service.applyManaged = async (id, patch, context) => {
+    applies += 1;
+    await tick();
+    return innerApply(id, patch, context);
+  };
+  const cap = capabilityFor({ service, gate: allowGate() });
+  const request = { ...booking(), spaceId: SPACE, confirmed: true };
+  const [a, b] = await Promise.all([cap.confirmBooking(request), cap.confirmBooking(request)]);
+  assert.equal(service.rows.length, 1, 'one booking, one row');
+  assert.equal(a.appointment.id, b.appointment.id);
+  assert.equal(a.appointment.status, 'confirmed');
+  assert.equal(b.appointment.status, 'confirmed');
+  assert.equal([a, b].filter((outcome) => outcome.replayed).length, 1, 'exactly one fresh writer and one replay');
+  assert.equal(applies, 1, 'the booked -> confirmed transition is written once, never duplicated');
+});
+
+test('two cancellations racing one booking advance once: the loser is refused', async () => {
+  const service = fakeAppointments();
+  // Same forced interleave as the confirm race above: both re-reads land
+  // before either write, so only the serialization makes the loser refuse.
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  const innerGet = service.get.bind(service);
+  service.get = async (id) => {
+    await tick();
+    return innerGet(id);
+  };
+  let applies = 0;
+  const innerApply = service.applyManaged.bind(service);
+  service.applyManaged = async (id, patch, context) => {
+    applies += 1;
+    await tick();
+    return innerApply(id, patch, context);
+  };
+  const cap = capabilityFor({ service, gate: allowGate() });
+  const { appointment } = await cap.bookAppointment(booking());
+  assert.equal(appointment.status, 'booked');
+  const reason = 'the customer called to cancel';
+  const outcomes = await Promise.allSettled([
+    cap.advanceAppointment(appointment, 'cancelled', reason),
+    cap.advanceAppointment(appointment, 'cancelled', reason),
+  ]);
+  const fulfilled = outcomes.filter((outcome) => outcome.status === 'fulfilled');
+  const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
+  assert.equal(service.rows.length, 1);
+  assert.equal(fulfilled.length, 1, 'one cancellation wins');
+  assert.equal(rejected.length, 1, 'the loser is refused, never a second write');
+  assert.equal(rejected[0].reason.code, 'APPOINTMENTS_INVALID_STATE');
+  assert.equal(service.rows[0].status, 'cancelled');
+  assert.equal(applies, 1, 'the transition is written once');
+});
+
+test('a link slot in another spelling books under the canonical UTC key', async () => {
+  const service = fakeAppointments();
+  const cap = capabilityFor({ service });
+  const first = await cap.bookFromLink({
+    ...booking(),
+    linkToken: TOKEN,
+    startsAt: '2026-10-20T17:00:00+02:00',
+    endsAt: '2026-10-20T18:00:00+02:00',
+  });
+  assert.equal(first.replayed, false);
+  assert.equal(first.appointment.sourceKey, 'booking-link:' + TOKEN + ':2026-10-20T15:00:00.000Z');
+  assert.equal(first.appointment.startsAt, '2026-10-20T15:00:00.000Z');
+  const second = await cap.bookFromLink({
+    ...booking(),
+    linkToken: TOKEN,
+    startsAt: '2026-10-20T15:00:00.000Z',
+    endsAt: '2026-10-20T16:00:00.000Z',
+  });
+  assert.equal(second.replayed, true, 'another spelling of one instant replays, never conflicts');
+  assert.equal(second.appointment.id, first.appointment.id);
+  assert.equal(service.rows.length, 1);
+  await assert.rejects(
+    cap.bookFromLink({ ...booking(), linkToken: TOKEN, startsAt: 'not-a-date' }),
+    (error) => {
+      assert.match(error.message, /startsAt/);
+      return true;
+    },
+  );
+});
+
+test('a handed-over gate on another contract is refused with the edge named', async () => {
+  const service = fakeAppointments();
+  const v2Gate = {
+    capabilities: [{
+      name: 'space-permission-gate',
+      version: 1,
+      create: () => ({
+        capabilityContract: 2,
+        gate: async () => ({ decision: 'allow' }),
+        propose: async () => ({ proposalId: 'p-1', replayed: false }),
+      }),
+    }],
+  };
+  // The handover opens eagerly at capability creation, so the wrong contract
+  // fails there — before any proposal is read or written.
+  assert.throws(
+    () => createAppointmentBookCapability({ spacePermissions: v2Gate }).create({
+      modules: modulesFor(service),
+      actor: ACTOR,
+      now: () => NOW,
+      consumer: 'host',
+    }),
+    (error) => {
+      assert.equal(error.code, 'PACKAGE_DEPENDENCY_MISMATCH');
+      assert.match(error.message, /space-permission-gate@1/);
+      return true;
+    },
+  );
+  assert.equal(service.rows.length, 0);
+});
+
+test('a handed-over gate on this contract opens through the handover path', async () => {
+  const service = fakeAppointments();
+  const v1Gate = {
+    capabilities: [{
+      name: 'space-permission-gate',
+      version: 1,
+      create: () => ({
+        capabilityContract: 1,
+        gate: async () => ({ decision: 'allow' }),
+        propose: async () => ({ proposalId: 'p-1', replayed: false }),
+      }),
+    }],
+  };
+  const cap = createAppointmentBookCapability({ spacePermissions: v1Gate }).create({
+    modules: modulesFor(service),
+    actor: ACTOR,
+    now: () => NOW,
+    consumer: 'host',
+  });
+  const proposed = await cap.proposeBooking({ ...booking(), spaceId: SPACE });
+  assert.equal(proposed.decision, 'confirm-required');
+  assert.equal(service.rows.length, 0, 'the draft writes nothing');
+});
+
+test('a handed-over LLM on another contract is refused with the edge named', async () => {
+  const service = fakeAppointments();
+  const llmV2 = {
+    capabilities: [{
+      name: 'llm-complete',
+      version: 1,
+      create: () => ({ capabilityContract: 2, complete: async () => ({}) }),
+    }],
+  };
+  assert.throws(
+    () => createAppointmentBookCapability({ llm: llmV2 }).create({
+      modules: modulesFor(service),
+      actor: ACTOR,
+      now: () => NOW,
+      consumer: 'host',
+    }),
+    (error) => {
+      assert.equal(error.code, 'PACKAGE_DEPENDENCY_MISMATCH');
+      assert.match(error.message, /llm-complete@1/);
+      return true;
+    },
+  );
 });

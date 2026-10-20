@@ -1,5 +1,7 @@
 // @ts-check
 
+import { createHash } from 'node:crypto';
+
 import {
   AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate, requireAmount,
@@ -460,6 +462,43 @@ export function findOverlap(candidate, held) {
  * proves the SQLite leg on a real file database.
  */
 const memberBookingChains = new Map();
+
+/**
+ * One appointment, one advancer at a time — in this process.
+ *
+ * `advanceAppointment` re-reads the row and then writes the transition: two
+ * advances interleaved on one process can both read `booked` before either
+ * writes, and both write `confirmed` — duplicate audit/events — or a stale
+ * confirmation can overwrite a concurrent cancellation. The chain below
+ * serializes the re-read and the write per appointment id, with the same
+ * attach-synchronously discipline as the booking chain above, so the loser
+ * re-reads the winner's committed transition (409, never a silent
+ * overwrite). Across connections the booking envelope below serializes
+ * writers on real storage — SQLite `BEGIN IMMEDIATE` holds the second
+ * connection until the winner commits, Postgres `SERIALIZABLE` refuses the
+ * loser with a retryable conflict whose retry re-reads the winner. The two
+ * chains never nest (a booking holds the member chain, an advance holds the
+ * id chain, never both at once), so they cannot deadlock each other.
+ */
+const appointmentAdvanceChains = new Map();
+
+/** @param {string} recordId @param {() => Promise<any>} critical */
+async function withAppointmentAdvance(recordId, critical) {
+  const previous = appointmentAdvanceChains.get(recordId) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise((resolve) => { release = resolve; });
+  const tail = previous.then(() => current, () => current);
+  appointmentAdvanceChains.set(recordId, tail);
+  // Synchronous until here: two callers racing in the same tick still order.
+  await previous;
+  try {
+    return await critical();
+  } finally {
+    // Remove only our own tail: a waiter queued behind us owns the slot now.
+    if (appointmentAdvanceChains.get(recordId) === tail) appointmentAdvanceChains.delete(recordId);
+    release();
+  }
+}
 
 /** @param {string} teamMemberId @param {() => Promise<any>} critical */
 async function withMemberBooking(teamMemberId, critical) {
@@ -958,9 +997,12 @@ async function replayReminder(context, { input, source }) {
  * The move is enforced against the row as stored, re-read inside this call —
  * never against the caller-supplied copy, which another writer may have moved
  * since it was read. A stale copy advancing from a state the row already left
- * is refused 409. (Residual: two advances racing between the re-read and the
- * write can still interleave; inside a package action the transaction envelope
- * closes the window.)
+ * is refused 409. The re-read and the write run serialized per appointment
+ * id on this process, and inside the storage handle's own transaction on a
+ * real database when one is available and no caller transaction is open —
+ * so two confirms of one booking advance once (the loser re-reads the
+ * winner's `confirmed` and answers it), and a confirm racing a cancellation
+ * never overwrites the winner.
  */
 export async function advanceAppointment({ appointments, actor, now }, record, to, reason) {
   // A state change names its author, like the booking path does: an undefined
@@ -979,23 +1021,35 @@ export async function advanceAppointment({ appointments, actor, now }, record, t
   // read surfaces the storage's own NotFoundError rather than advancing a
   // ghost.
   const recordId = safeText(record?.id, 'id', MAX_ID);
-  const current = await appointments.get(recordId);
-  const allowed = APPOINTMENT_TRANSITIONS[current.status] ?? [];
-  if (!APPOINTMENT_STATES.includes(target) || !allowed.includes(target)) {
-    throw new AppError(
-      `An appointment in state "${current.status}" cannot advance to "${target}"`
+  const runInTransaction = bookingTransaction(appointments);
+  const critical = async () => {
+    const current = await appointments.get(recordId);
+    const allowed = APPOINTMENT_TRANSITIONS[current.status] ?? [];
+    if (!APPOINTMENT_STATES.includes(target) || !allowed.includes(target)) {
+      throw new AppError(
+        `An appointment in state "${current.status}" cannot advance to "${target}"`
         + (allowed.length > 0 ? `; it may advance to ${allowed.join(' or ')}` : '; it is terminal and advances nowhere'),
-      { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: current.status, to: target, allowed } },
+        { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: current.status, to: target, allowed } },
+      );
+    }
+    const cancelReason = target === CANCELLED_STATE
+      ? safeText(reason, 'cancelReason', MAX_REASON)
+      : null;
+    if (target !== CANCELLED_STATE && reason !== undefined && reason !== null && reason !== '') {
+      throw new ValidationError('cancelReason is recorded only when an appointment is cancelled', { field: 'cancelReason' });
+    }
+    const stamp = typeof now === 'function' ? now() : new Date().toISOString();
+    return appointments.applyManaged(current.id, { status: target, cancelReason, decidedAt: stamp }, { actor });
+  };
+  // The re-read and the write above are one critical section per appointment:
+  // the id chain orders same-process advancers so the loser re-reads the
+  // winner, and the booking envelope orders cross-connection writers on real
+  // storage (reused here: it is generic over the record service, not tied to
+  // the insert it was written for).
+  return withAppointmentAdvance(
+    recordId,
+    runInTransaction ? () => runInTransaction(critical) : critical,
     );
-  }
-  const cancelReason = target === CANCELLED_STATE
-    ? safeText(reason, 'cancelReason', MAX_REASON)
-    : null;
-  if (target !== CANCELLED_STATE && reason !== undefined && reason !== null && reason !== '') {
-    throw new ValidationError('cancelReason is recorded only when an appointment is cancelled', { field: 'cancelReason' });
-  }
-  const stamp = typeof now === 'function' ? now() : new Date().toISOString();
-  return appointments.applyManaged(current.id, { status: target, cancelReason, decidedAt: stamp }, { actor });
 }
 
 /**
@@ -1359,6 +1413,35 @@ function publicDraft(input) {
   });
 }
 
+/** The gate replays an open proposal for one action key: bind that key to
+ * the whole booking claim, not just its source key. The booking path treats
+ * the customer, member, service, price, slot, reminder and provenance behind
+ * one source key as one claim — a divergent field is a 409, never an
+ * adoption — so a resubmitted claim with any of those fields changed opens a
+ * distinct proposal describing the new claim. Answering the old proposal as
+ * `replayed: true` would tell the caller the new request was proposed while
+ * the stored summary describes the old one. The digest is sha256 over the
+ * validated claim in fixed field order (the channels `boundedKey` idiom: a
+ * short readable prefix, a hash for the tail); the source key stays readable
+ * up front for the operator. The label is deliberately not identity: it is a
+ * display snapshot, like the booking replay treats it.
+ *
+ * @param {ReturnType<typeof validateAppointmentRequest>} input
+ */
+function proposalActionKey(input) {
+  const subject = input.subject;
+  const claim = JSON.stringify([
+    input.sourceKey,
+    subject.resource, subject.id, subject.owner, subject.ownerPackage,
+    input.teamMemberId, input.serviceKey, input.priceCents, input.currency,
+    input.startsAt, input.endsAt, input.notes,
+    input.remindAt, input.reminderChannel,
+    input.source.package, input.source.action,
+  ]);
+  const digest = createHash('sha256').update(claim, 'utf8').digest('hex').slice(0, 32);
+  return 'book-appointment:' + input.sourceKey + ':claim-' + digest;
+}
+
 /** @param {ReturnType<typeof validateAppointmentRequest>} input */
 function proposalSummary(input) {
   const label = input.subject.label ? ` (${input.subject.label})` : '';
@@ -1409,7 +1492,7 @@ export async function proposeBooking(context, request) {
     spaceId,
     permission: BOOK_APPOINTMENTS_PERMISSION,
     actionKind: PROPOSE_ACTION_KIND,
-    actionKey: `book-appointment:${input.sourceKey}`,
+    actionKey: proposalActionKey(input),
     summary: proposalSummary(input),
     actor,
   });
@@ -1455,7 +1538,7 @@ export async function confirmBooking(context, request) {
       spaceId,
       permission: BOOK_APPOINTMENTS_PERMISSION,
       actionKind: PROPOSE_ACTION_KIND,
-      actionKey: `book-appointment:${input.sourceKey}`,
+      actionKey: proposalActionKey(input),
       summary: proposalSummary(input),
       actor,
     });
@@ -1553,10 +1636,19 @@ export async function bookFromLink(context, request) {
   requireActor(context?.actor);
   const record = request && typeof request === 'object' ? request : {};
   const linkToken = validateBookingLinkToken(record.linkToken);
-  const startsAt = safeText(record.startsAt, 'startsAt', MAX_ID);
+  // Canonicalize the slot before deriving the identity: validation normalizes
+  // instants to UTC ISO, and the source key must derive from that canonical
+  // form — never from the caller's spelling. Otherwise a valid spelling the
+  // key charset rejects (`+02:00`, whose `+` is outside SOURCE_KEY_RE)
+  // refuses a real instant, and two spellings of one instant (`Z` vs
+  // `-00:00`) derive two keys, so a resubmission conflicts instead of
+  // replaying. The canonical instant re-enters validation below, which
+  // accepts its own output unchanged.
+  const startsAt = realIsoInstant(record.startsAt, 'startsAt').iso;
   const input = validateAppointmentRequest({
     ...record,
-    sourceKey: `${LINK_SOURCE_PREFIX}${linkToken}:${startsAt}`,
+    startsAt,
+    sourceKey: LINK_SOURCE_PREFIX + linkToken + ':' + startsAt,
   });
   // The whole record rides, with only the source key derived: a link booking
   // naming remindAt or a reminderChannel keeps its reminder — dropping them
@@ -1728,13 +1820,41 @@ export function createAppointmentScheduleCapability({ moduleNames } = {}) {
 }
 
 /**
+ * Refuse a handed-over edge whose opened handle settles on another contract.
+ * The flow edges below stay out of `requires` on purpose: a composition
+ * without space-permissions or llm must keep booting and booking (the
+ * customer-hub timeline keeps its optional providers out of `requires` for
+ * the same reason), and the direct booking path never touches them. So the
+ * registry cannot validate these handovers at startup — this open-time check
+ * is what keeps a wrong one fail-closed instead of silently opened: without
+ * it a contract-2 appointments graph could open a v1 handed-over gate or LLM
+ * handle (or vice versa) with no version, contract or provider validation.
+ * An explicitly injected handle (tests, or an opener's own wiring) is the
+ * opener's responsibility and is not re-checked here.
+ *
+ * @param {any} opened the created handle
+ * @param {string} edge the edge name for the refusal, e.g. `space-permission-gate@1`
+ * @param {number} expectedContract the package contract of this graph
+ */
+function assertHandoverContract(opened, edge, expectedContract) {
+  if (!opened || opened.capabilityContract !== expectedContract) {
+    throw new AppError(
+      'The appointments package needs ' + edge + ' on package contract ' + String(expectedContract) + ': '
+      + 'the handed-over handle settles on another contract — hand over the provider definition '
+      + 'from a composition on the same contract',
+      { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
+    );
+  }
+}
+
+/**
  * Open the handed-over `space-permission-gate@1` capability for one runtime
  * (BO-F3-02): the propose/confirm flow gates on the space's
  * `book-appointments` switch. Absent until a proposal is requested — the
  * direct booking path never touches it, so a composition without
  * space-permissions books exactly as before.
  */
-function openPermissionGate(gateCapability, runtime) {
+function openPermissionGate(gateCapability, runtime, expectedContract = 1) {
   if (gateCapability === undefined || gateCapability === null) return null;
   if (typeof gateCapability.create !== 'function') {
     throw new AppError(
@@ -1752,6 +1872,7 @@ function openPermissionGate(gateCapability, runtime) {
       { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
     );
   }
+  assertHandoverContract(opened, 'space-permission-gate@1', expectedContract);
   return opened;
 }
 
@@ -1760,7 +1881,7 @@ function openPermissionGate(gateCapability, runtime) {
  * "fissa con una frase"): the phrase parse suggests booking parameters the
  * human confirms. Absent until a phrase is parsed — bookings never touch it.
  */
-function openPhraseLlm(llmCapability, runtime) {
+function openPhraseLlm(llmCapability, runtime, expectedContract = 1) {
   if (llmCapability === undefined || llmCapability === null) return null;
   if (typeof llmCapability.create !== 'function') {
     throw new AppError(
@@ -1777,6 +1898,7 @@ function openPhraseLlm(llmCapability, runtime) {
       { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
     );
   }
+  assertHandoverContract(opened, 'llm-complete@1', expectedContract);
   return opened;
 }
 
@@ -1800,10 +1922,13 @@ function openPhraseLlm(llmCapability, runtime) {
  * @param {any} [spacePermissions] the composed space-permissions package definition (handover, optional)
  * @param {any} [permissionGate] an already-opened space-permission-gate@1 handle (tests; wins over the handover)
  * @param {any} [llm] the composed llm package definition (handover, optional)
+ * @param {1|2} [packageContract] the graph contract the handed-over flow edges
+ * must settle on: a handover opening another contract is refused with
+ * PACKAGE_DEPENDENCY_MISMATCH naming the edge
  * @param {any} [phraseLlm] an already-opened llm-complete@1 handle (tests; wins over the handover)
  * @param {any} [calendarSync] a calendar-sync push handle `{pushAppointment}` (per opener; optional)
  */
-export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend, spacePermissions, permissionGate, llm, phraseLlm, calendarSync } = {}) {
+export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend, spacePermissions, permissionGate, llm, phraseLlm, calendarSync, packageContract = 1 } = {}) {
   const names = resolvedNames(moduleNames);
   /**
    * Open the reminder handle for this opener: an explicitly injected handle
@@ -1845,7 +1970,7 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
     if (!spacePermissions || !Array.isArray(spacePermissions.capabilities)) return null;
     const offered = spacePermissions.capabilities
       .find((entry) => entry?.name === 'space-permission-gate' && entry?.version === 1) ?? null;
-    return openPermissionGate(offered, { modules: context.modules, now: context.now });
+    return openPermissionGate(offered, { modules: context.modules, now: context.now }, packageContract);
   };
   /**
    * Open the phrase LLM for this opener: same handover shape as the gate
@@ -1857,7 +1982,7 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
     if (!llm || !Array.isArray(llm.capabilities)) return null;
     const offered = llm.capabilities
       .find((entry) => entry?.name === 'llm-complete' && entry?.version === 1) ?? null;
-    return openPhraseLlm(offered, { modules: context.modules });
+    return openPhraseLlm(offered, { modules: context.modules }, packageContract);
   };
   const scoped = (context) => ({
     modules: {

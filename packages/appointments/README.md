@@ -67,7 +67,7 @@ database.
 
 `"07 Calendario"`: the operator proposes slots, confirms once, the
 customer books online from the business link. All on `appointment-book@1`,
-all additive — `bookAppointment` and `advanceAppointment` are unchanged.
+all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps its contract with the re-read and the write serialized per appointment.
 
 - `suggestSlots({ teamMemberIds, from, to, slotMinutes })` reads free slots
   from the same held rows the booking path overlap-checks against. Read
@@ -76,17 +76,24 @@ all additive — `bookAppointment` and `advanceAppointment` are unchanged.
 - `proposeBooking(request + spaceId)` validates, fails fast on a held slot,
   then reads the space `book-appointments` switch. Switch on: a draft is
   answered and nothing is written. Switch off: a `space-ai-proposal` is
-  recorded and the booking stays a proposal.
+  recorded and the booking stays a proposal. The proposal identity binds the
+  whole booking claim (customer, member, service, price, slot, reminder,
+  provenance) behind a digest: resubmitting the same source key with a
+  changed field opens a distinct proposal, never a replay of the old one.
 - `confirmBooking(request + spaceId + confirmed: true)` creates only on
   explicit confirmation. It re-checks the switch, books, advances
   `booked -> confirmed` and — when `calendar: { calendarId }` is named —
-  pushes the event through the calendar-sync push handle. A push that fails
-  after the local commit leaves a confirmed booking a retried confirm
-  replays, never duplicates.
+  pushes the event through the calendar-sync push handle. The advance is
+  serialized per appointment (same process) and inside the storage
+  transaction on a real database: two racing confirms advance once and the
+  loser replays the winner; a confirm racing a cancellation never overwrites
+  the winner. A push that fails after the local commit leaves a confirmed
+  booking a retried confirm replays, never duplicates.
 - `bookFromLink(request + linkToken)` books from `accordo.dev/p/...`: the
-  source key derives from the token and the slot, so a doubled submission
-  replays the winner. The published link is the standing approval, so the
-  agent-autonomy switch is not consulted here.
+  source key derives from the token and the canonical UTC slot, so a doubled
+  submission replays the winner whatever spelling of the instant it carries
+  (`Z`, `+02:00`, `-00:00` all derive one key). The published link is the
+  standing approval, so the agent-autonomy switch is not consulted here.
 - `parseBookingPhrase({ spaceId, phrase })` drafts parameters from one
   Italian sentence through `llm-complete@1` (purpose `suggest`). Without
   the handle it refuses with a named code; the model is strictly validated,
