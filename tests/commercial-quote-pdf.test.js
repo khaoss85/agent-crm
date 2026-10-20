@@ -85,7 +85,7 @@ test('quote PDF: frozen v1 bytes never move when the draft moves on', async (t) 
   assert.match(pdfA.documentHash, /^[0-9a-f]{64}$/, 'the document carries a sha256 hash');
   assert.equal(pdfA.versionId, v1.id, 'the render names the version it froze');
   const textA = pdfA.pdfBytes.toString('latin1');
-  assert.ok(textA.includes(String(v1.versionNumber)), 'the version number is printed');
+  assert.ok(textA.includes(`versione ${v1.versionNumber}`), 'the version number is printed');
 
   // The draft moves on: revise the rejected quote, reprice, submit v2.
   await app.runAction({ module: 'quote', action: 'revise', recordId: quote.id, input: {}, actor: ACTOR });
