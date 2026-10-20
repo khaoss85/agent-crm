@@ -273,10 +273,13 @@ it runs only where a merge has already happened — never on a PR push. Since
 backlog:9fff957f3968 the measurement itself runs in short pieces
 (`npm run measure`, `scripts/measure-pieces.sh`): `npm run check`, then one
 `measure-suite.js --shard i/n` per piece, each under its own heavy-job
-acquisition with its own declared maximum (600 s a normal piece, 1800 s the
-piece holding the full-oracle file) — the lock is free between two pieces,
-and a piece past its maximum fails red instead of holding the machine. The
-combine runs no tests and takes no lock; one red piece reddens the measure.
+acquisition with its own declared maximum (900 s a normal piece, 1800 s the
+piece holding the full-oracle file — backlog:664d5f481a96; the oracle piece
+keeps its proven budget, see scripts/measure-pieces.sh) — the lock is free
+between two pieces, the pieces run strictly one at a time so the run never
+holds two waiters at once, and a piece past its maximum fails red instead of
+holding the machine. The combine runs no tests and takes no lock; one red
+piece reddens the measure.
 
 | Gate | Where | What |
 |---|---|---|
