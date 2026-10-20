@@ -101,6 +101,20 @@ test('selectGeneratedModules gates on contract version and sorts deterministical
   assert.equal(legacy.supported, false);
 });
 
+test('parseModuleRoute routes the customer scheda to its three-column view', () => {
+  assert.deepEqual(parseModuleRoute('#/customer-card/contact/c1'), { view: 'customer-card', resource: 'contact', subjectId: 'c1' });
+  for (const hash of [
+    '#/customer-card',
+    '#/customer-card/contact',
+    '#/customer-card/contact/c1/extra',
+    '#/customer-card//c1',
+    '#/customer-card/Contact/c1',
+    '#/customer-card/contact/',
+  ]) {
+    assert.equal(parseModuleRoute(hash).view, 'invalid', hash);
+  }
+});
+
 test('parseModuleRoute is total and safe on hostile hashes', () => {
   assert.deepEqual(parseModuleRoute('#/'), { view: 'dashboard' });
   assert.deepEqual(parseModuleRoute(''), { view: 'dashboard' });

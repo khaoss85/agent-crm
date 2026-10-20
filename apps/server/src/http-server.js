@@ -424,6 +424,29 @@ function buildRouter(app) {
     return await app.readCustomerProfile({ resource: params.resource, id: params.id });
   });
 
+  // Customer Hub (BO-F1-06): the scheda cliente reads the card and the
+  // timeline through two enumerated adapters, the same shape as the profile
+  // route above. The kernel owns the path, gates the role boundary, and
+  // delegates to the composed application operations: without the hub
+  // composed each answers an honest 404. No new table, no new record —
+  // both operations are read-only projections over records other packages
+  // already hold.
+  router.add('GET', '/api/customer-hub/card/:resource/:id', async ({ params, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readCustomerCard !== 'function') {
+      throw new NotFoundError('Operation', 'customer card');
+    }
+    return await app.readCustomerCard({ resource: params.resource, id: params.id });
+  });
+
+  router.add('GET', '/api/customer-hub/timeline/:resource/:id', async ({ params, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readCustomerTimeline !== 'function') {
+      throw new NotFoundError('Operation', 'customer timeline');
+    }
+    return await app.readCustomerTimeline({ resource: params.resource, id: params.id });
+  });
+
   // Customer Data Operations v2: bulk decisions and scale-safe export. The
   // same enumerated-adapter shape as the import routes above: the kernel
   // owns the path, gates the role boundary, and delegates to the composed
