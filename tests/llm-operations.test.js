@@ -376,7 +376,8 @@ test('a key expected but custody unwired refuses', async () => {
 test('a long response within maxTokens is accepted, an absurd one refused', async () => {
   const long = createFixtureLlmAdapter({ secret: SECRET });
   long.api.answer('x'.repeat(100000));
-  const accepted = setup({ adapters: [long.definition] });
+  const fixtureSpace = () => ({ presti: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1 } });
+  const accepted = setup({ adapters: [long.definition], spaces: fixtureSpace() });
   const out = await call(accepted.ops, accepted.modules, { tag: 'long', maxTokens: 32000 });
   assert.equal(out.text.length, 100000, 'a response inside its own token ceiling is kept');
   const totals = await accepted.ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, accepted.modules);
@@ -384,7 +385,7 @@ test('a long response within maxTokens is accepted, an absurd one refused', asyn
 
   const absurd = createFixtureLlmAdapter({ secret: SECRET });
   absurd.api.answer('y'.repeat(60000), { match: 'absurd-marker' });
-  const refused = setup({ adapters: [absurd.definition] });
+  const refused = setup({ adapters: [absurd.definition], spaces: fixtureSpace() });
   // 60000 chars cannot come from 64 tokens: refused fail-closed, no spend.
   assert.equal(
     await codeOf(() => call(refused.ops, refused.modules, { tag: 'absurd-marker', maxTokens: 64 })),
