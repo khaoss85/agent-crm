@@ -3,7 +3,7 @@
  * Minimal PNG decode/compare for the Admin visual-baseline proof (BO-F0-01).
  *
  * `scripts/admin-shots.js` captures real Chromium pixels; the committed
- * before/after pair is compared with `diffPngFiles` here — no native
+ * before/after pair is compared with `diffPng` here — no native
  * dependency, no browser at compare time, so the evidence test runs in CI
  * and in the sandbox alike. Supports the PNGs Chromium writes (8-bit,
  * non-interlaced, colour types 0/2/3/4/6). Anything else throws instead of
@@ -141,7 +141,11 @@ export function decodePng(buffer) {
   }
   if (width === 0 || height === 0) throw new Error('PNG with zero width or height');
   const channels = colorType === 0 || colorType === 3 ? 1 : colorType === 4 ? 2 : colorType === 2 ? 3 : 4;
-  const raw = unfilter(inflateSync(Buffer.concat(idat)), width, height, channels);
+  const filtered = inflateSync(Buffer.concat(idat));
+  if (filtered.length !== height * (width * channels + 1)) {
+    throw new Error(`PNG pixel data is ${filtered.length} bytes, expected ${height * (width * channels + 1)}`);
+  }
+  const raw = unfilter(filtered, width, height, channels);
   const pixels = Buffer.alloc(width * height * 4);
   for (let i = 0; i < width * height; i++) {
     let r;

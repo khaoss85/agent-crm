@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deflateSync } from 'node:zlib';
+import { deflateSync, inflateSync } from 'node:zlib';
 import { decodePng, diffPng, encodePng } from '../scripts/admin-png-diff.js';
 
 /** Deterministic gradient pixels: every channel derives from x/y. */
@@ -146,4 +146,18 @@ test('corrupt input throws instead of comparing', () => {
   const tampered = Buffer.from(good);
   tampered[tampered.length - 5] ^= 0xff;
   assert.throws(() => decodePng(tampered), /CRC/);
+});
+
+test('short pixel data throws instead of decoding as black', () => {
+  // Valid signature, chunks and CRCs throughout — only the inflated rows
+  // stop early. Without a length check the missing tail would decode as
+  // zeros and a truncated capture could compare equal.
+  const full = encodePng({ width: 4, height: 2, pixels: gradient(4, 2) });
+  const ihdr = full.subarray(8, 8 + 25);
+  const idatStart = full.indexOf(Buffer.from('IDAT')) - 4;
+  const idatLen = full.readUInt32BE(idatStart);
+  const inflated = inflateSync(full.subarray(idatStart + 8, idatStart + 8 + idatLen));
+  const short = chunkOf('IDAT', deflateSync(inflated.subarray(0, inflated.length - 5)));
+  const png = Buffer.concat([full.subarray(0, 8), ihdr, short, chunkOf('IEND', Buffer.alloc(0))]);
+  assert.throws(() => decodePng(png), /pixel data/);
 });
