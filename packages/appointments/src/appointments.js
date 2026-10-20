@@ -1508,10 +1508,12 @@ export async function proposeBooking(context, request) {
 /**
  * Confirm one proposed booking (BO-F3-02, second step): without
  * `confirmed: true` nothing is created — the call is refused before any read
- * or write. With confirmation, the space switch is read again (a switch
- * flipped off after the proposal still stops the booking), then the booking
- * is stored, advanced `booked -> confirmed`, and — when the caller names a
- * calendar — pushed to the provider through calendar-sync.
+ * or write. With confirmation, a named calendar is validated first (a
+ * miscomposed calendar edge fails before any row exists), the space switch
+ * is read again (a switch flipped off after the proposal still stops the
+ * booking), then the booking is stored, advanced `booked -> confirmed`,
+ * and — when the caller names a calendar — pushed to the provider through
+ * calendar-sync.
  *
  * The calendar push rides the idempotent `pushAppointment` path: a push that
  * fails after the local commit leaves a confirmed booking whose event a retry
@@ -1531,6 +1533,23 @@ export async function confirmBooking(context, request) {
   }
   const spaceId = record.spaceId;
   const input = validateAppointmentRequest(request);
+  // A named calendar is validated before any row exists: a statically
+  // preventable miscomposition fails here, never after a committed
+  // confirmed booking the caller received an error for.
+  let calendarId = null;
+  let calendarPush = null;
+  if (record.calendar !== undefined && record.calendar !== null) {
+    calendarId = safeText(record.calendar.calendarId, 'calendar.calendarId', MAX_ID);
+    const calendarSync = context?.calendarSync ?? null;
+    if (!calendarSync || typeof calendarSync.pushAppointment !== 'function') {
+      throw new AppError(
+        'The confirmation names a calendar but the appointments package is composed without a calendar-sync push handle, '
+        + 'so the event cannot be created: confirm without a calendar, or compose the push handle.',
+        { code: 'APPOINTMENTS_CALENDAR_UNAVAILABLE', status: 500 },
+      );
+    }
+    calendarPush = calendarSync.pushAppointment.bind(calendarSync);
+  }
   const gate = requireFlowPermissionGate(context);
   const verdict = await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
   if (!verdict || verdict.decision !== 'allow') {
@@ -1571,19 +1590,12 @@ export async function confirmBooking(context, request) {
       appointment = fresh;
     }
   }
+  // The calendar edge was validated above, before any row existed: the
+  // push rides the idempotent path, so a runtime push failure still leaves
+  // a confirmed booking a retry of this same confirm links exactly once.
   let push = null;
-  const calendar = record.calendar;
-  if (calendar !== undefined && calendar !== null) {
-    const calendarId = safeText(calendar.calendarId, 'calendar.calendarId', MAX_ID);
-    const calendarSync = context?.calendarSync ?? null;
-    if (!calendarSync || typeof calendarSync.pushAppointment !== 'function') {
-      throw new AppError(
-        'The confirmation names a calendar but the appointments package is composed without a calendar-sync push handle, '
-        + 'so the event cannot be created: confirm without a calendar, or compose the push handle.',
-        { code: 'APPOINTMENTS_CALENDAR_UNAVAILABLE', status: 500 },
-      );
-    }
-    push = await calendarSync.pushAppointment(calendarId, booked.appointment.sourceKey, { spaceId, actor });
+  if (calendarPush !== null) {
+    push = await calendarPush(calendarId, booked.appointment.sourceKey, { spaceId, actor });
   }
   return Object.freeze({
     decision: 'booked',
@@ -1826,22 +1838,22 @@ export function createAppointmentScheduleCapability({ moduleNames } = {}) {
  * customer-hub timeline keeps its optional providers out of `requires` for
  * the same reason), and the direct booking path never touches them. So the
  * registry cannot validate these handovers at startup — this open-time check
- * is what keeps a wrong one fail-closed instead of silently opened: without
- * it a contract-2 appointments graph could open a v1 handed-over gate or LLM
- * handle (or vice versa) with no version, contract or provider validation.
- * An explicitly injected handle (tests, or an opener's own wiring) is the
- * opener's responsibility and is not re-checked here.
+ * is what keeps a wrong one fail-closed instead of silently opened.
+ * The edge version pins the provider capability contract (`@1` settles on
+ * contract 1): the appointments graph contract (v1/v2) governs this
+ * package's own graph, never the provider's handle, so every graph accepts
+ * these handovers. An explicitly injected handle (tests, or an opener's own
+ * wiring) is the opener's responsibility and is not re-checked here.
  *
  * @param {any} opened the created handle
  * @param {string} edge the edge name for the refusal, e.g. `space-permission-gate@1`
- * @param {number} expectedContract the package contract of this graph
  */
-function assertHandoverContract(opened, edge, expectedContract) {
-  if (!opened || opened.capabilityContract !== expectedContract) {
+function assertHandoverContract(opened, edge) {
+  if (!opened || opened.capabilityContract !== 1) {
     throw new AppError(
-      'The appointments package needs ' + edge + ' on package contract ' + String(expectedContract) + ': '
+      'The appointments package needs ' + edge + ' on provider capability contract 1: '
       + 'the handed-over handle settles on another contract — hand over the provider definition '
-      + 'from a composition on the same contract',
+      + 'for the named capability version',
       { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
     );
   }
@@ -1854,7 +1866,7 @@ function assertHandoverContract(opened, edge, expectedContract) {
  * direct booking path never touches it, so a composition without
  * space-permissions books exactly as before.
  */
-function openPermissionGate(gateCapability, runtime, expectedContract = 1) {
+function openPermissionGate(gateCapability, runtime) {
   if (gateCapability === undefined || gateCapability === null) return null;
   if (typeof gateCapability.create !== 'function') {
     throw new AppError(
@@ -1872,7 +1884,7 @@ function openPermissionGate(gateCapability, runtime, expectedContract = 1) {
       { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
     );
   }
-  assertHandoverContract(opened, 'space-permission-gate@1', expectedContract);
+  assertHandoverContract(opened, 'space-permission-gate@1');
   return opened;
 }
 
@@ -1881,7 +1893,7 @@ function openPermissionGate(gateCapability, runtime, expectedContract = 1) {
  * "fissa con una frase"): the phrase parse suggests booking parameters the
  * human confirms. Absent until a phrase is parsed — bookings never touch it.
  */
-function openPhraseLlm(llmCapability, runtime, expectedContract = 1) {
+function openPhraseLlm(llmCapability, runtime) {
   if (llmCapability === undefined || llmCapability === null) return null;
   if (typeof llmCapability.create !== 'function') {
     throw new AppError(
@@ -1898,7 +1910,7 @@ function openPhraseLlm(llmCapability, runtime, expectedContract = 1) {
       { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
     );
   }
-  assertHandoverContract(opened, 'llm-complete@1', expectedContract);
+  assertHandoverContract(opened, 'llm-complete@1');
   return opened;
 }
 
@@ -1922,13 +1934,10 @@ function openPhraseLlm(llmCapability, runtime, expectedContract = 1) {
  * @param {any} [spacePermissions] the composed space-permissions package definition (handover, optional)
  * @param {any} [permissionGate] an already-opened space-permission-gate@1 handle (tests; wins over the handover)
  * @param {any} [llm] the composed llm package definition (handover, optional)
- * @param {1|2} [packageContract] the graph contract the handed-over flow edges
- * must settle on: a handover opening another contract is refused with
- * PACKAGE_DEPENDENCY_MISMATCH naming the edge
  * @param {any} [phraseLlm] an already-opened llm-complete@1 handle (tests; wins over the handover)
  * @param {any} [calendarSync] a calendar-sync push handle `{pushAppointment}` (per opener; optional)
  */
-export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend, spacePermissions, permissionGate, llm, phraseLlm, calendarSync, packageContract = 1 } = {}) {
+export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend, spacePermissions, permissionGate, llm, phraseLlm, calendarSync } = {}) {
   const names = resolvedNames(moduleNames);
   /**
    * Open the reminder handle for this opener: an explicitly injected handle
@@ -1970,7 +1979,7 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
     if (!spacePermissions || !Array.isArray(spacePermissions.capabilities)) return null;
     const offered = spacePermissions.capabilities
       .find((entry) => entry?.name === 'space-permission-gate' && entry?.version === 1) ?? null;
-    return openPermissionGate(offered, { modules: context.modules, now: context.now }, packageContract);
+    return openPermissionGate(offered, { modules: context.modules, now: context.now });
   };
   /**
    * Open the phrase LLM for this opener: same handover shape as the gate
@@ -1982,7 +1991,7 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
     if (!llm || !Array.isArray(llm.capabilities)) return null;
     const offered = llm.capabilities
       .find((entry) => entry?.name === 'llm-complete' && entry?.version === 1) ?? null;
-    return openPhraseLlm(offered, { modules: context.modules }, packageContract);
+    return openPhraseLlm(offered, { modules: context.modules });
   };
   const scoped = (context) => ({
     modules: {

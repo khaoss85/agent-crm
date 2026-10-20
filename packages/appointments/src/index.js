@@ -154,13 +154,14 @@ export {
  *   direct booking path never touches them. Both stay out of `requires` on
  *   purpose (a composition without them must keep booting and booking); what
  *   keeps a wrong handover fail-closed is the open-time check that the
- *   opened handle settles on this graph's contract, refusing otherwise with
- *   PACKAGE_DEPENDENCY_MISMATCH naming the edge.
+ *   opened handle settles on the provider capability contract pinned by the
+ *   edge version, refusing otherwise with PACKAGE_DEPENDENCY_MISMATCH
+ *   naming the edge.
  */
 export function createAppointmentsPackage(options = {}) {
-  // The graph contract the handed-over flow edges (space-permissions, llm)
-  // must settle on: a handover opening another contract is refused at open
-  // with PACKAGE_DEPENDENCY_MISMATCH naming the edge.
+  // This package's own graph contract. The handed-over flow edges
+  // (space-permissions, llm) are validated against the provider capability
+  // contract pinned by their edge version, on every graph.
   const graphContract = options.packageContract === 2 ? 2 : 1;
   // The offered capability object, created once by the provider factory with
   // the provider's config. Held here by reference — never re-instantiated, so
@@ -200,7 +201,6 @@ export function createAppointmentsPackage(options = {}) {
         templateSendProvider: offeredTemplateSend,
         spacePermissions: options.spacePermissions,
         llm: options.llm,
-        packageContract: graphContract,
       }),
       createAppointmentScheduleCapability({ moduleNames: options.config }),
     ],

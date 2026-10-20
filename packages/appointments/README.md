@@ -81,9 +81,10 @@ all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps i
   provenance) behind a digest: resubmitting the same source key with a
   changed field opens a distinct proposal, never a replay of the old one.
 - `confirmBooking(request + spaceId + confirmed: true)` creates only on
-  explicit confirmation. It re-checks the switch, books, advances
-  `booked -> confirmed` and — when `calendar: { calendarId }` is named —
-  pushes the event through the calendar-sync push handle. The advance is
+  explicit confirmation. A named calendar is validated first (a miscomposed
+  calendar edge fails before any row exists); then it re-checks the switch,
+  books, advances `booked -> confirmed` and — when `calendar: { calendarId }`
+  is named — pushes the event through the calendar-sync push handle. The advance is
   serialized per appointment (same process) and inside the storage
   transaction on a real database: two racing confirms advance once and the
   loser replays the winner; a confirm racing a cancellation never overwrites

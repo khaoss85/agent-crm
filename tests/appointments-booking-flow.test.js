@@ -8,13 +8,15 @@ import {
   bookFromLink,
   confirmBooking,
   createAppointmentBookCapability,
+  createAppointmentsPackageV2,
   parseBookingPhrase,
   proposeBooking,
   suggestSlots,
   validateBookingLinkToken,
 } from '../packages/appointments/src/index.js';
 import { ConflictError, NotFoundError } from '../packages/core/index.js';
-import { createSpacePermissionGateCapability } from '../packages/space-permissions/src/index.js';
+import { createSpacePermissionGateCapability, createSpacePermissionsDomain } from '../packages/space-permissions/src/index.js';
+import { createLlmPackage } from '../packages/llm/src/index.js';
 
 /**
  * Appointments BO-F3-02 booking flow ("07 Calendario"), with fakes and no
@@ -115,7 +117,7 @@ function fakeGate({ overrides = [] } = {}) {
     },
   };
   const gate = createSpacePermissionGateCapability().create({ modules, consumer: 'flow-probe' });
-  return { gate, overrideRows, proposalRows };
+  return { gate, modules, overrideRows, proposalRows };
 }
 
 const allowGate = () => fakeGate({ overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: true }] }).gate;
@@ -382,7 +384,7 @@ test('confirm names the calendar edge when a calendar is named but none is compo
       return true;
     },
   );
-  assert.equal(service.rows[0].status, 'confirmed', 'the booking stands; only the push is missing');
+  assert.equal(service.rows.length, 0, 'the missing calendar edge fails before any row exists');
 });
 
 test('a booking link books once: the resubmission replays the winner', async () => {
@@ -737,6 +739,40 @@ test('a handed-over LLM on another contract is refused with the edge named', asy
     (error) => {
       assert.equal(error.code, 'PACKAGE_DEPENDENCY_MISMATCH');
       assert.match(error.message, /llm-complete@1/);
+      return true;
+    },
+  );
+});
+
+test('a contract-2 graph hands over the real provider definitions and proposes', async () => {
+  const service = fakeAppointments();
+  const { modules: gateModules } = fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: true }],
+  });
+  const combined = {
+    get: (name) => {
+      if (name === 'appointment') return { service };
+      return gateModules.get(name);
+    },
+  };
+  const composed = createAppointmentsPackageV2({
+    spacePermissions: createSpacePermissionsDomain(),
+    llm: createLlmPackage(),
+  });
+  const book = composed.capabilities.find((entry) => entry?.name === 'appointment-book');
+  // The contract-2 refusal this guards against threw here, before any
+  // proposal or phrase ran: both provider handles settle on contract 1.
+  const cap = await book.create({ modules: combined, actor: ACTOR, now: () => NOW, consumer: 'host' });
+  const proposed = await cap.proposeBooking({ ...booking(), spaceId: SPACE });
+  assert.equal(proposed.decision, 'confirm-required');
+  assert.equal(service.rows.length, 0, 'the draft writes nothing');
+  // The llm edge opened too: a phrase reaches the provider layer, never a
+  // contract refusal and never the missing-handle path.
+  await assert.rejects(
+    cap.parseBookingPhrase({ spaceId: SPACE, phrase: 'Giovedì alle 17 con Guido' }),
+    (error) => {
+      assert.notEqual(error.code, 'PACKAGE_DEPENDENCY_MISMATCH');
+      assert.notEqual(error.code, 'APPOINTMENTS_AI_UNAVAILABLE');
       return true;
     },
   );
