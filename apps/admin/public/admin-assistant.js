@@ -300,12 +300,15 @@ async function answerRicontattare(client) {
     answer.unavailable.push('Thread: modulo conversation non leggibile in questo spazio.');
     return answer;
   }
-  const open = newestFirst(conversations.filter((row) => row?.status === 'open')).slice(0, 5);
-  if (open.length === 0) {
+  // The headline counts every open thread on the read page; only the
+  // listed lines and cited sources are sliced to the newest few.
+  const openAll = newestFirst(conversations.filter((row) => row?.status === 'open'));
+  const open = openAll.slice(0, 5);
+  if (openAll.length === 0) {
     answer.lines.push('Nessun thread aperto: niente da ricontattare.');
     return answer;
   }
-  answer.lines.push(`${open.length} thread aperti da ricontattare:`);
+  answer.lines.push(`${openAll.length} thread aperti da ricontattare${conversations.length !== openAll.length ? ` (tra ${conversations.length} letti)` : ''}:`);
   for (const row of open.slice(0, SUGGESTION_MAX_LISTED)) {
     answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${shortText(row.channel, 20)})` : ''}`);
   }
@@ -325,12 +328,17 @@ async function answerRicontattare(client) {
       customerFacing: false,
     });
     if (first?.status === 'open') {
+      // Irreversible (CONVERSATION_TRANSITIONS has no reopen): single click
+      // must never close a thread. customerFacing routes it through the
+      // two-step confirmation gate, and the label names the thread so the
+      // operator confirms exactly what closes.
       answer.actions.push({
         id: `bo04:chiudi:${conversationId}`,
-        label: 'Chiudi thread risolto',
+        label: `Chiudi il thread di ${conversationLabel(first)}`,
         kind: 'api',
         request: { path: `/api/modules/conversation/records/${encodeURIComponent(conversationId)}/actions/close`, method: 'POST', body: {} },
-        customerFacing: false,
+        customerFacing: true,
+        confirmLabel: `Chiudere il thread di ${conversationLabel(first)}? Non si può riaprire: i nuovi messaggi aprono un altro thread.`,
       });
     }
     answer.actions.push({
@@ -404,6 +412,17 @@ async function opportunityBoardHref(client) {
   }
 }
 
+/**
+ * Open pipeline only: terminal stages (won/lost) and server-closed rows
+ * (closedAt) are never counted as closable this month — the copy promises
+ * the open pipeline, not the archive.
+ * @param {any} row
+ */
+function isOpenPipeline(row) {
+  if (row?.stage === 'won' || row?.stage === 'lost') return false;
+  return row?.closedAt === null || row?.closedAt === undefined;
+}
+
 /** Chiusura mese: opportunità aperte per fase, importi in centesimi interi. */
 async function answerChiusura(client) {
   const answer = emptyAnswer('bo04:pipeline:chiusura', 'Quanto posso chiudere questo mese?');
@@ -421,6 +440,8 @@ async function answerChiusura(client) {
     answer.unavailable.push('Opportunità: elenco non leggibile in questo spazio.');
     return answer;
   }
+  // Open pipeline only: won/lost/closed rows are archive, not closable.
+  const open = items.filter(isOpenPipeline);
   // Counts per stage; money per (stage, currency) — currencies are never
   // summed together, one formatMinorUnits line per currency like the
   // pipeline board (admin-pipeline.js renderColumn).
@@ -428,7 +449,7 @@ async function answerChiusura(client) {
   const stageCount = new Map();
   /** @type {Map<string, { stage: string, currency: string, cents: number }>} */
   const stageTotals = new Map();
-  for (const row of items) {
+  for (const row of open) {
     const stage = typeof row?.stage === 'string' && row.stage !== '' ? row.stage
       : typeof row?.status === 'string' && row.status !== '' ? row.status : 'senza fase';
     stageCount.set(stage, (stageCount.get(stage) ?? 0) + 1);
@@ -442,7 +463,9 @@ async function answerChiusura(client) {
       }
     }
   }
-  answer.lines.push(`${items.length} opportunità lette.`);
+  answer.lines.push(open.length === 1
+    ? `1 opportunità aperta in pipeline${items.length !== 1 ? ` su ${items.length} lette` : ''}.`
+    : `${open.length} opportunità aperte in pipeline${items.length !== open.length ? ` su ${items.length} lette` : ''}.`);
   const topStages = [...stageCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, SUGGESTION_MAX_LISTED);
   for (const [stage, count] of topStages) {
     answer.lines.push(`• ${shortText(stage, 30)}: ${count}`);
@@ -455,7 +478,7 @@ async function answerChiusura(client) {
   const labelOf = (row) => shortText(row?.name ?? row?.companyName ?? row?.title, 60) || shortText(row?.id, 24);
   const boardHref = await opportunityBoardHref(client);
   if (boardHref !== null) {
-    for (const row of items) {
+    for (const row of open) {
       if (answer.sources.length >= SUGGESTION_MAX_SOURCES) break;
       if (!isSafeRecordId(row?.id)) continue;
       const label = labelOf(row) || row.id;
@@ -468,7 +491,7 @@ async function answerChiusura(client) {
   } else {
     // No pipeline board renders opportunities in this space: name the
     // records as text instead of linking a dead route.
-    for (const row of items.slice(0, SUGGESTION_MAX_LISTED)) {
+    for (const row of open.slice(0, SUGGESTION_MAX_LISTED)) {
       answer.lines.push(`• ${labelOf(row) || shortText(row?.id, 24)}`);
     }
   }
@@ -503,14 +526,17 @@ async function answerLeadSito(client) {
     answer.unavailable.push('Messaggi: modulo interaction-message non leggibile in questo spazio.');
     return answer;
   }
-  const inbound = newestFirst(messages.filter(
+  // The headline counts every inbound form message on the read page;
+  // only the listed lines and cited sources are sliced to the newest few.
+  const inboundAll = newestFirst(messages.filter(
     (row) => row?.direction === 'inbound' && row?.channel === 'website-form',
-  )).slice(0, 5);
-  if (inbound.length === 0) {
+  ));
+  const inbound = inboundAll.slice(0, 5);
+  if (inboundAll.length === 0) {
     answer.lines.push('Nessun messaggio dal form del sito tra gli ultimi letti.');
     return answer;
   }
-  answer.lines.push(`${inbound.length} messaggi dal form del sito:`);
+  answer.lines.push(`${inboundAll.length} messaggi dal form del sito${messages.length !== inboundAll.length ? ` (tra ${messages.length} letti)` : ''}:`);
   for (const row of inbound.slice(0, SUGGESTION_MAX_LISTED)) {
     answer.lines.push(`• ${shortText(row?.body, 60) || '(senza testo)'}`);
   }
@@ -569,8 +595,8 @@ async function answerCallReport(client) {
  */
 async function answerAiPuo(client) {
   const answer = emptyAnswer('bo04:impostazioni:ai-puo', 'Cosa può fare l’AI senza chiedermi?');
-  answer.lines.push('Da sola: leggere record, filtrare elenchi, segnare thread come letti, chiudere thread risolti.');
-  answer.lines.push('Chiede conferma prima di: aprire un thread per contattare un cliente, e di ogni invio verso un cliente.');
+  answer.lines.push('Da sola: leggere record, filtrare elenchi, segnare thread come letti.');
+  answer.lines.push('Chiede conferma prima di: chiudere un thread, aprire un thread per contattare un cliente, e di ogni invio verso un cliente.');
   answer.lines.push('Le domande libere arrivano con la chiave (vedi sotto).');
   const audit = await readRecords(client, 'llm-call-audit', 20);
   if (audit === null) {

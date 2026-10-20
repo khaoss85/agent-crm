@@ -140,6 +140,52 @@ test('ricontattare: scheda cliente, segna-letta reale, contatta con conferma', a
   assert.equal(contact.customerFacing, true);
 });
 
+test('chiudi thread: irreversibile, conferma nominativa prima di ogni esecuzione', async () => {
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': CONVS,
+    '/api/modules/conversation/records/conv-2/actions/close': { ok: true, id: 'conv-2', status: 'closed' },
+  });
+  const answer = await runSuggestion(client, 'bo04:clienti:ricontattare');
+  const close = answer.actions.find((action) => action.id.startsWith('bo04:chiudi'));
+  assert.ok(close);
+  assert.equal(close.customerFacing, true);
+  // The newest open thread is named, never a generic label.
+  assert.ok(close.label.includes('Sara Bianchi'));
+  assert.ok(close.confirmLabel.includes('Sara Bianchi'));
+  const refused = await runAssistantAction(client, close, {});
+  assert.equal(refused.needsConfirmation, true);
+  assert.ok(!client.calls.some((call) => String(call.path).includes('/actions/close')));
+  const done = await runAssistantAction(client, close, { confirmedActionId: close.id });
+  assert.equal(done.ok, true);
+  assert.ok(client.calls.some(
+    (call) => call.path === '/api/modules/conversation/records/conv-2/actions/close',
+  ));
+});
+
+test('titoli contano tutta la pagina letta, non solo i primi 5', async () => {
+  const threads = {
+    items: Array.from({ length: 6 }, (_, index) => ({
+      id: `conv-${index}`, status: 'open', updatedAt: `2026-10-20T0${index}:00:00.000Z`,
+    })),
+  };
+  const ricontattare = await runSuggestion(
+    stubClient({ '/api/modules/conversation/records?limit=50': threads }),
+    'bo04:clienti:ricontattare',
+  );
+  assert.ok(ricontattare.lines.some((line) => line.includes('6 thread aperti da ricontattare')));
+  const messages = {
+    items: Array.from({ length: 6 }, (_, index) => ({
+      id: `msg-${index}`, direction: 'inbound', channel: 'website-form',
+      body: `richiesta ${index}`, conversationId: 'conv-0',
+    })),
+  };
+  const lead = await runSuggestion(
+    stubClient({ '/api/modules/interaction-message/records?limit=100': messages }),
+    'bo04:sequenze:lead-sito',
+  );
+  assert.ok(lead.lines.some((line) => line.includes('6 messaggi dal form del sito')));
+});
+
 test('segnali: raggruppati per lead da behavioral-signal (intelligence)', async () => {
   const client = stubClient({
     '/api/modules/behavioral-signal/records?limit=100': {
@@ -193,6 +239,26 @@ test('chiusura: valute miste mai sommate, una riga per valuta', async () => {
   assert.ok(answer.lines.some((line) => line.includes('USD 100.00')));
   assert.ok(!answer.lines.some((line) => line.includes('EUR 1,800.00')));
   assert.ok(!answer.lines.some((line) => line.includes('USD 1,800.00')));
+});
+
+test('chiusura: vinte, perse e chiuse escluse dai conteggi', async () => {
+  const client = stubClient({
+    '/api/opportunities': {
+      items: [
+        { id: 'opp-won', name: 'Vinta', stage: 'won', valueCents: 500000, currency: 'EUR' },
+        { id: 'opp-lost', name: 'Persa', stage: 'lost', valueCents: 300000, currency: 'EUR' },
+        { id: 'opp-closed', name: 'Chiusa', stage: 'proposal', valueCents: 200000, currency: 'EUR', closedAt: '2026-10-19T10:00:00.000Z' },
+        { id: 'opp-open', name: 'Aperta', stage: 'proposal', valueCents: 100000, currency: 'EUR' },
+      ],
+    },
+    '/api/schema': { pipelines: [{ name: 'b2b-sales', module: 'opportunity' }] },
+  });
+  const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
+  assert.ok(answer.lines.some((line) => line.includes('1 opportunità aperta in pipeline')));
+  assert.ok(answer.lines.some((line) => line.includes('su 4 lette')));
+  assert.ok(answer.lines.some((line) => line.includes('EUR 1,000.00')));
+  assert.ok(!answer.lines.some((line) => line.includes('5,000') || line.includes('3,000') || line.includes('2,000')));
+  assert.deepEqual(sourceIds(answer), ['opp-open']);
 });
 
 test('chiusura senza board: record come testo, nessun link morto', async () => {
