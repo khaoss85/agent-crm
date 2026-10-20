@@ -21,6 +21,7 @@
  *    rendered badge classes stop covering a state group.
  */
 
+import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
@@ -387,6 +388,69 @@ export function chromiumCaptureFlags(binary) {
     '--timeout=30000',
     '--force-device-scale-factor=1',
   ];
+}
+
+/**
+ * Run one subprocess (a Chromium invocation in the capture) WITHOUT blocking
+ * the event loop. The capture serves its loopback trees from this same
+ * process, so a synchronous spawn starves the servers: Chromium's requests
+ * are never answered, the run hits Chromium's own `--timeout`, and the dump
+ * is an empty document with zero served requests (CI run 39497667414: 40b
+ * empty DOM after ~79s per side, no `served:` lines at all). The async spawn
+ * below keeps the servers answering while Chromium renders.
+ *
+ * Resolves with `{ status, signal, timedOut, stdout, stderr, error }`;
+ * `timedOut` is true when the timeout killed the process. Output past
+ * `maxBuffer` bytes kills the process and resolves with what was captured.
+ * @param {string} command
+ * @param {string[]} args
+ * @param {{ timeoutMs?: number, maxBuffer?: number }} [options]
+ * @returns {Promise<{ status: number | null, signal: string | null, timedOut: boolean, stdout: string, stderr: string, error: unknown }>}
+ */
+export function runProcess(command, args, { timeoutMs = 60_000, maxBuffer = 16 * 1024 * 1024 } = {}) {
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let settled = false;
+    /** @param {{ status: number | null, signal: string | null, timedOut: boolean, error: unknown }} result */
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ ...result, stdout, stderr });
+    };
+    let child;
+    try {
+      child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      resolve({ status: null, signal: null, timedOut: false, stdout, stderr, error });
+      return;
+    }
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      done({ status: null, signal: 'SIGKILL', timedOut: true, error: undefined });
+    }, timeoutMs);
+    child.stdout.on('data', (chunk) => {
+      const text = String(chunk);
+      stdoutBytes += Buffer.byteLength(text);
+      if (stdoutBytes <= maxBuffer) stdout += text;
+      if (stdoutBytes > maxBuffer) {
+        child.kill('SIGKILL');
+        done({ status: null, signal: 'SIGKILL', timedOut: false, error: new Error('stdout exceeded maxBuffer') });
+      }
+    });
+    child.stderr.on('data', (chunk) => {
+      const text = String(chunk);
+      stderrBytes += Buffer.byteLength(text);
+      if (stderrBytes <= maxBuffer) stderr += text;
+    });
+    child.on('error', (error) => done({ status: null, signal: null, timedOut: false, error }));
+    child.on('close', (status, signal) =>
+      done({ status, signal: signal ?? null, timedOut: false, error: undefined }),
+    );
+  });
 }
 
 /**

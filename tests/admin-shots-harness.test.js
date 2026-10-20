@@ -17,6 +17,7 @@ import {
   countBadgeNodes,
   findChromium,
   isHeadlessShell,
+  runProcess,
   snipDom,
   startRootServer,
   stateBadgeGroups,
@@ -269,4 +270,43 @@ test('snipDom collapses a document to one log line with an explicit cut', () => 
   assert.ok(snipped.startsWith('<html>'), 'keeps the head, where the failure evidence is');
   assert.match(snipped, /\(\+\d+ chars\)$/, 'marks the cut instead of truncating silently');
   assert.equal(snipDom(null), '', 'never throws on odd input');
+});
+
+test('runProcess keeps the loopback servers answering while a subprocess runs', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'harness-test-'));
+  writeFileSync(join(dir, 'index.html'), '<!doctype html><html><body>capture-alive</body></html>');
+  const { port, log, close } = await serve(dir);
+  try {
+    // Regression: the capture used to spawn Chromium synchronously while
+    // serving its trees from the same process, so no request was ever
+    // answered (CI run 39497667414: zero served lines, empty DOM after the
+    // browser's own timeout). A subprocess fetching the tree must get its
+    // bytes while the parent awaits it.
+    const probe = await runProcess(
+      process.execPath,
+      [
+        '-e',
+        `fetch('http://127.0.0.1:${port}/index.html').then(async (r) => { console.log(await r.text()); }).catch((e) => { console.error('fetch failed: ' + e.message); process.exitCode = 7; })`,
+      ],
+      { timeoutMs: 15_000 },
+    );
+    assert.equal(probe.timedOut, false, 'the subprocess finished instead of hanging a starved server');
+    assert.equal(probe.status, 0, 'the fetch subprocess exited cleanly');
+    assert.ok(probe.stdout.includes('capture-alive'), 'the server answered mid-flight with its own bytes');
+    assert.ok(
+      log.some((item) => item.path === '/index.html' && item.status === 200),
+      'the hit is in the request log',
+    );
+  } finally {
+    close();
+  }
+});
+
+test('runProcess times out a hung subprocess instead of waiting forever', async () => {
+  const startedAt = Date.now();
+  const hung = await runProcess(process.execPath, ['-e', 'setInterval(() => {}, 50);'], {
+    timeoutMs: 500,
+  });
+  assert.equal(hung.timedOut, true, 'the hang is reported, not awaited');
+  assert.ok(Date.now() - startedAt < 15_000, 'the timeout bound holds');
 });

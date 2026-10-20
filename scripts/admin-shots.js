@@ -31,7 +31,6 @@
  * `npm run admin:shots`.
  */
 
-import { spawnSync } from 'node:child_process';
 import { spawnGit } from './git-env.js';
 import { createHash } from 'node:crypto';
 import {
@@ -52,6 +51,7 @@ import {
   countBadgeNodes,
   findChromium,
   isHeadlessShell,
+  runProcess,
   snipDom,
   startRootServer,
   stateBadgeGroups,
@@ -77,6 +77,12 @@ function sha256(data) {
 /**
  * Render one URL to a PNG screenshot plus its serialized DOM (after the
  * app's own fetches settle). Either artifact missing is a capture failure.
+ *
+ * Async on purpose: the loopback servers live in this same process, so a
+ * synchronous spawn would starve them — Chromium's requests would never be
+ * answered and every capture would dump an empty document (CI run
+ * 39497667414). The awaits below keep the servers answering while Chromium
+ * renders.
  * @param {string} binary chromium binary
  * @param {string} url
  * @param {{ width: number, height: number }} frame
@@ -84,35 +90,41 @@ function sha256(data) {
  * @param {string} profileDir fresh Chromium profile (never the user's own:
  * without it a running desktop Chrome can swallow the request and exit
  * without writing any screenshot)
- * @returns {{ dom: string, domBytes: number, elapsedMs: number } | { error: string }}
+ * @returns {Promise<{ dom: string, domBytes: number, elapsedMs: number } | { error: string }>}
  */
-function capture(binary, url, frame, shotPath, profileDir) {
+async function capture(binary, url, frame, shotPath, profileDir) {
   // Flag order is fixed by the shared harness (proxy bypass and Chromium's
   // own render timeout included); the fresh per-capture profile is appended
   // by the caller.
   const flags = [...chromiumCaptureFlags(binary), `--user-data-dir=${profileDir}`];
   const startedAt = Date.now();
-  const shot = spawnSync(
+  const shot = await runProcess(
     binary,
     [...flags, `--screenshot=${shotPath}`, `--window-size=${frame.width},${frame.height}`, url],
-    { encoding: 'utf8', timeout: 60_000 },
+    { timeoutMs: 60_000 },
   );
+  if (shot.timedOut) {
+    return { error: `chromium screenshot timed out after 60s (${binary.split('/').pop()})` };
+  }
   if (!existsSync(shotPath)) {
     // The runner is the only machine with a browser: report WHY Chromium
     // produced nothing (spawn error/exit status/signal/stderr tail) instead
     // of a bare sentence, so the next CI log names the cause directly.
-    const spawnErr = /** @type {NodeJS.ErrnoException | undefined} */ (shot.error);
-    const spawnError = spawnErr ? ` spawn=${spawnErr.code ?? spawnErr.message}` : '';
+    const spawnError = shot.error
+      ? ` spawn=${/** @type {NodeJS.ErrnoException} */ (shot.error).code ?? /** @type {Error} */ (shot.error).message}`
+      : '';
     const signal = shot.signal ? ` signal=${shot.signal}` : '';
     const status = shot.status !== null && shot.status !== undefined ? ` exit=${shot.status}` : '';
     const stderr = typeof shot.stderr === 'string' ? shot.stderr.trim().split('\n').slice(-5).join(' | ') : '';
     return { error: `chromium wrote no screenshot (${binary.split('/').pop()}${spawnError}${status}${signal}${stderr ? ` stderr: ${stderr}` : ' no stderr'})` };
   }
-  const dom = spawnSync(binary, [...flags, '--dump-dom', url], {
-    encoding: 'utf8',
-    timeout: 60_000,
+  const dom = await runProcess(binary, [...flags, '--dump-dom', url], {
+    timeoutMs: 60_000,
     maxBuffer: 16 * 1024 * 1024,
   });
+  if (dom.timedOut) {
+    return { error: 'chromium --dump-dom timed out after 60s' };
+  }
   if (typeof dom.stdout !== 'string' || !dom.stdout.includes('<html')) {
     return { error: 'chromium produced no serialized DOM' };
   }
@@ -219,7 +231,7 @@ async function main() {
         const url =
           `http://127.0.0.1:${entry.port}/index.html` + (target.route === '#/' ? '' : target.route);
         const profile = join(scratch, `profile-${entry.side}-${target.file}`);
-        const result = capture(binary, url, target, output, profile);
+        const result = await capture(binary, url, target, output, profile);
         if ('error' in result) {
           fail(`${entry.side}/${target.file}: ${result.error}`);
           break;
