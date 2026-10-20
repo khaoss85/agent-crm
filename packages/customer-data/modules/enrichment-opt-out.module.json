@@ -1,0 +1,59 @@
+{
+  "manifestVersion": 1,
+  "name": "enrichment-opt-out",
+  "description": "One subject's refusal of contact enrichment. While the row exists, no enrichment source writes a new enriched field for the subject, and opting out purges the subject's active enriched fields. Channel identities (external-identity) are untouched: they route messages, they are not enrichment.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectResource",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwner",
+      "type": "enum",
+      "values": [
+        "host",
+        "package"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwnerPackage",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectLabel",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "optedOutAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "optedOutByRunId",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}
