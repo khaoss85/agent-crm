@@ -118,7 +118,7 @@ export function createFixtureLlmAdapter(options = {}) {
           model,
           inputTokens: canned.inputTokens ?? 12,
           outputTokens: canned.outputTokens ?? 3,
-        }, model);
+        }, model, { maxTokens });
       },
     },
     api,

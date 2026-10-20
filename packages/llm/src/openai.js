@@ -147,7 +147,7 @@ export function createOpenAiLlmAdapter(options = {}) {
           outputTokens: Number.isSafeInteger(usage.completion_tokens) && usage.completion_tokens >= 0
             ? usage.completion_tokens
             : estimateTokens(text),
-        }, callModel);
+        }, callModel, { maxTokens });
       },
     },
   };

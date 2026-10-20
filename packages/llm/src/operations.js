@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ValidationError, requireActor } from '../../core/index.js';
+import { AppError, ValidationError, requireActor, withTimeout } from '../../core/index.js';
 import { LlmRegistries, assertGenerateInput } from './adapter.js';
 import { FIXTURE_LLM_SECRET, createFixtureLlmAdapter } from './fixture.js';
 import { OPENAI_DEFAULT_MODEL } from './openai.js';
@@ -23,7 +23,10 @@ import { OPENAI_DEFAULT_MODEL } from './openai.js';
  * anywhere the call runs as an explicit dry-run on the fixture adapter —
  * announced in the result and the audit, with no network behind it. With
  * a key expected but custody failing or unwired the call refuses with
- * `LLM_SECRET_UNAVAILABLE` instead of serving canned text. The model
+ * `LLM_SECRET_UNAVAILABLE` instead of serving canned text. Custody waits
+ * at most the space timeout, and the audit row names the cause
+ * (`secret-timeout`, `secret-error`, `secret-empty`, `secret-unwired`)
+ * without vault detail. The model
  * surface is closed (the default model plus the space allowlist) and every
  * allowed model needs a valid price, or the call refuses before the
  * provider is touched. Every attempt writes one audit row with the space,
@@ -77,8 +80,10 @@ const RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/;
  */
 const daySpendChains = new Map();
 
-/** @param {string} key @param {() => Promise<any>} critical */
-function withDaySpend(key, critical) {
+/**
+ * @param {string} key @param {() => Promise<any>} critical @param {number} slotMs
+ */
+export function withDaySpend(key, critical, slotMs) {
   const previous = daySpendChains.get(key) ?? Promise.resolve();
   let release = () => {};
   const current = new Promise((resolve) => { release = resolve; });
@@ -89,7 +94,25 @@ function withDaySpend(key, critical) {
   return (async () => {
     await previous;
     try {
-      return await critical();
+      // The slot itself is bounded: a hung custody edge or an adapter that
+      // ignores its own timeout cannot wedge the space chain — the slot
+      // refuses retryable and the chain stays free for the next attempt.
+      // A late settler's spend still lands through the claim below as real
+      // spend instead of vanishing. (MEM_ACC_REUSE: core `withTimeout`,
+      // the same bound channels puts on verifyInbound.)
+      return await withTimeout(
+        Promise.resolve().then(() => critical()),
+        slotMs,
+        'llm day-spend slot',
+      );
+    } catch (error) {
+      if (error !== null && typeof error === 'object'
+        && /** @type {any} */ (error).code === 'PROVIDER_TIMEOUT') {
+        throw new AppError(`the llm operation timed out after ${slotMs}ms: retry the call`, {
+          code: 'LLM_OPERATION_TIMEOUT', status: 503,
+        });
+      }
+      throw error;
     } finally {
       if (daySpendChains.get(key) === tail) daySpendChains.delete(key);
       release();
@@ -736,7 +759,10 @@ export function createLlmOperations(options = {}) {
     // calls neither bypass the cap nor lose each other's tokens. Keyed by
     // space, never by day, so midnight straddlers share the slot and each
     // resolves its own day inside. Synchronous until the chain links, so
-    // same-tick racers still order.
+    // same-tick racers still order. The slot outlives the two sequential
+    // bounded legs (custody, provider) plus the claim retries: only a
+    // genuinely wedged leg trips it.
+    const slotMs = timeoutMs * 2 + 5000;
     return withDaySpend(spaceId, async () => {
       const current = await usageToday(usageService, spaceId, actor);
       if (overCap(current.row, caps)) {
@@ -798,10 +824,25 @@ export function createLlmOperations(options = {}) {
       // that does not branch on dryRun would present fabricated text as
       // the model answer.
       let secret = null;
+      // The audit's `refused` carries the cause as a fixed token — timeout,
+      // throw, empty or unwired — so the refusal stays diagnosable without
+      // the vault's raw error, which could echo reference material. Never
+      // the secret, never the prompt: tokens only.
+      let secretCause = 'secret-unwired';
       if (typeof resolveSecret === 'function') {
         try {
-          secret = await resolveSecret(secretRef, { spaceId, purpose: 'llm-complete' });
-        } catch {
+          // Bounded like the provider leg below: a hung vault refuses
+          // within the attempt's timeout instead of wedging this space's
+          // spend chain, with the same stable refusal code.
+          secret = await withTimeout(
+            Promise.resolve().then(() => resolveSecret(secretRef, { spaceId, purpose: 'llm-complete' })),
+            timeoutMs,
+            'llm secret custody',
+          );
+          secretCause = 'secret-empty';
+        } catch (error) {
+          secretCause = error !== null && typeof error === 'object'
+            && /** @type {any} */ (error).code === 'PROVIDER_TIMEOUT' ? 'secret-timeout' : 'secret-error';
           secret = null;
         }
       }
@@ -809,10 +850,10 @@ export function createLlmOperations(options = {}) {
         await audit(auditService, {
           spaceId, purpose, adapter: '', model,
           inputTokens: 0, outputTokens: 0, estimatedCostCents: 0,
-          dryRun: false, errorCode: 'LLM_SECRET_UNAVAILABLE', sources,
+          dryRun: false, refused: secretCause, errorCode: 'LLM_SECRET_UNAVAILABLE', sources,
         }, actor);
         throw new AppError('the llm key is unavailable: no text was sent anywhere', {
-          code: 'LLM_SECRET_UNAVAILABLE', status: 500,
+          code: 'LLM_SECRET_UNAVAILABLE', status: 500, details: { reason: secretCause },
         });
       }
 
@@ -860,7 +901,7 @@ export function createLlmOperations(options = {}) {
           dayCostCents: claimed.row.estimatedCostCents,
         }),
       });
-    });
+    }, slotMs);
   }
 
   async function readUsage(request, modules) {

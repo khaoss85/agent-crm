@@ -12,7 +12,7 @@ import {
   createRecordModuleFromManifest,
   recordModuleMigrations,
 } from '../packages/core/src/record-module-runtime.js';
-import { claimSpend, createLlmOperations, estimateCostCents } from '../packages/llm/src/operations.js';
+import { claimSpend, createLlmOperations, estimateCostCents, withDaySpend } from '../packages/llm/src/operations.js';
 import { createFixtureLlmAdapter } from '../packages/llm/src/fixture.js';
 import { OPENAI_DEFAULT_MODEL, createOpenAiLlmAdapter } from '../packages/llm/src/openai.js';
 
@@ -371,6 +371,91 @@ test('a key expected but custody unwired refuses', async () => {
   });
   assert.equal(await codeOf(() => call(ops, modules, { tag: 'unwired' })), 'LLM_SECRET_UNAVAILABLE');
   assert.equal(api.calls(), 0, 'the adapter ran without custody');
+});
+
+test('a long response within maxTokens is accepted, an absurd one refused', async () => {
+  const long = createFixtureLlmAdapter({ secret: SECRET });
+  long.api.answer('x'.repeat(100000));
+  const accepted = setup({ adapters: [long.definition] });
+  const out = await call(accepted.ops, accepted.modules, { tag: 'long', maxTokens: 32000 });
+  assert.equal(out.text.length, 100000, 'a response inside its own token ceiling is kept');
+  const totals = await accepted.ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, accepted.modules);
+  assert.equal(totals[0].calls, 1, 'the accepted long response claimed its spend');
+
+  const absurd = createFixtureLlmAdapter({ secret: SECRET });
+  absurd.api.answer('y'.repeat(60000), { match: 'absurd-marker' });
+  const refused = setup({ adapters: [absurd.definition] });
+  // 60000 chars cannot come from 64 tokens: refused fail-closed, no spend.
+  assert.equal(
+    await codeOf(() => call(refused.ops, refused.modules, { tag: 'absurd-marker', maxTokens: 64 })),
+    'VALIDATION_ERROR',
+  );
+  const none = await refused.ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, refused.modules);
+  assert.deepEqual(none.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[0, 0, 0]],
+    'the refused absurd response claimed no spend');
+});
+
+test('a hung custody refuses within the timeout and frees the space chain', async () => {
+  const hanging = setup({
+    resolveSecret: () => new Promise(() => {}),
+    spaces: { presti: { enabled: true, timeoutMs: 1000 } },
+  });
+  const code = await codeOf(() => call(hanging.ops, hanging.modules, { tag: 'hung' }));
+  assert.equal(code, 'LLM_SECRET_UNAVAILABLE', 'a hung vault refuses with the stable code');
+  const audit = await hanging.ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, hanging.modules);
+  assert.equal(audit[audit.length - 1].refused, 'secret-timeout', 'the audit names the timeout cause');
+  assert.equal(audit[audit.length - 1].errorCode, 'LLM_SECRET_UNAVAILABLE');
+  // The chain is free: the same space serves the next attempt.
+  const working = setup();
+  const out = await call(working.ops, working.modules, { tag: 'after-hang' });
+  assert.equal(out.text, 'live answer', 'the space chain stayed free after the timeout');
+});
+
+test('a secret failure records its cause and never the secret', async () => {
+  // Built at runtime, never written down: a vault error echoing secret
+  // material must not reach storage, errors or the audit.
+  const LEAK = ['llm', 'operations', 'leaked', 'value', '9'].join('-');
+  const failing = setup({
+    resolveSecret: async () => { throw new Error(`vault exploded on ${LEAK}`); },
+  });
+  let thrown = null;
+  try {
+    await call(failing.ops, failing.modules, { tag: 'leak' });
+  } catch (error) {
+    thrown = error;
+  }
+  assert.equal(thrown?.code, 'LLM_SECRET_UNAVAILABLE');
+  assert.equal(thrown?.details?.reason, 'secret-error');
+  assert.ok(!JSON.stringify(thrown, Object.getOwnPropertyNames(thrown)).includes(LEAK),
+    'the error carries the leaked value');
+  assert.ok(!failing.dump().includes(LEAK), 'the leaked value reached storage');
+  const audit = await failing.ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, failing.modules);
+  assert.equal(audit[audit.length - 1].refused, 'secret-error', 'the audit names the throw cause');
+  assert.ok(!JSON.stringify(audit).includes(LEAK), 'the leaked value reached the audit');
+
+  const empty = setup({ resolveSecret: async () => '' });
+  assert.equal(await codeOf(() => call(empty.ops, empty.modules, { tag: 'empty' })), 'LLM_SECRET_UNAVAILABLE');
+  const emptyAudit = await empty.ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, empty.modules);
+  assert.equal(emptyAudit[emptyAudit.length - 1].refused, 'secret-empty');
+
+  const { definition, api } = createFixtureLlmAdapter({ secret: SECRET });
+  const unwired = setup({
+    adapters: [definition],
+    omitResolver: true,
+    spaces: { presti: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1 } },
+  });
+  assert.equal(await codeOf(() => call(unwired.ops, unwired.modules, { tag: 'unwired-cause' })),
+    'LLM_SECRET_UNAVAILABLE');
+  assert.equal(api.calls(), 0, 'the adapter ran without custody');
+  const unwiredAudit = await unwired.ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, unwired.modules);
+  assert.equal(unwiredAudit[unwiredAudit.length - 1].refused, 'secret-unwired');
+});
+
+test('a wedged slot refuses retryable and frees the space chain', async () => {
+  const code = await codeOf(() => withDaySpend('slot-probe-00647aef', () => new Promise(() => {}), 50));
+  assert.equal(code, 'LLM_OPERATION_TIMEOUT', 'a wedged slot refuses with the stable retryable code');
+  const next = await withDaySpend('slot-probe-00647aef', async () => 'served', 50);
+  assert.equal(next, 'served', 'the chain stayed free after the slot timeout');
 });
 
 test('racing calls serialize: the loser of a filled cap refuses', async () => {

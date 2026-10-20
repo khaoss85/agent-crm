@@ -92,19 +92,39 @@ export function assertGenerateInput(input) {
 }
 
 /**
- * Validate one completion the way every adapter returns it: bounded text,
- * the model that produced it, non-negative token counts. Throws
- * fail-closed; returns the frozen completion the package audits.
- *
- * @param {unknown} completion @param {string} expectedModel
+ * Characters one output token can plausibly carry. The working estimate
+ * elsewhere is ~4 per token; the acceptance ceiling doubles it, covering
+ * whitespace- and code-heavy text, while staying bounded by the request:
+ * a completion can never be longer than its own token ceiling allows.
  */
-export function assertCompletion(completion, expectedModel) {
+export const LLM_MAX_CHARS_PER_TOKEN = 8;
+
+/** Absolute text bound when the caller names no token ceiling. */
+const LLM_MAX_COMPLETION_CHARS = 32000;
+
+/**
+ * Validate one completion the way every adapter returns it: text within
+ * the request's token ceiling, the model that produced it, non-negative
+ * token counts. Throws fail-closed; returns the frozen completion the
+ * package audits.
+ *
+ * @param {unknown} completion @param {string} expectedModel @param {{maxTokens?: number}} [options]
+ */
+export function assertCompletion(completion, expectedModel, options = {}) {
   if (!completion || typeof completion !== 'object' || Array.isArray(completion)) {
     throw new ValidationError('llm completion must be a plain object', { field: 'completion' });
   }
   const value = /** @type {Record<string, any>} */ (completion);
-  if (typeof value.text !== 'string' || value.text === '' || value.text.length > 32000) {
-    throw new ValidationError('llm completion text must be bounded non-empty text (at most 32000 characters)', {
+  const maxTokens = options?.maxTokens;
+  if (maxTokens !== undefined
+    && (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 32000)) {
+    throw new ValidationError('llm completion maxTokens must be an integer between 1 and 32000', {
+      field: 'completion.maxTokens',
+    });
+  }
+  const ceiling = maxTokens === undefined ? LLM_MAX_COMPLETION_CHARS : maxTokens * LLM_MAX_CHARS_PER_TOKEN;
+  if (typeof value.text !== 'string' || value.text === '' || value.text.length > ceiling) {
+    throw new ValidationError(`llm completion text must be bounded non-empty text (at most ${ceiling} characters)`, {
       field: 'completion.text',
     });
   }
