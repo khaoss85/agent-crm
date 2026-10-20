@@ -462,3 +462,93 @@ test('an opt-out racing an in-flight enrichment leaves no active enriched field'
   await raceOnce('corsa-uno');
   await raceOnce('corsa-due');
 });
+
+test('conflicting evidence becomes a candidate only: no enriched field lands on either side', async (t) => {
+  const { app } = await scene(t, 'enrichment-conflict-fields');
+  // Contact A owns phone P through signature enrichment.
+  await app.applyContactEnrichment({
+    actor: ACTOR, email: 'anna@prestigroup.example',
+    fields: { firstName: 'Anna', phone: '+393331111111' }, source: 'email-signature', sourceDetail: 'msg-a',
+  });
+  // Contact B exists independently.
+  const created = await app.resolveChannelSender({
+    channel: 'email', handle: 'bruno@prestigroup.example', email: 'bruno@prestigroup.example',
+    firstName: 'Bruno', lastName: 'Bianchi', companyName: 'Presti Group', actor: ACTOR,
+  });
+  assert.equal(created.outcome, 'created');
+  const bId = app.modules.get('external-identity').service
+    .listWhere({ sourceKey: 'email:bruno@prestigroup.example' })[0].subjectId;
+  const aId = app.modules.get('external-identity').service
+    .listWhere({ sourceKey: 'email:anna@prestigroup.example' })[0].subjectId;
+  const aRowsBefore = enrichedRows(app, aId).length;
+
+  // The same tainted request names B by email and A by phone.
+  const answer = await app.applyContactEnrichment({
+    actor: ACTOR, email: 'bruno@prestigroup.example',
+    fields: { firstName: 'X', phone: '+393331111111' }, source: 'email-signature', sourceDetail: 'msg-b',
+  });
+  assert.equal(answer.candidatesWritten, 1, 'the conflict is recorded for a human');
+  assert.equal(answer.applied.length, 0, 'ambiguous evidence stores no field on either side');
+  assert.equal(enrichedRows(app, bId).length, 0, 'no firstName X is misattributed to B');
+  assert.equal(enrichedRows(app, aId).length, aRowsBefore, 'A gains nothing from the ambiguous request');
+  const candidates = app.modules.get('duplicate-candidate').service.listWhere({ status: 'unresolved' });
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].rule, 'contact-enrichment');
+});
+
+test('a conflict naming an opted-out contact writes no candidate', async (t) => {
+  const { app } = await scene(t, 'enrichment-optout-conflict', { googleContacts: true });
+  const fake = createFakeGoogleContacts();
+  seedPerson(fake, { resourceName: 'people/c1', emailAddresses: [{ value: 'luca@prestigroup.example' }] });
+  await app.importGoogleContacts({ actor: ACTOR, adapter: fake });
+  await app.optOutContactEnrichment({ actor: ACTOR, email: 'luca@prestigroup.example', reason: 'test' });
+
+  // Contact B exists; the same Google id now carries B's email.
+  const socio = await app.resolveChannelSender({
+    channel: 'email', handle: 'socio@prestigroup.example', email: 'socio@prestigroup.example',
+    firstName: 'Socio', lastName: 'Altro', companyName: 'Altra Srl', actor: ACTOR,
+  });
+  assert.equal(socio.outcome, 'created');
+  const second = createFakeGoogleContacts();
+  second.seedPerson({
+    resourceName: 'people/c1',
+    names: [{ givenName: 'Luca', familyName: 'Rossi' }],
+    emailAddresses: [{ value: 'socio@prestigroup.example' }],
+  });
+  const summary = await app.importGoogleContacts({ actor: ACTOR, adapter: second });
+  assert.equal(summary.counts.skippedOptOut, 1, 'the opted-out side refuses the candidate path');
+  assert.equal(summary.counts.candidates, 0, 'no row naming the opted-out contact is written after the purge');
+  const candidates = app.modules.get('duplicate-candidate').service.listWhere({ status: 'unresolved' });
+  assert.equal(candidates.length, 0, 'the opt-out stays final: no new row names that subject');
+});
+
+test('a busy database fails loudly instead of counting contention as malformed', async (t) => {
+  const root = project(t, { googleContacts: true });
+  const dbPath = join(root, 'data', 'enrichment-busy.sqlite');
+  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+  const holder = createAccordoApp({ dbPath });
+  const importer = createAccordoApp({ dbPath, busyTimeoutMs: 0 });
+  t.after(() => {
+    try { holder.database.raw.exec('ROLLBACK'); } catch { /* already released */ }
+    holder.close();
+    importer.close();
+  });
+
+  const fake = createFakeGoogleContacts();
+  seedPerson(fake);
+  const first = await importer.importGoogleContacts({ actor: ACTOR, adapter: fake });
+  assert.equal(first.counts.created, 1);
+
+  // Another writer holds the write lock past the (zero) busy timeout.
+  holder.database.raw.exec('BEGIN IMMEDIATE');
+  const again = createFakeGoogleContacts();
+  seedPerson(again, {
+    resourceName: 'people/c2',
+    names: [{ givenName: 'Nuova', familyName: 'Persona' }],
+    emailAddresses: [{ value: 'nuova@prestigroup.example' }],
+  });
+  await assert.rejects(
+    importer.importGoogleContacts({ actor: ACTOR, adapter: again }),
+    (error) => error.code === 'CONFLICT',
+    'contention aborts the run loudly: the person is never bucketed as skipped-malformed in a success receipt');
+});

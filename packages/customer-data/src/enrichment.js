@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import { AppError, ConflictError, ValidationError, normalizeActor } from '../../core/index.js';
 import { emailShape, requireExternalId, safeString } from './normalize.js';
 import {
   createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow,
@@ -287,45 +287,54 @@ export function createContactEnrichment({
           'this contact opted out of enrichment: no new field is stored and the enriched fields are purged on opt-out');
       }
 
-      if (googleResourceName) {
-        if (knownGoogle && knownGoogle.subjectId !== id) {
+      // Ambiguous evidence names two different subjects: the whole request
+      // is tainted, so it becomes candidate(s) only — no identity link and
+      // no enriched-field row lands on either side. This is the same
+      // early-return discipline the Google import uses for its id-vs-email
+      // conflict: a human decides before any attribute is attributed.
+      const googleConflict = Boolean(googleResourceName && knownGoogle && knownGoogle.subjectId !== id);
+      const emailConflict = Boolean(email && knownEmail && knownEmail.subjectId !== id);
+      const phoneConflict = Boolean(fields.phone && knownPhone && knownPhone.subjectId !== id);
+      if (googleConflict || emailConflict || phoneConflict) {
+        if (googleConflict) {
           // The evidence names the opaque provider id, never PII: the
           // handles themselves travel in the candidate subjects' labels.
           candidatesWritten += await recordEnrichmentCandidate(
             subject, candidateOf(knownGoogle),
             'this Google contact already names another record: a human decides',
             runId, actor);
-        } else {
-          await recordExternalIdentityRow({
-            modules, names, system: GOOGLE_CONTACTS_SYSTEM, externalId: googleResourceName,
-            subject, runId, actor,
-          });
         }
-      }
-
-      if (email) {
-        if (knownEmail && knownEmail.subjectId !== id) {
+        if (emailConflict) {
           candidatesWritten += await recordEnrichmentCandidate(
             subject, candidateOf(knownEmail),
             'this email already names another record: a human decides', runId, actor);
-        } else {
-          await recordExternalIdentityRow({
-            modules, names, system: 'email', externalId: email, subject, runId, actor,
-          });
         }
-      }
-
-      if (fields.phone) {
-        if (knownPhone && knownPhone.subjectId !== id) {
+        if (phoneConflict) {
           candidatesWritten += await recordEnrichmentCandidate(
             subject, candidateOf(knownPhone),
             'this phone already names another record: a human decides', runId, actor);
-        } else {
-          await recordExternalIdentityRow({
-            modules, names, system: 'phone', externalId: fields.phone, subject, runId, actor,
-          });
-          applied.push(await storeField(subject, 'phone', fields.phone, { source, sourceDetail, runId, now, actor }));
         }
+        return { id, created, applied, candidatesWritten };
+      }
+
+      if (googleResourceName) {
+        await recordExternalIdentityRow({
+          modules, names, system: GOOGLE_CONTACTS_SYSTEM, externalId: googleResourceName,
+          subject, runId, actor,
+        });
+      }
+
+      if (email) {
+        await recordExternalIdentityRow({
+          modules, names, system: 'email', externalId: email, subject, runId, actor,
+        });
+      }
+
+      if (fields.phone) {
+        await recordExternalIdentityRow({
+          modules, names, system: 'phone', externalId: fields.phone, subject, runId, actor,
+        });
+        applied.push(await storeField(subject, 'phone', fields.phone, { source, sourceDetail, runId, now, actor }));
       } else if (phoneRefused) {
         applied.push({
           field: 'phone', value: null, source, sourceDetail, observedAt: now,
@@ -457,6 +466,15 @@ export function createContactEnrichment({
     const emailContact = read.email ? await reader.contactByEmail(read.email) : null;
 
     if (knownSubject && emailContact && knownSubject.id !== emailContact.id) {
+      // The opt-out is final on both sides: a candidate naming an opted-out
+      // subject must never be written after the purge (OPT_OUT_IS_FINAL).
+      // This branch writes inside its own transaction without touching the
+      // enrichment path, so it needs the same check that path enforces.
+      const eitherOptedOut = await optOutRow(emailContact.id)
+        || (knownSubject.resource === 'contact' ? await optOutRow(knownSubject.id) : null);
+      if (eitherOptedOut) {
+        return { outcome: 'skipped', reason: 'opted-out', evidence: 'a named contact opted out of enrichment: no candidate is written' };
+      }
       const written = await database.transactionAsync(async () => recordEnrichmentCandidate(
         { resource: 'contact', id: emailContact.id, owner: 'host', ownerPackage: null, label: emailContact.email },
         knownSubject,
@@ -571,18 +589,27 @@ export function createContactEnrichment({
           }
           // One bad person can never abort the run: provider strings that
           // fail validation (overlong, control characters, unusable ids)
-          // throw AppError out of personFields, and the person is counted
+          // throw out of personFields, and the person is counted
           // skipped-malformed while the page continues. Anything else —
-          // storage errors, programming errors — still aborts loudly.
+          // transient contention, storage errors, programming errors —
+          // still aborts loudly: a busy write lock is retried by the
+          // caller, never misreported as malformed data in a receipt
+          // that claims success.
           let receipt;
           try {
             receipt = await enrichGooglePerson(person, { actor, runId });
           } catch (error) {
+            // A transient busy ConflictError means contention, not bad
+            // data: rethrow so the run fails loudly instead of silently
+            // dropping the person while the receipt claims success.
+            if (error instanceof ConflictError) throw error;
             if (!(error instanceof AppError)) throw error;
             // An opt-out that committed mid-person still refuses through
             // the re-check: it counts as opted-out, not malformed.
             if (error.code === 'ENRICHMENT_OPTED_OUT') counts.skippedOptOut += 1;
-            else counts.skippedMalformed += 1;
+            else if (error.code === 'ENRICHMENT_SOURCE_MALFORMED' || error instanceof ValidationError) {
+              counts.skippedMalformed += 1;
+            } else throw error;
             continue;
           }
           if (receipt.outcome === 'created') {
