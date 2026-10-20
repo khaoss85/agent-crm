@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
 import { buildChannelConnectionActions } from '../packages/channels/src/index.js';
+import { connectionSecretRef } from '../packages/channels/src/connection.js';
 import { createHttpServer } from '../apps/server/src/index.js';
 import { boot, project } from './helpers/customer-data-project.js';
 
@@ -197,4 +198,55 @@ test('POST /api/connectors/finish drives the history import to done', async (t) 
   assert.equal(finished.done, true);
   assert.equal(finished.import?.status, 'done');
   assert.equal(finished.import?.importedEvents, 2, 'finish pulled every page, not just the cursor');
+});
+
+test('POST /api/connectors/authorize stores one vault slot per account', async (t) => {
+  // BO-F1-02 finding: authorize invented one vault://space/channel slot for
+  // every account, so two WhatsApp accounts in one space shared a credential.
+  const { app, close } = await scene(t, 'connect-flow-slots-http');
+  t.after(() => close());
+  const server = createHttpServer(app);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const headers = {
+    'content-type': 'application/json',
+    'x-actor-type': 'user',
+    'x-actor-id': 'connect-flow-slots-http',
+  };
+  const authorize = async (account) => {
+    const response = await fetch(`${base}/api/connectors/authorize`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        spaceId: SPACE, channel: 'whatsapp', account,
+        adapter: 'fixture-channel', adapterVersion: 1,
+      }),
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const one = await authorize('+390200000001');
+  const two = await authorize('+390200000002');
+  assert.equal(one.connection.status, 'active');
+  assert.equal(two.connection.status, 'active');
+  assert.notEqual(one.connection.connectionKey, two.connection.connectionKey);
+  const rows = app.modules.get('channel-connection').service.listWhere({ spaceId: SPACE });
+  const refs = new Map(rows.map((row) => [row.sourceKey, row.secretRef]));
+  assert.equal(
+    refs.get(one.connection.connectionKey),
+    connectionSecretRef({ spaceId: SPACE, channel: 'whatsapp', account: '+390200000001' }),
+  );
+  assert.equal(
+    refs.get(two.connection.connectionKey),
+    connectionSecretRef({ spaceId: SPACE, channel: 'whatsapp', account: '+390200000002' }),
+  );
+  assert.notEqual(
+    refs.get(one.connection.connectionKey),
+    refs.get(two.connection.connectionKey),
+    'two accounts never share one vault slot',
+  );
 });

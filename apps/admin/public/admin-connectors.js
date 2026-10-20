@@ -15,9 +15,9 @@
 // adapter identities the composed application publishes on `/api/schema`.
 // This file owns no storage and no merge: passo 1 authorizes through
 // POST /api/connectors/authorize, passo 2 chooses the history import through
-// POST /api/connectors/finish (the server drives the import to completion in
-// bounded pages — no scheduler advances it later), passo 3 reads the receipts
-// back.
+// POST /api/connectors/finish (the server pulls at most a few pages per
+// request — no scheduler advances it later — and passo 3 resumes from Fatto
+// until the import reports done), passo 3 reads the receipts back.
 //
 // Conventions follow apps/admin/public/admin-core.js: the catalog, the flow
 // state machine and the status mapping are pure and DOM-free (unit-tested
@@ -54,7 +54,7 @@ export const CONNECTOR_CATALOG = Object.freeze([
     syncLines: Object.freeze(['Nuovi messaggi in arrivo e in uscita', 'Cronologia passata, piano piano (facoltativa)']),
     whatHappens: Object.freeze([
       'Colleghi il numero: i nuovi messaggi entrano da soli nelle conversazioni.',
-      'Se scegli la cronologia, il passato arriva a pagine e puoi continuare a lavorare.',
+      'Se scegli la cronologia, il passato arriva a pagine: da Fatto continui finché è completa.',
       'I contatti che sembrano doppioni diventano proposte da decidere in Stato sync, mai uniti da soli.',
     ]),
   },
@@ -66,7 +66,7 @@ export const CONNECTOR_CATALOG = Object.freeze([
     syncLines: Object.freeze(['Nuovi messaggi direct in arrivo e in uscita', 'Cronologia passata, piano piano (facoltativa)']),
     whatHappens: Object.freeze([
       'Colleghi l\u2019account: i nuovi direct entrano da soli nelle conversazioni.',
-      'Se scegli la cronologia, il passato arriva a pagine e puoi continuare a lavorare.',
+      'Se scegli la cronologia, il passato arriva a pagine: da Fatto continui finché è completa.',
       'I contatti che sembrano doppioni diventano proposte da decidere in Stato sync, mai uniti da soli.',
     ]),
   },
@@ -78,7 +78,7 @@ export const CONNECTOR_CATALOG = Object.freeze([
     syncLines: Object.freeze(['Nuovi messaggi della pagina in arrivo e in uscita', 'Cronologia passata, piano piano (facoltativa)']),
     whatHappens: Object.freeze([
       'Colleghi la pagina: i nuovi messaggi entrano da soli nelle conversazioni.',
-      'Se scegli la cronologia, il passato arriva a pagine e puoi continuare a lavorare.',
+      'Se scegli la cronologia, il passato arriva a pagine: da Fatto continui finché è completa.',
       'I contatti che sembrano doppioni diventano proposte da decidere in Stato sync, mai uniti da soli.',
     ]),
   },
@@ -90,7 +90,7 @@ export const CONNECTOR_CATALOG = Object.freeze([
     syncLines: Object.freeze(['Nuovi messaggi in arrivo e in uscita', 'Cronologia passata, piano piano (facoltativa)']),
     whatHappens: Object.freeze([
       'Colleghi l\u2019account: i nuovi messaggi entrano da soli nelle conversazioni.',
-      'Se scegli la cronologia, il passato arriva a pagine e puoi continuare a lavorare.',
+      'Se scegli la cronologia, il passato arriva a pagine: da Fatto continui finché è completa.',
       'I contatti che sembrano doppioni diventano proposte da decidere in Stato sync, mai uniti da soli.',
     ]),
   },
@@ -114,7 +114,7 @@ export const CONNECTOR_CATALOG = Object.freeze([
     syncLines: Object.freeze(['Nuove email in arrivo e risposte nello stesso filo', 'Cronologia passata, piano piano (facoltativa)']),
     whatHappens: Object.freeze([
       'Colleghi la casella (anche Gmail): le nuove email entrano da sole, le risposte restano nello stesso filo.',
-      'Se scegli la cronologia, il passato arriva a pagine e puoi continuare a lavorare.',
+      'Se scegli la cronologia, il passato arriva a pagine: da Fatto continui finché è completa.',
       'I contatti che sembrano doppioni diventano proposte da decidere in Stato sync, mai uniti da soli.',
     ]),
   },
@@ -238,8 +238,16 @@ export function flowFinishStart(flow) {
 
 /** @param {any} flow @param {unknown} finish */
 export function flowFinished(flow, finish) {
-  if (flow.step !== 1) return flow;
+  // A resume lands the same answer on step 2: it must be a continuation the
+  // view started (busy), never a stray write onto a settled fatto step.
+  if (flow.step !== 1 && !(flow.step === 2 && flow.busy === true)) return flow;
   return Object.freeze({ ...flow, busy: false, step: 2, finish });
+}
+
+/** @param {any} flow */
+export function flowResumeImport(flow) {
+  if (flow.step !== 2 || flow.busy) return flow;
+  return Object.freeze({ ...flow, busy: true, error: null });
 }
 
 /** @param {any} flow @param {unknown} message */
@@ -478,9 +486,9 @@ export function createConnectorsView(deps) {
   function renderDone(box, catalog, flow) {
     const finish = flow.finish;
     box.appendChild(el(doc, 'p', undefined, `${catalog.label} è collegato. Fatto.`));
-    // The server drives the history import to completion inside finish, so
-    // the fatto step reports what it actually imported — never a background
-    // promise nothing keeps.
+    // One finish request pulls at most a few history pages, so a large past
+    // reports its real progress with a button to continue — never a
+    // background promise nothing keeps, and never an unconditional done.
     const summary = finish?.import ?? null;
     if (summary?.status === 'done' || finish?.done === true) {
       const imported = Number(summary?.importedEvents ?? 0);
@@ -488,9 +496,39 @@ export function createConnectorsView(deps) {
       const pending = Number(summary?.unresolvedContacts ?? 0);
       box.appendChild(el(doc, 'p', 'bo-muted',
         `Cronologia completata: ${imported} eventi importati, ${created} contatti creati, ${pending} da decidere.`));
-    } else if (finish?.started === true || finish?.resumed === true) {
+    } else if (finish?.done === false && (finish?.started === true || finish?.resumed === true)) {
+      const imported = Number(summary?.importedEvents ?? 0);
       box.appendChild(el(doc, 'p', 'bo-muted',
-        'La cronologia passata arriva a pagine, in sottofondo: puoi continuare a lavorare.'));
+        `Cronologia in corso: ${imported} eventi importati finora. Continua per completarla.`));
+      const more = el(doc, 'button', undefined, 'Continua l\u2019importazione');
+      more.setAttribute('data-action', 'connect-resume');
+      state.busyControls.push(more);
+      if (flow.busy) more.disabled = true;
+      more.addEventListener('click', async () => {
+        state.flow = flowResumeImport(state.flow);
+        render();
+        setBusy(true);
+        try {
+          const answer = await client.request('/api/connectors/finish', {
+            method: 'POST',
+            body: {
+              spaceId: refreshSpace().trim(),
+              connectionKey: state.flow.connection?.connectionKey ?? '',
+              history: state.flow.history !== false,
+            },
+          });
+          state.flow = flowFinished(state.flow, answer ?? null);
+          await load();
+        } catch (error) {
+          state.flow = flowFail(state.flow, errorOf(error));
+        } finally {
+          setBusy(false);
+          render();
+        }
+      });
+      const row = el(doc, 'p', undefined);
+      row.appendChild(more);
+      box.appendChild(row);
     } else {
       box.appendChild(el(doc, 'p', 'bo-muted',
         'Da qui in poi arrivano i nuovi messaggi. Niente cronologia: l\u2019hai saltata al passo 2.'));
@@ -563,7 +601,24 @@ export function createConnectorsView(deps) {
       go.setAttribute('data-action', 'connect-open');
       state.busyControls.push(go);
       go.addEventListener('click', async () => {
-        const picked = matchAdapters(catalog.channel, state.adapters)[0] ?? null;
+        // Completing an incomplete row re-authorizes with that row's own
+        // adapter identity: picking adapters[0] under a multi-adapter
+        // composition would rebind under a different adapter and fail with
+        // CHANNEL_CONNECTION_CONFLICT instead of activating the row. The
+        // schema fallback applies only when the row carries no identity.
+        const candidates = matchAdapters(catalog.channel, state.adapters);
+        const completing = mapped.status === 'da-completare'
+          ? connections.find((item) => item.status === 'pending')
+            ?? connections.find((item) => item.status === 'suspended')
+            ?? connections[0] ?? null
+          : null;
+        const rowAdapter = completing !== null && typeof completing === 'object'
+          && typeof completing.adapter === 'string'
+          && Number.isSafeInteger(completing.adapterVersion)
+          ? candidates.find((entry) => entry.name === completing.adapter
+            && entry.version === completing.adapterVersion) ?? null
+          : null;
+        const picked = rowAdapter ?? candidates[0] ?? null;
         state.flow = createConnectFlow({ channel: catalog.channel, adapter: picked });
         if (mapped.status !== 'da-completare') {
           render();

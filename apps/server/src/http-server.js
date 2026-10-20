@@ -16,6 +16,7 @@ import { isExposableGeneratedModule } from '../../../packages/core/src/generated
 import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
 import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
 import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
+import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
 
 const DEFAULT_PUBLIC_DIR = resolve(
   fileURLToPath(new URL('../../admin/public', import.meta.url)),
@@ -62,6 +63,14 @@ function writeContext(app, ctx) {
     idempotencyKey: readIdempotencyHeader(ctx.headers),
   };
 }
+
+// Connectors (BO-F1-02): one finish request pulls at most this many history
+// pages of this many events. Exported so the bound test pins the exact page
+// budget instead of a magic number.
+/** @type {number} */
+export const CONNECTORS_FINISH_PAGE_LIMIT = 50;
+/** @type {number} */
+export const CONNECTORS_FINISH_MAX_PAGES = 5;
 
 /** @param {unknown} value */
 function isResponseEnvelope(value) {
@@ -474,11 +483,12 @@ function buildRouter(app) {
     const adapter = typeof input.adapter === 'string' ? input.adapter : '';
     const adapterVersion = Number.isSafeInteger(input.adapterVersion) ? input.adapterVersion : 0;
     // The secret itself is never collected here and never stored anywhere:
-    // authorize records the vault slot the deployment fills later, in the
-    // same namespaced reference shape every connection already carries.
-    // Resolution happens at call time through the deployment's resolver —
-    // a fake-backed adapter never dials anything real (MEM_ACC_DECISIONS).
-    const secretRef = `vault://${spaceId}/${channel}`;
+    // authorize records the vault slot the deployment fills later — one slot
+    // per space+channel+account, so two accounts on one channel in one space
+    // never share a credential. Resolution happens at call time through the
+    // deployment's resolver — a fake-backed adapter never dials anything
+    // real (MEM_ACC_DECISIONS).
+    const secretRef = connectionSecretRef({ spaceId, channel, account });
     const reg = await app.registerChannelConnection({
       spaceId, channel, account, adapter, adapterVersion, secretRef, actor,
     });
@@ -528,21 +538,24 @@ function buildRouter(app) {
     }
     const started = await app.startInitialImport({ spaceId, connectionKey, actor });
     // Pulling starts with the first advance call, and no scheduler advances
-    // running imports: finish drives the import to completion in bounded
-    // pages, so the fatto step never promises background progress that
-    // nothing delivers. Each page is bounded (at most CHANNEL_HISTORY_PAGE_MAX
-    // events, one provider timeout); a transient failure aborts with the
-    // cursor unmoved, and retrying finish resumes from the stored cursor.
+    // running imports — but one HTTP request cannot pull an unbounded past:
+    // at most CONNECTORS_FINISH_MAX_PAGES pages of CONNECTORS_FINISH_PAGE_LIMIT
+    // events each, so one request costs at most a few provider round-trips
+    // (one timeout each) and always fits inside gateway timeouts. A large past
+    // needs several fatto continuations; every continuation resumes from the
+    // stored cursor, and the reply carries done:false plus the progress so far
+    // instead of an unconditional done:true. A transient failure aborts with
+    // the cursor unmoved, and retrying finish resumes from the stored cursor.
     let advance = null;
-    for (;;) {
-      advance = await app.advanceInitialImport({ spaceId, connectionKey });
+    for (let page = 0; page < CONNECTORS_FINISH_MAX_PAGES; page += 1) {
+      advance = await app.advanceInitialImport({ spaceId, connectionKey, limit: CONNECTORS_FINISH_PAGE_LIMIT });
       if (advance?.done === true) break;
     }
     return {
       started: started.started,
       resumed: started.resumed ?? false,
       connectionKey,
-      done: true,
+      done: advance?.done === true,
       import: advance?.state ?? started.state ?? null,
     };
   });

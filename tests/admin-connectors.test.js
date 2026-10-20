@@ -13,6 +13,7 @@ import {
   flowFail,
   flowFinished,
   flowFinishStart,
+  flowResumeImport,
   flowSetAccount,
   matchAdapters,
   matchConnections,
@@ -119,6 +120,26 @@ test('flow transitions enforce the step order', () => {
   assert.equal(flowBack(flow).step, 2);
   const failed = flowFail(createConnectFlow({ channel: 'sms', adapter }), '');
   assert.equal(failed.error, 'La richiesta non è riuscita.');
+});
+
+test('resume continues a partial import from fatto without restarting it', () => {
+  const adapter = { name: 'wa', version: 1 };
+  const step1 = flowAuthorized(createConnectFlow({ channel: 'whatsapp', adapter }), { connectionKey: 'k' });
+  assert.equal(step1.step, 1);
+  const step2 = flowFinished(step1, { started: true, done: false });
+  assert.equal(step2.step, 2);
+  // A stray finish onto a settled fatto step changes nothing.
+  assert.deepEqual(flowFinished(step2, { started: 'stray' }).finish, { started: true, done: false });
+  const resuming = flowResumeImport(step2);
+  assert.equal(resuming.busy, true);
+  assert.equal(resuming.step, 2);
+  // Resuming from step 0 changes nothing, and resuming twice stays busy.
+  assert.equal(flowResumeImport(createConnectFlow({ channel: 'whatsapp', adapter })).busy, false);
+  assert.equal(flowResumeImport(resuming).busy, true);
+  const relanded = flowFinished(resuming, { started: true, done: true });
+  assert.equal(relanded.step, 2);
+  assert.equal(relanded.busy, false);
+  assert.equal(relanded.finish?.done, true);
 });
 
 function stubBody(options) {
@@ -435,4 +456,92 @@ test('Completa il collegamento refuses a revoked row clearly', async () => {
     'no sync choice is offered for a revoked connection');
   assert.ok(mount.textContent.includes('revoked'),
     'the refusal names the revoked connection instead of failing with NOT_ACTIVE');
+});
+
+test('the fatto step resumes a partial import instead of promising background progress', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let finishes = 0;
+  const client = stubClient({
+    schema: SCHEMA,
+    sync: { connectors: [] },
+    finish: () => {
+      finishes += 1;
+      return finishes === 1
+        ? {
+          started: true, resumed: false, connectionKey: 'ck', done: false,
+          import: { status: 'running', importedEvents: 4, createdContacts: 1, unresolvedContacts: 1 },
+        }
+        : {
+          started: true, resumed: true, connectionKey: 'ck', done: true,
+          import: { status: 'done', importedEvents: 7, createdContacts: 2, unresolvedContacts: 1 },
+        };
+    },
+  });
+  await createConnectorsView({
+    doc, mount, client, navigate: () => {}, storage: storageWith('presti'),
+  }).render();
+
+  mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi').dispatch('click');
+  await flush();
+  const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'account');
+  input.value = '+390200000001';
+  mount.findAll('button').find((node) => node.textContent === 'Autorizza e collega').dispatch('click');
+  await flush(10);
+  mount.findAll('button').find((node) => node.textContent === 'Concludi il collegamento').dispatch('click');
+  await flush(10);
+  assert.ok(mount.textContent.includes('Cronologia in corso: 4 eventi importati finora.'),
+    'a partial import reports its real progress, never background completion');
+  assert.ok(!mount.textContent.includes('in sottofondo'), 'no background promise is rendered');
+
+  mount.findAll('button').find((node) => node.textContent === 'Continua l\u2019importazione').dispatch('click');
+  await flush(10);
+  assert.equal(finishes, 2, 'continuing re-posts finish, resuming from the stored cursor');
+  assert.ok(mount.textContent.includes('Cronologia completata: 7 eventi importati, 2 contatti creati, 1 da decidere.'));
+});
+
+test('Completa il collegamento re-authorizes with the row adapter, not adapters[0]', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const multi = {
+    domains: {
+      channels: {
+        metadata: {
+          channelsContract: 1,
+          adapters: [
+            { name: 'wa-a', version: 1, label: 'WhatsApp A', channel: 'whatsapp' },
+            { name: 'wa-b', version: 1, label: 'WhatsApp B', channel: 'whatsapp' },
+          ],
+        },
+      },
+    },
+  };
+  const pending = {
+    connectionKey: 'ck-pending-b',
+    channel: 'whatsapp',
+    account: '+390200000001',
+    adapter: 'wa-b',
+    adapterVersion: 1,
+    status: 'pending',
+    importable: true,
+    sync: null,
+  };
+  const client = stubClient({
+    schema: multi,
+    sync: { connectors: [pending] },
+    authorize: () => ({
+      duplicate: true,
+      connection: { ...pending, status: 'active' },
+    }),
+  });
+  await createConnectorsView({
+    doc, mount, client, navigate: () => {}, storage: storageWith('presti'),
+  }).render();
+
+  mount.findAll('button').find((node) => node.textContent === 'Completa il collegamento').dispatch('click');
+  await flush(10);
+  const authorized = client.calls.find((call) => call.path === '/api/connectors/authorize');
+  assert.equal(authorized.body.adapter, 'wa-b',
+    'the pending row reactivates under its own adapter instead of conflicting under wa-a');
+  assert.equal(authorized.body.adapterVersion, 1);
 });
