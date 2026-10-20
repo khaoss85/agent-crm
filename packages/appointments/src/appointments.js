@@ -1236,12 +1236,10 @@ export async function readTeamWeek({ appointments }, filter) {
  *   the slot, so a retried or doubled submission replays the winner's row
  *   (or 409s on a divergent claim) instead of writing a second booking, and
  *   the member serialization plus the source-key unique guard serialize the
- *   race. The published link is the business's standing approval, so the
- *   link path does not consult the agent-autonomy switch: that switch governs
- *   agent-initiated bookings (propose/confirm), not a customer holding the
- *   business's own link. DECISION (to be confirmed): if the owner wants
- *   switched-off spaces to refuse link bookings too, the gate check moves
- *   into `bookFromLink` behind the same `book-appointments` key.
+ *   race. The link path reads the same `book-appointments` switch as
+ *   propose/confirm: switch on books, switch off records a
+ *   `space-ai-proposal` and stays a proposal — a published link never
+ *   bypasses a switch the owner turned off.
  *
  * No new record, no new module: the flow reads and writes the appointment
  * rows, the work follow-up and the space-ai-proposal rows that already exist,
@@ -1515,10 +1513,12 @@ export async function proposeBooking(context, request) {
  * and — when the caller names a calendar — pushed to the provider through
  * calendar-sync.
  *
- * The calendar push rides the idempotent `pushAppointment` path: a push that
- * fails after the local commit leaves a confirmed booking whose event a retry
- * of this same confirm (same source key) links or exports exactly once, never
- * twice.
+ * The calendar push rides the idempotent `pushAppointment` path. A push that
+ * fails at runtime never throws: the booking is already committed, so the
+ * confirm answers `decision: 'booked'` with `push: null` and
+ * `pushError: { code }` naming the failure, and a retry of this same confirm
+ * (same source key) replays the confirmed row and links or exports the event
+ * exactly once, never twice. Only the pre-write miscomposition above throws.
  */
 export async function confirmBooking(context, request) {
   const record = request && typeof request === 'object' ? request : {};
@@ -1591,17 +1591,29 @@ export async function confirmBooking(context, request) {
     }
   }
   // The calendar edge was validated above, before any row existed: the
-  // push rides the idempotent path, so a runtime push failure still leaves
-  // a confirmed booking a retry of this same confirm links exactly once.
+  // push rides the idempotent path. A runtime push failure must not throw —
+  // the confirmed row is already committed and the caller would observe a
+  // failure for a booking that exists — so it is answered as data: the same
+  // retry (same source key) replays the row and links the event exactly
+  // once. Only the provider's code is surfaced, never its text.
   let push = null;
+  let pushError = null;
   if (calendarPush !== null) {
-    push = await calendarPush(calendarId, booked.appointment.sourceKey, { spaceId, actor });
+    try {
+      push = await calendarPush(calendarId, booked.appointment.sourceKey, { spaceId, actor });
+    } catch (error) {
+      const code = typeof error?.code === 'string' && error.code !== ''
+        ? error.code
+        : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+      pushError = Object.freeze({ code });
+    }
   }
   return Object.freeze({
     decision: 'booked',
     appointment,
     reminder: booked.reminder ?? null,
     push,
+    pushError,
     replayed: booked.replayed ?? false,
     spaceId,
   });
@@ -1630,8 +1642,10 @@ export function validateBookingLinkToken(value) {
 /**
  * Book from an online booking link (`accordo.dev/p/...`, BO-F3-02): the
  * customer picked a slot on the business's own page and submitted it — that
- * submission IS the confirmation, so no `confirmed` flag is asked and the
- * agent-autonomy switch is not consulted (see the section note). The booking
+ * submission IS the confirmation, so no `confirmed` flag is asked. The link
+ * path reads the same `book-appointments` switch as propose/confirm: switch
+ * on books, switch off records a `space-ai-proposal` and stays a proposal —
+ * a published link never bypasses a switch the owner turned off. The booking
  * source key derives deterministically from the link token and the slot, so
  * the same link submitted twice — a double click, a retry, two racers —
  * replays the winner's row through the booking path's idempotency instead of
@@ -1645,8 +1659,12 @@ export async function bookFromLink(context, request) {
   // The actor is validated here and bound by the booking path below: an
   // anonymous link booking would hold a slot with nobody accountable for it.
   // The deployment passes its own identified actor (it verified the link).
-  requireActor(context?.actor);
+  const actor = requireActor(context?.actor);
   const record = request && typeof request === 'object' ? request : {};
+  if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
+    throw new ValidationError('spaceId is required: a link booking is gated on the space switch', { field: 'spaceId' });
+  }
+  const spaceId = record.spaceId;
   const linkToken = validateBookingLinkToken(record.linkToken);
   // Canonicalize the slot before deriving the identity: validation normalizes
   // instants to UTC ISO, and the source key must derive from that canonical
@@ -1662,15 +1680,41 @@ export async function bookFromLink(context, request) {
     startsAt,
     sourceKey: LINK_SOURCE_PREFIX + linkToken + ':' + startsAt,
   });
+  // The switch is read before any row exists: with the switch off the
+  // link stays a proposal a human approves, like the confirm path — the
+  // proposal action key binds the whole derived claim, so a resubmitted
+  // link replays its own proposal instead of opening a second one.
+  const gate = requireFlowPermissionGate(context);
+  const verdict = await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
+  if (!verdict || verdict.decision !== 'allow') {
+    const proposal = await gate.propose({
+      spaceId,
+      permission: BOOK_APPOINTMENTS_PERMISSION,
+      actionKind: PROPOSE_ACTION_KIND,
+      actionKey: proposalActionKey(input),
+      summary: proposalSummary(input),
+      actor,
+    });
+    return Object.freeze({
+      decision: 'proposal',
+      proposalId: proposal?.proposalId ?? null,
+      replayed: proposal?.replayed ?? false,
+      spaceId,
+      permission: BOOK_APPOINTMENTS_PERMISSION,
+      linkToken,
+    });
+  }
   // The whole record rides, with only the source key derived: a link booking
   // naming remindAt or a reminderChannel keeps its reminder — dropping them
   // here would store a booking that claims less than the customer asked for.
   const booked = await bookAppointment(context, { ...record, sourceKey: input.sourceKey });
   return Object.freeze({
+    decision: 'booked',
     linkToken,
     appointment: booked.appointment,
     reminder: booked.reminder ?? null,
     replayed: booked.replayed ?? false,
+    spaceId,
   });
 }
 
@@ -1925,10 +1969,12 @@ function openPhraseLlm(llmCapability, runtime) {
  * slots from the same held rows the booking path overlap-checks;
  * `proposeBooking` plans without writing (a draft when the space switch is
  * on, a `space-ai-proposal` when it is off); `confirmBooking` creates only on
- * explicit confirmation; `bookFromLink` books from the business's own online
- * link idempotently; `parseBookingPhrase` drafts parameters from one Italian
- * sentence through the composed LLM. Nothing here changes `bookAppointment`,
- * `advanceAppointment` or the contract.
+ * explicit confirmation and answers a runtime calendar-push failure as data
+ * (`push: null`, `pushError: { code }`), never a throw past the commit;
+ * `bookFromLink` books from the business's own online link idempotently
+ * behind the same switch (off stays a proposal); `parseBookingPhrase` drafts
+ * parameters from one Italian sentence through the composed LLM. Nothing
+ * here changes `bookAppointment`, `advanceAppointment` or the contract.
  *
  * @param {Record<string, string>} [moduleNames]
  * @param {any} [spacePermissions] the composed space-permissions package definition (handover, optional)

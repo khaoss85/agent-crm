@@ -306,10 +306,11 @@ test('confirm with the switch on books and advances booked -> confirmed', async 
   assert.equal(confirmed.replayed, false);
   assert.equal(confirmed.appointment.status, 'confirmed');
   assert.equal(confirmed.push, null, 'no calendar named, no push');
+  assert.equal(confirmed.pushError, null, 'no calendar named, no push error');
   assert.equal(service.rows.length, 1);
 });
 
-test('confirm names the calendar push: the event is created once, a failed push retries idempotently', async () => {
+test('confirm names the calendar push: a failed push answers as data, the retry exports once', async () => {
   const service = fakeAppointments();
   const pushes = [];
   let failOnce = true;
@@ -329,13 +330,14 @@ test('confirm names the calendar push: the event is created once, a failed push 
   const request = {
     ...booking(), spaceId: SPACE, confirmed: true, calendar: { calendarId: 'cal-1' },
   };
-  await assert.rejects(
-    cap.confirmBooking(request),
-    (error) => {
-      assert.equal(error.code, 'CALENDAR_PROVIDER_UNAVAILABLE');
-      return true;
-    },
-  );
+  // The push fails after the local commit: the confirm must not throw for a
+  // booking that exists — it answers the failure as data instead.
+  const failed = await cap.confirmBooking(request);
+  assert.equal(failed.decision, 'booked');
+  assert.equal(failed.replayed, false);
+  assert.equal(failed.appointment.status, 'confirmed');
+  assert.equal(failed.push, null, 'no event on the failed push');
+  assert.deepEqual(failed.pushError, { code: 'CALENDAR_PROVIDER_UNAVAILABLE' });
   assert.equal(service.rows.length, 1, 'the local commit stays confirmed past the push failure');
   assert.equal(service.rows[0].status, 'confirmed');
   const retried = await cap.confirmBooking(request);
@@ -343,9 +345,27 @@ test('confirm names the calendar push: the event is created once, a failed push 
   assert.equal(retried.replayed, true, 'the retry replays the winner row');
   assert.equal(retried.appointment.status, 'confirmed');
   assert.deepEqual(retried.push, { status: 'exported', eventId: 'evt-1', sourceKey: 'gym:flow:1' });
+  assert.equal(retried.pushError, null, 'the successful retry carries no push error');
   assert.equal(pushes.length, 2, 'the push ran again, exactly once per confirm');
   assert.equal(pushes[1].calendarId, 'cal-1');
   assert.equal(pushes[1].spaceId, SPACE);
+});
+
+test('a codeless push failure answers a named code and never the provider text', async () => {
+  const service = fakeAppointments();
+  const calendarSync = {
+    async pushAppointment() {
+      throw new Error('the provider exploded in plain words');
+    },
+  };
+  const cap = capabilityFor({ service, gate: allowGate(), calendarSync });
+  const failed = await cap.confirmBooking({
+    ...booking(), spaceId: SPACE, confirmed: true, calendar: { calendarId: 'cal-1' },
+  });
+  assert.equal(failed.decision, 'booked');
+  assert.equal(failed.appointment.status, 'confirmed');
+  assert.equal(failed.push, null);
+  assert.deepEqual(failed.pushError, { code: 'APPOINTMENTS_CALENDAR_PUSH_FAILED' });
 });
 
 test('confirm with the switch off stays a proposal: still no appointment row', async () => {
@@ -389,9 +409,10 @@ test('confirm names the calendar edge when a calendar is named but none is compo
 
 test('a booking link books once: the resubmission replays the winner', async () => {
   const service = fakeAppointments();
-  const cap = capabilityFor({ service });
-  const link = { ...booking(), linkToken: TOKEN };
+  const cap = capabilityFor({ service, gate: allowGate() });
+  const link = { ...booking(), spaceId: SPACE, linkToken: TOKEN };
   const first = await cap.bookFromLink(link);
+  assert.equal(first.decision, 'booked');
   assert.equal(first.replayed, false);
   assert.equal(first.linkToken, TOKEN);
   assert.equal(first.appointment.status, 'booked');
@@ -404,9 +425,9 @@ test('a booking link books once: the resubmission replays the winner', async () 
 
 test('a link booking naming a reminder keeps the pair promise: no transaction, no row', async () => {
   const service = fakeAppointments();
-  const cap = capabilityFor({ service });
+  const cap = capabilityFor({ service, gate: allowGate() });
   await assert.rejects(
-    cap.bookFromLink({ ...booking(), linkToken: TOKEN, remindAt: '2026-10-20T16:00:00.000Z' }),
+    cap.bookFromLink({ ...booking(), spaceId: SPACE, linkToken: TOKEN, remindAt: '2026-10-20T16:00:00.000Z' }),
     (error) => {
       assert.equal(error.code, 'APPOINTMENTS_TRANSACTION_REQUIRED');
       return true;
@@ -417,10 +438,11 @@ test('a link booking naming a reminder keeps the pair promise: no transaction, n
 
 test('two different slots behind one link stay two bookings', async () => {
   const service = fakeAppointments();
-  const cap = capabilityFor({ service });
-  await cap.bookFromLink({ ...booking(), linkToken: TOKEN });
+  const cap = capabilityFor({ service, gate: allowGate() });
+  await cap.bookFromLink({ ...booking(), spaceId: SPACE, linkToken: TOKEN });
   await cap.bookFromLink({
     ...booking(),
+    spaceId: SPACE,
     linkToken: TOKEN,
     startsAt: '2026-10-20T18:00:00.000Z',
     endsAt: '2026-10-20T19:00:00.000Z',
@@ -430,10 +452,10 @@ test('two different slots behind one link stay two bookings', async () => {
 
 test('a divergent claim behind the same link and slot is refused, never adopted', async () => {
   const service = fakeAppointments();
-  const cap = capabilityFor({ service });
-  await cap.bookFromLink({ ...booking(), linkToken: TOKEN });
+  const cap = capabilityFor({ service, gate: allowGate() });
+  await cap.bookFromLink({ ...booking(), spaceId: SPACE, linkToken: TOKEN });
   await assert.rejects(
-    cap.bookFromLink({ ...booking(), linkToken: TOKEN, teamMemberId: 'coach-maria' }),
+    cap.bookFromLink({ ...booking(), spaceId: SPACE, linkToken: TOKEN, teamMemberId: 'coach-maria' }),
     (error) => {
       assert.equal(error.code, 'APPOINTMENTS_LOG_CONFLICT');
       assert.equal(error.status, 409);
@@ -448,7 +470,7 @@ test('a malformed link token books nothing', async () => {
   const cap = capabilityFor({ service });
   for (const linkToken of [undefined, '', 'short', 'has spaces in it 123456', 'punctuation!*-token-1234']) {
     await assert.rejects(
-      cap.bookFromLink({ ...booking(), linkToken }),
+      cap.bookFromLink({ ...booking(), spaceId: SPACE, linkToken }),
       (error) => {
         assert.match(error.message, /linkToken/);
         return true;
@@ -461,8 +483,8 @@ test('a malformed link token books nothing', async () => {
 
 test('ten racers on one link leave one row: the losers replay the winner', async () => {
   const service = fakeAppointments();
-  const cap = capabilityFor({ service });
-  const link = { ...booking(), linkToken: TOKEN };
+  const cap = capabilityFor({ service, gate: allowGate() });
+  const link = { ...booking(), spaceId: SPACE, linkToken: TOKEN };
   const outcomes = await Promise.all(Array.from({ length: 10 }, () => cap.bookFromLink(link)));
   assert.equal(service.rows.length, 1, 'exactly one row survives the race');
   assert.equal(outcomes.filter((outcome) => outcome.replayed === false).length, 1, 'exactly one fresh writer');
@@ -473,8 +495,8 @@ test('ten racers on one link leave one row: the losers replay the winner', async
 
 test('two racers on one slot with different keys: one books, the other names the overlap', async () => {
   const service = fakeAppointments();
-  const cap = capabilityFor({ service });
-  const race = (key) => cap.bookFromLink({ ...booking(), sourceKey: key, linkToken: `${TOKEN}-x${key}` });
+  const cap = capabilityFor({ service, gate: allowGate() });
+  const race = (key) => cap.bookFromLink({ ...booking(), spaceId: SPACE, sourceKey: key, linkToken: `${TOKEN}-x${key}` });
   const [a, b] = await Promise.allSettled([race('k1'), race('k2')]);
   const fulfilled = [a, b].filter((outcome) => outcome.status === 'fulfilled');
   const rejected = [a, b].filter((outcome) => outcome.status === 'rejected');
@@ -637,9 +659,10 @@ test('two cancellations racing one booking advance once: the loser is refused', 
 
 test('a link slot in another spelling books under the canonical UTC key', async () => {
   const service = fakeAppointments();
-  const cap = capabilityFor({ service });
+  const cap = capabilityFor({ service, gate: allowGate() });
   const first = await cap.bookFromLink({
     ...booking(),
+    spaceId: SPACE,
     linkToken: TOKEN,
     startsAt: '2026-10-20T17:00:00+02:00',
     endsAt: '2026-10-20T18:00:00+02:00',
@@ -649,6 +672,7 @@ test('a link slot in another spelling books under the canonical UTC key', async 
   assert.equal(first.appointment.startsAt, '2026-10-20T15:00:00.000Z');
   const second = await cap.bookFromLink({
     ...booking(),
+    spaceId: SPACE,
     linkToken: TOKEN,
     startsAt: '2026-10-20T15:00:00.000Z',
     endsAt: '2026-10-20T16:00:00.000Z',
@@ -657,12 +681,63 @@ test('a link slot in another spelling books under the canonical UTC key', async 
   assert.equal(second.appointment.id, first.appointment.id);
   assert.equal(service.rows.length, 1);
   await assert.rejects(
-    cap.bookFromLink({ ...booking(), linkToken: TOKEN, startsAt: 'not-a-date' }),
+    cap.bookFromLink({ ...booking(), spaceId: SPACE, linkToken: TOKEN, startsAt: 'not-a-date' }),
     (error) => {
       assert.match(error.message, /startsAt/);
       return true;
     },
   );
+});
+
+test('a link booking with the switch off stays a proposal: still no appointment row', async () => {
+  const service = fakeAppointments();
+  const { gate, proposalRows } = fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
+  });
+  const cap = capabilityFor({ service, gate });
+  const refused = await cap.bookFromLink({ ...booking(), spaceId: SPACE, linkToken: TOKEN });
+  assert.equal(refused.decision, 'proposal');
+  assert.ok(refused.proposalId, 'the proposal row is named');
+  assert.equal(refused.replayed, false);
+  assert.equal(refused.permission, BOOK_APPOINTMENTS_PERMISSION);
+  assert.equal(refused.linkToken, TOKEN);
+  assert.equal(service.rows.length, 0, 'no appointment row on the proposal path');
+  assert.equal(proposalRows.length, 1);
+  assert.equal(proposalRows[0].permission, 'book-appointments');
+  const again = await cap.bookFromLink({ ...booking(), spaceId: SPACE, linkToken: TOKEN });
+  assert.equal(again.decision, 'proposal');
+  assert.equal(again.proposalId, refused.proposalId);
+  assert.equal(again.replayed, true, 'the same link replays its own proposal');
+  assert.equal(proposalRows.length, 1, 'no second proposal row');
+  assert.equal(service.rows.length, 0);
+});
+
+test('a link booking names the permission edge when no gate is composed', async () => {
+  const service = fakeAppointments();
+  const cap = capabilityFor({ service });
+  await assert.rejects(
+    cap.bookFromLink({ ...booking(), spaceId: SPACE, linkToken: TOKEN }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_PERMISSION_UNAVAILABLE');
+      return true;
+    },
+  );
+  assert.equal(service.rows.length, 0);
+});
+
+test('a link booking without a space is refused before the token is read', async () => {
+  const service = fakeAppointments();
+  const cap = capabilityFor({ service, gate: allowGate() });
+  for (const spaceId of [undefined, '', '   ']) {
+    await assert.rejects(
+      cap.bookFromLink({ ...booking(), spaceId, linkToken: TOKEN }),
+      (error) => {
+        assert.match(error.message, /spaceId/);
+        return true;
+      },
+    );
+  }
+  assert.equal(service.rows.length, 0);
 });
 
 test('a handed-over gate on another contract is refused with the edge named', async () => {
