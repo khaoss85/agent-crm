@@ -447,6 +447,88 @@ function buildRouter(app) {
     return await app.readCustomerTimeline({ resource: params.resource, id: params.id });
   });
 
+  // Connectors (BO-F1-02): the backoffice 3-step connect flow. The same
+  // enumerated-adapter shape as the routes above: the kernel owns the path,
+  // gates the role boundary, and delegates to the composed application
+  // operations — without the channels package composed each answers an
+  // honest 404. No new table, no new record: every write below runs through
+  // the package's own register operation and its audited status action, so
+  // validation, audit and trace stay exactly where they already are.
+  router.add('GET', '/api/connectors', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readSyncState !== 'function') {
+      throw new NotFoundError('Operation', 'connector sync state');
+    }
+    return await app.readSyncState({ spaceId: query.spaceId });
+  });
+
+  router.add('POST', '/api/connectors/authorize', async ({ body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.registerChannelConnection !== 'function' || typeof app.readSyncState !== 'function') {
+      throw new NotFoundError('Operation', 'connector authorize');
+    }
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    const channel = typeof input.channel === 'string' ? input.channel : '';
+    const account = typeof input.account === 'string' ? input.account : '';
+    const adapter = typeof input.adapter === 'string' ? input.adapter : '';
+    const adapterVersion = Number.isSafeInteger(input.adapterVersion) ? input.adapterVersion : 0;
+    // The secret itself is never collected here and never stored anywhere:
+    // authorize records the vault slot the deployment fills later, in the
+    // same namespaced reference shape every connection already carries.
+    // Resolution happens at call time through the deployment's resolver —
+    // a fake-backed adapter never dials anything real (MEM_ACC_DECISIONS).
+    const secretRef = `vault://${spaceId}/${channel}`;
+    const reg = await app.registerChannelConnection({
+      spaceId, channel, account, adapter, adapterVersion, secretRef, actor,
+    });
+    const state = await app.readSyncState({ spaceId });
+    const entry = state.connectors.find((row) => row.connectionKey === reg.connection.sourceKey) ?? null;
+    if (entry !== null && (entry.status === 'pending' || entry.status === 'suspended')) {
+      const context = writeContext(app, { actor, identity, organizationId, headers });
+      await app.runAction({
+        module: 'channel-connection',
+        action: 'activate-connection',
+        recordId: reg.connection.id,
+        input: { reason: 'connected from the guided Connectors flow (BO-F1-02)' },
+        actor,
+        identity,
+        organizationId,
+        tenantId: context.tenantId,
+        idempotencyKey: context.idempotencyKey,
+      });
+      const next = await app.readSyncState({ spaceId });
+      return {
+        duplicate: reg.duplicate,
+        connection: next.connectors.find((row) => row.connectionKey === reg.connection.sourceKey) ?? entry,
+      };
+    }
+    if (entry !== null && entry.status === 'revoked') {
+      throw new AppError('This connection was revoked: register a new account to reconnect', {
+        code: 'CHANNEL_CONNECTION_REVOKED', status: 409,
+      });
+    }
+    return { duplicate: reg.duplicate, connection: entry };
+  });
+
+  router.add('POST', '/api/connectors/finish', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    const connectionKey = typeof input.connectionKey === 'string' ? input.connectionKey : '';
+    // Passo 2 "cosa sincronizzare": nuovi messaggi fluiscono sempre una
+    // volta che la connessione è attiva; la cronologia passata è la scelta.
+    // Skipping it starts nothing — there is no import row to resume — and
+    // conflicts found later still become duplicate candidates, never merges.
+    if (input.history === false) {
+      return { started: false, skipped: 'history', connectionKey };
+    }
+    if (typeof app.startInitialImport !== 'function') {
+      throw new NotFoundError('Operation', 'connector initial import');
+    }
+    return await app.startInitialImport({ spaceId, connectionKey, actor });
+  });
+
   // Customer Data Operations v2: bulk decisions and scale-safe export. The
   // same enumerated-adapter shape as the import routes above: the kernel
   // owns the path, gates the role boundary, and delegates to the composed

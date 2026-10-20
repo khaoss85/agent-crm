@@ -329,6 +329,13 @@ export function parseModuleRoute(hash) {
     if (proposalId === null || proposalId === '' || proposalId.includes('/')) return { view: 'invalid' };
     return { view: 'marketing-proposal', proposalId };
   }
+  // Connectors route: #/connettori (BO-F1-02). One screen, nothing to drill
+  // into — the wizard state lives in the view, never in the hash — so any
+  // deeper path is invalid, not a lookup.
+  if (rawParts.length && rawParts[0] === 'connettori') {
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'connectors' };
+  }
   if (rawParts.length === 0 || rawParts[0] !== 'modules') return { view: 'dashboard' };
   // An internal empty segment (e.g. "modules//new") is malformed, not a lookup.
   if (rawParts.some((part) => part === '')) return { view: 'invalid' };
