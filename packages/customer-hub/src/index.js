@@ -41,14 +41,20 @@ export {
 };
 
 /**
- * @param {{ customerData?: { capabilities?: Array<any> }, interactions?: { capabilities?: Array<any> }, appointments?: { capabilities?: Array<any> } }} [options]
+ * @param {{ customerData?: { capabilities?: Array<any> }, interactions?: { capabilities?: Array<any> }, appointments?: { capabilities?: Array<any> }, packageContract?: 1 | 2 }} [options]
  *   Each entry is the composed provider package definition — the same object
  *   the composition lists beside this package. The hub takes each created
  *   capability object from it, so every read runs with the provider's own
  *   name resolution and never with a second resolution from this package's
- *   options.
+ *   options. `packageContract: 2` selects the awaited graph, composed beside
+ *   the providers' own `*V2` factories; omitted, the synchronous v1 graph.
  */
 export function createCustomerHubPackage(options = {}) {
+  // This package's own graph contract. The handed-over provider edges are
+  // validated against the provider capability contract pinned by the edge
+  // version, never against this graph contract: a v2 hub opens the v2
+  // providers' async `create`, a v1 hub the v1 providers' sync one.
+  const graphContract = options.packageContract === 2 ? 2 : 1;
   // The offered capability objects, created once by the provider factories
   // with the providers' config. Held here by reference — never
   // re-instantiated, so a remapped composition cannot leave the hub reading
@@ -115,6 +121,9 @@ export function createCustomerHubPackage(options = {}) {
           // is opened here instead; the declared `requires` edge above keeps a
           // missing provider fail-closed at startup, and this check keeps a
           // missing handle fail-closed at composition with the edge named.
+          // The v2 provider's `create` settles asynchronously, so the v2 card
+          // opens at request time instead; the missing-handle check above
+          // still runs at composition on both graphs.
           if (!offered || typeof offered.create !== 'function') {
             throw new AppError(
               'The customer-hub package requires the customer-data package capability customer-profile@1: '
@@ -122,6 +131,16 @@ export function createCustomerHubPackage(options = {}) {
               + 'beside createCustomerDataPackage()',
               { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
             );
+          }
+          if (graphContract === 2) {
+            return async (request) => {
+              const profile = await offered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN });
+              return readCustomerCard({
+                core: runtime.core,
+                subject: { resource: request?.resource, id: request?.id },
+                readProfile: (input) => profile.readProfile(input),
+              });
+            };
           }
           const profile = offered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN });
           return (request) => readCustomerCard({
@@ -155,7 +174,10 @@ export function createCustomerHubPackage(options = {}) {
           // modules and memoized; the declared card edge above still keeps a
           // missing customer-data fail-closed at startup.
           let opened = null;
-          const open = () => {
+          // Async so the v2 providers' settling `create` is awaited; on v1
+          // the awaited values are already settled handles, so v1 opens
+          // exactly as before — once, memoized, with the caller's modules.
+          const open = async () => {
             if (opened) return opened;
             if (!offered || typeof offered.create !== 'function') {
               throw new AppError(
@@ -182,14 +204,14 @@ export function createCustomerHubPackage(options = {}) {
               );
             }
             opened = {
-              profile: offered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN }),
-              threads: timelineOffered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN }),
-              schedule: scheduleOffered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN }),
+              profile: await offered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN }),
+              threads: await timelineOffered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN }),
+              schedule: await scheduleOffered.create({ modules: runtime.modules, consumer: CUSTOMER_HUB_DOMAIN }),
             };
             return opened;
           };
           return async (request) => {
-            const { profile, threads, schedule } = open();
+            const { profile, threads, schedule } = await open();
             return readCustomerTimeline({
               core: runtime.core,
               subject: { resource: request?.resource, id: request?.id },
@@ -210,10 +232,10 @@ export function createCustomerHubPackage(options = {}) {
         reuses: ['contact', 'company', 'read-customer-profile', 'interaction-timeline', 'appointment-schedule'],
       };
     },
-  }));
+  }), graphContract);
 }
-// No contract-2 twin here: every provider this hub reads
-// (customer-profile, interaction-timeline, appointment-schedule) is
-// capabilityContract 1 with a synchronous `create`, so a v2 hub graph could
-// neither compose against them nor settle their handles — the twin arrives
-// with the first contract-2 provider, not before.
+
+/** Distinct awaited contract-2 graph. Existing `createCustomerHubPackage()` callers keep v1. */
+export function createCustomerHubPackageV2(options = {}) {
+  return createCustomerHubPackage({ ...options, packageContract: 2 });
+}

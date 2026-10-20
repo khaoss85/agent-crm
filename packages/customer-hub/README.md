@@ -70,9 +70,35 @@ export const generatedDomains = [
 
 The threads and bookings providers stay out of `requires` on purpose: without
 them the application still boots and serves the card, and opening the timeline
-fails closed naming the missing edge. There is no contract-2 twin of this
-package: every provider it reads is capabilityContract 1 with a synchronous
-`create`.
+fails closed naming the missing edge.
+
+## Async graph (contract 2)
+
+`createCustomerHubPackageV2()` is the awaited twin for application graphs
+composed with `packageContract: 2` — the reader that serves every shared
+space. Compose it beside the providers' own `*V2` factories:
+
+```js
+const customerData = createCustomerDataPackageV2();
+const work = createWorkPackageV2();
+const interactions = createInteractionsPackageV2();
+const appointments = createAppointmentsPackageV2({ work });
+export const generatedDomains = [
+  customerData,
+  work,
+  interactions,
+  appointments,
+  createCustomerHubPackageV2({ customerData, interactions, appointments }),
+];
+```
+
+The v1 factory stays the synchronous graph: existing `createCustomerHubPackage()`
+callers keep it, unchanged. The twin reads the same provider capabilities
+(`customer-profile`, `interaction-timeline`, `appointment-schedule` at version
+1) through the same handed-over definitions, so a remapped composition keeps
+serving the card and the timeline with no change here; only the graph
+contract differs. A v1 hub composed in a contract-2 graph refuses to start
+with `PACKAGE_ASYNC_CONTRACT_REQUIRED` — compose the twin instead.
 
 ## Rendering
 
