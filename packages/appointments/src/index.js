@@ -246,7 +246,7 @@ export function createAppointmentsPackage(options = {}) {
         ],
         notModeled: ['customer master data', 'staff roster or shifts', 'service catalog or pricing', 'calendar synchronization',
           'free-text notifications or sends', 'package credits or payments', 'recurrence or series', 'waitlists'],
-        reuses: ['contact', 'follow-up@1', 'channel-template-send@1', 'channel outbox (channel-send)', 'interaction-log@1'],
+        reuses: ['contact', 'follow-up@1', 'channel-template-send@1', 'channel outbox (channel-send)', 'interaction-log@1', 'space-permission-gate@1', 'llm-complete@1'],
       };
     },
   }), options.packageContract === 2 ? 2 : 1);
