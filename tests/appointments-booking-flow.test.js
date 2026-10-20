@@ -119,7 +119,6 @@ function fakeGate({ overrides = [] } = {}) {
 }
 
 const allowGate = () => fakeGate({ overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: true }] }).gate;
-const offGate = () => fakeGate({ overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }] });
 
 const capabilityFor = ({ service, gate = null, phraseLlm = null, calendarSync = null } = {}) => createAppointmentBookCapability({
   permissionGate: gate,
@@ -399,6 +398,19 @@ test('a booking link books once: the resubmission replays the winner', async () 
   assert.equal(second.replayed, true);
   assert.equal(second.appointment.id, first.appointment.id);
   assert.equal(service.rows.length, 1, 'one link, one slot, one row');
+});
+
+test('a link booking naming a reminder keeps the pair promise: no transaction, no row', async () => {
+  const service = fakeAppointments();
+  const cap = capabilityFor({ service });
+  await assert.rejects(
+    cap.bookFromLink({ ...booking(), linkToken: TOKEN, remindAt: '2026-10-20T16:00:00.000Z' }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_TRANSACTION_REQUIRED');
+      return true;
+    },
+  );
+  assert.equal(service.rows.length, 0, 'the reminder is never silently dropped');
 });
 
 test('two different slots behind one link stay two bookings', async () => {

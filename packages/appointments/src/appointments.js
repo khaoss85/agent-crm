@@ -1247,6 +1247,8 @@ function validateSuggestFilter(filter) {
       field: 'teamMemberIds',
     });
   }
+  // Same bound as the team week: the team is named per call, never scanned,
+  // because there is no roster to scan.
   if (value.teamMemberIds.length > MAX_TEAM_WEEK_MEMBERS) {
     throw new ValidationError(`teamMemberIds names at most ${MAX_TEAM_WEEK_MEMBERS} team members per call`, {
       field: 'teamMemberIds',
@@ -1545,6 +1547,9 @@ export function validateBookingLinkToken(value) {
  * mapping.
  */
 export async function bookFromLink(context, request) {
+  // The actor is validated here and bound by the booking path below: an
+  // anonymous link booking would hold a slot with nobody accountable for it.
+  // The deployment passes its own identified actor (it verified the link).
   requireActor(context?.actor);
   const record = request && typeof request === 'object' ? request : {};
   const linkToken = validateBookingLinkToken(record.linkToken);
@@ -1553,19 +1558,10 @@ export async function bookFromLink(context, request) {
     ...record,
     sourceKey: `${LINK_SOURCE_PREFIX}${linkToken}:${startsAt}`,
   });
-  const booked = await bookAppointment(context, {
-    ...record,
-    sourceKey: input.sourceKey,
-    subject: record.subject,
-    teamMemberId: record.teamMemberId,
-    serviceKey: record.serviceKey,
-    priceCents: record.priceCents,
-    currency: record.currency,
-    startsAt: record.startsAt,
-    endsAt: record.endsAt,
-    notes: record.notes,
-    source: record.source,
-  });
+  // The whole record rides, with only the source key derived: a link booking
+  // naming remindAt or a reminderChannel keeps its reminder — dropping them
+  // here would store a booking that claims less than the customer asked for.
+  const booked = await bookAppointment(context, { ...record, sourceKey: input.sourceKey });
   return Object.freeze({
     linkToken,
     appointment: booked.appointment,
