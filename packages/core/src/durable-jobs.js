@@ -354,6 +354,17 @@ export function createDurableJobStore(options) {
     return inTransaction(async (adapter) => decodeRow(await adapter.get(tenantId, jobId)));
   }
 
+  /**
+   * One job by its idempotency root, or null. The sqlite and postgresql
+   * adapters both hold a unique `(tenant_id, idempotency_root)` index, so
+   * this is an exact lookup — unlike `list(limit)`, it cannot miss a job
+   * that aged out of the newest-N window (backlog:233c590cbc81).
+   */
+  async function getByRoot(root) {
+    const key = boundedText(root, 'idempotencyRoot');
+    return inTransaction(async (adapter) => decodeRow(await adapter.getByRoot(tenantId, key)));
+  }
+
   async function enqueue(input, context = {}) {
     const authority = mutationAuthority(context, ['transaction']);
     const actor = authority.actor;
@@ -478,6 +489,7 @@ export function createDurableJobStore(options) {
     now,
     enqueue,
     get,
+    getByRoot,
     claim,
     claimById,
     async beginExecution(job, workerId, context = {}) {

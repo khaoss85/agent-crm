@@ -403,10 +403,12 @@ export function createChannelsPackage(options = {}) {
         name: 'read-channel-reply',
         label: 'Read channel reply',
         appMethod: 'readReply',
-        description: 'Read one reply lifecycle state: pending-approval, approved, queued (in consegna), sent (consegnato, provider receipt in), failed, or refused.',
+        description: 'Read one reply lifecycle state: pending-approval, approved, queued (in consegna), sent (consegnato, provider receipt in), failed, or refused. Exactly one key: the proposal id for the gated path, or — for the switch-on path, which records no proposal row — the jobId or idempotencyKey the propose call handed back.',
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
-          { name: 'proposalId', type: 'string', required: true, hint: 'The space-ai-proposal row id.' },
+          { name: 'proposalId', type: 'string', required: false, hint: 'The space-ai-proposal row id (gated path).' },
+          { name: 'jobId', type: 'string', required: false, hint: 'The outbox job id from the switch-on propose call.' },
+          { name: 'idempotencyKey', type: 'string', required: false, hint: 'The outbox idempotency key from the switch-on propose call.' },
         ],
         create(runtime) {
           const ops = operations(runtime);

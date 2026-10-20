@@ -1707,7 +1707,20 @@ export function createChannelOperations(deps) {
     return matches[0];
   }
 
-  /** Reverse `boundedKey` escaping for the reply action-key tuple. */
+  /**
+   * Escape one reply-key component so the tuple join stays injective. Same
+   * shape as the channels `boundedKey` (MEM_ACC_REUSE): `%` first, then
+   * `:` — a separator inside a component (a nested connection key, a long
+   * caller message key) can never collide with the real separator.
+   */
+  function escapeReplyPart(value) {
+    return value.replace(/%/g, '%25').replace(/:/g, '%3A');
+  }
+
+  /**
+   * Reverse `escapeReplyPart`. `%3A` first, then `%25`, so an original
+   * `%3A` text (escaped as `%253A`) round-trips instead of double-decoding.
+   */
   function unescapeKeyPart(value) {
     return String(value).replace(/%3A/g, ':').replace(/%25/g, '%');
   }
@@ -1715,13 +1728,33 @@ export function createChannelOperations(deps) {
   /**
    * The reply identity the approval binds:
    * `reply:<connection>:<to>:<key>:<text-hash>`, each free-charset
-   * component escaped so the join stays injective. The text fingerprint
-   * binds the approved bytes themselves: a summary changed after the human
-   * ok no longer reproduces the key, so the approved send refuses instead
-   * of sending something the human did not see.
+   * component escaped so the join stays injective and always parses back
+   * into the same 5-part tuple. Deliberately NOT `boundedKey`: that helper
+   * replaces >128-char components with `sha256:<hex>` (which adds a `:`)
+   * and folds >256-char joins to 2 parts, so longer-but-legal inputs never
+   * round-tripped — the proposal was recorded, then every later send and
+   * read refused and the reply stuck forever. The text fingerprint binds
+   * the approved bytes themselves: a summary changed after the human ok no
+   * longer reproduces the key, so the approved send refuses instead of
+   * sending something the human did not see. The proposal store holds at
+   * most 256 chars, so a tuple past that bound refuses here with a typed
+   * code — before anything is recorded — instead of stranding a proposal
+   * no send or read can parse.
    */
   function replyActionKey(connectionKey, to, replyKey, textHash) {
-    return boundedKey('reply', connectionKey, to, replyKey, textHash);
+    const parts = [connectionKey, to, replyKey, textHash];
+    for (const part of parts) {
+      if (typeof part !== 'string' || part === '' || part.length > 1024 || /[\x00-\x1f\x7f]/.test(part)) {
+        throw new ValidationError('reply key parts must be bounded single-line text', { field: 'key' });
+      }
+    }
+    const key = `reply:${parts.map(escapeReplyPart).join(':')}`;
+    if (key.length > 256) {
+      throw new AppError('Channel reply addresses more key than the approval record holds: shorten the message key or recipient', {
+        code: 'CHANNEL_REPLY_KEY_TOO_LONG', status: 422,
+      });
+    }
+    return key;
   }
 
   /** Split a reply action key back into its tuple. Fail-closed on drift. */
@@ -1777,11 +1810,36 @@ export function createChannelOperations(deps) {
   }
 
   /**
-   * Propose one human reply (BO-F1-07). With `send-without-approval` on in
-   * this space the reply queues through the outbox at once (`queued`); with
-   * the switch off (the default) the reply waits as a `space-ai-proposal`
-   * row (`pending-approval`) and nothing is enqueued — the provider sees
-   * nothing until a human approves and the approved send runs.
+   * Queue one reply send through the outbox (MEM_ACC_REUSE: the same durable
+   * enqueue as every channel send). A deduped terminal job never reports
+   * `queued`: the existing row already settled, so nothing will ever send —
+   * the retry refuses with a typed code directing to a new round (a new
+   * messageKey) instead of letting the human believe it is in consegna.
+   */
+  const REPLY_SETTLED_JOB_STATES = new Set(['succeeded', 'failed_terminal', 'cancelled']);
+  async function queueReplySend({ spaceId, connectionKey, message, messageKey, actor }) {
+    const queued = await queueChannelSend({ spaceId, connectionKey, message, messageKey, actor });
+    const job = await jobs().get(queued.jobId);
+    if (job && REPLY_SETTLED_JOB_STATES.has(job.state)) {
+      throw new AppError(`This reply already settled as ${job.state}: propose a new round with a new messageKey`, {
+        code: 'CHANNEL_REPLY_SEND_SETTLED', status: 409,
+        details: { jobId: queued.jobId, jobState: job.state },
+      });
+    }
+    return queued;
+  }
+
+  /**
+   * Propose one human reply (BO-F1-07). The gate's own `propose` is the
+   * single decision point: with `send-without-approval` on in this space it
+   * throws `SPACE_PERMISSION_ENABLED` and the reply queues through the
+   * outbox at once (`queued`); with the switch off (the default) the reply
+   * waits as a `space-ai-proposal` row (`pending-approval`) and nothing is
+   * enqueued — the provider sees nothing until a human approves and the
+   * approved send runs. There is deliberately no `gate()` pre-read on this
+   * path: an allow verdict read before the enqueue would go stale on an
+   * on-to-off flip and bypass approval; the enqueue decision always rests
+   * on the gate's own fresh verdict inside `propose`.
    */
   async function proposeReply(params) {
     const actor = requireUser(params?.actor);
@@ -1804,23 +1862,6 @@ export function createChannelOperations(deps) {
     const actionKey = replyActionKey(
       connection.sourceKey, message.to, replyKey, fingerprintPayload(message.text),
     );
-    const verdict = await gate.gate({ spaceId, permission: CHANNEL_REPLY_PERMISSION });
-    const decision = verdict && typeof verdict === 'object' ? verdict.decision : undefined;
-    if (decision !== 'allow' && decision !== 'proposal') {
-      throw new AppError('The permission gate answered with an unknown verdict', {
-        code: 'CHANNEL_REPLY_GATE_INVALID', status: 500,
-      });
-    }
-    if (decision === 'allow') {
-      const queued = await queueChannelSend({
-        spaceId, connectionKey: connection.sourceKey, message, messageKey: replyKey, actor,
-      });
-      return {
-        state: 'queued', proposalId: null, replayed: false,
-        connectionKey: connection.sourceKey, channel: connection.channel, to: message.to,
-        jobId: queued.jobId, idempotencyKey: queued.idempotencyKey,
-      };
-    }
     let proposed;
     try {
       proposed = await gate.propose({
@@ -1829,9 +1870,10 @@ export function createChannelOperations(deps) {
       });
     } catch (error) {
       if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'SPACE_PERMISSION_ENABLED') {
-        // The switch flipped on between the gate read and the proposal
-        // write: the space now allows unattended sends, so send at once.
-        const queued = await queueChannelSend({
+        // The space allows unattended sends: send at once, with no proposal
+        // row. The lifecycle still reads back through the returned jobId or
+        // idempotencyKey.
+        const queued = await queueReplySend({
           spaceId, connectionKey: connection.sourceKey, message, messageKey: replyKey, actor,
         });
         return {
@@ -1898,7 +1940,7 @@ export function createChannelOperations(deps) {
         code: 'CHANNEL_REPLY_KEY_INVALID', status: 409,
       });
     }
-    const queued = await queueChannelSend({
+    const queued = await queueReplySend({
       spaceId, connectionKey: connection.sourceKey, message, messageKey: routed.replyKey, actor,
     });
     return {
@@ -1909,50 +1951,11 @@ export function createChannelOperations(deps) {
   }
 
   /**
-   * Read one reply's lifecycle state for the backoffice card: waiting for
-   * the ok, approved, in consegna (the outbox job exists), consegnato (the
-   * provider receipt is in), failed, or refused. The job lookup reads the
-   * durable-jobs rows the outbox wrote — the same rows the worker settles.
+   * Project one reply send onto the lifecycle the backoffice card shows —
+   * shared by the proposal read and the proposal-less read below, so both
+   * keys report the same queued / sent / failed from the same rows.
    */
-  async function readReply(params) {
-    const spaceId = assertSpaceId(params?.spaceId);
-    const gate = requireReplyGate();
-    const proposalId = typeof params?.proposalId === 'string' && params?.proposalId !== ''
-      ? params.proposalId
-      : null;
-    if (!proposalId) {
-      throw new ValidationError('readReply needs the proposalId', { field: 'proposalId' });
-    }
-    const row = await gate.proposal(spaceId, proposalId);
-    if (!row) {
-      throw new AppError('Unknown reply proposal', { code: 'CHANNEL_REPLY_UNKNOWN', status: 404 });
-    }
-    const routed = parseReplyActionKey(row.actionKey);
-    const connection = getConnection(spaceId, routed.connectionKey);
-    const base = {
-      proposalId: row.id ?? proposalId,
-      connectionKey: routed.connectionKey,
-      channel: connection?.channel ?? null,
-      to: routed.to,
-    };
-    if (row.status === 'refused') {
-      return {
-        ...base, state: 'refused',
-        decidedBy: row.decidedBy ?? null, decidedAt: row.decidedAt ?? null,
-        refusalReason: row.refusalReason ?? null,
-      };
-    }
-    if (row.status !== 'approved') {
-      return { ...base, state: 'pending-approval' };
-    }
-    const idempotencyKey = channelSendIdempotencyKey({
-      spaceId, connectionKey: routed.connectionKey, messageKey: routed.replyKey,
-    });
-    const stored = await jobs().list(500);
-    const job = Array.isArray(stored)
-      ? stored.find((entry) => entry
-        && (entry.idempotencyRoot === idempotencyKey || entry.outcomeReference === idempotencyKey))
-      : null;
+  function replySendRead({ spaceId, job, idempotencyKey, base }) {
     if (!job) {
       return { ...base, state: 'approved', idempotencyKey };
     }
@@ -1968,6 +1971,94 @@ export function createChannelOperations(deps) {
       return { ...base, state: 'failed', idempotencyKey, jobId: job.id };
     }
     return { ...base, state: 'queued', idempotencyKey, jobId: job.id };
+  }
+
+  /**
+   * Read one reply's lifecycle state for the backoffice card: waiting for
+   * the ok, approved, in consegna (the outbox job exists), consegnato (the
+   * provider receipt is in), failed, or refused.
+   *
+   * Exactly one key: the proposal id for the gated path, or — for the
+   * switch-on path, which records no proposal row — the jobId or
+   * idempotencyKey the propose call handed back. The job lookup is always
+   * exact (by id or by idempotency root, the same rows the worker settles),
+   * never a newest-N window scan that forgets older sends.
+   */
+  async function readReply(params) {
+    const spaceId = assertSpaceId(params?.spaceId);
+    const gate = requireReplyGate();
+    const proposalId = typeof params?.proposalId === 'string' && params.proposalId !== ''
+      ? params.proposalId
+      : null;
+    const jobId = typeof params?.jobId === 'string' && params.jobId !== ''
+      ? params.jobId
+      : null;
+    const idempotencyKey = typeof params?.idempotencyKey === 'string' && params.idempotencyKey !== ''
+      ? params.idempotencyKey
+      : null;
+    if ((proposalId ? 1 : 0) + (jobId ? 1 : 0) + (idempotencyKey ? 1 : 0) !== 1) {
+      throw new ValidationError('readReply needs exactly one of proposalId, jobId or idempotencyKey', {
+        field: 'proposalId',
+      });
+    }
+    if (proposalId) {
+      const row = await gate.proposal(spaceId, proposalId);
+      if (!row) {
+        throw new AppError('Unknown reply proposal', { code: 'CHANNEL_REPLY_UNKNOWN', status: 404 });
+      }
+      if (row.permission !== CHANNEL_REPLY_PERMISSION || row.actionKind !== CHANNEL_REPLY_ACTION_KIND) {
+        throw new AppError('This proposal is not a channel reply', { code: 'CHANNEL_REPLY_MISMATCH', status: 409 });
+      }
+      const routed = parseReplyActionKey(row.actionKey);
+      const connection = getConnection(spaceId, routed.connectionKey);
+      const base = {
+        proposalId: row.id ?? proposalId,
+        connectionKey: routed.connectionKey,
+        channel: connection?.channel ?? null,
+        to: routed.to,
+      };
+      if (row.status === 'refused') {
+        return {
+          ...base, state: 'refused',
+          decidedBy: row.decidedBy ?? null, decidedAt: row.decidedAt ?? null,
+          refusalReason: row.refusalReason ?? null,
+        };
+      }
+      if (row.status !== 'approved') {
+        return { ...base, state: 'pending-approval' };
+      }
+      const key = channelSendIdempotencyKey({
+        spaceId, connectionKey: routed.connectionKey, messageKey: routed.replyKey,
+      });
+      const job = await jobs().getByRoot(key);
+      return replySendRead({ spaceId, job, idempotencyKey: key, base });
+    }
+    // Proposal-less sends (the switch-on path records no proposal row):
+    // the job the propose call handed back is the lifecycle. The job store
+    // is bound to the deployment tenant, not the space, so the payload's
+    // space must match — a key of another space is not found, never
+    // forbidden.
+    const job = jobId ? await jobs().get(jobId) : await jobs().getByRoot(idempotencyKey);
+    const payload = job && job.payload && typeof job.payload === 'object' ? job.payload : null;
+    if (!job || !payload || payload.spaceId !== spaceId) {
+      throw new AppError('Unknown channel reply send', { code: 'CHANNEL_REPLY_UNKNOWN', status: 404 });
+    }
+    const routedKey = typeof payload.connectionKey === 'string' ? payload.connectionKey : '';
+    const connection = routedKey !== '' ? getConnection(spaceId, routedKey) : null;
+    const to = payload.message && typeof payload.message === 'object' && typeof payload.message.to === 'string'
+      ? payload.message.to
+      : null;
+    return replySendRead({
+      spaceId,
+      job,
+      idempotencyKey: typeof job.idempotencyRoot === 'string' ? job.idempotencyRoot : idempotencyKey,
+      base: {
+        proposalId: null,
+        connectionKey: routedKey === '' ? null : routedKey,
+        channel: connection?.channel ?? null,
+        to,
+      },
+    });
   }
 
   /** Record one terminal send failure. Never the raw payload, never a secret. */

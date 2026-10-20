@@ -507,14 +507,62 @@ test('anonymous callers never propose or send', async (t) => {
   );
 });
 
-test('an unknown gate verdict refuses fail-closed, never sends', async (t) => {
+test('the enqueue decision never rests on a stale gate() verdict', async (t) => {
   const h = setupReplyHarness();
   t.after(() => h.close());
   const key = await h.register(SPACE_A);
   await h.activate(SPACE_A, key);
-  const weird = {
-    gate: async () => ({ decision: 'maybe' }),
+  const { definition: sameFixture } = createFixtureChannelAdapter({ secret: CHANNEL_SECRET });
+  const replayGate = (gate) => createChannelOperations({
+    database: h.database, modules: h.modules,
+    registries: new ChannelRegistries({ channelAdapters: [sameFixture] }),
+    resolveSecret: async () => CHANNEL_SECRET, tenantId: 'reply-kit',
+    permissionGate: gate, llm: null,
+  });
+
+  // A gate() read that disagrees with its own propose decision: the reply
+  // flow follows propose, never the stale read, so a stale `allow` with the
+  // switch off still waits for the human ok and enqueues nothing.
+  const stale = {
+    gate: async () => ({ decision: 'allow' }),
     propose: (...args) => h.permissionGate.propose(...args),
+    proposal: (...args) => h.permissionGate.proposal(...args),
+  };
+  const proposed = await replayGate(stale).proposeReply({
+    spaceId: SPACE_A, connectionKey: key, to: ACCOUNT_A, text: 'Ciao.', actor: USER,
+  });
+  assert.equal(proposed.state, 'pending-approval', 'the fresh propose verdict wins over the stale allow read');
+  assert.equal((await h.jobs()).length, 0, 'a stale allow never enqueues');
+
+  // A gate() that throws outright changes nothing on either path: propose
+  // is the single decision point.
+  const broken = {
+    gate: async () => { throw new Error('gate read down'); },
+    propose: (...args) => h.permissionGate.propose(...args),
+    proposal: (...args) => h.permissionGate.proposal(...args),
+  };
+  const ops = replayGate(broken);
+  const proposedOff = await ops.proposeReply({
+    spaceId: SPACE_A, connectionKey: key, to: ACCOUNT_A, text: 'Sempre proposta.', actor: USER,
+  });
+  assert.equal(proposedOff.state, 'pending-approval');
+  await h.setPermission(SPACE_A, 'on');
+  const queued = await ops.proposeReply({
+    spaceId: SPACE_A, connectionKey: key, to: ACCOUNT_A,
+    text: 'Via libera.', messageKey: 'stale-gate-on-1', actor: USER,
+  });
+  assert.equal(queued.state, 'queued');
+  assert.equal(queued.proposalId, null);
+});
+
+test('a propose failure refuses fail-closed, never sends', async (t) => {
+  const h = setupReplyHarness();
+  t.after(() => h.close());
+  const key = await h.register(SPACE_A);
+  await h.activate(SPACE_A, key);
+  const failing = {
+    gate: async () => ({ decision: 'proposal' }),
+    propose: async () => { throw new Error('proposal store down'); },
     proposal: (...args) => h.permissionGate.proposal(...args),
   };
   const { definition: sameFixture } = createFixtureChannelAdapter({ secret: CHANNEL_SECRET });
@@ -522,15 +570,181 @@ test('an unknown gate verdict refuses fail-closed, never sends', async (t) => {
     database: h.database, modules: h.modules,
     registries: new ChannelRegistries({ channelAdapters: [sameFixture] }),
     resolveSecret: async () => CHANNEL_SECRET, tenantId: 'reply-kit',
-    permissionGate: weird, llm: null,
+    permissionGate: failing, llm: null,
+  });
+  await assert.rejects(
+    () => ops.proposeReply({
+      spaceId: SPACE_A, connectionKey: key, to: ACCOUNT_A, text: 'Ciao.', actor: USER,
+    }),
+    /proposal store down/,
+    'an unexpected propose failure propagates instead of a typed code',
+  );
+  assert.equal((await h.jobs()).length, 0, 'a failed propose enqueues nothing');
+});
+
+test('a foreign proposal never enters the reply lifecycle read path', async (t) => {
+  const h = setupReplyHarness();
+  t.after(() => h.close());
+  const key = await h.register(SPACE_A);
+  await h.activate(SPACE_A, key);
+
+  // A proposal the reply flow never made: the same permission, another kind.
+  const foreign = await h.permissionGate.propose({
+    spaceId: SPACE_A, permission: 'send-without-approval',
+    actionKind: 'merge-duplicates', actionKey: 'merge:whatever', summary: 'not a reply', actor: USER,
   });
   assert.equal(
-    await codeOf(() => ops.proposeReply({
-      spaceId: SPACE_A, connectionKey: key, to: ACCOUNT_A, text: 'Ciao.', actor: USER,
-    })),
-    'CHANNEL_REPLY_GATE_INVALID',
+    await codeOf(() => h.ops.readReply({ spaceId: SPACE_A, proposalId: foreign.proposalId })),
+    'CHANNEL_REPLY_MISMATCH',
   );
-  assert.equal((await h.jobs()).length, 0, 'an undecided gate enqueues nothing');
+  assert.equal(
+    await codeOf(() => h.ops.sendApprovedReply({ spaceId: SPACE_A, proposalId: foreign.proposalId, actor: OWNER })),
+    'CHANNEL_REPLY_MISMATCH',
+  );
+  assert.equal((await h.jobs()).length, 0, 'a foreign proposal enqueues nothing');
+});
+
+test('a longer-but-legal reply key round-trips end to end', async (t) => {
+  const h = setupReplyHarness();
+  t.after(() => h.close());
+  // A 130-char caller key: over the old 128-char component bound, inside
+  // the 256-char record bound (short test account, like a short email).
+  // The old tuple hashed it into a 6-part key and stuck the reply; the
+  // escaped tuple parses back whole.
+  const short = await h.register(SPACE_A, '+391');
+  await h.activate(SPACE_A, short);
+  const longKey = `reply-${'k'.repeat(124)}`;
+  assert.equal(longKey.length, 130);
+  const proposed = await h.ops.proposeReply({
+    spaceId: SPACE_A, connectionKey: short, to: '+391',
+    text: 'Chiave lunga ma legittima.', messageKey: longKey, actor: USER,
+  });
+  assert.equal(proposed.state, 'pending-approval');
+  await h.decide(proposed.proposalId, SPACE_A, 'approved');
+  const sent = await h.ops.sendApprovedReply({ spaceId: SPACE_A, proposalId: proposed.proposalId, actor: OWNER });
+  assert.equal(sent.state, 'queued');
+  const settled = await h.pump(sent.jobId);
+  assert.equal(settled.state, 'succeeded');
+  const read = await h.ops.readReply({ spaceId: SPACE_A, proposalId: proposed.proposalId });
+  assert.equal(read.state, 'sent');
+  assert.equal(read.to, '+391');
+});
+
+test('a reply past the approval record bound refuses before anything is recorded', async (t) => {
+  const h = setupReplyHarness();
+  t.after(() => h.close());
+  const key = await h.register(SPACE_A);
+  await h.activate(SPACE_A, key);
+
+  assert.equal(
+    await codeOf(() => h.ops.proposeReply({
+      spaceId: SPACE_A, connectionKey: key, to: ACCOUNT_A,
+      text: 'Troppo lunga da legare.', messageKey: `reply-${'k'.repeat(294)}`, actor: USER,
+    })),
+    'CHANNEL_REPLY_KEY_TOO_LONG',
+  );
+  assert.equal((await h.proposals(SPACE_A)).length, 0, 'no stranded proposal is recorded');
+  assert.equal((await h.jobs()).length, 0, 'no send is enqueued');
+});
+
+test('a reply whose job aged out of the newest window still reads back', async (t) => {
+  const h = setupReplyHarness();
+  t.after(() => h.close());
+  const key = await h.register(SPACE_A);
+  await h.activate(SPACE_A, key);
+
+  const proposed = await h.ops.proposeReply({
+    spaceId: SPACE_A, connectionKey: key, to: ACCOUNT_A,
+    text: 'La più vecchia di cinquecento.', messageKey: 'window-first-1', actor: USER,
+  });
+  await h.decide(proposed.proposalId, SPACE_A, 'approved');
+  const sent = await h.ops.sendApprovedReply({ spaceId: SPACE_A, proposalId: proposed.proposalId, actor: OWNER });
+  assert.equal(sent.state, 'queued');
+
+  // Push the reply job out of any newest-500 window: 500 younger sends.
+  await h.setPermission(SPACE_A, 'on');
+  for (let index = 0; index < 500; index += 1) {
+    const filler = await h.ops.proposeReply({
+      spaceId: SPACE_A, connectionKey: key, to: ACCOUNT_A,
+      text: `Riempitivo ${index}.`, messageKey: `window-fill-${index}`, actor: USER,
+    });
+    assert.equal(filler.state, 'queued');
+  }
+  // The harness helper reads the same newest-500 window the old code
+  // scanned: the reply job (oldest of 501) is not in it, yet reads back.
+  assert.equal((await h.jobs()).length, 500);
+
+  const read = await h.ops.readReply({ spaceId: SPACE_A, proposalId: proposed.proposalId });
+  assert.equal(read.state, 'queued', 'the exact lookup finds the aged-out job');
+  assert.equal(read.jobId, sent.jobId);
+});
+
+test('retry after a terminal failure refuses with a new-round code, never a fake queued', async (t) => {
+  const h = setupReplyHarness();
+  t.after(() => h.close());
+  const key = await h.register(SPACE_A);
+  await h.activate(SPACE_A, key);
+
+  const proposed = await h.ops.proposeReply({
+    spaceId: SPACE_A, connectionKey: key, to: ACCOUNT_A,
+    text: 'Non partirà mai.', messageKey: 'retry-fail-1', actor: USER,
+  });
+  await h.decide(proposed.proposalId, SPACE_A, 'approved');
+  h.api.setMode('refuse');
+  const sent = await h.ops.sendApprovedReply({ spaceId: SPACE_A, proposalId: proposed.proposalId, actor: OWNER });
+  const settled = await h.pump(sent.jobId);
+  assert.equal(settled.state, 'failed_terminal');
+  h.api.reset();
+
+  // The approved bytes are unchanged, so the retry dedups onto the settled
+  // job: it must refuse instead of reporting a send that never happens.
+  assert.equal(
+    await codeOf(() => h.ops.sendApprovedReply({ spaceId: SPACE_A, proposalId: proposed.proposalId, actor: OWNER })),
+    'CHANNEL_REPLY_SEND_SETTLED',
+  );
+  const read = await h.ops.readReply({ spaceId: SPACE_A, proposalId: proposed.proposalId });
+  assert.equal(read.state, 'failed');
+  assert.equal(read.jobId, sent.jobId);
+});
+
+test('a switch-on send reads back through its job key: queued, then sent', async (t) => {
+  const h = setupReplyHarness();
+  t.after(() => h.close());
+  const key = await h.register(SPACE_A);
+  await h.activate(SPACE_A, key);
+  await h.setPermission(SPACE_A, 'on');
+
+  const queued = await h.ops.proposeReply({
+    spaceId: SPACE_A, channel: 'whatsapp', to: ACCOUNT_A,
+    text: 'Senza proposta, ma leggibile.', messageKey: 'auto-read-1', actor: USER,
+  });
+  assert.equal(queued.state, 'queued');
+  assert.equal(queued.proposalId, null);
+
+  const before = await h.ops.readReply({ spaceId: SPACE_A, idempotencyKey: queued.idempotencyKey });
+  assert.equal(before.state, 'queued');
+  assert.equal(before.proposalId, null);
+  assert.equal(before.to, ACCOUNT_A);
+  assert.equal(before.channel, 'whatsapp');
+  assert.equal(before.jobId, queued.jobId);
+
+  const settled = await h.pump(queued.jobId);
+  assert.equal(settled.state, 'succeeded');
+  const after = await h.ops.readReply({ spaceId: SPACE_A, jobId: queued.jobId });
+  assert.equal(after.state, 'sent');
+  assert.equal(after.attempts, 1);
+
+  // A key of another space is not found, never forbidden.
+  assert.equal(
+    await codeOf(() => h.ops.readReply({ spaceId: SPACE_B, jobId: queued.jobId })),
+    'CHANNEL_REPLY_UNKNOWN',
+  );
+  // Exactly one key: none or two refuse.
+  assert.equal(await codeOf(() => h.ops.readReply({ spaceId: SPACE_A })), 'VALIDATION_ERROR');
+  assert.equal(
+    await codeOf(() => h.ops.readReply({ spaceId: SPACE_A, jobId: queued.jobId, idempotencyKey: queued.idempotencyKey })),
+    'VALIDATION_ERROR',
+  );
 });
 
 test('an unwired composition refuses the reply flow, never sends past it', async (t) => {
