@@ -143,7 +143,7 @@ export function createSequencesPackage(options = {}) {
     .filter((row) => row && Number.isInteger(row.stepOrder))
     .sort((a, b) => a.stepOrder - b.stepOrder);
 
-  return selectPackageGraph(definePackage({
+  const graph = definePackage({
     packageContract: 1,
     name: SEQUENCES_DOMAIN,
     // 1: BO-F3-03 — sequences with reply stop, fail-closed permission,
@@ -187,29 +187,37 @@ export function createSequencesPackage(options = {}) {
             }
             const at = nowIso();
             const sequences = trusted(runtime.modules, 'sequence');
-            const existing = await sequences.listWhere({ spaceId, sourceKey });
-            if (existing[0]) {
-              return { sequence: existing[0], steps: await loadSteps(runtime.modules, sourceKey), replayed: true };
-            }
             const checked = rawSteps.map((step, index) => checkStepInput(step, index));
-            let sequence;
-            try {
-              sequence = await sequences.createManaged({
-                sourceKey, spaceId, name, status: 'draft',
-                decidedAt: at,
-                actorType: actor.type, actorId: actor.id,
-                sourcePackage: SEQUENCES_DOMAIN, sourceAction: 'create-sequence',
-              }, { actor });
-            } catch (error) {
-              if (!isWinnerConflict(error)) throw error;
-              const winner = await sequences.listWhere({ spaceId, sourceKey });
-              if (!winner[0]) throw error;
-              return { sequence: winner[0], steps: await loadSteps(runtime.modules, sourceKey), replayed: true };
+            let sequence = (await sequences.listWhere({ spaceId, sourceKey }))[0] ?? null;
+            let replayed = sequence !== null;
+            if (!sequence) {
+              try {
+                sequence = await sequences.createManaged({
+                  sourceKey, spaceId, name, status: 'draft',
+                  decidedAt: at,
+                  actorType: actor.type, actorId: actor.id,
+                  sourcePackage: SEQUENCES_DOMAIN, sourceAction: 'create-sequence',
+                }, { actor });
+              } catch (error) {
+                if (!isWinnerConflict(error)) throw error;
+                sequence = (await sequences.listWhere({ spaceId, sourceKey }))[0] ?? null;
+                if (!sequence) throw error;
+                replayed = true;
+              }
             }
+            // An interrupted first attempt leaves the sequence row with only
+            // some step rows: the retry carries the same payload under the
+            // same key, so every missing deterministic step row is created
+            // now instead of activating a truncated workflow later.
             const stepService = trusted(runtime.modules, 'sequence-step');
             const stored = [];
             for (const step of checked) {
               const stepKey = sequenceKey('seq-step', sourceKey, String(step.stepOrder));
+              const found = await stepService.listWhere({ sourceKey: stepKey });
+              if (found[0]) {
+                stored.push(found[0]);
+                continue;
+              }
               try {
                 stored.push(await stepService.createManaged({
                   sourceKey: stepKey,
@@ -231,7 +239,7 @@ export function createSequencesPackage(options = {}) {
             return {
               sequence,
               steps: stored.sort((a, b) => a.stepOrder - b.stepOrder),
-              replayed: false,
+              replayed,
             };
           };
         },
@@ -517,10 +525,10 @@ export function createSequencesPackage(options = {}) {
         ],
       };
     },
-  }));
+  });
 
-  /** Distinct awaited contract-2 graph. Existing `createSequencesPackage()` callers keep v1. */
-  return selectPackageGraph(pkg, options.packageContract === 2 ? 2 : 1);
+  // Distinct awaited contract-2 graph. Existing `createSequencesPackage()` callers keep v1.
+  return selectPackageGraph(graph, options.packageContract === 2 ? 2 : 1);
 }
 
 /** The records this package owns (re-exported for the composition that applies manifests). */

@@ -125,8 +125,18 @@ function gate(composed) {
 }
 
 function queue(composed) {
+  // No actor injection: the sweep carries its own timer actor to the outbox,
+  // like every production caller of the seam — the assertion below fails a
+  // sweep that queues anonymously.
   return {
-    queueTemplate: (request) => composed.ops.queueTemplateSend({ ...request, actor: SYSTEM }),
+    queueTemplate: (request) => {
+      assert.ok(
+        request && typeof request.actor === 'object'
+          && typeof request.actor.type === 'string' && typeof request.actor.id === 'string',
+        'the sweep carries its timer actor to the outbox',
+      );
+      return composed.ops.queueTemplateSend(request);
+    },
   };
 }
 
@@ -134,7 +144,7 @@ function windows(composed, connectionKey) {
   return { [connectionKey]: composed.adapterDefinition.outboundWindow };
 }
 
-async function advance(composed, connectionKey, iso) {
+async function advance(composed, connectionKey, iso, options = {}) {
   composed.clockBox.ms = Date.parse(iso);
   return advanceSequences({
     modules: composed.modules,
@@ -143,6 +153,7 @@ async function advance(composed, connectionKey, iso) {
     replyWindows: windows(composed, connectionKey),
     now: () => iso,
     actor: SYSTEM,
+    personalize: options.personalize ?? undefined,
   });
 }
 
@@ -159,11 +170,11 @@ function sequenceOps(composed, connectionKey, extras = {}) {
   );
 }
 
-async function activeConnection(composed) {
+async function activeConnection(composed, account = '+390200000099') {
   const reg = await composed.ops.registerChannelConnection({
     spaceId: SPACE,
     channel: 'whatsapp',
-    account: '+390200000099',
+    account,
     adapter: WHATSAPP_ADAPTER_NAME,
     adapterVersion: WHATSAPP_ADAPTER_VERSION,
     secretRef: SECRET_REF,
@@ -230,17 +241,17 @@ function workerKit(composed, clock) {
   return { store, registry, worker };
 }
 
-async function replyRow(composed, connectionKey, to, at) {
+async function replyRow(composed, connectionKey, to, at, tag = '') {
   const subject = composed.adapterDefinition.outboundWindow.subjectForRecipient(to);
   const inbox = composed.modules.get('channel-inbox-event').service;
   return inbox.createManaged({
-    sourceKey: `ch-in:reply:${Date.parse(at)}`,
+    sourceKey: `ch-in:reply:${Date.parse(at)}${tag}`,
     spaceId: SPACE,
     connectionKey,
     importKey: null,
     adapter: WHATSAPP_ADAPTER_NAME,
     adapterVersion: WHATSAPP_ADAPTER_VERSION,
-    providerEventId: `wamid.reply.${Date.parse(at)}`,
+    providerEventId: `wamid.reply.${Date.parse(at)}${tag}`,
     subject,
     payloadFingerprint: 'reply-fixture',
     sequence: 1,
@@ -492,4 +503,310 @@ test('elenco con stato e metriche', async (t) => {
   const stillDraft = elenco.find((entry) => entry.sourceKey === 'seq:list-b');
   assert.equal(stillDraft.status, 'draft');
   assert.equal(stillDraft.enrolled, 0);
+});
+
+async function decideProposal(composed, decision, at) {
+  const proposals = composed.modules.get('space-ai-proposal').service;
+  const recorded = await proposals.listWhere({ spaceId: SPACE });
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].status, 'proposed');
+  await proposals.applyManaged(recorded[0].id, {
+    status: decision,
+    decidedBy: 'user:presti-owner',
+    decidedAt: at,
+    refusalReason: decision === 'refused' ? 'not now' : null,
+  }, { actor: USER });
+}
+
+test("l'ok della persona sblocca il passo anche a interruttore spento", async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  // The global switch stays off: the step waits as a human-decided proposal.
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:human-ok');
+  await enroll(ops, connectionKey, 'seq:human-ok', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  const gated = await advance(composed, connectionKey, T0);
+  assert.equal(gated.waitingApproval, 1);
+  assert.equal(gated.advanced, 0);
+
+  // The human approves that exact proposal: the next sweep queues the step
+  // without the global switch, exactly once.
+  await decideProposal(composed, 'approved', T0_LATER);
+  const unblocked = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(unblocked.advanced, 1);
+  assert.equal(unblocked.waitingApproval, 0);
+  const sends = composed.modules.get('sequence-send').service;
+  const rows = await sends.listWhere({ sequenceSourceKey: 'seq:human-ok' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'queued');
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:human-ok' }))[0].currentStep, 1);
+});
+
+test('il rifiuto della persona salta il passo senza inviare', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:human-no');
+  await enroll(ops, connectionKey, 'seq:human-no', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  const gated = await advance(composed, connectionKey, T0);
+  assert.equal(gated.waitingApproval, 1);
+
+  // The human refuses: the step is recorded skipped and the cursor moves
+  // past it — the sweep never queues, and the next step stays gated.
+  await decideProposal(composed, 'refused', T0_LATER);
+  const refused = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(refused.skipped, 1);
+  assert.equal(refused.advanced, 0);
+  assert.equal(composed.api.state.sendCalls, 0);
+  const sends = composed.modules.get('sequence-send').service;
+  const rows = await sends.listWhere({ sequenceSourceKey: 'seq:human-no' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'skipped');
+  assert.equal(rows[0].detail, 'SPACE_PROPOSAL_REFUSED');
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:human-no' }))[0].currentStep, 1);
+});
+
+test("senza inbox non si invia: l'errore resta nel riepilogo", async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:blind');
+  await enroll(ops, connectionKey, 'seq:blind', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  // The inbox read fails transiently: the sweep fires nothing, keeps the
+  // enrollment active, and records the failure with the space identifier.
+  const inbox = composed.modules.get('channel-inbox-event').service;
+  const original = inbox.listWhere.bind(inbox);
+  inbox.listWhere = () => {
+    throw Object.assign(new Error('transient storage failure'), { code: 'SQLITE_IOERR' });
+  };
+  let blind;
+  try {
+    blind = await advance(composed, connectionKey, T0);
+  } finally {
+    inbox.listWhere = original;
+  }
+  assert.equal(blind.advanced, 0);
+  assert.equal(blind.stoppedReplied, 0);
+  assert.equal(blind.inboxUnavailable.length, 1);
+  assert.equal(blind.inboxUnavailable[0].spaceId, SPACE);
+  assert.equal(blind.inboxUnavailable[0].code, 'SQLITE_IOERR');
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:blind' }))[0].status, 'active');
+  const sends = composed.modules.get('sequence-send').service;
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:blind' })).length, 0);
+
+  // The inbox back: the same step fires on the next sweep.
+  const seeing = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(seeing.advanced, 1);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:blind' })).length, 1);
+});
+
+test("la risposta su un'altra connessione non ferma l'iscrizione", async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  const otherKey = await activeConnection(composed, '+390200000077');
+  assert.notEqual(otherKey, connectionKey);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:scoped');
+  await enroll(ops, connectionKey, 'seq:scoped', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  // A reply to the same recipient through the OTHER connection is not ours:
+  // our enrollment fires instead of stopping.
+  await replyRow(composed, otherKey, TO, T0_LATER);
+  const fired = await advance(composed, connectionKey, T0);
+  assert.equal(fired.advanced, 1);
+  assert.equal(fired.stoppedReplied, 0);
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:scoped' }))[0].status, 'active');
+
+  // The same reply through our own connection stops it.
+  await replyRow(composed, connectionKey, TO, T0_LATER, ':own');
+  const stopped = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(stopped.stoppedReplied, 1);
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:scoped' }))[0].status, 'stopped-replied');
+});
+
+test('il replay dopo un crash ripara il cursore senza doppi invii', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:crash');
+  const enrollment = await enroll(ops, connectionKey, 'seq:crash', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  const first = await advance(composed, connectionKey, T0);
+  assert.equal(first.advanced, 1);
+
+  // Crash between the send row and the cursor write: the cursor still points
+  // at the queued step while the send row already exists.
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  await enrollments.applyManaged(enrollment.id, { currentStep: 0, nextDueAt: T0 }, { actor: USER });
+
+  const replayed = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(replayed.advanced, 0);
+  const sends = composed.modules.get('sequence-send').service;
+  const rows = await sends.listWhere({ sequenceSourceKey: 'seq:crash' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'queued');
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:crash' }))[0].currentStep, 1);
+
+  // The repaired cursor fires step two on its day, still exactly once.
+  await advance(composed, connectionKey, T1);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:crash' })).length, 2);
+});
+
+test("l'ultimo invio si conferma prima di chiudere l'iscrizione", async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  const created = await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:final', name: 'Solo uno',
+    steps: STEPS.slice(0, 1), actor: USER,
+  });
+  assert.equal(created.steps.length, 1);
+  await ops.activateSequence({ spaceId: SPACE, sourceKey: 'seq:final', actor: USER });
+  await enroll(ops, connectionKey, 'seq:final', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  const queued = await advance(composed, connectionKey, T0);
+  assert.equal(queued.advanced, 1);
+
+  // The send is still unsettled: the enrollment stays active, never
+  // completed on an unconfirmed send.
+  const pending = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(pending.confirmed, 0);
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:final' }))[0].status, 'active');
+
+  // The outbox answers: the confirm pass records the send and then the
+  // enrollment completes on the same sweep.
+  const sends = composed.modules.get('sequence-send').service;
+  const jobId = (await sends.listWhere({ sequenceSourceKey: 'seq:final' }))[0].jobId;
+  const { worker } = workerKit(composed, () => T0_LATER);
+  worker.start();
+  t.after(() => worker.close());
+  const settled = await worker.run(jobId);
+  assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
+  const confirmed = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(confirmed.confirmed, 1);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:final' }))[0].status, 'sent');
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:final' }))[0].status, 'completed');
+});
+
+test('la conferma riusa il testo personalizzato senza mismatch', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  const created = await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:rewrite', name: 'Riscritto',
+    steps: STEPS.slice(0, 1), actor: USER,
+  });
+  assert.equal(created.steps.length, 1);
+  await ops.activateSequence({ spaceId: SPACE, sourceKey: 'seq:rewrite', actor: USER });
+  await enroll(ops, connectionKey, 'seq:rewrite', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  // The AI seam rewrites the variables: the confirm requeue must carry the
+  // exact queued payload, or the outbox raises an idempotency mismatch.
+  const personalize = async () => ['riscritto: ciao Guido, ore 17:00'];
+  const queued = await advance(composed, connectionKey, T0, { personalize });
+  assert.equal(queued.advanced, 1);
+  const sends = composed.modules.get('sequence-send').service;
+  const stored = (await sends.listWhere({ sequenceSourceKey: 'seq:rewrite' }))[0];
+  assert.deepEqual(JSON.parse(stored.variables), ['riscritto: ciao Guido, ore 17:00']);
+
+  const { worker } = workerKit(composed, () => T0_LATER);
+  worker.start();
+  t.after(() => worker.close());
+  const settled = await worker.run(stored.jobId);
+  assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
+  const confirmed = await advance(composed, connectionKey, T0_LATER, { personalize });
+  assert.equal(confirmed.confirmed, 1);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:rewrite' }))[0].status, 'sent');
+});
+
+test('un rifiuto terminale salta il passo e avanza senza riprovare', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:refused-template', name: 'Modello non approvato',
+    steps: [
+      { dayOffset: 0, channel: 'whatsapp', templateName: 'presti_seq', templateLanguage: 'it', templateVars: [] },
+      {
+        dayOffset: 1, channel: 'whatsapp', templateName: 'mai_approvato', templateLanguage: 'it',
+        templateVars: ['{{name}}'],
+      },
+      STEPS[1],
+    ],
+    actor: USER,
+  });
+  await ops.activateSequence({ spaceId: SPACE, sourceKey: 'seq:refused-template', actor: USER });
+  await enroll(ops, connectionKey, 'seq:refused-template', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  await advance(composed, connectionKey, T0);
+  const second = await advance(composed, connectionKey, T1);
+  assert.equal(second.skipped, 1);
+  assert.equal(second.advanced, 0);
+  const sends = composed.modules.get('sequence-send').service;
+  const rows = await sends.listWhere({ sequenceSourceKey: 'seq:refused-template' });
+  assert.equal(rows.length, 2);
+  const refused = rows.find((row) => row.stepOrder === 1);
+  assert.equal(refused.status, 'skipped');
+  assert.equal(refused.detail, 'CHANNEL_MESSAGE_MALFORMED');
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  // The cursor moved past the refused step: no retry, the next step is due.
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:refused-template' }))[0].currentStep, 2);
+
+  // Step three is due a day after the refused step fired, not five minutes after.
+  const thirdDue = new Date(Date.parse(T1) + 24 * 60 * 60 * 1000).toISOString();
+  const third = await advance(composed, connectionKey, thirdDue);
+  assert.equal(third.advanced, 1);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:refused-template' })).length, 3);
+});
+
+test('la create interrotta riprende i passi mancanti', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, 'unused-connection-key');
+  const created = await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:partial', name: 'Parziale', steps: STEPS, actor: USER,
+  });
+  assert.equal(created.replayed, false);
+  assert.equal(created.steps.length, 2);
+
+  // A crash after the first step row: the retry carries the same payload and
+  // completes the deterministic step rows instead of returning a truncated set.
+  composed.database.raw.exec("DELETE FROM sequence_steps WHERE source_key = 'seq-step:seq:partial:1'");
+  const replayed = await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:partial', name: 'Parziale', steps: STEPS, actor: USER,
+  });
+  assert.equal(replayed.replayed, true);
+  assert.equal(replayed.steps.length, 2);
+  assert.deepEqual(replayed.steps.map((step) => step.stepOrder), [0, 1]);
+});
+
+test('il pacchetto dichiara il contratto richiesto', async () => {
+  const v1 = createSequencesPackage({});
+  assert.equal(v1.packageContract, 1);
+  const v2 = createSequencesPackage({ packageContract: 2 });
+  assert.equal(v2.packageContract, 2);
 });

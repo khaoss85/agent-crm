@@ -10,6 +10,7 @@
     { "name": "stepOrder", "type": "integer", "writable": "managed" },
     { "name": "messageKey", "type": "string", "writable": "managed" },
     { "name": "jobId", "type": "string", "writable": "managed" },
+    { "name": "variables", "type": "string", "writable": "managed" },
     { "name": "status", "type": "enum", "values": ["queued", "waiting-approval", "sent", "dead-letter", "skipped"], "index": true, "writable": "managed" },
     { "name": "queuedAt", "type": "timestamp", "writable": "managed" },
     { "name": "decidedAt", "type": "timestamp", "writable": "managed" },

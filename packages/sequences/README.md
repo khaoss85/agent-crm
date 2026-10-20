@@ -43,8 +43,10 @@ keeps a composition without the gate fail-closed at startup.
    no further step fires. Caller timestamps never enter: only stored rows.
 2. **Fail-closed permission.** Every fire passes the gate. On `proposal`
    the sweep records the approval proposal and stores a `waiting-approval`
-   send row; the step stays due until a human approves and the enrollment
-   resumes.
+   send row; the step stays due. A human approval recorded for that exact
+   step unblocks it on the next sweep even while the global switch stays
+   off; a refusal records the step `skipped` and moves past it. Nothing is
+   ever queued without the gate or a recorded approval.
 3. **Pause/resume without doubles.** A send row is keyed by the
    deterministic message key (`seq:<enrollment>:<stepOrder>`, bounded like
    every outbox key): a retry or a resume replays the stored row, and the
