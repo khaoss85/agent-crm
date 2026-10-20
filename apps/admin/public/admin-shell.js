@@ -48,11 +48,12 @@ export const SHELL_GROUPS = Object.freeze([
 
 /**
  * The four settings areas from the prototype. Stato sync is backed by the
- * data-quality queue that already exists in the customer-data section;
- * the other three name the story that delivers them.
+ * data-quality queue that already exists in the customer-data section and
+ * Personalizzazione opens the connectors screen (BO-F1-02); the other two
+ * name the story that delivers them.
  */
 export const SETTINGS_AREAS = Object.freeze([
-  { id: 'personalizzazione', label: 'Personalizzazione', route: null, story: 'BO-F1 (connettori)' },
+  { id: 'personalizzazione', label: 'Personalizzazione', route: '#/connettori', story: 'BO-F1-02' },
   { id: 'catalogo', label: 'Catalogo prodotti', route: null, story: 'BO-F2 (catalogo)' },
   { id: 'stato-sync', label: 'Stato sync', route: '#/customer-data', story: 'BO-F1' },
   { id: 'spazi-accessi', label: 'Spazi e accessi', route: null, story: 'BO-F0-06' },

@@ -495,6 +495,11 @@ export function createChannelsPackage(options = {}) {
       return {
         channelsContract: 1,
         channels: [...CHANNELS],
+        // Connectors screen (BO-F1-02): the adapters this composition
+        // registered, so the backoffice lists exactly what can connect.
+        // Identities only (name, version, label, channel, fingerprint) —
+        // never a secret, never a function.
+        adapters: registries.metadata().adapters,
         connectionStatuses: [...CONNECTION_STATUSES],
         replayScope: 'space + connection + providerEventId; the payload fingerprint must match or the reuse is refused 409 CHANNEL_EVENT_ID_CONFLICT',
         sendRetry: 'bounded attempts on the durable job (default 5); transient failures ride the worker backoff; exhaustion writes a dead-letter row with phase, error code and payload fingerprint',

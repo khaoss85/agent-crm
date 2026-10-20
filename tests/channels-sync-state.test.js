@@ -129,6 +129,8 @@ test('two connectors: one finishes first, the state counts 1 of 2 until the seco
   const entryA = state.connectors.find((entry) => entry.connectionKey === keyA);
   const entryB = state.connectors.find((entry) => entry.connectionKey === keyB);
   assert.equal(entryA?.status, 'active');
+  assert.equal(entryA?.account, ACCOUNT_A,
+    'the entry carries the account, so the backoffice can resume through authorize');
   assert.equal(entryA?.sync?.status, 'done');
   assert.equal(entryA?.sync?.importedEvents, 2);
   assert.ok(entryA?.sync?.finishedAt, 'a finished import stamps its end');
