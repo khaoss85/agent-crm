@@ -111,6 +111,20 @@ instead of rebooking it, the package factory forwarding an explicit
 database handle, and creation refusing without a storage transaction.
 No test dials Google.
 
+## Event detail (BO-F3-01, backlog `3ec06fdee0e2`)
+
+`read-appointment-detail` renders the "07 Calendario" event detail: one
+appointment row with its origin and its sync state. Origin is the stored
+source package — `calendar-sync` rows were imported from Google, every
+other source package booked locally. Sync state is the link row joined on
+the appointment's own source key (calendar, Google event, pending remote,
+operator-facing conflict), or `null` when the row was never synced. A
+purely local read: no provider call, no grant needed, so the detail
+renders while the grant is revoked. Exactly one of `id` / `sourceKey`
+names the row. `tests/calendar-sync-detail.test.js` proves it against the
+fake: imported, local-only, and pushed-local rows, the typed 404, and the
+frozen shape. No test dials Google.
+
 ## Space grant
 
 Backlog: `43b62d4bcaa3` — «Gmail e Calendar usano il grant dello spazio

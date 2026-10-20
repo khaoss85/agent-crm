@@ -206,6 +206,21 @@ export function createCalendarSyncPackage(options = {}) {
       },
       {
         operationContract: 1,
+        name: 'read-appointment-detail',
+        label: 'Read appointment detail',
+        appMethod: 'readAppointmentDetail',
+        description: 'One appointment row with its origin (google-calendar for imports, locale for local bookings) and its sync state (the link row, or null when never synced). A purely local read: no provider call, no grant needed. Exactly one of id or sourceKey.',
+        input: [
+          { name: 'id', type: 'string', required: false, hint: 'The appointment row id.' },
+          { name: 'sourceKey', type: 'string', required: false, hint: 'The appointment source key (the sync join key).' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.readAppointmentDetail(params);
+        },
+      },
+      {
+        operationContract: 1,
         name: 'register-calendar-push',
         label: 'Register calendar push channel',
         appMethod: 'registerCalendarPush',

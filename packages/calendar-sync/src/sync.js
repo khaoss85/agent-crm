@@ -1110,6 +1110,66 @@ export function createCalendarSyncOperations(options = {}) {
       return { status: 'acknowledged', sourceKey, reason: 'lifecycle is Accordo-owned: confirmed/done/no-show stay local' };
     },
 
+    /**
+     * The BO-F3-01 event detail ("07 Calendario"): one appointment row with
+     * its origin and its sync state. Origin is the stored source package —
+     * `calendar-sync` rows were imported from Google, every other source
+     * package booked locally — never caller text, never a re-derived guess
+     * from the key shape. Sync state is the link row joined on the
+     * appointment's own source key: the calendar and Google event it tracks,
+     * whether a remote change is still pending, and the operator-facing
+     * conflict note, if any. A row with no link was never synced
+     * (`sync: null`): local-only, not unsynced. A purely local read: no
+     * provider call, no grant needed, so the detail renders while the grant
+     * is revoked. Exactly one of `id` / `sourceKey` names the row; an
+     * orphan link (a conflict kept pending before any row existed) has no
+     * appointment to detail — it already surfaces through the pull entries
+     * and `pendingConflicts`, never here.
+     */
+    async readAppointmentDetail({ id, sourceKey, actor } = {}) {
+      const named = [id, sourceKey].filter((value) => value !== undefined && value !== null);
+      if (named.length !== 1) {
+        throw new ValidationError('readAppointmentDetail needs exactly one of id or sourceKey', { field: named.length === 0 ? 'id' : 'id/sourceKey' });
+      }
+      const handle = bookHandle(actor ?? defaultActor);
+      const row = id !== undefined && id !== null
+        ? await handle.appointment(id)
+        : await handle.appointmentBySourceKey(sourceKey);
+      if (!row) {
+        const missing = id !== undefined && id !== null ? `id "${id}"` : `sourceKey "${sourceKey}"`;
+        throw syncError('CALENDAR_SYNC_UNKNOWN_APPOINTMENT', 404, `no appointment with ${missing}`);
+      }
+      const link = await findLinkBySource(row.sourceKey);
+      return Object.freeze({
+        appointment: Object.freeze({
+          id: row.id,
+          status: row.status,
+          startsAt: row.startsAt,
+          endsAt: row.endsAt,
+          serviceKey: row.serviceKey,
+          teamMemberId: row.teamMemberId,
+          priceCents: row.priceCents,
+          currency: row.currency,
+          notes: row.notes ?? null,
+          sourceKey: row.sourceKey,
+          subject: Object.freeze({
+            resource: row.subjectResource,
+            id: row.subjectId,
+            owner: row.subjectOwner,
+            ownerPackage: row.subjectOwnerPackage ?? null,
+          }),
+        }),
+        origin: row.sourcePackage === CALENDAR_SYNC_CONSUMER ? 'google-calendar' : 'locale',
+        sync: link ? Object.freeze({
+          calendarId: link.calendarId,
+          googleEventId: link.googleEventId,
+          googleUpdated: link.googleUpdated,
+          pending: link.pendingRemote !== null && link.pendingRemote !== undefined,
+          conflict: link.conflictNote ?? null,
+        }) : null,
+      });
+    },
+
     /** Push every linked row of a calendar whose local half moved. */
     async pushLocalChanges(calendarId, { spaceId, actor } = {}) {
       calendarId = canonicalCalendarId(calendarId);
