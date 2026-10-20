@@ -1106,12 +1106,16 @@ test('listChangedFiles reports added paths, including rename destinations', () =
     git(['commit', '-m', 'pr']);
 
     const { changed, added, deleted, allChanged } = listChangedFiles(git, 'base');
+    // `--name-only` prints a pure rename as its new path only: the old path
+    // never enters the diff, so it seeds neither the run nor the deleted
+    // set — the destination counts as added, which is what the
+    // characterization new-file rule reads.
     assert.deepEqual(changed, ['packages/app/src/keep.js', 'packages/app/src/moved.js', 'packages/app/src/new.js']);
     assert.deepEqual(added, ['packages/app/src/moved.js', 'packages/app/src/new.js']);
-    assert.deepEqual(deleted, ['packages/app/src/move.js']);
+    assert.deepEqual(deleted, []);
     assert.deepEqual(
       [...allChanged].sort(),
-      ['packages/app/src/keep.js', 'packages/app/src/move.js', 'packages/app/src/moved.js', 'packages/app/src/new.js'],
+      ['packages/app/src/keep.js', 'packages/app/src/moved.js', 'packages/app/src/new.js'],
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });
