@@ -99,6 +99,16 @@ export function assertGenerateInput(input) {
  */
 export const LLM_MAX_CHARS_PER_TOKEN = 8;
 
+/**
+ * Floor for a request-bound completion ceiling. The per-token estimate
+ * above is a heuristic, not a tokenizer bound: single dense tokens longer
+ * than 8 characters exist (a leading-space adjective like ' expensive' is
+ * one token), so without a floor the tightest maxTokens values would
+ * false-reject valid paid responses main accepted under its flat 32000
+ * bound. 256 still fails absurd output far below any real completion.
+ */
+export const LLM_MIN_COMPLETION_CHARS = 256;
+
 /** Absolute text bound when the caller names no token ceiling. */
 const LLM_MAX_COMPLETION_CHARS = 32000;
 
@@ -122,7 +132,9 @@ export function assertCompletion(completion, expectedModel, options = {}) {
       field: 'completion.maxTokens',
     });
   }
-  const ceiling = maxTokens === undefined ? LLM_MAX_COMPLETION_CHARS : maxTokens * LLM_MAX_CHARS_PER_TOKEN;
+  const ceiling = maxTokens === undefined
+    ? LLM_MAX_COMPLETION_CHARS
+    : Math.max(LLM_MIN_COMPLETION_CHARS, maxTokens * LLM_MAX_CHARS_PER_TOKEN);
   if (typeof value.text !== 'string' || value.text === '' || value.text.length > ceiling) {
     throw new ValidationError(`llm completion text must be bounded non-empty text (at most ${ceiling} characters)`, {
       field: 'completion.text',

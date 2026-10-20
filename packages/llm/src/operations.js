@@ -31,10 +31,11 @@ import { OPENAI_DEFAULT_MODEL } from './openai.js';
  * allowed model needs a valid price, or the call refuses before the
  * provider is touched. Every attempt writes one audit row with the space,
  * the purpose, the adapter, the model, the token counts and the estimated
- * cost: never the prompt text, never the key. The one exception is a
- * slot-timed-out attempt whose provider settles late: the caller already
- * got LLM_OPERATION_TIMEOUT, so the late answer claims no spend and
- * writes no receipt, and the 503-safe retry lands exactly once.
+ * cost: never the prompt text, never the key. A slot-timed-out attempt
+ * is audited too — `refused: 'slot-timeout'` with
+ * `errorCode: 'LLM_OPERATION_TIMEOUT'` and zero tokens — while the late
+ * answer that settles after the slot claims no spend and writes no
+ * receipt, so the 503-safe retry lands exactly once.
  *
  * State lives in two managed record modules, like every sibling package:
  * `llm-usage-day` (one row per space per UTC day, the running totals the
@@ -96,6 +97,28 @@ function refuseLateSettler(slotMs) {
 }
 
 /**
+ * The slot's own timeout signal, module-local on purpose: core
+ * `withTimeout` rejects every bound with the shared `PROVIDER_TIMEOUT`
+ * code, so matching that string for the slot would also catch an
+ * identical code raised inside the critical section (a custom adapter or
+ * vault reusing core `withTimeout` for its own inner bound) and convert a
+ * provider-side timeout into a slot timeout with no cause chain. This
+ * class is never exported and never audited — `complete` maps it to the
+ * caller-facing refusal and writes the slot-timeout audit row at that
+ * boundary, so an adapter-thrown `LLM_OPERATION_TIMEOUT` keeps its own
+ * provider-path row and never gains a second one.
+ */
+class LlmSlotTimeoutError extends AppError {
+  /** @param {number} slotMs */
+  constructor(slotMs) {
+    super(`the llm operation timed out after ${slotMs}ms: retry the call`, {
+      code: 'LLM_OPERATION_TIMEOUT', status: 503,
+    });
+    this.name = 'LlmSlotTimeoutError';
+  }
+}
+
+/**
  * @param {string} key @param {(attempt: {timedOut: boolean}) => Promise<any>} critical @param {number} slotMs
  */
 export function withDaySpend(key, critical, slotMs) {
@@ -114,24 +137,38 @@ export function withDaySpend(key, critical, slotMs) {
   return (async () => {
     await previous;
     const pending = Promise.resolve().then(() => critical(attempt));
+    // The late settlement is observed and discarded here: once the slot
+    // below wins the race, the abandoned critical still runs to its own
+    // poisoned end (it lands nothing) without ever surfacing an unhandled
+    // rejection.
+    pending.catch(() => {});
+    /** @type {any} */
+    let slotTimer;
     try {
-      // The slot itself is bounded: a hung custody edge or an adapter that
-      // ignores its own timeout cannot wedge the space chain — the slot
-      // refuses retryable and the chain stays free for the next attempt.
-      // A critical section that settles after the slot finds the attempt
+      // The slot itself is bounded by its own timer, not by core
+      // `withTimeout`: a hung custody edge or an adapter that ignores its
+      // own timeout cannot wedge the space chain — the slot refuses
+      // retryable and the chain stays free for the next attempt. A
+      // critical section that settles after the slot finds the attempt
       // poisoned and lands nothing (see `refuseLateSettler`): the spend
       // and its receipt belong to the retry, never to the abandoned
-      // attempt. (MEM_ACC_REUSE: core `withTimeout`, the same bound
-      // channels puts on verifyInbound.)
-      return await withTimeout(pending, slotMs, 'llm day-spend slot');
+      // attempt. Custody still uses core `withTimeout` for its own leg
+      // (MEM_ACC_REUSE, the same bound channels puts on verifyInbound) —
+      // only the slot signal is local, so inner bounds keep their codes.
+      return await Promise.race([
+        pending,
+        new Promise((_resolve, reject) => {
+          slotTimer = setTimeout(() => reject(new LlmSlotTimeoutError(slotMs)), slotMs);
+        }),
+      ]);
     } catch (error) {
-      if (error !== null && typeof error === 'object'
-        && /** @type {any} */ (error).code === 'PROVIDER_TIMEOUT') {
+      if (error instanceof LlmSlotTimeoutError) {
         attempt.timedOut = true;
-        throw refuseLateSettler(slotMs);
+        throw error;
       }
       throw error;
     } finally {
+      clearTimeout(slotTimer);
       if (daySpendChains.get(key) === tail) daySpendChains.delete(key);
       release();
     }
@@ -431,8 +468,21 @@ function buildSpendReceipt(auditService, patch, actor, clock) {
  * this call was at the provider, the spend still lands — real money is
  * never hidden — and `capExceeded` annotates the over-cap landing so
  * the caller slows down; the next call refuses before any provider.
+ * Pass `shouldAbort` (a `() => boolean` the slot-timeout poison drives)
+ * so an attempt the slot already timed out affects zero rows: the poison
+ * is consulted after every blocking step — the fresh read and, inside
+ * the atomic unit, right before the conditional UPDATE executes — and an
+ * aborted claim refuses retryable instead of landing spend the retry
+ * would bill twice. A check before `claimSpend` alone is not enough: the
+ * committing write must be gated where it executes.
+ *
+ * @param {(() => boolean) | null} [shouldAbort]
  */
-export async function claimSpend(usageService, dayKey, delta, actor, caps, clock = Date.now, receipt = null) {
+export async function claimSpend(usageService, dayKey, delta, actor, caps, clock = Date.now, receipt = null, shouldAbort = null) {
+  const aborted = () => typeof shouldAbort === 'function' && shouldAbort();
+  const abortClaim = () => new AppError('the llm operation timed out: retry the call', {
+    code: 'LLM_OPERATION_TIMEOUT', status: 503,
+  });
   const { manifest, columns, syncApi } = spendSeam(usageService);
   if (receipt !== null && receipt !== undefined
     && (typeof receipt !== 'object' || Array.isArray(receipt)
@@ -449,6 +499,10 @@ export async function claimSpend(usageService, dayKey, delta, actor, caps, clock
   const action = `${manifest.name}.updated`;
   for (let attempt = 1; attempt <= 8; attempt += 1) {
     const fresh = (await usageService.listWhere({ dayKey }))[0] ?? null;
+    // A slot that fired while the fresh read was blocked: the read is
+    // stale by definition (the caller already got LLM_OPERATION_TIMEOUT),
+    // so the claim stops before touching totals.
+    if (aborted()) throw abortClaim();
     if (!fresh) {
       throw new AppError('llm usage day row vanished mid-claim: retry the call', {
         code: 'LLM_USAGE_CONFLICT', status: 503,
@@ -488,6 +542,9 @@ export async function claimSpend(usageService, dayKey, delta, actor, caps, clock
     let row = null;
     if (syncApi) {
       row = usageService.mutationSync(() => {
+        // The committing write is gated where it executes: a slot that
+        // fired after the fresh read above still lands zero rows.
+        if (aborted()) throw abortClaim();
         const claimed = syncApi.execute(statement);
         if (Number(claimed?.affectedRows ?? 0) !== 1) return null;
         usageService.audit.record(auditEvent, syncApi);
@@ -499,6 +556,9 @@ export async function claimSpend(usageService, dayKey, delta, actor, caps, clock
       });
     } else {
       row = await usageService.mutationAsync(async (tx) => {
+        // The committing write is gated where it executes: a slot that
+        // fired after the fresh read above still lands zero rows.
+        if (aborted()) throw abortClaim();
         const claimed = await tx.execute(statement);
         if (Number(claimed?.affectedRows ?? 0) !== 1) return null;
         await usageService.audit.record(auditEvent, tx);
@@ -781,7 +841,15 @@ export function createLlmOperations(options = {}) {
     // bounded legs (custody, provider) plus the claim retries: only a
     // genuinely wedged leg trips it.
     const slotMs = timeoutMs * 2 + 5000;
-    return withDaySpend(spaceId, async (attempt) => {
+    // The slot-timeout refusal is audited exactly once, here at the only
+    // site that owns the audit service: the abandoned critical section
+    // itself writes nothing after the slot (its late spend is gated by
+    // `shouldAbort` in `claimSpend`, its late provider failure skips its
+    // audit), so one logical attempt leaves one row — this one — and the
+    // retry owns its own landing. `withDaySpend` stays audit-free on
+    // purpose: it has no audit service, and auditing there would double
+    // with this site.
+    const slotGuarded = withDaySpend(spaceId, async (attempt) => {
       const current = await usageToday(usageService, spaceId, actor);
       if (overCap(current.row, caps)) {
         await audit(auditService, {
@@ -814,7 +882,9 @@ export function createLlmOperations(options = {}) {
             inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
             estimatedCostCents: cost, dryRun: true, sources,
           }),
-        });
+          // A slot that fired while the fixture answered: the poisoned
+          // attempt claims no spend, so the retry stays idempotent.
+        }, () => attempt.timedOut);
         // The dry-run result exposes the same shape as the live one,
         // including `usage` from the claimed row: every production call
         // today takes this path, and a consumer reading
@@ -883,6 +953,13 @@ export function createLlmOperations(options = {}) {
       try {
         completion = await definition.generate({ secret, messages, model, maxTokens, timeoutMs });
       } catch (error) {
+        // A failure that lands after the slot timed out writes no audit
+        // row: the caller already got LLM_OPERATION_TIMEOUT with its own
+        // boundary row, and a second row bearing the provider's code would
+        // contradict both the caller's diagnosis and the one-row-per-attempt
+        // contract. The rethrow below dies in the abandoned pending — it is
+        // observed there and never reaches a caller.
+        if (attempt.timedOut) throw error;
         // The adapter's typed error travels intact — its text carries no key
         // and no prompt by construction — with the failure audited.
         const code = error && typeof error === 'object' && typeof /** @type {any} */ (error).code === 'string'
@@ -911,7 +988,9 @@ export function createLlmOperations(options = {}) {
           inputTokens: completion.inputTokens, outputTokens: completion.outputTokens,
           estimatedCostCents: cost, dryRun: false, sources,
         }),
-      });
+        // A slot that fired while the provider answered: the poisoned
+        // attempt claims no spend, so the retry stays idempotent.
+      }, () => attempt.timedOut);
       return Object.freeze({
         text: completion.text,
         model: completion.model,
@@ -928,6 +1007,23 @@ export function createLlmOperations(options = {}) {
         }),
       });
     }, slotMs);
+    try {
+      return await slotGuarded;
+    } catch (error) {
+      if (error instanceof LlmSlotTimeoutError) {
+        // The slot fired: the caller gets LLM_OPERATION_TIMEOUT with this
+        // one audited row (zero tokens, cause named, no prompt, no key).
+        // An adapter-thrown LLM_OPERATION_TIMEOUT is a plain AppError, so
+        // it never matches here and never gains a second row — its
+        // provider-path audit is the attempt's one row.
+        await audit(auditService, {
+          spaceId, purpose, adapter: '', model,
+          inputTokens: 0, outputTokens: 0, estimatedCostCents: 0,
+          dryRun: false, refused: 'slot-timeout', errorCode: 'LLM_OPERATION_TIMEOUT', sources,
+        }, actor);
+      }
+      throw error;
+    }
   }
 
   async function readUsage(request, modules) {

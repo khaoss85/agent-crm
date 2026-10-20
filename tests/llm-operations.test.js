@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { AppError } from '../packages/core/index.js';
+import { AppError, withTimeout } from '../packages/core/index.js';
 import { AuditLog } from '../packages/core/src/audit.js';
 import { createDatabase } from '../packages/core/src/database.js';
 import { EventBus } from '../packages/core/src/event-bus.js';
@@ -517,14 +517,203 @@ test('a late provider settler claims no spend after the slot timed out', async (
   assert.deepEqual(totals.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[10, 4, 1]],
     'one logical attempt plus one retry billed exactly once');
   const audit = await ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, modules);
-  assert.equal(audit.length, 1, 'the late settler wrote no receipt next to the retry');
-  assert.equal(audit[0].refused, '');
+  assert.equal(audit.length, 2, 'one audited slot-timeout refusal plus the retry receipt');
+  assert.equal(audit[0].refused, 'slot-timeout', 'the timed-out attempt is diagnosable');
+  assert.equal(audit[0].errorCode, 'LLM_OPERATION_TIMEOUT');
+  assert.deepEqual([audit[0].inputTokens, audit[0].outputTokens], [0, 0]);
+  assert.equal(audit[1].refused, '', 'the late settler wrote no receipt next to the retry');
   // Still nothing after another turn of the loop: the late write is gone,
   // not merely delayed past the retry.
   await new Promise((resolve) => { setImmediate(resolve); });
   const again = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
   assert.deepEqual(again.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[10, 4, 1]],
     'no late spend landed after the retry either');
+});
+
+test('a poisoned claim affects zero rows: the slot owns the landing', async () => {
+  const { usage, audit } = setup();
+  await usage.createManaged({
+    dayKey: 'presti:2026-10-19', spaceId: 'presti', day: '2026-10-19',
+    inputTokens: 10, outputTokens: 4, estimatedCostCents: 1, calls: 1,
+  }, { actor: ACTOR });
+  const caps = { dailyTokenCap: 1000000, dailyCostCentsCap: null };
+  const delta = { inputTokens: 10, outputTokens: 4, estimatedCostCents: 1 };
+  const patch = (callKey) => ({
+    callKey,
+    at: new Date(T0).toISOString(),
+    spaceId: 'presti',
+    purpose: 'free-question',
+    adapter: 'openai',
+    model: OPENAI_DEFAULT_MODEL,
+    inputTokens: 10,
+    outputTokens: 4,
+    estimatedCostCents: 1,
+    dryRun: false,
+    refused: null,
+    errorCode: null,
+    sourceCount: 0,
+    sources: null,
+  });
+  await assert.rejects(
+    () => claimSpend(usage, 'presti:2026-10-19', delta, ACTOR, caps, () => T0,
+      { service: audit, patch: patch('call:presti:poisoned-1') }, () => true),
+    (error) => error?.code === 'LLM_OPERATION_TIMEOUT',
+  );
+  const kept = await usage.listWhere({ dayKey: 'presti:2026-10-19' });
+  assert.deepEqual([kept[0].inputTokens, kept[0].outputTokens, kept[0].calls], [10, 4, 1],
+    'the poisoned claim wrote no spend');
+  assert.equal(audit.rows.length, 0, 'the poisoned claim wrote no receipt');
+  const landed = await claimSpend(usage, 'presti:2026-10-19', delta, ACTOR, caps, () => T0,
+    { service: audit, patch: patch('call:presti:poisoned-2') });
+  assert.deepEqual(
+    [landed.row.inputTokens, landed.row.outputTokens, landed.row.calls], [20, 8, 2],
+    'an unpoisoned claim on the same row still lands');
+});
+
+test('a slot firing mid-claim lands no spend: the retry bills once', async () => {
+  const { ops, modules, usage } = setup({
+    spaces: { presti: { enabled: true, timeoutMs: 1000 } },
+  });
+  // Wedge the claim's fresh read, not the provider: usageToday reads once
+  // (a miss, then it creates the row) and the claim's own read hangs past
+  // the slot, so the poison — not a pre-claim check — must stop the write.
+  let releaseRead = () => {};
+  const readGate = new Promise((resolve) => { releaseRead = resolve; });
+  const realListWhere = usage.listWhere.bind(usage);
+  let reads = 0;
+  usage.listWhere = async (filter) => {
+    reads += 1;
+    if (reads >= 2) await readGate;
+    return realListWhere(filter);
+  };
+  const first = call(ops, modules, { tag: 'midclaim-hung' });
+  // slotMs is timeoutMs * 2 + 5000: the caller gets LLM_OPERATION_TIMEOUT
+  // while the claim's read still hangs. Releasing the gate afterwards
+  // resolves the read into a poisoned attempt that must claim nothing —
+  // no fixed sleep, the attempt's own settlement drives the test.
+  assert.equal(await codeOf(() => first), 'LLM_OPERATION_TIMEOUT');
+  releaseRead();
+  await new Promise((resolve) => { setTimeout(resolve, 50); });
+  const totals = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(totals.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[0, 0, 0]],
+    'the wedged claim wrote no spend after the slot');
+  const audit = await ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.equal(audit.length, 1, 'one audited slot-timeout refusal, no late receipt');
+  assert.equal(audit[0].refused, 'slot-timeout');
+  // The retry (the gate stays open) bills exactly once.
+  const out = await call(ops, modules, { tag: 'midclaim-retry' });
+  assert.equal(out.text, 'live answer');
+  const after = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(after.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[10, 4, 1]],
+    'the retry claimed once on the shared day row');
+});
+
+test('a provider failure after the slot writes no second row', async () => {
+  let releaseFirst = () => {};
+  const gate = new Promise((resolve) => { releaseFirst = resolve; });
+  let generations = 0;
+  const lateFail = {
+    name: 'late-fail-llm',
+    version: 1,
+    label: 'Late-fail LLM',
+    config: { testOnly: true },
+    async generate(request) {
+      generations += 1;
+      if (generations === 1) {
+        await gate;
+        throw new AppError('the provider failed after the slot', {
+          code: 'LLM_PROVIDER_TRANSIENT', status: 503,
+        });
+      }
+      if (typeof request?.secret !== 'string' || request.secret !== SECRET) {
+        throw new AppError('the provider refused the llm credential', {
+          code: 'LLM_AUTH_FAILED', status: 401,
+        });
+      }
+      return assertCompletion({
+        text: 'recovered answer', model: request.model, inputTokens: 10, outputTokens: 4,
+      }, request.model);
+    },
+  };
+  const { ops, modules } = setup({
+    adapters: [lateFail],
+    spaces: { presti: { enabled: true, adapter: 'late-fail-llm', adapterVersion: 1, timeoutMs: 1000 } },
+    resolveSecret: async () => SECRET,
+  });
+  const first = call(ops, modules, { tag: 'late-fail-first' });
+  assert.equal(await codeOf(() => first), 'LLM_OPERATION_TIMEOUT');
+  const audit = await ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.equal(audit.length, 1, 'the timed-out attempt leaves its boundary row');
+  assert.equal(audit[0].refused, 'slot-timeout');
+  assert.equal(audit[0].errorCode, 'LLM_OPERATION_TIMEOUT');
+  // The abandoned attempt fails late: poisoned, it audits nothing more.
+  releaseFirst();
+  await new Promise((resolve) => { setTimeout(resolve, 100); });
+  const after = await ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.equal(after.length, 1, 'the late failure wrote no second row');
+  const out = await call(ops, modules, { tag: 'late-fail-retry' });
+  assert.equal(out.text, 'recovered answer', 'the retry is served after the late failure');
+  const totals = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(totals.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[10, 4, 1]],
+    'the retry billed once on the shared day row');
+});
+
+test('a dense single token within maxTokens is accepted, absurd output still refused', async () => {
+  const dense = createFixtureLlmAdapter({ secret: SECRET });
+  // One dense token: ten characters the old maxTokens*8 ceiling refused at
+  // maxTokens:1, while main's flat 32000 bound accepted it.
+  dense.api.answer(' expensive', { match: 'dense-marker' });
+  const accepted = setup({
+    adapters: [dense.definition],
+    spaces: { presti: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1 } },
+  });
+  const out = await call(accepted.ops, accepted.modules, { tag: 'dense-marker', maxTokens: 1 });
+  assert.equal(out.text, ' expensive', 'a response within maxTokens is never refused for length');
+
+  const absurd = createFixtureLlmAdapter({ secret: SECRET });
+  absurd.api.answer('z'.repeat(300), { match: 'absurd-dense-marker' });
+  const refused = setup({
+    adapters: [absurd.definition],
+    spaces: { presti: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1 } },
+  });
+  assert.equal(
+    await codeOf(() => call(refused.ops, refused.modules, { tag: 'absurd-dense-marker', maxTokens: 1 })),
+    'VALIDATION_ERROR',
+  );
+  const none = await refused.ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, refused.modules);
+  assert.deepEqual(none.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[0, 0, 0]],
+    'the absurd response claimed no spend');
+});
+
+test('an inner provider timeout keeps its own code, never the slot refusal', async () => {
+  const inner = {
+    name: 'inner-timeout-llm',
+    version: 1,
+    label: 'Inner timeout LLM',
+    config: { testOnly: true },
+    async generate() {
+      // A third-party adapter reusing core withTimeout for its own fast
+      // inner bound (MEM_ACC_REUSE): it fires long before the slot.
+      await withTimeout(new Promise(() => {}), 20, 'inner provider leg');
+      throw new Error('unreachable: the inner bound always fires first');
+    },
+  };
+  const { ops, modules } = setup({
+    adapters: [inner],
+    spaces: { presti: { enabled: true, adapter: 'inner-timeout-llm', adapterVersion: 1, timeoutMs: 1000 } },
+    resolveSecret: async () => SECRET,
+  });
+  let thrown = null;
+  try {
+    await call(ops, modules, { tag: 'inner' });
+  } catch (error) {
+    thrown = error;
+  }
+  assert.equal(thrown?.code, 'PROVIDER_TIMEOUT', 'the inner timeout keeps its own code and cause');
+  const audit = await ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.equal(audit.length, 1, 'one row for the failed attempt');
+  assert.equal(audit[0].errorCode, 'PROVIDER_TIMEOUT');
+  assert.equal(audit[0].refused, '');
 });
 
 test('racing calls serialize: the loser of a filled cap refuses', async () => {
