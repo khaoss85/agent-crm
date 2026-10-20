@@ -1,0 +1,47 @@
+name: admin-shots
+
+# Manual capture of the Admin visual baseline for BO-F0-01 AC-3
+# (backlog:65891147): before/after PNGs of the existing Admin screens,
+# rendered by real Chromium on the self-hosted Mac runner. Dispatch-only on
+# purpose: it never runs on push or pull_request, so it adds no load to the
+# PR gate and cannot turn any other PR red. The committed fixtures it
+# produces are locked by tests/admin-shots-manifest.test.js. Re-capture
+# whenever apps/admin/public/styles.css badge rules change (docs/ADMIN_SMOKE.md
+# "Visual baseline"). The executor sandbox cannot run a browser, so this
+# workflow is the executor's capture path: dispatch with
+# `gh workflow run admin-shots.yml --ref <branch>`, download the
+# `admin-shots-<sha>` artifact, verify the pixels, and commit the fixtures.
+on:
+  workflow_dispatch:
+    inputs:
+      before:
+        description: 'Base stylesheet: strip-authority or a git ref'
+        required: false
+        default: 'strip-authority'
+
+jobs:
+  capture:
+    runs-on: [self-hosted, accordo-ci]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Show the Chromium candidates (diagnostics only)
+        run: |
+          ls ~/Library/Caches/ms-playwright/ 2>/dev/null || true
+          ls ~/.cache/ms-playwright/ 2>/dev/null || true
+          ls /opt/pw-browsers/ 2>/dev/null || true
+      - name: Capture the before/after PNG proof
+        env:
+          ADMIN_SHOTS_BEFORE: ${{ inputs.before }}
+        run: npm run admin:shots -- --before="$ADMIN_SHOTS_BEFORE"
+      - name: Print the manifest
+        run: cat tests/fixtures/admin-shots/manifest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: admin-shots-${{ github.sha }}
+          path: tests/fixtures/admin-shots/
+          if-no-files-found: error
+          retention-days: 90

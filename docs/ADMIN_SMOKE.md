@@ -577,6 +577,8 @@ pixel on the existing Admin screens, plus the CI tests that lock the reason.
 1. On a machine with Chromium (CI images with Playwright browsers, a
    maintainer Mac — the executor sandbox cannot run a browser), fetch
    origin/main, then capture: `npm run admin:shots -- --before=strip-authority`
+   (or dispatch the `admin-shots` workflow on the branch and download its
+   artifact: `gh workflow run admin-shots.yml --ref <branch>`)
    (`strip-authority` serves the working-tree stylesheet with the six authority
    rules removed, i.e. the exact F0-01 delta now that #279 is merged; a plain
    `npm run admin:shots` compares against `origin/main` instead).
