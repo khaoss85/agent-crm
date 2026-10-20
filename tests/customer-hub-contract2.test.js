@@ -211,9 +211,43 @@ test('read-customer-timeline answers on the async app', async (t) => {
   assert.equal(timeline.contactPoints.available, true);
 });
 
+/** Row counts per module plus host records: the no-write proof. Every composed
+ * module must expose a counter; a module with none fails loudly instead of
+ * passing silently, so the guarantee below cannot go green on an unmeasured
+ * module. */
+async function rowCounts(app) {
+  const out = {};
+  for (const entry of app.modules.list()) {
+    const service = app.modules.get(entry.name)?.service;
+    let count = null;
+    for (const counter of [
+      () => service?.countWhere?.({}),
+      async () => (await service?.listWhere?.({}))?.length,
+      async () => (await service?.list?.())?.length,
+    ]) {
+      try {
+        const value = await counter();
+        if (Number.isInteger(value)) {
+          count = value;
+          break;
+        }
+      } catch {
+        // Not countable this way; try the next counter.
+      }
+    }
+    assert.ok(
+      Number.isInteger(count),
+      `module ${entry.name} must expose a row count for the no-write proof`,
+    );
+    out[entry.name] = count;
+  }
+  out['host:contacts'] = (await app.services.contacts.list()).length;
+  out['host:companies'] = (await app.services.companies.list()).length;
+  return out;
+}
+
 test('the twin creates no record the v1 graph does not', async (t) => {
   const app = await composedHubV2(t);
-  const before = app.modules.list().map((entry) => entry.name).sort();
   await app.operations.run('apply-customer-import', {
     system: 'whatsapp',
     rows: [{ externalId: '+39 333 1111111', email: 'solo@palestra-esempio.it', firstName: 'Solo', lastName: 'Lettura' }],
@@ -222,8 +256,9 @@ test('the twin creates no record the v1 graph does not', async (t) => {
   const contacts = await app.services.contacts.list();
   const found = contacts.find((contact) => contact.email === 'solo@palestra-esempio.it');
   assert.ok(found, 'the import lands for the timeline read');
+  const before = await rowCounts(app);
   await app.operations.run('read-customer-card', { resource: 'contact', id: found.id });
   await app.operations.run('read-customer-timeline', { resource: 'contact', id: found.id });
-  const after = app.modules.list().map((entry) => entry.name).sort();
-  assert.deepEqual(after, before, 'both reads are projections: no module appears, none disappears');
+  const after = await rowCounts(app);
+  assert.deepEqual(after, before, 'both reads are projections: no row appears, none disappears');
 });
