@@ -156,8 +156,11 @@ const STEP_BUDGET_SEC = 300;
  * agent-tool-selection-docs-ids ~1 s, ci-touched-tests ~1 s — about 25 s
  * added to the fast step in total. Deliberately NOT always-run: the three
  * characterization suites (~80 s together) join conditionally instead —
- * only when the diff touches a file their baseline digests (see
- * `CHARACTERIZATION_SUITES` and `withCharacterizationTests`), so a
+ * when the diff touches a file their baseline digests, or adds a source
+ * file under a directory their baseline digests (a brand-new file is never
+ * a digest key yet, so key matching alone misses it: #293 added
+ * packages/commercial/src/quote-pdf.js green-alone and reddened `main`;
+ * see `CHARACTERIZATION_SUITES` and `withCharacterizationTests`), so a
  * docs-only PR never pays for them while a PR that would redden their
  * staleness check on `main` runs them here first. The fixed-directory
  * listers (e.g. the `*-package-absence` kernel reads) stay out — same bug
@@ -578,6 +581,19 @@ export function withKernelBoundaryTests(
  * `loadCharacterizationDigests` reads the checked-in baselines once per run
  * (see `main()`), `withCharacterizationTests` is unit-tested, including both
  * acceptance directions.
+ *
+ * Key matching alone misses a brand-new file: it is never a digest key yet,
+ * so #293 (which added `packages/commercial/src/quote-pdf.js` without
+ * touching any digested path) ran green-alone and reddened `main` on the
+ * ownership guard. A diff that ADDS a digest-relevant source file
+ * (`*.js`/`*.mjs`/`*.cjs` or `*.module.json`) under a digest-owned
+ * directory therefore selects the suite too: the file's own directory, then
+ * each ancestor up to the repository root, is checked against
+ * `digestDirectorySuites`, so a new file in a brand-new subdirectory of a
+ * digested package still runs its characterization. A merely modified file
+ * outside the digest needs no such rule: editing an existing file never
+ * changes the owned/unowned set the ownership guard reads — only an added
+ * (or renamed-into-place) path can arrive unowned.
  */
 export const CHARACTERIZATION_SUITES = Object.freeze([
   { baseline: 'tests/characterization/commercial-baseline.json', test: 'tests/characterization/commercial-characterization.test.js' },
@@ -641,9 +657,35 @@ export function loadCharacterizationDigests(
 }
 
 /**
+ * Digest-owned directories: the immediate parent directory of every file a
+ * characterization baseline digests, each mapped to the staleness suite(s)
+ * whose baseline digests something under it. Derived from the digest index
+ * (`loadCharacterizationDigests`), so a regenerated baseline moves the
+ * boundary with it — no second list to keep in sync.
+ * @param {Map<string, string[]>} digestIndex
+ * @returns {Map<string, string[]>}
+ */
+export function digestDirectorySuites(digestIndex) {
+  const directories = new Map();
+  for (const [file, suites] of digestIndex) {
+    const directory = dirname(normalize(file).replace(/\\/g, '/'));
+    const known = directories.get(directory);
+    if (known === undefined) directories.set(directory, [...suites]);
+    else for (const suite of suites) {
+      if (!known.includes(suite)) known.push(suite);
+    }
+  }
+  return directories;
+}
+
+/** Added paths that can arrive outside digest ownership: executable source and record manifests. */
+const DIGEST_RELEVANT_ADDED = /\.[cm]?js$|\.module\.json$/;
+
+/**
  * Add the characterization staleness suite(s) (`CHARACTERIZATION_SUITES`) on
  * top of a mapped or fallback selection when the diff touches a file their
- * baselines digest.
+ * baselines digest — or adds a digest-relevant source file under a directory
+ * their baselines digest (a brand-new file is never a digest key yet).
  *
  * - a diff touching no digested path (docs-only included) returns the
  *   selection unchanged — but only after the missing check below, so a PR
@@ -660,6 +702,7 @@ export function withCharacterizationTests(
   /** @type {string[]} */ changedFiles,
   /** @type {Map<string, string[]>} */ digestIndex = new Map(),
   /** @type {readonly {baseline: string, test: string}[]} */ suites = CHARACTERIZATION_SUITES,
+  /** @type {string[]} */ addedFiles = [],
 ) {
   if (changedFiles.length === 0) return [...selectedTests].sort();
   const missing = suites
@@ -675,6 +718,18 @@ export function withCharacterizationTests(
   for (const file of changedFiles) {
     const key = normalize(file).replace(/\\/g, '/');
     for (const suite of digestIndex.get(key) ?? []) matched.add(suite);
+  }
+  if (addedFiles.length > 0) {
+    const ownedDirs = digestDirectorySuites(digestIndex);
+    for (const file of addedFiles) {
+      const key = normalize(file).replace(/\\/g, '/');
+      if (!DIGEST_RELEVANT_ADDED.test(key)) continue;
+      let directory = dirname(key);
+      while (directory !== '.' && directory !== '/') {
+        for (const suite of ownedDirs.get(directory) ?? []) matched.add(suite);
+        directory = dirname(directory);
+      }
+    }
   }
   if (matched.size === 0) return [...selectedTests].sort();
   return [...new Set([...selectedTests, ...matched])].sort();
@@ -794,7 +849,7 @@ export function buildFileImports(
 }
 
 /**
- * The PR's changed files against `base`, split in three: `changed` drives
+ * The PR's changed files against `base`, split in four: `changed` drives
  * what runs (the unfiltered diff minus the deleted-only diff: uppercase
  * `--diff-filter=D` selects only deleted paths — lowercase `-d` would
  * exclude them — so the code subtracts that set; a deleted file needs no
@@ -802,8 +857,12 @@ export function buildFileImports(
  * the run), `deleted` seeds the reachability search only (a deleted module
  * an unchanged test still imports selects that importer — the walk stops
  * at test files, and a deleted test is absent from the corpus so it is
- * never itself selected), `allChanged` drives the guard check (a PR
- * deleting a listed guard without updating the list still fails red).
+ * never itself selected), `added` drives the characterization new-file rule
+ * (a brand-new file is never a digest key yet: `--diff-filter=ACR` lists
+ * the added paths plus the rename/copy destinations `--name-only` prints
+ * as their new path, so a file renamed into a digested package counts as
+ * added there), `allChanged` drives the guard check (a PR deleting a
+ * listed guard without updating the list still fails red).
  * Throws on git failure; `main()` reports it as unusable input. The git
  * runner is injected so the end-to-end test drives these exact commands
  * against a throwaway repository with real git.
@@ -819,6 +878,10 @@ export function listChangedFiles(runGit, /** @type {string} */ base) {
   if (gone.status !== 0) {
     throw new Error(`ci-touched-tests: \`git diff --name-only --diff-filter=D ${range}\` failed.`);
   }
+  const fresh = runGit(['diff', '--name-only', '--diff-filter=ACR', range]);
+  if (fresh.status !== 0) {
+    throw new Error(`ci-touched-tests: \`git diff --name-only --diff-filter=ACR ${range}\` failed.`);
+  }
   const paths = (/** @type {string} */ output) => (output
     ? output.split('\n').map((line) => line.trim()).filter(Boolean)
     : []);
@@ -827,6 +890,7 @@ export function listChangedFiles(runGit, /** @type {string} */ base) {
   return {
     changed: allChanged.filter((file) => !deleted.has(file)),
     deleted: allChanged.filter((file) => deleted.has(file)),
+    added: paths(fresh.stdout).filter((file) => !deleted.has(file)),
     allChanged,
   };
 }
@@ -845,9 +909,10 @@ async function main() {
 
   let changed;
   let deleted;
+  let added;
   let allChanged;
   try {
-    ({ changed, deleted, allChanged } = listChangedFiles(git, options.base));
+    ({ changed, deleted, added, allChanged } = listChangedFiles(git, options.base));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : error}\n`);
     process.exit(2);
@@ -909,6 +974,8 @@ async function main() {
         contents,
         allChanged,
         loadCharacterizationDigests(root),
+        CHARACTERIZATION_SUITES,
+        added,
       );
     } catch (error) {
       process.stderr.write(`ci-touched-tests: ${error instanceof Error ? error.message : error}\n`);
