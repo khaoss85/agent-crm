@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ConflictError, ValidationError, nowIso, requireActor } from '../../core/index.js';
+import { AppError, ConflictError, ValidationError, nowIso, requireActor, trustedSystemActor } from '../../core/index.js';
 
 /**
  * Call intelligence (BO-F1-08, backlog:588db7766206): the start-of-call
@@ -43,6 +43,20 @@ export const CALL_TRANSCRIPT_MAX_RETENTION_MONTHS = 120;
 
 export const CALL_SIGNAL_TYPES = Object.freeze(['budget', 'timing', 'interest', 'doubt']);
 export const CALL_SUBJECT_RESOURCES = Object.freeze(['contact', 'company']);
+
+/**
+ * The retention purge as a durable scheduled sweep (BO-F1-08): the same
+ * shape as the appointment reminder sweep — the package registers the
+ * handler and seeds one job per beat, and the deployment owns the beats.
+ * A beat purges what expired before it fires; the purge itself skips rows
+ * that already carry `purgedAt`, so a replayed beat changes nothing.
+ */
+export const CALL_TRANSCRIPT_PURGE_KIND = 'call-transcript-purge';
+export const CALL_TRANSCRIPT_PURGE_HANDLER = 'call-transcript-purge';
+export const CALL_TRANSCRIPT_PURGE_VERSION = 1;
+export const CALL_TRANSCRIPT_PURGE_MAX_ATTEMPTS = 5;
+
+const PURGE_ACTOR = trustedSystemActor('purging expired call transcripts');
 
 const SPACE_ID_RE = /^[a-z][a-z0-9-]{0,62}$/;
 const CALL_REF_RE = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/;
@@ -131,6 +145,16 @@ export function addMonthsUtc(iso, months) {
 }
 
 /**
+ * Whether the retention deadline of a transcript row already passed at
+ * `now`: the purge selects exactly these rows, so a summarize that sees
+ * one must stop instead of writing derivatives the purge would erase.
+ * @param {{ expiresAt?: unknown }} transcript @param {string} now
+ */
+export function isExpired(transcript, now) {
+  return typeof transcript?.expiresAt === 'string' && transcript.expiresAt <= now;
+}
+
+/**
  * @param {Map<string, any>} modules @param {string} name
  */
 function trusted(modules, name) {
@@ -149,6 +173,7 @@ function trusted(modules, name) {
  *   modules: Map<string, any>,
  *   llm?: { complete: (request: any) => Promise<any> } | null,
  *   retention?: { defaultMonths?: number, bySpace?: Record<string, number> },
+ *   database?: { transactionAsync?: (fn: () => Promise<any>) => Promise<any> } | null,
  *   now?: () => string,
  * }} options
  * `modules` is the runtime's module view (the same Map shape channels
@@ -156,12 +181,19 @@ function trusted(modules, name) {
  * composition — absent is fine until a call asks for an AI summary, which
  * refuses then, never at boot. `retention` carries the per-space
  * transcript lifetime in months (Q-G2, configurable per space); spaces
- * without an entry keep the 12-month default.
+ * without an entry keep the 12-month default. `database` is the runtime's
+ * database when the composition has one (like channels): the summarize
+ * commit runs inside one transaction then, so a signal set and its summary
+ * land together or not at all; without it the writes stay sequential.
  */
 export function createCallIntelligence(options = {}) {
   const modules = options.modules;
   const llm = options.llm ?? null;
+  const database = options.database ?? null;
   const clock = typeof options.now === 'function' ? options.now : () => nowIso();
+  const inTransaction = typeof database?.transactionAsync === 'function'
+    ? (work) => database.transactionAsync(work)
+    : (work) => work();
   const retention = options.retention ?? {};
   const defaultMonths = retention.defaultMonths ?? CALL_TRANSCRIPT_DEFAULT_RETENTION_MONTHS;
   if (!Number.isInteger(defaultMonths)
@@ -331,7 +363,8 @@ export function createCallIntelligence(options = {}) {
    * Summarize a call with the workspace LLM adapter and store the buying
    * signals, each citing the transcript it was read from. Once summarized,
    * a call replays its stored summary without spending again; a purged
-   * transcript cannot be summarized anymore.
+   * transcript — or one past its retention deadline — cannot be summarized
+   * anymore, so no new personal-data derivative outlives the deadline.
    */
   async function summarizeCall(input = {}) {
     const actor = requireActor(input.actor);
@@ -342,7 +375,7 @@ export function createCallIntelligence(options = {}) {
     if (!transcript) {
       throw new AppError('Unknown call transcript', { code: 'CALL_TRANSCRIPT_UNKNOWN', status: 404 });
     }
-    if (transcript.purgedAt) {
+    if (transcript.purgedAt || isExpired(transcript, clock())) {
       throw new AppError('This transcript was erased by retention and cannot be summarized', {
         code: 'CALL_TRANSCRIPT_PURGED', status: 404,
       });
@@ -375,41 +408,70 @@ export function createCallIntelligence(options = {}) {
     });
     const { summary, signals } = parseSummaryAnswer(completion, transcript.text);
     const observedAt = clock();
-    const created = [];
-    try {
+    // The commit re-reads the transcript inside the same transaction that
+    // writes the signals and the summary: a purge that erased the row while
+    // the LLM worked — or a deadline that passed meanwhile — stops the
+    // commit instead of restoring personal data onto a purged row. The
+    // signal set and the summary land together or not at all, so a later
+    // signal can never leave a partial set behind.
+    const commit = async () => {
+      const fresh = await findTranscript(spaceId, callRef);
+      if (!fresh) {
+        throw new AppError('Unknown call transcript', { code: 'CALL_TRANSCRIPT_UNKNOWN', status: 404 });
+      }
+      if (fresh.purgedAt || isExpired(fresh, clock())) {
+        throw new AppError('This transcript was erased by retention and cannot be summarized', {
+          code: 'CALL_TRANSCRIPT_PURGED', status: 404,
+        });
+      }
+      if (fresh.summary) {
+        const winnerSignals = await trusted(modules, 'call-signal').listWhere({ spaceId, callRef });
+        return {
+          summary: fresh.summary,
+          signals: winnerSignals.map((row) => ({ type: row.signalType, excerpt: row.excerpt })),
+          replayed: true,
+        };
+      }
+      const created = [];
       for (let index = 0; index < signals.length; index += 1) {
         const signal = signals[index];
         created.push(await trusted(modules, 'call-signal').createManaged({
           sourceKey: `call-signal:${spaceId}:${callRef}:${signal.type}:${index}`,
           spaceId,
-          subjectResource: transcript.subjectResource,
-          subjectId: transcript.subjectId,
+          subjectResource: fresh.subjectResource,
+          subjectId: fresh.subjectId,
           callRef,
-          transcriptRef: transcript.sourceKey,
+          transcriptRef: fresh.sourceKey,
           signalType: signal.type,
           excerpt: signal.excerpt,
           observedAt,
         }, { actor }));
       }
+      const updated = await trusted(modules, 'call-transcript').applyManaged(fresh.id, { summary }, { actor });
+      return {
+        summary: updated.summary,
+        signals: created.map((row) => ({ type: row.signalType, excerpt: row.excerpt })),
+        replayed: false,
+      };
+    };
+    try {
+      return await inTransaction(commit);
     } catch (error) {
       // A concurrent summarize won the same deterministic keys: converge
       // on the winner's rows instead of failing the operator. First write
-      // wins; the keys make a second summary the same summary.
+      // wins; the keys make a second summary the same summary. Replay only
+      // counts on a fully committed winner — a summary with its row stored:
+      // anything else (a busy store, a still-running winner) retries.
       if (!(error instanceof ConflictError)) throw error;
       const winner = await findTranscript(spaceId, callRef);
+      if (!winner || winner.purgedAt || !winner.summary) throw error;
       const winnerSignals = await trusted(modules, 'call-signal').listWhere({ spaceId, callRef });
       return {
-        summary: winner?.summary ?? null,
+        summary: winner.summary,
         signals: winnerSignals.map((row) => ({ type: row.signalType, excerpt: row.excerpt })),
         replayed: true,
       };
     }
-    const updated = await trusted(modules, 'call-transcript').applyManaged(transcript.id, { summary }, { actor });
-    return {
-      summary: updated.summary,
-      signals: created.map((row) => ({ type: row.signalType, excerpt: row.excerpt })),
-      replayed: false,
-    };
   }
 
   /**
@@ -484,4 +546,82 @@ export function createCallIntelligence(options = {}) {
     purgeExpiredTranscripts,
     readCustomerCalls,
   };
+}
+
+/**
+ * Register the retention-purge sweep on a durable-job handler registry
+ * (BO-F1-08): the same seam as the appointment reminder sweep. The
+ * deployment seeds one job per beat; a beat purges what expired before it
+ * fires, scoped to one space when the seed names one.
+ *
+ * @param {{ register: (entry: any) => void }} registry
+ * @param {{ calls: { purgeExpiredTranscripts: (input: any) => Promise<any> } }} composition
+ */
+export function registerCallTranscriptPurge(registry, composition) {
+  if (!registry || typeof registry.register !== 'function') {
+    throw new ValidationError('registerCallTranscriptPurge needs a durable-job handler registry', {
+      field: 'registry',
+    });
+  }
+  const calls = composition?.calls;
+  if (!calls || typeof calls.purgeExpiredTranscripts !== 'function') {
+    throw new ValidationError('registerCallTranscriptPurge needs the call-intelligence operations', {
+      field: 'composition.calls',
+    });
+  }
+  registry.register({
+    kind: CALL_TRANSCRIPT_PURGE_KIND,
+    name: CALL_TRANSCRIPT_PURGE_HANDLER,
+    version: CALL_TRANSCRIPT_PURGE_VERSION,
+    async execute({ job }) {
+      const spaceId = job?.payload?.spaceId;
+      const purged = await calls.purgeExpiredTranscripts(
+        spaceId === undefined ? { actor: PURGE_ACTOR } : { spaceId, actor: PURGE_ACTOR },
+      );
+      return {
+        outcomeReference: job?.outcomeReference
+          ?? `${CALL_TRANSCRIPT_PURGE_KIND}:${job?.scheduleAt ?? 'unknown'}`,
+        purged: purged.purged.length,
+      };
+    },
+  });
+  return registry;
+}
+
+/**
+ * Queue one purge sweep for the beat at `at`: the beat the deployment owns.
+ * Each beat is its own sweep — the idempotency root names the beat instant
+ * (and the space when scoped), so a beat that already ran replays its own
+ * row while the next beat still purges what expired meanwhile. A double
+ * beat of the same instant stacks nothing.
+ *
+ * @param {{ store: any, spaceId?: string, actor?: unknown, at?: string }} context
+ */
+export async function seedCallTranscriptPurge(context) {
+  const store = context?.store;
+  if (!store || typeof store.enqueue !== 'function') {
+    throw new ValidationError('seedCallTranscriptPurge needs a durable-job store', { field: 'store' });
+  }
+  const spaceId = context?.spaceId === undefined ? undefined : assertSpaceId(context.spaceId, 'spaceId');
+  const at = typeof context?.at === 'string' && context.at !== '' ? context.at : new Date().toISOString();
+  const scope = spaceId ?? 'all';
+  const beat = `${CALL_TRANSCRIPT_PURGE_KIND}:${scope}:${at}`;
+  try {
+    const job = await store.enqueue({
+      kind: CALL_TRANSCRIPT_PURGE_KIND,
+      handler: { name: CALL_TRANSCRIPT_PURGE_HANDLER, contract: 1, version: CALL_TRANSCRIPT_PURGE_VERSION },
+      payload: spaceId === undefined ? {} : { spaceId },
+      scheduleAt: at,
+      maxAttempts: CALL_TRANSCRIPT_PURGE_MAX_ATTEMPTS,
+      idempotencyRoot: beat,
+      outcomeReference: beat,
+      recoveryPolicy: 'reconcilable_at_least_once',
+    }, context?.actor === undefined ? {} : { actor: context.actor });
+    return Object.freeze({ job, seeded: true });
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'DURABLE_JOB_IDEMPOTENCY_MISMATCH') {
+      return Object.freeze({ job: null, seeded: false });
+    }
+    throw error;
+  }
 }

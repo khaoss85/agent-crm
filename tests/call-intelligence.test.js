@@ -14,9 +14,16 @@ import {
   recordModuleMigrations,
 } from '../packages/core/src/record-module-runtime.js';
 import {
+  CALL_TRANSCRIPT_PURGE_HANDLER,
+  CALL_TRANSCRIPT_PURGE_KIND,
+  CALL_TRANSCRIPT_PURGE_VERSION,
   addMonthsUtc,
   createCallIntelligence,
+  isExpired,
+  registerCallTranscriptPurge,
+  seedCallTranscriptPurge,
 } from '../packages/intelligence/src/call-intelligence.js';
+import { ConflictError } from '../packages/core/index.js';
 import { createIntelligenceDomain } from '../packages/intelligence/src/index.js';
 import { createLlmOperations, openLlmComplete } from '../packages/llm/src/operations.js';
 import { createFixtureLlmAdapter } from '../packages/llm/src/fixture.js';
@@ -106,7 +113,10 @@ function setupCallHarness({ withLlm = false, retention = undefined, llmAnswers =
     llm = openLlmComplete(llmOps, { modules });
   }
 
-  const ops = createCallIntelligence({ modules, llm, retention, now: () => NOW });
+  // The harness database hands the summarize commit its transaction, like
+  // the composed runtime does through runtime.database: the signal set and
+  // the summary land together or not at all, even under sqlite.
+  const ops = createCallIntelligence({ modules, llm, retention, database, now: () => NOW });
   return {
     database, modules, ops, llmApi,
     notices: () => modules.get('call-notice').service.listWhere({}),
@@ -374,4 +384,132 @@ test('addMonthsUtc counts calendar months in UTC', () => {
   assert.equal(addMonthsUtc('2026-10-20T12:00:00.000Z', 12), '2027-10-20T12:00:00.000Z');
   assert.equal(addMonthsUtc('2026-10-01T10:00:00.000Z', 1), '2026-11-01T10:00:00.000Z');
   assert.equal(addMonthsUtc('2026-11-15T00:00:00.000Z', 2), '2027-01-15T00:00:00.000Z');
+});
+
+test('a transient conflict with no committed winner propagates, never a partial replay', async (t) => {
+  const harness = setupCallHarness({ withLlm: true });
+  t.after(() => harness.close());
+  await noticeAndSave(harness.ops);
+  // A busy store on the first signal write: nothing committed, no winner.
+  const signals = harness.modules.get('call-signal').service;
+  const createManaged = signals.createManaged.bind(signals);
+  let calls = 0;
+  signals.createManaged = async (...args) => {
+    calls += 1;
+    if (calls === 1) throw new ConflictError('write-write conflict on call-signal');
+    return createManaged(...args);
+  };
+  try {
+    const answer = await outcome(harness.ops.summarizeCall({ spaceId: SPACE, callRef: 'call-1', actor: USER }));
+    assert.equal(answer.accepted, false, 'no committed summary exists, so the conflict retries');
+    assert.equal(answer.code, 'CONFLICT');
+    assert.equal(answer.message, 'write-write conflict on call-signal');
+  } finally {
+    signals.createManaged = createManaged;
+  }
+  assert.equal((await harness.signals()).length, 0, 'the rolled-back commit leaves no partial signal');
+  const retry = await harness.ops.summarizeCall({ spaceId: SPACE, callRef: 'call-1', actor: USER });
+  assert.equal(retry.replayed, false, 'the retry commits the full set');
+  assert.equal(retry.signals.length, 4);
+});
+
+test('a purge that lands while the LLM works stops the commit: nothing is restored', async (t) => {
+  const harness = setupCallHarness({ withLlm: false });
+  t.after(() => harness.close());
+  await noticeAndSave(harness.ops);
+  const transcriptService = harness.modules.get('call-transcript').service;
+  const row = (await harness.transcripts())[0];
+  const llm = {
+    complete: async () => {
+      // Another beat erases the row while the summary is being written.
+      await transcriptService.applyManaged(row.id, { text: null, summary: null, purgedAt: NOW }, { actor: USER });
+      return { text: SUMMARY_ANSWER };
+    },
+  };
+  const racing = createCallIntelligence({
+    modules: harness.modules, llm, database: harness.database, now: () => NOW,
+  });
+  const answer = await outcome(racing.summarizeCall({ spaceId: SPACE, callRef: 'call-1', actor: USER }));
+  assert.equal(answer.accepted, false);
+  assert.equal(answer.code, 'CALL_TRANSCRIPT_PURGED');
+  assert.equal((await harness.signals()).length, 0, 'no signal cites an erased transcript');
+  const after = (await harness.transcripts())[0];
+  assert.equal(after.summary ?? null, null, 'no summary is restored onto the purged row');
+  assert.equal(after.purgedAt, NOW);
+});
+
+test('a transcript past its retention deadline cannot be summarized anymore', async (t) => {
+  const harness = setupCallHarness({ withLlm: true });
+  t.after(() => harness.close());
+  await harness.ops.recordCallNotice(NOTICE);
+  await harness.ops.saveCallTranscript({
+    spaceId: SPACE, subjectResource: 'contact', subjectId: 'c1',
+    callRef: 'call-1', text: TRANSCRIPT, recordedAt: '2025-10-01T10:00:00.000Z', actor: USER,
+  });
+  const saved = (await harness.transcripts())[0];
+  assert.ok(isExpired(saved, NOW), '13 months back is past the 12-month deadline');
+  const answer = await outcome(harness.ops.summarizeCall({ spaceId: SPACE, callRef: 'call-1', actor: USER }));
+  assert.equal(answer.accepted, false);
+  assert.equal(answer.code, 'CALL_TRANSCRIPT_PURGED');
+  assert.equal((await harness.signals()).length, 0, 'no derivative outlives the deadline');
+});
+
+test('the purge sweep is registered and seeded like the reminder sweep', async (t) => {
+  const harness = setupCallHarness();
+  t.after(() => harness.close());
+  // The beat fires after the 1-month deadline of the short space: the
+  // 12-month default space stays untouched. The short-space save goes
+  // through the short retention, so its deadline is stamped at 1 month.
+  const short = createCallIntelligence({
+    modules: harness.modules, retention: { bySpace: { [SPACE_SHORT]: 1 } }, now: () => '2026-12-01T00:00:00.000Z',
+  });
+  await short.recordCallNotice({ ...NOTICE, spaceId: SPACE_SHORT });
+  await short.saveCallTranscript({
+    spaceId: SPACE_SHORT, subjectResource: 'contact', subjectId: 'c1',
+    callRef: 'call-1', text: TRANSCRIPT, recordedAt: '2026-10-01T10:00:00.000Z', actor: USER,
+  });
+
+  const registered = [];
+  registerCallTranscriptPurge({ register: (entry) => registered.push(entry) }, { calls: short });
+  assert.equal(registered.length, 1);
+  assert.equal(registered[0].kind, CALL_TRANSCRIPT_PURGE_KIND);
+  assert.equal(registered[0].name, CALL_TRANSCRIPT_PURGE_HANDLER);
+  assert.equal(registered[0].version, CALL_TRANSCRIPT_PURGE_VERSION);
+
+  // The beat purges what expired before it fires: the 1-month space goes,
+  // the 12-month default space stays. Notices are per call, like the saves.
+  await harness.ops.recordCallNotice({ ...NOTICE, callRef: 'call-2' });
+  await harness.ops.saveCallTranscript({
+    spaceId: SPACE, subjectResource: 'contact', subjectId: 'c1',
+    callRef: 'call-2', text: TRANSCRIPT, recordedAt: '2026-10-01T10:00:00.000Z', actor: USER,
+  });
+  const seeded = [];
+  const store = {
+    async enqueue(job) {
+      seeded.push(job);
+      return { id: `job-${seeded.length}` };
+    },
+  };
+  const first = await seedCallTranscriptPurge({ store, at: '2026-12-01T00:00:00.000Z' });
+  assert.equal(first.seeded, true);
+  assert.equal(seeded[0].kind, CALL_TRANSCRIPT_PURGE_KIND);
+  assert.equal(seeded[0].handler.name, CALL_TRANSCRIPT_PURGE_HANDLER);
+  assert.equal(seeded[0].idempotencyRoot, 'call-transcript-purge:all:2026-12-01T00:00:00.000Z');
+  assert.deepEqual(seeded[0].payload, {}, 'an unscoped beat purges every space');
+
+  const scoped = await seedCallTranscriptPurge({ store, spaceId: SPACE_SHORT, at: '2026-12-01T00:00:00.000Z' });
+  assert.equal(scoped.seeded, true);
+  assert.equal(seeded[1].idempotencyRoot, `call-transcript-purge:${SPACE_SHORT}:2026-12-01T00:00:00.000Z`);
+  assert.deepEqual(seeded[1].payload, { spaceId: SPACE_SHORT });
+
+  const done = await registered[0].execute({ job: { payload: seeded[1].payload, scheduleAt: '2026-12-01T00:00:00.000Z' } });
+  assert.equal(done.purged, 1, 'the sweep runs the purge operation');
+  const rows = await harness.transcripts();
+  assert.equal(rows.find((row) => row.spaceId === SPACE_SHORT)?.purgedAt, '2026-12-01T00:00:00.000Z');
+  assert.equal(rows.find((row) => row.callRef === 'call-2')?.purgedAt ?? null, null);
+
+  const refused = await outcome((async () => registerCallTranscriptPurge({}, { calls: short }))());
+  assert.equal(refused.accepted, false, 'a registry without register refuses');
+  const noStore = await outcome(seedCallTranscriptPurge({ at: '2026-12-01T00:00:00.000Z' }));
+  assert.equal(noStore.accepted, false, 'seeding without a store refuses');
 });

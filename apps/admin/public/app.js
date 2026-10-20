@@ -481,13 +481,13 @@ if (boSidebar && boTopbar) {
       toast('Spazio locale reimpostato.');
     },
     onPickSpace: (id) => {
-      // The card's calls read follows the switcher through the spaceId
-      // thunk above (BO-F1-08): without this the card would keep reading
-      // the startup space after a switch.
       shellActiveSpace = id;
       try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
         // The switch still applies to this tab.
       }
+      // The open card shows space-scoped calls (BO-F1-08): re-render it on
+      // the new space instead of leaving the previous space's summaries.
+      if (targetForHash(window.location.hash || '#/').view === 'customer-card') route();
     },
     win: typeof window !== 'undefined' ? window : null,
   });

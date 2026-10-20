@@ -90,11 +90,16 @@ export function createCustomerCardView(deps) {
       client.request(`/api/customer-hub/timeline/${encoded}`),
       client.request(`/api/customer-data/profile/${encoded}`),
       // Without intelligence composed (honest 404) or without a space the
-      // calls read stays unavailable — never a failed card.
+      // calls read stays unavailable — never a failed card. Every other
+      // failure (expired session, network, HTTP 5xx) still rejects, so the
+      // card shows its error instead of a misleading "no calls".
       spaceId === null
         ? Promise.resolve(null)
         : client.request(`/api/call-intelligence/calls/${encoded}?spaceId=${encodeURIComponent(spaceId)}`)
-          .catch(() => null),
+          .catch((error) => {
+            if (error && error.status === 404) return null;
+            throw error;
+          }),
     ]);
     return { card, timeline, profile, calls };
   }

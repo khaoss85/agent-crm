@@ -4,7 +4,16 @@ import { AppError, definePackage, selectPackageGraph } from '../../core/index.js
 import { IntelligenceRegistries } from './registry.js';
 import { buildEnrichAction, buildRecordSignalAction, buildScoreAction, buildRouteAction } from './actions.js';
 import { createIntelligenceCapability } from './capability.js';
-import { CALL_INTELLIGENCE_MODULES, createCallIntelligence } from './call-intelligence.js';
+import {
+  CALL_INTELLIGENCE_MODULES,
+  CALL_TRANSCRIPT_PURGE_HANDLER,
+  CALL_TRANSCRIPT_PURGE_KIND,
+  CALL_TRANSCRIPT_PURGE_MAX_ATTEMPTS,
+  CALL_TRANSCRIPT_PURGE_VERSION,
+  createCallIntelligence,
+  registerCallTranscriptPurge,
+  seedCallTranscriptPurge,
+} from './call-intelligence.js';
 
 /**
  * The Lead Intelligence domain package.
@@ -114,7 +123,9 @@ export function createIntelligenceDomain(options = {}) {
   // One composed instance PER APPLICATION runtime: the operations close
   // over the runtime's own database and modules — the same per-runtime
   // pattern channels and signature use, so one composition module may
-  // serve several instances in one process.
+  // serve several instances in one process. The runtime database hands the
+  // summarize commit its transaction (signals and summary land together);
+  // a runtime without one keeps the sequential writes.
   const callsByRuntime = new WeakMap();
   const callOperations = (runtime) => {
     let composed = callsByRuntime.get(runtime);
@@ -123,6 +134,7 @@ export function createIntelligenceDomain(options = {}) {
         modules: runtime.modules,
         llm: openCallLlm(llmOffered, runtime),
         retention: callRetention,
+        database: runtime.database,
       });
       callsByRuntime.set(runtime, composed);
     }
@@ -270,7 +282,14 @@ export {
   CALL_INTELLIGENCE_MODULES,
   CALL_SIGNAL_TYPES,
   CALL_TRANSCRIPT_DEFAULT_RETENTION_MONTHS,
+  CALL_TRANSCRIPT_PURGE_HANDLER,
+  CALL_TRANSCRIPT_PURGE_KIND,
+  CALL_TRANSCRIPT_PURGE_MAX_ATTEMPTS,
+  CALL_TRANSCRIPT_PURGE_VERSION,
   addMonthsUtc,
   createCallIntelligence,
+  isExpired,
+  registerCallTranscriptPurge,
+  seedCallTranscriptPurge,
 } from './call-intelligence.js';
 export { ENRICHMENT_CAPABILITIES, ROUTING_TARGET_KINDS } from './registry.js';

@@ -477,6 +477,17 @@ function buildRouter(app) {
     return await app.summarizeCall({ ...stripServerControlledKeys(body), actor });
   });
 
+  // The explicit operator path for the retention purge (BO-F1-08): the same
+  // operation the scheduled sweep runs, triggerable by hand when no beat is
+  // seeded. Without intelligence composed it answers the honest 404 above.
+  router.add('POST', '/api/call-intelligence/purge', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.purgeExpiredTranscripts !== 'function') {
+      throw new NotFoundError('Operation', 'call purge');
+    }
+    return await app.purgeExpiredTranscripts({ ...stripServerControlledKeys(body), actor });
+  });
+
   router.add('GET', '/api/call-intelligence/calls/:resource/:id', async ({ params, searchParams, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     if (typeof app.readCustomerCalls !== 'function') {

@@ -34,6 +34,7 @@ in its own process.
 | **Resources** | `enrichment-snapshot`, `behavioral-signal`, `score-run`, `score-contribution`, `routing-run`, `route-evaluation`, `assignment`, plus call intelligence (BO-F1-08): `call-notice`, `call-transcript`, `call-signal` — all `writable: "managed"` |
 | **Actions** | `enrich`, `record-signal`, `score`, `route`, on the project's `lead` |
 | **Operations** | `record-call-notice`, `save-call-transcript`, `summarize-call`, `purge-expired-transcripts`, `read-customer-calls` (app methods `recordCallNotice`, `saveCallTranscript`, `summarizeCall`, `purgeExpiredTranscripts`, `readCustomerCalls`) |
+| **Retention sweep** | `registerCallTranscriptPurge` + `seedCallTranscriptPurge` (same beat shape as the appointment reminder sweep; the deployment owns the beats) and `POST /api/call-intelligence/purge` as the explicit operator path |
 | **Offers** | `intelligence@1` |
 | **Requires** | nothing declared: the workspace LLM (`llm-complete@1`) arrives as a handed-over capability object at composition (like channels), used only by `summarize-call` |
 

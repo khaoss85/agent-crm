@@ -143,7 +143,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, failHub = false, calls = null, failCalls = false } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, failHub = false, calls = null, failCalls = false, callsError = null } = {}) {
   const requested = [];
   return {
     calls: requested,
@@ -160,6 +160,7 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, failH
       }
       if (path.startsWith('/api/call-intelligence/calls/')) {
         if (failCalls) throw Object.assign(new Error('Not Found'), { status: 404 });
+        if (callsError) throw callsError;
         return calls;
       }
       throw new Error(`unexpected request ${path}`);
@@ -352,4 +353,13 @@ test('BO-F1-08: without a space or without intelligence composed the card stays 
   assert.ok(uncomposed.textContent.includes('Riepilogo AI'), 'the card still renders');
   assert.ok(uncomposed.textContent.includes('non disponibile: nessun riepilogo registrato'),
     'without intelligence composed no summary is shown');
+});
+
+test('BO-F1-08: a failing calls read is an error, never a quiet "no calls"', async () => {
+  const mount = await renderCard(
+    stubClient({ callsError: Object.assign(new Error('boom'), { status: 500 }) }), 'call-a',
+  );
+  assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the card shows its error UI');
+  assert.ok(!mount.textContent.includes('nessuna chiamata registrata'),
+    'a 500 never reads as no calls');
 });
