@@ -61,7 +61,7 @@ export {
   estimateCostCents,
   openLlmComplete,
 };
-export { LLM_ADAPTER_CONTRACT, LlmRegistries, assertCompletion, assertGenerateInput, validateLlmAdapter } from './adapter.js';
+export { LLM_ADAPTER_CONTRACT, LLM_MAX_CHARS_PER_TOKEN, LlmRegistries, assertCompletion, assertGenerateInput, validateLlmAdapter } from './adapter.js';
 export { LLM_KIT_CHECKS, runLlmAdapterKit } from './kit.js';
 
 /**

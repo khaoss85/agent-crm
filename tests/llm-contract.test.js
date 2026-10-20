@@ -86,6 +86,21 @@ test('completions name their model and bound their counts', () => {
   assert.throws(() => assertCompletion({ ...completion, inputTokens: -1 }, 'gpt-5.6-luna'), /non-negative integer/);
 });
 
+test('completion text stays within the request token ceiling', () => {
+  const completion = (text) => ({ text, model: 'gpt-5.6-luna', inputTokens: 10, outputTokens: 4 });
+  // 100000 chars at ~3.1 chars/token: valid inside a 32000-token ceiling,
+  // refused under the nameless absolute bound — a long paid response is
+  // never rejected for length when it fits its own ceiling.
+  assert.doesNotThrow(() => assertCompletion(completion('x'.repeat(100000)), 'gpt-5.6-luna', { maxTokens: 32000 }));
+  assert.throws(() => assertCompletion(completion('x'.repeat(100000)), 'gpt-5.6-luna'), /at most 32000 characters/);
+  // 513 chars cannot come from 64 tokens: fail-closed against absurd output.
+  assert.doesNotThrow(() => assertCompletion(completion('x'.repeat(512)), 'gpt-5.6-luna', { maxTokens: 64 }));
+  assert.throws(() => assertCompletion(completion('x'.repeat(513)), 'gpt-5.6-luna', { maxTokens: 64 }),
+    /at most 512 characters/);
+  assert.throws(() => assertCompletion(completion('ok'), 'gpt-5.6-luna', { maxTokens: 0 }), /maxTokens/);
+  assert.throws(() => assertCompletion(completion('ok'), 'gpt-5.6-luna', { maxTokens: 32001 }), /maxTokens/);
+});
+
 test('the model name is written in exactly one place', () => {
   // The item forbids the model name in several places: every file imports
   // the single constant instead of repeating it.
