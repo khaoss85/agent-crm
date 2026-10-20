@@ -17,10 +17,12 @@ import {
   countBadgeNodes,
   findChromium,
   isHeadlessShell,
+  snipDom,
   startRootServer,
   stateBadgeGroups,
   stripAuthority,
   stubResponse,
+  summarizeServed,
 } from '../scripts/admin-shots-harness.js';
 
 const root = join(import.meta.dirname, '..');
@@ -244,4 +246,27 @@ test('countBadgeNodes counts badge elements and their state classes', () => {
   assert.equal(counted.total, 2, 'only badge-token elements count');
   assert.deepEqual(counted.states, ['approval_pending', 'extra', 'rejected'], 'state classes collected');
   assert.equal(countBadgeNodes('<html><body>no badges</body></html>').total, 0, 'empty shell counts zero');
+});
+
+test('summarizeServed renders the request log one line per hit, in order', () => {
+  const lines = summarizeServed([
+    { method: 'GET', path: '/index.html', status: 200, bytes: 12 },
+    { method: 'GET', path: '/styles.css', status: 200, bytes: 34 },
+    { method: 'GET', path: '/missing', status: 404, bytes: 0 },
+  ]);
+  assert.deepEqual(lines, [
+    'GET /index.html 200 12b',
+    'GET /styles.css 200 34b',
+    'GET /missing 404 0b',
+  ]);
+  assert.deepEqual(summarizeServed([]), [], 'empty log summarises empty');
+});
+
+test('snipDom collapses a document to one log line with an explicit cut', () => {
+  assert.equal(snipDom('<html>\n  <body>hi</body>\n</html>'), '<html> <body>hi</body> </html>');
+  const long = `<html>${'x'.repeat(2000)}</html>`;
+  const snipped = snipDom(long, 100);
+  assert.ok(snipped.startsWith('<html>'), 'keeps the head, where the failure evidence is');
+  assert.match(snipped, /\(\+\d+ chars\)$/, 'marks the cut instead of truncating silently');
+  assert.equal(snipDom(null), '', 'never throws on odd input');
 });

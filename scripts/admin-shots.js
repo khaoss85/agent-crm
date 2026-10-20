@@ -52,9 +52,11 @@ import {
   countBadgeNodes,
   findChromium,
   isHeadlessShell,
+  snipDom,
   startRootServer,
   stateBadgeGroups,
   stripAuthority,
+  summarizeServed,
 } from './admin-shots-harness.js';
 
 const root = process.cwd();
@@ -82,13 +84,14 @@ function sha256(data) {
  * @param {string} profileDir fresh Chromium profile (never the user's own:
  * without it a running desktop Chrome can swallow the request and exit
  * without writing any screenshot)
- * @returns {{ dom: string } | { error: string }}
+ * @returns {{ dom: string, domBytes: number, elapsedMs: number } | { error: string }}
  */
 function capture(binary, url, frame, shotPath, profileDir) {
   // Flag order is fixed by the shared harness (proxy bypass and Chromium's
   // own render timeout included); the fresh per-capture profile is appended
   // by the caller.
   const flags = [...chromiumCaptureFlags(binary), `--user-data-dir=${profileDir}`];
+  const startedAt = Date.now();
   const shot = spawnSync(
     binary,
     [...flags, `--screenshot=${shotPath}`, `--window-size=${frame.width},${frame.height}`, url],
@@ -113,7 +116,7 @@ function capture(binary, url, frame, shotPath, profileDir) {
   if (typeof dom.stdout !== 'string' || !dom.stdout.includes('<html')) {
     return { error: 'chromium produced no serialized DOM' };
   }
-  return { dom: dom.stdout };
+  return { dom: dom.stdout, domBytes: Buffer.byteLength(dom.stdout), elapsedMs: Date.now() - startedAt };
 }
 
 async function main() {
@@ -209,6 +212,8 @@ async function main() {
       const shots = {};
       /** @type {Record<string, number>} */
       const badgeCounts = {};
+      /** @type {Record<string, { domBytes: number, elapsedMs: number, domHead: string }>} */
+      const captureDiag = {};
       for (const entry of sides) {
         const output = join(scratch, `${entry.side}-${target.file}`);
         const url =
@@ -222,6 +227,11 @@ async function main() {
         shots[entry.side] = readFileSync(output);
         const counted = countBadgeNodes(result.dom);
         badgeCounts[entry.side] = counted.total;
+        captureDiag[entry.side] = {
+          domBytes: result.domBytes,
+          elapsedMs: result.elapsedMs,
+          domHead: snipDom(result.dom),
+        };
         for (const state of counted.states) renderedStates.add(state);
       }
       if (failed || !shots.before || !shots.after) {
@@ -234,6 +244,16 @@ async function main() {
             `(before ${badgeCounts.before}, after ${badgeCounts.after}) — ` +
             'the diff could not detect a badge regression',
         );
+        // Name the cause in the log: whether each side's app shell, CSS and
+        // stubbed APIs answered, how large the dumped DOM was, and what its
+        // head holds — the difference between "the browser never ran the
+        // app" and "the app rendered no badges".
+        for (const entry of sides) {
+          const diag = captureDiag[entry.side];
+          console.error(`    ${entry.side}: dump-dom ${diag?.domBytes ?? 0}b in ${diag?.elapsedMs ?? 0}ms`);
+          for (const line of summarizeServed(entry.log)) console.error(`    ${entry.side} served: ${line}`);
+          console.error(`    ${entry.side} DOM head: ${diag?.domHead ?? '(none)'}`);
+        }
         break;
       }
       let verdict;

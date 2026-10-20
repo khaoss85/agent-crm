@@ -98,11 +98,12 @@ jobs:
           import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
           import { tmpdir } from 'node:os';
           import { join } from 'node:path';
-          import { chromiumCaptureFlags, findChromium } from './scripts/admin-shots-harness.js';
+          import { chromiumCaptureFlags, findChromium } from '${{ github.workspace }}/scripts/admin-shots-harness.js';
           const binary = findChromium();
           console.log('probe: binary=' + binary);
           if (binary) {
-            const url = 'data:text/html,<html><body><h1>probe</h1></body></html>';
+            const shotUrl = 'data:text/html,<html><body><h1>probe</h1></body></html>';
+            const jsUrl = 'data:text/html,<html><body><div id="t">cold</div><script>document.getElementById("t").textContent="sync";setTimeout(()=>{document.getElementById("t").textContent+="|late"},1000);</scr' + 'ipt></body></html>';
             const variants = [
               ['exact', chromiumCaptureFlags(binary)],
               ['no-virtual-time', chromiumCaptureFlags(binary).filter((f) => !f.startsWith('--virtual-time-budget'))],
@@ -112,13 +113,21 @@ jobs:
               const shot = join(dir, 'probe.png');
               let line = 'probe: ' + name + ': ';
               try {
-                const r = spawnSync(binary, [...flags, '--user-data-dir=' + join(dir, 'profile'), '--screenshot=' + shot, '--window-size=800,600', url], { encoding: 'utf8', timeout: 45000 });
+                const t0 = Date.now();
+                const r = spawnSync(binary, [...flags, '--user-data-dir=' + join(dir, 'profile'), '--screenshot=' + shot, '--window-size=800,600', shotUrl], { encoding: 'utf8', timeout: 30000 });
                 const wrote = existsSync(shot);
                 const bytes = wrote ? statSync(shot).size : 0;
                 const stderr = String(r.stderr || '').trim().split('\n').slice(-3).join(' | ').slice(0, 400);
-                line += 'wrote=' + wrote + ' bytes=' + bytes + ' error=' + (r.error ? r.error.code || r.error.message : 'none') + ' status=' + r.status + ' signal=' + (r.signal || 'none') + ' stderr=' + JSON.stringify(stderr);
+                line += 'shotMs=' + (Date.now() - t0) + ' wrote=' + wrote + ' bytes=' + bytes + ' error=' + (r.error ? r.error.code || r.error.message : 'none') + ' status=' + r.status + ' signal=' + (r.signal || 'none') + ' stderr=' + JSON.stringify(stderr);
               } catch (error) {
                 line += 'threw=' + (error instanceof Error ? error.message : String(error));
+              }
+              try {
+                const d = spawnSync(binary, [...flags, '--user-data-dir=' + join(dir, 'profile-dom'), '--dump-dom', jsUrl], { encoding: 'utf8', timeout: 30000, maxBuffer: 4 * 1024 * 1024 });
+                const out = String(d.stdout || '');
+                line += ' domSync=' + out.includes('>sync<') + ' domLate=' + out.includes('sync|late') + ' domBytes=' + out.length;
+              } catch (error) {
+                line += ' domThrew=' + (error instanceof Error ? error.message : String(error));
               }
               console.log(line);
               rmSync(dir, { recursive: true, force: true });

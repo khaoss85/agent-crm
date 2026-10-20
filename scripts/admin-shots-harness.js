@@ -408,3 +408,31 @@ export function countBadgeNodes(dom) {
   }
   return { total, states: [...states].sort() };
 }
+
+/**
+ * Render one captured side's request log as log lines (`METHOD path status
+ * bytes`), in arrival order. Printed by the capture script when a side
+ * fails its badge gate, so the CI log names whether the app shell, the
+ * stylesheet or the stubbed APIs never answered — the difference between
+ * "the browser never ran the app" and "the app rendered no badges".
+ * @param {{ method: string, path: string, status: number, bytes: number }[]} log
+ * @returns {string[]}
+ */
+export function summarizeServed(log) {
+  return (Array.isArray(log) ? log : []).map(
+    (item) => `${item.method ?? 'GET'} ${item.path} ${item.status} ${item.bytes}b`,
+  );
+}
+
+/**
+ * Collapse a serialized DOM to a single log line for failure diagnostics:
+ * whitespace runs become one space, the ends are trimmed, overlong
+ * documents are cut with an explicit marker. Never throws on odd input.
+ * @param {unknown} dom
+ * @param {number} [max]
+ */
+export function snipDom(dom, max = 1200) {
+  const flat = String(dom ?? '').replace(/\s+/g, ' ').trim();
+  if (flat.length <= max) return flat;
+  return `${flat.slice(0, max)}…(+${flat.length - max} chars)`;
+}
