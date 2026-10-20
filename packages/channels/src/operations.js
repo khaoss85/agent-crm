@@ -1805,7 +1805,13 @@ export function createChannelOperations(deps) {
       connection.sourceKey, message.to, replyKey, fingerprintPayload(message.text),
     );
     const verdict = await gate.gate({ spaceId, permission: CHANNEL_REPLY_PERMISSION });
-    if (!verdict || verdict.decision === 'allow') {
+    const decision = verdict && typeof verdict === 'object' ? verdict.decision : undefined;
+    if (decision !== 'allow' && decision !== 'proposal') {
+      throw new AppError('The permission gate answered with an unknown verdict', {
+        code: 'CHANNEL_REPLY_GATE_INVALID', status: 500,
+      });
+    }
+    if (decision === 'allow') {
       const queued = await queueChannelSend({
         spaceId, connectionKey: connection.sourceKey, message, messageKey: replyKey, actor,
       });
@@ -1814,11 +1820,6 @@ export function createChannelOperations(deps) {
         connectionKey: connection.sourceKey, channel: connection.channel, to: message.to,
         jobId: queued.jobId, idempotencyKey: queued.idempotencyKey,
       };
-    }
-    if (!verdict || verdict.decision !== 'proposal') {
-      throw new AppError('The permission gate answered with an unknown verdict', {
-        code: 'CHANNEL_REPLY_GATE_INVALID', status: 500,
-      });
     }
     let proposed;
     try {
