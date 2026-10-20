@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ValidationError, nowIso, requireActor } from '../../core/index.js';
+import { AppError, ConflictError, ValidationError, nowIso, requireActor } from '../../core/index.js';
 
 /**
  * Call intelligence (BO-F1-08, backlog:588db7766206): the start-of-call
@@ -376,19 +376,33 @@ export function createCallIntelligence(options = {}) {
     const { summary, signals } = parseSummaryAnswer(completion, transcript.text);
     const observedAt = clock();
     const created = [];
-    for (let index = 0; index < signals.length; index += 1) {
-      const signal = signals[index];
-      created.push(await trusted(modules, 'call-signal').createManaged({
-        sourceKey: `call-signal:${spaceId}:${callRef}:${signal.type}:${index}`,
-        spaceId,
-        subjectResource: transcript.subjectResource,
-        subjectId: transcript.subjectId,
-        callRef,
-        transcriptRef: transcript.sourceKey,
-        signalType: signal.type,
-        excerpt: signal.excerpt,
-        observedAt,
-      }, { actor }));
+    try {
+      for (let index = 0; index < signals.length; index += 1) {
+        const signal = signals[index];
+        created.push(await trusted(modules, 'call-signal').createManaged({
+          sourceKey: `call-signal:${spaceId}:${callRef}:${signal.type}:${index}`,
+          spaceId,
+          subjectResource: transcript.subjectResource,
+          subjectId: transcript.subjectId,
+          callRef,
+          transcriptRef: transcript.sourceKey,
+          signalType: signal.type,
+          excerpt: signal.excerpt,
+          observedAt,
+        }, { actor }));
+      }
+    } catch (error) {
+      // A concurrent summarize won the same deterministic keys: converge
+      // on the winner's rows instead of failing the operator. First write
+      // wins; the keys make a second summary the same summary.
+      if (!(error instanceof ConflictError)) throw error;
+      const winner = await findTranscript(spaceId, callRef);
+      const winnerSignals = await trusted(modules, 'call-signal').listWhere({ spaceId, callRef });
+      return {
+        summary: winner?.summary ?? null,
+        signals: winnerSignals.map((row) => ({ type: row.signalType, excerpt: row.excerpt })),
+        replayed: true,
+      };
     }
     const updated = await trusted(modules, 'call-transcript').applyManaged(transcript.id, { summary }, { actor });
     return {

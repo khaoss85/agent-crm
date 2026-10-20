@@ -356,6 +356,20 @@ test('the domain hands the composed llm-complete capability to the summarize ope
   assert.equal(refused.code, 'CALL_SUMMARY_UNAVAILABLE', 'without llm composed the summary refuses, never at boot');
 });
 
+test('two concurrent summarizes converge on one set of signals, never eight', async (t) => {
+  const harness = setupCallHarness({ withLlm: true });
+  t.after(() => harness.close());
+  await noticeAndSave(harness.ops);
+  const [first, second] = await Promise.all([
+    harness.ops.summarizeCall({ spaceId: SPACE, callRef: 'call-1', actor: USER }),
+    harness.ops.summarizeCall({ spaceId: SPACE, callRef: 'call-1', actor: USER }),
+  ]);
+  const replayed = [first.replayed, second.replayed].sort();
+  assert.deepEqual(replayed, [false, true], 'one winner writes, the loser replays');
+  assert.equal((await harness.signals()).length, 4, 'deterministic keys keep one signal set');
+  assert.equal(first.summary, second.summary);
+});
+
 test('addMonthsUtc counts calendar months in UTC', () => {
   assert.equal(addMonthsUtc('2026-10-20T12:00:00.000Z', 12), '2027-10-20T12:00:00.000Z');
   assert.equal(addMonthsUtc('2026-10-01T10:00:00.000Z', 1), '2026-11-01T10:00:00.000Z');
