@@ -458,6 +458,7 @@ const connectorsView = createConnectorsView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  submissions,
   navigate: (hash) => { window.location.hash = hash; },
   storage: shellStorage,
   toast,

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
 import { buildChannelConnectionActions } from '../packages/channels/src/index.js';
+import { createHttpServer } from '../apps/server/src/index.js';
 import { boot, project } from './helpers/customer-data-project.js';
 
 /**
@@ -151,4 +152,49 @@ test('connecting a channel files conflicting senders as candidates, never mergin
   const progress = await app.readInitialImport({ spaceId: SPACE, connectionKey: key });
   assert.equal(progress.status, 'done');
   assert.equal(progress.unresolvedContacts, 1, 'the fatto step can report what still needs a human');
+});
+
+test('POST /api/connectors/finish drives the history import to done', async (t) => {
+  // The fatto step promises past history in pages: with no scheduler
+  // advancing running imports, finish itself must pull to completion —
+  // otherwise the wizard reports background progress that never arrives.
+  const { app, fixtureApi, close } = await scene(t, 'connect-flow-finish-http');
+  t.after(() => close());
+  const server = createHttpServer(app);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const headers = {
+    'content-type': 'application/json',
+    'x-actor-type': 'user',
+    'x-actor-id': 'connect-flow-finish-http',
+  };
+
+  const reg = await app.registerChannelConnection({
+    spaceId: SPACE, channel: 'whatsapp', account: ACCOUNT,
+    adapter: 'fixture-channel', adapterVersion: 1,
+    secretRef: 'vault://presti/whatsapp', actor: ACTOR,
+  });
+  await activate(app, SPACE, reg.connection.sourceKey);
+
+  const at = new Date(Date.now() - 3600 * 1000).toISOString();
+  fixtureApi.seedHistory([
+    { id: 'conn-evt-http-1', subject: 'chat-conn-http-1', seq: 1, at, sender: { handle: BRUNO_HANDLE } },
+    { id: 'conn-evt-http-2', subject: 'chat-conn-http-2', seq: 2, at, sender: { handle: BRUNO_HANDLE } },
+  ]);
+
+  const response = await fetch(`${base}/api/connectors/finish`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ spaceId: SPACE, connectionKey: reg.connection.sourceKey, history: true }),
+  });
+  assert.equal(response.status, 200);
+  const finished = await response.json();
+  assert.equal(finished.started, true);
+  assert.equal(finished.done, true);
+  assert.equal(finished.import?.status, 'done');
+  assert.equal(finished.import?.importedEvents, 2, 'finish pulled every page, not just the cursor');
 });

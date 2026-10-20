@@ -15,7 +15,9 @@
 // adapter identities the composed application publishes on `/api/schema`.
 // This file owns no storage and no merge: passo 1 authorizes through
 // POST /api/connectors/authorize, passo 2 chooses the history import through
-// POST /api/connectors/finish, passo 3 reads the receipts back.
+// POST /api/connectors/finish (the server drives the import to completion in
+// bounded pages — no scheduler advances it later), passo 3 reads the receipts
+// back.
 //
 // Conventions follow apps/admin/public/admin-core.js: the catalog, the flow
 // state machine and the status mapping are pure and DOM-free (unit-tested
@@ -24,6 +26,7 @@
 // hostile channel, account or adapter label is inert text, never markup.
 
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
+import { bindAdminMutations } from './admin-submission.js';
 
 /** The three guided steps, in order. */
 export const CONNECT_STEPS = Object.freeze(['autorizza', 'sincronizza', 'fatto']);
@@ -276,7 +279,12 @@ function errorOf(error) {
  * `client`, `storage` and `navigate` keeps it testable without a browser.
  */
 export function createConnectorsView(deps) {
-  const { doc, mount, client, navigate } = deps;
+  const { doc, mount, navigate } = deps;
+  // POSTs go through the submission controller with idempotency, like every
+  // other admin view: the shared module client refuses a raw mutation without
+  // an Idempotency-Key, so authorizing or finishing through it directly would
+  // throw on the real code path. GETs stay on the raw client.
+  const { client } = bindAdminMutations(deps.client, deps);
   const toast = deps.toast ?? (() => {});
   const storage = deps.storage ?? null;
 
@@ -287,6 +295,14 @@ export function createConnectorsView(deps) {
     } catch {
       return '';
     }
+  };
+
+  // The shell space picker writes storage without telling this view: every
+  // load and every mutation re-reads it, so switching spaces and then
+  // opening Connettori never authorizes into the previously stored space.
+  const refreshSpace = () => {
+    state.spaceId = readSpace();
+    return state.spaceId;
   };
 
   const state = {
@@ -305,6 +321,7 @@ export function createConnectorsView(deps) {
   };
 
   async function load() {
+    refreshSpace();
     state.loaded = false;
     state.loadError = null;
     let schema;
@@ -381,7 +398,7 @@ export function createConnectorsView(deps) {
         const answer = await client.request('/api/connectors/authorize', {
           method: 'POST',
           body: {
-            spaceId: state.spaceId.trim(),
+            spaceId: refreshSpace().trim(),
             channel: catalog.channel,
             account,
             adapter: picked.name,
@@ -440,7 +457,7 @@ export function createConnectorsView(deps) {
         const answer = await client.request('/api/connectors/finish', {
           method: 'POST',
           body: {
-            spaceId: state.spaceId.trim(),
+            spaceId: refreshSpace().trim(),
             connectionKey: connection?.connectionKey ?? '',
             history: importable ? state.flow.history !== false : false,
           },
@@ -461,7 +478,17 @@ export function createConnectorsView(deps) {
   function renderDone(box, catalog, flow) {
     const finish = flow.finish;
     box.appendChild(el(doc, 'p', undefined, `${catalog.label} è collegato. Fatto.`));
-    if (finish?.started === true) {
+    // The server drives the history import to completion inside finish, so
+    // the fatto step reports what it actually imported — never a background
+    // promise nothing keeps.
+    const summary = finish?.import ?? null;
+    if (summary?.status === 'done' || finish?.done === true) {
+      const imported = Number(summary?.importedEvents ?? 0);
+      const created = Number(summary?.createdContacts ?? 0);
+      const pending = Number(summary?.unresolvedContacts ?? 0);
+      box.appendChild(el(doc, 'p', 'bo-muted',
+        `Cronologia completata: ${imported} eventi importati, ${created} contatti creati, ${pending} da decidere.`));
+    } else if (finish?.started === true || finish?.resumed === true) {
       box.appendChild(el(doc, 'p', 'bo-muted',
         'La cronologia passata arriva a pagine, in sottofondo: puoi continuare a lavorare.'));
     } else {
@@ -535,16 +562,53 @@ export function createConnectorsView(deps) {
       const go = el(doc, 'button', undefined, mapped.status === 'da-collegare' ? 'Collega in 3 passi' : 'Completa il collegamento');
       go.setAttribute('data-action', 'connect-open');
       state.busyControls.push(go);
-      go.addEventListener('click', () => {
+      go.addEventListener('click', async () => {
         const picked = matchAdapters(catalog.channel, state.adapters)[0] ?? null;
         state.flow = createConnectFlow({ channel: catalog.channel, adapter: picked });
-        if (mapped.status === 'da-completare') {
-          const active = connections.find((item) => item.status === 'active')
-            ?? connections.find((item) => item.status === 'pending')
-            ?? connections[0] ?? null;
-          state.flow = flowAuthorized(state.flow, active);
+        if (mapped.status !== 'da-completare') {
+          render();
+          return;
         }
+        // "Completa il collegamento" never finishes a non-active connection
+        // directly: an active row can continue to the sync choice, but a
+        // pending or suspended row goes through the authorize endpoint first
+        // (which activates it and refuses a revoked row clearly), landing on
+        // step 1 instead of failing step 2 with NOT_ACTIVE.
+        const resumable = connections.find((item) => item.status === 'active') ?? null;
+        if (resumable !== null) {
+          state.flow = flowAuthorized(state.flow, resumable);
+          render();
+          return;
+        }
+        const next = connections.find((item) => item.status === 'pending')
+          ?? connections.find((item) => item.status === 'suspended')
+          ?? connections[0] ?? null;
+        if (next === null || picked === null) {
+          render();
+          return;
+        }
+        state.flow = flowAuthorizeStart(state.flow);
         render();
+        setBusy(true);
+        try {
+          const answer = await client.request('/api/connectors/authorize', {
+            method: 'POST',
+            body: {
+              spaceId: refreshSpace().trim(),
+              channel: catalog.channel,
+              account: typeof next.account === 'string' ? next.account : '',
+              adapter: picked.name,
+              adapterVersion: picked.version,
+            },
+          });
+          state.flow = flowAuthorized(state.flow, answer?.connection ?? null);
+          await load();
+        } catch (error) {
+          state.flow = flowFail(state.flow, errorOf(error));
+        } finally {
+          setBusy(false);
+          render();
+        }
       });
       row.appendChild(go);
     }

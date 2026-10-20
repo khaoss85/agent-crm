@@ -523,10 +523,28 @@ function buildRouter(app) {
     if (input.history === false) {
       return { started: false, skipped: 'history', connectionKey };
     }
-    if (typeof app.startInitialImport !== 'function') {
+    if (typeof app.startInitialImport !== 'function' || typeof app.advanceInitialImport !== 'function') {
       throw new NotFoundError('Operation', 'connector initial import');
     }
-    return await app.startInitialImport({ spaceId, connectionKey, actor });
+    const started = await app.startInitialImport({ spaceId, connectionKey, actor });
+    // Pulling starts with the first advance call, and no scheduler advances
+    // running imports: finish drives the import to completion in bounded
+    // pages, so the fatto step never promises background progress that
+    // nothing delivers. Each page is bounded (at most CHANNEL_HISTORY_PAGE_MAX
+    // events, one provider timeout); a transient failure aborts with the
+    // cursor unmoved, and retrying finish resumes from the stored cursor.
+    let advance = null;
+    for (;;) {
+      advance = await app.advanceInitialImport({ spaceId, connectionKey });
+      if (advance?.done === true) break;
+    }
+    return {
+      started: started.started,
+      resumed: started.resumed ?? false,
+      connectionKey,
+      done: true,
+      import: advance?.state ?? started.state ?? null,
+    };
   });
 
   // Customer Data Operations v2: bulk decisions and scale-safe export. The

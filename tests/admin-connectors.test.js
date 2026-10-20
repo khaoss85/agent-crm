@@ -121,22 +121,35 @@ test('flow transitions enforce the step order', () => {
   assert.equal(failed.error, 'La richiesta non è riuscita.');
 });
 
-function stubClient({ schema = null, sync = null, calls = null } = {}) {
+function stubBody(options) {
+  // Through the submission controller the transport JSON-encodes the body,
+  // like the real module client: accept either shape, like the server does.
+  const raw = options.body;
+  if (typeof raw === 'string') {
+    try { return raw === '' ? {} : JSON.parse(raw); } catch { return raw; }
+  }
+  return raw ?? {};
+}
+
+function stubClient({ schema = null, sync = null, calls = null, authorize = null, finish = null } = {}) {
   const seen = calls ?? [];
   return {
     calls: seen,
     async request(path, options = {}) {
-      seen.push({ path, body: options.body });
+      const body = stubBody(options);
+      seen.push({ path, body });
       if (path === '/api/schema') {
         if (schema === null) throw new Error('schema down');
         return schema;
       }
       if (path.startsWith('/api/connectors?')) return sync ?? { connectors: [] };
       if (path === '/api/connectors/authorize') {
+        if (typeof authorize === 'function') return authorize(body);
         return { duplicate: false, connection: { connectionKey: 'ck', status: 'active', importable: true, sync: null } };
       }
       if (path === '/api/connectors/finish') {
-        return { started: options.body?.history !== false, resumed: false };
+        if (typeof finish === 'function') return finish(body);
+        return { started: body?.history !== false, resumed: false };
       }
       throw new Error(`unexpected request ${path}`);
     },
@@ -237,4 +250,187 @@ test('the wizard drives authorize, sync choice and finish', async () => {
   assert.deepEqual(finished.body, { spaceId: 'presti', connectionKey: 'ck', history: true });
   assert.ok(mount.textContent.includes('è collegato. Fatto.'));
   assert.ok(mount.textContent.includes('mai uniti da soli'));
+});
+
+test('mutations go through the submission controller, never raw', async () => {
+  // The shared module client refuses a POST without a submission-owned
+  // Idempotency-Key: driving the wizard against such an enforcing client
+  // proves authorize and finish travel through bindAdminMutations.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = stubClient({ schema: SCHEMA, sync: { connectors: [] } });
+  const enforcing = {
+    calls: inner.calls,
+    async request(path, options = {}) {
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+        && !(typeof options.idempotencyKey === 'string' && options.idempotencyKey !== '')) {
+        const error = new Error('Admin mutations require a submission-owned Idempotency-Key');
+        error.code = 'ADMIN_SUBMISSION_REQUIRED';
+        throw error;
+      }
+      return inner.request(path, options);
+    },
+  };
+  await createConnectorsView({
+    doc, mount, client: enforcing, navigate: () => {}, storage: storageWith('presti'),
+  }).render();
+
+  mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi').dispatch('click');
+  await flush();
+  const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'account');
+  input.value = '+390200000001';
+  mount.findAll('button').find((node) => node.textContent === 'Autorizza e collega').dispatch('click');
+  await flush(10);
+  assert.ok(enforcing.calls.some((call) => call.path === '/api/connectors/authorize'),
+    'authorize reaches the server through the submission controller');
+  assert.ok(mount.textContent.includes('2 · Cosa sincronizzare'));
+
+  mount.findAll('button').find((node) => node.textContent === 'Concludi il collegamento').dispatch('click');
+  await flush(10);
+  assert.ok(enforcing.calls.some((call) => call.path === '/api/connectors/finish'),
+    'finish reaches the server through the submission controller');
+  assert.ok(mount.textContent.includes('è collegato. Fatto.'));
+});
+
+test('the fatto step reports the import the server actually ran', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    schema: SCHEMA,
+    sync: { connectors: [] },
+    finish: () => ({
+      started: true,
+      resumed: false,
+      connectionKey: 'ck',
+      done: true,
+      import: {
+        status: 'done', importedEvents: 3, createdContacts: 1, unresolvedContacts: 1,
+      },
+    }),
+  });
+  await createConnectorsView({
+    doc, mount, client, navigate: () => {}, storage: storageWith('presti'),
+  }).render();
+
+  mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi').dispatch('click');
+  await flush();
+  const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'account');
+  input.value = '+390200000001';
+  mount.findAll('button').find((node) => node.textContent === 'Autorizza e collega').dispatch('click');
+  await flush(10);
+  mount.findAll('button').find((node) => node.textContent === 'Concludi il collegamento').dispatch('click');
+  await flush(10);
+  assert.ok(mount.textContent.includes('Cronologia completata: 3 eventi importati, 1 contatti creati, 1 da decidere.'));
+});
+
+test('the view re-reads the active space on every load', async () => {
+  let current = 'presti';
+  const storage = {
+    getItem: () => current,
+    setItem: (key, value) => { current = String(value); },
+    removeItem: () => {},
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ schema: SCHEMA, sync: { connectors: [] } });
+  const view = createConnectorsView({
+    doc, mount, client, navigate: () => {}, storage,
+  });
+  await view.render();
+  // The shell picker switches the space without telling this view.
+  current = 'altro-spazio';
+  await view.render();
+  const loads = client.calls.filter((call) => call.path.startsWith('/api/connectors?'));
+  assert.equal(loads.length, 2);
+  assert.ok(loads[1].path.includes('altro-spazio'),
+    `the second load reads the switched space, got ${loads[1].path}`);
+
+  mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi').dispatch('click');
+  await flush();
+  const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'account');
+  input.value = '+390200000001';
+  mount.findAll('button').find((node) => node.textContent === 'Autorizza e collega').dispatch('click');
+  await flush(10);
+  const authorized = client.calls.find((call) => call.path === '/api/connectors/authorize');
+  assert.equal(authorized.body.spaceId, 'altro-spazio',
+    'authorize writes to the switched space, not the construction-time one');
+});
+
+test('Completa il collegamento reactivates a pending row before the sync choice', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const pending = {
+    connectionKey: 'ck-pending',
+    channel: 'whatsapp',
+    account: '+390200000001',
+    adapter: 'wa-fake',
+    adapterVersion: 1,
+    status: 'pending',
+    importable: true,
+    sync: null,
+  };
+  const client = stubClient({
+    schema: SCHEMA,
+    sync: { connectors: [pending] },
+    authorize: () => ({
+      duplicate: true,
+      connection: { ...pending, status: 'active' },
+    }),
+  });
+  await createConnectorsView({
+    doc, mount, client, navigate: () => {}, storage: storageWith('presti'),
+  }).render();
+  assert.ok(mount.textContent.includes('Da completare'));
+
+  mount.findAll('button').find((node) => node.textContent === 'Completa il collegamento').dispatch('click');
+  await flush(10);
+  const authorized = client.calls.find((call) => call.path === '/api/connectors/authorize');
+  assert.deepEqual(authorized.body, {
+    spaceId: 'presti',
+    channel: 'whatsapp',
+    account: '+390200000001',
+    adapter: 'wa-fake',
+    adapterVersion: 1,
+  });
+  assert.ok(!client.calls.some((call) => call.path === '/api/connectors/finish'),
+    'a non-active connection never finishes without activation');
+  assert.ok(mount.textContent.includes('2 · Cosa sincronizzare'),
+    'reactivation lands on the sync choice, not on fatto');
+});
+
+test('Completa il collegamento refuses a revoked row clearly', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const revoked = {
+    connectionKey: 'ck-revoked',
+    channel: 'whatsapp',
+    account: '+390200000001',
+    adapter: 'wa-fake',
+    adapterVersion: 1,
+    status: 'revoked',
+    importable: false,
+    sync: null,
+  };
+  const client = stubClient({
+    schema: SCHEMA,
+    sync: { connectors: [revoked] },
+    authorize: () => {
+      const error = new Error('This connection was revoked: register a new account to reconnect');
+      error.code = 'CHANNEL_CONNECTION_REVOKED';
+      throw error;
+    },
+  });
+  await createConnectorsView({
+    doc, mount, client, navigate: () => {}, storage: storageWith('presti'),
+  }).render();
+
+  mount.findAll('button').find((node) => node.textContent === 'Completa il collegamento').dispatch('click');
+  await flush(10);
+  assert.ok(client.calls.some((call) => call.path === '/api/connectors/authorize'));
+  assert.ok(!client.calls.some((call) => call.path === '/api/connectors/finish'),
+    'a revoked connection never finishes');
+  assert.ok(!mount.textContent.includes('2 · Cosa sincronizzare'));
+  assert.ok(mount.textContent.includes('revoked'),
+    'the refusal names the revoked connection instead of failing with NOT_ACTIVE');
 });
