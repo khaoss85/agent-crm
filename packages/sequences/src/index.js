@@ -99,7 +99,9 @@ function isWinnerConflict(error) {
  *   `queueTemplateSend` (same durable enqueue as every channel send).
  *   `replyWindows` maps a connection key (or channel) to the adapter's
  *   `outboundWindow` (`subjectForRecipient`/`isObservation`); without the
- *   window for a connection the stop matches the recipient exactly.
+ *   window for a connection the enrollment is recorded blind
+ *   (`SEQUENCES_WINDOW_MISSING`) and never fires — fail closed, never a
+ *   raw-recipient match.
  *   `personalize` optionally rewrites the substituted variables (the AI
  *   seam); without it the deterministic substitution stands.
  */
@@ -383,20 +385,22 @@ export function createSequencesPackage(options = {}) {
         label: 'Pause one enrollment',
         description: 'Pause one person: their steps stop firing while paused; nothing already queued is withdrawn.',
         input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id.' },
           { name: 'enrollmentSourceKey', type: 'string', hint: 'The enrollment source key.' },
         ],
         create(runtime) {
           return async (request) => {
             const record = request && typeof request === 'object' ? request : {};
             const actor = requireSequenceActor(record.actor, 'Pausing an enrollment');
+            const spaceId = checkSpaceId(record.spaceId);
             const key = typeof record.enrollmentSourceKey === 'string' ? record.enrollmentSourceKey : '';
-            const rows = await trusted(runtime.modules, 'sequence-enrollment').listWhere({ sourceKey: key });
+            const rows = await trusted(runtime.modules, 'sequence-enrollment').listWhere({ spaceId, sourceKey: key });
             if (!rows[0]) {
-              throw new AppError('Unknown sequence enrollment', { code: 'SEQUENCE_ENROLLMENT_UNKNOWN', status: 404 });
+              throw new AppError('Unknown sequence enrollment in this space', { code: 'SEQUENCE_ENROLLMENT_UNKNOWN', status: 404 });
             }
             return transitionEnrollment({
               enrollments: trusted(runtime.modules, 'sequence-enrollment'),
-              enrollment: rows[0], event: 'pause', at: nowIso(), actor,
+              enrollment: rows[0], event: 'pause', at: nowIso(), actor, spaceId,
             });
           };
         },
@@ -409,20 +413,22 @@ export function createSequencesPackage(options = {}) {
         description:
           'Resume a paused person: overdue steps fire on the next advance, steps already queued or sent never fire twice.',
         input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id.' },
           { name: 'enrollmentSourceKey', type: 'string', hint: 'The enrollment source key.' },
         ],
         create(runtime) {
           return async (request) => {
             const record = request && typeof request === 'object' ? request : {};
             const actor = requireSequenceActor(record.actor, 'Resuming an enrollment');
+            const spaceId = checkSpaceId(record.spaceId);
             const key = typeof record.enrollmentSourceKey === 'string' ? record.enrollmentSourceKey : '';
-            const rows = await trusted(runtime.modules, 'sequence-enrollment').listWhere({ sourceKey: key });
+            const rows = await trusted(runtime.modules, 'sequence-enrollment').listWhere({ spaceId, sourceKey: key });
             if (!rows[0]) {
-              throw new AppError('Unknown sequence enrollment', { code: 'SEQUENCE_ENROLLMENT_UNKNOWN', status: 404 });
+              throw new AppError('Unknown sequence enrollment in this space', { code: 'SEQUENCE_ENROLLMENT_UNKNOWN', status: 404 });
             }
             return transitionEnrollment({
               enrollments: trusted(runtime.modules, 'sequence-enrollment'),
-              enrollment: rows[0], event: 'resume', at: nowIso(), actor, resumeNow: true,
+              enrollment: rows[0], event: 'resume', at: nowIso(), actor, resumeNow: true, spaceId,
             });
           };
         },

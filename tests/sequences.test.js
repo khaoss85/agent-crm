@@ -393,7 +393,7 @@ test('pausa e riattivazione senza invii doppi', async (t) => {
 
   // Pause: the advance fires nothing, and a second advance still fires
   // nothing — no retry, no duplicate.
-  await ops.pauseSequenceEnrollment({ enrollmentSourceKey: one[0].enrollmentSourceKey, actor: USER });
+  await ops.pauseSequenceEnrollment({ spaceId: SPACE, enrollmentSourceKey: one[0].enrollmentSourceKey, actor: USER });
   const enrollService = composed.modules.get('sequence-enrollment').service;
   assert.equal((await enrollService.listWhere({ sequenceSourceKey: 'seq:pause' }))[0].status, 'paused');
   for (const at of [T0, T0_LATER]) {
@@ -405,7 +405,7 @@ test('pausa e riattivazione senza invii doppi', async (t) => {
 
   // Resume: the already-queued step replays onto the same job — still one
   // row, still one job — and the worker confirms it sent.
-  const resumed = await ops.resumeSequenceEnrollment({ enrollmentSourceKey: one[0].enrollmentSourceKey, actor: USER });
+  const resumed = await ops.resumeSequenceEnrollment({ spaceId: SPACE, enrollmentSourceKey: one[0].enrollmentSourceKey, actor: USER });
   assert.equal(resumed.enrollment.status, 'active');
   const again = await advance(composed, connectionKey, T0_LATER);
   assert.equal(again.advanced, 0);
@@ -809,4 +809,121 @@ test('il pacchetto dichiara il contratto richiesto', async () => {
   assert.equal(v1.packageContract, 1);
   const v2 = createSequencesPackage({ packageContract: 2 });
   assert.equal(v2.packageContract, 2);
+});
+
+test('pausa e riattivazione restano nello spazio', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:scoped-pause');
+  await enroll(ops, connectionKey, 'seq:scoped-pause', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  const home = (await enrollments.listWhere({ sequenceSourceKey: 'seq:scoped-pause' }))[0];
+  assert.equal(home.spaceId, SPACE);
+
+  // Another space computing the deterministic enrollment key must not move
+  // this row: unknown in this space is a 404 and the row stays active.
+  await assert.rejects(
+    ops.pauseSequenceEnrollment({ spaceId: 'other-space', enrollmentSourceKey: home.sourceKey, actor: USER }),
+    (error) => error.code === 'SEQUENCE_ENROLLMENT_UNKNOWN',
+  );
+  assert.equal((await enrollments.listWhere({ sourceKey: home.sourceKey }))[0].status, 'active');
+  await assert.rejects(
+    ops.resumeSequenceEnrollment({ spaceId: 'other-space', enrollmentSourceKey: home.sourceKey, actor: USER }),
+    (error) => error.code === 'SEQUENCE_ENROLLMENT_UNKNOWN',
+  );
+
+  // The owning space pauses and resumes as before.
+  await ops.pauseSequenceEnrollment({ spaceId: SPACE, enrollmentSourceKey: home.sourceKey, actor: USER });
+  assert.equal((await enrollments.listWhere({ sourceKey: home.sourceKey }))[0].status, 'paused');
+  await ops.resumeSequenceEnrollment({ spaceId: SPACE, enrollmentSourceKey: home.sourceKey, actor: USER });
+  assert.equal((await enrollments.listWhere({ sourceKey: home.sourceKey }))[0].status, 'active');
+
+  // spaceId is required, never defaulted to whatever the key finds.
+  await assert.rejects(
+    ops.pauseSequenceEnrollment({ enrollmentSourceKey: home.sourceKey, actor: USER }),
+    (error) => error instanceof Error && /spaceId/.test(error.message),
+  );
+});
+
+test('la conferma registra dead-letter su rifiuto terminale', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:confirm-dead', name: 'Uno',
+    steps: STEPS.slice(0, 1), actor: USER,
+  });
+  await ops.activateSequence({ spaceId: SPACE, sourceKey: 'seq:confirm-dead', actor: USER });
+  await enroll(ops, connectionKey, 'seq:confirm-dead', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  const queued = await advance(composed, connectionKey, T0);
+  assert.equal(queued.advanced, 1);
+
+  // The connection dies after queueing: the confirm requeue refuses
+  // terminally and the row must leave queued instead of hanging forever.
+  const connectionService = composed.modules.get('channel-connection').service;
+  const connection = (await connectionService.listWhere({ sourceKey: connectionKey }))[0];
+  const actions = Object.fromEntries(
+    buildChannelConnectionActions().map((action) => [action.name, action]),
+  );
+  await actions['suspend-connection'].execute({
+    record: connection,
+    input: { reason: 'sequences confirm test' },
+    actor: USER,
+    modules: composed.modules,
+    managed: (id, patch) => connectionService.applyManaged(id, patch, { actor: USER }),
+    now: () => T0,
+  });
+
+  const confirmed = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(confirmed.skipped, 1);
+  const sends = composed.modules.get('sequence-send').service;
+  const rows = await sends.listWhere({ sequenceSourceKey: 'seq:confirm-dead' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'dead-letter');
+  assert.equal(rows[0].detail, 'CHANNEL_CONNECTION_NOT_ACTIVE');
+
+  // The settled row lets the enrollment complete on the next sweep.
+  const settled = await advance(composed, connectionKey, T1);
+  assert.equal(settled.confirmed, 1);
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:confirm-dead' }))[0].status, 'completed');
+});
+
+test('senza finestra di risposta non si invia', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:no-window');
+  await enroll(ops, connectionKey, 'seq:no-window', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  // The deployment composed no reply window for this connection: the sweep
+  // records the enrollment blind and fires nothing — a raw-recipient match
+  // could never equal the normalized wa: subject, so matching would only
+  // miss the reply and send anyway.
+  composed.clockBox.ms = Date.parse(T0);
+  const blind = await advanceSequences({
+    modules: composed.modules,
+    queueTemplate: queue(composed).queueTemplate,
+    permissionGate: gate(composed),
+    replyWindows: {},
+    now: () => T0,
+    actor: SYSTEM,
+  });
+  assert.equal(blind.advanced, 0);
+  assert.equal(blind.stoppedReplied, 0);
+  assert.equal(blind.inboxUnavailable.length, 1);
+  assert.equal(blind.inboxUnavailable[0].spaceId, SPACE);
+  assert.equal(blind.inboxUnavailable[0].code, 'SEQUENCES_WINDOW_MISSING');
+  const sends = composed.modules.get('sequence-send').service;
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:no-window' })).length, 0);
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:no-window' }))[0].status, 'active');
 });

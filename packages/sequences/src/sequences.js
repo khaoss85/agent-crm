@@ -239,8 +239,11 @@ export function personalizeVars(templateVarsJson, enrollment) {
  * The first recorded reply of one enrollment: an applied inbox row for the
  * recipient's conversation after the enrollment, where "the recipient's
  * conversation" and "a reply" (not a delivery report) are the connection
- * window's own rule. Without a window the subject must equal the recipient
- * exactly — delivery reports never match a recipient address.
+ * window's own rule. Without a window there is no reply: a raw-recipient
+ * comparison could never equal a normalized conversation subject (such as
+ * `wa:<digits>`), so matching here would only miss the reply and send
+ * anyway. Callers fail closed on a missing window (blind enrollment, never
+ * fired) instead of relying on this null.
  */
 export function findReply({ inboxRows, window, to, sinceMs }) {
   const rows = Array.isArray(inboxRows) ? inboxRows : [];
@@ -252,7 +255,7 @@ export function findReply({ inboxRows, window, to, sinceMs }) {
       return null;
     }
   } else {
-    subject = to;
+    return null;
   }
   if (typeof subject !== 'string' || subject === '') return null;
   const isObservation = window && typeof window.isObservation === 'function'
@@ -389,6 +392,7 @@ export async function advanceSequences({
   };
   /** Enrollments the sweep cannot see the inbox of: never fired blind. */
   const blindEnrollments = new Set();
+  const blindKey = (enrollment) => `${enrollment.spaceId} ${enrollment.sourceKey}`;
   const noteInboxBlind = (enrollment, error) => {
     const details = error && typeof error === 'object' ? error.details : null;
     const cause = details && typeof details === 'object' && typeof details.cause === 'string' ? details.cause : null;
@@ -397,7 +401,33 @@ export async function advanceSequences({
     summary.inboxUnavailable.push(Object.freeze({
       enrollmentSourceKey: enrollment.sourceKey, spaceId: enrollment.spaceId, code,
     }));
-    blindEnrollments.add(enrollment.sourceKey);
+    blindEnrollments.add(blindKey(enrollment));
+  };
+
+  /**
+   * The reply window of one enrollment: its connection key first, then the
+   * channel of the step it currently waits on — the same resolution in the
+   * stop pass and in the due path. Null when the deployment composed no
+   * window for either: the caller records the enrollment blind (fail
+   * closed) instead of matching a recipient that could never equal a
+   * normalized conversation subject.
+   */
+  const resolveReplyWindow = async (enrollment) => {
+    const direct = replyWindows?.[enrollment.connectionKey] ?? null;
+    if (direct) return direct;
+    try {
+      const sibs = await steps.listWhere({ sequenceSourceKey: enrollment.sequenceSourceKey });
+      const ordered = (Array.isArray(sibs) ? sibs : [])
+        .filter((row) => row && Number.isInteger(row.stepOrder))
+        .sort((a, b) => a.stepOrder - b.stepOrder);
+      const at = Number.isInteger(enrollment.currentStep) ? enrollment.currentStep : 0;
+      const step = ordered.find((row) => row.stepOrder >= at) ?? ordered[0] ?? null;
+      const channel = step && typeof step.channel === 'string' ? step.channel : '';
+      if (channel !== '') return replyWindows?.[channel] ?? null;
+    } catch {
+      return null;
+    }
+    return null;
   };
 
   /**
@@ -566,7 +596,11 @@ export async function advanceSequences({
       noteInboxBlind(current, error);
       return 'blind';
     }
-    const window = replyWindows?.[current.connectionKey] ?? null;
+    const window = await resolveReplyWindow(current);
+    if (!window) {
+      noteInboxBlind(current, { code: 'SEQUENCES_WINDOW_MISSING' });
+      return 'blind';
+    }
     const reply = findReply({
       inboxRows,
       window,
@@ -611,7 +645,7 @@ export async function advanceSequences({
       }
       if (!current || current.status !== 'active' || Date.parse(current.nextDueAt) > nowMs) continue;
       if (current.sequenceSourceKey !== seqKey) continue;
-      if (blindEnrollments.has(current.sourceKey)) continue;
+      if (blindEnrollments.has(blindKey(current))) continue;
 
       const live = ordered.filter((row) => row.stepOrder >= current.currentStep);
       if (live.length === 0) {
@@ -630,8 +664,13 @@ export async function advanceSequences({
       const messageKey = sequenceMessageKey(current.sourceKey, step.stepOrder);
 
       // 1. Stop on reply: the first recorded reply ends the enrollment.
-      // Without the inbox this sweep cannot know — fail closed, never fire.
+      // Without the inbox — or without the reply window — this sweep
+      // cannot know, so it fails closed and never fires.
       const window = replyWindows?.[current.connectionKey] ?? replyWindows?.[step.channel] ?? null;
+      if (!window) {
+        noteInboxBlind(current, { code: 'SEQUENCES_WINDOW_MISSING' });
+        continue;
+      }
       let inboxRows;
       try {
         inboxRows = await loadEnrollmentInbox(current);
@@ -840,7 +879,21 @@ export async function advanceSequences({
         actor: timer,
       });
     } catch (error) {
-      if (error && typeof error === 'object' && QUEUE_REFUSAL_SKIPS.has(/** @type {any} */ (error).code)) continue;
+      if (error && typeof error === 'object' && QUEUE_REFUSAL_SKIPS.has(/** @type {any} */ (error).code)) {
+        // Terminal refusal on confirm: the connection died or the template
+        // was revoked after queueing, so this row can never send. Move it
+        // out of queued (dead-letter with the refusal code) instead of
+        // leaving it queued forever — the enrollment then settles on the
+        // next sweep like every other terminal row.
+        const latest = await sends.listWhere({ sourceKey: row.sourceKey });
+        if (latest[0] && latest[0].status === 'queued') {
+          await sends.applyManaged(latest[0].id, {
+            status: 'dead-letter', decidedAt: nowIso, detail: /** @type {any} */ (error).code,
+          }, { actor: timer });
+        }
+        summary.skipped += 1;
+        continue;
+      }
       throw error;
     }
     const state = requeue && typeof requeue.state === 'string' ? requeue.state : '';
@@ -922,7 +975,7 @@ export async function enrollSequencePerson({ modules, input, at }) {
   }
   const enrollments = trusted(modules, 'sequence-enrollment');
   const atIso = checkInstant(at ?? new Date().toISOString(), 'at');
-  const existing = await enrollments.listWhere({ sourceKey: key });
+  const existing = await enrollments.listWhere({ spaceId, sourceKey: key });
   if (existing[0]) return { enrollment: existing[0], replayed: true };
   const row = {
     sourceKey: key,
@@ -949,7 +1002,7 @@ export async function enrollSequencePerson({ modules, input, at }) {
     return { enrollment, replayed: false };
   } catch (error) {
     if (!isWinnerConflict(error)) throw error;
-    const winner = await enrollments.listWhere({ sourceKey: key });
+    const winner = await enrollments.listWhere({ spaceId, sourceKey: key });
     if (!winner[0]) throw error;
     return { enrollment: winner[0], replayed: true };
   }
@@ -978,11 +1031,13 @@ export async function transitionSequence({ sequences, sequence, event, at, actor
  * overdue step due at resume instead of waiting for a stored instant that
  * already passed; steps already queued or sent still never fire twice.
  */
-export async function transitionEnrollment({ enrollments, enrollment, event, at, actor, resumeNow = false }) {
+export async function transitionEnrollment({ enrollments, enrollment, event, at, actor, resumeNow = false, spaceId = null }) {
   assertEnrollmentTransition(enrollment.status, event);
   let current = enrollment;
   try {
-    const reread = await enrollments.listWhere({ sourceKey: enrollment.sourceKey });
+    const reread = await enrollments.listWhere(
+      spaceId === null ? { sourceKey: enrollment.sourceKey } : { spaceId, sourceKey: enrollment.sourceKey },
+    );
     if (reread[0]) current = reread[0];
   } catch {
     current = enrollment;
