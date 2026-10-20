@@ -27,6 +27,7 @@
 // confirmation first.
 
 import { formatMinorUnits } from './admin-core.js';
+import { issueAdminKey } from './admin-submission.js';
 
 /** Probe path for the future assistant backend (status + free-question ask). */
 export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
@@ -380,6 +381,29 @@ async function answerSegnali(client) {
   return answer;
 }
 
+/**
+ * Where opportunity records actually render: the pipeline board
+ * (`#/pipelines/<name>`), never the generated-module detail route — core
+ * modules are not served by the generic records surface (admin-modules.js
+ * resolves schema.generatedModules only, so `#/modules/opportunity/<id>`
+ * lands on 'Module not found'). Null when no board covers them.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @returns {Promise<string | null>}
+ */
+async function opportunityBoardHref(client) {
+  try {
+    const schema = await client.request('/api/schema');
+    const pipeline = Array.isArray(schema?.pipelines)
+      ? schema.pipelines.find((entry) => entry !== null && typeof entry === 'object'
+        && entry.module === 'opportunity'
+        && typeof entry.name === 'string' && /^[a-z][a-z0-9-]*$/.test(entry.name))
+      : undefined;
+    return pipeline ? `#/pipelines/${pipeline.name}` : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Chiusura mese: opportunità aperte per fase, importi in centesimi interi. */
 async function answerChiusura(client) {
   const answer = emptyAnswer('bo04:pipeline:chiusura', 'Quanto posso chiudere questo mese?');
@@ -397,29 +421,56 @@ async function answerChiusura(client) {
     answer.unavailable.push('Opportunità: elenco non leggibile in questo spazio.');
     return answer;
   }
-  /** @type {Map<string, { count: number, cents: number, currency: string | null }>} */
-  const byStage = new Map();
+  // Counts per stage; money per (stage, currency) — currencies are never
+  // summed together, one formatMinorUnits line per currency like the
+  // pipeline board (admin-pipeline.js renderColumn).
+  /** @type {Map<string, number>} */
+  const stageCount = new Map();
+  /** @type {Map<string, { stage: string, currency: string, cents: number }>} */
+  const stageTotals = new Map();
   for (const row of items) {
     const stage = typeof row?.stage === 'string' && row.stage !== '' ? row.stage
       : typeof row?.status === 'string' && row.status !== '' ? row.status : 'senza fase';
-    const entry = byStage.get(stage) ?? { count: 0, cents: 0, currency: null };
-    entry.count += 1;
-    if (Number.isSafeInteger(row?.valueCents) && Number.isSafeInteger(entry.cents + /** @type {number} */ (row.valueCents))) {
-      entry.cents += /** @type {number} */ (row.valueCents);
-      if (entry.currency === null && typeof row?.currency === 'string') entry.currency = row.currency;
+    stageCount.set(stage, (stageCount.get(stage) ?? 0) + 1);
+    if (Number.isSafeInteger(row?.valueCents)) {
+      const currency = typeof row?.currency === 'string' ? row.currency : '';
+      const key = JSON.stringify([stage, currency]);
+      const total = stageTotals.get(key) ?? { stage, currency, cents: 0 };
+      if (Number.isSafeInteger(total.cents + /** @type {number} */ (row.valueCents))) {
+        total.cents += /** @type {number} */ (row.valueCents);
+        stageTotals.set(key, total);
+      }
     }
-    byStage.set(stage, entry);
   }
   answer.lines.push(`${items.length} opportunità lette.`);
-  for (const [stage, entry] of [...byStage.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, SUGGESTION_MAX_LISTED)) {
-    const total = entry.cents > 0 ? ` (totale ${formatMinorUnits(entry.cents, entry.currency ?? 'EUR')})` : '';
-    answer.lines.push(`• ${shortText(stage, 30)}: ${entry.count}${total}`);
+  const topStages = [...stageCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, SUGGESTION_MAX_LISTED);
+  for (const [stage, count] of topStages) {
+    answer.lines.push(`• ${shortText(stage, 30)}: ${count}`);
+    for (const total of [...stageTotals.values()]
+      .filter((entry) => entry.stage === stage)
+      .sort((a, b) => (a.currency < b.currency ? -1 : a.currency > b.currency ? 1 : 0))) {
+      answer.lines.push(`• ${shortText(stage, 30)} — totale ${formatMinorUnits(total.cents, total.currency)}`);
+    }
   }
   const labelOf = (row) => shortText(row?.name ?? row?.companyName ?? row?.title, 60) || shortText(row?.id, 24);
-  answer.sources.push(...takeSources(items.slice(0, SUGGESTION_MAX_SOURCES), 'opportunity', labelOf));
-  const first = answer.sources[0];
-  if (first) {
-    answer.actions.push({ id: 'bo04:apri-primo', label: `Apri: ${first.label}`, kind: 'navigate', href: first.href, customerFacing: false });
+  const boardHref = await opportunityBoardHref(client);
+  if (boardHref !== null) {
+    for (const row of items) {
+      if (answer.sources.length >= SUGGESTION_MAX_SOURCES) break;
+      if (!isSafeRecordId(row?.id)) continue;
+      const label = labelOf(row) || row.id;
+      answer.sources.push({ kind: 'record', module: 'opportunity', id: row.id, label, href: boardHref });
+    }
+    const first = answer.sources[0];
+    if (first) {
+      answer.actions.push({ id: 'bo04:apri-primo', label: `Apri: ${first.label}`, kind: 'navigate', href: first.href, customerFacing: false });
+    }
+  } else {
+    // No pipeline board renders opportunities in this space: name the
+    // records as text instead of linking a dead route.
+    for (const row of items.slice(0, SUGGESTION_MAX_LISTED)) {
+      answer.lines.push(`• ${labelOf(row) || shortText(row?.id, 24)}`);
+    }
   }
   return answer;
 }
@@ -568,9 +619,13 @@ export async function runSuggestion(client, suggestionId) {
 export async function probeAssistantBackend(client) {
   try {
     const status = await client.request(ASSISTANT_STATUS_PATH);
+    // Allowlist: only the documented assistant contract answers free
+    // questions. A status payload must never steer the question POST at an
+    // arbitrary backend route.
     if (status !== null && typeof status === 'object'
       && status.freeQuestions === 'enabled'
-      && typeof status.endpoint === 'string' && status.endpoint.startsWith('/api/')) {
+      && typeof status.endpoint === 'string'
+      && (status.endpoint === '/api/assistant/ask' || status.endpoint.startsWith('/api/assistant/'))) {
       return { mode: 'live', freeQuestions: 'enabled', endpoint: status.endpoint, notice: '' };
     }
   } catch {
@@ -595,10 +650,13 @@ export async function askFreeQuestion(client, status, question) {
   if (status?.mode !== 'live' || typeof status?.endpoint !== 'string') {
     return { ok: false, disabled: true, notice: FREE_QUESTION_DISABLED_NOTICE };
   }
+  // One fresh submission-owned key per question: keys come from the Admin
+  // submission controller (KEY_RE) so the real client gate accepts them, and
+  // the full question text is never truncated into a colliding identity.
   const body = await client.request(status.endpoint, {
     method: 'POST',
     body: { question: text },
-    idempotencyKey: `assistant:free:${text.length}:${text.slice(0, 32)}`,
+    idempotencyKey: issueAdminKey(),
   });
   const lines = Array.isArray(body?.lines) ? body.lines.map((line) => String(line)).filter((line) => line !== '') : [];
   /** @type {Source[]} */
@@ -661,10 +719,15 @@ export async function runAssistantAction(client, action, options = {}) {
   if (request === null || typeof request !== 'object' || typeof request.path !== 'string' || !request.path.startsWith('/api/')) {
     throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non valida.`);
   }
+  // Mutations run on the real Admin client only with a submission-owned key
+  // (admin-submission.js KEY_RE): an explicit caller key is honored, the
+  // default is issued here so the panel never hand-rolls 'assistant:*' keys
+  // the real gate rejects.
+  const key = typeof idempotencyKey === 'string' && idempotencyKey !== '' ? idempotencyKey : issueAdminKey();
   const result = await client.request(request.path, {
     method: request.method ?? 'POST',
     body: request.body ?? {},
-    ...(idempotencyKey !== null ? { idempotencyKey } : {}),
+    idempotencyKey: key,
   });
   return { ok: true, needsConfirmation: false, result };
 }
@@ -698,7 +761,6 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     busy: false,
     pendingConfirmId: null,
     error: '',
-    key: 0,
   };
 
   function clearMount() {
@@ -787,11 +849,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     state.error = '';
     render();
     try {
-      state.key += 1;
       const outcome = await runAssistantAction(client, action, {
         navigate,
         confirmedActionId: state.pendingConfirmId,
-        idempotencyKey: `assistant:${action.id}:${state.key}`,
+        idempotencyKey: issueAdminKey(),
       });
       state.pendingConfirmId = null;
       if (outcome.needsConfirmation === true) {

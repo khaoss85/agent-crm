@@ -62,7 +62,10 @@ The ⌘K bar opens the assistant side panel
   are built only from ids the panel just read (conversations, calls and
   messages from `packages/interactions`, signals from
   `packages/intelligence`, AI audit rows from `packages/llm`), each linking
-  to the record route. A module that is not composed names itself as
+  to the record route. Opportunities are a core module with no
+  generated-module detail route, so their sources link the pipeline board
+  (`#/pipelines/<name>`) that renders them — or name the record as text
+  when no board covers them. A module that is not composed names itself as
   unavailable instead of failing the answer; hostile record strings render
   as text, never markup.
 - Linked actions execute really: navigation filters/opens records, and the

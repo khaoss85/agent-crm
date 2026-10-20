@@ -12,6 +12,7 @@ import {
   runSuggestion,
   suggestionsFor,
 } from '../apps/admin/public/admin-assistant.js';
+import { requireSubmissionContext } from '../apps/admin/public/admin-submission.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 const CONVS = {
@@ -163,11 +164,48 @@ test('chiusura: somme intere per fase, mai float', async () => {
         { id: 'opp-3', name: 'Senza importo', stage: 'new' },
       ],
     },
+    '/api/schema': { pipelines: [{ name: 'b2b-sales', module: 'opportunity' }] },
   });
   const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
   assert.ok(answer.lines.some((line) => line.includes('EUR 1,700.00')));
   assert.ok(!answer.lines.some((line) => line.includes('.000')));
   assert.ok(sourceIds(answer).every((id) => ['opp-1', 'opp-2', 'opp-3'].includes(id)));
+  // Opportunity sources link the pipeline board that renders them, never the
+  // dead generated-module detail route for a core module.
+  for (const source of answer.sources) {
+    assert.equal(source.href, '#/pipelines/b2b-sales');
+  }
+  assert.ok(answer.actions.some((action) => action.href === '#/pipelines/b2b-sales'));
+});
+
+test('chiusura: valute miste mai sommate, una riga per valuta', async () => {
+  const client = stubClient({
+    '/api/opportunities': {
+      items: [
+        { id: 'opp-1', name: 'Prova costume', stage: 'proposal', valueCents: 170000, currency: 'EUR' },
+        { id: 'opp-2', name: 'US deal', stage: 'proposal', valueCents: 10000, currency: 'USD' },
+      ],
+    },
+    '/api/schema': { pipelines: [{ name: 'b2b-sales', module: 'opportunity' }] },
+  });
+  const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
+  assert.ok(answer.lines.some((line) => line.includes('EUR 1,700.00')));
+  assert.ok(answer.lines.some((line) => line.includes('USD 100.00')));
+  assert.ok(!answer.lines.some((line) => line.includes('EUR 1,800.00')));
+  assert.ok(!answer.lines.some((line) => line.includes('USD 1,800.00')));
+});
+
+test('chiusura senza board: record come testo, nessun link morto', async () => {
+  const client = stubClient({
+    '/api/opportunities': {
+      items: [{ id: 'opp-1', name: 'Prova costume', stage: 'proposal', valueCents: 150000, currency: 'EUR' }],
+    },
+    '/api/schema': { pipelines: [{ name: 'other-board', module: 'lead' }] },
+  });
+  const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
+  assert.deepEqual(answer.sources, []);
+  assert.ok(!answer.actions.some((action) => String(action.href ?? '').includes('opportunity')));
+  assert.ok(answer.lines.some((line) => line.includes('Prova costume')));
 });
 
 test('ai-puo: registri llm-call-audit reali + capability deterministiche', async () => {
@@ -222,6 +260,46 @@ test('azione api esegue davvero la richiesta dichiarata', async () => {
   assert.equal(outcome.ok, true);
   assert.equal(client.calls.length, 1);
   assert.equal(client.calls[0].options.idempotencyKey, 'assistant:test:1');
+});
+
+/**
+ * The real Admin client (app.js moduleClient) refuses mutations whose
+ * Idempotency-Key is not submission-owned (admin-submission.js
+ * requireSubmissionContext, KEY_RE). This wrapper mirrors that gate so the
+ * panel tests prove the keys work on the real code path, not only on the
+ * permissive stub.
+ */
+function gatedClient(routes) {
+  const inner = stubClient(routes);
+  return {
+    calls: inner.calls,
+    async request(path, options = {}) {
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+        requireSubmissionContext(options);
+      }
+      return inner.request(path, options);
+    },
+  };
+}
+
+test('azione api passa il gate reale del client (chiave submission-owned)', async () => {
+  const client = gatedClient({
+    '/api/modules/conversation/records/conv-2/actions/mark-read': { read: { id: 'conv-2' } },
+  });
+  const outcome = await runAssistantAction(
+    client,
+    {
+      id: 'bo04:segna-letta:conv-2', label: 'Segna come letta', kind: 'api',
+      request: { path: '/api/modules/conversation/records/conv-2/actions/mark-read', method: 'POST', body: {} },
+      customerFacing: false,
+    },
+    {},
+  );
+  assert.equal(outcome.ok, true);
+  assert.equal(client.calls.length, 1);
+  const key = client.calls[0].options.idempotencyKey;
+  assert.equal(requireSubmissionContext({ idempotencyKey: key }), key);
 });
 
 test('verso un cliente senza conferma: zero richieste, zero navigazioni', async () => {
@@ -292,6 +370,19 @@ test('probe: 404 o forma inattesa valgono dry-run, mai un errore', async () => {
   });
 });
 
+test('probe: un endpoint arbitrario sotto /api/ resta dry-run', async () => {
+  const sneaky = stubClient({
+    [ASSISTANT_STATUS_PATH]: { freeQuestions: 'enabled', endpoint: '/api/modules/conversation/records/conv-1/actions/close' },
+  });
+  assert.deepEqual(await probeAssistantBackend(sneaky), {
+    mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: FREE_QUESTION_DISABLED_NOTICE,
+  });
+  const lookalike = stubClient({
+    [ASSISTANT_STATUS_PATH]: { freeQuestions: 'enabled', endpoint: '/api/assistant-evil/ask' },
+  });
+  assert.equal((await probeAssistantBackend(lookalike)).mode, 'dry-run');
+});
+
 test('domanda libera in dry-run: rifiuto col messaggio chiave, zero richieste', async () => {
   const client = stubClient({
     [ASSISTANT_STATUS_PATH]: { freeQuestions: 'enabled', endpoint: '/api/assistant/ask' },
@@ -325,6 +416,23 @@ test('domanda libera live: cita solo fonti lette dal backend', async () => {
   assert.equal(outcome.ok, true);
   assert.deepEqual(outcome.answer.sources.map((source) => source.id), ['conv-1']);
   assert.ok(outcome.answer.sources[0].href.includes('conv-1'));
+});
+
+test('domande libere distinte hanno identità distinte e valide', async () => {
+  const seen = [];
+  const client = gatedClient({
+    '/api/assistant/ask': (path, options) => {
+      seen.push(options.idempotencyKey);
+      return { lines: ['ok'], sources: [] };
+    },
+  });
+  const live = { mode: 'live', endpoint: '/api/assistant/ask' };
+  // Same length, same first 32 chars: the old length+prefix scheme collided.
+  await askFreeQuestion(client, live, `${'A'.repeat(32)}${'X'.repeat(100)}`);
+  await askFreeQuestion(client, live, `${'A'.repeat(32)}${'Y'.repeat(100)}`);
+  assert.equal(seen.length, 2);
+  assert.notEqual(seen[0], seen[1]);
+  for (const key of seen) requireSubmissionContext({ idempotencyKey: key });
 });
 
 // Panel rendering: suggestions, sources as links, two-step confirm, dry-run box.
