@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full measurement in short pieces (backlog:9fff957f3968).
+# Full measurement in short pieces (backlog:9fff957f3968, backlog:664d5f481a96).
 #
 # The monolith (`node scripts/measure-suite.js --apply`, one `npm run verify`
 # ~25-40 minutes under a single machine-lock acquisition) queued every other
@@ -14,12 +14,24 @@
 #      instead of holding the machine;
 #   3. `measure-suite.js --combine`, which runs no tests and takes no lock.
 #
+# One waiter at a time (backlog:664d5f481a96): the pieces run strictly in
+# series in the loop below — each piece enters the machine-lock queue only
+# after the previous one released the lock, so this run never holds two
+# lock waiters at once (a backgrounded piece would queue beside Arvo with
+# its own aging: never background a piece here). `tests/measure-pieces.test.js`
+# pins the seriality by counting coexisting waiters through test doubles.
+#
 # Budgets (declared maxima, enforced by the wrapper): a normal piece gets
-# 600 s — the ~250 non-oracle files share ~25 minutes, so a normal piece
-# finishes in about five. The piece holding the full-oracle file
+# 900 s — the ~250 non-oracle files share ~25 minutes, so a normal piece
+# finishes in about five, with room for a loaded machine. `npm run check`
+# gets the same 900 s. The piece holding the full-oracle file
 # (HEAVY_MEASURE_FILE in measure-suite.js, ~13-20 minutes against its own
-# 40-minute driver budget) gets 1800 s. The dealing (`--plan`) marks that
-# piece, so no index is hardcoded here: the budget follows the file.
+# 40-minute driver budget) keeps 1800 s: the machine log shows it holding
+# 907-1070 s on recent scheduled runs, so a 900 s cap would kill healthy
+# runs red (DECISION to be confirmed: split the oracle corpus across pieces
+# so the heavy piece fits 900 s too; until then the exception stays). The
+# dealing (`--plan`) marks that piece, so no index is hardcoded here: the
+# budget follows the file.
 #
 # Usage: bash scripts/measure-pieces.sh [--apply]
 #   without --apply prints the { measuredAgainst } block (CI redirects it
@@ -47,8 +59,8 @@ fi
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/accordo-measure-pieces-XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
-echo "measure-pieces: check piece under its own lock (max 600s)…" >&2
-HEAVY_JOB_WAIT_SEC="${HEAVY_JOB_WAIT_SEC:-5400}" HEAVY_JOB_MAX_SEC=600 \
+echo "measure-pieces: check piece under its own lock (max 900s)…" >&2
+HEAVY_JOB_WAIT_SEC="${HEAVY_JOB_WAIT_SEC:-5400}" HEAVY_JOB_MAX_SEC=900 \
   scripts/ci-heavy.sh measure-check -- npm run check >&2
 
 node scripts/measure-suite.js --plan "$SHARDS" > "$scratch/plan.json"
@@ -56,9 +68,9 @@ for (( i = 1; i <= SHARDS; i++ )); do
   if node -e 'process.exit(require(process.argv[1]).pieces[Number(process.argv[2]) - 1].heavy ? 0 : 1)' \
     "$scratch/plan.json" "$i"; then
     max=1800
-    why="holds the full-oracle file"
+    why="holds the full-oracle file (DECISION backlog:664d5f481a96: 900 s would kill its healthy 907-1070 s runs)"
   else
-    max=600
+    max=900
     why="normal piece"
   fi
   echo "measure-pieces: piece $i of $SHARDS ($why, lock max ${max}s)…" >&2
