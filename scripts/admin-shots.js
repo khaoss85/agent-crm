@@ -25,6 +25,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { spawnGit } from './git-env.js';
 import { createHash } from 'node:crypto';
 import {
   cpSync,
@@ -156,8 +157,7 @@ async function main() {
   let baseRef;
   if (!beforeArg || beforeArg === 'origin/main') {
     baseRef = 'origin/main';
-    const shown = spawnSync('git', ['show', 'origin/main:apps/admin/public/styles.css'], {
-      encoding: 'utf8',
+    const shown = spawnGit(['show', 'origin/main:apps/admin/public/styles.css'], {
       maxBuffer: 4 * 1024 * 1024,
     });
     if (shown.status !== 0) {
@@ -178,8 +178,7 @@ async function main() {
     baseCss = kept.join('\n');
   } else {
     baseRef = beforeArg;
-    const shown = spawnSync('git', ['show', `${beforeArg}:apps/admin/public/styles.css`], {
-      encoding: 'utf8',
+    const shown = spawnGit(['show', `${beforeArg}:apps/admin/public/styles.css`], {
       maxBuffer: 4 * 1024 * 1024,
     });
     if (shown.status !== 0) {
