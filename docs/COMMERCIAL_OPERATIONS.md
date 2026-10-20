@@ -7,7 +7,9 @@ extraction record: `docs/plans/extract-commercial-operations-package.md`,
 behaviour preservation: `npm run characterize:commercial`). Everything below
 still holds — the extraction changed where the code lives, not what it does.
 The one wiring note: `POST /api/catalog/sync` and `app.syncCatalog` exist only
-while the package is composed. **Signature and Order are Milestone 11 (ADR-017,
+while the package is composed — and so do the manual-catalog routes
+(`GET /api/catalog/products`, `POST /api/catalog/products`,
+`POST /api/catalog/products/:id`, `.../:id/prices`, `.../:id/active`). **Signature and Order are Milestone 11 (ADR-017,
 `docs/SIGNATURE_ORDER.md`) and are not implemented in this milestone**; no
 taxes, currency conversion, metered usage, overage, proration, ramps, minimum
 commitments, attribute-based pricing, PDFs, payment or billing. Volume and
@@ -125,6 +127,35 @@ in the provider's declared `config` so its fingerprint covers every amount
 (a price change under a frozen version is drift and stops the next boot),
 and optional `externalId` / `externalOfferId` / `externalPriceId` fields
 carry the future payment mapping without claiming it.
+
+### Stripe catalog source
+
+`createStripeCatalogProvider({ name, version, stripe })`
+(`packages/commercial/src/stripe-catalog.js`) maps Stripe Products/Prices
+into the normalized catalog `syncCatalog` persists: one price book per
+currency, one product per Stripe product, one offer per Stripe price.
+Stripe ids ride along as `externalId` / `externalPriceId` and
+`sourcePricingModel: 'stripe:…'`; metered prices and non-month/year
+recurrences close only their own offer (`quoteEligible: false`), siblings
+stay quotable. The client is injected — `createFixtureStripeCatalogClient()`
+is the deterministic fake (no network, no credentials) until the owner
+provides real keys (`tests/commercial-stripe-catalog.test.js` guards the
+mapping and the marked sync). Name a Stripe-backed provider with `stripe`
+in its name: the product table reports `stripeConnected` off that
+convention, and the backoffice reads it for the "connect Stripe" invite.
+
+### Manual catalog
+
+`app.createManualProduct / updateManualProduct / setManualPrices /
+setManualProductActive / listCatalogProducts`
+(`packages/commercial/src/manual-catalog.js`) manage products whose price
+source is not a provider — no Stripe needed. Versions stay immutable, offers
+stay revisioned as a whole, and components pass `validatePriceComponent`,
+the same gate sync applies. Provider-owned rows are read-only:
+every manual mutation on them refuses with `PROVIDER_PRICE_READONLY`
+(the backoffice renders those price fields read-only when the Stripe source
+is active). `listCatalogProducts` is the backoffice product table: source,
+active flag, category filter, current prices with quantity-tier labels.
 
 ### Unsupported models fail closed
 
