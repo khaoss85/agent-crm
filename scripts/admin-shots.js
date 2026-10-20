@@ -16,11 +16,18 @@
  * app ships (`/styles.css`, `/app.js`) resolve to that side's bytes. The
  * servers stub the Admin read APIs with deterministic rows, so every captured
  * screen renders real `.badge` nodes. Before comparing, the script proves the
- * proof is not vacuous and exits 1 with no fixtures when any check fails:
- * each side must have served its own `/styles.css` with 200 and the expected
- * bytes (plus `/app.js` and `/index.html` with 200), every captured screen
- * must render at least one `.badge` node, and the rendered badge classes must
- * cover every state-colour group of the working-tree stylesheet.
+ * proof is not vacuous and exits 1 with no fixtures when any check fails.
+ * The checks run per Chromium invocation on its OWN request-log slice (never
+ * the union log): the screenshot run and the --dump-dom run must each have
+ * served this side's `/styles.css` with 200 and the expected bytes (plus
+ * `/app.js` and `/index.html` with 200), and both runs must show identical
+ * stub-API traffic — otherwise the compared PNGs and the counted DOM could
+ * describe different renders. Every captured screen must render at least one
+ * `.badge` node, and the rendered badge classes must cover every
+ * state-colour group of the working-tree stylesheet. The counted DOM of
+ * every screen/side is committed under `tests/fixtures/admin-shots/dom/`
+ * and the manifest test recomputes badge counts, coverage, PNG richness and
+ * the rendered no-authority proof from those files.
  *
  * Requires a Chromium binary (shared discovery in
  * `scripts/admin-shots-harness.js`: full browsers first, then the Playwright
@@ -47,11 +54,13 @@ import { join } from 'node:path';
 import { diffPng } from './admin-png-diff.js';
 import {
   STUB_VERSION,
+  apiFingerprint,
   chromiumCaptureFlags,
   countBadgeNodes,
   findChromium,
   isHeadlessShell,
   runProcess,
+  sideProofError,
   snipDom,
   startRootServer,
   stateBadgeGroups,
@@ -78,6 +87,14 @@ function sha256(data) {
  * Render one URL to a PNG screenshot plus its serialized DOM (after the
  * app's own fetches settle). Either artifact missing is a capture failure.
  *
+ * Two Chromium invocations per capture (screenshot, then --dump-dom), and
+ * each invocation proves itself: the shared request `log` is sliced around
+ * each run, and the screenshot run's OWN slice must show this side's assets
+ * with 200 — a union log cannot tell which run fetched what, so a blank
+ * screenshot run could otherwise hide behind a good DOM run (review finding
+ * on head b8fce9e1). The two slices must also carry identical stub-API
+ * traffic, so both renderings provably saw the same server responses.
+ *
  * Async on purpose: the loopback servers live in this same process, so a
  * synchronous spawn would starve them — Chromium's requests would never be
  * answered and every capture would dump an empty document (CI run
@@ -90,14 +107,16 @@ function sha256(data) {
  * @param {string} profileDir fresh Chromium profile (never the user's own:
  * without it a running desktop Chrome can swallow the request and exit
  * without writing any screenshot)
- * @returns {Promise<{ dom: string, domBytes: number, elapsedMs: number } | { error: string }>}
+ * @param {{ method: string, path: string, status: number, bytes: number }[]} log the side's shared request log
+ * @returns {Promise<{ dom: string, domBytes: number, elapsedMs: number, shotServed: { method: string, path: string, status: number, bytes: number }[], domServed: { method: string, path: string, status: number, bytes: number }[] } | { error: string }>}
  */
-async function capture(binary, url, frame, shotPath, profileDir) {
+async function capture(binary, url, frame, shotPath, profileDir, log) {
   // Flag order is fixed by the shared harness (proxy bypass and Chromium's
   // own render timeout included); the fresh per-capture profile is appended
   // by the caller.
   const flags = [...chromiumCaptureFlags(binary), `--user-data-dir=${profileDir}`];
   const startedAt = Date.now();
+  const shotMark = log.length;
   const shot = await runProcess(
     binary,
     [...flags, `--screenshot=${shotPath}`, `--window-size=${frame.width},${frame.height}`, url],
@@ -118,17 +137,20 @@ async function capture(binary, url, frame, shotPath, profileDir) {
     const stderr = typeof shot.stderr === 'string' ? shot.stderr.trim().split('\n').slice(-5).join(' | ') : '';
     return { error: `chromium wrote no screenshot (${binary.split('/').pop()}${spawnError}${status}${signal}${stderr ? ` stderr: ${stderr}` : ' no stderr'})` };
   }
+  const shotServed = log.slice(shotMark);
+  const domMark = log.length;
   const dom = await runProcess(binary, [...flags, '--dump-dom', url], {
     timeoutMs: 60_000,
     maxBuffer: 16 * 1024 * 1024,
   });
+  const domServed = log.slice(domMark);
   if (dom.timedOut) {
     return { error: 'chromium --dump-dom timed out after 60s' };
   }
   if (typeof dom.stdout !== 'string' || !dom.stdout.includes('<html')) {
     return { error: 'chromium produced no serialized DOM' };
   }
-  return { dom: dom.stdout, domBytes: Buffer.byteLength(dom.stdout), elapsedMs: Date.now() - startedAt };
+  return { dom: dom.stdout, domBytes: Buffer.byteLength(dom.stdout), elapsedMs: Date.now() - startedAt, shotServed, domServed };
 }
 
 async function main() {
@@ -206,7 +228,7 @@ async function main() {
     entry.port = typeof address === 'object' && address ? address.port : 0;
   }
 
-  /** @type {{ route: string, file: string, width: number, height: number, diffPixels: number, badgeNodesBefore: number, badgeNodesAfter: number }[]} */
+  /** @type {{ route: string, file: string, width: number, height: number, diffPixels: number, badgeNodesBefore: number, badgeNodesAfter: number, domBefore: string, domAfter: string, domShaBefore: string, domShaAfter: string }[]} */
   const compared = [];
   /** Union of rendered badge state classes across every capture. */
   const renderedStates = new Set();
@@ -231,9 +253,33 @@ async function main() {
         const url =
           `http://127.0.0.1:${entry.port}/index.html` + (target.route === '#/' ? '' : target.route);
         const profile = join(scratch, `profile-${entry.side}-${target.file}`);
-        const result = await capture(binary, url, target, output, profile);
+        const result = await capture(binary, url, target, output, profile, entry.log);
         if ('error' in result) {
           fail(`${entry.side}/${target.file}: ${result.error}`);
+          break;
+        }
+        // Each invocation proves itself on its OWN log slice: the screenshot
+        // run must have rendered this side's tree (its stylesheet bytes, app
+        // shell, boot script), not an empty shell the later DOM run covers.
+        const cssBytes = Buffer.byteLength(entry.css);
+        for (const [run, served] of [['screenshot', result.shotServed], ['dump-dom', result.domServed]]) {
+          const proofError = sideProofError(served, { side: entry.side, cssBytes });
+          if (proofError) {
+            fail(`${entry.side}/${target.file}: ${run} run: ${proofError}`);
+            break;
+          }
+        }
+        if (failed) break;
+        // Both renderings must have seen identical stub-API responses: same
+        // paths, same bytes. Otherwise the PNG and the counted DOM describe
+        // different renders and neither proves the other.
+        const shotApi = apiFingerprint(result.shotServed);
+        const domApi = apiFingerprint(result.domServed);
+        if (shotApi.length === 0 || domApi.length === 0 || shotApi.join('\n') !== domApi.join('\n')) {
+          fail(
+            `${entry.side}/${target.file}: screenshot and DOM runs saw different API traffic ` +
+              `(shot [${shotApi.join(', ')}] vs dom [${domApi.join(', ')}]) — the counted DOM may not describe the compared pixels`,
+          );
           break;
         }
         shots[entry.side] = readFileSync(output);
@@ -245,6 +291,9 @@ async function main() {
           domHead: snipDom(result.dom),
         };
         for (const state of counted.states) renderedStates.add(state);
+        // Persist the exact DOM the badge gate counted: the manifest test
+        // recomputes from these files instead of trusting the manifest.
+        writeFileSync(join(scratch, `dom-${entry.side}-${target.file}.html`), result.dom);
       }
       if (failed || !shots.before || !shots.after) {
         failed = true;
@@ -288,36 +337,26 @@ async function main() {
         );
         break;
       }
-      compared.push({ ...target, diffPixels: 0, badgeNodesBefore: badgeCounts.before, badgeNodesAfter: badgeCounts.after });
+      const domBase = target.file.replace(/\.png$/, '.html');
+      compared.push({
+        ...target,
+        diffPixels: 0,
+        badgeNodesBefore: badgeCounts.before,
+        badgeNodesAfter: badgeCounts.after,
+        domBefore: `before-${domBase}`,
+        domAfter: `after-${domBase}`,
+        domShaBefore: sha256(readFileSync(join(scratch, `dom-before-${target.file}.html`), 'utf8')),
+        domShaAfter: sha256(readFileSync(join(scratch, `dom-after-${target.file}.html`), 'utf8')),
+      });
       // Keep the passing pair for the fixture write below.
       writeFileSync(join(scratch, `keep-before-${target.file}`), shots.before);
       writeFileSync(join(scratch, `keep-after-${target.file}`), shots.after);
     }
 
-    if (!failed) {
-      // The proof is only as good as its setup: each side must have served
-      // its OWN stylesheet (200, expected bytes) plus the app shell, and the
-      // rendered badges must cover every state-colour group.
-      for (const entry of sides) {
-        const cssHits = entry.log.filter((item) => item.path === '/styles.css' && item.status === 200);
-        if (cssHits.length === 0) {
-          fail(`${entry.side}: /styles.css was never fetched with 200 — the diff compared unstyled markup`);
-          break;
-        }
-        const expectedBytes = Buffer.byteLength(entry.css);
-        if (!cssHits.some((item) => item.bytes === expectedBytes)) {
-          fail(`${entry.side}: /styles.css bytes never matched this side's stylesheet — the diff compared the wrong CSS`);
-          break;
-        }
-        for (const asset of ['/app.js', '/index.html']) {
-          if (!entry.log.some((item) => item.path === asset && item.status === 200)) {
-            fail(`${entry.side}: ${asset} was never fetched with 200 — the app did not boot from this side's tree`);
-            break;
-          }
-        }
-        if (failed) break;
-      }
-    }
+    // Per-run asset proof and API-traffic equality already ran per capture
+    // above (on each invocation's own log slice, not the union log). What
+    // remains is the coverage gate: the rendered badges must span every
+    // state-colour group, or a restyle of a pair moves no pixel in the proof.
 
     /** @type {string[]} */
     let uncoveredGroups = [];
@@ -344,12 +383,15 @@ async function main() {
 
   mkdirSync(join(FIXTURES, 'before'), { recursive: true });
   mkdirSync(join(FIXTURES, 'after'), { recursive: true });
+  mkdirSync(join(FIXTURES, 'dom'), { recursive: true });
   for (const target of compared) {
     cpSync(join(scratch, `keep-before-${target.file}`), join(FIXTURES, 'before', target.file));
     cpSync(join(scratch, `keep-after-${target.file}`), join(FIXTURES, 'after', target.file));
+    cpSync(join(scratch, `dom-before-${target.file}.html`), join(FIXTURES, 'dom', target.domBefore));
+    cpSync(join(scratch, `dom-after-${target.file}.html`), join(FIXTURES, 'dom', target.domAfter));
   }
   const manifest = {
-    version: 1,
+    version: 2,
     backend: 'stubbed-api',
     stubVersion: STUB_VERSION,
     baseRef,
@@ -359,13 +401,17 @@ async function main() {
     renderer: binary.split('/').pop(),
     command: `npm run admin:shots${beforeArg ? ` -- --before=${beforeArg}` : ''}`,
     stateGroupsCovered: stateGroups.length,
-    screens: compared.map(({ route, file, width, height, badgeNodesBefore, badgeNodesAfter }) => ({
+    screens: compared.map(({ route, file, width, height, badgeNodesBefore, badgeNodesAfter, domBefore, domAfter, domShaBefore, domShaAfter }) => ({
       route,
       file,
       width,
       height,
       badgeNodesBefore,
       badgeNodesAfter,
+      domBefore,
+      domAfter,
+      domShaBefore,
+      domShaAfter,
     })),
   };
   writeFileSync(join(FIXTURES, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);

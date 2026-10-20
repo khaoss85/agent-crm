@@ -142,6 +142,47 @@ test('the badge census is closed: base, five state rules, six authority rules', 
   );
 });
 
+/**
+ * Every shipped `.js`/`.html` source under the Admin public tree, at any
+ * depth, as a path relative to that tree. New views land in subdirectories;
+ * a top-level listing would miss them and the scan would stay green while
+ * new authority-badge pixels ship without a re-capture.
+ * @param {string} dir
+ * @returns {string[]}
+ */
+function collectShippedSources(dir) {
+  const found = [];
+  /** @param {string} current @param {string} prefix */
+  const walk = (current, prefix) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        walk(join(current, entry.name), `${prefix}${entry.name}/`);
+      } else if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.html'))) {
+        found.push(`${prefix}${entry.name}`);
+      }
+    }
+  };
+  walk(dir, '');
+  return found.sort();
+}
+
+/**
+ * Patterns that all produce the identical matched attribute
+ * `.badge[data-authority="<id>"]` without containing the literal
+ * `data-authority`: the codebase already sets attributes through the DOM
+ * (`button.dataset.stage`, `row.setAttribute(...)` in admin-work.js), so a
+ * future view could paint authority badges via `node.dataset.authority =
+ * 'agent'` while the literal scan stays green (review finding on head
+ * b8fce9e1).
+ */
+const PRODUCER_PATTERNS = [
+  ['literal data-authority', /data-authority/],
+  ['dataset.authority', /dataset\s*(?:\.\s*authority|\[\s*['"]authority['"]\s*\])/],
+  ['dataAuthority identifier', /dataAuthority/],
+  ['split setAttribute', /setAttribute\s*\(\s*['"]data-['"]\s*\+\s*['"]authority/],
+  ['createAttribute(authority)', /createAttribute\s*\([^)]*authority/i],
+];
+
 test('no shipped markup or script can match an authority selector', () => {
   // The six rules above paint only `.badge[data-authority="<id>"]`. That
   // attribute appears in styles.css (the definitions) and nowhere else, so no
@@ -151,11 +192,14 @@ test('no shipped markup or script can match an authority selector', () => {
   // the story id and re-capture the proof with `npm run admin:shots`.
   const pub = join(root, 'apps/admin/public');
   const producers = [];
-  const entries = readdirSync(pub);
-  for (const file of [...entries, 'index.html']) {
-    if (!file.endsWith('.js') && !file.endsWith('.html')) continue;
+  for (const file of collectShippedSources(pub)) {
     const source = readFileSync(join(pub, file), 'utf8');
-    if (source.includes('data-authority')) producers.push(file);
+    for (const [name, pattern] of PRODUCER_PATTERNS) {
+      if (pattern.test(source)) {
+        producers.push(`${file} (${name})`);
+        break;
+      }
+    }
   }
   assert.deepEqual(producers, [], 'existing screens must not produce data-authority elements');
 });

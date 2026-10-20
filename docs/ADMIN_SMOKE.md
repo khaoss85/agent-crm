@@ -588,17 +588,28 @@ pixel on the existing Admin screens, plus the CI tests that lock the reason.
    (`stubbed-api` backend, `STUB_VERSION` in `scripts/admin-shots-harness.js`),
    then screenshots `#/` and `#/work` at 1280x800 before and after plus each
    screen's serialized DOM, and pixel-diffs each pair with
-   `scripts/admin-png-diff.js`. Only on zero differing pixels writes
-   `tests/fixtures/admin-shots/before|after/*.png` plus `manifest.json`
-   (base/head stylesheet shas, renderer, timestamp, per-screen badge counts).
-   Any differing pixel exits 1 and writes nothing, as does any vacuous setup:
-   a side that never served its own stylesheet with 200, a screen that
-   rendered no `.badge` node, or badge classes that stop covering a
-   state-colour group.
+   `scripts/admin-png-diff.js`. Each Chromium invocation (screenshot and
+   `--dump-dom`) proves itself on its own request-log slice: both runs must
+   have served that side's stylesheet bytes plus the app shell, and both runs
+   must show identical stub-API traffic — otherwise the PNG and the counted
+   DOM could describe different renders. Only on zero differing pixels writes
+   `tests/fixtures/admin-shots/before|after/*.png`, the counted DOMs under
+   `tests/fixtures/admin-shots/dom/`, plus `manifest.json` (base/head
+   stylesheet shas, renderer, timestamp, per-screen badge counts and DOM
+   shas). Any differing pixel exits 1 and writes nothing, as does any vacuous
+   setup: a run that never served its own stylesheet with 200, a screen that
+   rendered no `.badge` node, badge classes that stop covering a
+   state-colour group, or two runs with different API traffic. The manifest
+   test recomputes badge counts, group coverage, PNG richness and the
+   rendered no-authority proof from the committed files, never from manifest
+   numbers alone.
 3. `tests/admin-authority-tokens.test.js` pins why the pairs must be
    identical: the badge census (one base, five state, six authority rules),
    the verbatim baseline pairs, and the proof that no shipped markup or script
-   produces a `data-authority` element.
+   produces a `data-authority` element — scanned recursively at any depth,
+   including the dynamic forms (`dataset.authority`, split `setAttribute`,
+   `createAttribute`) that produce the identical matched attribute without
+   the literal.
 4. Re-capture whenever `apps/admin/public/styles.css` badge rules change; a
    future view that starts using `data-authority` updates the producers test
    with its story id and re-captures.

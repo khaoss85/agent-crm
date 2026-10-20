@@ -13,11 +13,14 @@ import { join } from 'node:path';
 
 import {
   STUB_VERSION,
+  apiFingerprint,
   chromiumCaptureFlags,
   countBadgeNodes,
+  countDistinctRgb,
   findChromium,
   isHeadlessShell,
   runProcess,
+  sideProofError,
   snipDom,
   startRootServer,
   stateBadgeGroups,
@@ -300,6 +303,90 @@ test('runProcess keeps the loopback servers answering while a subprocess runs', 
   } finally {
     close();
   }
+});
+
+test('sideProofError trusts one invocation, never the union log', () => {
+  const css = '.badge { color: red; }';
+  const cssBytes = Buffer.byteLength(css);
+  const good = [
+    { method: 'GET', path: '/index.html', status: 200, bytes: 100 },
+    { method: 'GET', path: '/styles.css', status: 200, bytes: cssBytes },
+    { method: 'GET', path: '/app.js', status: 200, bytes: 50 },
+  ];
+  assert.equal(sideProofError(good, { side: 'after', cssBytes }), null, 'a run that served its own tree passes');
+  // A blank screenshot run (no asset fetched) must fail even when a later
+  // DOM run fetched everything: the union of the two slices is good, each
+  // slice alone is not.
+  assert.match(
+    sideProofError([], { side: 'after', cssBytes }),
+    /never fetched \/styles\.css/,
+    'an empty slice fails closed',
+  );
+  assert.match(
+    sideProofError(
+      good.filter((item) => item.path !== '/styles.css'),
+      { side: 'after', cssBytes },
+    ),
+    /never fetched \/styles\.css/,
+    'a slice without the stylesheet fails',
+  );
+  assert.match(
+    sideProofError(
+      good.map((item) => (item.path === '/styles.css' ? { ...item, bytes: cssBytes + 1 } : item)),
+      { side: 'after', cssBytes },
+    ),
+    /never served this side's stylesheet bytes/,
+    'a slice with the other side’s bytes fails',
+  );
+  assert.match(
+    sideProofError(
+      good.filter((item) => item.path !== '/app.js'),
+      { side: 'after', cssBytes },
+    ),
+    /\/app\.js/,
+    'a slice without the boot script fails',
+  );
+});
+
+test('apiFingerprint distinguishes renders that saw different responses', () => {
+  const shot = [
+    { method: 'GET', path: '/index.html', status: 200, bytes: 100 },
+    { method: 'GET', path: '/api/approvals', status: 200, bytes: 42 },
+    { method: 'GET', path: '/api/traces', status: 200, bytes: 17 },
+  ];
+  const same = [...shot].reverse();
+  const stale = [
+    { method: 'GET', path: '/index.html', status: 200, bytes: 100 },
+    { method: 'GET', path: '/api/approvals', status: 200, bytes: 43 },
+    { method: 'GET', path: '/api/traces', status: 200, bytes: 17 },
+  ];
+  assert.deepEqual(apiFingerprint(shot), apiFingerprint(same), 'order does not matter, bytes do');
+  assert.deepEqual(
+    apiFingerprint([...shot, { method: 'GET', path: '/api/traces', status: 200, bytes: 17 }]),
+    apiFingerprint(shot),
+    'a refetch of identical bytes is the same render input',
+  );
+  assert.notDeepEqual(apiFingerprint(shot), apiFingerprint(stale), 'one changed byte changes the fingerprint');
+  assert.deepEqual(apiFingerprint([]), [], 'a run with no API traffic fingerprints empty, never undefined');
+  assert.deepEqual(
+    apiFingerprint([{ method: 'GET', path: '/api/approvals', status: 404, bytes: 0 }]),
+    [],
+    'only 200 answers count: a failed fetch is not rendered data',
+  );
+});
+
+test('countDistinctRgb separates a rendered screen from a blank capture', () => {
+  const blank = Buffer.alloc(1280 * 800 * 4, 255);
+  assert.equal(countDistinctRgb(blank), 1, 'a white capture has one colour');
+  const screen = Buffer.alloc(64 * 4);
+  for (let i = 0; i < 64; i++) {
+    screen[i * 4] = i * 4;
+    screen[i * 4 + 1] = 255 - i;
+    screen[i * 4 + 2] = (i * 7) % 256;
+    screen[i * 4 + 3] = 255;
+  }
+  assert.equal(countDistinctRgb(screen), 64, 'every distinct triple counts');
+  assert.equal(countDistinctRgb(screen, 10), 10, 'the count stops at the limit');
 });
 
 test('runProcess times out a hung subprocess instead of waiting forever', async () => {

@@ -37,6 +37,8 @@ jobs:
         env:
           ADMIN_SHOTS_BEFORE: ${{ inputs.before }}
         run: npm run admin:shots -- --before="$ADMIN_SHOTS_BEFORE"
+      - name: Lock the evidence on the runner's fresh fixtures
+        run: node --no-warnings --test tests/admin-shots-manifest.test.js tests/admin-shots-harness.test.js tests/admin-png-diff.test.js tests/admin-authority-tokens.test.js
       - name: Print the manifest
         run: cat tests/fixtures/admin-shots/manifest.json
       - uses: actions/upload-artifact@v4

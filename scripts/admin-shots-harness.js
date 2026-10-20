@@ -7,18 +7,27 @@
  * `tests/admin-shots-harness.test.js` unit-tests this module with no browser.
  * `tests/admin-shots-manifest.test.js` locks the captured fixtures.
  *
- * Two facts keep the proof from being vacuous (both were review findings on
- * the first harness, which served one /before|after mount with an empty
- * backend):
+ * Three facts keep the proof from being vacuous (the first two were review
+ * findings on the first harness, which served one /before|after mount with
+ * an empty backend; the third on head b8fce9e1, where the screenshot and the
+ * counted DOM came from two runs sharing one union log):
  *
  * 1. Each side is served at the DOCUMENT ROOT of its own loopback server, so
  *    the absolute asset URLs the app ships (`/styles.css`, `/app.js`) resolve
- *    to that side's frozen tree. The capture asserts every side answered its
- *    own `/styles.css` with 200 and the expected bytes before comparing.
+ *    to that side's frozen tree. Each Chromium invocation proves itself on
+ *    its OWN request-log slice (`sideProofError`): the screenshot run and
+ *    the --dump-dom run must each have served this side's bytes.
  * 2. The servers stub the Admin read APIs with deterministic rows, so every
  *    captured screen renders real `.badge` nodes covering each state-colour
- *    group. The capture fails when a screen renders no badge, or when the
- *    rendered badge classes stop covering a state group.
+ *    group. The capture fails when a screen renders no badge, when the
+ *    rendered badge classes stop covering a state group, and when the two
+ *    runs of one capture show different stub-API traffic (`apiFingerprint`)
+ *    — so the compared PNGs and the counted DOM describe the same render.
+ * 3. The counted DOM of every screen/side is committed under
+ *    `tests/fixtures/admin-shots/dom/` and the manifest test recomputes
+ *    badge counts, group coverage, PNG richness (`countDistinctRgb`) and
+ *    the rendered no-authority proof from committed files — never from
+ *    manifest numbers alone.
  */
 
 import { spawn } from 'node:child_process';
@@ -451,6 +460,73 @@ export function runProcess(command, args, { timeoutMs = 60_000, maxBuffer = 16 *
       done({ status, signal: signal ?? null, timedOut: false, error: undefined }),
     );
   });
+}
+
+/**
+ * Fingerprint of the stub-API traffic inside one Chromium invocation's served
+ * slice: sorted unique `path=bytes` entries for the 200 API answers
+ * (deduplicated: a refetch of identical bytes is the same render input, not
+ * a different one). The capture requires the screenshot run's fingerprint to
+ * equal the --dump-dom run's, so both renderings provably saw identical
+ * server responses — a blank or stale screenshot run cannot hide behind a
+ * good DOM run.
+ * @param {{ method: string, path: string, status: number, bytes: number }[]} served one invocation's log slice
+ * @returns {string[]}
+ */
+export function apiFingerprint(served) {
+  return [
+    ...new Set(
+      (Array.isArray(served) ? served : [])
+        .filter((item) => item && typeof item.path === 'string' && item.path.startsWith('/api/') && item.status === 200)
+        .map((item) => `${item.path}=${item.bytes}b`),
+    ),
+  ].sort();
+}
+
+/**
+ * Fail-closed proof that one Chromium invocation actually rendered this
+ * side's tree: its own `/styles.css` with 200 and the expected bytes, plus
+ * `/app.js` and `/index.html` with 200. Call it on each invocation's OWN log
+ * slice (requests served while that invocation ran), never on the union log:
+ * the union cannot tell which run fetched what. Returns null when the proof
+ * holds, else the human-readable reason.
+ * @param {{ method: string, path: string, status: number, bytes: number }[]} served one invocation's log slice
+ * @param {{ side: string, cssBytes: number }} expected
+ * @returns {string | null}
+ */
+export function sideProofError(served, { side, cssBytes }) {
+  const slice = Array.isArray(served) ? served : [];
+  const cssHits = slice.filter((item) => item.path === '/styles.css' && item.status === 200);
+  if (cssHits.length === 0) {
+    return `${side}: its own run never fetched /styles.css with 200 — the pixels compared no stylesheet`;
+  }
+  if (!cssHits.some((item) => item.bytes === cssBytes)) {
+    return `${side}: its own run never served this side's stylesheet bytes — the diff compared the wrong CSS`;
+  }
+  for (const asset of ['/app.js', '/index.html']) {
+    if (!slice.some((item) => item.path === asset && item.status === 200)) {
+      return `${side}: its own run never fetched ${asset} with 200 — the app did not boot from this side's tree`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Distinct RGB triples in decoded RGBA pixels, counted up to `limit` (then
+ * reported as `limit`, i.e. "at least this many"). The manifest test uses it
+ * as the PNG non-vacuity gate: a blank or shell-only capture has a handful
+ * of colours, a real Admin screen thousands.
+ * @param {Buffer} pixels RGBA bytes (e.g. `decodePng` output)
+ * @param {number} [limit]
+ */
+export function countDistinctRgb(pixels, limit = 4096) {
+  const seen = new Set();
+  const bytes = Buffer.isBuffer(pixels) ? pixels : Buffer.from([]);
+  for (let i = 0; i + 2 < bytes.length; i += 4) {
+    seen.add((bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2]);
+    if (seen.size >= limit) return limit;
+  }
+  return seen.size;
 }
 
 /**
