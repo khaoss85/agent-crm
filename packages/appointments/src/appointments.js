@@ -1,5 +1,7 @@
 // @ts-check
 
+import { createHash } from 'node:crypto';
+
 import {
   AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate, requireAmount,
@@ -460,6 +462,43 @@ export function findOverlap(candidate, held) {
  * proves the SQLite leg on a real file database.
  */
 const memberBookingChains = new Map();
+
+/**
+ * One appointment, one advancer at a time — in this process.
+ *
+ * `advanceAppointment` re-reads the row and then writes the transition: two
+ * advances interleaved on one process can both read `booked` before either
+ * writes, and both write `confirmed` — duplicate audit/events — or a stale
+ * confirmation can overwrite a concurrent cancellation. The chain below
+ * serializes the re-read and the write per appointment id, with the same
+ * attach-synchronously discipline as the booking chain above, so the loser
+ * re-reads the winner's committed transition (409, never a silent
+ * overwrite). Across connections the booking envelope below serializes
+ * writers on real storage — SQLite `BEGIN IMMEDIATE` holds the second
+ * connection until the winner commits, Postgres `SERIALIZABLE` refuses the
+ * loser with a retryable conflict whose retry re-reads the winner. The two
+ * chains never nest (a booking holds the member chain, an advance holds the
+ * id chain, never both at once), so they cannot deadlock each other.
+ */
+const appointmentAdvanceChains = new Map();
+
+/** @param {string} recordId @param {() => Promise<any>} critical */
+async function withAppointmentAdvance(recordId, critical) {
+  const previous = appointmentAdvanceChains.get(recordId) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise((resolve) => { release = resolve; });
+  const tail = previous.then(() => current, () => current);
+  appointmentAdvanceChains.set(recordId, tail);
+  // Synchronous until here: two callers racing in the same tick still order.
+  await previous;
+  try {
+    return await critical();
+  } finally {
+    // Remove only our own tail: a waiter queued behind us owns the slot now.
+    if (appointmentAdvanceChains.get(recordId) === tail) appointmentAdvanceChains.delete(recordId);
+    release();
+  }
+}
 
 /** @param {string} teamMemberId @param {() => Promise<any>} critical */
 async function withMemberBooking(teamMemberId, critical) {
@@ -958,9 +997,12 @@ async function replayReminder(context, { input, source }) {
  * The move is enforced against the row as stored, re-read inside this call —
  * never against the caller-supplied copy, which another writer may have moved
  * since it was read. A stale copy advancing from a state the row already left
- * is refused 409. (Residual: two advances racing between the re-read and the
- * write can still interleave; inside a package action the transaction envelope
- * closes the window.)
+ * is refused 409. The re-read and the write run serialized per appointment
+ * id on this process, and inside the storage handle's own transaction on a
+ * real database when one is available and no caller transaction is open —
+ * so two confirms of one booking advance once (the loser re-reads the
+ * winner's `confirmed` and answers it), and a confirm racing a cancellation
+ * never overwrites the winner.
  */
 export async function advanceAppointment({ appointments, actor, now }, record, to, reason) {
   // A state change names its author, like the booking path does: an undefined
@@ -979,23 +1021,35 @@ export async function advanceAppointment({ appointments, actor, now }, record, t
   // read surfaces the storage's own NotFoundError rather than advancing a
   // ghost.
   const recordId = safeText(record?.id, 'id', MAX_ID);
-  const current = await appointments.get(recordId);
-  const allowed = APPOINTMENT_TRANSITIONS[current.status] ?? [];
-  if (!APPOINTMENT_STATES.includes(target) || !allowed.includes(target)) {
-    throw new AppError(
-      `An appointment in state "${current.status}" cannot advance to "${target}"`
+  const runInTransaction = bookingTransaction(appointments);
+  const critical = async () => {
+    const current = await appointments.get(recordId);
+    const allowed = APPOINTMENT_TRANSITIONS[current.status] ?? [];
+    if (!APPOINTMENT_STATES.includes(target) || !allowed.includes(target)) {
+      throw new AppError(
+        `An appointment in state "${current.status}" cannot advance to "${target}"`
         + (allowed.length > 0 ? `; it may advance to ${allowed.join(' or ')}` : '; it is terminal and advances nowhere'),
-      { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: current.status, to: target, allowed } },
+        { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: current.status, to: target, allowed } },
+      );
+    }
+    const cancelReason = target === CANCELLED_STATE
+      ? safeText(reason, 'cancelReason', MAX_REASON)
+      : null;
+    if (target !== CANCELLED_STATE && reason !== undefined && reason !== null && reason !== '') {
+      throw new ValidationError('cancelReason is recorded only when an appointment is cancelled', { field: 'cancelReason' });
+    }
+    const stamp = typeof now === 'function' ? now() : new Date().toISOString();
+    return appointments.applyManaged(current.id, { status: target, cancelReason, decidedAt: stamp }, { actor });
+  };
+  // The re-read and the write above are one critical section per appointment:
+  // the id chain orders same-process advancers so the loser re-reads the
+  // winner, and the booking envelope orders cross-connection writers on real
+  // storage (reused here: it is generic over the record service, not tied to
+  // the insert it was written for).
+  return withAppointmentAdvance(
+    recordId,
+    runInTransaction ? () => runInTransaction(critical) : critical,
     );
-  }
-  const cancelReason = target === CANCELLED_STATE
-    ? safeText(reason, 'cancelReason', MAX_REASON)
-    : null;
-  if (target !== CANCELLED_STATE && reason !== undefined && reason !== null && reason !== '') {
-    throw new ValidationError('cancelReason is recorded only when an appointment is cancelled', { field: 'cancelReason' });
-  }
-  const stamp = typeof now === 'function' ? now() : new Date().toISOString();
-  return appointments.applyManaged(current.id, { status: target, cancelReason, decidedAt: stamp }, { actor });
 }
 
 /**
@@ -1160,6 +1214,630 @@ export async function readTeamWeek({ appointments }, filter) {
 }
 
 /**
+ * The BO-F3-02 booking flow ("07 Calendario"): propose slots from real
+ * availability, confirm explicitly, book online idempotently.
+ *
+ * Three rules, one section:
+ *
+ * - Slots are read, never invented: `suggestSlots` steps the named window and
+ *   keeps the steps no held booking overlaps, using the same exact-match
+ *   reads and the same `findOverlap` invariant the booking path enforces. A
+ *   held row whose slot cannot be proven fails the suggestion closed, exactly
+ *   like it fails the booking — never a silent free slot over a corrupt row.
+ * - Nothing is created without confirmation: `proposeBooking` never writes
+ *   an appointment row. With the space's `book-appointments` switch on it
+ *   answers a draft the caller confirms; with the switch off it records a
+ *   `space-ai-proposal` through the permission gate and stops. `confirmBooking`
+ *   refuses without `confirmed: true`, re-checks the switch, then books,
+ *   advances `booked -> confirmed` and — when the caller names a calendar —
+ *   pushes the event through calendar-sync.
+ * - An online booking link is idempotent by construction: `bookFromLink`
+ *   derives the booking source key deterministically from the link token and
+ *   the slot, so a retried or doubled submission replays the winner's row
+ *   (or 409s on a divergent claim) instead of writing a second booking, and
+ *   the member serialization plus the source-key unique guard serialize the
+ *   race. The link path reads the same `book-appointments` switch as
+ *   propose/confirm: switch on books, switch off records a
+ *   `space-ai-proposal` and stays a proposal — a published link never
+ *   bypasses a switch the owner turned off.
+ *
+ * No new record, no new module: the flow reads and writes the appointment
+ * rows, the work follow-up and the space-ai-proposal rows that already exist,
+ * through the capabilities that already own them. Cross-package handles (the
+ * permission gate, the phrase LLM, the calendar push) arrive injected and
+ * opened — never imported, never re-instantiated here.
+ */
+
+/** The BO-F0-06 switch this flow gates agent-initiated bookings on. */
+export const BOOK_APPOINTMENTS_PERMISSION = 'book-appointments';
+
+/** The proposal kind recorded when the switch is off. */
+export const PROPOSE_ACTION_KIND = 'book-appointment';
+
+/** Step granularities a suggestion window may be cut into, in minutes. */
+export const SUGGEST_SLOT_MINUTES = Object.freeze([15, 30, 45, 60, 90, 120]);
+
+const MAX_SUGGEST_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
+const MAX_SUGGEST_STEPS_PER_MEMBER = 2000;
+const MAX_PHRASE = 500;
+const LINK_TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/;
+const LINK_SOURCE_PREFIX = 'booking-link:';
+const DRAFT_SERVICE_KEY_RE = /^[a-z][a-z0-9-]{0,47}$/;
+
+/** The opened permission gate, or a named refusal when the flow needs one. */
+function requireFlowPermissionGate(context) {
+  const gate = context?.permissionGate ?? null;
+  if (!gate || typeof gate.gate !== 'function' || typeof gate.propose !== 'function') {
+    throw new AppError(
+      'The appointments package is composed without an opened space-permission-gate@1 capability, '
+      + 'so a permission-aware booking (propose or confirm with a space) cannot read the space switch',
+      { code: 'APPOINTMENTS_PERMISSION_UNAVAILABLE', status: 500 },
+    );
+  }
+  return gate;
+}
+
+/** The appointment record service behind the caller's modules view. */
+function flowAppointments(context, names) {
+  const service = resolveModule(context?.modules, names?.appointment)?.service;
+  if (!service?.listWhere) {
+    throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
+      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
+    });
+  }
+  return service;
+}
+
+/**
+ * Validate the suggestion filter: named members (never a scan — there is no
+ * roster to scan), a bounded window, a step from the fixed set.
+ */
+function validateSuggestFilter(filter) {
+  const value = filter && typeof filter === 'object' && !Array.isArray(filter) ? filter : {};
+  if (!Array.isArray(value.teamMemberIds) || value.teamMemberIds.length === 0) {
+    throw new ValidationError('teamMemberIds names at least one team member: a suggestion for nobody suggests nothing', {
+      field: 'teamMemberIds',
+    });
+  }
+  // Same bound as the team week: the team is named per call, never scanned,
+  // because there is no roster to scan.
+  if (value.teamMemberIds.length > MAX_TEAM_WEEK_MEMBERS) {
+    throw new ValidationError(`teamMemberIds names at most ${MAX_TEAM_WEEK_MEMBERS} team members per call`, {
+      field: 'teamMemberIds',
+    });
+  }
+  const seen = new Set();
+  const members = [];
+  value.teamMemberIds.forEach((member, index) => {
+    const id = safeText(member, `teamMemberIds[${index}]`, MAX_ID);
+    if (!seen.has(id)) {
+      seen.add(id);
+      members.push(id);
+    }
+  });
+  const from = realIsoInstant(value.from, 'from');
+  const to = realIsoInstant(value.to, 'to');
+  if (to.ms <= from.ms) {
+    throw new ValidationError('to must be after from: a window with no duration holds no slots', { field: 'to' });
+  }
+  if (to.ms - from.ms > MAX_SUGGEST_WINDOW_MS) {
+    throw new ValidationError('a suggestion window spans at most 31 days: a wider window is a report, not a suggestion', {
+      field: 'to',
+    });
+  }
+  const slotMinutes = value.slotMinutes === undefined || value.slotMinutes === null ? 30 : value.slotMinutes;
+  if (!Number.isSafeInteger(slotMinutes) || !SUGGEST_SLOT_MINUTES.includes(slotMinutes)) {
+    throw new ValidationError(`slotMinutes must be one of ${SUGGEST_SLOT_MINUTES.join(', ')}`, { field: 'slotMinutes' });
+  }
+  const steps = Math.floor((to.ms - from.ms) / (slotMinutes * 60 * 1000));
+  if (steps > MAX_SUGGEST_STEPS_PER_MEMBER) {
+    throw new ValidationError(
+      `this window cut into ${slotMinutes}-minute steps is ${steps} slots per member: narrow the window (at most ${MAX_SUGGEST_STEPS_PER_MEMBER})`,
+      { field: 'to' },
+    );
+  }
+  return {
+    members, fromMs: from.ms, toMs: to.ms, fromIso: from.iso, toIso: to.iso, slotMinutes,
+  };
+}
+
+/**
+ * Suggest free slots from real availability (BO-F3-02): the named window cut
+ * into `slotMinutes` steps, minus every step a held booking overlaps. Read
+ * only: no row is written, no slot is invented. Cancelled bookings hold
+ * nothing; every other state holds its slot — the same rule `findOverlap`
+ * enforces, reused here so a suggestion never offers a slot the booking path
+ * would refuse.
+ *
+ * @param {{modules: any, moduleNames?: Record<string, string>}} storage
+ */
+export async function suggestSlots({ modules, moduleNames }, filter) {
+  const names = { appointment: moduleNames?.appointment ?? 'appointment' };
+  const appointments = flowAppointments({ modules }, names);
+  const checked = validateSuggestFilter(filter);
+  const slotMs = checked.slotMinutes * 60 * 1000;
+  const groups = [];
+  for (const teamMemberId of checked.members) {
+    const held = await appointments.listWhere({ teamMemberId });
+    const slots = [];
+    for (let start = checked.fromMs; start + slotMs <= checked.toMs; start += slotMs) {
+      const candidate = { teamMemberId, startMs: start, endMs: start + slotMs };
+      // findOverlap throws on a held row whose slot cannot be proven: a
+      // corrupt witness fails the suggestion closed, never a silent free slot.
+      if (findOverlap(candidate, held) === null) {
+        slots.push(Object.freeze({
+          startsAt: new Date(start).toISOString(),
+          endsAt: new Date(start + slotMs).toISOString(),
+        }));
+      }
+    }
+    groups.push(Object.freeze({ teamMemberId, slots: Object.freeze(slots) }));
+  }
+  return Object.freeze({
+    from: checked.fromIso,
+    to: checked.toIso,
+    slotMinutes: checked.slotMinutes,
+    members: Object.freeze(groups),
+  });
+}
+
+/**
+ * The validated booking subset a `confirm-required` draft carries: everything
+ * the confirm re-validates, minus the internal millisecond bounds.
+ */
+function publicDraft(input) {
+  return Object.freeze({
+    sourceKey: input.sourceKey,
+    subject: Object.freeze({ ...input.subject }),
+    teamMemberId: input.teamMemberId,
+    serviceKey: input.serviceKey,
+    priceCents: input.priceCents,
+    currency: input.currency,
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    notes: input.notes,
+    remindAt: input.remindAt,
+    reminderChannel: input.reminderChannel === null ? null : Object.freeze({
+      spaceId: input.reminderChannel.spaceId,
+      connectionKey: input.reminderChannel.connectionKey,
+      to: input.reminderChannel.to,
+      template: Object.freeze({
+        name: input.reminderChannel.template.name,
+        language: input.reminderChannel.template.language,
+        variables: Object.freeze([...input.reminderChannel.template.variables]),
+      }),
+    }),
+    source: Object.freeze({ ...input.source }),
+  });
+}
+
+/** The gate replays an open proposal for one action key: bind that key to
+ * the whole booking claim, not just its source key. The booking path treats
+ * the customer, member, service, price, slot, reminder and provenance behind
+ * one source key as one claim — a divergent field is a 409, never an
+ * adoption — so a resubmitted claim with any of those fields changed opens a
+ * distinct proposal describing the new claim. Answering the old proposal as
+ * `replayed: true` would tell the caller the new request was proposed while
+ * the stored summary describes the old one. The digest is sha256 over the
+ * validated claim in fixed field order (the channels `boundedKey` idiom: a
+ * short readable prefix, a hash for the tail); the source key stays readable
+ * up front for the operator. The label is deliberately not identity: it is a
+ * display snapshot, like the booking replay treats it.
+ *
+ * @param {ReturnType<typeof validateAppointmentRequest>} input
+ */
+function proposalActionKey(input) {
+  const subject = input.subject;
+  const claim = JSON.stringify([
+    input.sourceKey,
+    subject.resource, subject.id, subject.owner, subject.ownerPackage,
+    input.teamMemberId, input.serviceKey, input.priceCents, input.currency,
+    input.startsAt, input.endsAt, input.notes,
+    input.remindAt, input.reminderChannel,
+    input.source.package, input.source.action,
+  ]);
+  const digest = createHash('sha256').update(claim, 'utf8').digest('hex').slice(0, 32);
+  return 'book-appointment:' + input.sourceKey + ':claim-' + digest;
+}
+
+/** @param {ReturnType<typeof validateAppointmentRequest>} input */
+function proposalSummary(input) {
+  const label = input.subject.label ? ` (${input.subject.label})` : '';
+  const price = `${input.priceCents} ${input.currency}`;
+  return `Book ${input.serviceKey} for ${input.subject.resource}:${input.subject.id}${label} `
+    + `with ${input.teamMemberId} from ${input.startsAt} to ${input.endsAt}, agreed ${price}`
+    .slice(0, 2000);
+}
+
+/**
+ * Propose one booking (BO-F3-02 "Nuovo appuntamento", first step): validate
+ * the request and fail fast on a held slot, then read the space switch. With
+ * `book-appointments` on, answer the draft and write nothing — the
+ * appointment row is created only by the confirm step. With the switch off,
+ * record a `space-ai-proposal` through the gate and stop: the booking stays a
+ * proposal a human approves, and no appointment row exists on either path.
+ */
+export async function proposeBooking(context, request) {
+  const actor = requireActor(context?.actor);
+  const record = request && typeof request === 'object' ? request : {};
+  if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
+    throw new ValidationError('spaceId is required: a proposal is gated on the space switch', { field: 'spaceId' });
+  }
+  const spaceId = record.spaceId;
+  const input = validateAppointmentRequest(request);
+  const names = { appointment: context?.moduleNames?.appointment ?? 'appointment' };
+  const appointments = flowAppointments(context, names);
+  const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
+  const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs }, held);
+  if (conflict) {
+    throw new AppError(
+      `The team member "${input.teamMemberId}" already holds an appointment overlapping this slot `
+      + `(${conflict.startsAt} to ${conflict.endsAt}, status "${conflict.status}"): propose a free slot instead.`,
+      { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
+    );
+  }
+  const gate = requireFlowPermissionGate(context);
+  const verdict = await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
+  if (verdict && verdict.decision === 'allow') {
+    return Object.freeze({
+      decision: 'confirm-required',
+      draft: publicDraft(input),
+      spaceId,
+      permission: BOOK_APPOINTMENTS_PERMISSION,
+    });
+  }
+  const proposal = await gate.propose({
+    spaceId,
+    permission: BOOK_APPOINTMENTS_PERMISSION,
+    actionKind: PROPOSE_ACTION_KIND,
+    actionKey: proposalActionKey(input),
+    summary: proposalSummary(input),
+    actor,
+  });
+  return Object.freeze({
+    decision: 'proposal',
+    proposalId: proposal?.proposalId ?? null,
+    replayed: proposal?.replayed ?? false,
+    spaceId,
+    permission: BOOK_APPOINTMENTS_PERMISSION,
+  });
+}
+
+/**
+ * Confirm one proposed booking (BO-F3-02, second step): without
+ * `confirmed: true` nothing is created — the call is refused before any read
+ * or write. With confirmation, a named calendar is validated first (a
+ * miscomposed calendar edge fails before any row exists), the space switch
+ * is read again (a switch flipped off after the proposal still stops the
+ * booking), then the booking is stored, advanced `booked -> confirmed`,
+ * and — when the caller names a calendar — pushed to the provider through
+ * calendar-sync.
+ *
+ * The calendar push rides the idempotent `pushAppointment` path. A push that
+ * fails at runtime never throws: the booking is already committed, so the
+ * confirm answers `decision: 'booked'` with `push: null` and
+ * `pushError: { code }` naming the failure, and a retry of this same confirm
+ * (same source key) replays the confirmed row and links or exports the event
+ * exactly once, never twice. Only the pre-write miscomposition above throws.
+ */
+export async function confirmBooking(context, request) {
+  const record = request && typeof request === 'object' ? request : {};
+  if (record.confirmed !== true) {
+    throw new ValidationError('confirmed must be true: a booking is created only by an explicit confirmation', {
+      field: 'confirmed',
+    });
+  }
+  const actor = requireActor(context?.actor);
+  if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
+    throw new ValidationError('spaceId is required: a confirmation is gated on the space switch', { field: 'spaceId' });
+  }
+  const spaceId = record.spaceId;
+  const input = validateAppointmentRequest(request);
+  // A named calendar is validated before any row exists: a statically
+  // preventable miscomposition fails here, never after a committed
+  // confirmed booking the caller received an error for.
+  let calendarId = null;
+  let calendarPush = null;
+  if (record.calendar !== undefined && record.calendar !== null) {
+    calendarId = safeText(record.calendar.calendarId, 'calendar.calendarId', MAX_ID);
+    const calendarSync = context?.calendarSync ?? null;
+    if (!calendarSync || typeof calendarSync.pushAppointment !== 'function') {
+      throw new AppError(
+        'The confirmation names a calendar but the appointments package is composed without a calendar-sync push handle, '
+        + 'so the event cannot be created: confirm without a calendar, or compose the push handle.',
+        { code: 'APPOINTMENTS_CALENDAR_UNAVAILABLE', status: 500 },
+      );
+    }
+    calendarPush = calendarSync.pushAppointment.bind(calendarSync);
+  }
+  const gate = requireFlowPermissionGate(context);
+  const verdict = await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
+  if (!verdict || verdict.decision !== 'allow') {
+    const proposal = await gate.propose({
+      spaceId,
+      permission: BOOK_APPOINTMENTS_PERMISSION,
+      actionKind: PROPOSE_ACTION_KIND,
+      actionKey: proposalActionKey(input),
+      summary: proposalSummary(input),
+      actor,
+    });
+    return Object.freeze({
+      decision: 'proposal',
+      proposalId: proposal?.proposalId ?? null,
+      replayed: proposal?.replayed ?? false,
+      spaceId,
+      permission: BOOK_APPOINTMENTS_PERMISSION,
+    });
+  }
+  const booked = await bookAppointment(context, request);
+  const names = { appointment: context?.moduleNames?.appointment ?? 'appointment' };
+  const appointments = flowAppointments(context, names);
+  let appointment = booked.appointment;
+  if (appointment && appointment.status === 'booked') {
+    try {
+      appointment = await advanceAppointment(
+        { appointments, actor, now: context?.now },
+        appointment,
+        'confirmed',
+      );
+    } catch (error) {
+      // A concurrent confirm of the same source key may have advanced the
+      // row between the booking replay and this advance: re-read, and only a
+      // row that is still not confirmed keeps the refusal.
+      if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE') throw error;
+      const fresh = await readAppointment({ appointments }, appointment.id);
+      if (!fresh || fresh.status !== 'confirmed') throw error;
+      appointment = fresh;
+    }
+  }
+  // The calendar edge was validated above, before any row existed: the
+  // push rides the idempotent path. A runtime push failure must not throw —
+  // the confirmed row is already committed and the caller would observe a
+  // failure for a booking that exists — so it is answered as data: the same
+  // retry (same source key) replays the row and links the event exactly
+  // once. Only the provider's code is surfaced, never its text.
+  let push = null;
+  let pushError = null;
+  if (calendarPush !== null) {
+    try {
+      push = await calendarPush(calendarId, booked.appointment.sourceKey, { spaceId, actor });
+    } catch (error) {
+      const code = typeof error?.code === 'string' && error.code !== ''
+        ? error.code
+        : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+      pushError = Object.freeze({ code });
+    }
+  }
+  return Object.freeze({
+    decision: 'booked',
+    appointment,
+    reminder: booked.reminder ?? null,
+    push,
+    pushError,
+    replayed: booked.replayed ?? false,
+    spaceId,
+  });
+}
+
+/**
+ * Validate an online booking-link token: opaque, URL-safe, long enough to
+ * guess never (at least 128 bits at 6 bits per character) and bounded so it
+ * fits the derived source key.
+ */
+export function validateBookingLinkToken(value) {
+  if (typeof value !== 'string') {
+    throw new ValidationError('linkToken is required', { field: 'linkToken' });
+  }
+  const token = value.trim();
+  if (!LINK_TOKEN_RE.test(token)) {
+    throw new ValidationError(
+      'linkToken must be an opaque URL-safe token of 16-128 characters (letters, digits, _ and -): '
+      + 'a guessable or unbounded token books nothing',
+      { field: 'linkToken' },
+    );
+  }
+  return token;
+}
+
+/**
+ * Book from an online booking link (`accordo.dev/p/...`, BO-F3-02): the
+ * customer picked a slot on the business's own page and submitted it — that
+ * submission IS the confirmation, so no `confirmed` flag is asked. The link
+ * path reads the same `book-appointments` switch as propose/confirm: switch
+ * on books, switch off records a `space-ai-proposal` and stays a proposal —
+ * a published link never bypasses a switch the owner turned off. The booking
+ * source key derives deterministically from the link token and the slot, so
+ * the same link submitted twice — a double click, a retry, two racers —
+ * replays the winner's row through the booking path's idempotency instead of
+ * writing a second booking, and two different slots behind one link stay two
+ * bookings. The link token itself is issued and verified by the deployment
+ * (the pilot maps it to the business, the team member and the service before
+ * calling here); this path only refuses malformed tokens, never invents a
+ * mapping.
+ */
+export async function bookFromLink(context, request) {
+  // The actor is validated here and bound by the booking path below: an
+  // anonymous link booking would hold a slot with nobody accountable for it.
+  // The deployment passes its own identified actor (it verified the link).
+  const actor = requireActor(context?.actor);
+  const record = request && typeof request === 'object' ? request : {};
+  if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
+    throw new ValidationError('spaceId is required: a link booking is gated on the space switch', { field: 'spaceId' });
+  }
+  const spaceId = record.spaceId;
+  const linkToken = validateBookingLinkToken(record.linkToken);
+  // Canonicalize the slot before deriving the identity: validation normalizes
+  // instants to UTC ISO, and the source key must derive from that canonical
+  // form — never from the caller's spelling. Otherwise a valid spelling the
+  // key charset rejects (`+02:00`, whose `+` is outside SOURCE_KEY_RE)
+  // refuses a real instant, and two spellings of one instant (`Z` vs
+  // `-00:00`) derive two keys, so a resubmission conflicts instead of
+  // replaying. The canonical instant re-enters validation below, which
+  // accepts its own output unchanged.
+  const startsAt = realIsoInstant(record.startsAt, 'startsAt').iso;
+  const input = validateAppointmentRequest({
+    ...record,
+    startsAt,
+    sourceKey: LINK_SOURCE_PREFIX + linkToken + ':' + startsAt,
+  });
+  // The switch is read before any row exists: with the switch off the
+  // link stays a proposal a human approves, like the confirm path — the
+  // proposal action key binds the whole derived claim, so a resubmitted
+  // link replays its own proposal instead of opening a second one.
+  const gate = requireFlowPermissionGate(context);
+  const verdict = await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
+  if (!verdict || verdict.decision !== 'allow') {
+    const proposal = await gate.propose({
+      spaceId,
+      permission: BOOK_APPOINTMENTS_PERMISSION,
+      actionKind: PROPOSE_ACTION_KIND,
+      actionKey: proposalActionKey(input),
+      summary: proposalSummary(input),
+      actor,
+    });
+    return Object.freeze({
+      decision: 'proposal',
+      proposalId: proposal?.proposalId ?? null,
+      replayed: proposal?.replayed ?? false,
+      spaceId,
+      permission: BOOK_APPOINTMENTS_PERMISSION,
+      linkToken,
+    });
+  }
+  // The whole record rides, with only the source key derived: a link booking
+  // naming remindAt or a reminderChannel keeps its reminder — dropping them
+  // here would store a booking that claims less than the customer asked for.
+  const booked = await bookAppointment(context, { ...record, sourceKey: input.sourceKey });
+  return Object.freeze({
+    decision: 'booked',
+    linkToken,
+    appointment: booked.appointment,
+    reminder: booked.reminder ?? null,
+    replayed: booked.replayed ?? false,
+    spaceId,
+  });
+}
+
+const PHRASE_SYSTEM = 'You extract appointment booking parameters from an Italian customer sentence. '
+  + 'Reply with JSON only, no other text, with any of these keys: '
+  + '{"teamMemberId": "opaque team identity, only when the sentence names a person", '
+  + '"serviceKey": "lowercase listino slug, only when the sentence names a service", '
+  + '"startsAt": "ISO instant the sentence asks for, resolved against the reference instant", '
+  + '"endsAt": "ISO instant the appointment ends, when the sentence gives a duration or an end", '
+  + '"notes": "anything else worth keeping, at most one line"}. '
+  + 'Omit every key the sentence does not state. Never invent a person, a service or a time.';
+
+/**
+ * Parse "fissa con una frase" (BO-F3-02, AI option): turn the customer's
+ * sentence into a booking draft through the composed `llm-complete@1`
+ * handle, purpose `suggest` — a suggestion the human confirms, like every
+ * other suggest-path the framework audits. Without the handle the parse is
+ * refused with a named code (off, not broken); a completion that is not
+ * usable JSON, or carries an invalid known field, is refused naming the
+ * cause — the model is never trusted, only strictly validated. Unknown keys
+ * are dropped, never stored. The price is never taken from the model: it is
+ * resolved from the listino at booking time, so a draft carries no price.
+ */
+export async function parseBookingPhrase(context, request) {
+  const record = request && typeof request === 'object' ? request : {};
+  const phrase = safeText(record.phrase, 'phrase', MAX_PHRASE);
+  if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
+    throw new ValidationError('spaceId is required: the phrase is parsed for one space', { field: 'spaceId' });
+  }
+  const llm = context?.phraseLlm ?? null;
+  if (!llm || typeof llm.complete !== 'function') {
+    throw new AppError(
+      'The appointments package is composed without an opened llm-complete@1 capability, '
+      + 'so the booking phrase cannot be parsed: book with the manual option instead',
+      { code: 'APPOINTMENTS_AI_UNAVAILABLE', status: 500 },
+    );
+  }
+  const actor = requireActor(context?.actor);
+  const now = typeof context?.now === 'function' ? context.now() : new Date().toISOString();
+  let completion;
+  try {
+    completion = await llm.complete({
+      actor,
+      spaceId: record.spaceId,
+      purpose: 'suggest',
+      messages: [
+        { role: 'system', content: PHRASE_SYSTEM },
+        { role: 'user', content: `Reference instant: ${now}. Sentence: ${phrase}` },
+      ],
+      maxTokens: 512,
+    });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError(`The booking phrase could not be parsed: ${error instanceof Error ? error.message : String(error)}`, {
+      code: 'APPOINTMENTS_AI_DRAFT_UNUSABLE',
+      status: 503,
+    });
+  }
+  const text = completion && typeof completion.text === 'string' ? completion.text : '';
+  const draft = extractPhraseDraft(text);
+  return Object.freeze({
+    draft,
+    dryRun: completion?.dryRun === true,
+    spaceId: record.spaceId,
+  });
+}
+
+/** Strictly validate the model's JSON: known keys only, every one proven. */
+function extractPhraseDraft(text) {
+  const fenced = String(text ?? '').replace(/```(?:json)?/gi, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(fenced);
+  } catch {
+    throw new AppError('The workspace AI returned no usable booking draft: book with the manual option instead', {
+      code: 'APPOINTMENTS_AI_DRAFT_UNUSABLE',
+      status: 502,
+    });
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new AppError('The workspace AI returned no usable booking draft: book with the manual option instead', {
+      code: 'APPOINTMENTS_AI_DRAFT_UNUSABLE',
+      status: 502,
+    });
+  }
+  const draft = {};
+  try {
+    if (parsed.teamMemberId !== undefined) {
+      draft.teamMemberId = safeText(parsed.teamMemberId, 'draft.teamMemberId', MAX_ID);
+    }
+    if (parsed.serviceKey !== undefined) {
+      const key = safeText(parsed.serviceKey, 'draft.serviceKey', 48);
+      if (!DRAFT_SERVICE_KEY_RE.test(key)) {
+        throw new ValidationError('draft.serviceKey must be the listino product key', { field: 'draft.serviceKey' });
+      }
+      draft.serviceKey = key;
+    }
+    if (parsed.startsAt !== undefined) draft.startsAt = realIsoInstant(parsed.startsAt, 'draft.startsAt').iso;
+    if (parsed.endsAt !== undefined) draft.endsAt = realIsoInstant(parsed.endsAt, 'draft.endsAt').iso;
+    if (draft.startsAt !== undefined && draft.endsAt !== undefined
+      && Date.parse(draft.endsAt) <= Date.parse(draft.startsAt)) {
+      throw new ValidationError('draft.endsAt must be after draft.startsAt', { field: 'draft.endsAt' });
+    }
+    if (parsed.notes !== undefined) {
+      draft.notes = safeText(parsed.notes, 'draft.notes', MAX_NOTES);
+    }
+  } catch (error) {
+    // A known key with an invalid value is an unusable draft, never a raw
+    // validation leak: the caller books with the manual option instead.
+    if (error instanceof AppError && error.code === 'APPOINTMENTS_AI_DRAFT_UNUSABLE') throw error;
+    throw new AppError(
+      `The workspace AI returned an invalid booking draft (${error instanceof Error ? error.message : String(error)}): book with the manual option instead`,
+      {
+        code: 'APPOINTMENTS_AI_DRAFT_UNUSABLE',
+        status: 502,
+        details: { field: (error instanceof ValidationError && error.details?.field) || 'draft' },
+      },
+    );
+  }
+  return Object.freeze(draft);
+}
+
+/**
  * `appointment-schedule@1` — the reads the customer scheda and the team
  * calendar render: one subject's appointments (`scheduleFor`), and the team
  * week (`teamWeekFor`). Read-only by construction: frozen rows, no storage
@@ -1198,15 +1876,114 @@ export function createAppointmentScheduleCapability({ moduleNames } = {}) {
 }
 
 /**
+ * Refuse a handed-over edge whose opened handle settles on another contract.
+ * The flow edges below stay out of `requires` on purpose: a composition
+ * without space-permissions or llm must keep booting and booking (the
+ * customer-hub timeline keeps its optional providers out of `requires` for
+ * the same reason), and the direct booking path never touches them. So the
+ * registry cannot validate these handovers at startup — this open-time check
+ * is what keeps a wrong one fail-closed instead of silently opened.
+ * The edge version pins the provider capability contract (`@1` settles on
+ * contract 1): the appointments graph contract (v1/v2) governs this
+ * package's own graph, never the provider's handle, so every graph accepts
+ * these handovers. An explicitly injected handle (tests, or an opener's own
+ * wiring) is the opener's responsibility and is not re-checked here.
+ *
+ * @param {any} opened the created handle
+ * @param {string} edge the edge name for the refusal, e.g. `space-permission-gate@1`
+ */
+function assertHandoverContract(opened, edge) {
+  if (!opened || opened.capabilityContract !== 1) {
+    throw new AppError(
+      'The appointments package needs ' + edge + ' on provider capability contract 1: '
+      + 'the handed-over handle settles on another contract — hand over the provider definition '
+      + 'for the named capability version',
+      { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
+    );
+  }
+}
+
+/**
+ * Open the handed-over `space-permission-gate@1` capability for one runtime
+ * (BO-F3-02): the propose/confirm flow gates on the space's
+ * `book-appointments` switch. Absent until a proposal is requested — the
+ * direct booking path never touches it, so a composition without
+ * space-permissions books exactly as before.
+ */
+function openPermissionGate(gateCapability, runtime) {
+  if (gateCapability === undefined || gateCapability === null) return null;
+  if (typeof gateCapability.create !== 'function') {
+    throw new AppError(
+      'The appointments package needs the space-permissions package capability space-permission-gate@1: '
+      + 'compose it with the provider definition, e.g. createAppointmentsPackage({ spacePermissions }) '
+      + 'beside createSpacePermissionsPackage()',
+      { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
+    );
+  }
+  const opened = gateCapability.create({ modules: runtime.modules, consumer: APPOINTMENTS_PACKAGE, now: runtime.now });
+  if (!opened || typeof opened.gate !== 'function' || typeof opened.propose !== 'function') {
+    throw new AppError(
+      'The appointments package needs the space-permissions package capability space-permission-gate@1: '
+      + 'the created capability opens no gate/propose',
+      { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
+    );
+  }
+  assertHandoverContract(opened, 'space-permission-gate@1');
+  return opened;
+}
+
+/**
+ * Open the handed-over `llm-complete@1` capability for one runtime (BO-F3-02
+ * "fissa con una frase"): the phrase parse suggests booking parameters the
+ * human confirms. Absent until a phrase is parsed — bookings never touch it.
+ */
+function openPhraseLlm(llmCapability, runtime) {
+  if (llmCapability === undefined || llmCapability === null) return null;
+  if (typeof llmCapability.create !== 'function') {
+    throw new AppError(
+      'The appointments package needs the llm package capability llm-complete@1: '
+      + 'compose it with the provider definition, e.g. createAppointmentsPackage({ llm }) beside createLlmPackage()',
+      { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
+    );
+  }
+  const opened = llmCapability.create({ modules: runtime.modules });
+  if (!opened || typeof opened.complete !== 'function') {
+    throw new AppError(
+      'The appointments package needs the llm package capability llm-complete@1: '
+      + 'the created capability opens no complete',
+      { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
+    );
+  }
+  assertHandoverContract(opened, 'llm-complete@1');
+  return opened;
+}
+
+/**
  * `appointment-book@1` — the only write path: book appointments and advance
  * them along the lifecycle. It is created with the caller's runtime handles
  * and writes through them; every booking is one row, idempotent by source
  * key, so a retry replays rather than duplicates. It hands out no service, no
  * table and no query handle. Reads are exact: one row by id, never a scan.
  *
+ * The BO-F3-02 flow widens the surface additively: `suggestSlots` reads free
+ * slots from the same held rows the booking path overlap-checks;
+ * `proposeBooking` plans without writing (a draft when the space switch is
+ * on, a `space-ai-proposal` when it is off); `confirmBooking` creates only on
+ * explicit confirmation and answers a runtime calendar-push failure as data
+ * (`push: null`, `pushError: { code }`), never a throw past the commit;
+ * `bookFromLink` books from the business's own online link idempotently
+ * behind the same switch (off stays a proposal); `parseBookingPhrase` drafts
+ * parameters from one Italian sentence through the composed LLM. Nothing
+ * here changes `bookAppointment`, `advanceAppointment` or the contract.
+ *
  * @param {Record<string, string>} [moduleNames]
+ * @param {any} [spacePermissions] the composed space-permissions package definition (handover, optional)
+ * @param {any} [permissionGate] an already-opened space-permission-gate@1 handle (tests; wins over the handover)
+ * @param {any} [llm] the composed llm package definition (handover, optional)
+ * @param {any} [phraseLlm] an already-opened llm-complete@1 handle (tests; wins over the handover)
+ * @param {any} [calendarSync] a calendar-sync push handle `{pushAppointment}` (per opener; optional)
  */
-export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend } = {}) {
+export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend, spacePermissions, permissionGate, llm, phraseLlm, calendarSync } = {}) {
   const names = resolvedNames(moduleNames);
   /**
    * Open the reminder handle for this opener: an explicitly injected handle
@@ -1237,6 +2014,31 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
     if (!templateSendProvider || typeof templateSendProvider.create !== 'function') return null;
     return templateSendProvider.create({ modules: context.modules });
   };
+  /**
+   * Open the permission gate for this opener: an explicitly injected handle
+   * wins (tests), otherwise the space-permissions definition handed to the
+   * package factory is opened with the opener's own modules.
+   */
+  const openGate = (context) => {
+    if (permissionGate !== undefined && permissionGate !== null) return permissionGate;
+    if (context?.permissionGate) return context.permissionGate;
+    if (!spacePermissions || !Array.isArray(spacePermissions.capabilities)) return null;
+    const offered = spacePermissions.capabilities
+      .find((entry) => entry?.name === 'space-permission-gate' && entry?.version === 1) ?? null;
+    return openPermissionGate(offered, { modules: context.modules, now: context.now });
+  };
+  /**
+   * Open the phrase LLM for this opener: same handover shape as the gate
+   * above. Absent until a phrase is parsed.
+   */
+  const openLlm = (context) => {
+    if (phraseLlm !== undefined && phraseLlm !== null) return phraseLlm;
+    if (context?.phraseLlm) return context.phraseLlm;
+    if (!llm || !Array.isArray(llm.capabilities)) return null;
+    const offered = llm.capabilities
+      .find((entry) => entry?.name === 'llm-complete' && entry?.version === 1) ?? null;
+    return openPhraseLlm(offered, { modules: context.modules });
+  };
   const scoped = (context) => ({
     modules: {
       get: (name) => context.modules.get(name === APPOINTMENT_MODULE ? names.appointment : name),
@@ -1247,15 +2049,19 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
     consumer: context.consumer,
     followUps: openFollowUps(context),
     templateSend: openTemplateSend(context),
+    permissionGate: openGate(context),
+    phraseLlm: openLlm(context),
+    calendarSync: calendarSync ?? context.calendarSync ?? null,
   });
   return {
     name: 'appointment-book',
     version: 1,
     description:
-      'Book one appointment per call — validated, overlap-checked against the team member\'s held slots, stored as booked — '
-      + 'and advance it along the booking lifecycle. A booking with remindAt also opens exactly one work follow-up reminder '
-      + 'in the same transaction. Every write is idempotent by source key. Grants no read beyond the written row and the exact id lookup, no update and no delete.',
-    /** @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string, followUps?: any, templateSend?: any}} context */
+      'Book one appointment per call — validated, overlap-checked, stored as booked — '
+      + 'and advance it along the lifecycle. A booking with remindAt opens one work follow-up in the same transaction. '
+      + 'BO-F3-02 adds suggestSlots, propose/confirmBooking, bookFromLink and parseBookingPhrase. '
+      + 'Every write is idempotent by source key; reads exact only, no update and no delete.',
+    /** @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string, followUps?: any, templateSend?: any, permissionGate?: any, phraseLlm?: any, calendarSync?: any}} context */
     create(context = {}) {
       const modules = context?.modules;
       if (!modules || typeof modules.get !== 'function') {
@@ -1269,6 +2075,16 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
         capabilityContract: 1,
         /** @param {unknown} request */
         bookAppointment: (request) => bookAppointment(scope, request),
+        /** @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown, slotMinutes?: unknown}} filter */
+        suggestSlots: (filter) => suggestSlots({ modules: scope.modules, moduleNames: scope.moduleNames }, filter),
+        /** @param {unknown} request */
+        proposeBooking: (request) => proposeBooking(scope, request),
+        /** @param {unknown} request */
+        confirmBooking: (request) => confirmBooking(scope, request),
+        /** @param {unknown} request */
+        bookFromLink: (request) => bookFromLink(scope, request),
+        /** @param {unknown} request */
+        parseBookingPhrase: (request) => parseBookingPhrase(scope, request),
         /** @param {unknown} record @param {unknown} to @param {unknown} [reason] */
         advanceAppointment: (record, to, reason) => advanceAppointment(
           { appointments: storage(), actor: scope.actor, now: scope.now }, record, to, reason,

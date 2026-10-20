@@ -1,4 +1,5 @@
 import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
+import { createAssistantPanel } from './admin-assistant.js';
 
 const elements = {
   metrics: document.querySelector('#metrics'),
@@ -437,7 +438,7 @@ const spineView = createSpineView({
 // ---- Backoffice shell (BO-F0-02) ------------------------------------------
 // Sidebar + topbar chrome on every screen: Italian voices from the approved
 // prototype, space selector (⌘1/2/3), Impostazioni badge from the real
-// data-quality count, AI bar entry (⌘K; the assistant itself is BO-F0-04).
+// data-quality count, AI bar (⌘K) opening the BO-F0-04 assistant panel.
 // Spaces are local shell state until space records exist (BO-F0-06).
 
 function guardedStorage() {
@@ -472,6 +473,19 @@ try {
   // Keep the default space.
 }
 
+let currentScreenId = 'oggi';
+let assistantPanel = null;
+const boAssistant = document.querySelector('#boAssistant');
+if (boAssistant) {
+  assistantPanel = createAssistantPanel({
+    doc: document,
+    mount: boAssistant,
+    client: moduleClient,
+    navigate: (hash) => { window.location.hash = hash; },
+    notify: (message) => toast(message),
+  });
+}
+
 let shellView = null;
 const boSidebar = document.querySelector('#boSidebar');
 const boTopbar = document.querySelector('#boTopbar');
@@ -492,6 +506,9 @@ if (boSidebar && boTopbar) {
       if (shellView) shellView.setSpaces(shellSpaces, shellSpaces[0].id);
       window.location.hash = '#/';
       toast('Spazio locale reimpostato.');
+    },
+    onAiSubmit: () => {
+      if (assistantPanel) void assistantPanel.open(currentScreenId);
     },
     onPickSpace: (id) => {
       try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
@@ -539,6 +556,7 @@ function shellScreenFor(target) {
 function syncShell(target) {
   if (!shellView) return;
   const screen = shellScreenFor(target);
+  currentScreenId = typeof screen?.id === 'string' && screen.id !== '' ? screen.id : 'oggi';
   shellView.update({
     fixCount: shellFixCount,
     items: shellItems,

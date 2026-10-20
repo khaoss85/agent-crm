@@ -5,8 +5,9 @@
 // Reference: the approved backoffice prototype (sidebar on every screen with
 // a space selector, Oggi, the "Moduli nativi / Moduli personalizzati" groups,
 // "+ Nuovo modulo", "Impostazioni" with a badge and a user row with logout;
-// topbar with the path and the AI bar entry). The assistant behind the AI
-// bar is BO-F0-04 and stays out of this story: the bar is an entry only.
+// topbar with the path and the AI bar entry). The bar opens the BO-F0-04
+// assistant panel (apps/admin/public/admin-assistant.js); without an
+// onAiSubmit callback it stays a plain entry that asks for a description.
 //
 // Conventions follow apps/admin/public/admin-core.js: the model builders are
 // pure and DOM-free (unit-tested under node:test without a browser) and the
@@ -306,6 +307,7 @@ export function createShellView({
   notify = () => {},
   onLogout = () => {},
   onPickSpace = () => {},
+  onAiSubmit = null,
   win = null,
 } = {}) {
   const state = {
@@ -405,8 +407,12 @@ export function createShellView({
     const aiOption = el(doc, 'button', 'bo-add-option', '✦ Crea con l\u2019AI');
     aiOption.addEventListener('click', () => {
       addMenu.classList.toggle('hidden', true);
-      focusAiEntry();
-      notify('Descrivi il modulo nella barra AI: l\u2019assistente arriva con BO-F0-04.');
+      if (typeof onAiSubmit === 'function') {
+        onAiSubmit('');
+      } else {
+        focusAiEntry();
+        notify('Descrivi il modulo nella barra AI e premi Invio.');
+      }
     });
     const manualOption = el(doc, 'button', 'bo-add-option', 'Compila manualmente');
     manualOption.addEventListener('click', () => {
@@ -460,15 +466,19 @@ export function createShellView({
     aiInput = doc.createElement('input');
     aiInput.setAttribute('type', 'search');
     aiInput.setAttribute('class', 'bo-ai-input');
-    aiInput.setAttribute('aria-label', 'Barra AI (solo ingresso)');
+    aiInput.setAttribute('aria-label', 'Barra AI: chiedi o fai qualcosa');
     aiInput.setAttribute('placeholder', aiPlaceholder(state.activeScreenId));
-    aiInput.setAttribute('title', 'Barra AI (⌘K): solo ingresso, l\u2019assistente arriva con BO-F0-04');
+    aiInput.setAttribute('title', 'Barra AI (⌘K): chiedi o fai qualcosa');
     form.appendChild(aiInput);
     const hint = el(doc, 'kbd', 'bo-ai-key', '⌘K');
     form.appendChild(hint);
     form.addEventListener('submit', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      notify('Barra AI: solo ingresso. L\u2019assistente arriva con BO-F0-04.');
+      if (typeof onAiSubmit === 'function') {
+        onAiSubmit(aiInput !== null && typeof aiInput.value === 'string' ? aiInput.value : '');
+      } else {
+        notify('Barra AI: descrivi cosa fare e premi Invio.');
+      }
     });
     topbar.appendChild(form);
   }

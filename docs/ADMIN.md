@@ -45,9 +45,39 @@ Sidebar on every screen plus topbar, with the prototype's Italian voices
   local shell state (localStorage) until space records exist (BO-F0-06).
 - Impostazioni badge from the real count of open data-quality issues plus
   unresolved duplicate candidates; zero or unknown renders no badge.
-- Topbar with the "<spazio> / <schermata>" path and the AI bar entry (⌘K).
-  The bar is an entry only — the assistant is BO-F0-04.
+- Topbar with the "<spazio> / <schermata>" path and the AI bar (⌘K), which
+  opens the BO-F0-04 assistant panel (see below).
 - Fluid under 700px: single column, horizontal nav strip, stacked topbar.
+
+## Backoffice assistant (BO-F0-04)
+
+The ⌘K bar opens the assistant side panel
+(`apps/admin/public/admin-assistant.js`, unit-tested in
+`tests/admin-assistant.test.js`):
+
+- Every backoffice screen offers different deterministic suggestions
+  (Oggi, Clienti, Pipeline, Calendario, Sequenze, Reporting, Impostazioni);
+  unknown screens get the generic pair, never an empty panel.
+- Every answer cites clickable sources that point at real records: sources
+  are built only from ids the panel just read (conversations, calls and
+  messages from `packages/interactions`, signals from
+  `packages/intelligence`, AI audit rows from `packages/llm`), each linking
+  to the record route. Opportunities are a core module with no
+  generated-module detail route, so their sources link the pipeline board
+  (`#/pipelines/<name>`) that renders them — or name the record as text
+  when no board covers them. A module that is not composed names itself as
+  unavailable instead of failing the answer; hostile record strings render
+  as text, never markup.
+- Linked actions execute really: navigation filters/opens records, and the
+  `mark-read`/`close` record actions run through the same module action
+  surface as the handwritten views. An action flagged customer-facing never
+  runs without an explicit per-action confirmation first — unconfirmed, it
+  neither requests nor navigates.
+- Without a configured LLM key the backend probe
+  (`GET /api/assistant/status`, published by a future backend) misses and
+  the panel runs in dry-run: suggestions stay usable on real data, and the
+  free-question box is disabled with the message that free questions arrive
+  with the key. With the backend live the box posts to its endpoint.
 
 ## How it works
 
