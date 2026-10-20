@@ -39,7 +39,7 @@ import {
 } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir, homedir } from 'node:os';
-import { join, extname } from 'node:path';
+import { join, extname, sep } from 'node:path';
 import { diffPng } from './admin-png-diff.js';
 
 const root = process.cwd();
@@ -130,7 +130,7 @@ function startStaticServer(beforeDir, afterDir) {
     const base = match[1] === 'before' ? beforeDir : afterDir;
     let file = join(base, decodeURIComponent(match[2] ?? '/'));
     if (url.pathname.endsWith('/')) file = join(file, 'index.html');
-    if (!existsSync(file)) {
+    if (!file.startsWith(base + sep) || !existsSync(file)) {
       response.writeHead(404);
       response.end();
       return;
