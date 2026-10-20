@@ -130,32 +130,41 @@ carry the future payment mapping without claiming it.
 
 ### Stripe catalog source
 
-`createStripeCatalogProvider({ name, version, stripe })`
+`createStripeCatalogProvider({ name, version, stripe, deactivateMissing = true })`
 (`packages/commercial/src/stripe-catalog.js`) maps Stripe Products/Prices
 into the normalized catalog `syncCatalog` persists: one price book per
 currency, one product per Stripe product, one offer per Stripe price.
 Stripe ids ride along as `externalId` / `externalPriceId` and
-`sourcePricingModel: 'stripe:…'`; metered prices and non-month/year
-recurrences close only their own offer (`quoteEligible: false`), siblings
-stay quotable. The client is injected — `createFixtureStripeCatalogClient()`
-is the deterministic fake (no network, no credentials) until the owner
-provides real keys (`tests/commercial-stripe-catalog.test.js` guards the
-mapping and the marked sync). Name a Stripe-backed provider with `stripe`
-in its name: the product table reports `stripeConnected` off that
-convention, and the backoffice reads it for the "connect Stripe" invite.
+`sourcePricingModel: 'stripe:…'`; metered prices (real Stripe marker:
+`recurring.usage_type: 'metered'`) and non-month/year recurrences close only
+their own offer (`quoteEligible: false`), siblings stay quotable. A price
+that disappears from Stripe deactivates the offer the earlier sync created
+(`deactivateMissing`, on by default — Stripe is the price source). The
+client is injected — `createFixtureStripeCatalogClient()` is the
+deterministic fake (no network, no credentials) until the owner provides
+real keys (`tests/commercial-stripe-catalog.test.js` guards the mapping and
+the marked sync). Name a Stripe-backed provider with `stripe` in its name:
+the product table reports `stripeConnected` off that convention, and the
+backoffice reads it for the "connect Stripe" invite.
 
 ### Manual catalog
 
 `app.createManualProduct / updateManualProduct / setManualPrices /
 setManualProductActive / listCatalogProducts`
 (`packages/commercial/src/manual-catalog.js`) manage products whose price
-source is not a provider — no Stripe needed. Versions stay immutable, offers
-stay revisioned as a whole, and components pass `validatePriceComponent`,
-the same gate sync applies. Provider-owned rows are read-only:
+source is not a provider — no Stripe needed. Every mutation requires an
+accountable actor (`requireActor`, never anonymous), runs buffered until
+its transaction commits, and leaves a best-effort `catalog.manual` trace —
+the same discipline as `catalog.sync`. Versions stay immutable, offers stay
+revisioned as a whole, and components pass `validatePriceComponent`, the
+same gate sync applies. Provider-owned rows are read-only:
 every manual mutation on them refuses with `PROVIDER_PRICE_READONLY`
-(the backoffice renders those price fields read-only when the Stripe source
-is active). `listCatalogProducts` is the backoffice product table: source,
-active flag, category filter, current prices with quantity-tier labels.
+(the backoffice renders those prices as read-only text when the Stripe
+source is active). `listCatalogProducts` is the backoffice product table
+(Admin `#/catalogo`, reachable from Impostazioni → Catalogo prodotti):
+source, active flag, category filter, current prices with quantity-tier
+labels; its source summary always covers the whole catalog, so a filtered
+page never reports a synced source as missing.
 
 ### Unsupported models fail closed
 

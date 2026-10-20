@@ -7,7 +7,10 @@ import {
   PRICING_MODELS,
   ValidationError,
   computeDefinitionFingerprint,
+  normalizeError,
   nowIso,
+  requireActor,
+  writeTrace,
 } from '../../core/index.js';
 import { requireCurrency, validatePriceComponent } from './money.js';
 
@@ -174,9 +177,9 @@ function normalizeManualOffers(input, label) {
 }
 
 /**
- * @param {{database: any, modules: any, moduleNames?: Record<string, string>}} deps
+ * @param {{database: any, events: any, modules: any, moduleNames?: Record<string, string>}} deps
  */
-export function createManualCatalog({ database, modules, moduleNames = {} }) {
+export function createManualCatalog({ database, events, modules, moduleNames = {} }) {
   const names = {
     product: moduleNames.product ?? 'product',
     productVersion: moduleNames.productVersion ?? 'product-version',
@@ -195,6 +198,59 @@ export function createManualCatalog({ database, modules, moduleNames = {} }) {
     }
     return module.service;
   };
+
+  /**
+   * The envelope every manual mutation runs in: the actor is a precondition
+   * (`requireActor`, never anonymous), record events stay buffered until the
+   * write transaction commits (so a later failure never leaves observed rows
+   * that never committed), and a best-effort `catalog.manual` trace records
+   * the run — the same discipline as `catalog.sync`, without its provider
+   * fetch. A trace write failure never masks the mutation outcome.
+   */
+  async function runManual(operation, actor, write) {
+    const runId = randomUUID();
+    const startedAt = nowIso();
+    /** @type {Array<{name: string, status: string, output?: unknown, error?: string}>} */
+    const steps = [];
+    /** @type {any} */
+    let failure = null;
+    /** @type {any} */
+    let output = null;
+    try {
+      const who = requireActor(actor);
+      output = await events.buffered(async (outbox) => {
+        const value = await database.transactionAsync(async () => write({ actor: who }));
+        steps.push({ name: 'catalog.manual.write', status: 'completed' });
+        try {
+          await outbox.commit();
+        } catch (error) {
+          const dispatchFailure = normalizeError(error);
+          steps.push({ name: 'events.dispatch', status: 'failed', error: dispatchFailure.message });
+          console.error(`[accordo] catalog.manual run ${runId}: business writes committed but event dispatch failed: ${dispatchFailure.message}`);
+        }
+        return value;
+      });
+      return output;
+    } catch (error) {
+      failure = normalizeError(error);
+      throw failure;
+    } finally {
+      try {
+        writeTrace(database, {
+          runId,
+          workflowName: 'catalog.manual',
+          status: failure ? 'failed' : 'completed',
+          input: { operation, actor: actor && typeof actor === 'object' ? { type: actor.type ?? null, id: actor.id ?? null } : null },
+          output: failure ? null : output,
+          error: failure ? failure.message : null,
+          startedAt,
+          steps,
+        });
+      } catch (traceError) {
+        console.error(`[accordo] catalog.manual run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`);
+      }
+    }
+  }
 
   /**
    * Find the manual price book for a currency, creating it on first use. One
@@ -324,17 +380,16 @@ export function createManualCatalog({ database, modules, moduleNames = {} }) {
      * revision 1 per declared offer.
      */
     async createProduct(input = {}, actor) {
-      const sku = requireText(input.sku, 'sku', 100);
-      const name = requireText(input.name, 'name', 200);
-      const description = optionalText(input.description, 'description');
-      const category = optionalText(input.category, 'category', 100);
-      const currency = requireCurrency(input.currency, 'currency');
-      if (input.offers !== undefined && input.components !== undefined) {
-        throw new ValidationError('offers and components are alternatives: declare one offer list, or shorthand components for a single offer');
-      }
-      const offers = normalizeManualOffers(input.offers ?? [{ name, components: input.components }], 'offers');
-      const context = { actor };
-      return database.transactionAsync(async () => {
+      return runManual('create-manual-product', actor, async (context) => {
+        const sku = requireText(input.sku, 'sku', 100);
+        const name = requireText(input.name, 'name', 200);
+        const description = optionalText(input.description, 'description');
+        const category = optionalText(input.category, 'category', 100);
+        const currency = requireCurrency(input.currency, 'currency');
+        if (input.offers !== undefined && input.components !== undefined) {
+          throw new ValidationError('offers and components are alternatives: declare one offer list, or shorthand components for a single offer');
+        }
+        const offers = normalizeManualOffers(input.offers ?? [{ name, components: input.components }], 'offers');
         const products = service(names.product);
         const versions = service(names.productVersion);
         let book;
@@ -389,9 +444,8 @@ export function createManualCatalog({ database, modules, moduleNames = {} }) {
 
     /** Edit a manual product's description: opens version n+1, never rewrites. */
     async updateProduct(input = {}, actor) {
-      const productId = requireText(input.productId, 'productId', 200);
-      const context = { actor };
-      return database.transactionAsync(async () => {
+      return runManual('update-manual-product', actor, async (context) => {
+        const productId = requireText(input.productId, 'productId', 200);
         const products = service(names.product);
         const versions = service(names.productVersion);
         const product = await products.get(productId);
@@ -431,13 +485,12 @@ export function createManualCatalog({ database, modules, moduleNames = {} }) {
      * Provider-owned offers refuse with PROVIDER_PRICE_READONLY.
      */
     async setPrices(input = {}, actor) {
-      const productId = requireText(input.productId, 'productId', 200);
-      const offers = normalizeManualOffers(input.offers, 'offers');
-      if (!Array.isArray(input.offerIds) || input.offerIds.length !== offers.length) {
-        throw new ValidationError('offerIds must name the offer row each declared offer replaces, in order');
-      }
-      const context = { actor };
-      return database.transactionAsync(async () => {
+      return runManual('set-manual-prices', actor, async (context) => {
+        const productId = requireText(input.productId, 'productId', 200);
+        const offers = normalizeManualOffers(input.offers, 'offers');
+        if (!Array.isArray(input.offerIds) || input.offerIds.length !== offers.length) {
+          throw new ValidationError('offerIds must name the offer row each declared offer replaces, in order');
+        }
         const products = service(names.product);
         const offersService = service(names.offer);
         const product = await products.get(productId);
@@ -504,10 +557,9 @@ export function createManualCatalog({ database, modules, moduleNames = {} }) {
 
     /** Activate or deactivate a manual product and its current offers. */
     async setActive(input = {}, actor) {
-      const productId = requireText(input.productId, 'productId', 200);
-      const active = requireBoolean(input.active, 'active');
-      const context = { actor };
-      return database.transactionAsync(async () => {
+      return runManual('set-manual-product-active', actor, async (context) => {
+        const productId = requireText(input.productId, 'productId', 200);
+        const active = requireBoolean(input.active, 'active');
         const products = service(names.product);
         const offersService = service(names.offer);
         const product = await products.get(productId);
@@ -543,10 +595,22 @@ export function createManualCatalog({ database, modules, moduleNames = {} }) {
       const offersService = service(names.offer);
       const components = service(names.component);
       const tiers = service(names.tier);
-      const rows = [];
+      // The source summary answers "is a price source connected" for the
+      // whole catalog: it runs over the complete product set BEFORE filters
+      // or the row limit, so `source=manual` (or a short page) never reports
+      // a synced Stripe source as missing.
+      const all = await products.listWhere({});
       const byProvider = {};
       let manual = 0;
-      for (const product of await products.listWhere({})) {
+      for (const product of all) {
+        if (product.sourceKind === 'internal') manual += 1;
+        else {
+          const name = String(product.provider);
+          byProvider[name] = (byProvider[name] ?? 0) + 1;
+        }
+      }
+      const rows = [];
+      for (const product of all) {
         if (active !== null && product.active !== active) continue;
         const isManual = product.sourceKind === 'internal';
         const productSource = isManual ? MANUAL_PROVIDER : String(product.provider);
@@ -556,8 +620,6 @@ export function createManualCatalog({ database, modules, moduleNames = {} }) {
           throw new AppError(`Product "${product.id}" has no current version`, { code: 'COMMERCIAL_STATE_CORRUPT', status: 409 });
         }
         if (category !== null && version.category !== category) continue;
-        if (isManual) manual += 1;
-        else byProvider[productSource] = (byProvider[productSource] ?? 0) + 1;
         const offerRows = [];
         for (const offer of latestRevisions(await offersService.listWhere({ productId: product.id }))) {
           const componentRows = [];
@@ -581,6 +643,7 @@ export function createManualCatalog({ database, modules, moduleNames = {} }) {
             offerId: offer.id,
             name: offer.name,
             active: offer.active,
+            currency: offer.currency ?? null,
             quoteEligible: offer.quoteEligible,
             unsupportedReason: offer.unsupportedReason,
             components: componentRows,

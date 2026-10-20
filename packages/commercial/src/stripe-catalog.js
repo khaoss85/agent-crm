@@ -25,9 +25,11 @@ import { validateCatalogProvider } from './registry.js';
  *                               the Stripe id, category = metadata.category)
  *   one price book per currency (`stripe.<name>.book.<CUR>`, "Stripe <CUR>")
  *   one offer PER PRICE (`stripe.<name>.offer.<price-id>`) so a price Stripe
- *   cannot express never poisons its siblings: metered prices and
- *   non-month/year recurrences sync as `quoteEligible: false` offers with an
- *   `unsupportedReason`, everything else stays quotable.
+ *   cannot express never poisons its siblings: metered prices
+ *   (`recurring.usage_type: 'metered'`, the real Stripe marker — never a
+ *   top-level flag) and non-month/year recurrences sync as
+ *   `quoteEligible: false` offers with an `unsupportedReason`, everything
+ *   else stays quotable.
  *   simple unit prices       → per_unit (one_time, or recurring month/year —
  *                               Stripe has no flat fee; quantity lives on the
  *                               quote line, fixed fees belong to the manual
@@ -98,7 +100,7 @@ export function createFixtureStripeCatalogClient() {
         { up_to: null, unit_amount: 600 },
       ],
     },
-    { id: 'price_yoga_misurato', product: 'prod_yoga', active: true, currency: 'eur', unit_amount: 100, billing_scheme: 'per_unit', recurring: { interval: 'month', interval_count: 1 }, metered: true, nickname: 'Consumo misurato' },
+    { id: 'price_yoga_misurato', product: 'prod_yoga', active: true, currency: 'eur', unit_amount: 100, billing_scheme: 'per_unit', recurring: { interval: 'month', interval_count: 1, usage_type: 'metered' }, nickname: 'Consumo misurato' },
     { id: 'price_yoga_settimanale', product: 'prod_yoga', active: true, currency: 'eur', unit_amount: 2000, billing_scheme: 'per_unit', recurring: { interval: 'week', interval_count: 1 }, nickname: 'Canone settimanale' },
     { id: 'price_yoga_vecchio', product: 'prod_yoga', active: false, currency: 'eur', unit_amount: 4500, billing_scheme: 'per_unit', recurring: { interval: 'month', interval_count: 1 }, nickname: 'Canone vecchio' },
   ];
@@ -136,13 +138,16 @@ function mapPriceComponent(price) {
   const label = optionalText(price?.nickname, 'price.nickname', 200)
     ?? `${requireText(price?.productName, 'price.productName', 200)} (${requireText(price?.currency, 'price.currency', 10)})`;
   const recurring = price?.recurring ?? null;
-  if (price?.metered === true) {
+  if (recurring !== null && recurring !== undefined && (typeof recurring !== 'object' || Array.isArray(recurring))) {
+    throw new AppError('Stripe catalog sent an invalid "price.recurring"', { code: 'PROVIDER_INVALID', status: 502, details: { field: 'price.recurring' } });
+  }
+  // Real Stripe marks metered billing as recurring.usage_type 'metered' (there
+  // is no top-level metered flag): a metered price never becomes a quotable
+  // per_unit component. 'licensed' usage prices normally.
+  if (recurring !== null && recurring !== undefined && recurring.usage_type === 'metered') {
     return { unsupported: true, unsupportedModel: 'metered', label, priceId };
   }
   if (recurring !== null && recurring !== undefined) {
-    if (!recurring || typeof recurring !== 'object') {
-      throw new AppError('Stripe catalog sent an invalid "price.recurring"', { code: 'PROVIDER_INVALID', status: 502, details: { field: 'price.recurring' } });
-    }
     const interval = requireText(recurring.interval, 'price.recurring.interval', 20);
     if (interval !== 'month' && interval !== 'year') {
       return { unsupported: true, unsupportedModel: 'recurring-interval', label, priceId };
@@ -206,12 +211,21 @@ function requireIntervalCount(value) {
  * provides credentials). The provider definition is declared data plus the
  * `fetchCatalog` edge — validated by `validateCatalogProvider` like every
  * other provider, fingerprinted by the registry like every other provider.
- * @param {{name: string, version: number, label?: string, stripe: unknown}} options
+ *
+ * Stripe is the price source: a price that disappears from Stripe (deleted,
+ * or flipped inactive so `fetchCatalog` skips it) deactivates the offer an
+ * earlier sync created, so nothing stays quotable past its source. That is
+ * the sync's `deactivateMissing` policy, on by default here (unlike the
+ * workspace price list, where it is opt-in).
+ * @param {{name: string, version: number, label?: string, stripe: unknown, deactivateMissing?: boolean}} options
  */
-export function createStripeCatalogProvider({ name, version, label, stripe }) {
+export function createStripeCatalogProvider({ name, version, label, stripe, deactivateMissing = true }) {
   const stripeClient = requireStripeClient(stripe);
   if (typeof name !== 'string' || !/^[a-z][a-z0-9-]{0,59}$/.test(name)) {
     throw new ValidationError('stripe catalog provider name must match /^[a-z][a-z0-9-]*$/ within 60 characters');
+  }
+  if (typeof deactivateMissing !== 'boolean') {
+    throw new ValidationError('deactivateMissing must be a boolean when present');
   }
   const providerName = name;
 
@@ -332,7 +346,7 @@ export function createStripeCatalogProvider({ name, version, label, stripe }) {
     name: providerName,
     version,
     label: label ?? `Stripe (${providerName})`,
-    config: Object.freeze({ source: 'stripe', client: stripeClient.source ?? 'injected' }),
+    config: Object.freeze({ source: 'stripe', deactivateMissing, client: stripeClient.source ?? 'injected' }),
     fetchCatalog,
   };
   validateCatalogProvider(provider);

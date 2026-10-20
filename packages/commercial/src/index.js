@@ -48,6 +48,7 @@ export const COMMERCIAL_DOMAIN = 'commercial';
 function manualFor(runtime, config) {
   return createManualCatalog({
     database: runtime.database,
+    events: runtime.events,
     modules: runtime.modules,
     moduleNames: config ? {
       product: config.productModule,

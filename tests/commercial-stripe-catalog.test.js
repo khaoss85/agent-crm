@@ -189,6 +189,112 @@ test('stripe ids differing only in case refuse instead of merging', async () => 
   );
 });
 
+test('metered follows real Stripe: usage_type metered is unsupported, licensed quotes normally', async () => {
+  const provider = createStripeCatalogProvider({
+    name: 'stripe-test',
+    version: 1,
+    stripe: {
+      async listProducts() { return [{ id: 'prod_m', name: 'Metered', active: true }]; },
+      async listPrices() {
+        return [
+          { id: 'price_metered', product: 'prod_m', active: true, currency: 'eur', unit_amount: 100, billing_scheme: 'per_unit', recurring: { interval: 'month', interval_count: 1, usage_type: 'metered' } },
+          { id: 'price_licensed', product: 'prod_m', active: true, currency: 'eur', unit_amount: 200, billing_scheme: 'per_unit', recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' } },
+        ];
+      },
+    },
+  });
+  const catalog = normalizeCatalog(await provider.fetchCatalog({}));
+  const byPrice = new Map(catalog.offers.map((offer) => [offer.sourceKey.split('.').at(-1), offer]));
+  const metered = byPrice.get('price_metered');
+  assert.equal(metered.quoteEligible, false);
+  assert.match(metered.unsupportedReason, /metered/);
+  assert.equal(byPrice.get('price_licensed').quoteEligible, true);
+});
+
+function flipProject(t, initialPrices) {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-stripe-flip-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
+    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
+  }
+  applyManifests(root);
+  writeFileSync(join(root, 'flip-fixture.mjs'), [
+    `let prices = ${JSON.stringify(initialPrices)};`,
+    'export const stripe = {',
+    "  source: 'flip-fixture',",
+    "  async listProducts() { return [{ id: 'prod_flip', name: 'Flip', active: true }]; },",
+    '  async listPrices() { return structuredClone(prices); },',
+    '};',
+    'export function setPrices(next) { prices = next; }',
+    '',
+  ].join('\n'));
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
+    "import { createCommercialDomain } from '../../commercial/src/index.js';",
+    "import { createStripeCatalogProvider } from '../../commercial/src/index.js';",
+    "import { stripe } from '../../../flip-fixture.mjs';",
+    'const catalogProviders = [createStripeCatalogProvider({ name: \'stripe-flip\', version: 1, stripe })];',
+    'export const generatedDomains = [',
+    '  createCommercialDomain({ catalogProviders }),',
+    '];',
+    '',
+  ].join('\n'));
+  return root;
+}
+
+test('a Stripe price flipped inactive deactivates the offer the earlier sync created', async (t) => {
+  const root = flipProject(t, [
+    { id: 'price_flip', product: 'prod_flip', active: true, currency: 'eur', unit_amount: 3000, billing_scheme: 'per_unit' },
+  ]);
+  const app = await bootApp(root);
+  t.after(() => app.close());
+  const first = await app.syncCatalog({ provider: 'stripe-flip', actor: ACTOR });
+  assert.equal(first.counts.offersCreated, 1);
+  const { setPrices } = await import(pathToFileURL(join(root, 'flip-fixture.mjs')).href);
+  setPrices([
+    { id: 'price_flip', product: 'prod_flip', active: false, currency: 'eur', unit_amount: 3000, billing_scheme: 'per_unit' },
+  ]);
+  const second = await app.syncCatalog({ provider: 'stripe-flip', actor: ACTOR });
+  assert.ok(second.counts.deactivated >= 1, 'the missing offer deactivates');
+  const offers = app.modules.get('offer').service.listWhere({});
+  assert.ok(offers.length >= 1);
+  assert.ok(offers.every((offer) => offer.active === false), 'no quotable offer survives its source');
+  const table = await app.listCatalogProducts({});
+  assert.equal(table.products[0].offers.filter((offer) => offer.active).length, 0);
+});
+
+test('manual mutations refuse without an accountable actor', async (t) => {
+  const app = await bootApp(manualProject(t));
+  t.after(() => app.close());
+  await assert.rejects(
+    () => app.createManualProduct({ sku: 'NO-ACTOR', name: 'No actor', currency: 'EUR', components: [MANUAL_COMPONENT] }, undefined),
+    (error) => error.code === 'VALIDATION_FAILED' || /actor/i.test(error.message),
+    'an omitted actor never creates a product',
+  );
+  const open = await app.listCatalogProducts({});
+  assert.ok(Array.isArray(open.products), 'reads stay open: only mutations gate the actor');
+});
+
+test('the source summary survives filters: source=manual still reports a synced Stripe source', async (t) => {
+  const app = await bootApp(stripeProject(t));
+  t.after(() => app.close());
+  await app.syncCatalog({ provider: 'stripe-test', actor: ACTOR });
+  const filtered = await app.listCatalogProducts({ source: 'manual' });
+  assert.equal(filtered.products.length, 0, 'no manual rows in the fixture sync');
+  assert.equal(filtered.summary.stripeConnected, true, 'the invite logic reads the whole catalog, not the page');
+});
+
+test('every manual write leaves a catalog.manual trace', async (t) => {
+  const app = await bootApp(manualProject(t));
+  t.after(() => app.close());
+  const before = app.workflows.listRuns({ workflowName: 'catalog.manual', limit: 500 }).length;
+  await app.createManualProduct({
+    sku: 'TRACE-1', name: 'Traced', currency: 'EUR', components: [MANUAL_COMPONENT],
+  }, ACTOR);
+  const runs = app.workflows.listRuns({ workflowName: 'catalog.manual', limit: 500 });
+  assert.equal(runs.length, before + 1);
+  assert.equal(runs[0].status, 'completed');
+});
+
 test('acceptance 1: sync from the fake Stripe adapter marks the source on product rows', async (t) => {
   const app = await bootApp(stripeProject(t));
   t.after(() => app.close());

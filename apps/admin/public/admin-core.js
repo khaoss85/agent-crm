@@ -250,7 +250,7 @@ function safeDecode(segment) {
  * resolve to anything but an explicit view. Decodes each segment exactly once.
  *
  * @param {string} hash — e.g. "#/modules/partner/new"
- * @returns {{view: 'dashboard'} | {view: 'invalid'} | {view: 'list'|'new'|'detail', moduleName: string, id?: string}}
+ * @returns {{view: 'dashboard'} | {view: 'invalid'} | {view: 'catalog'} | {view: 'list'|'new'|'detail', moduleName: string, id?: string}}
  */
 export function parseModuleRoute(hash) {
   const raw = String(hash ?? '').replace(/^#/, '');
@@ -296,6 +296,14 @@ export function parseModuleRoute(hash) {
     if (resource === null || !/^[a-z][a-z0-9-]*$/.test(resource)) return { view: 'invalid' };
     if (subjectId === null || subjectId === '') return { view: 'invalid' };
     return { view: 'customer-card', resource, subjectId };
+  }
+  // Product catalog routes: #/catalogo (BO-F2-05). The backoffice product
+  // table with its source summary. Same canonical discipline as every other
+  // route here; anything else under the prefix is invalid, not a lookup.
+  if (rawParts.length && rawParts[0] === 'catalogo') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'catalog' };
   }
   // Quote builder routes: #/quotes and #/quotes/<id> (ADR-016). Same
   // canonical discipline; anything else is invalid, not a lookup.
