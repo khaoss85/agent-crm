@@ -249,7 +249,14 @@ async function main() {
         failed = true;
         break;
       }
-      const verdict = diffPng(shots.before, shots.after);
+      let verdict;
+      try {
+        verdict = diffPng(shots.before, shots.after);
+      } catch (error) {
+        console.error(`  ✗ ${target.route}: cannot decode screenshots (${error.message})`);
+        failed = true;
+        break;
+      }
       console.log(
         `  ${verdict.equal ? '✓' : '✗'} ${target.route} → ${target.file}: ` +
           `${verdict.reason} (before ${verdict.left.width}×${verdict.left.height})`,
@@ -295,7 +302,7 @@ async function main() {
     headStylesSha: sha256(headCss),
     capturedAt: new Date().toISOString(),
     renderer: binary.split('/').pop(),
-    command: 'npm run admin:shots',
+    command: `npm run admin:shots${beforeArg ? ` -- --before=${beforeArg}` : ''}`,
     screens: compared.map(({ route, file, width, height }) => ({ route, file, width, height })),
   };
   writeFileSync(join(FIXTURES, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
