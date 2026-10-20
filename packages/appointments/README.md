@@ -63,6 +63,41 @@ detail reads the sync state through) and the subject envelope (who the
 slot is for). `tests/appointment-team-week.test.js` proves it with no
 database.
 
+## Booking flow (BO-F3-02, backlog `c1d05e6547fc`)
+
+`"07 Calendario"`: the operator proposes slots, confirms once, the
+customer books online from the business link. All on `appointment-book@1`,
+all additive — `bookAppointment` and `advanceAppointment` are unchanged.
+
+- `suggestSlots({ teamMemberIds, from, to, slotMinutes })` reads free slots
+  from the same held rows the booking path overlap-checks against. Read
+  only: no row is written, no slot is invented; a held row whose slot cannot
+  be proven fails the suggestion closed.
+- `proposeBooking(request + spaceId)` validates, fails fast on a held slot,
+  then reads the space `book-appointments` switch. Switch on: a draft is
+  answered and nothing is written. Switch off: a `space-ai-proposal` is
+  recorded and the booking stays a proposal.
+- `confirmBooking(request + spaceId + confirmed: true)` creates only on
+  explicit confirmation. It re-checks the switch, books, advances
+  `booked -> confirmed` and — when `calendar: { calendarId }` is named —
+  pushes the event through the calendar-sync push handle. A push that fails
+  after the local commit leaves a confirmed booking a retried confirm
+  replays, never duplicates.
+- `bookFromLink(request + linkToken)` books from `accordo.dev/p/...`: the
+  source key derives from the token and the slot, so a doubled submission
+  replays the winner. The published link is the standing approval, so the
+  agent-autonomy switch is not consulted here.
+- `parseBookingPhrase({ spaceId, phrase })` drafts parameters from one
+  Italian sentence through `llm-complete@1` (purpose `suggest`). Without
+  the handle it refuses with a named code; the model is strictly validated,
+  the price never comes from it.
+
+`tests/appointments-booking-flow.test.js` proves the flow with fakes and no
+application boot, including the ten-racer link race. The backoffice UI
+(week view, "Nuovo appuntamento", booking link page), the calendar invite
+(attendees) and the approval-to-execution wiring are follow-ups, not this
+package.
+
 ## Enablement per space
 
 Composition, not a flag: a space whose project lists

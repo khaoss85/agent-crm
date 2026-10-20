@@ -1657,32 +1657,38 @@ function extractPhraseDraft(text) {
     });
   }
   const draft = {};
-  if (parsed.teamMemberId !== undefined) {
-    draft.teamMemberId = safeText(parsed.teamMemberId, 'draft.teamMemberId', MAX_ID);
-  }
-  if (parsed.serviceKey !== undefined) {
-    const key = safeText(parsed.serviceKey, 'draft.serviceKey', 48);
-    if (!DRAFT_SERVICE_KEY_RE.test(key)) {
-      throw new AppError('The workspace AI returned an invalid serviceKey: book with the manual option instead', {
+  try {
+    if (parsed.teamMemberId !== undefined) {
+      draft.teamMemberId = safeText(parsed.teamMemberId, 'draft.teamMemberId', MAX_ID);
+    }
+    if (parsed.serviceKey !== undefined) {
+      const key = safeText(parsed.serviceKey, 'draft.serviceKey', 48);
+      if (!DRAFT_SERVICE_KEY_RE.test(key)) {
+        throw new ValidationError('draft.serviceKey must be the listino product key', { field: 'draft.serviceKey' });
+      }
+      draft.serviceKey = key;
+    }
+    if (parsed.startsAt !== undefined) draft.startsAt = realIsoInstant(parsed.startsAt, 'draft.startsAt').iso;
+    if (parsed.endsAt !== undefined) draft.endsAt = realIsoInstant(parsed.endsAt, 'draft.endsAt').iso;
+    if (draft.startsAt !== undefined && draft.endsAt !== undefined
+      && Date.parse(draft.endsAt) <= Date.parse(draft.startsAt)) {
+      throw new ValidationError('draft.endsAt must be after draft.startsAt', { field: 'draft.endsAt' });
+    }
+    if (parsed.notes !== undefined) {
+      draft.notes = safeText(parsed.notes, 'draft.notes', MAX_NOTES);
+    }
+  } catch (error) {
+    // A known key with an invalid value is an unusable draft, never a raw
+    // validation leak: the caller books with the manual option instead.
+    if (error instanceof AppError && error.code === 'APPOINTMENTS_AI_DRAFT_UNUSABLE') throw error;
+    throw new AppError(
+      `The workspace AI returned an invalid booking draft (${error instanceof Error ? error.message : String(error)}): book with the manual option instead`,
+      {
         code: 'APPOINTMENTS_AI_DRAFT_UNUSABLE',
         status: 502,
-        details: { field: 'draft.serviceKey' },
-      });
-    }
-    draft.serviceKey = key;
-  }
-  if (parsed.startsAt !== undefined) draft.startsAt = realIsoInstant(parsed.startsAt, 'draft.startsAt').iso;
-  if (parsed.endsAt !== undefined) draft.endsAt = realIsoInstant(parsed.endsAt, 'draft.endsAt').iso;
-  if (draft.startsAt !== undefined && draft.endsAt !== undefined
-    && Date.parse(draft.endsAt) <= Date.parse(draft.startsAt)) {
-    throw new AppError('The workspace AI returned an end before the start: book with the manual option instead', {
-      code: 'APPOINTMENTS_AI_DRAFT_UNUSABLE',
-      status: 502,
-      details: { field: 'draft.endsAt' },
-    });
-  }
-  if (parsed.notes !== undefined) {
-    draft.notes = safeText(parsed.notes, 'draft.notes', MAX_NOTES);
+        details: { field: (error instanceof ValidationError && error.details?.field) || 'draft' },
+      },
+    );
   }
   return Object.freeze(draft);
 }
@@ -1875,12 +1881,10 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
     name: 'appointment-book',
     version: 1,
     description:
-      'Book one appointment per call — validated, overlap-checked against the team member\'s held slots, stored as booked — '
-      + 'and advance it along the booking lifecycle. A booking with remindAt also opens exactly one work follow-up reminder '
-      + 'in the same transaction. Every write is idempotent by source key. The BO-F3-02 flow widens this surface additively: '
-      + 'suggestSlots reads free slots from held rows, proposeBooking plans without writing, confirmBooking creates only on '
-      + 'explicit confirmation, bookFromLink books from the business link idempotently, parseBookingPhrase drafts from one sentence. '
-      + 'Grants no read beyond the written row and the exact id lookup, no update and no delete.',
+      'Book one appointment per call — validated, overlap-checked, stored as booked — '
+      + 'and advance it along the lifecycle. A booking with remindAt opens one work follow-up in the same transaction. '
+      + 'BO-F3-02 adds suggestSlots, propose/confirmBooking, bookFromLink and parseBookingPhrase. '
+      + 'Every write is idempotent by source key; reads exact only, no update and no delete.',
     /** @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string, followUps?: any, templateSend?: any, permissionGate?: any, phraseLlm?: any, calendarSync?: any}} context */
     create(context = {}) {
       const modules = context?.modules;
