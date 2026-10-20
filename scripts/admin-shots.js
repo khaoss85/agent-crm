@@ -48,6 +48,7 @@ import { diffPng } from './admin-png-diff.js';
 import {
   STUB_VERSION,
   countBadgeNodes,
+  isHeadlessShell,
   startRootServer,
   stateBadgeGroups,
   stripAuthority,
@@ -120,7 +121,7 @@ function findChromium() {
  */
 function capture(binary, url, frame, shotPath) {
   const flags = [
-    ...(/headless_shell/.test(binary) ? [] : ['--headless=new']),
+    ...(isHeadlessShell(binary) ? [] : ['--headless=new']),
     '--no-sandbox',
     '--disable-gpu',
     '--no-first-run',
@@ -135,8 +136,15 @@ function capture(binary, url, frame, shotPath) {
     [...flags, `--screenshot=${shotPath}`, `--window-size=${frame.width},${frame.height}`, url],
     { encoding: 'utf8', timeout: 60_000 },
   );
-  void shot;
-  if (!existsSync(shotPath)) return { error: 'chromium wrote no screenshot' };
+  if (!existsSync(shotPath)) {
+    // The runner is the only machine with a browser: report WHY Chromium
+    // produced nothing (exit status/signal/stderr tail) instead of a bare
+    // sentence, so the next CI log names the cause directly.
+    const signal = shot.signal ? ` signal=${shot.signal}` : '';
+    const status = shot.status !== null && shot.status !== undefined ? ` exit=${shot.status}` : '';
+    const stderr = typeof shot.stderr === 'string' ? shot.stderr.trim().split('\n').slice(-5).join(' | ') : '';
+    return { error: `chromium wrote no screenshot (${binary.split('/').pop()}${status}${signal}${stderr ? ` stderr: ${stderr}` : ' no stderr'})` };
+  }
   const dom = spawnSync(binary, [...flags, '--dump-dom', url], {
     encoding: 'utf8',
     timeout: 60_000,
@@ -159,6 +167,7 @@ async function main() {
     );
     process.exit(2);
   }
+  console.log(`admin-shots: renderer ${binary} (headless-shell: ${isHeadlessShell(binary)})`);
   const headCss = readFileSync(join(ADMIN, 'styles.css'), 'utf8');
   let baseCss;
   let baseRef;

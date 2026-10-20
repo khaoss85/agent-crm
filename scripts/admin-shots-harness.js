@@ -292,6 +292,19 @@ export function stateBadgeGroups(css) {
 }
 
 /**
+ * Whether a Chromium binary is already headless by definition (Playwright's
+ * headless shell) and must NOT receive `--headless=new`. Matches both shell
+ * spellings: the legacy `headless_shell` (also the Playwright download-dir
+ * prefix `chromium_headless_shell-*`) and the current
+ * `chrome-headless-shell` binary name, so a bare CHROMIUM_BIN pointing at
+ * the hyphenated binary is not misdetected as a full browser.
+ * @param {string} binary
+ */
+export function isHeadlessShell(binary) {
+  return /headless[-_]shell/.test(binary);
+}
+
+/**
  * Count rendered badge nodes in serialized DOM: elements whose class list
  * contains the `badge` token.
  * @param {string} dom serialized document (e.g. Chromium --dump-dom)

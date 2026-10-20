@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import {
   STUB_VERSION,
   countBadgeNodes,
+  isHeadlessShell,
   startRootServer,
   stateBadgeGroups,
   stripAuthority,
@@ -160,6 +161,27 @@ test('stateBadgeGroups parses the five pinned state rules', () => {
     assert.ok(flat.includes(state), `group coverage includes ${state}`);
   }
   assert.ok(!flat.some((state) => state.includes('authority')), 'attribute variants are not state groups');
+});
+
+test('isHeadlessShell recognises both shell spellings, never a full browser', () => {
+  // Legacy Linux shell and the Playwright download-dir prefix (underscores).
+  assert.equal(isHeadlessShell('/opt/pw-browsers/chromium/chrome-linux/headless_shell'), true, 'legacy shell');
+  assert.equal(
+    isHeadlessShell('/Users/x/Library/Caches/ms-playwright/chromium_headless_shell-1208/chrome-linux/headless_shell'),
+    true,
+    'shell via download-dir prefix',
+  );
+  // Current macOS/Linux shell binary (hyphens), including a bare CHROMIUM_BIN
+  // with no Playwright parent dir to match against (the old underscore-only
+  // test misdetected that layout as a full browser and added --headless=new).
+  assert.equal(
+    isHeadlessShell('/Users/x/Library/Caches/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/chrome-headless-shell'),
+    true,
+    'hyphenated shell under an underscore parent',
+  );
+  assert.equal(isHeadlessShell('/tmp/chrome-headless-shell'), true, 'bare hyphenated binary path');
+  assert.equal(isHeadlessShell('/usr/bin/google-chrome'), false, 'full Chrome needs --headless=new');
+  assert.equal(isHeadlessShell('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'), false, 'macOS Chrome bundle');
 });
 
 test('countBadgeNodes counts badge elements and their state classes', () => {
