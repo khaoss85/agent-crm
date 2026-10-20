@@ -580,11 +580,19 @@ pixel on the existing Admin screens, plus the CI tests that lock the reason.
    (`strip-authority` serves the working-tree stylesheet with the six authority
    rules removed, i.e. the exact F0-01 delta now that #279 is merged; a plain
    `npm run admin:shots` compares against `origin/main` instead).
-2. The script screenshots `#/` and `#/work` at 1280x800 before and after,
-   pixel-diffs each pair with `scripts/admin-png-diff.js`, and only on zero
-   differing pixels writes `tests/fixtures/admin-shots/before|after/*.png`
-   plus `manifest.json` (base/head stylesheet shas, renderer, timestamp).
-   Any differing pixel exits 1 and writes nothing.
+2. The script serves each side from its own loopback server at the document
+   root (so the absolute `/styles.css` and `/app.js` resolve to that side's
+   frozen tree) with the Admin read APIs stubbed deterministically
+   (`stubbed-api` backend, `STUB_VERSION` in `scripts/admin-shots-harness.js`),
+   then screenshots `#/` and `#/work` at 1280x800 before and after plus each
+   screen's serialized DOM, and pixel-diffs each pair with
+   `scripts/admin-png-diff.js`. Only on zero differing pixels writes
+   `tests/fixtures/admin-shots/before|after/*.png` plus `manifest.json`
+   (base/head stylesheet shas, renderer, timestamp, per-screen badge counts).
+   Any differing pixel exits 1 and writes nothing, as does any vacuous setup:
+   a side that never served its own stylesheet with 200, a screen that
+   rendered no `.badge` node, or badge classes that stop covering a
+   state-colour group.
 3. `tests/admin-authority-tokens.test.js` pins why the pairs must be
    identical: the badge census (one base, five state, six authority rules),
    the verbatim baseline pairs, and the proof that no shipped markup or script

@@ -11,11 +11,16 @@
  * copies are served from scratch directories; the worktree is never modified.
  * Every pair must be pixel-identical or the script exits 1 with no fixtures.
  *
- * Backend mode is `static-nobackend`: the app is served statically with no
- * framework server, so API calls answer 404 and the screens render their
- * deterministic unavailable/empty shells. That is the whole layout, type and
- * chrome surface; badge semantics for every state are pinned separately by
- * `tests/admin-authority-tokens.test.js`, which needs no browser.
+ * Serving (see `scripts/admin-shots-harness.js`). Each side gets its own
+ * loopback server rooted at its frozen tree, so the absolute asset URLs the
+ * app ships (`/styles.css`, `/app.js`) resolve to that side's bytes. The
+ * servers stub the Admin read APIs with deterministic rows, so every captured
+ * screen renders real `.badge` nodes. Before comparing, the script proves the
+ * proof is not vacuous and exits 1 with no fixtures when any check fails:
+ * each side must have served its own `/styles.css` with 200 and the expected
+ * bytes (plus `/app.js` and `/index.html` with 200), every captured screen
+ * must render at least one `.badge` node, and the rendered badge classes must
+ * cover every state-colour group of the working-tree stylesheet.
  *
  * Requires a Chromium binary (same discovery as `scripts/site-shots.js`).
  * Unlike site-shots — a publishing convenience that skips silently — this is
@@ -37,10 +42,16 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { createServer } from 'node:http';
 import { tmpdir, homedir } from 'node:os';
-import { join, extname, sep } from 'node:path';
+import { join } from 'node:path';
 import { diffPng } from './admin-png-diff.js';
+import {
+  STUB_VERSION,
+  countBadgeNodes,
+  startRootServer,
+  stateBadgeGroups,
+  stripAuthority,
+} from './admin-shots-harness.js';
 
 const root = process.cwd();
 const ADMIN = join(root, 'apps/admin/public');
@@ -51,19 +62,6 @@ const ROUTES = [
   { route: '#/', file: 'dashboard.png', width: 1280, height: 800 },
   { route: '#/work', file: 'work.png', width: 1280, height: 800 },
 ];
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.map': 'application/json; charset=utf-8',
-  '.woff2': 'font/woff2',
-  '.woff': 'font/woff',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-};
 
 /** @param {string} data */
 function sha256(data) {
@@ -112,33 +110,42 @@ function findChromium() {
 }
 
 /**
- * Serve two frozen copies of the Admin app: /before/* (base stylesheet) and
- * /after/* (working-tree stylesheet). Unknown paths answer 404 with an empty
- * body — the honest static-nobackend response the app already handles.
- * @param {string} beforeDir
- * @param {string} afterDir
+ * Render one URL to a PNG screenshot plus its serialized DOM (after the
+ * app's own fetches settle). Either artifact missing is a capture failure.
+ * @param {string} binary chromium binary
+ * @param {string} url
+ * @param {{ width: number, height: number }} frame
+ * @param {string} shotPath where to write the screenshot
+ * @returns {{ dom: string } | { error: string }}
  */
-function startStaticServer(beforeDir, afterDir) {
-  const server = createServer((request, response) => {
-    const url = new URL(request.url ?? '/', 'http://localhost');
-    const match = /^\/(before|after)(\/.*)?$/.exec(url.pathname);
-    if (!match) {
-      response.writeHead(404);
-      response.end();
-      return;
-    }
-    const base = match[1] === 'before' ? beforeDir : afterDir;
-    let file = join(base, decodeURIComponent(match[2] ?? '/'));
-    if (url.pathname.endsWith('/')) file = join(file, 'index.html');
-    if (!file.startsWith(base + sep) || !existsSync(file)) {
-      response.writeHead(404);
-      response.end();
-      return;
-    }
-    response.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
-    response.end(readFileSync(file));
+function capture(binary, url, frame, shotPath) {
+  const flags = [
+    ...(/headless_shell/.test(binary) ? [] : ['--headless=new']),
+    '--no-sandbox',
+    '--disable-gpu',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-background-networking',
+    '--hide-scrollbars',
+    '--virtual-time-budget=5000',
+    '--force-device-scale-factor=1',
+  ];
+  const shot = spawnSync(
+    binary,
+    [...flags, `--screenshot=${shotPath}`, `--window-size=${frame.width},${frame.height}`, url],
+    { encoding: 'utf8', timeout: 60_000 },
+  );
+  void shot;
+  if (!existsSync(shotPath)) return { error: 'chromium wrote no screenshot' };
+  const dom = spawnSync(binary, [...flags, '--dump-dom', url], {
+    encoding: 'utf8',
+    timeout: 60_000,
+    maxBuffer: 16 * 1024 * 1024,
   });
-  return server;
+  if (typeof dom.stdout !== 'string' || !dom.stdout.includes('<html')) {
+    return { error: 'chromium produced no serialized DOM' };
+  }
+  return { dom: dom.stdout };
 }
 
 async function main() {
@@ -167,15 +174,12 @@ async function main() {
     baseCss = shown.stdout;
   } else if (beforeArg === 'strip-authority') {
     baseRef = 'strip-authority';
-    const lines = headCss.split('\n');
-    const kept = lines.filter((line) => !/^\s*\.badge\[data-authority="[^"]+"\] \{[^}]*\}\s*$/.test(line));
-    if (lines.length - kept.length !== 6) {
-      console.error(
-        `admin-shots: expected to strip exactly 6 authority-badge rules, found ${lines.length - kept.length}.`,
-      );
+    try {
+      baseCss = stripAuthority(headCss);
+    } catch (error) {
+      console.error(`admin-shots: ${error instanceof Error ? error.message : String(error)}`);
       process.exit(1);
     }
-    baseCss = kept.join('\n');
   } else {
     baseRef = beforeArg;
     const shown = spawnGit(['show', `${beforeArg}:apps/admin/public/styles.css`], {
@@ -191,6 +195,11 @@ async function main() {
     console.error('admin-shots: base and working-tree stylesheets are identical — nothing to compare.');
     process.exit(1);
   }
+  const stateGroups = stateBadgeGroups(headCss);
+  if (stateGroups.length === 0) {
+    console.error('admin-shots: no state badge groups parsed from the working-tree stylesheet.');
+    process.exit(1);
+  }
 
   const scratch = mkdtempSync(join(tmpdir(), 'admin-shots-'));
   const beforeDir = join(scratch, 'before');
@@ -199,54 +208,62 @@ async function main() {
   cpSync(ADMIN, afterDir, { recursive: true });
   writeFileSync(join(beforeDir, 'styles.css'), baseCss);
 
-  const server = startStaticServer(beforeDir, afterDir);
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : 0;
+  /** @type {{ side: string, server: import('node:http').Server, log: { method: string, path: string, status: number, bytes: number }[], port: number, css: string }[]} */
+  const sides = [
+    { side: 'before', server: null, log: [], port: 0, css: baseCss },
+    { side: 'after', server: null, log: [], port: 0, css: headCss },
+  ].map((entry) => ({
+    ...entry,
+    server: startRootServer(entry.side === 'before' ? beforeDir : afterDir, { log: entry.log }),
+  }));
+  for (const entry of sides) {
+    await new Promise((resolve) => entry.server.listen(0, '127.0.0.1', resolve));
+    const address = entry.server.address();
+    entry.port = typeof address === 'object' && address ? address.port : 0;
+  }
 
-  /** @type {{ route: string, file: string, width: number, height: number, diffPixels: number }[]} */
+  /** @type {{ route: string, file: string, width: number, height: number, diffPixels: number, badgeNodesBefore: number, badgeNodesAfter: number }[]} */
   const compared = [];
+  /** Union of rendered badge state classes across every capture. */
+  const renderedStates = new Set();
   let failed = false;
-  let noScreenshot = false;
-  let undecodable = false;
+  let failureReason = '';
+  /** @param {string} reason */
+  const fail = (reason) => {
+    console.error(`  ✗ ${reason}`);
+    failed = true;
+    if (!failureReason) failureReason = reason;
+  };
   try {
     for (const target of ROUTES) {
       /** @type {Record<string, Buffer>} */
       const shots = {};
-      for (const side of ['before', 'after']) {
-        const output = join(scratch, `${side}-${target.file}`);
+      /** @type {Record<string, number>} */
+      const badgeCounts = {};
+      for (const entry of sides) {
+        const output = join(scratch, `${entry.side}-${target.file}`);
         const url =
-          `http://127.0.0.1:${port}/${side}/index.html` +
-          (target.route === '#/' ? '' : target.route);
-        const result = spawnSync(
-          binary,
-          [
-            ...(/headless_shell/.test(binary) ? [] : ['--headless=new']),
-            '--no-sandbox',
-            '--disable-gpu',
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--disable-background-networking',
-            '--hide-scrollbars',
-            '--virtual-time-budget=3000',
-            '--force-device-scale-factor=1',
-            `--screenshot=${output}`,
-            `--window-size=${target.width},${target.height}`,
-            url,
-          ],
-          { encoding: 'utf8', timeout: 60_000 },
-        );
-        void result;
-        if (!existsSync(output)) {
-          console.error(`  ✗ ${side}/${target.file}: chromium wrote no screenshot`);
-          failed = true;
-          noScreenshot = true;
+          `http://127.0.0.1:${entry.port}/index.html` + (target.route === '#/' ? '' : target.route);
+        const result = capture(binary, url, target, output);
+        if ('error' in result) {
+          fail(`${entry.side}/${target.file}: ${result.error}`);
           break;
         }
-        shots[side] = readFileSync(output);
+        shots[entry.side] = readFileSync(output);
+        const counted = countBadgeNodes(result.dom);
+        badgeCounts[entry.side] = counted.total;
+        for (const state of counted.states) renderedStates.add(state);
       }
       if (failed || !shots.before || !shots.after) {
         failed = true;
+        break;
+      }
+      if (badgeCounts.before < 1 || badgeCounts.after < 1) {
+        fail(
+          `${target.route}: rendered no badge nodes ` +
+            `(before ${badgeCounts.before}, after ${badgeCounts.after}) — ` +
+            'the diff could not detect a badge regression',
+        );
         break;
       }
       let verdict;
@@ -254,39 +271,72 @@ async function main() {
         verdict = diffPng(shots.before, shots.after);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        console.error(`  ✗ ${target.route}: cannot decode screenshots (${reason})`);
-        failed = true;
-        undecodable = true;
+        fail(`${target.route}: cannot decode screenshots (${reason})`);
         break;
       }
       console.log(
         `  ${verdict.equal ? '✓' : '✗'} ${target.route} → ${target.file}: ` +
-          `${verdict.reason} (before ${verdict.left.width}×${verdict.left.height})`,
+          `${verdict.reason} (before ${verdict.left.width}×${verdict.left.height}, ` +
+          `badges before ${badgeCounts.before}/after ${badgeCounts.after})`,
       );
       if (!verdict.equal) {
-        console.error(
-          `    ${verdict.diffPixels} differing pixels, first at ` +
+        fail(
+          `${target.route}: ${verdict.diffPixels} differing pixels, first at ` +
             `(${verdict.firstDiff?.x}, ${verdict.firstDiff?.y})`,
         );
-        failed = true;
         break;
       }
-      compared.push({ ...target, diffPixels: 0 });
+      compared.push({ ...target, diffPixels: 0, badgeNodesBefore: badgeCounts.before, badgeNodesAfter: badgeCounts.after });
       // Keep the passing pair for the fixture write below.
       writeFileSync(join(scratch, `keep-before-${target.file}`), shots.before);
       writeFileSync(join(scratch, `keep-after-${target.file}`), shots.after);
     }
+
+    if (!failed) {
+      // The proof is only as good as its setup: each side must have served
+      // its OWN stylesheet (200, expected bytes) plus the app shell, and the
+      // rendered badges must cover every state-colour group.
+      for (const entry of sides) {
+        const cssHits = entry.log.filter((item) => item.path === '/styles.css' && item.status === 200);
+        if (cssHits.length === 0) {
+          fail(`${entry.side}: /styles.css was never fetched with 200 — the diff compared unstyled markup`);
+          break;
+        }
+        const expectedBytes = Buffer.byteLength(entry.css);
+        if (!cssHits.some((item) => item.bytes === expectedBytes)) {
+          fail(`${entry.side}: /styles.css bytes never matched this side's stylesheet — the diff compared the wrong CSS`);
+          break;
+        }
+        for (const asset of ['/app.js', '/index.html']) {
+          if (!entry.log.some((item) => item.path === asset && item.status === 200)) {
+            fail(`${entry.side}: ${asset} was never fetched with 200 — the app did not boot from this side's tree`);
+            break;
+          }
+        }
+        if (failed) break;
+      }
+    }
+
+    /** @type {string[]} */
+    let uncoveredGroups = [];
+    if (!failed) {
+      uncoveredGroups = stateGroups
+        .filter((group) => !group.some((state) => renderedStates.has(state)))
+        .map((group) => group.join('|'));
+      if (uncoveredGroups.length > 0) {
+        fail(
+          `rendered badges never cover state group(s) ${uncoveredGroups.join(', ')} — ` +
+            'a restyle of those pairs would move no pixel in this proof',
+        );
+      }
+    }
   } finally {
-    server.close();
+    for (const entry of sides) entry.server.close();
   }
 
   if (failed) {
     rmSync(scratch, { recursive: true, force: true });
-    console.error(
-      noScreenshot || undecodable
-        ? 'admin-shots: capture failed — no fixtures written.'
-        : 'admin-shots: before/after differ — no fixtures written.',
-    );
+    console.error(`admin-shots: ${failureReason} — no fixtures written.`);
     process.exit(1);
   }
 
@@ -298,14 +348,23 @@ async function main() {
   }
   const manifest = {
     version: 1,
-    backend: 'static-nobackend',
+    backend: 'stubbed-api',
+    stubVersion: STUB_VERSION,
     baseRef,
     baseStylesSha: sha256(baseCss),
     headStylesSha: sha256(headCss),
     capturedAt: new Date().toISOString(),
     renderer: binary.split('/').pop(),
     command: `npm run admin:shots${beforeArg ? ` -- --before=${beforeArg}` : ''}`,
-    screens: compared.map(({ route, file, width, height }) => ({ route, file, width, height })),
+    stateGroupsCovered: stateGroups.length,
+    screens: compared.map(({ route, file, width, height, badgeNodesBefore, badgeNodesAfter }) => ({
+      route,
+      file,
+      width,
+      height,
+      badgeNodesBefore,
+      badgeNodesAfter,
+    })),
   };
   writeFileSync(join(FIXTURES, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   rmSync(scratch, { recursive: true, force: true });

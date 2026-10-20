@@ -13,7 +13,11 @@
  *   (`strip-authority` filter, or `git show <ref>` through the isolated
  *   helper), so a hand-edited fixture fails;
  * - every screen pair decodes and pixel-diffs to zero through the same
- *   comparator the script uses.
+ *   comparator the script uses;
+ * - every screen rendered at least one `.badge` node from the stubbed APIs
+ *   (`stubbed-api` backend), so the zero-pixel diff cannot be an empty shell
+ *   proving nothing, and the rendered badges covered every state-colour
+ *   group of the current stylesheet.
  *
  * With no fixtures on disk the proof has not been captured yet: the test
  * skips and says how to capture it. A skip is the honest interim state, not
@@ -26,6 +30,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { diffPng, decodePng } from '../scripts/admin-png-diff.js';
+import { STUB_VERSION, stateBadgeGroups, stripAuthority } from '../scripts/admin-shots-harness.js';
 import { spawnGit } from './helpers/isolated-git.js';
 
 const root = join(import.meta.dirname, '..');
@@ -45,9 +50,15 @@ test('admin before/after fixtures match the stylesheets they prove', { skip: !fi
   const headCss = readFileSync(ADMIN_CSS, 'utf8');
   const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8'));
   assert.equal(manifest.version, 1, 'manifest version 1');
-  assert.equal(manifest.backend, 'static-nobackend', 'fixtures come from the static-nobackend capture');
+  assert.equal(manifest.backend, 'stubbed-api', 'fixtures come from the stubbed-API capture');
+  assert.equal(manifest.stubVersion, STUB_VERSION, 'fixtures come from the current stub rows');
   assert.ok(typeof manifest.renderer === 'string' && manifest.renderer.length > 0, 'renderer is named');
   assert.ok(Array.isArray(manifest.screens) && manifest.screens.length > 0, 'screens are listed');
+  assert.equal(
+    manifest.stateGroupsCovered,
+    stateBadgeGroups(headCss).length,
+    'the capture covered every state-colour group of the current stylesheet',
+  );
   assert.equal(
     manifest.headStylesSha,
     sha256(headCss),
@@ -56,10 +67,7 @@ test('admin before/after fixtures match the stylesheets they prove', { skip: !fi
 
   let baseCss;
   if (manifest.baseRef === 'strip-authority') {
-    baseCss = headCss
-      .split('\n')
-      .filter((line) => !/^\s*\.badge\[data-authority="[^"]+"\] \{[^}]*\}\s*$/.test(line))
-      .join('\n');
+    baseCss = stripAuthority(headCss);
   } else {
     const shown = spawnGit(['show', `${manifest.baseRef}:apps/admin/public/styles.css`]);
     assert.equal(shown.status, 0, `base ref ${manifest.baseRef} must resolve`);
@@ -72,6 +80,14 @@ test('admin before/after fixtures match the stylesheets they prove', { skip: !fi
   );
 
   for (const screen of manifest.screens) {
+    assert.ok(
+      Number.isInteger(screen.badgeNodesBefore) && screen.badgeNodesBefore >= 1,
+      `${screen.route}: before rendered badges, not an empty shell`,
+    );
+    assert.ok(
+      Number.isInteger(screen.badgeNodesAfter) && screen.badgeNodesAfter >= 1,
+      `${screen.route}: after rendered badges, not an empty shell`,
+    );
     for (const side of ['before', 'after']) {
       const file = join(FIXTURES, side, screen.file);
       assert.ok(existsSync(file), `${side}/${screen.file} is captured`);
