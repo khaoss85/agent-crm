@@ -568,3 +568,27 @@ actually matters.
 Report any step that fails; do not mark the identity and access section
 browser-validated unless all 34 pass **on the current head**. As of this
 change that has not happened — see the note above.
+
+## Visual baseline — authority badges (BO-F0-01)
+
+Manual-browser proof that the six `.badge[data-authority]` rules changed no
+pixel on the existing Admin screens, plus the CI tests that lock the reason.
+
+1. On a machine with Chromium (CI images with Playwright browsers, a
+   maintainer Mac — the executor sandbox cannot run a browser), fetch
+   origin/main, then capture: `npm run admin:shots -- --before=strip-authority`
+   (`strip-authority` serves the working-tree stylesheet with the six authority
+   rules removed, i.e. the exact F0-01 delta now that #279 is merged; a plain
+   `npm run admin:shots` compares against `origin/main` instead).
+2. The script screenshots `#/` and `#/work` at 1280x800 before and after,
+   pixel-diffs each pair with `scripts/admin-png-diff.js`, and only on zero
+   differing pixels writes `tests/fixtures/admin-shots/before|after/*.png`
+   plus `manifest.json` (base/head stylesheet shas, renderer, timestamp).
+   Any differing pixel exits 1 and writes nothing.
+3. `tests/admin-authority-tokens.test.js` pins why the pairs must be
+   identical: the badge census (one base, five state, six authority rules),
+   the verbatim baseline pairs, and the proof that no shipped markup or script
+   produces a `data-authority` element.
+4. Re-capture whenever `apps/admin/public/styles.css` badge rules change; a
+   future view that starts using `data-authority` updates the producers test
+   with its story id and re-captures.
