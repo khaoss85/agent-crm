@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { readQuoteVersionEvidence, renderQuoteVersionPdf } from '../packages/commercial/src/quote-pdf.js';
+import { requireSignedTerm } from '../packages/commercial/src/terms.js';
 import { project, boot } from './helpers/contracts-project.js';
 
 /**
@@ -144,6 +145,48 @@ test('quote PDF: hostile evidence stays a valid, deterministic document', () => 
   assert.ok(text.includes('123.45 EUR'), 'the frozen net amount is printed');
   assert.ok(!/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text), 'no raw control bytes escape into the document');
   assert.ok(text.includes('?'), 'unencodable evidence degrades to a visible placeholder, never a broken byte');
+});
+
+test('quote PDF: a verified term snapshot renders, a tampered one refuses', async () => {
+  const versionRow = { id: 'qv-term', versionNumber: 1, quoteId: 'q1', priceBookId: 'pb1', currency: 'EUR' };
+  const lineRow = {
+    id: 'l1', offerName: 'Offerta', offerLogicalKey: 'k', offerRevision: 1, sku: 's',
+    quantity: 1, discountBps: 0, position: 1,
+    listAmountCents: 100, discountAmountCents: 0, netAmountCents: 100,
+  };
+  const totalRow = {
+    kind: 'one_time', currency: 'EUR', interval: null, intervalCount: null,
+    listAmountCents: 100, discountAmountCents: 0, netAmountCents: 100,
+  };
+  const signed = requireSignedTerm({
+    effectiveDate: '2026-01-01', termStartDate: '2026-01-01', termEndDate: '2027-01-01',
+    autoRenew: true, renewalNoticeDays: 30,
+  });
+  const termRow = { versionId: 'qv-term', quoteId: 'q1', sourceKey: 'qvt:qv-term', ...signed };
+  const stub = (terms) => ({
+    versions: { get: async () => versionRow },
+    lines: { listWhere: async () => [lineRow] },
+    components: { listWhere: async () => [] },
+    totals: { listWhere: async () => [totalRow] },
+    terms: { listWhere: async () => terms },
+  });
+
+  const evidence = await readQuoteVersionEvidence(stub([termRow]), 'qv-term');
+  assert.equal(evidence.terms.termsFingerprint, signed.termsFingerprint, 'the verified snapshot renders its fingerprint');
+  const pdf = renderQuoteVersionPdf(evidence);
+  assert.ok(pdf.pdfBytes.toString('latin1').includes(signed.termsFingerprint), 'the PDF prints the verified fingerprint');
+
+  const tampered = { ...termRow, termDays: 1 };
+  await assert.rejects(
+    readQuoteVersionEvidence(stub([tampered]), 'qv-term'),
+    (error) => error.code === 'TERMS_FINGERPRINT_MISMATCH',
+    'an out-of-band mutation of the term row refuses instead of rendering as signed',
+  );
+  await assert.rejects(
+    readQuoteVersionEvidence(stub([termRow, { ...termRow, sourceKey: 'qvt:qv-term:2' }]), 'qv-term'),
+    (error) => error.code === 'TERMS_SNAPSHOT_AMBIGUOUS',
+    'two term snapshots for one version refuse instead of picking one to print',
+  );
 });
 
 test('quote PDF: unknown versions and empty snapshots refuse', async () => {

@@ -2,6 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import { AppError, ValidationError } from '../../core/index.js';
+import { TERMS_SNAPSHOT_AMBIGUOUS, verifySelfConsistent } from './verify-terms.js';
 
 /**
  * Frozen-version quote PDF (accordo BO-F2-03, first slice).
@@ -13,7 +14,10 @@ import { AppError, ValidationError } from '../../core/index.js';
  *
  *   readQuoteVersionEvidence(services, versionId) — collects every frozen row
  *     of one quote version (version, lines, components, totals, terms) into a
- *     plain, JSON-able evidence object. It reads version rows only.
+ *     plain, JSON-able evidence object. It reads version rows only. A present
+ *     term snapshot is verified with the package's own verifier before it is
+ *     rendered: a corrupt or ambiguous snapshot refuses, so the document never
+ *     presents an unverified term as signed.
  *   renderQuoteVersionPdf(evidence) — renders that evidence to deterministic
  *     PDF 1.4 bytes (uncompressed text, Helvetica), with a sha256 document
  *     hash over the canonical evidence bytes.
@@ -49,17 +53,6 @@ function byteOrder(a, b) {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** Parse a JSON column that may already be an object. @param {unknown} value */
-function fromJson(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'object') return value;
-  try {
-    return JSON.parse(String(value));
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Collect the frozen evidence of one quote version. Reads version rows only —
  * never the draft quote, its lines, or the live catalog — so the evidence
@@ -93,6 +86,21 @@ export async function readQuoteVersionEvidence(services, versionId) {
     throw new AppError('The quote version carries no frozen totals', { code: 'VERSION_SNAPSHOT_INCOMPLETE', status: 409 });
   }
   const termRows = services.terms ? await services.terms.listWhere({ versionId: version.id }) : [];
+  // The document below prints the term and hashes it into the document hash,
+  // so it presents the term as signed evidence. It therefore verifies the
+  // frozen snapshot with the package's own verifier first — the same check
+  // `commercial-quotes@2` runs — and refuses a corrupt or ambiguous snapshot
+  // instead of rendering it. A version that predates terms carries no row and
+  // renders without a terms section, exactly as before.
+  if (termRows.length > 1) {
+    throw new AppError(
+      'This quote version carries more than one signed-term snapshot, so the rendered terms cannot be decided from the evidence',
+      { code: TERMS_SNAPSHOT_AMBIGUOUS, status: 409, details: { quoteVersionId: version.id, count: termRows.length } },
+    );
+  }
+  const verifiedTerm = termRows.length === 1
+    ? verifySelfConsistent(termRows[0], { kind: 'quoteVersion', id: version.id })
+    : null;
   return {
     version: {
       id: version.id,
@@ -148,14 +156,14 @@ export async function readQuoteVersionEvidence(services, versionId) {
       discountAmountCents: total.discountAmountCents,
       netAmountCents: total.netAmountCents,
     })),
-    terms: termRows.length > 0
+    terms: verifiedTerm
       ? {
-        effectiveDate: termRows[0].effectiveDate ?? null,
-        termStartDate: termRows[0].termStartDate ?? null,
-        termEndDate: termRows[0].termEndDate ?? null,
-        termDays: termRows[0].termDays ?? null,
-        autoRenew: termRows[0].autoRenew ?? null,
-        renewalNoticeDays: termRows[0].renewalNoticeDays ?? null,
+        effectiveDate: verifiedTerm.effectiveDate,
+        termStartDate: verifiedTerm.termStartDate,
+        termEndDate: verifiedTerm.termEndDate,
+        termDays: verifiedTerm.termDays,
+        autoRenew: verifiedTerm.autoRenew,
+        renewalNoticeDays: verifiedTerm.renewalNoticeDays,
         termsFingerprint: termRows[0].termsFingerprint ?? null,
       }
       : null,
