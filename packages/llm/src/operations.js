@@ -31,7 +31,10 @@ import { OPENAI_DEFAULT_MODEL } from './openai.js';
  * allowed model needs a valid price, or the call refuses before the
  * provider is touched. Every attempt writes one audit row with the space,
  * the purpose, the adapter, the model, the token counts and the estimated
- * cost: never the prompt text, never the key.
+ * cost: never the prompt text, never the key. The one exception is a
+ * slot-timed-out attempt whose provider settles late: the caller already
+ * got LLM_OPERATION_TIMEOUT, so the late answer claims no spend and
+ * writes no receipt, and the 503-safe retry lands exactly once.
  *
  * State lives in two managed record modules, like every sibling package:
  * `llm-usage-day` (one row per space per UTC day, the running totals the
@@ -81,7 +84,19 @@ const RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/;
 const daySpendChains = new Map();
 
 /**
- * @param {string} key @param {() => Promise<any>} critical @param {number} slotMs
+ * Refuse a slot-timed-out critical section that settles late: the caller
+ * already received LLM_OPERATION_TIMEOUT, so the late answer claims no
+ * spend and writes no receipt — a 503-safe retry lands exactly once.
+ * @param {number} slotMs
+ */
+function refuseLateSettler(slotMs) {
+  return new AppError(`the llm operation timed out after ${slotMs}ms: retry the call`, {
+    code: 'LLM_OPERATION_TIMEOUT', status: 503,
+  });
+}
+
+/**
+ * @param {string} key @param {(attempt: {timedOut: boolean}) => Promise<any>} critical @param {number} slotMs
  */
 export function withDaySpend(key, critical, slotMs) {
   const previous = daySpendChains.get(key) ?? Promise.resolve();
@@ -91,26 +106,29 @@ export function withDaySpend(key, critical, slotMs) {
   daySpendChains.set(key, tail);
   // Synchronous until here: two callers racing in the same tick still
   // order. Tails never reject, so a refused call never wedges the chain.
+  // The attempt token is the late-settler poison: the slot timeout flips
+  // it, and the abandoned critical must check it before landing spend or
+  // a receipt — the caller already got LLM_OPERATION_TIMEOUT, so a late
+  // write would bill one logical attempt twice.
+  const attempt = { timedOut: false };
   return (async () => {
     await previous;
+    const pending = Promise.resolve().then(() => critical(attempt));
     try {
       // The slot itself is bounded: a hung custody edge or an adapter that
       // ignores its own timeout cannot wedge the space chain — the slot
       // refuses retryable and the chain stays free for the next attempt.
-      // A late settler's spend still lands through the claim below as real
-      // spend instead of vanishing. (MEM_ACC_REUSE: core `withTimeout`,
-      // the same bound channels puts on verifyInbound.)
-      return await withTimeout(
-        Promise.resolve().then(() => critical()),
-        slotMs,
-        'llm day-spend slot',
-      );
+      // A critical section that settles after the slot finds the attempt
+      // poisoned and lands nothing (see `refuseLateSettler`): the spend
+      // and its receipt belong to the retry, never to the abandoned
+      // attempt. (MEM_ACC_REUSE: core `withTimeout`, the same bound
+      // channels puts on verifyInbound.)
+      return await withTimeout(pending, slotMs, 'llm day-spend slot');
     } catch (error) {
       if (error !== null && typeof error === 'object'
         && /** @type {any} */ (error).code === 'PROVIDER_TIMEOUT') {
-        throw new AppError(`the llm operation timed out after ${slotMs}ms: retry the call`, {
-          code: 'LLM_OPERATION_TIMEOUT', status: 503,
-        });
+        attempt.timedOut = true;
+        throw refuseLateSettler(slotMs);
       }
       throw error;
     } finally {
@@ -763,7 +781,7 @@ export function createLlmOperations(options = {}) {
     // bounded legs (custody, provider) plus the claim retries: only a
     // genuinely wedged leg trips it.
     const slotMs = timeoutMs * 2 + 5000;
-    return withDaySpend(spaceId, async () => {
+    return withDaySpend(spaceId, async (attempt) => {
       const current = await usageToday(usageService, spaceId, actor);
       if (overCap(current.row, caps)) {
         await audit(auditService, {
@@ -781,6 +799,9 @@ export function createLlmOperations(options = {}) {
         const completion = await dryRun.definition.generate({
           secret: FIXTURE_LLM_SECRET, messages, model, maxTokens,
         });
+        // The slot may have timed out while the fixture answered: a late
+        // settler lands nothing, so the caller's retry stays idempotent.
+        if (attempt.timedOut) throw refuseLateSettler(slotMs);
         const cost = estimateCostCents({ inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, model, pricing });
         // The dry-run spend claims with its domain receipt in one unit:
         // a receipt failure rolls the claim back, never a silent total.
@@ -873,6 +894,11 @@ export function createLlmOperations(options = {}) {
         }, actor);
         throw error;
       }
+      // The provider may have settled after the slot timed out (an
+      // adapter that ignores its own timeout): the late answer claims no
+      // spend and writes no receipt — the caller already got
+      // LLM_OPERATION_TIMEOUT and the retry owns this attempt's landing.
+      if (attempt.timedOut) throw refuseLateSettler(slotMs);
       const cost = estimateCostCents({
         inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, model, pricing,
       });

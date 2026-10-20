@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { AppError } from '../packages/core/index.js';
 import { AuditLog } from '../packages/core/src/audit.js';
 import { createDatabase } from '../packages/core/src/database.js';
 import { EventBus } from '../packages/core/src/event-bus.js';
@@ -12,6 +13,7 @@ import {
   createRecordModuleFromManifest,
   recordModuleMigrations,
 } from '../packages/core/src/record-module-runtime.js';
+import { assertCompletion } from '../packages/llm/src/adapter.js';
 import { claimSpend, createLlmOperations, estimateCostCents, withDaySpend } from '../packages/llm/src/operations.js';
 import { createFixtureLlmAdapter } from '../packages/llm/src/fixture.js';
 import { OPENAI_DEFAULT_MODEL, createOpenAiLlmAdapter } from '../packages/llm/src/openai.js';
@@ -397,8 +399,9 @@ test('a long response within maxTokens is accepted, an absurd one refused', asyn
 });
 
 test('a hung custody refuses within the timeout and frees the space chain', async () => {
+  let custody = () => new Promise(() => {});
   const hanging = setup({
-    resolveSecret: () => new Promise(() => {}),
+    resolveSecret: (...args) => custody(...args),
     spaces: { presti: { enabled: true, timeoutMs: 1000 } },
   });
   const code = await codeOf(() => call(hanging.ops, hanging.modules, { tag: 'hung' }));
@@ -406,10 +409,19 @@ test('a hung custody refuses within the timeout and frees the space chain', asyn
   const audit = await hanging.ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, hanging.modules);
   assert.equal(audit[audit.length - 1].refused, 'secret-timeout', 'the audit names the timeout cause');
   assert.equal(audit[audit.length - 1].errorCode, 'LLM_SECRET_UNAVAILABLE');
-  // The chain is free: the same space serves the next attempt.
-  const working = setup();
-  const out = await call(working.ops, working.modules, { tag: 'after-hang' });
+  // The chain is free on the SAME space and storage: swap in a working
+  // vault and call again — no fresh setup, so this proves the timed-out
+  // attempt left no lock behind on the shared day row, not just that a
+  // fresh map starts empty.
+  custody = async () => SECRET;
+  const out = await call(hanging.ops, hanging.modules, { tag: 'after-hang' });
   assert.equal(out.text, 'live answer', 'the space chain stayed free after the timeout');
+  const totals = await hanging.ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, hanging.modules);
+  assert.deepEqual(totals.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[10, 4, 1]],
+    'only the retry claimed spend on the shared day row');
+  const after = await hanging.ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, hanging.modules);
+  assert.equal(after.length, 2, 'one refusal row plus one receipt, in order');
+  assert.equal(after[1].refused, '');
 });
 
 test('a secret failure records its cause and never the secret', async () => {
@@ -457,6 +469,62 @@ test('a wedged slot refuses retryable and frees the space chain', async () => {
   assert.equal(code, 'LLM_OPERATION_TIMEOUT', 'a wedged slot refuses with the stable retryable code');
   const next = await withDaySpend('slot-probe-00647aef', async () => 'served', 50);
   assert.equal(next, 'served', 'the chain stayed free after the slot timeout');
+});
+
+test('a late provider settler claims no spend after the slot timed out', async () => {
+  let releaseFirst = () => {};
+  const gate = new Promise((resolve) => { releaseFirst = resolve; });
+  let generations = 0;
+  // An adapter that ignores its own timeoutMs: the first generation hangs
+  // in the provider past the slot, the retry answers at once.
+  const late = {
+    name: 'late-llm',
+    version: 1,
+    label: 'Late LLM',
+    config: { testOnly: true },
+    async generate(request) {
+      generations += 1;
+      if (generations === 1) await gate;
+      if (typeof request?.secret !== 'string' || request.secret !== SECRET) {
+        throw new AppError('the provider refused the llm credential', {
+          code: 'LLM_AUTH_FAILED', status: 401,
+        });
+      }
+      return assertCompletion({
+        text: 'late answer', model: request.model, inputTokens: 10, outputTokens: 4,
+      }, request.model);
+    },
+  };
+  const { ops, modules } = setup({
+    adapters: [late],
+    spaces: { presti: { enabled: true, adapter: 'late-llm', adapterVersion: 1, timeoutMs: 1000 } },
+    resolveSecret: async () => SECRET,
+  });
+  // slotMs is timeoutMs * 2 + 5000: the first attempt hangs in the
+  // provider past 7000ms and the caller gets the retryable refusal.
+  const first = call(ops, modules, { tag: 'late-first' });
+  assert.equal(await codeOf(() => first), 'LLM_OPERATION_TIMEOUT');
+  // The retry runs while the first attempt still hangs: the chain did not
+  // wedge behind the abandoned critical section.
+  const out = await call(ops, modules, { tag: 'late-retry' });
+  assert.equal(out.text, 'late answer', 'the retry is served while the first attempt still hangs');
+  // The abandoned attempt settles late with a valid completion: poisoned,
+  // it claims no spend and writes no receipt.
+  releaseFirst();
+  await new Promise((resolve) => { setImmediate(resolve); });
+  await new Promise((resolve) => { setImmediate(resolve); });
+  const totals = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(totals.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[10, 4, 1]],
+    'one logical attempt plus one retry billed exactly once');
+  const audit = await ops.readAudit({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.equal(audit.length, 1, 'the late settler wrote no receipt next to the retry');
+  assert.equal(audit[0].refused, '');
+  // Still nothing after another turn of the loop: the late write is gone,
+  // not merely delayed past the retry.
+  await new Promise((resolve) => { setImmediate(resolve); });
+  const again = await ops.readUsage({ actor: ACTOR, spaceId: 'presti' }, modules);
+  assert.deepEqual(again.map((row) => [row.inputTokens, row.outputTokens, row.calls]), [[10, 4, 1]],
+    'no late spend landed after the retry either');
 });
 
 test('racing calls serialize: the loser of a filled cap refuses', async () => {
