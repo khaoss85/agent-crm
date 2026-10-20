@@ -1,0 +1,74 @@
+{
+  "manifestVersion": 1,
+  "name": "space-ai-proposal",
+  "description": "What a switched-off AI action wanted to do, waiting for a human: one proposal per space, permission and action key. Proposed until a human approves or refuses it; approval authorizes that one action and executes nothing by itself. Keyed by opaque control-plane space id.",
+  "fields": [
+    {
+      "name": "spaceId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "permission",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "actionKind",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "actionKey",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "summary",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "proposed",
+        "approved",
+        "refused"
+      ],
+      "default": "proposed",
+      "writable": "managed"
+    },
+    {
+      "name": "proposedAt",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "decidedBy",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "decidedAt",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    },
+    {
+      "name": "refusalReason",
+      "type": "string",
+      "writable": "managed",
+      "required": false
+    }
+  ]
+}
