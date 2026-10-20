@@ -10,12 +10,15 @@ import { findStage } from './pipeline-registry.js';
  * server-side against the registered pipeline — the Admin's stage select is
  * convenience, never authority.
  *
- * Transition rules this milestone: open → open, open → won, open → lost.
- * No moves out of won/lost (409 TERMINAL_STAGE), no same-stage moves
- * (409 SAME_STAGE — a stale double-submit must be visible, not a silent
+ * Transition rules this milestone: working stages (`open`, `renewal`) move to
+ * working or terminal (`won`, `paid`, `lost`) stages. No moves out of a
+ * terminal stage (`won`, `paid`, `lost`; 409 TERMINAL_STAGE), no same-stage
+ * moves (409 SAME_STAGE — a stale double-submit must be visible, not a silent
  * no-op), no reopen. `fromStage`, when supplied, is an optimistic-concurrency
  * check (mismatch → 409 STALE_STAGE). A move to the lost stage requires a
- * non-blank `reason`, recorded as `closeReason`.
+ * non-blank `reason`, recorded as `closeReason`. A move into `paid` closes
+ * like `won` (payment received); a move into `renewal` stays working and
+ * clears terminal-only fields like `open`.
  *
  * @param {{module: string}} options
  */
@@ -58,7 +61,7 @@ export function buildMoveStageAction({ module }) {
           { code: 'STALE_STAGE', status: 409, details: { expected: input.fromStage, actual: record.pipelineStage } },
         );
       }
-      if (currentStage.type !== 'open') {
+      if (currentStage.type !== 'open' && currentStage.type !== 'renewal') {
         throw new AppError(
           `Cannot move out of terminal stage "${currentStage.key}" (${currentStage.type}); reopening is not supported`,
           { code: 'TERMINAL_STAGE', status: 409, details: { stage: currentStage.key, type: currentStage.type } },
@@ -84,12 +87,13 @@ export function buildMoveStageAction({ module }) {
       const patch = {
         pipelineStage: targetStage.key,
         stageEnteredAt: timestamp,
-        // Coherence is enforced, not assumed: an open stage never carries
+        // Coherence is enforced, not assumed: a working stage never carries
         // terminal-only fields (a corrupt out-of-band closedAt is cleared on
-        // the next legitimate open move), won never carries a lost reason,
-        // and a reason supplied for a non-lost target is deliberately ignored.
-        ...(targetStage.type === 'open' ? { closedAt: null, closeReason: null } : {}),
-        ...(targetStage.type === 'won' ? { closedAt: timestamp, closeReason: null } : {}),
+        // the next legitimate working move), won/paid never carry a lost
+        // reason, and a reason supplied for a non-lost target is deliberately
+        // ignored.
+        ...(targetStage.type === 'open' || targetStage.type === 'renewal' ? { closedAt: null, closeReason: null } : {}),
+        ...(targetStage.type === 'won' || targetStage.type === 'paid' ? { closedAt: timestamp, closeReason: null } : {}),
         ...(targetStage.type === 'lost' ? { closedAt: timestamp, closeReason: input.reason } : {}),
       };
       const updated = await managed(record.id, patch);
