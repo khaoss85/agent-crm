@@ -4,7 +4,12 @@ import { NotFoundError, ValidationError } from './errors.js';
 
 export const SUPPORTED_PIPELINE_CONTRACT = 1;
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
-const STAGE_TYPES = new Set(['open', 'won', 'lost']);
+// Closed stage-type set (BO-F2-02, backoffice roadmap "06 Pipeline": Aperto,
+// Vinto, Pagato, Perso, Rinnovo). `paid` is a terminal positive outcome like
+// `won`; `renewal` is a working state like `open`.
+const STAGE_TYPES = new Set(['open', 'won', 'paid', 'lost', 'renewal']);
+/** The closed stage-type set, in prototype order. @type {readonly string[]} */
+export const PIPELINE_STAGE_TYPES = Object.freeze(['open', 'won', 'paid', 'lost', 'renewal']);
 const LABEL_MAX = 80;
 
 /**
@@ -19,7 +24,7 @@ const LABEL_MAX = 80;
  *   label?: string,
  *   module: string,
  *   defaultStage: string,
- *   stages: Array<{key: string, label?: string, order: number, type: 'open' | 'won' | 'lost', probability: number}>
+ *   stages: Array<{key: string, label?: string, order: number, type: 'open' | 'won' | 'paid' | 'lost' | 'renewal', probability: number}>
  * }} PipelineDefinition
  */
 
@@ -61,6 +66,7 @@ export function validatePipelineDefinition(definition, deps) {
   const orders = new Set();
   let openCount = 0;
   let wonCount = 0;
+  let paidCount = 0;
   let lostCount = 0;
   for (const stage of definition.stages) {
     if (!stage || typeof stage !== 'object') throw new ValidationError(`${label}: each stage must be an object`);
@@ -84,6 +90,7 @@ export function validatePipelineDefinition(definition, deps) {
     }
     if (stage.type === 'open') openCount += 1;
     if (stage.type === 'won') wonCount += 1;
+    if (stage.type === 'paid') paidCount += 1;
     if (stage.type === 'lost') lostCount += 1;
     if (!Number.isInteger(stage.probability) || stage.probability < 0 || stage.probability > 100) {
       throw new ValidationError(`${label}: stage "${stage.key}" probability must be an integer 0–100`);
@@ -91,12 +98,16 @@ export function validatePipelineDefinition(definition, deps) {
     if (stage.type === 'won' && stage.probability !== 100) {
       throw new ValidationError(`${label}: the won stage must have probability 100`);
     }
+    if (stage.type === 'paid' && stage.probability !== 100) {
+      throw new ValidationError(`${label}: the paid stage must have probability 100`);
+    }
     if (stage.type === 'lost' && stage.probability !== 0) {
       throw new ValidationError(`${label}: the lost stage must have probability 0`);
     }
   }
   if (openCount === 0) throw new ValidationError(`${label}: at least one open stage is required`);
   if (wonCount > 1) throw new ValidationError(`${label}: at most one won stage is supported in this milestone`);
+  if (paidCount > 1) throw new ValidationError(`${label}: at most one paid stage is supported in this milestone`);
   if (lostCount > 1) throw new ValidationError(`${label}: at most one lost stage is supported in this milestone`);
   if (typeof definition.defaultStage !== 'string' || !keys.has(definition.defaultStage)) {
     throw new ValidationError(`${label}: defaultStage must name one of the stage keys`);
