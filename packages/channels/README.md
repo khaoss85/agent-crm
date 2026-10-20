@@ -20,6 +20,17 @@ The shared, space-scoped foundation every messaging channel builds on
   primitives (`src/crypto.js`), the operations (`src/operations.js`),
   the contract-test kit (`src/kit.js`) and the fixture adapter
   (`src/fixture.js`).
+- `propose-channel-reply` / `send-approved-reply` / `read-channel-reply`
+  — the backoffice reply flow (BO-F1-07): a human answer on the space
+  connection for the preferred channel (or the named connection), drafted
+  by the caller or the workspace LLM ("Scrivi con AI"), gated on the
+  space's `send-without-approval` switch (off by default). With the switch
+  off the reply waits as a `space-ai-proposal` row and nothing is
+  enqueued; the approval authorizes exactly the proposed bytes (routing
+  plus a text fingerprint), and the approved send rides the outbox with a
+  provider receipt. The read model reports `pending-approval`,
+  `approved`, `queued` (in consegna), `sent` (consegnato), `failed` or
+  `refused`.
 
 ## What it needs
 
@@ -46,6 +57,24 @@ published capabilities (the same handover appointments uses for work's
 naming the edge; without the edge the history import refuses while
 webhooks and sends keep working standalone.
 
+The reply flow (BO-F1-07) needs two more definitions composed beside
+channels — `spacePermissions` (`space-permission-gate@1`) for the
+approval gate and `llm` (`llm-complete@1`) for "Scrivi con AI" drafts:
+
+```js
+createChannelsPackage({
+  channelAdapters: [whatsappDefinition],
+  resolveSecret, tenantId, customerData,
+  spacePermissions, // createSpacePermissionsDomain()
+  llm, // createLlmPackage({ adapters, spaces, secretRef, resolveSecret })
+});
+```
+
+Both stay optional at composition: without `spacePermissions` every
+reply refuses (`CHANNEL_REPLY_GATE_MISSING`) instead of sending past the
+approval; without `llm` only AI drafts refuse
+(`CHANNEL_LLM_UNAVAILABLE`) while caller-drafted replies work as before.
+
 - Registration is one static import in the project's composition file
   (this repository's `packages/domains/generated/index.js` stays empty —
   downstream projects compose what they need, like signature/commercial).
@@ -64,6 +93,14 @@ webhooks and sends keep working standalone.
   the dead-letter queue, and dead-letter requeue (one open letter retries
   with a human-supplied message; concurrent retries serialize — one wins,
   the other is refused without touching the winner's job).
+- `tests/channels-reply.test.js` — the reply flow (BO-F1-07) on real
+  `:memory:` sqlite with real channels and space-permissions modules, the
+  real permission gate, the real outbox and worker, and the fixture LLM:
+  switch off waits with nothing enqueued, approval sends the approved
+  bytes with a provider receipt, refusal and pending never send,
+  cross-space calls never touch another space, "Scrivi con AI" uses the
+  composed adapter (and refuses without one), approval binds exact bytes
+  (drift refuses), double approval sends once, failures read back failed.
 - The kit: `runChannelAdapterKit({ adapter, secrets, harness })` — the
   same seven checks the acceptance names (receive, send, replay, bad
   signature, out-of-order) plus no-secrets and space isolation. The
@@ -178,6 +215,6 @@ webhooks and sends keep working standalone.
   window, no Meta history adapters yet: those are the follow-up voices.
 - No automatic retry of dead letters: every retry is a human-approved
   requeue of one open letter, never a silent loop.
-- Sends, registrations and status changes require
+- Sends, registrations, replies and status changes require
   `actor.type === 'user'`. Provider-driven ingest runs under a system
   actor after verification and ignores any caller-supplied actor.
