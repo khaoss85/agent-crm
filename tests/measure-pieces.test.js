@@ -306,6 +306,11 @@ function writeShadowTree(shadow) {
   const binDir = join(shadow, 'bin');
   mkdirSync(scriptsDir, { recursive: true });
   mkdirSync(binDir, { recursive: true });
+  // The stub below uses ESM `import` syntax: pin the shadow tree to ESM, or
+  // node resolves the stub's module kind from the nearest ambient
+  // package.json and a CommonJS one above TMPDIR breaks piece 1 with no
+  // shard-child (backlog:664d5f481a96).
+  writeFileSync(join(shadow, 'package.json'), `${JSON.stringify({ type: 'module' })}\n`);
   writeFileSync(join(scriptsDir, 'ci-heavy.sh'), [
     '#!/usr/bin/env bash',
     'set -u',
