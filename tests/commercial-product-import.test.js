@@ -169,10 +169,12 @@ function importProject(t, llm = null) {
         : '',
       'export const llm = createLlmPackage({',
       '  adapters: [created.definition],',
-      "  spaces: { prova: { enabled: true, secretRef: 'secret://prova/llm' } },",
+      llm === 'key'
+        ? "  spaces: { prova: { enabled: true, secretRef: 'secret://prova/llm' } },"
+        : '  spaces: { prova: { enabled: true } },',
       llm === 'key'
         ? '  resolveSecret: async () => FIXTURE_LLM_SECRET,'
-        : '  resolveSecret: async () => null,',
+        : '',
       '});',
       '',
     ].join('\n'));
