@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
-import { createAdminShellMount, injectAdminBase } from '../packages/app/src/admin-mount.js';
+import { createAdminShellMount, injectAdminBase, serializeEnvelope } from '../packages/app/src/admin-mount.js';
 import { resolveAdminBase } from '../apps/admin/public/admin-base.js';
 
 /**
@@ -232,6 +232,250 @@ test('injectAdminBase prefixes served HTML, or prepends without a head', () => {
   assert.ok(noHead.startsWith('<base href="/bo/"><meta name="admin-base" content="/bo"><p>'));
   const root = injectAdminBase('<html><head></head></html>', '');
   assert.match(root, /<base href="\/"><meta name="admin-base" content="">/);
+});
+
+test('liveness skips the identity path, like the standalone server', async () => {
+  const app = readApp();
+  try {
+    let calls = 0;
+    const mount = createAdminShellMount(app, {
+      basePath: '/bo',
+      identityFor: async () => {
+        calls += 1;
+        return { actor: null, identity: null, organizationId: null };
+      },
+    });
+    const get = await mount.handle({ method: 'GET', path: '/bo/health', headers: {} });
+    assert.equal(get.status, 200);
+    assert.equal(jsonBody(get).ok, true);
+    const head = await mount.handle({ method: 'HEAD', path: '/bo/health', headers: {} });
+    assert.equal(head.status, 200);
+    assert.equal(calls, 0);
+  } finally {
+    app.close();
+  }
+});
+
+test('query strings embedded in path route and merge with explicit query', async () => {
+  const app = readApp();
+  try {
+    await app.runDemo();
+    const mount = createAdminShellMount(app, { basePath: '/bo' });
+    const embedded = await mount.handle({
+      method: 'GET',
+      path: '/bo/api/approvals?status=pending',
+      headers: {},
+    });
+    assert.equal(embedded.status, 200);
+    assert.equal(jsonBody(embedded).items.length, 1);
+    const fragment = await mount.handle({
+      method: 'GET',
+      path: '/bo/api/approvals?status=pending#section',
+      headers: {},
+    });
+    assert.equal(fragment.status, 200);
+    assert.equal(jsonBody(fragment).items.length, 1);
+    const explicitWins = await mount.handle({
+      method: 'GET',
+      path: '/bo/api/approvals?status=all',
+      query: { status: 'pending' },
+      headers: {},
+    });
+    assert.equal(explicitWins.status, 200);
+    assert.equal(jsonBody(explicitWins).items.length, 1);
+    const explicitStringAppends = await mount.handle({
+      method: 'GET',
+      path: '/bo/api/approvals',
+      query: '?status=pending',
+      headers: {},
+    });
+    assert.equal(explicitStringAppends.status, 200);
+    assert.equal(jsonBody(explicitStringAppends).items.length, 1);
+  } finally {
+    app.close();
+  }
+});
+
+test('identity receives the mount path without the query and the URL with it', async () => {
+  const app = readApp();
+  try {
+    const seen = [];
+    const mount = createAdminShellMount(app, {
+      basePath: '/bo',
+      identityFor: async (input) => {
+        seen.push(input);
+        return { actor: { type: 'user', id: 'space-owner' }, identity: null, organizationId: null };
+      },
+    });
+    const answer = await mount.handle({
+      method: 'GET',
+      path: '/bo/api/schema?x=1',
+      query: { y: '2' },
+      headers: {},
+    });
+    assert.equal(answer.status, 200);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].path, '/bo/api/schema');
+    assert.equal(seen[0].url, '/bo/api/schema?x=1&y=2');
+  } finally {
+    app.close();
+  }
+});
+
+test('the default identity forwards the URL to the verifier, like the server', async () => {
+  const seen = [];
+  const stubApp = {
+    spine: {
+      verifyRequest: async (request) => {
+        seen.push(request);
+        return null;
+      },
+      identityFor: async () => ({ kind: 'anonymous' }),
+    },
+  };
+  const mount = createAdminShellMount(stubApp, { basePath: '/bo' });
+  await mount.handle({
+    method: 'GET',
+    path: '/bo/api/schema?status=pending',
+    headers: { 'x-actor-id': 'probe' },
+  });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].method, 'GET');
+  assert.equal(seen[0].url, '/bo/api/schema?status=pending');
+});
+
+test('JSON body policy mirrors the standalone server', async () => {
+  const app = readApp();
+  try {
+    const mount = createAdminShellMount(app, { basePath: '/bo', methods: ['GET', 'HEAD', 'POST'] });
+    const parsed = await mount.handle({
+      method: 'POST',
+      path: '/bo/api/demo/run',
+      headers: { 'content-type': 'application/json' },
+      body: '{"ok":true}',
+    });
+    assert.equal(parsed.status, 200);
+    const fromBytes = await mount.handle({
+      method: 'POST',
+      path: '/bo/api/demo/run',
+      headers: { 'content-type': 'application/json' },
+      rawBody: Buffer.from('{"ok":true}', 'utf8'),
+    });
+    assert.equal(fromBytes.status, 200);
+    const invalid = await mount.handle({
+      method: 'POST',
+      path: '/bo/api/demo/run',
+      headers: { 'content-type': 'application/json' },
+      body: '{"broken"',
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(jsonBody(invalid).error.code, 'INVALID_JSON');
+    const invalidBytes = await mount.handle({
+      method: 'POST',
+      path: '/bo/api/demo/run',
+      headers: { 'content-type': 'application/json' },
+      rawBody: Buffer.from('not json', 'utf8'),
+    });
+    assert.equal(invalidBytes.status, 400);
+    assert.equal(jsonBody(invalidBytes).error.code, 'INVALID_JSON');
+    const oversized = await mount.handle({
+      method: 'POST',
+      path: '/bo/api/demo/run',
+      headers: { 'content-type': 'application/json' },
+      body: `{"pad":"${'x'.repeat(1_000_001)}"}`,
+    });
+    assert.equal(oversized.status, 413);
+    assert.equal(jsonBody(oversized).error.code, 'PAYLOAD_TOO_LARGE');
+  } finally {
+    app.close();
+  }
+});
+
+test('rawBody routes require the exact bytes instead of coercing', async () => {
+  const app = readApp();
+  try {
+    const mount = createAdminShellMount(app, { basePath: '/bo', methods: ['GET', 'HEAD', 'POST'] });
+    const parsedOnly = await mount.handle({
+      method: 'POST',
+      path: '/bo/api/signature/providers/acme/events',
+      headers: { 'content-type': 'application/json' },
+      body: { id: 'evt-1' },
+    });
+    assert.equal(parsedOnly.status, 400);
+    assert.equal(jsonBody(parsedOnly).error.code, 'INVALID_JSON');
+    // Bytes reach the handler: the in-memory app has no signature intake,
+    // so the route answers its honest 404 instead of a body-shape error.
+    const bytes = await mount.handle({
+      method: 'POST',
+      path: '/bo/api/signature/providers/acme/events',
+      headers: { 'content-type': 'application/octet-stream' },
+      rawBody: Buffer.from('{"id":"evt-1"}', 'utf8'),
+    });
+    assert.equal(bytes.status, 404);
+    assert.equal(jsonBody(bytes).error.code, 'NOT_FOUND');
+    const oversized = await mount.handle({
+      method: 'POST',
+      path: '/bo/api/signature/providers/acme/events',
+      headers: { 'content-type': 'application/octet-stream' },
+      rawBody: Buffer.alloc(65_537),
+    });
+    assert.equal(oversized.status, 413);
+    assert.equal(jsonBody(oversized).error.code, 'PAYLOAD_TOO_LARGE');
+  } finally {
+    app.close();
+  }
+});
+
+test('API and static responses carry content-length and the idempotency echo', async () => {
+  const app = readApp();
+  try {
+    const mount = createAdminShellMount(app, { basePath: '/bo' });
+    const api = await mount.handle({ method: 'GET', path: '/bo/api/schema', headers: {} });
+    assert.equal(api.status, 200);
+    assert.equal(api.headers['content-length'], String(Buffer.byteLength(api.body)));
+    const js = await mount.handle({ method: 'GET', path: '/bo/app.js', headers: {} });
+    assert.equal(js.status, 200);
+    assert.equal(js.headers['content-length'], String(js.body.byteLength));
+    const head = await mount.handle({ method: 'HEAD', path: '/bo/api/schema', headers: {} });
+    assert.equal(head.status, 200);
+    assert.ok(Number(head.headers['content-length']) > 0);
+    assert.equal(head.body.byteLength, 0);
+    const echoed = serializeEnvelope({ status: 200, body: { idempotencyKey: 'k-1', ok: true } });
+    assert.equal(echoed.headers['idempotency-key'], 'k-1');
+    assert.equal(echoed.headers['content-length'], String(Buffer.byteLength(echoed.body)));
+    const nested = serializeEnvelope({
+      status: 409,
+      body: { error: { code: 'CONFLICT', message: 'no', details: { idempotencyKey: 'k-2' } } },
+    });
+    assert.equal(nested.headers['idempotency-key'], 'k-2');
+    const explicit = serializeEnvelope({ status: 200, body: { ok: true }, headers: { 'idempotency-key': 'k-0' } });
+    assert.equal(explicit.headers['idempotency-key'], 'k-0');
+  } finally {
+    app.close();
+  }
+});
+
+test('basePath grammar refuses markup and injectAdminBase escapes attributes', () => {
+  const app = readApp();
+  try {
+    for (const bad of [
+      '/bo"><script>alert(1)</script>',
+      '/bo[0]',
+      "/bo'",
+      '/bo?x=1',
+      '/bo#frag',
+      '/bo&x',
+      '/bo|pipe',
+    ]) {
+      assert.throws(() => createAdminShellMount(app, { basePath: bad }), /ADMIN_MOUNT_BASE_PATH_REFUSED/, bad);
+    }
+    assert.equal(createAdminShellMount(app, { basePath: '/bo/v2' }).basePath, '/bo/v2');
+    const injected = injectAdminBase('<html><head></head></html>', '/bo&w"<>');
+    assert.match(injected, /<base href="\/bo&amp;w&quot;&lt;&gt;\/">/);
+    assert.match(injected, /<meta name="admin-base" content="\/bo&amp;w&quot;&lt;&gt;">/);
+  } finally {
+    app.close();
+  }
 });
 
 test('resolveAdminBase reads the injected meta, defaulting to ""', () => {
