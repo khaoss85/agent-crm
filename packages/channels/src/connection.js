@@ -132,6 +132,21 @@ export function assertSecretReference(value) {
  * The adapter identity is resolved against the registries (unknown adapter
  * or version is 404 there); the channel must match the adapter's channel.
  */
+/**
+ * The provider-stated expiry of the grant behind a connection, recorded as
+ * observed (BO-F1-04): some providers state it at authorize time, some never
+ * do. Optional, canonical-instant only. A past instant is recorded as-is —
+ * it means the grant already needs renewal — never normalized away.
+ */
+export function assertGrantExpiresAt(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || Number.isNaN(Date.parse(value))
+    || new Date(value).toISOString() !== value) {
+    throw new ValidationError('grantExpiresAt must be a canonical ISO instant or be omitted', { field: 'grantExpiresAt' });
+  }
+  return value;
+}
+
 export function assertConnectionInput(input, registries) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new ValidationError('connection input must be a plain object', { field: 'input' });
@@ -146,6 +161,7 @@ export function assertConnectionInput(input, registries) {
   }
   const account = boundedLine(value.account, 'account', MAX_ACCOUNT);
   const secretRef = assertSecretReference(value.secretRef);
+  const grantExpiresAt = assertGrantExpiresAt(value.grantExpiresAt);
   if (typeof value.adapter !== 'string' || value.adapter === '') {
     throw new ValidationError('adapter must name a registered channel adapter', { field: 'adapter' });
   }
@@ -164,6 +180,7 @@ export function assertConnectionInput(input, registries) {
     adapterVersion: adapter.version,
     adapterFingerprint: fingerprint,
     secretRef,
+    grantExpiresAt,
     // DB-unique identity: one account bound once per space and channel.
     // Bounded through boundedKey so a max-length account still fits.
     sourceKey: boundedKey('ch-conn', spaceId, value.channel, account.toLowerCase()),
