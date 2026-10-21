@@ -252,7 +252,10 @@ revision. Provider failures are stable
 `PROVIDER_FAILED` / `PROVIDER_TIMEOUT` / `PROVIDER_INVALID` with **no partial
 catalog state** and an honest failed trace. Provider-managed products missing
 from a payload deactivate only under the provider's declared
-`config.deactivateMissing`.
+`config.deactivateMissing`. An archived provider product closes its offers
+with it (`active: false` on the next sync revision), and quoting gates on
+both flags: a stale active offer of an inactive product refuses with
+`409 PRODUCT_INACTIVE`, never a line.
 
 Future provider packages may target Stripe Products/Prices, Zuora, ERP or
 custom CPQ APIs. **No real adapter or credential ships in this milestone** —

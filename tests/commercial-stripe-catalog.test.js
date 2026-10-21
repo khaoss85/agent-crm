@@ -262,6 +262,85 @@ test('a Stripe price flipped inactive deactivates the offer the earlier sync cre
   assert.equal(table.products[0].offers.filter((offer) => offer.active).length, 0);
 });
 
+function archiveProject(t) {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-stripe-archive-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
+    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
+  }
+  applyManifests(root);
+  writeFileSync(join(root, 'archive-fixture.mjs'), [
+    'let products = [{ id: \'prod_arch\', name: \'Archiviabile\', active: true }];',
+    'export const stripe = {',
+    "  source: 'archive-fixture',",
+    '  async listProducts() { return structuredClone(products); },',
+    '  async listPrices() { return [{ id: \'price_arch\', product: \'prod_arch\', active: true, currency: \'eur\', unit_amount: 5000, billing_scheme: \'per_unit\' }]; },',
+    '};',
+    'export function setProducts(next) { products = next; }',
+    '',
+  ].join('\n'));
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
+    "import { createCommercialDomain } from '../../commercial/src/index.js';",
+    "import { createStripeCatalogProvider } from '../../commercial/src/index.js';",
+    "import { stripe } from '../../../archive-fixture.mjs';",
+    'const catalogProviders = [createStripeCatalogProvider({ name: \'stripe-archive\', version: 1, stripe })];',
+    'export const generatedDomains = [',
+    '  createCommercialDomain({ catalogProviders }),',
+    '];',
+    '',
+  ].join('\n'));
+  return root;
+}
+
+test('an archived Stripe product leaves no quotable offer: sync deactivates them and add-line refuses', async (t) => {
+  const root = archiveProject(t);
+  const instance = await boot(root, join(root, 'data', 'stripe-archive.sqlite'));
+  t.after(() => instance.close().catch(() => {}));
+  const { app, client } = instance;
+  await app.syncCatalog({ provider: 'stripe-archive', actor: ACTOR });
+
+  // A live offer quotes normally before the archive (the product gate stays green).
+  const book = app.modules.get('price-book').service.listWhere({})[0];
+  const company = await app.services.companies.create({ name: 'Co Archive' }, { actor: ACTOR });
+  const opportunity = await app.services.opportunities.create(
+    { companyId: company.id, name: 'Archive deal', type: 'new_business', valueCents: 100000, currency: 'EUR', stage: 'discovery', owner: 'archive-test' },
+    { actor: ACTOR },
+  );
+  const created = await client.request(`/api/modules/opportunity/records/${opportunity.id}/actions/create-quote`, { method: 'POST', body: { priceBookId: book.id } });
+  const quoteId = created.result.quote.id;
+  const liveOffer = app.modules.get('offer').service.listWhere({ active: true })[0];
+  assert.ok(liveOffer, 'the sync leaves one active offer');
+  const line = await client.module('quote').action(quoteId, 'add-line', { offerId: liveOffer.id, quantity: 1 });
+  assert.ok(line.result.line.id, 'an active offer of an active product quotes');
+
+  // Archive the product in Stripe and re-sync: its offers deactivate with it.
+  const { setProducts } = await import(pathToFileURL(join(root, 'archive-fixture.mjs')).href);
+  setProducts([{ id: 'prod_arch', name: 'Archiviabile', active: false }]);
+  await app.syncCatalog({ provider: 'stripe-archive', actor: ACTOR });
+  const offers = app.modules.get('offer').service.listWhere({});
+  assert.ok(offers.length >= 1);
+  assert.ok(offers.every((offer) => offer.active === false), 'no active offer survives the product archive');
+  const table = await app.listCatalogProducts({});
+  assert.equal(table.products[0].active, false);
+  assert.equal(table.products[0].offers.filter((offer) => offer.active).length, 0);
+
+  // The synced revision refuses with OFFER_INACTIVE …
+  await assert.rejects(
+    () => client.module('quote').action(quoteId, 'add-line', { offerId: liveOffer.id, quantity: 1 }),
+    (error) => error.code === 'OFFER_INACTIVE',
+    'an offer of an archived product is not quotable',
+  );
+
+  // … and even a stale active row cannot quote once the product is inactive.
+  const stale = offers[0];
+  await app.modules.get('offer').service.applyManaged(stale.id, { active: true });
+  await assert.rejects(
+    () => client.module('quote').action(quoteId, 'add-line', { offerId: stale.id, quantity: 1 }),
+    (error) => error.code === 'PRODUCT_INACTIVE',
+    'quoting gates on product.active, not only offer.active',
+  );
+});
+
 test('manual mutations refuse without an accountable actor', async (t) => {
   const app = await bootApp(manualProject(t));
   t.after(() => app.close());
@@ -466,4 +545,32 @@ test('acceptance 3: without Stripe the manual catalog works end to end', async (
     }, ACTOR),
     /flat_fee/,
   );
+});
+
+test('setManualPrices refuses a stale offer revision instead of forking history', async (t) => {
+  const app = await bootApp(manualProject(t));
+  t.after(() => app.close());
+  const created = await app.createManualProduct({
+    sku: 'STALE-1', name: 'Stale', currency: 'EUR', components: [MANUAL_COMPONENT],
+  }, ACTOR);
+  const rev1 = created.offers[0].id;
+  const repriced = await app.setManualPrices({
+    productId: created.product.id,
+    offerIds: [rev1],
+    offers: [{ name: 'Stale', components: [{ ...MANUAL_COMPONENT, flatAmountCents: 10900 }] }],
+  }, ACTOR);
+  assert.equal(repriced.offers[0].revision, 2, 'the reprice opens revision 2');
+
+  // The superseded revision id no longer replaces anything: the caller re-reads.
+  await assert.rejects(
+    () => app.setManualPrices({
+      productId: created.product.id,
+      offerIds: [rev1],
+      offers: [{ name: 'Stale', components: [{ ...MANUAL_COMPONENT, flatAmountCents: 11900 }] }],
+    }, ACTOR),
+    (error) => error.code === 'STALE_REVISION' && error.status === 409,
+    'a stale offerIds entry refuses fail-closed, never a unique-violation rollback',
+  );
+  const revisions = app.modules.get('offer').service.listWhere({ productId: created.product.id });
+  assert.equal(revisions.length, 2, 'the refused write leaves history untouched');
 });

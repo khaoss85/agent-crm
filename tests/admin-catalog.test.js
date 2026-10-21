@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCatalogView } from '../apps/admin/public/admin-catalog.js';
+import { createCatalogView, commercialBlock } from '../apps/admin/public/admin-catalog.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -206,4 +206,14 @@ test('an unavailable catalog says so instead of a blank screen', async () => {
   });
   await failingView.renderTable({});
   assert.ok(failing.textContent.includes('non leggibile'), 'a failed read is visible with the cause');
+});
+
+test('the nav gate reads the same domains block the view gates on', () => {
+  // The server publishes commercial only under domains.commercial (the
+  // ambient top-level block is gone): the shell nav and the view must agree,
+  // or the Catalogo link never appears while the table would render.
+  assert.equal(commercialBlock({ domains: { commercial: { commercialContract: 1 } } })?.commercialContract, 1);
+  assert.equal(commercialBlock({ commercial: { commercialContract: 1 } })?.commercialContract, 1);
+  assert.equal(commercialBlock({}), undefined);
+  assert.equal(commercialBlock(null), undefined);
 });

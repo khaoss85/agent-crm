@@ -297,6 +297,10 @@ export function createStripeCatalogProvider({ name, version, label, stripe, deac
         throw new AppError(`Stripe price "${priceId}" references unknown product "${productStripeId}"`, { code: 'PROVIDER_INVALID', status: 502 });
       }
       const enriched = { ...price, productName: known.record.name };
+      // An archived Stripe product closes its offers too: the sync persists
+      // product and offers together, so quoting (which gates on both) never
+      // sees a sellable offer for a non-active product.
+      const offerActive = known.record.active === true;
       const mapped = mapPriceComponent(enriched);
       const slug = slugifyStripeId(priceId, 'price.id');
       const book = bookFor(price?.currency);
@@ -315,7 +319,7 @@ export function createStripeCatalogProvider({ name, version, label, stripe, deac
           priceBookSourceKey: book.sourceKey,
           productSourceKey: known.record.sourceKey,
           name: `${known.record.name} — ${mapped.label}`,
-          active: true,
+          active: offerActive,
           externalOfferId: null,
           quoteEligible: false,
           unsupportedReason: `Stripe pricing model "${mapped.unsupportedModel}" is not supported for quoting`,
@@ -328,7 +332,7 @@ export function createStripeCatalogProvider({ name, version, label, stripe, deac
         priceBookSourceKey: book.sourceKey,
         productSourceKey: known.record.sourceKey,
         name: `${known.record.name} — ${mapped.label}`,
-        active: true,
+        active: offerActive,
         externalOfferId: null,
         components: [{ ...componentBase, ...mapped.component }],
       });

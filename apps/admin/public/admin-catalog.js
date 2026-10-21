@@ -18,10 +18,11 @@ const LIST_LIMIT = 200;
 /**
  * The commercial schema block, wherever the composition publishes it: the
  * ambient top-level key before the extraction, the package's own contribution
- * under `domains` after it.
+ * under `domains` after it. Shared with the shell nav so the link and the
+ * view gate on the same block.
  * @param {any} schema
  */
-function commercialBlock(schema) {
+export function commercialBlock(schema) {
   return schema?.commercial ?? schema?.domains?.commercial;
 }
 

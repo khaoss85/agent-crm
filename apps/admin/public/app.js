@@ -339,7 +339,7 @@ import {
 import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
-import { createCatalogView } from './admin-catalog.js';
+import { createCatalogView, commercialBlock } from './admin-catalog.js';
 import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
@@ -591,8 +591,9 @@ async function populateNav() {
     }
     // Product catalog (BO-F2-05): one nav link when the commercial product
     // records are composed — the table reads `product`, so without it the
-    // view would only ever say it is unavailable.
-    if (schema?.commercial?.commercialContract === 1 && modules.some((module) => module.name === 'product')) {
+    // view would only ever say it is unavailable. The block lives under
+    // `domains.commercial` (same helper as the view), never top-level.
+    if (commercialBlock(schema)?.commercialContract === 1 && modules.some((module) => module.name === 'product')) {
       const link = document.createElement('a');
       link.setAttribute('href', '#/catalogo');
       link.setAttribute('data-nav', 'catalog');

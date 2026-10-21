@@ -510,6 +510,16 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
               { code: PRICE_SOURCE_READONLY, status: 409 },
             );
           }
+          // Fail closed on a stale revision: only the latest revision per
+          // logical key may be replaced, otherwise two writers fork history
+          // (the loser used to get an obscure unique-violation rollback).
+          const [latest] = latestRevisions(await offersService.listWhere({ logicalKey: current.logicalKey }));
+          if (!latest || latest.id !== current.id) {
+            throw new AppError(
+              `Offer "${current.id}" is not the latest revision (latest is "${latest?.id ?? 'none'}"): re-read the catalog and retry`,
+              { code: 'STALE_REVISION', status: 409, details: { offerId: current.id, latestOfferId: latest?.id ?? null } },
+            );
+          }
           const book = await service(names.priceBook).get(current.priceBookId);
           const declared = {
             name: offer.name,
