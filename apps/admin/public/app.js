@@ -434,6 +434,16 @@ const customerDataView = createCustomerDataView({
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
+  notify: (message) => toast(message),
+  // BO-F1-05: the space the calls read stays space-explicit, and the AI
+  // filter entry opens the BO-F0-04 assistant on the Clienti screen (its
+  // dry-run answers the key notice when no LLM backend is present).
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  onAskAi: () => {
+    if (assistantPanel) void assistantPanel.open('clienti');
+    else toast('Apri la barra AI (⌘K) e descrivi chi vuoi vedere.');
+  },
+  storage: shellStorage,
 });
 
 // Connectors (BO-F1-02): instantiated after shellStorage below (const order).
