@@ -160,6 +160,22 @@ export const DENY = Object.freeze([
   'tests/agent-tool-selection-prompts.test.js',
   'tests/agent-tool-selection-contract.test.js',
   'tests/agent-tool-selection-scoring.test.js',
+  // The shell-classifier oracle, sliced across a shared helper, six slice
+  // files and their partition test (backlog:664d5f481a96): the corpus
+  // generator and the driver are the benchmark itself, same as the matrix
+  // file above.
+  'tests/helpers/shell-oracle.js',
+  'tests/shell-oracle-a.test.js',
+  'tests/shell-oracle-b.test.js',
+  'tests/shell-oracle-c.test.js',
+  'tests/shell-oracle-d.test.js',
+  'tests/shell-oracle-e.test.js',
+  'tests/shell-oracle-f.test.js',
+  // The partition test imports the helper (and reads the slice files as
+  // text): leaving it in a fixture would keep a static import of the
+  // denied helper inside a tree whose guarantee is that the benchmark was
+  // never copied (backlog:664d5f481a96).
+  'tests/shell-oracle-slices.test.js',
 ]);
 
 /**

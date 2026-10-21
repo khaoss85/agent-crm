@@ -4,8 +4,7 @@
  * The milestone identifiers a prompt may not carry are read from the
  * repository — kept here as a fast standalone file so the fast gate can
  * always run it. The same check still lives in
- * tests/agent-tool-selection-prompts.test.js next to the slow benchmark
- * matrix (deliberately doubled until that file is split: see
+ * tests/agent-tool-selection-prompts.test.js (deliberately doubled: see
  * REPO_WIDE_GUARD_EXCLUSIONS in scripts/ci-touched-tests.js). It scans
  * every `docs/*.md` for milestone identifiers and requires the
  * prompt-leak scanner to trip on each: a hand-typed list
