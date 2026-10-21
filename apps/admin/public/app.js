@@ -1,4 +1,5 @@
 import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
+import { createAssistantPanel } from './admin-assistant.js';
 
 const elements = {
   metrics: document.querySelector('#metrics'),
@@ -344,6 +345,7 @@ import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
 import { createCustomerDataView } from './admin-customer-data.js';
+import { createConnectorsView } from './admin-connectors.js';
 import { createSpineView } from './admin-spine.js';
 import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
 
@@ -431,6 +433,8 @@ const customerDataView = createCustomerDataView({
   navigate: (hash) => { window.location.hash = hash; },
 });
 
+// Connectors (BO-F1-02): instantiated after shellStorage below (const order).
+
 // Production Spine (ADR-038): verified identity, the tenant, memberships and
 // what this build cannot promise. Always available — an application with no
 // spine composed still renders the section, saying exactly that, because a
@@ -445,7 +449,7 @@ const spineView = createSpineView({
 // ---- Backoffice shell (BO-F0-02) ------------------------------------------
 // Sidebar + topbar chrome on every screen: Italian voices from the approved
 // prototype, space selector (⌘1/2/3), Impostazioni badge from the real
-// data-quality count, AI bar entry (⌘K; the assistant itself is BO-F0-04).
+// data-quality count, AI bar (⌘K) opening the BO-F0-04 assistant panel.
 // Spaces are local shell state until space records exist (BO-F0-06).
 
 function guardedStorage() {
@@ -458,6 +462,19 @@ function guardedStorage() {
 }
 
 const shellStorage = guardedStorage();
+
+// Connectors (BO-F1-02): the 3-step connect flow over the channels package.
+// Renders only while the server publishes the channels package; otherwise
+// the view itself says so.
+const connectorsView = createConnectorsView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  submissions,
+  navigate: (hash) => { window.location.hash = hash; },
+  storage: shellStorage,
+  toast,
+});
 const shellSpaces = readSpaces(shellStorage);
 let shellActiveSpace = null;
 try {
@@ -465,6 +482,19 @@ try {
   if (typeof stored === 'string' && shellSpaces.some((space) => space.id === stored)) shellActiveSpace = stored;
 } catch {
   // Keep the default space.
+}
+
+let currentScreenId = 'oggi';
+let assistantPanel = null;
+const boAssistant = document.querySelector('#boAssistant');
+if (boAssistant) {
+  assistantPanel = createAssistantPanel({
+    doc: document,
+    mount: boAssistant,
+    client: moduleClient,
+    navigate: (hash) => { window.location.hash = hash; },
+    notify: (message) => toast(message),
+  });
 }
 
 let shellView = null;
@@ -487,6 +517,9 @@ if (boSidebar && boTopbar) {
       if (shellView) shellView.setSpaces(shellSpaces, shellSpaces[0].id);
       window.location.hash = '#/';
       toast('Spazio locale reimpostato.');
+    },
+    onAiSubmit: () => {
+      if (assistantPanel) void assistantPanel.open(currentScreenId);
     },
     onPickSpace: (id) => {
       try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
@@ -526,6 +559,7 @@ function shellScreenFor(target) {
     case 'quotes': return { id: null, label: 'Preventivi' };
     case 'catalog': return { id: null, label: 'Catalogo prodotti' };
     case 'quote-detail': return { id: null, label: 'Preventivo' };
+    case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
     case 'invalid': return { id: null, label: 'Percorso non valido' };
     default: return { id: null, label: 'Vista' };
   }
@@ -534,6 +568,7 @@ function shellScreenFor(target) {
 function syncShell(target) {
   if (!shellView) return;
   const screen = shellScreenFor(target);
+  currentScreenId = typeof screen?.id === 'string' && screen.id !== '' ? screen.id : 'oggi';
   shellView.update({
     fixCount: shellFixCount,
     items: shellItems,
@@ -715,6 +750,7 @@ async function route() {
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
     else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') await customerDataView.render();
+    else if (target.view === 'connectors') await connectorsView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'customer-card') await customerCardView.renderCard(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();

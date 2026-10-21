@@ -63,6 +63,52 @@ detail reads the sync state through) and the subject envelope (who the
 slot is for). `tests/appointment-team-week.test.js` proves it with no
 database.
 
+## Booking flow (BO-F3-02, backlog `c1d05e6547fc`)
+
+`"07 Calendario"`: the operator proposes slots, confirms once, the
+customer books online from the business link. All on `appointment-book@1`,
+all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps its contract with the re-read and the write serialized per appointment.
+
+- `suggestSlots({ teamMemberIds, from, to, slotMinutes })` reads free slots
+  from the same held rows the booking path overlap-checks against. Read
+  only: no row is written, no slot is invented; a held row whose slot cannot
+  be proven fails the suggestion closed.
+- `proposeBooking(request + spaceId)` validates, fails fast on a held slot,
+  then reads the space `book-appointments` switch. Switch on: a draft is
+  answered and nothing is written. Switch off: a `space-ai-proposal` is
+  recorded and the booking stays a proposal. The proposal identity binds the
+  whole booking claim (customer, member, service, price, slot, reminder,
+  provenance) behind a digest: resubmitting the same source key with a
+  changed field opens a distinct proposal, never a replay of the old one.
+- `confirmBooking(request + spaceId + confirmed: true)` creates only on
+  explicit confirmation. A named calendar is validated first (a miscomposed
+  calendar edge fails before any row exists); then it re-checks the switch,
+  books, advances `booked -> confirmed` and — when `calendar: { calendarId }`
+  is named — pushes the event through the calendar-sync push handle. The advance is
+  serialized per appointment (same process) and inside the storage
+  transaction on a real database: two racing confirms advance once and the
+  loser replays the winner; a confirm racing a cancellation never overwrites
+  the winner. A push that fails at runtime never throws: the confirm answers
+  `push: null` with `pushError: { code }` on the committed booking, and a
+  retried confirm (same source key) replays it and exports the event once.
+- `bookFromLink(request + spaceId + linkToken)` books from
+  `accordo.dev/p/...`: the source key derives from the token and the
+  canonical UTC slot, so a doubled submission replays the winner whatever
+  spelling of the instant it carries (`Z`, `+02:00`, `-00:00` all derive one
+  key). The link path reads the space `book-appointments` switch like
+  propose/confirm: switch on books, switch off records a `space-ai-proposal`
+  and stays a proposal.
+- `parseBookingPhrase({ spaceId, phrase })` drafts parameters from one
+  Italian sentence through `llm-complete@1` (purpose `suggest`). Without
+  the handle it refuses with a named code; the model is strictly validated,
+  the price never comes from it.
+
+`tests/appointments-booking-flow.test.js` proves the flow with fakes and no
+application boot, including the ten-racer link race. The backoffice UI
+(week view, "Nuovo appuntamento", booking link page), the calendar invite
+(attendees) and the approval-to-execution wiring are follow-ups, not this
+package.
+
 ## Enablement per space
 
 Composition, not a flag: a space whose project lists

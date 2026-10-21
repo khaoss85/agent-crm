@@ -409,3 +409,65 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 @media (max-width: 700px) {
   .bo-scheda-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/*
+ * Connectors (BO-F1-02): the connector list with the "cosa succede" preview
+ * and the 3-step wizard. Same tokens and radii as the settings rows above —
+ * no new visual identity, one column already, so nothing special under
+ * 700px beyond what the rows already do.
+ */
+.bo-field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; font-size: 13px; }
+.bo-connectors { display: grid; gap: 10px; margin-top: 14px; }
+.bo-connector-row { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px; }
+.bo-connector-row p { margin: 6px 0; font-size: 13px; }
+.bo-connector-badge { font-size: 12px; color: var(--muted); }
+.bo-connect-preview { margin: 8px 0; }
+.bo-connect-preview ul { margin: 4px 0 4px 18px; font-size: 13px; }
+.bo-connect-flow { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.bo-connect-flow h4 { margin: 4px 0; font-size: 14px; }
+.bo-connect-steps { display: flex; gap: 8px; list-style: none; margin: 6px 0; padding: 0; font-size: 12px; color: var(--muted); }
+.bo-connect-step-now { font-weight: 700; color: var(--ink); }
+.bo-connect-sync { margin: 4px 0 4px 18px; font-size: 13px; }
+*/
+
+/*
+ * Assistant (BO-F0-04): the ⌘K side panel. Fixed on the right so the shell
+ * grid never moves; full width under 700px. Same bordered-surface idiom as
+ * the shell, no new visual identity.
+ */
+.bo-assistant {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 30;
+  width: min(380px, 100%); background: var(--paper);
+  border-left: 1px solid var(--line); padding: 16px;
+  overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+}
+.bo-assistant-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.bo-assistant-name { margin: 0; font-size: 16px; }
+.bo-assistant-close { font-size: 12px; font-weight: 700; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; cursor: pointer; }
+.bo-assistant-suggestions, .bo-assistant-answer, .bo-assistant-free { display: flex; flex-direction: column; gap: 8px; }
+.bo-assistant-heading { margin: 0; font-size: 12px; font-weight: 700; color: var(--muted); }
+.bo-assistant-suggestion, .bo-assistant-action, .bo-assistant-send {
+  font-size: 13px; font-weight: 700; text-align: left; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  color: var(--ink); padding: 9px 12px;
+}
+.bo-assistant-confirm {
+  font-size: 13px; font-weight: 700; text-align: left; cursor: pointer;
+  border: 1px solid var(--ink); border-radius: 10px; background: var(--ink);
+  color: var(--paper); padding: 9px 12px;
+}
+.bo-assistant-cancel {
+  font-size: 12px; font-weight: 700; cursor: pointer; border: none;
+  background: transparent; color: var(--muted); padding: 4px 0; text-align: left;
+}
+.bo-assistant-title { margin: 0; font-size: 14px; }
+.bo-assistant-line, .bo-assistant-unavailable, .bo-assistant-notice { margin: 0; font-size: 13px; }
+.bo-assistant-unavailable, .bo-assistant-notice { color: var(--muted); font-size: 12px; }
+.bo-assistant-error { margin: 0; font-size: 13px; font-weight: 700; }
+.bo-assistant-source-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.bo-assistant-source-link { font-size: 13px; font-weight: 700; color: var(--accent); }
+.bo-assistant-input {
+  width: 100%; padding: 9px 12px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px;
+}
+.bo-assistant-busy { margin: 0; font-size: 13px; color: var(--muted); }
