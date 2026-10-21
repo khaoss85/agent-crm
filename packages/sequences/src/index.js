@@ -207,6 +207,17 @@ export function createSequencesPackage(options = {}) {
                 replayed = true;
               }
             }
+            // A replay that finds the sequence already active or paused never
+            // mutates it: creating the "missing" step rows on a live sequence
+            // would add a step under running enrollments, violating
+            // append-only-in-draft. The stored steps are the answer — the
+            // operator who activated the sequence approved that exact set.
+            if (replayed && sequence.status !== 'draft') {
+              const liveSteps = trusted(runtime.modules, 'sequence-step');
+              const existing = await liveSteps.listWhere({ sequenceSourceKey: sourceKey });
+              existing.sort((a, b) => a.stepOrder - b.stepOrder);
+              return { sequence, steps: existing, replayed };
+            }
             // An interrupted first attempt leaves the sequence row with only
             // some step rows: the retry carries the same payload under the
             // same key, so every missing deterministic step row is created
@@ -300,16 +311,37 @@ export function createSequencesPackage(options = {}) {
         name: 'activate-sequence',
         appMethod: 'activateSequence',
         label: 'Activate a draft sequence',
-        description: 'Move a draft (or paused) sequence to active so its steps can fire.',
+        description: 'Move a draft (or paused) sequence to active so its steps can fire. '
+          + 'Refuses a sequence with no steps, and — when the caller passes the '
+          + 'step count it created — a sequence with fewer stored steps, so an '
+          + 'interrupted create can never activate truncated.',
         input: [
           { name: 'spaceId', type: 'string', hint: 'The Accordo space id.' },
           { name: 'sourceKey', type: 'string', hint: 'The sequence source key.' },
+          { name: 'expectedSteps', type: 'integer', hint: 'Optional: the step count the caller created; fewer stored steps refuse.' },
         ],
         create(runtime) {
           return async (request) => {
             const record = request && typeof request === 'object' ? request : {};
             const actor = requireSequenceActor(record.actor, 'Activating a sequence');
             const sequence = await loadSequence(runtime.modules, checkSpaceId(record.spaceId), record.sourceKey);
+            const present = await loadSteps(runtime.modules, sequence.sourceKey);
+            if (present.length === 0) {
+              throw new AppError('Cannot activate a sequence with no steps', {
+                code: 'SEQUENCE_NO_STEPS', status: 409,
+              });
+            }
+            if (record.expectedSteps !== undefined && record.expectedSteps !== null) {
+              if (!Number.isInteger(record.expectedSteps) || record.expectedSteps < 1) {
+                throw new ValidationError('expectedSteps must be a positive integer', { field: 'expectedSteps' });
+              }
+              if (present.length < record.expectedSteps) {
+                throw new AppError(
+                  `Sequence stores ${present.length} of ${record.expectedSteps} steps: refusing a truncated activation`,
+                  { code: 'SEQUENCE_INCOMPLETE', status: 409 },
+                );
+              }
+            }
             const at = nowIso();
             return transitionSequence({
               sequences: trusted(runtime.modules, 'sequence'),

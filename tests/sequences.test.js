@@ -1275,3 +1275,225 @@ test('una pausa della sequenza in gara con lo sweep non invia', async (t) => {
   assert.equal(resumed.advanced, 1);
   assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:race' })).length, 1);
 });
+
+test('il replay di uno skip ripara il cursore senza restare fermo', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:skip-replay');
+  const enrollment = await enroll(ops, connectionKey, 'seq:skip-replay', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  // Crash between the skip record and the cursor move: the skipped row for
+  // step zero exists while the cursor still points at it.
+  const sends = composed.modules.get('sequence-send').service;
+  const messageKey = sequenceMessageKey(enrollment.sourceKey, 0);
+  await sends.createManaged({
+    sourceKey: messageKey,
+    enrollmentSourceKey: enrollment.sourceKey,
+    sequenceSourceKey: 'seq:skip-replay',
+    stepOrder: 0,
+    messageKey,
+    jobId: '',
+    status: 'skipped',
+    queuedAt: T0,
+    decidedAt: T0,
+    detail: 'CHANNEL_TEMPLATE_REQUIRED',
+    variables: '[]',
+    actorType: SYSTEM.type,
+    actorId: SYSTEM.id,
+  }, { actor: SYSTEM });
+
+  // The sweep repairs the cursor instead of wedging: step zero is not
+  // re-fired, and the enrollment is not stuck on it.
+  const repaired = await advance(composed, connectionKey, T0);
+  assert.equal(repaired.advanced, 0);
+  const enrollService = composed.modules.get('sequence-enrollment').service;
+  assert.equal((await enrollService.listWhere({ sequenceSourceKey: 'seq:skip-replay' }))[0].currentStep, 1);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:skip-replay' })).length, 1);
+
+  // Step two fires on its day: the enrollment was never stuck on step zero.
+  const fired = await advance(composed, connectionKey, T1);
+  assert.equal(fired.advanced, 1);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:skip-replay' })).length, 2);
+});
+
+test('la create riprodotta non tocca una sequenza attiva e activate rifiuta il troncato', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, 'unused-connection-key');
+  const created = await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:live', name: 'Viva', steps: STEPS.slice(0, 1), actor: USER,
+  });
+  assert.equal(created.steps.length, 1);
+  await ops.activateSequence({ spaceId: SPACE, sourceKey: 'seq:live', actor: USER });
+
+  // A retry with a wider payload on the now-active sequence replays the
+  // stored steps instead of adding a step under the live enrollment.
+  const replayed = await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:live', name: 'Viva', steps: STEPS, actor: USER,
+  });
+  assert.equal(replayed.replayed, true);
+  assert.equal(replayed.steps.length, 1);
+  assert.deepEqual(replayed.steps.map((step) => step.stepOrder), [0]);
+
+  // Activate refuses a sequence with no stored steps ...
+  await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:trunc', name: 'Troncata', steps: STEPS.slice(0, 1), actor: USER,
+  });
+  // Step keys escape ':' as '%3A' (sequenceKey), like every outbox key.
+  composed.database.raw.exec("DELETE FROM sequence_steps WHERE source_key = 'seq-step:seq%3Atrunc:0'");
+  await assert.rejects(
+    ops.activateSequence({ spaceId: SPACE, sourceKey: 'seq:trunc', actor: USER }),
+    (error) => error.code === 'SEQUENCE_NO_STEPS',
+  );
+
+  // ... and, when the caller knows the payload, a truncated step set.
+  await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:partial-live', name: 'Parziale', steps: STEPS.slice(0, 1), actor: USER,
+  });
+  await assert.rejects(
+    ops.activateSequence({ spaceId: SPACE, sourceKey: 'seq:partial-live', actor: USER, expectedSteps: 2 }),
+    (error) => error.code === 'SEQUENCE_INCOMPLETE',
+  );
+  const activated = await ops.activateSequence({
+    spaceId: SPACE, sourceKey: 'seq:partial-live', actor: USER, expectedSteps: 1,
+  });
+  assert.equal(activated.sequence.status, 'active');
+});
+
+test("lo skip dell'ultimo passo aspetta gli invii precedenti", async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:last-skip', name: 'Ultimo saltato',
+    steps: [
+      STEPS[0],
+      {
+        dayOffset: 1, channel: 'whatsapp', templateName: 'mai_approvato', templateLanguage: 'it',
+        templateVars: ['{{name}}'],
+      },
+    ],
+    actor: USER,
+  });
+  await ops.activateSequence({ spaceId: SPACE, sourceKey: 'seq:last-skip', actor: USER });
+  await enroll(ops, connectionKey, 'seq:last-skip', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  // Step zero queues and stays unsettled: the worker never runs.
+  const fired = await advance(composed, connectionKey, T0);
+  assert.equal(fired.advanced, 1);
+
+  // Step one refuses terminally while step zero is still queued: the skip is
+  // recorded but the enrollment stays active — completing now would orphan
+  // the queued row the confirm pass only reads on active rows.
+  const skipped = await advance(composed, connectionKey, T1);
+  assert.equal(skipped.skipped, 1);
+  assert.equal(skipped.advanced, 0);
+  const enrollService = composed.modules.get('sequence-enrollment').service;
+  const stored = (await enrollService.listWhere({ sequenceSourceKey: 'seq:last-skip' }))[0];
+  assert.equal(stored.status, 'active');
+  assert.equal(stored.currentStep, 2);
+  const sends = composed.modules.get('sequence-send').service;
+  const refused = (await sends.listWhere({ sequenceSourceKey: 'seq:last-skip' }))
+    .find((row) => row.stepOrder === 1);
+  assert.equal(refused.status, 'skipped');
+
+  // The outbox settles step zero: the confirm pass records the send, and the
+  // next sweep completes the settled enrollment.
+  const first = (await sends.listWhere({ sequenceSourceKey: 'seq:last-skip' }))
+    .find((row) => row.stepOrder === 0);
+  const { worker } = workerKit(composed, () => T1_LATER);
+  worker.start();
+  t.after(() => worker.close());
+  const settled = await worker.run(first.jobId);
+  assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
+  const confirmed = await advance(composed, connectionKey, T1_LATER);
+  assert.equal(confirmed.confirmed, 1);
+  const settledStep = (await sends.listWhere({ sequenceSourceKey: 'seq:last-skip' }))
+    .find((row) => row.stepOrder === 0);
+  assert.equal(settledStep.status, 'sent');
+  const settledSweep = await advance(composed, connectionKey, T1_LATER);
+  assert.equal((await enrollService.listWhere({ sequenceSourceKey: 'seq:last-skip' }))[0].status, 'completed');
+  assert.equal(settledSweep.confirmed, 1);
+});
+
+test('personalize non deterministico più crash non incastra l\u2019invio', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:flaky-hook', name: 'Uno',
+    steps: STEPS.slice(0, 1), actor: USER,
+  });
+  await ops.activateSequence({ spaceId: SPACE, sourceKey: 'seq:flaky-hook', actor: USER });
+  await enroll(ops, connectionKey, 'seq:flaky-hook', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  // A non-deterministic AI rewrite: the first sweep computes V1, a recompute
+  // would compute V2.
+  let hookCalls = 0;
+  const personalize = async () => {
+    hookCalls += 1;
+    return hookCalls === 1 ? ['primo invio ore 17:00'] : ['secondo invio ore 17:00'];
+  };
+
+  // Crash between the outbox enqueue and the send-row write: the job is in
+  // the outbox but the row has no job id yet. The claim row (with V1) is
+  // already persisted, so the retry must reuse V1 — never recompute V2.
+  const realQueue = queue(composed).queueTemplate;
+  let queueCalls = 0;
+  const crashing = async (request) => {
+    queueCalls += 1;
+    const result = await realQueue(request);
+    if (queueCalls === 1) {
+      throw Object.assign(new Error('injected crash after enqueue'), { code: 'CRASH_INJECTED' });
+    }
+    return result;
+  };
+  composed.clockBox.ms = Date.parse(T0);
+  const crashed = await advanceSequences({
+    modules: composed.modules,
+    queueTemplate: crashing,
+    permissionGate: gate(composed),
+    replyWindows: windows(composed, connectionKey),
+    now: () => T0,
+    actor: SYSTEM,
+    personalize,
+  });
+  assert.equal(crashed.advanced, 0);
+  assert.equal(crashed.sweepErrors.length, 1);
+  assert.equal(crashed.sweepErrors[0].code, 'CRASH_INJECTED');
+  const sends = composed.modules.get('sequence-send').service;
+  const claim = (await sends.listWhere({ sequenceSourceKey: 'seq:flaky-hook' }))[0];
+  assert.equal(claim.status, 'queued');
+  assert.ok(claim.jobId === '' || claim.jobId === null, 'no outbox job confirmed yet');
+  assert.deepEqual(JSON.parse(claim.variables), ['primo invio ore 17:00']);
+
+  // The retry reuses the persisted V1: the outbox replays the first job —
+  // no idempotency mismatch, no second row, the hook never runs again.
+  const retried = await advance(composed, connectionKey, T0_LATER, { personalize });
+  assert.equal(retried.advanced, 1);
+  assert.equal(retried.sweepErrors.length, 0);
+  assert.equal(hookCalls, 1);
+  const rows = await sends.listWhere({ sequenceSourceKey: 'seq:flaky-hook' });
+  assert.equal(rows.length, 1);
+  assert.ok(rows[0].jobId !== '');
+  assert.deepEqual(JSON.parse(rows[0].variables), ['primo invio ore 17:00']);
+
+  // The single job settles and confirms like any other send.
+  const { worker } = workerKit(composed, () => T0_LATER);
+  worker.start();
+  t.after(() => worker.close());
+  const settled = await worker.run(rows[0].jobId);
+  assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
+  const confirmed = await advance(composed, connectionKey, T0_LATER, { personalize });
+  assert.equal(confirmed.confirmed, 1);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:flaky-hook' }))[0].status, 'sent');
+});

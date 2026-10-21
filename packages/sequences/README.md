@@ -67,6 +67,17 @@ A deployment plugs AI rewriting into `personalize(input)` —
 without it the deterministic substitution stands (declared in `remaining`,
 not faked).
 
+The sweep persists the payload on the send row BEFORE the outbox enqueue
+and reuses it on every retry, so the hook runs once per step: it may be
+non-deterministic, the first payload wins and a crash retry replays it
+byte-identical instead of wedging on idempotency mismatch. A replayed
+`create-sequence` on an active or paused sequence never creates step rows —
+the stored steps are the answer — and `activate-sequence` refuses a
+sequence with no steps (or fewer than the caller-supplied `expectedSteps`).
+A terminal skip on the last step completes the enrollment only once every
+prior send settled; otherwise the enrollment stays active until the confirm
+pass settles the priors.
+
 ## What is deliberately NOT here
 
 Provider sends (the channels outbox owns them), the backoffice UI (the

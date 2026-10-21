@@ -520,6 +520,39 @@ export async function advanceSequences({
    * is no send to wait for, so the last step completes at once. One skip
    * records one row and moves once — never a retry on the next sweep.
    */
+  /**
+   * True while one send of this enrollment still waits for an answer: a
+   * queued row the outbox has not settled, or a step waiting for a human
+   * ok. Skipped, sent and dead rows are settled and never block completion.
+   */
+  const hasUnsettledSends = async (enrollmentSourceKey) => {
+    const outstanding = await sends.listWhere({ enrollmentSourceKey });
+    return (Array.isArray(outstanding) ? outstanding : [])
+      .some((row) => row && (row.status === 'queued' || row.status === 'waiting-approval'));
+  };
+
+  /**
+   * Move the cursor past a terminally skipped step. The last step completes
+   * the enrollment only once every prior send settled: a sweep that skips
+   * the final step while an earlier send is still queued or waiting for a
+   * human ok stays active, and the live-empty branch completes later once
+   * the confirm pass settles the priors — otherwise the orphaned queued
+   * row belongs to a completed enrollment the confirm pass never reads.
+   * A read failure stays active too (fail closed): the next sweep retries
+   * the check instead of completing blind.
+   */
+  const moveCursorAfterSkip = async (current, ordered, step) => {
+    let unsettled = true;
+    try {
+      unsettled = await hasUnsettledSends(current.sourceKey);
+    } catch (error) {
+      noteSweepError(current, error, 'due');
+    }
+    return moveCursorPast({
+      current, ordered, step, nowIso, nowMs, completeWhenLast: !unsettled,
+    });
+  };
+
   const moveCursorPast = async ({ current, ordered, step, nowIso, nowMs, completeWhenLast = true }) => {
     const next = ordered.find((row) => row && row.stepOrder === step.stepOrder + 1) ?? null;
     if (!next) {
@@ -542,8 +575,11 @@ export async function advanceSequences({
 
   /**
    * Record one terminal refusal (a revoked connection, an unapproved
-   * template, a human refusal) on the step's own row, then move past it.
-   * The refusal belongs to the row, never to the sweep.
+   * template, a human refusal) on the step's own row. True when this call
+   * recorded the skip; false when the row already carries provider evidence
+   * the refusal must not rewrite — a confirmed outbox claim, a send, or a
+   * dead row belongs to the confirm pass, never to the refusal. The refusal
+   * belongs to the row, never to the sweep.
    */
   const recordTerminalSkip = async ({ seqKey, current, step, messageKey, nowIso, detail, pre }) => {
     if (!pre) {
@@ -566,20 +602,30 @@ export async function advanceSequences({
       } catch (error) {
         if (!isWinnerConflict(error)) throw error;
       }
-    } else if (pre.status === 'waiting-approval') {
-      // Only a waiting row may become skipped: a queued, sent or dead row
-      // is provider evidence and is never rewritten by a refusal.
-      await sends.applyManaged(pre.id, { status: 'skipped', decidedAt: nowIso, detail }, { actor: timer });
+      return true;
     }
+    if (pre.status === 'waiting-approval'
+      || (pre.status === 'queued' && (!pre.jobId || pre.jobId === ''))) {
+      // A waiting row never reached the outbox, and a queued row without a
+      // confirmed job id is a claim whose enqueue outcome is unknown — every
+      // refusal code below is raised before the enqueue, and a job orphaned
+      // by an earlier crash either already sent the allowed step once or
+      // dead-letters at execute time, so it never sends twice from this row.
+      await sends.applyManaged(pre.id, { status: 'skipped', decidedAt: nowIso, detail }, { actor: timer });
+      return true;
+    }
+    return false;
   };
 
   /**
-   * Resolve the queued template variables for one step. The confirm pass
-   * reuses the exact payload stored at queue time — the outbox compares
-   * fingerprints under the same idempotency key, and a rewritten payload
-   * would raise DURABLE_JOB_IDEMPOTENCY_MISMATCH. A row with no stored
-   * variables (never written by this code) reproduces what queueing would
-   * do, hook included, as a best effort.
+   * Resolve the queued template variables for one step. The due pass
+   * persists the payload on the send row BEFORE the outbox enqueue and every
+   * later attempt reuses it, so the personalize hook runs once per step: a
+   * non-deterministic hook cannot wedge the enrollment on idempotency
+   * mismatch — the first payload wins and retries replay it byte-identical.
+   * The confirm pass reuses the same stored payload for the same reason. A
+   * row with no stored variables (never written by this code) reproduces
+   * what queueing would do, hook included, as a best effort.
    */
   const resolveSendVariables = async (step, enrollment, storedJson) => {
     if (typeof storedJson === 'string' && storedJson !== '') {
@@ -825,12 +871,12 @@ export async function advanceSequences({
           const pre = await sends.listWhere({ sourceKey: messageKey });
           const decided = await readStoredProposal(current.spaceId, pre[0] ?? null);
           if (decided === 'refused') {
-            await recordTerminalSkip({
+            const recorded = await recordTerminalSkip({
               seqKey, current, step, messageKey, nowIso,
               detail: 'SPACE_PROPOSAL_REFUSED', pre: pre[0] ?? null,
             });
-            await moveCursorPast({ current, ordered, step, nowIso, nowMs });
-            summary.skipped += 1;
+            await moveCursorAfterSkip(current, ordered, step);
+            if (recorded) summary.skipped += 1;
             continue;
           }
           if (decided !== 'approved') {
@@ -860,12 +906,12 @@ export async function advanceSequences({
                 const raced = await sends.listWhere({ sourceKey: messageKey });
                 const late = await readStoredProposal(current.spaceId, raced[0] ?? null);
                 if (late === 'refused') {
-                  await recordTerminalSkip({
+                  const recorded = await recordTerminalSkip({
                     seqKey, current, step, messageKey, nowIso,
                     detail: 'SPACE_PROPOSAL_REFUSED', pre: raced[0] ?? null,
                   });
-                  await moveCursorPast({ current, ordered, step, nowIso, nowMs });
-                  summary.skipped += 1;
+                  await moveCursorAfterSkip(current, ordered, step);
+                  if (recorded) summary.skipped += 1;
                   continue;
                 }
                 if (late !== 'approved') throw error;
@@ -903,19 +949,76 @@ export async function advanceSequences({
         }
 
         // 3. Allowed: personalize and queue through the channels outbox. The
-        // persistent enqueue IS the cross-process claim — two sweeps racing
-        // queue the byte-identical job and the second gets the first row back.
+        // persisted send row IS the cross-process claim, written BEFORE the
+        // outbox enqueue: every attempt reuses the row's payload, so a crash
+        // between the enqueue and the job-id write retries with a
+        // byte-identical payload — the outbox replays the first job instead
+        // of raising DURABLE_JOB_IDEMPOTENCY_MISMATCH, even when the
+        // personalize hook is non-deterministic. Two sweeps racing the first
+        // claim collide on the deterministic row and the loser reuses the
+        // winner's payload.
         const stored = await sends.listWhere({ sourceKey: messageKey });
-        if (stored[0] && stored[0].status === 'skipped') continue;
-        if (stored[0] && stored[0].status !== 'waiting-approval') {
-          // Already queued, sent or dead: a crash between the send row and
-          // the cursor left the cursor behind, so repair it idempotently —
+        if (stored[0] && stored[0].status === 'skipped') {
+          // A crash between the skip record and the cursor move left the
+          // cursor behind: repair it idempotently — the skip was already
+          // recorded, so this never re-fires the step. Completion still
+          // waits for unsettled priors like the skip path itself.
+          await moveCursorAfterSkip(current, ordered, step);
+          continue;
+        }
+        // A missing job id reads back as '' or null (the record layer
+        // normalizes empty strings): a queued row without one is an
+        // unconfirmed claim and this attempt must carry the persisted
+        // payload. Any other stored row — a confirmed claim, a send, a dead
+        // row — needs only the cursor repair below.
+        const unconfirmedClaim = stored[0] && (stored[0].status === 'waiting-approval'
+          || (stored[0].status === 'queued' && !stored[0].jobId));
+        if (stored[0] && !unconfirmedClaim) {
+          // A claimed send the cursor never passed (crash between the send
+          // row and the cursor write): repair the cursor idempotently —
           // never a second job for the same step, and never a completion on
           // an unsettled send (the live-empty branch completes once settled).
           await moveCursorPast({ current, ordered, step, nowIso, nowMs, completeWhenLast: false });
           continue;
         }
-        const variables = await resolveSendVariables(step, current, null);
+        if (!stored[0]) {
+          const computed = await resolveSendVariables(step, current, null);
+          try {
+            await sends.createManaged({
+              sourceKey: messageKey,
+              enrollmentSourceKey: current.sourceKey,
+              sequenceSourceKey: seqKey,
+              stepOrder: step.stepOrder,
+              messageKey,
+              jobId: '',
+              status: 'queued',
+              queuedAt: nowIso,
+              decidedAt: nowIso,
+              detail: '',
+              variables: JSON.stringify(computed),
+              actorType: timer.type,
+              actorId: timer.id,
+            }, { actor: timer });
+          } catch (error) {
+            if (!isWinnerConflict(error)) throw error;
+          }
+        } else if (stored[0].status === 'waiting-approval') {
+          // A human-approved waiting row still carries the placeholder
+          // payload: persist the computed variables before the first outbox
+          // claim, so a crash retry reuses them instead of recomputing.
+          const computed = await resolveSendVariables(step, current, null);
+          await sends.applyManaged(stored[0].id, {
+            variables: JSON.stringify(computed),
+          }, { actor: timer });
+        }
+        const claim = (await sends.listWhere({ sourceKey: messageKey }))[0] ?? null;
+        if (!claim) {
+          throw new AppError('Sequence send claim vanished before the outbox enqueue', {
+            code: 'SEQUENCES_SEND_MISSING', status: 500,
+            details: { spaceId: current.spaceId },
+          });
+        }
+        const variables = await resolveSendVariables(step, current, claim.variables);
         let queued;
         try {
           queued = await queueTemplate({
@@ -927,13 +1030,26 @@ export async function advanceSequences({
             actor: timer,
           });
         } catch (error) {
-          if (error && typeof error === 'object' && QUEUE_REFUSAL_SKIPS.has(/** @type {any} */ (error).code)) {
-            await recordTerminalSkip({
+          const code = error && typeof error === 'object' ? /** @type {any} */ (error).code : null;
+          if (code !== null && QUEUE_REFUSAL_SKIPS.has(code)) {
+            const recorded = await recordTerminalSkip({
               seqKey, current, step, messageKey, nowIso,
-              detail: /** @type {any} */ (error).code, pre: stored[0] ?? null,
+              detail: code, pre: claim,
             });
-            await moveCursorPast({ current, ordered, step, nowIso, nowMs });
-            summary.skipped += 1;
+            await moveCursorAfterSkip(current, ordered, step);
+            if (recorded) summary.skipped += 1;
+            continue;
+          }
+          if (code === 'DURABLE_JOB_IDEMPOTENCY_MISMATCH') {
+            // Another writer already claimed this key with a different
+            // payload (a pre-fix crash orphan, or a foreign writer): the
+            // outbox holds exactly one send for this step, so re-firing
+            // ours would double-send. Keep the persisted claim, record the
+            // mismatch on the summary for the operator, and move the cursor
+            // past the step without completing — the enrollment keeps moving
+            // instead of wedging due on a key it can never match.
+            noteSweepError(current, error, 'due');
+            await moveCursorPast({ current, ordered, step, nowIso, nowMs, completeWhenLast: false });
             continue;
           }
           throw error;
@@ -941,29 +1057,12 @@ export async function advanceSequences({
         const jobId = typeof queued?.jobId === 'string' ? queued.jobId : '';
         const jobState = typeof queued?.state === 'string' ? queued.state : '';
         const variablesJson = JSON.stringify(variables);
-        if (stored[0]) {
-          await sends.applyManaged(stored[0].id, {
-            jobId, status: 'queued', queuedAt: nowIso, decidedAt: nowIso, variables: variablesJson,
-          }, { actor: timer });
-        } else {
-          try {
-            await sends.createManaged({
-              sourceKey: messageKey,
-              enrollmentSourceKey: current.sourceKey,
-              sequenceSourceKey: seqKey,
-              stepOrder: step.stepOrder,
-              messageKey,
-              jobId,
-              status: 'queued',
-              queuedAt: nowIso,
-              decidedAt: nowIso,
-              detail: '',
-              variables: variablesJson,
-              actorType: timer.type,
-              actorId: timer.id,
+        {
+          const latest = (await sends.listWhere({ sourceKey: messageKey }))[0] ?? null;
+          if (latest && (latest.status === 'queued' || latest.status === 'waiting-approval')) {
+            await sends.applyManaged(latest.id, {
+              jobId, status: 'queued', queuedAt: nowIso, decidedAt: nowIso, variables: variablesJson,
             }, { actor: timer });
-          } catch (error) {
-            if (!isWinnerConflict(error)) throw error;
           }
         }
         if (jobState === 'succeeded') {
