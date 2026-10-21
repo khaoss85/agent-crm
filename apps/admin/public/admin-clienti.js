@@ -81,6 +81,7 @@ export function pageNumbers(pages, page) {
  */
 export function createCustomerListView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {}, onAskAi = null } = deps;
+  void navigate;
   const { client } = deps;
   const activeSpaceId = () => {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
