@@ -511,6 +511,63 @@ function buildRouter(app) {
     return await app.readCustomerTimeline({ resource: params.resource, id: params.id });
   });
 
+  // Call intelligence (BO-F1-08): the notice, the transcript, its summary
+  // and the customer calls read for the scheda cliente. The same
+  // enumerated-adapter shape as the hub routes above: the kernel owns the
+  // path, gates the role boundary, and delegates to the composed
+  // application operations — without intelligence composed each answers an
+  // honest 404. The space stays explicit on every call, never inferred.
+  router.add('POST', '/api/call-intelligence/notice', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.recordCallNotice !== 'function') {
+      throw new NotFoundError('Operation', 'call notice');
+    }
+    return await app.recordCallNotice({ ...stripServerControlledKeys(body), actor });
+  });
+
+  router.add('POST', '/api/call-intelligence/transcript', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.saveCallTranscript !== 'function') {
+      throw new NotFoundError('Operation', 'call transcript');
+    }
+    return await app.saveCallTranscript({ ...stripServerControlledKeys(body), actor });
+  });
+
+  router.add('POST', '/api/call-intelligence/summarize', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.summarizeCall !== 'function') {
+      throw new NotFoundError('Operation', 'call summary');
+    }
+    return await app.summarizeCall({ ...stripServerControlledKeys(body), actor });
+  });
+
+  // The explicit operator path for the retention purge (BO-F1-08): the same
+  // operation the scheduled sweep runs, triggerable by hand when no beat is
+  // seeded. Without intelligence composed it answers the honest 404 above.
+  // The instant is server-controlled: a caller-supplied `now` could erase
+  // every transcript early by naming a far-future date, so only the space
+  // scope is read from the body and `now` is never forwarded.
+  router.add('POST', '/api/call-intelligence/purge', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.purgeExpiredTranscripts !== 'function') {
+      throw new NotFoundError('Operation', 'call purge');
+    }
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : undefined;
+    return await app.purgeExpiredTranscripts(spaceId === undefined ? { actor } : { spaceId, actor });
+  });
+
+  router.add('GET', '/api/call-intelligence/calls/:resource/:id', async ({ params, searchParams, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readCustomerCalls !== 'function') {
+      throw new NotFoundError('Operation', 'customer calls');
+    }
+    return await app.readCustomerCalls({
+      spaceId: searchParams.get('spaceId'),
+      subjectResource: params.resource,
+      subjectId: params.id,
+    });
+  });
   // Connectors (BO-F1-02): the backoffice 3-step connect flow. The same
   // enumerated-adapter shape as the routes above: the kernel owns the path,
   // gates the role boundary, and delegates to the composed application

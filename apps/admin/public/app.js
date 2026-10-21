@@ -420,6 +420,9 @@ const customerCardView = createCustomerCardView({
   mount: moduleView,
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
+  // The shell's active space, read late: the calls read stays
+  // space-explicit and follows the space switcher (BO-F1-08).
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
 });
 
 // Customer Data Foundation (ADR-037): import, duplicate candidates, the data
@@ -522,9 +525,13 @@ if (boSidebar && boTopbar) {
       if (assistantPanel) void assistantPanel.open(currentScreenId);
     },
     onPickSpace: (id) => {
+      shellActiveSpace = id;
       try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
         // The switch still applies to this tab.
       }
+      // The open card shows space-scoped calls (BO-F1-08): re-render it on
+      // the new space instead of leaving the previous space's summaries.
+      if (targetForHash(window.location.hash || '#/').view === 'customer-card') route();
     },
     win: typeof window !== 'undefined' ? window : null,
   });

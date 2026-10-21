@@ -1,0 +1,17 @@
+{
+  "manifestVersion": 1,
+  "name": "call-notice",
+  "table": "call_notices",
+  "description": "One recorded start-of-call notice (BO-F1-08, owner decision Q-G2 19/10: a notice at the start of the call is enough; the notice is recorded before any audio or text is saved). Append-only: a transcript save for the same callRef is refused without one. The subject envelope is denormalized onto the row so reads stay per-customer without joining through conversations. (backlog:588db7766206)",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectResource", "type": "string", "writable": "managed" },
+    { "name": "subjectId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "callRef", "type": "string", "index": true, "writable": "managed" },
+    { "name": "channel", "type": "string", "writable": "managed" },
+    { "name": "noticedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "actorType", "type": "string", "writable": "managed" },
+    { "name": "actorId", "type": "string", "writable": "managed" }
+  ]
+}

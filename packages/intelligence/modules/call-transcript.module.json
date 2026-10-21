@@ -1,0 +1,20 @@
+{
+  "manifestVersion": 1,
+  "name": "call-transcript",
+  "table": "call_transcripts",
+  "description": "One call transcript (BO-F1-08): the recorded text of a call whose start-of-call notice is on file, the AI summary once summarized, and the retention deadline. expiresAt is recordedAt plus the space's retention (default 12 months, Q-G2); the purge wipes text and summary and stamps purgedAt instead of deleting the row, so the retention proof survives the erasure. Every field is managed: a transcript exists only through the call-intelligence operations. (backlog:588db7766206)",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "subjectResource", "type": "string", "writable": "managed" },
+    { "name": "subjectId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "callRef", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "text", "type": "string", "writable": "managed" },
+    { "name": "recordedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "expiresAt", "type": "timestamp", "index": true, "writable": "managed" },
+    { "name": "purgedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "summary", "type": "string", "writable": "managed" },
+    { "name": "actorType", "type": "string", "writable": "managed" },
+    { "name": "actorId", "type": "string", "writable": "managed" }
+  ]
+}
