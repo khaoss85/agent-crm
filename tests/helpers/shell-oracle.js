@@ -201,7 +201,7 @@ function heredocCrossProduct(spellings = HEREDOC_DELIMITER_SPELLINGS) {
           unterminated: `${open}\nremember\n${run}\n`,
           spaceIndent: `${open}\nremember\n  ${terminator}\n${run}\n`,
         })) {
-          cases.push({ label: `heredoc-delim/${spelling}/${dash || 'plain'}/${gap ? 'gap' : 'tight'}/${placement}`, probe: snippet });
+          cases.push({ label: `heredoc-delim/${spelling}/${dash || 'plain'}/${gap ? 'gap' : 'tight'}/${placement}`, snippet, probe: snippet });
         }
       }
     }
@@ -263,6 +263,15 @@ function heredocCrossProduct(spellings = HEREDOC_DELIMITER_SPELLINGS) {
  * CI sets it, so Linux coverage is exactly what it was. A local full run is
  * legitimate but slow: give it its own timeout and never hold the shared
  * machine lock for it.
+ *
+ * The driver itself runs only with `ACCORDO_ORACLE_DRIVER=1` (beside the
+ * full flag for the complete product): the three slices' share of the
+ * default subset is minutes of bash per slice, which fits neither the
+ * pre-push hook's 300 s timeout nor the PR gate's run bound now that every
+ * oracle change selects all three. Without the flag the slices run only
+ * their wiring (imports, corpus shape, counts — seconds): a skipped driver
+ * shows as skipped, never as green, and the full proof lives in the
+ * author's run plus the scheduled main measurement.
  */
 export const SHELL_ORACLE_FULL = process.env.ACCORDO_FULL_SHELL_ORACLE === '1';
 /** One representative per wrapper-grammar path; every name must be a key of ORACLE_WRAPPERS. */

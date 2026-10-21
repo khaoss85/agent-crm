@@ -157,6 +157,10 @@ jobs:
       # See tests/helpers/shell-oracle.js (sliced across
       # tests/shell-oracle-a/b/c.test.js).
       ACCORDO_FULL_SHELL_ORACLE: '1'
+      # The oracle slices skip their bash driver by default (the PR gate and
+      # the pre-push hook run only the wiring); the scheduled measurement
+      # drives them. Same backlog as the slicing above.
+      ACCORDO_ORACLE_DRIVER: '1'
     steps:
       - uses: actions/checkout@v4
         with:
