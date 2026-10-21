@@ -2,6 +2,8 @@
 
 The Admin is a zero-build, dependency-free static app (`apps/admin/public/`) served by the HTTP server at `/`. It has two parts: the handwritten CRM dashboard (opportunities, approvals, traces) and, since Milestone 4, an automatic experience for **generated modules**.
 
+When the same shell is mounted for a space (`createAdminShellMount` with a basePath such as `/bo`, backlog:7eee63a5), the home is the Oggi frame (`admin-oggi.js`: greeting plus links to the delivered screens, no invented data) and the demo dashboard is never rendered — the served HTML carries no demo markup. The standalone development server keeps the demo (`admin-demo.js`, rendered at startup).
+
 > Local development only. The Admin sends a declared actor identity for audit — it is **not** authentication and a local caller can set any actor. Do not expose the server publicly until authentication, tenancy and RBAC exist.
 
 ## From manifest to a managed record
@@ -23,7 +25,7 @@ The module now appears under **Generated modules** in the Admin nav — no page 
 ## Routes (hash-based)
 
 ```text
-#/                          dashboard (shell: Oggi)
+#/                          Oggi frame under a space mount, demo dashboard standalone
 #/impostazioni               settings entry (BO-F0-02; tabs land in BO-F0-03)
 #/modules/:module           collection / list
 #/modules/:module/new       create form

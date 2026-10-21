@@ -7,20 +7,34 @@ import { resolveAdminBase } from './admin-base.js';
 // absolute API path below is prefixed, so the shell works unchanged.
 const ADMIN_BASE = resolveAdminBase();
 
+// Under a space mount (e.g. `/bo`) the home is the Oggi frame and the
+// framework demo is never rendered (backlog:7eee63a5). The standalone
+// development server owns the domain root and keeps the demo.
+const MOUNTED = isSpaceMount(ADMIN_BASE);
+
+const boMain = document.querySelector('.bo-main');
+const dashboardView = document.querySelector('#view-dashboard');
+const moduleView = document.querySelector('#view-module');
+// Standalone only: the served HTML carries no demo markup, so the demo
+// chrome is rendered here, before any ref below is captured.
+const demoRefs = MOUNTED
+  ? null
+  : renderDemoChrome({ doc: document, main: boMain, moduleView, dashboardView });
+
 const elements = {
-  metrics: document.querySelector('#metrics'),
-  opportunities: document.querySelector('#opportunities'),
-  opportunitiesEmpty: document.querySelector('#opportunitiesEmpty'),
-  approvals: document.querySelector('#approvals'),
-  approvalsEmpty: document.querySelector('#approvalsEmpty'),
-  traces: document.querySelector('#traces'),
-  tracesEmpty: document.querySelector('#tracesEmpty'),
-  demoButton: document.querySelector('#demoButton'),
-  refreshButton: document.querySelector('#refreshButton'),
-  traceDetail: document.querySelector('#traceDetail'),
-  traceTitle: document.querySelector('#traceTitle'),
-  traceSpans: document.querySelector('#traceSpans'),
-  closeTrace: document.querySelector('#closeTrace'),
+  metrics: demoRefs?.metrics ?? null,
+  opportunities: demoRefs?.opportunities ?? null,
+  opportunitiesEmpty: demoRefs?.opportunitiesEmpty ?? null,
+  approvals: demoRefs?.approvals ?? null,
+  approvalsEmpty: demoRefs?.approvalsEmpty ?? null,
+  traces: demoRefs?.traces ?? null,
+  tracesEmpty: demoRefs?.tracesEmpty ?? null,
+  demoButton: demoRefs?.demoButton ?? null,
+  refreshButton: demoRefs?.refreshButton ?? null,
+  traceDetail: demoRefs?.traceDetail ?? null,
+  traceTitle: demoRefs?.traceTitle ?? null,
+  traceSpans: demoRefs?.traceSpans ?? null,
+  closeTrace: demoRefs?.closeTrace ?? null,
   toast: document.querySelector('#toast'),
 };
 
@@ -329,9 +343,11 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
-elements.demoButton.addEventListener('click', runDemo);
-elements.refreshButton.addEventListener('click', refresh);
-elements.closeTrace.addEventListener('click', () => elements.traceDetail.classList.add('hidden'));
+if (elements.demoButton) elements.demoButton.addEventListener('click', runDemo);
+if (elements.refreshButton) elements.refreshButton.addEventListener('click', refresh);
+if (elements.closeTrace) {
+  elements.closeTrace.addEventListener('click', () => elements.traceDetail.classList.add('hidden'));
+}
 
 // ---- Hash routing + generated-module navigation -------------------------
 
@@ -343,6 +359,8 @@ import {
   readSpaces,
   renderSettingsPanel,
 } from './admin-shell.js';
+import { buildOggiLinks, isSpaceMount, renderOggi } from './admin-oggi.js';
+import { renderDemoChrome } from './admin-demo.js';
 import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
@@ -355,8 +373,6 @@ import { createConnectorsView } from './admin-connectors.js';
 import { createSpineView } from './admin-spine.js';
 import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
 
-const dashboardView = document.querySelector('#view-dashboard');
-const moduleView = document.querySelector('#view-module');
 const generatedNav = document.querySelector('#generatedNav');
 
 const moduleAdmin = createModuleAdmin({
@@ -537,7 +553,9 @@ if (boSidebar && boTopbar) {
       }
       // The open card shows space-scoped calls (BO-F1-08): re-render it on
       // the new space instead of leaving the previous space's summaries.
-      if (targetForHash(window.location.hash || '#/').view === 'customer-card') route();
+      // The mounted home greets with the space name: re-render it too.
+      const openView = targetForHash(window.location.hash || '#/').view;
+      if (openView === 'customer-card' || (MOUNTED && openView === 'dashboard')) route();
     },
     win: typeof window !== 'undefined' ? window : null,
   });
@@ -547,6 +565,11 @@ if (boSidebar && boTopbar) {
 let shellItems = buildShellNav();
 let shellFixCount = null;
 let shellCustomerData = false;
+
+function currentSpaceName() {
+  const active = shellSpaces.find((space) => space.id === shellActiveSpace) ?? shellSpaces[0];
+  return typeof active?.name === 'string' ? active.name : '';
+}
 
 function shellScreenFor(target) {
   switch (target.view) {
@@ -613,6 +636,13 @@ async function populateNav() {
     // shell items update, so a cold deep link keeps its screen.
     syncShell(targetForHash(window.location.hash || '#/'));
     await refreshShellBadge();
+    // Mounted home (backlog:7eee63a5): the Oggi links follow the delivered
+    // screens, which are known only after the schema arrives — re-render an
+    // open home so it never shows the pre-schema voices.
+    if (MOUNTED && targetForHash(window.location.hash || '#/').view === 'dashboard') route();
+    // The legacy module nav lives inside the demo chrome, which is rendered
+    // standalone only: under a mount there is nothing to fill here.
+    if (!generatedNav) return;
     while (generatedNav.firstChild) generatedNav.removeChild(generatedNav.firstChild);
     if (!supported) {
       const note = document.createElement('span');
@@ -724,11 +754,26 @@ async function route() {
   const target = targetForHash(hash);
   syncShell(target);
   const onDashboard = target.view === 'dashboard';
+  if (onDashboard && MOUNTED) {
+    // Space home (backlog:7eee63a5): the Oggi frame, never the demo. The
+    // demo dashboard stays hidden for the whole session under a mount.
+    dashboardView.classList.add('hidden');
+    moduleView.classList.remove('hidden');
+    renderOggi({
+      doc: document,
+      mount: moduleView,
+      spaceName: currentSpaceName(),
+      links: buildOggiLinks(shellItems),
+      navigate: (next) => { window.location.hash = next; },
+      now: new Date(),
+    });
+    return;
+  }
   dashboardView.classList.toggle('hidden', !onDashboard);
   moduleView.classList.toggle('hidden', onDashboard);
   // Set the active nav link by comparing the safe href we built ourselves,
   // never by constructing a selector from route input.
-  for (const link of generatedNav.querySelectorAll('a')) {
+  for (const link of (generatedNav?.querySelectorAll('a') ?? [])) {
     const active = !onDashboard && (
       link.getAttribute('href') === `#/modules/${target.moduleName}` ||
       (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`) ||
@@ -778,4 +823,6 @@ async function route() {
 window.addEventListener('hashchange', route);
 populateNav();
 route();
-refresh();
+// The demo dashboard fetches framework records: standalone only. Under a
+// mount the home is the Oggi frame, which reads no record at all.
+if (!MOUNTED) refresh();

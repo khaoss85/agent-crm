@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createAdminShellMount, injectAdminBase, serializeEnvelope } from '../packages/app/src/admin-mount.js';
 import { resolveAdminBase } from '../apps/admin/public/admin-base.js';
+import { DEMO_STRINGS } from '../apps/admin/public/admin-oggi.js';
 
 /**
  * The Admin shell as an embedding mount (backlog:ecdf7dc4): the same static
@@ -56,6 +57,29 @@ test('the shell HTML carries the mount prefix for assets and API calls', async (
     const root = await rootMount.handle({ method: 'GET', path: '/', headers: {} });
     assert.match(root.body.toString('utf8'), /<base href="\/">/);
     assert.match(root.body.toString('utf8'), /<meta name="admin-base" content="">/);
+  } finally {
+    app.close();
+  }
+});
+
+test('served shell HTML carries no demo text, mounted or standalone', async () => {
+  const app = readApp();
+  try {
+    for (const basePath of ['/bo', '']) {
+      const mount = createAdminShellMount(app, basePath === '' ? {} : { basePath });
+      const answer = await mount.handle({ method: 'GET', path: `${basePath}/`, headers: {} });
+      assert.equal(answer.status, 200);
+      assert.match(answer.headers['content-type'], /text\/html/);
+      const html = answer.body.toString('utf8');
+      // The demo lives in JS-rendered chrome (standalone only): the served
+      // bytes a space user receives never contain it (backlog:7eee63a5).
+      for (const banned of DEMO_STRINGS) {
+        assert.ok(!html.includes(banned), `${basePath === '' ? '/' : basePath} serves no demo text: ${banned}`);
+      }
+      assert.match(html, /id="boSidebar"/);
+      assert.match(html, /id="boTopbar"/);
+      assert.match(html, /src="app\.js"/);
+    }
   } finally {
     app.close();
   }
