@@ -2765,7 +2765,7 @@
     }
   ],
   "source": {
-    "apps/server/src/http-server.js": "e566c8db1734305f43c972c5a2d5b797268f3019cf1fd80d6c6f55b8222690dd",
+    "apps/server/src/http-server.js": "fc06934f7dbf303d371826ae1edd108b1ea7c2cfabde35b11c266caf7b66dfff",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
     "examples/starters/b2b-lead-qualification/signature.js": "e2f34c4e71f9a03f8ced77ba23b9a09c3da8ab6b9731db91cee12cf778ba4765",
     "packages/app/src/create-app.js": "39d5984c0e302de3838646ddc2b0b76d6ba7f27478b0f21255f999a186d350bf",
@@ -2786,10 +2786,10 @@
     "packages/commercial/modules/quote-version-total.module.json": "9ea4af6efc5ff7e506b7f7b78c7440e9be603507d6d0246904b7b384bb1a88e2",
     "packages/commercial/modules/quote-version.module.json": "b3a209f5f45c1486f942e145437e69f091cd3bd77972485386607af0dc5f3bc9",
     "packages/commercial/modules/quote.module.json": "08a6d9a8e48d2d412837a8a52c6fae22520b3add5a82275901ce4754c31386b0",
-    "packages/commercial/src/actions.js": "c54feaa41ff41c41f0f2b343c60bb43a8a8979d61b697d79d454282f302249c0",
+    "packages/commercial/src/actions.js": "228d542046636914d8a7d325413b3f19e91ca653dcf46fc38bbed0351d6ead45",
     "packages/commercial/src/capability.js": "f1b35c2dbd53d906fdfb8ecb9ffa34d79c24f35f5706810b7933341ab6184763",
     "packages/commercial/src/catalog-sync.js": "d315a3a12535820661083d651fd104dafcff696d2df4ba4c5f094a057ffc6a73",
-    "packages/commercial/src/index.js": "657aca03bd58e50cc6866fb06eebab8541857b3ec1ca35c8a804f2a87401c1b0",
+    "packages/commercial/src/index.js": "9cfd0150517a34cc9a81d058b63a5dd8b4227973c393b929dbd0774f655b9099",
     "packages/commercial/src/money.js": "5a2716542ebac08388b75d425c0c8c7b91b3dbc8ec756e42927d6d9b203d5a86",
     "packages/commercial/src/registry.js": "22e3635ea6b8be14bae95d624a23b90de9ab1ca2b6b92d3ce272d3ef286bb0dd",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",

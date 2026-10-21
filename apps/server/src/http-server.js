@@ -366,6 +366,61 @@ function buildRouter(app) {
     return await app.syncCatalog({ provider: input.provider, input: input.input, actor });
   });
 
+  // Manual catalog (BO-F2-05). Enumerated adapters over the commercial manual
+  // operations — the kernel owns the paths and gates the role boundary, the
+  // package owns the writes. Without the package composed each answers an
+  // honest 404. Reads gate `records.read`, writes gate `records.write` like
+  // every other write route. Query flags arrive as strings and are parsed
+  // here; bodies pass through (server-controlled keys stripped) because the
+  // operations validate their own input fail-closed.
+  router.add('GET', '/api/catalog/products', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.listCatalogProducts !== 'function') {
+      throw new NotFoundError('Operation', 'manual catalog');
+    }
+    if (query.active !== undefined && query.active !== 'true' && query.active !== 'false') {
+      throw new ValidationError('active must be true or false', { field: 'active' });
+    }
+    return await app.listCatalogProducts({
+      category: query.category,
+      active: query.active === undefined ? undefined : query.active === 'true',
+      source: query.source,
+      limit: parseLimit(query.limit),
+    });
+  });
+  router.add('POST', '/api/catalog/products', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.createManualProduct !== 'function') {
+      throw new NotFoundError('Operation', 'manual catalog');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return respond(201, await app.createManualProduct({ ...stripServerControlledKeys(input) }, actor));
+  });
+  router.add('POST', '/api/catalog/products/:id', async ({ params, body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.updateManualProduct !== 'function') {
+      throw new NotFoundError('Operation', 'manual catalog');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.updateManualProduct({ ...stripServerControlledKeys(input), productId: params.id }, actor);
+  });
+  router.add('POST', '/api/catalog/products/:id/prices', async ({ params, body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.setManualPrices !== 'function') {
+      throw new NotFoundError('Operation', 'manual catalog');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.setManualPrices({ ...stripServerControlledKeys(input), productId: params.id }, actor);
+  });
+  router.add('POST', '/api/catalog/products/:id/active', async ({ params, body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.setManualProductActive !== 'function') {
+      throw new NotFoundError('Operation', 'manual catalog');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.setManualProductActive({ ...stripServerControlledKeys(input), productId: params.id }, actor);
+  });
+
   // Signature provider events (ADR-017). A dedicated route, NOT a record
   // action: the payload arrives from outside, must be verified as the exact
   // bytes the provider signed before any state is touched, and its identity

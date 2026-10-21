@@ -38,7 +38,7 @@ import {
  *   versionLineModule?: string, versionComponentModule?: string,
  *   versionTotalModule?: string, approvalModule?: string,
  *   priceBookModule?: string, offerModule?: string, componentModule?: string,
- *   tierModule?: string, productVersionModule?: string,
+ *   tierModule?: string, productVersionModule?: string, productModule?: string,
  *   quoteTermModule?: string, versionTermModule?: string,
  * }} CommercialActionConfig */
 
@@ -57,6 +57,7 @@ function resolved(config = {}) {
     componentModule: config.componentModule ?? 'price-component',
     tierModule: config.tierModule ?? 'price-tier',
     productVersionModule: config.productVersionModule ?? 'product-version',
+    productModule: config.productModule ?? 'product',
     quoteTermModule: config.quoteTermModule ?? 'quote-term',
     versionTermModule: config.versionTermModule ?? 'quote-version-term',
   };
@@ -268,6 +269,13 @@ export function buildQuoteLineActions(config) {
       }
       if (offer.active !== true) {
         throw new AppError('The offer revision is no longer active', { code: 'OFFER_INACTIVE', status: 409 });
+      }
+      // The product carries the sellable flag independently of its offers: an
+      // archived product never quotes even when a stale active offer row
+      // survives (a writer that forgot to propagate the deactivation).
+      const product = await trusted(modules, cfg.productModule).get(offer.productId);
+      if (product.active !== true) {
+        throw new AppError(`The product "${product.id}" is not active and cannot be quoted`, { code: 'PRODUCT_INACTIVE', status: 409 });
       }
       if (offer.quoteEligible !== true) {
         throw new AppError(
