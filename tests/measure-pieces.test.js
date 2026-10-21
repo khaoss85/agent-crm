@@ -363,7 +363,7 @@ function writeShadowTree(shadow) {
  * @param {string} shadow
  * @param {{ shards?: number, failPiece?: string }} [options]
  */
-function runDriver(shadow, { shards = 3, failPiece = null } = {}) {
+function runDriver(shadow, { shards = 6, failPiece = null } = {}) {
   const root = fileURLToPath(new URL('..', import.meta.url));
   const driver = process.env.MEASURE_TEST_DRIVER ?? join(root, 'scripts', 'measure-pieces.sh');
   const log = join(shadow, 'driver.log');
