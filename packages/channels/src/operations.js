@@ -1506,8 +1506,8 @@ export function createChannelOperations(deps) {
    * traffic), and a health verdict (`idle` while a binding waits for
    * activation or before the first pull of an importable connection
    * with no traffic yet, `down` when a binding is suspended or revoked,
-   * `attention` when quarantined rows or open dead letters need a human,
-   * `ok` otherwise) — plus the space feed (latest inbox rows as `in` with
+   * `attention` when quarantined rows, open dead letters or a failed
+   * import need a human, `ok` otherwise) — plus the space feed (latest inbox rows as `in` with
    * their effect, latest open dead letters as `out` with their normalized
    * error code, newest first) and the `needsFix` total that lights the
    * Impostazioni badge (quarantined inbox rows plus open dead letters).
@@ -1568,7 +1568,7 @@ export function createChannelOperations(deps) {
       const fixes = inboxCount.quarantined + outbox.openDeadLetters;
       const health = connection.status !== 'active'
         ? (connection.status === 'pending' ? 'idle' : 'down')
-        : fixes > 0 || (sync && sync.lastErrorCode !== null) ? 'attention'
+        : fixes > 0 || Boolean(sync && sync.lastErrorCode) ? 'attention'
           : sync === null && isHistoryImportable(connection) && inboxCount.received === 0 ? 'idle' : 'ok';
       const direction = inboxCount.received > 0 && traffic.letters.length > 0 ? 'both'
         : inboxCount.received > 0 ? 'in'
