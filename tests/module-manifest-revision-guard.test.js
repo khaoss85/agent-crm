@@ -219,7 +219,7 @@ test('every manifest-selected module renders its recorded migration SQL at its r
     const recorded = RECORDED[normalized.name];
     if (recorded === undefined) {
       failures.push(
-        `${relative}: new module "${normalized.name}" — record its revision and migration checksums in RECORDED in tests/module-manifest-revision-guard.test.js`,
+        `${relative}: new module "${normalized.name}" — run \`npm run module:record -- ${relative}\` and paste its line into RECORDED in tests/module-manifest-revision-guard.test.js`,
       );
       continue;
     }

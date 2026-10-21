@@ -173,6 +173,14 @@ Records are ordinary manifests, applied by the ordinary module factory:
 npm run crm -- module create packages/<name>/modules/<record>.module.json --apply
 ```
 
+A new manifest also needs its revision and migration checksums recorded, or
+the manifest revision guard fails the PR. Print the `RECORDED` line and paste
+it into `tests/module-manifest-revision-guard.test.js`:
+
+```bash
+npm run module:record -- packages/<name>/modules/<record>.module.json
+```
+
 Declare them on the package so a collision is detectable before boot:
 
 ```js
