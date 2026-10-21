@@ -88,8 +88,8 @@ test('quote PDF: frozen v1 bytes never move when the draft moves on', async (t) 
   const textA = pdfA.pdfBytes.toString('latin1');
   assert.ok(textA.includes(`versione ${v1.versionNumber}`), 'the version number is printed');
 
-  // The draft moves on: revise the rejected quote, reprice, submit v2.
-  await app.runAction({ module: 'quote', action: 'revise', recordId: quote.id, input: {}, actor: ACTOR });
+  // The draft moves on: a policy-refused submit never leaves the draft
+  // (BO-F2-04), so reprice and submit v2 with no revise step.
   await app.runAction({
     module: 'quote', action: 'update-line', recordId: quote.id,
     input: { lineId: added.result.line.id, quantity: 5, discountBps: 500 }, actor: ACTOR,
@@ -103,7 +103,7 @@ test('quote PDF: frozen v1 bytes never move when the draft moves on', async (t) 
   // v1 renders byte-identical: the PDF came from the frozen rows, not the draft.
   const frozenAgain = await readQuoteVersionEvidence(servicesOf(app), v1.id);
   const pdfAgain = renderQuoteVersionPdf(frozenAgain);
-  assert.deepEqual(pdfAgain.pdfBytes, pdfA.pdfBytes, 'v1 renders byte-identical after revise and v2');
+  assert.deepEqual(pdfAgain.pdfBytes, pdfA.pdfBytes, 'v1 renders byte-identical after the draft moved on to v2');
   assert.equal(pdfAgain.documentHash, pdfA.documentHash, 'the document hash is stable too');
 
   // v2 is a different frozen document.
