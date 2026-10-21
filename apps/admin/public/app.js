@@ -1,5 +1,11 @@
 import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
 import { createAssistantPanel } from './admin-assistant.js';
+import { resolveAdminBase } from './admin-base.js';
+
+// The mount prefix the shell is served under: '' at the domain root, the
+// mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
+// absolute API path below is prefixed, so the shell works unchanged.
+const ADMIN_BASE = resolveAdminBase();
 
 const elements = {
   metrics: document.querySelector('#metrics'),
@@ -35,7 +41,7 @@ async function api(path, options = {}) {
   if (isMutation(method)) {
     requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
   }
-  const response = await fetch(path, { ...options, headers: requestHeaders });
+  const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
   const body = await response.json();
   if (!response.ok) {
     const error = new Error(body?.error?.message || `Request failed (${response.status})`);
@@ -69,7 +75,7 @@ const moduleClient = {
     if (isMutation(method)) {
       requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
     }
-    const response = await fetch(path, {
+    const response = await fetch(`${ADMIN_BASE}${path}`, {
       ...options,
       headers: requestHeaders,
     });

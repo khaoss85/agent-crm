@@ -72,8 +72,13 @@ export const CONNECTORS_FINISH_PAGE_LIMIT = 50;
 /** @type {number} */
 export const CONNECTORS_FINISH_MAX_PAGES = 5;
 
-/** @param {unknown} value */
-function isResponseEnvelope(value) {
+/**
+ * Whether a handler return value is an explicit `{ status, body }` envelope.
+ * Exported for embedding mounts (backlog:ecdf7dc4), which normalize handler
+ * results exactly the way the standalone server does.
+ *
+ * @param {unknown} value */
+export function isResponseEnvelope(value) {
   return typeof value === 'object' && value !== null && /** @type {any} */ (value)[RESPONSE_ENVELOPE] === true;
 }
 
@@ -298,8 +303,14 @@ function publicStorageDescriptor(app) {
     ?? { adapter: 'sqlite', available: true };
 }
 
-/** @param {any} app */
-function buildRouter(app) {
+/**
+ * The route table of the Admin server, exported so an embedder can mount the
+ * same routes under its own session and path prefix (backlog:ecdf7dc4). The
+ * handlers are pure request/response functions: they never touch the socket,
+ * so both the standalone server above and an embedding mount can drive them.
+ *
+ * @param {any} app */
+export function buildRouter(app) {
   const router = new Router();
 
   router.add('GET', '/health', async () => operationalHealth(app), { skipIdentity: true });
@@ -1032,9 +1043,13 @@ async function gate(app, identity, organizationId, permission) {
  * override that C9 forbids — so a mismatch is refused by the authorizer rather
  * than resolved in the caller's favour.
  *
- * @param {any} app @param {import('node:http').IncomingMessage} request
+ * The request may be a live `IncomingMessage` or a plain `{ headers, method,
+ * url }` triple — an embedding mount passes the latter, and only the three
+ * fields above are ever read.
+ *
+ * @param {any} app @param {{ headers?: any, method?: string, url?: string }} request
  */
-async function requestIdentity(app, request) {
+export async function requestIdentity(app, request) {
   const spine = app?.spine ?? null;
 
   if (!spine) {
@@ -1176,25 +1191,39 @@ function sendJson(response, status, body, extraHeaders = {}) {
   response.end(payload);
 }
 
-/** @param {string} publicDir @param {string} pathname @param {import('node:http').ServerResponse} response */
-async function serveStatic(publicDir, pathname, response) {
+/**
+ * Read a static file of the Admin shell without touching a socket. Returns
+ * `{ data, contentType }`, or `null` when the path escapes the directory or
+ * names no file — the same two cases `serveStatic` answers `false` for.
+ * Anything else (an unreadable-but-present file) throws, as before.
+ *
+ * @param {string} publicDir @param {string} pathname
+ */
+export async function readStaticFile(publicDir, pathname) {
   const requestPath = pathname === '/' ? '/index.html' : pathname;
   const safePath = normalize(requestPath).replace(/^(\.\.(\/|\\|$))+/, '');
   const filePath = resolve(join(publicDir, safePath));
-  if (!filePath.startsWith(publicDir)) return false;
+  if (!filePath.startsWith(publicDir)) return null;
   try {
     const data = await readFile(filePath);
-    response.writeHead(200, {
-      'content-type': mimeType(extname(filePath)),
-      'content-length': data.byteLength,
-      'cache-control': 'no-cache',
-    });
-    response.end(data);
-    return true;
+    return { data, contentType: mimeType(extname(filePath)) };
   } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return false;
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
     throw error;
   }
+}
+
+/** @param {string} publicDir @param {string} pathname @param {import('node:http').ServerResponse} response */
+async function serveStatic(publicDir, pathname, response) {
+  const found = await readStaticFile(publicDir, pathname);
+  if (!found) return false;
+  response.writeHead(200, {
+    'content-type': found.contentType,
+    'content-length': found.data.byteLength,
+    'cache-control': 'no-cache',
+  });
+  response.end(found.data);
+  return true;
 }
 
 /** @param {string | undefined} value */
