@@ -318,7 +318,7 @@ export function createCustomerDataOperations({ database, modules, events, config
  *   unavailable with its reason — never an empty claim).
  * Writes nothing.
  */
-async function listCustomerRecords({ modules, core, names }, request) {
+export async function listCustomerRecords({ modules, core, names }, request) {
   void core;
   const query = parseCustomerListQuery(request);
   const contactsSvc = optional(modules, 'contact');

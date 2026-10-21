@@ -150,6 +150,15 @@ export function channelWordsIn(q) {
   return [...hit];
 }
 
+/** All the words (canonical + aliases) that name one channel. */
+function channelAliases(channel) {
+  return {
+    whatsapp: ['wa'], instagram: ['ig'], facebook: ['messenger', 'fb'],
+    tiktok: ['tik'], email: ['mail', 'gmail'], phone: ['telefono', 'tel'],
+    sms: [], voice: ['voce'],
+  }[channel] ?? [];
+}
+
 /**
  * The saved-query semantic of one view: which extra predicates a view adds
  * on top of the explicit filters. Pure, so the endpoint and its tests share
@@ -177,7 +186,16 @@ export function applyCustomerListQuery(rows, query, todayIso) {
   const haystackOf = (row) => [
     row?.name, row?.email, row?.company?.name, row?.phone?.value,
   ].filter((part) => typeof part === 'string' && part !== '').join(' ').toLowerCase();
-  const strippedQ = (query.q ?? '').replace(/^(chi è di|chi e di|clienti di|clienti)\s+/i, '').toLowerCase().trim();
+  // Channel words filter by channel AND are removed from the text: unlike the
+  // prototype (which ignored the remaining words once a channel hit), "marco
+  // whatsapp" must not match every WhatsApp customer.
+  const channelWordSet = new Set(channelHits.flatMap((channel) => [channel, ...channelAliases(channel)]));
+  const strippedQ = (query.q ?? '')
+    .replace(/^(chi è di|chi e di|clienti di|clienti)\s+/i, '')
+    .toLowerCase()
+    .split(/[^a-zà-öø-ÿ0-9+]+/i)
+    .filter((word) => word !== '' && !channelWordSet.has(word))
+    .join(' ');
 
   const today = typeof todayIso === 'string' && todayIso !== '' ? todayIso : new Date().toISOString().slice(0, 10);
   const filtered = all.filter((row) => {
