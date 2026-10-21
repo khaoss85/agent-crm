@@ -1495,6 +1495,188 @@ export function createChannelOperations(deps) {
   }
 
   /**
+   * Read the sync activity of every connection in one space
+   * (backlog:8fdbc5f21cd0, BO-F1-03): the counters and the live feed the
+   * "Stato sync" screen renders, all read from the real inbox and
+   * dead-letter rows — never invented, never provider text. One entry per
+   * connection — its binding, the same import progress surface
+   * `readInitialImport` returns, inbox tallies by effect, open dead
+   * letters, the observed direction (`in` when inbox rows exist, `out`
+   * when dead-letter rows exist, `both` when both do, null before any
+   * traffic), and a health verdict (`idle` while a binding waits for
+   * activation or before the first pull of an importable connection
+   * with no traffic yet, `down` when a binding is suspended or revoked,
+   * `attention` when quarantined rows or open dead letters need a human,
+   * `ok` otherwise) — plus the space feed (latest inbox rows as `in` with
+   * their effect, latest open dead letters as `out` with their normalized
+   * error code, newest first) and the `needsFix` total that lights the
+   * Impostazioni badge (quarantined inbox rows plus open dead letters).
+   * The feed carries no subject, no payload and no provider wording: a
+   * secret or personal handle repeated by the provider must never reach
+   * the screen. Read-only: no actor, no mutation.
+   */
+  function readSyncActivity(params) {
+    const spaceId = assertSpaceId(params?.spaceId);
+    const feedLimit = params?.feedLimit === undefined ? 20 : params.feedLimit;
+    if (!Number.isSafeInteger(feedLimit) || feedLimit < 1 || feedLimit > 100) {
+      throw new ValidationError('feed limit must be an integer 1-100', { field: 'feedLimit' });
+    }
+    const inboxRows = inbox().listWhere({ spaceId });
+    const letterRows = letters().listWhere({ spaceId });
+    const byConnection = new Map();
+    const atConnection = (connectionKey) => {
+      let entry = byConnection.get(connectionKey);
+      if (!entry) {
+        entry = { inbox: [], letters: [] };
+        byConnection.set(connectionKey, entry);
+      }
+      return entry;
+    };
+    for (const row of inboxRows) atConnection(row.connectionKey).inbox.push(row);
+    for (const row of letterRows) atConnection(row.connectionKey).letters.push(row);
+
+    const inboxSummary = (rows) => {
+      const tallies = { applied: 0, quarantined: 0, ignored: 0, duplicate: 0, pending: 0 };
+      let lastReceivedAt = null;
+      for (const row of rows) {
+        if (Object.hasOwn(tallies, row.effect)) tallies[row.effect] += 1;
+        if (typeof row.receivedAt === 'string'
+          && (lastReceivedAt === null || row.receivedAt > lastReceivedAt)) {
+          lastReceivedAt = row.receivedAt;
+        }
+      }
+      return Object.freeze({ received: rows.length, ...tallies, lastReceivedAt });
+    };
+    const outboxSummary = (rows) => {
+      const open = rows.filter((row) => row.state === 'open');
+      let lastFailedAt = null;
+      for (const row of open) {
+        if (typeof row.lastFailedAt === 'string'
+          && (lastFailedAt === null || row.lastFailedAt > lastFailedAt)) {
+          lastFailedAt = row.lastFailedAt;
+        }
+      }
+      return Object.freeze({ openDeadLetters: open.length, lastFailedAt });
+    };
+
+    const entries = connections().listWhere({ spaceId }).map((connection) => {
+      const traffic = byConnection.get(connection.sourceKey) ?? { inbox: [], letters: [] };
+      const inboxCount = inboxSummary(traffic.inbox);
+      const outbox = outboxSummary(traffic.letters);
+      const row = findImportState(spaceId, connection.sourceKey);
+      const sync = row ? importStateSummary(row) : null;
+      const fixes = inboxCount.quarantined + outbox.openDeadLetters;
+      const health = connection.status !== 'active'
+        ? (connection.status === 'pending' ? 'idle' : 'down')
+        : fixes > 0 || (sync && sync.lastErrorCode !== null) ? 'attention'
+          : sync === null && isHistoryImportable(connection) && inboxCount.received === 0 ? 'idle' : 'ok';
+      const direction = inboxCount.received > 0 && traffic.letters.length > 0 ? 'both'
+        : inboxCount.received > 0 ? 'in'
+          : traffic.letters.length > 0 ? 'out' : null;
+      return Object.freeze({
+        connectionKey: connection.sourceKey,
+        channel: connection.channel,
+        account: connection.account,
+        adapter: connection.adapter,
+        adapterVersion: connection.adapterVersion,
+        status: connection.status,
+        importable: isHistoryImportable(connection),
+        sync,
+        inbox: inboxCount,
+        outbox,
+        direction,
+        health,
+        needsFix: fixes,
+      });
+    }).sort((left, right) => (left.connectionKey < right.connectionKey ? -1
+      : left.connectionKey > right.connectionKey ? 1 : 0));
+
+    const feed = [];
+    for (const row of inboxRows) {
+      if (typeof row.receivedAt !== 'string') continue;
+      const connection = entries.find((entry) => entry.connectionKey === row.connectionKey);
+      feed.push(Object.freeze({
+        direction: 'in',
+        connectionKey: row.connectionKey,
+        channel: connection?.channel ?? null,
+        at: row.receivedAt,
+        kind: typeof row.effect === 'string' ? row.effect : 'unknown',
+      }));
+    }
+    for (const row of letterRows) {
+      if (row.state !== 'open' || typeof row.lastFailedAt !== 'string') continue;
+      const connection = entries.find((entry) => entry.connectionKey === row.connectionKey);
+      feed.push(Object.freeze({
+        direction: 'out',
+        connectionKey: row.connectionKey,
+        channel: connection?.channel ?? null,
+        at: row.lastFailedAt,
+        kind: 'dead-letter',
+        code: typeof row.errorCode === 'string' ? row.errorCode : 'CHANNEL_SEND_FAILED',
+      }));
+    }
+    feed.sort((left, right) => (left.at > right.at ? -1 : left.at < right.at ? 1
+      : left.connectionKey < right.connectionKey ? -1
+        : left.connectionKey > right.connectionKey ? 1 : 0));
+    const capped = feed.slice(0, feedLimit);
+
+    let lastActivityAt = null;
+    for (const entry of entries) {
+      for (const at of [entry.inbox.lastReceivedAt, entry.outbox.lastFailedAt]) {
+        if (typeof at === 'string' && (lastActivityAt === null || at > lastActivityAt)) lastActivityAt = at;
+      }
+    }
+    const needsFix = entries.reduce((total, entry) => total + entry.needsFix, 0);
+    return Object.freeze({
+      spaceId,
+      connections: Object.freeze(entries),
+      feed: Object.freeze(capped),
+      needsFix,
+      lastActivityAt,
+    });
+  }
+
+  /**
+   * Pull one bounded history page of a connection right now
+   * (backlog:8fdbc5f21cd0, BO-F1-03 "Sincronizza ora"): the same paged
+   * pull the progressive import walks, driven by a human instead of the
+   * scheduler. Starting is a human decision, so the actor is required and
+   * travels into the import start like the guided connect flow; the page
+   * itself runs under the package system actor like every other advance.
+   * When no import ever started, this call starts it and pulls the first
+   * page; when one is running, it pulls the next page; when it is done,
+   * it reports done with a null page — a refresh of a finished past is a
+   * new voice, never a silent re-import. New events are stored through
+   * the deduped ingest path, so a re-listed past recounts as duplicates
+   * instead of doubling. Adapters without `historyImport` refuse with
+   * CHANNEL_HISTORY_UNAVAILABLE, so the screen only enables the button
+   * where a pull exists.
+   */
+  async function syncNowChannel(params) {
+    const actor = requireUser(params?.actor);
+    const spaceId = assertSpaceId(params?.spaceId);
+    const limit = params?.limit === undefined ? CHANNEL_HISTORY_DEFAULT_PAGE : params.limit;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > CHANNEL_HISTORY_PAGE_MAX) {
+      throw new ValidationError(`history page limit must be an integer 1-${CHANNEL_HISTORY_PAGE_MAX}`, { field: 'limit' });
+    }
+    const connectionKey = typeof params?.connectionKey === 'string' ? params.connectionKey : '';
+    const connection = requireActiveConnection(spaceId, connectionKey);
+    requireHistoryAdapter(connection);
+    let started = false;
+    if (!findImportState(spaceId, connection.sourceKey)) {
+      const created = await startInitialImport({ spaceId, connectionKey, actor });
+      started = created.started === true;
+    }
+    const advanced = await advanceInitialImport({ spaceId, connectionKey, limit });
+    return Object.freeze({
+      started,
+      done: advanced.done,
+      state: advanced.state,
+      page: advanced.page,
+    });
+  }
+
+  /**
    * Resolve the service-window observation server-side for adapters that
    * declare `outboundWindow`: the latest applied customer-message instant
    * recorded in the inbox for the recipient's conversation — the provider
@@ -2330,5 +2512,7 @@ export function createChannelOperations(deps) {
     advanceInitialImport,
     readInitialImport,
     readSyncState,
+    readSyncActivity,
+    syncNowChannel,
   });
 }
