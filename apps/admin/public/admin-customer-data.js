@@ -1,9 +1,14 @@
 // @ts-check
 
+import { createCustomerListView } from './admin-clienti.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /**
  * **The Customer Data Foundation section (ADR-037).**
+ *
+ * The BO-F1-05 customer list ("Elenco Clienti") renders first: it is the
+ * screen the backoffice shell names "Clienti", and the import/quality work
+ * below stays where the operators who govern it expect it.
  *
  * It renders only while `/api/schema` publishes `domains['customer-data']`,
  * because the package is optional and an Admin that shows a dead surface is
@@ -46,11 +51,22 @@ function block(el, panel, meta) {
 }
 
 /**
- * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps
+ * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
+ *   notify?: (message: string) => void, spaceId?: string | (() => (string | null | undefined)),
+ *   onAskAi?: ((question: string) => void) | null, storage?: any}} deps
  */
 export function createCustomerDataView(deps) {
-  const { doc, mount, navigate = () => {} } = deps;
+  const { doc, mount, navigate = () => {}, notify = () => {} } = deps;
   const { client } = bindAdminMutations(deps.client, deps);
+  // BO-F1-05: the list keeps its own state across the section re-renders
+  // (a filter the operator just set must survive the import preview below
+  // re-rendering), so it owns a stable mount re-attached on every render.
+  const listBox = doc.createElement('div');
+  listBox.setAttribute('class', 'customer-data-list');
+  const customerList = createCustomerListView({
+    doc, mount: listBox, client, navigate, notify,
+    spaceId: deps.spaceId, onAskAi: deps.onAskAi ?? null, storage: deps.storage ?? null,
+  });
   const el = (tag, className, text) => {
     const node = doc.createElement(tag);
     if (className) node.setAttribute('class', className);
@@ -91,7 +107,6 @@ export function createCustomerDataView(deps) {
   async function render() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     busy = [];
-
     let schema;
     try {
       schema = await client.request('/api/schema');
@@ -105,6 +120,22 @@ export function createCustomerDataView(deps) {
       // surface that cannot work.
       return;
     }
+
+    // BO-F1-05: the customer list renders first and owns its refresh; the
+    // section below re-renders without resetting the operator's filters.
+    // It mounts only here, past the composed-package gate above, so an
+    // absent package still renders nothing at all.
+    mount.appendChild(listBox);
+    // The list renders its own request errors (unknown space, offline
+    // package) inside listBox; this catch is only for an unexpected throw,
+    // which must still read as an honest line, never a blank box.
+    void customerList.render().catch((error) => {
+      listBox.textContent = '';
+      const fallback = doc.createElement('p');
+      fallback.setAttribute('class', 'bo-muted');
+      fallback.textContent = `Clienti non disponibili: ${error?.message ?? 'errore sconosciuto'}`;
+      listBox.appendChild(fallback);
+    });
 
     const panel = el('div', 'customer-data-section');
     panel.setAttribute('data-contract', String(meta.customerDataContract ?? ''));

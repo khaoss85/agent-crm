@@ -247,6 +247,33 @@ export function createCustomerDataPackage(options = {}) {
       },
       {
         operationContract: 1,
+        name: 'list-customer-records',
+        appMethod: 'listCustomers',
+        label: 'List customers with filters, sorting and server pagination',
+        description:
+          'One server page over the host contact and company records, enriched with channels, status, latest contact, '
+          + 'next step, offer value and AI-extracted budget. Views are saved query descriptors re-read on every open. '
+          + 'Creates nothing. A package that is not composed reads "not available" with a reason rather than empty.',
+        input: [
+          { name: 'q', type: 'string', hint: 'Free-text search over name, email, company and phone. Channel words act as a channel filter.' },
+          { name: 'canale', type: 'string', hint: 'Channel system, e.g. "whatsapp", or "all".' },
+          { name: 'stato', type: 'string', hint: '"cliente", "contatto" or "all".' },
+          { name: 'sort', type: 'string', hint: 'One of recent, name, value, status.' },
+          { name: 'vista', type: 'string', hint: 'One of tutti, nuovi-lead, clienti-attivi, ricontattare-oggi, rinnovi-30-giorni.' },
+          { name: 'page', type: 'integer', hint: '1-based page. Absent means 1.' },
+          { name: 'pageSize', type: 'integer', hint: '10, 25 or 50. Absent means 10.' },
+          { name: 'spaceId', type: 'string', hint: 'Space for the AI budget signals. Absent means the budget column reads unavailable.' },
+        ],
+        create(runtime) {
+          const operations = createCustomerDataOperations({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+          });
+          return (request) => operations.listCustomerRecords(request);
+        },
+      },
+      {
+        operationContract: 1,
         name: 'apply-contact-enrichment',
         appMethod: 'applyContactEnrichment',
         label: 'Enrich one contact from a free source',

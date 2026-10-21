@@ -499,6 +499,29 @@ export function buildRouter(app) {
     return await app.readCustomerProfile({ resource: params.resource, id: params.id });
   });
 
+  // Customer list (BO-F1-05): one server page over the host records with
+  // views-as-saved-queries, channel and status filters, sorting and the
+  // AI budget column. Same enumerated-adapter shape as the profile route:
+  // without the package composed each answers an honest 404. Query values
+  // arrive as strings and are validated by the operation, which refuses
+  // unknown values fail-closed rather than answering a page nobody asked.
+  router.add('GET', '/api/customer-data/customers', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.listCustomers !== 'function') {
+      throw new NotFoundError('Operation', 'customer list');
+    }
+    return await app.listCustomers({
+      q: query.q,
+      canale: query.canale,
+      stato: query.stato,
+      sort: query.sort,
+      vista: query.vista,
+      page: query.page,
+      pageSize: query.pageSize,
+      spaceId: query.spaceId,
+    });
+  });
+
   // Customer Hub (BO-F1-06): the scheda cliente reads the card and the
   // timeline through two enumerated adapters, the same shape as the profile
   // route above. The kernel owns the path, gates the role boundary, and

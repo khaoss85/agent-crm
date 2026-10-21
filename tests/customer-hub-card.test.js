@@ -6,7 +6,17 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { shapeCustomerCard } from '../packages/customer-hub/src/card.js';
 import { renderCustomerCardHtml } from '../packages/customer-hub/src/render.js';
+import { deriveCustomerStatus } from '../packages/customer-data/src/customer-status.js';
 import { boot, project } from './helpers/customer-data-project.js';
+
+/**
+ * The verdict the real `profileFor` would carry for these evidence sections.
+ * Fabricated profiles state it explicitly because the card reads it through
+ * the capability shape instead of computing its own.
+ */
+const profileStatusOf = ({ orders, contracts, subscriptions }) => deriveCustomerStatus({ orders, contracts, subscriptions });
+/** A fabricated profile with the verdict the real provider would carry. */
+const withStatus = (profile) => ({ ...profile, status: profileStatusOf(profile) });
 
 /**
  * **The customer card: the readable projection with no master record.**
@@ -230,7 +240,7 @@ test('signed business promotes the card to cliente', () => {
     subscriptions: section(false, 0), orders: section(false, 0), contracts: section(false, 0),
     opportunities: section(true, 1), quotes: section(true, 2),
   };
-  const uncomposed = shapeCustomerCard(base, { resource: 'contact', id: 'c1' });
+  const uncomposed = shapeCustomerCard(withStatus(base), { resource: 'contact', id: 'c1' });
   assert.equal(uncomposed.status.value, 'contatto',
     'quotes and opportunities alone never promote a contact');
   assert.match(uncomposed.status.reason, /not all readable here/,
@@ -239,7 +249,7 @@ test('signed business promotes the card to cliente', () => {
     ...base,
     subscriptions: { available: true, count: 1, items: [{ id: 's1', status: 'active', name: 'Pacchetto 10 ingressi' }] },
   };
-  const card = shapeCustomerCard(signed, { resource: 'contact', id: 'c1' });
+  const card = shapeCustomerCard(withStatus(signed), { resource: 'contact', id: 'c1' });
   assert.equal(card.status.value, 'cliente');
   assert.match(card.status.reason, /subscriptions/);
   assert.equal(card.activePackage.available, true);
@@ -249,23 +259,44 @@ test('signed business promotes the card to cliente', () => {
 test('the definitive "no signed business" needs every evidence package readable and complete', () => {
   const section = (available, count, extra = {}) => ({ available, count, items: [], ...extra });
   const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
+  const proven = shapeCustomerCard(withStatus({
+    identity, externalIdentities: [],
+    subscriptions: section(true, 0), orders: section(true, 0), contracts: section(true, 0),
+  }), { resource: 'contact', id: 'c1' });
+  assert.equal(proven.status.value, 'contatto');
+  assert.match(proven.status.reason, /no orders, contracts or subscriptions reference this customer/,
+    'all three evidence packages readable with complete zero counts: the negative claim is proven');
+  const partial = shapeCustomerCard(withStatus({
+    identity, externalIdentities: [],
+    subscriptions: section(true, 0),
+    orders: section(true, 0),
+    contracts: section(true, 0, { countIsComplete: false, countNote: 'contracts were read from a bounded page' }),
+  }), { resource: 'contact', id: 'c1' });
+  assert.equal(partial.status.value, 'contatto');
+  assert.match(partial.status.reason, /not all readable here/,
+    'a partially read evidence package refuses the definitive "none" claim');
+  assert.match(partial.status.reason, /contracts: partially readable/);
+});
+
+test('a profile without the status verdict still renders (legacy customer-profile@1)', () => {
+  const section = (available, count, extra = {}) => ({ available, count, items: [], ...extra });
+  const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
+  // No `status` key: a profile cached or shaped before the verdict was added.
+  // The card derives the same verdict from the sections instead of throwing.
   const proven = shapeCustomerCard({
     identity, externalIdentities: [],
     subscriptions: section(true, 0), orders: section(true, 0), contracts: section(true, 0),
   }, { resource: 'contact', id: 'c1' });
   assert.equal(proven.status.value, 'contatto');
-  assert.match(proven.status.reason, /no orders, contracts or subscriptions reference this customer/,
-    'all three evidence packages readable with complete zero counts: the negative claim is proven');
-  const partial = shapeCustomerCard({
+  assert.match(proven.status.reason, /no orders, contracts or subscriptions reference this customer/);
+  assert.match(proven.status.reason, /no status verdict/,
+    'the reason says where the verdict came from, never silently');
+  const signed = shapeCustomerCard({
     identity, externalIdentities: [],
-    subscriptions: section(true, 0),
-    orders: section(true, 0),
-    contracts: section(true, 0, { countIsComplete: false, countNote: 'contracts were read from a bounded page' }),
+    subscriptions: section(true, 1), orders: section(true, 0), contracts: section(true, 0),
   }, { resource: 'contact', id: 'c1' });
-  assert.equal(partial.status.value, 'contatto');
-  assert.match(partial.status.reason, /not all readable here/,
-    'a partially read evidence package refuses the definitive "none" claim');
-  assert.match(partial.status.reason, /contracts: partially readable/);
+  assert.equal(signed.status.value, 'cliente');
+  assert.match(signed.status.reason, /subscriptions/);
 });
 
 test('the card renders as one self-contained phone page', async (t) => {
@@ -332,22 +363,22 @@ test('the package count is escaped like every other card field', () => {
 test('a non-dialable channel id is held, never presented as a callable phone', () => {
   const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
   const off = { available: false, count: 0, items: [] };
-  const crmId = shapeCustomerCard({
+  const crmId = shapeCustomerCard(withStatus({
     identity,
     externalIdentities: [{ system: 'whatsapp', externalId: 'CRM-1' }],
     subscriptions: off, orders: off, contracts: off,
-  }, { resource: 'contact', id: 'c1' });
+  }), { resource: 'contact', id: 'c1' });
   assert.equal(crmId.phone.available, false, 'a CRM identifier is not a phone number');
   assert.match(crmId.phone.reason, /not a dialable phone number/,
     'the reason names the held identity as non-dialable, never as "no phone"');
   const html = renderCustomerCardHtml({ ...crmId, name: 'A B', email: 'a@b.it' });
   assert.ok(!html.includes('tel:CRM-1'), 'no tap-to-call link points at a CRM identifier');
 
-  const dialable = shapeCustomerCard({
+  const dialable = shapeCustomerCard(withStatus({
     identity,
     externalIdentities: [{ system: 'whatsapp', externalId: '+39 333 1234567' }],
     subscriptions: off, orders: off, contracts: off,
-  }, { resource: 'contact', id: 'c1' });
+  }), { resource: 'contact', id: 'c1' });
   assert.equal(dialable.phone.available, true);
   assert.equal(dialable.phone.value, '+39 333 1234567');
 });
@@ -355,14 +386,14 @@ test('a non-dialable channel id is held, never presented as a callable phone', (
 test('a floor package count reads as "at least N", never as an exact total', () => {
   const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
   const off = { available: false, count: 0, items: [] };
-  const floor = shapeCustomerCard({
+  const floor = shapeCustomerCard(withStatus({
     identity, externalIdentities: [],
     subscriptions: {
       available: true, count: 500, items: [],
       countIsComplete: false, countNote: 'subscriptions were read from a bounded page',
     },
     orders: off, contracts: off,
-  }, { resource: 'contact', id: 'c1' });
+  }), { resource: 'contact', id: 'c1' });
   assert.equal(floor.status.value, 'cliente');
   assert.equal(floor.activePackage.available, false,
     'a floor count with no active record in hand is not a definitive "none"');
@@ -378,11 +409,11 @@ test('a floor package count reads as "at least N", never as an exact total', () 
     'a floor count never renders the definitive "no active package"');
   assert.ok(floorHtml.includes('bounded page'), 'the page shows the floor reason instead');
 
-  const exact = shapeCustomerCard({
+  const exact = shapeCustomerCard(withStatus({
     identity, externalIdentities: [],
     subscriptions: { available: true, count: 2, items: [], countIsComplete: true },
     orders: { available: true, count: 0, items: [] }, contracts: { available: true, count: 0, items: [] },
-  }, { resource: 'contact', id: 'c1' });
+  }), { resource: 'contact', id: 'c1' });
   assert.equal(exact.activePackage.countIsComplete, true);
   const exactHtml = renderCustomerCardHtml({ ...exact, name: 'A B', email: 'a@b.it' });
   assert.ok(exactHtml.includes('(record: 2)'), 'a complete count keeps its exact reading');
@@ -398,7 +429,7 @@ test('read-customer-card keeps the profile\u2019s no-RBAC posture: any caller re
     orders: { available: false, count: 0, items: [] },
     contracts: { available: false, count: 0, items: [] },
   };
-  const readProfile = async () => profile;
+  const readProfile = async () => withStatus(profile);
   const subject = { resource: 'contact', id: 'c1' };
   const anonymous = await readCustomerCard({ subject, readProfile });
   const asOwner = await readCustomerCard({ subject, readProfile, actor: { type: 'user', id: 'owner' } });
@@ -414,11 +445,11 @@ test('a truncated subscriptions page without an active record in hand refuses th
   const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
   const off = { available: false, count: 0, items: [] };
   const slice = Array.from({ length: 50 }, (_, index) => ({ id: `s${index}`, status: 'expired', name: `Pacchetto ${index}` }));
-  const card = shapeCustomerCard({
+  const card = shapeCustomerCard(withStatus({
     identity, externalIdentities: [],
     subscriptions: { available: true, count: 60, items: slice, truncated: true },
     orders: off, contracts: off,
-  }, { resource: 'contact', id: 'c1' });
+  }), { resource: 'contact', id: 'c1' });
   assert.equal(card.activePackage.available, false, 'no active record in hand on a truncated page is not a "none"');
   assert.equal(card.activePackage.truncated, true, 'the qualifier travels with the package');
   assert.equal(card.activePackage.count, 60);
@@ -433,11 +464,11 @@ test('a truncated page that holds an active record still shows it', () => {
   const off = { available: false, count: 0, items: [] };
   const slice = [{ id: 's-active', status: 'active', name: 'Pacchetto annuale' },
     ...Array.from({ length: 49 }, (_, index) => ({ id: `s${index}`, status: 'expired', name: `Pacchetto ${index}` }))];
-  const card = shapeCustomerCard({
+  const card = shapeCustomerCard(withStatus({
     identity, externalIdentities: [],
     subscriptions: { available: true, count: 60, items: slice, truncated: true },
     orders: off, contracts: off,
-  }, { resource: 'contact', id: 'c1' });
+  }), { resource: 'contact', id: 'c1' });
   assert.equal(card.activePackage.available, true, 'an active record in hand is shown even when the page is truncated');
   assert.equal(card.activePackage.truncated, true);
   assert.deepEqual(card.activePackage.active.map((item) => item.id), ['s-active']);
@@ -498,22 +529,22 @@ test('the hub without the provider handle fails closed at composition naming the
 test('a newer non-dialable channel id never hides an older callable number', () => {
   const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
   const off = { available: false, count: 0, items: [] };
-  const card = shapeCustomerCard({
+  const card = shapeCustomerCard(withStatus({
     identity,
     externalIdentities: [
       { system: 'whatsapp', externalId: 'CRM-1' },
       { system: 'whatsapp', externalId: '+39 333 1234567' },
     ],
     subscriptions: off, orders: off, contracts: off,
-  }, { resource: 'contact', id: 'c1' });
+  }), { resource: 'contact', id: 'c1' });
   assert.equal(card.phone.available, true, 'the older callable number is surfaced despite the newer channel id');
   assert.equal(card.phone.value, '+39 333 1234567');
 
-  const none = shapeCustomerCard({
+  const none = shapeCustomerCard(withStatus({
     identity,
     externalIdentities: [{ system: 'sms', externalId: 'CRM-9' }],
     subscriptions: off, orders: off, contracts: off,
-  }, { resource: 'contact', id: 'c1' });
+  }), { resource: 'contact', id: 'c1' });
   assert.equal(none.phone.available, false);
   assert.match(none.phone.reason, /CRM-9/, 'the reason names the newest held non-dialable id');
 });
@@ -523,30 +554,30 @@ test('a complete 50-row timeline reads complete, a cut one reads truncated', () 
   const off = { available: false, count: 0, items: [] };
   const items = (prefix, count) => Array.from({ length: count },
     (_, index) => ({ id: `${prefix}${index}`, name: `${prefix} ${index}`, status: 'open' }));
-  const complete = shapeCustomerCard({
+  const complete = shapeCustomerCard(withStatus({
     identity, externalIdentities: [],
     opportunities: { available: true, count: 30, items: items('o', 30) },
     quotes: { available: true, count: 20, items: items('q', 20) },
     orders: off, contracts: off, subscriptions: off,
-  }, { resource: 'contact', id: 'c1' });
+  }), { resource: 'contact', id: 'c1' });
   assert.equal(complete.history.available, true);
   assert.equal(complete.history.count, 50);
   assert.equal(complete.history.truncated, false, 'exactly 50 rows with nothing beyond reads complete');
 
-  const cut = shapeCustomerCard({
+  const cut = shapeCustomerCard(withStatus({
     identity, externalIdentities: [],
     opportunities: { available: true, count: 30, items: items('o', 30) },
     quotes: { available: true, count: 21, items: items('q', 21) },
     orders: off, contracts: off, subscriptions: off,
-  }, { resource: 'contact', id: 'c1' });
+  }), { resource: 'contact', id: 'c1' });
   assert.equal(cut.history.count, 50);
   assert.equal(cut.history.truncated, true, 'the 51st row left out marks the timeline truncated');
 
-  const sectionCut = shapeCustomerCard({
+  const sectionCut = shapeCustomerCard(withStatus({
     identity, externalIdentities: [],
     opportunities: { available: true, count: 60, truncated: true, items: items('o', 10) },
     orders: off, contracts: off, subscriptions: off,
-  }, { resource: 'contact', id: 'c1' });
+  }), { resource: 'contact', id: 'c1' });
   assert.equal(sectionCut.history.count, 10);
   assert.equal(sectionCut.history.truncated, true, 'a consumed section that reports its own truncation marks the timeline truncated');
 });

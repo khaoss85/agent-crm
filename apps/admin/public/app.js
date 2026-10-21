@@ -418,6 +418,20 @@ const marketingView = createMarketingView({
   navigate: (hash) => { window.location.hash = hash; },
 });
 
+// Shell persistence first: the views below read this at construction, so it
+// must exist before any of them (a later `const` would throw a temporal-dead-zone
+// error on every page load). Private mode keeps tab state without persisting.
+function guardedStorage() {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) return window.localStorage;
+  } catch {
+    // Private mode: shell state simply does not persist.
+  }
+  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+}
+
+const shellStorage = guardedStorage();
+
 // Customer scheda (BO-F1-06): the three-column customer view, a read-only
 // projection over the hub. Renders only while the server publishes the
 // customer-hub package; otherwise the view itself says so.
@@ -440,9 +454,19 @@ const customerDataView = createCustomerDataView({
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
+  notify: (message) => toast(message),
+  // BO-F1-05: the space the calls read stays space-explicit, and the AI
+  // filter entry opens the BO-F0-04 assistant on the Clienti screen (its
+  // dry-run answers the key notice when no LLM backend is present).
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  onAskAi: () => {
+    if (assistantPanel) void assistantPanel.open('clienti');
+    else toast('Apri la barra AI (⌘K) e descrivi chi vuoi vedere.');
+  },
+  storage: shellStorage,
 });
 
-// Connectors (BO-F1-02): instantiated after shellStorage below (const order).
+// Connectors (BO-F1-02).
 
 // Production Spine (ADR-038): verified identity, the tenant, memberships and
 // what this build cannot promise. Always available — an application with no
@@ -460,17 +484,6 @@ const spineView = createSpineView({
 // prototype, space selector (⌘1/2/3), Impostazioni badge from the real
 // data-quality count, AI bar (⌘K) opening the BO-F0-04 assistant panel.
 // Spaces are local shell state until space records exist (BO-F0-06).
-
-function guardedStorage() {
-  try {
-    if (typeof window !== 'undefined' && window.localStorage) return window.localStorage;
-  } catch {
-    // Private mode: shell state simply does not persist.
-  }
-  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-}
-
-const shellStorage = guardedStorage();
 
 // Connectors (BO-F1-02): the 3-step connect flow over the channels package.
 // Renders only while the server publishes the channels package; otherwise

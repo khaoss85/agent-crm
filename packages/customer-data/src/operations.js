@@ -2,10 +2,15 @@
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
 import { createBulkRunner } from './bulk.js';
+import { deriveCustomerStatus } from './customer-status.js';
+import {
+  CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT, CUSTOMER_SORTS,
+  CUSTOMER_VIEWS, applyCustomerListQuery, parseCustomerListQuery, shapeCustomerRow,
+} from './customers.js';
 import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
 import { detectIssues } from './quality.js';
-import { canonicalClusterFor, profileFor } from './profile.js';
+import { belongsToCustomer, canonicalClusterFor, profileFor } from './profile.js';
 import {
   createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow,
 } from './sender.js';
@@ -234,6 +239,19 @@ export function createCustomerDataOperations({ database, modules, events, config
       }
       return profileFor({ modules, core, names, subject: { resource, id } });
     },
+
+    /**
+     * The customer list (BO-F1-05): one server page over the host contact and
+     * company records, enriched from the same reads the scheda uses. Creates
+     * nothing. Every read behind a row is a complete exact-match query except
+     * the host scan itself, which is a bounded display read: when the bound
+     * truncates it the answer says `complete: false` and the total is a
+     * floor, never an exact count.
+     * @param {any} request
+     */
+    async listCustomerRecords(request) {
+      return listCustomerRecords({ modules, core, names }, request);
+    },
   };
 
   /** Create the Company/Contact this row names, through the core adapters. Shared with the sender resolution. */
@@ -286,6 +304,271 @@ export function createCustomerDataOperations({ database, modules, events, config
     }
     return written;
   }
+}
+
+/**
+ * The customer list read (BO-F1-05). Module-level so tests drive it with a
+ * fake module map; the operation above hands it the composed runtime.
+ *
+ * Reads, all optional except the host records:
+ * - contacts + companies (bounded display scan; truncation is reported);
+ * - channel identities beside each subject (complete exact-match reads);
+ * - signed-business evidence, opportunities, work tasks, subscriptions,
+ *   messages, calls and budget signals (complete when the owning module
+ *   offers `listWhere`, otherwise a bounded page flagged partial, otherwise
+ *   unavailable with its reason — never an empty claim).
+ * Writes nothing.
+ */
+export async function listCustomerRecords({ modules, core, names }, request) {
+  void core;
+  const query = parseCustomerListQuery(request);
+  const contactsSvc = optional(modules, 'contact');
+  const companiesSvc = optional(modules, 'company');
+  if (!contactsSvc || typeof contactsSvc.list !== 'function') {
+    throw new AppError('the customer list needs the host contact records', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
+  if (!companiesSvc || typeof companiesSvc.list !== 'function') {
+    throw new AppError('the customer list needs the host company records', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
+  const contacts = await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  const companies = await companiesSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  const complete = contacts.length < CUSTOMER_SCAN_LIMIT && companies.length < CUSTOMER_SCAN_LIMIT;
+  const companyById = new Map(companies.map((company) => [company.id, company]));
+  const subjects = [];
+  const seenCompanies = new Set();
+  for (const contact of contacts) {
+    const company = (contact?.companyId && companyById.get(contact.companyId)) || null;
+    if (company) seenCompanies.add(company.id);
+    subjects.push({ contact, company });
+  }
+  for (const company of companies) {
+    if (!seenCompanies.has(company.id)) subjects.push({ contact: null, company });
+  }
+  const refs = {
+    companyIds: new Set(companies.map((company) => company.id)),
+    contactIds: new Set(contacts.map((contact) => contact.id)),
+    opportunityIds: new Set(),
+  };
+  const keyOf = (resource, id) => `${resource}:${id}`;
+  const subjectKeys = subjects.map(({ contact, company }) => (
+    contact ? keyOf('contact', contact.id) : keyOf('company', company.id)
+  ));
+
+  // One batched exact-match read per module: the IN shapes for both host
+  // kinds at once, so the whole list costs a bounded handful of indexed
+  // queries instead of one read per customer.
+  const batched = async (moduleName, extraShapes = []) => {
+    const service = optional(modules, moduleName);
+    if (!service) return { rows: [], readable: false };
+    const shapes = [
+      { subjectResource: 'contact', subjectId: [...refs.contactIds] },
+      { subjectResource: 'company', subjectId: [...refs.companyIds] },
+      ...extraShapes,
+    ].filter((shape) => Array.isArray(shape.subjectId) ? shape.subjectId.length > 0 : true);
+    if (typeof service.listWhere === 'function') {
+      const byId = new Map();
+      let exact = false;
+      for (const shape of shapes) {
+        try {
+          for (const row of await service.listWhere(shape)) byId.set(row.id, row);
+          exact = true;
+        } catch {
+          // A module that declares none of these shapes is not readable from
+          // here; the next shape (or the fallback below) still runs.
+        }
+      }
+      // An exact read with zero rows is complete, not partial: falling
+      // through to the bounded page would mislabel an exact zero as a floor.
+      if (exact) return { rows: [...byId.values()], readable: true, complete: true };
+    }
+    if (typeof service.list === 'function') {
+      const rows = (await service.list({ limit: CUSTOMER_SCAN_LIMIT }))
+        .filter((row) => belongsToCustomer(row, refs));
+      return { rows, readable: true, complete: false };
+    }
+    return { rows: [], readable: false };
+  };
+
+  const identities = await batched(names.identity);
+  const identitiesBySubject = new Map(subjectKeys.map((key) => [key, []]));
+  for (const row of identities.rows) {
+    const key = keyOf(row.subjectResource, row.subjectId);
+    if (identitiesBySubject.has(key) && row?.status === 'active') identitiesBySubject.get(key).push(row);
+  }
+
+  const opportunities = await batched('opportunity', [
+    { companyId: [...refs.companyIds] },
+    { contactId: [...refs.contactIds] },
+  ]);
+  for (const row of opportunities.rows) {
+    if (row?.id) refs.opportunityIds.add(row.id);
+  }
+
+  // Evidence after opportunities: an evidence row may name the opportunity
+  // rather than the customer, and that hop is explicit, never guessed.
+  const evidenceReads = {};
+  for (const [sectionKey, moduleName] of [['orders', 'order'], ['contracts', 'commercial-contract'], ['subscriptions', 'subscription']]) {
+    evidenceReads[sectionKey] = await batched(moduleName, [
+      { companyId: [...refs.companyIds] },
+      { contactId: [...refs.contactIds] },
+      ...(refs.opportunityIds.size > 0 ? [{ opportunityId: [...refs.opportunityIds] }] : []),
+    ]);
+  }
+
+  const tasks = await batched('work-task');
+  const messages = await batched('interaction-message');
+  const calls = await batched('interaction-call');
+  let signals = { rows: [], readable: false };
+  if (query.spaceId) {
+    const signalSvc = optional(modules, 'call-signal');
+    if (signalSvc && typeof signalSvc.listWhere === 'function') {
+      const byId = new Map();
+      for (const resource of ['contact', 'company']) {
+        const ids = resource === 'contact' ? [...refs.contactIds] : [...refs.companyIds];
+        if (ids.length === 0) continue;
+        try {
+          for (const row of await signalSvc.listWhere({ spaceId: query.spaceId, subjectResource: resource, subjectId: ids })) {
+            if (row?.signalType === 'budget') byId.set(row.id, row);
+          }
+        } catch {
+          // A renamed signal module stays unreadable, never misread.
+        }
+      }
+      signals = { rows: [...byId.values()], readable: true };
+    }
+  }
+
+  // A derived view over an unreadable dependency refuses with its reason,
+  // never with an exact-looking empty page: the two derived views need the
+  // work and subscription packages, and without them "no renewals" would be
+  // a claim the application cannot make. A truncated dependency read
+  // (complete:false from a list-only fallback or a bound the scan hit)
+  // refuses the same way: it would silently omit renewals or callbacks
+  // while totalIsExact stays true.
+  if (query.view?.id === 'rinnovi-30-giorni'
+    && (evidenceReads.subscriptions.readable !== true || evidenceReads.subscriptions.complete === false)) {
+    throw new AppError('the rinnovi-30-giorni view needs the subscription records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
+  if (query.view?.id === 'ricontattare-oggi'
+    && (tasks.readable !== true || tasks.complete === false)) {
+    throw new AppError('the ricontattare-oggi view needs the work-task records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = subjects.map(({ contact, company }) => {
+    const resource = contact ? 'contact' : 'company';
+    const id = contact?.id ?? company?.id;
+    const key = keyOf(resource, id);
+    const directIds = {
+      companyIds: new Set(company ? [company.id] : []),
+      contactIds: new Set(contact ? [contact.id] : []),
+    };
+    // This customer's own opportunities first (company/contact reference),
+    // so the opportunity hop below is scoped to this customer: an order
+    // that names another customer's opportunity must not promote this one.
+    const myOpportunities = opportunities.rows.filter((row) => belongsToCustomer(row, {
+      ...directIds,
+      opportunityIds: new Set(),
+    }));
+    const mine = (row) => belongsToCustomer(row, {
+      ...directIds,
+      opportunityIds: new Set(myOpportunities.map((entry) => entry?.id).filter((entry) => entry != null)),
+    });
+    const statusBySubject = new Map([[key, deriveCustomerStatus({
+      orders: sectionSummary(evidenceReads.orders, mine),
+      contracts: sectionSummary(evidenceReads.contracts, mine),
+      subscriptions: sectionSummary(evidenceReads.subscriptions, mine),
+    })]]);
+    const openValue = myOpportunities
+      .filter((row) => row?.stage !== 'won' && row?.stage !== 'lost')
+      .reduce((sum, row) => sum + (Number(row?.valueCents ?? 0) || 0), 0);
+    const currencies = [...new Set(myOpportunities.map((row) => row?.currency).filter((currency) => typeof currency === 'string' && currency !== ''))];
+    const myTasks = tasks.rows.filter(mine).filter((row) => row?.status === 'open');
+    // The callback view filters on this one value, so it must be the most
+    // actionable open task — overdue first, then due today — never the
+    // earliest-sorted row, where an undated task ('') would sort before any
+    // date and hide a callback that is due.
+    const taskRank = (row) => {
+      const day = typeof row?.dueAt === 'string' ? row.dueAt.slice(0, 10) : '';
+      if (day !== '' && day < today) return 0;
+      if (day === today) return 1;
+      return 2;
+    };
+    myTasks.sort((a, b) => (taskRank(a) - taskRank(b))
+      || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
+    const next = myTasks[0] ?? null;
+    const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
+    let lastContactAt = null;
+    let lastContactChannel = null;
+    for (const row of myMessages) {
+      const time = Date.parse(String(row?.occurredAt ?? ''));
+      if (!Number.isFinite(time)) continue;
+      if (lastContactAt === null || time > Date.parse(String(lastContactAt))) {
+        lastContactAt = row.occurredAt;
+        lastContactChannel = row.channel ?? null;
+      }
+    }
+    const renewalWithinDays = evidenceReads.subscriptions.rows.filter(mine).some((row) => (
+      row?.status === 'active' && withinDays(row?.endDate, today, 30)
+    ));
+    const mySignals = signals.rows.filter(mine);
+    mySignals.sort((a, b) => String(b?.observedAt ?? '').localeCompare(String(a?.observedAt ?? '')));
+    const budgetSignal = mySignals[0] ?? null;
+    return shapeCustomerRow({ contact, company }, {
+      identitiesBySubject,
+      statusBySubject,
+      activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel }]]),
+      offerBySubject: new Map(myOpportunities.length === 0 ? [] : [[key, {
+        valueCents: openValue, currency: currencies.length === 1 ? currencies[0] : null,
+      }]]),
+      taskBySubject: new Map(next === null ? [] : [[key, {
+        title: next.title ?? null,
+        dueAt: next.dueAt ?? null,
+        overdue: typeof next.dueAt === 'string' && next.dueAt !== '' && next.dueAt.slice(0, 10) < today,
+      }]]),
+      renewalBySubject: new Map([[key, renewalWithinDays]]),
+      budgetBySubject: new Map(budgetSignal === null ? [] : [[key, {
+        available: true,
+        value: typeof budgetSignal.excerpt === 'string' && budgetSignal.excerpt !== '' ? budgetSignal.excerpt : null,
+        source: { resource, id },
+      }]]),
+    });
+  });
+
+  const page = applyCustomerListQuery(rows, query, today);
+  return Object.freeze({
+    customerListContract: CUSTOMER_LIST_CONTRACT,
+    items: page.items,
+    total: page.total,
+    page: page.page,
+    pageSize: page.pageSize,
+    pages: page.pages,
+    complete,
+    totalIsExact: complete,
+    views: CUSTOMER_VIEWS.map((view) => ({ id: view.id, label: view.label })),
+    sorts: CUSTOMER_SORTS.map((sort) => ({ ...sort })),
+    columns: CUSTOMER_COLUMNS.map((column) => ({ ...column })),
+    pageSizes: [...CUSTOMER_PAGE_SIZES],
+  });
+}
+
+/** Evidence summary for one customer from a batched section read. */
+function sectionSummary(read, mine) {
+  if (!read || read.readable !== true) {
+    return { available: false, count: null, countIsComplete: true };
+  }
+  const count = read.rows.filter(mine).length;
+  return { available: true, count, countIsComplete: read.complete !== false };
+}
+
+/** YYYY-MM-DD within (today, today + days]. */
+function withinDays(value, today, days) {
+  if (typeof value !== 'string' || value === '') return false;
+  const day = value.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  const end = new Date(`${today}T00:00:00.000Z`).getTime() + days * 86400000;
+  const endDay = new Date(end).toISOString().slice(0, 10);
+  return day > today && day <= endDay;
 }
 
 /** Stated on every operation result, because a limit nobody reads is not a limit. */
