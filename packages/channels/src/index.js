@@ -450,7 +450,7 @@ export function createChannelsPackage(options = {}) {
         name: 'sync-now-channel',
         label: 'Sync one channel now',
         appMethod: 'syncNowChannel',
-        description: 'Pull one bounded history page of one connection right now ("Sincronizza ora"): starts the initial import when none ever started, advances the running one otherwise, reports done with a null page when the past is exhausted. New events store through the deduped ingest path; adapters without history refuse with CHANNEL_HISTORY_UNAVAILABLE.',
+        description: 'Pull one bounded history page of one connection right now ("Sincronizza ora"): starts the initial import when none ever started, advances the running one otherwise, re-opens a finished one as a refresh run covering only history since its completion. New events store through the deduped ingest path; adapters without history refuse with CHANNEL_HISTORY_UNAVAILABLE.',
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
           { name: 'connectionKey', type: 'string', required: true, hint: 'The active connection source key in that space.' },

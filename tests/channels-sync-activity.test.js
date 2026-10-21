@@ -170,20 +170,66 @@ test('"Sincronizza ora" pulls the provider past page by page through the fake ad
   ]);
   const second = await harness.ops.syncNowChannel({ spaceId: SPACE, connectionKey: key, actor: ACTOR });
   assert.equal(second.started, false);
+  assert.equal(second.refreshed, false);
   assert.equal(second.done, true);
   assert.equal(second.page.imported, 2);
   assert.equal(harness.inbox(SPACE).length, 4);
 
+  // A finished past is not mute: the next press re-opens the same import
+  // row as a refresh run covering only history since the completion, so
+  // what arrived after the import finished still imports.
+  api.seedHistory([
+    ...historySeed(3, new Date(base - 3 * hour).toISOString()),
+    ...historySeed(1, new Date(base).toISOString(), 3),
+    { id: 'evt-act-new', subject: 'chat-act-new', seq: 5, at: new Date(Date.now() + 1000).toISOString() },
+  ]);
   const third = await harness.ops.syncNowChannel({ spaceId: SPACE, connectionKey: key, actor: ACTOR });
+  assert.equal(third.started, false);
+  assert.equal(third.refreshed, true);
   assert.equal(third.done, true);
-  assert.equal(third.page, null);
-  assert.equal(harness.inbox(SPACE).length, 4, 'a finished past is never re-imported');
+  assert.equal(third.page.imported, 1);
+  assert.equal(third.page.duplicates, 0);
+  assert.equal(harness.inbox(SPACE).length, 5);
+
+  // With nothing new the button still contacts the provider and reports an
+  // empty page — never a mute done with a null page. The re-listed event
+  // replays to its final outcome row and recounts nothing.
+  const fourth = await harness.ops.syncNowChannel({ spaceId: SPACE, connectionKey: key, actor: ACTOR });
+  assert.equal(fourth.refreshed, true);
+  assert.equal(fourth.done, true);
+  assert.notEqual(fourth.page, null);
+  assert.equal(fourth.page.imported, 0);
+  assert.equal(fourth.page.duplicates, 0);
+  assert.equal(harness.inbox(SPACE).length, 5);
+  assert.ok(fourth.state.finishedAt >= third.state.finishedAt, 'the refresh run completed again');
 
   activity = harness.ops.readSyncActivity({ spaceId: SPACE });
   const done = activity.connections.find((entry) => entry.connectionKey === key);
   assert.equal(done.sync.status, 'done');
   assert.equal(done.health, 'ok');
-  assert.equal(done.inbox.received, 4);
+  assert.equal(done.inbox.received, 5);
+});
+
+test('tallies stay exact past the feed window', async (t) => {
+  const { harness, api } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  api.seedHistory(historySeed(25, new Date(Date.now() - 3600 * 1000).toISOString()));
+  const pulled = await harness.ops.syncNowChannel({ spaceId: SPACE, connectionKey: key, actor: ACTOR });
+  assert.equal(pulled.done, true);
+  assert.equal(pulled.page.imported, 25);
+
+  const activity = harness.ops.readSyncActivity({ spaceId: SPACE, feedLimit: 5 });
+  const live = activity.connections.find((entry) => entry.connectionKey === key);
+  assert.equal(live.inbox.received, 25);
+  assert.equal(live.inbox.applied, 25);
+  assert.equal(live.needsFix, 0);
+  assert.equal(activity.needsFix, 0);
+  assert.equal(activity.feed.length, 5);
+  for (let index = 1; index < activity.feed.length; index += 1) {
+    assert.ok(activity.feed[index - 1].at >= activity.feed[index].at, 'the feed reads newest first');
+  }
+  assert.equal(activity.lastActivityAt, activity.feed.map((entry) => entry.at).sort().at(-1));
 });
 
 test('"Sincronizza ora" refuses honestly where no pull exists', async (t) => {
@@ -236,12 +282,16 @@ const CHANNEL_MANIFESTS = [
 ];
 
 test('GET /api/connectors/activity and POST /api/connectors/sync-now expose the screen reads', async (t) => {
-  const { createHttpServer } = await import('../apps/server/src/index.js');
   const { boot, project } = await import('./helpers/customer-data-project.js');
   const { spawnSync } = await import('node:child_process');
   const { writeFileSync } = await import('node:fs');
+  const { pathToFileURL } = await import('node:url');
 
   const root = project(t, {});
+  // The server comes from the composed project copy — the same realm as
+  // the app — so error identity (code, status) survives the round trip,
+  // exactly as in production with its single copy of the framework.
+  const { createHttpServer } = await import(pathToFileURL(join(root, 'apps/server/src/index.js')).href);
   for (const manifest of CHANNEL_MANIFESTS) {
     const applied = spawnSync(process.execPath,
       ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'),
@@ -259,7 +309,10 @@ test('GET /api/connectors/activity and POST /api/connectors/sync-now expose the 
     'export const generatedDomains = [',
     '  createChannelsPackage({',
     '    channelAdapters: [fixture.definition],',
-    `    resolveSecret: async () => '${secret}',`,
+    "    resolveSecret: async (ref) => {",
+    "      if (ref === 'vault://activity/broken') throw new Error('vault is down');",
+    `      return '${secret}';`,
+    '    },',
     "    tenantId: 'sync-activity-http',",
     '  }),',
     '];',
@@ -274,8 +327,11 @@ test('GET /api/connectors/activity and POST /api/connectors/sync-now expose the 
     adapter: 'fixture-channel', adapterVersion: 1,
     secretRef: 'vault://activity/http', actor: ACTOR,
   });
+  const { buildChannelConnectionActions: buildCopyActions } = await import(
+    pathToFileURL(join(root, 'packages/channels/src/index.js')).href
+  );
   const actions = Object.fromEntries(
-    buildChannelConnectionActions().map((action) => [action.name, action]),
+    buildCopyActions().map((action) => [action.name, action]),
   );
   const service = app.modules.get('channel-connection').service;
   const record = service.listWhere({ spaceId: SPACE, sourceKey: reg.connection.sourceKey })[0];
@@ -325,4 +381,44 @@ test('GET /api/connectors/activity and POST /api/connectors/sync-now expose the 
   assert.equal(activity.connections[0].sync.status, 'done');
   assert.equal(activity.feed.length, 2);
   assert.ok(activity.feed.every((entry) => entry.direction === 'in'));
+
+  const broken = await app.registerChannelConnection({
+    spaceId: SPACE, channel: 'whatsapp', account: ACCOUNT_B,
+    adapter: 'fixture-channel', adapterVersion: 1,
+    secretRef: 'vault://activity/broken', actor: ACTOR,
+  });
+  const brokenRecord = service.listWhere({ spaceId: SPACE, sourceKey: broken.connection.sourceKey })[0];
+  await actions['activate-connection'].execute({
+    record: brokenRecord,
+    input: { reason: 'broken secret proof' },
+    actor: ACTOR,
+    modules: app.modules,
+    managed: (id, patch) => service.applyManaged(id, patch, { actor: ACTOR }),
+    now: () => new Date().toISOString(),
+  });
+
+  // A 5xx from sync-now is logged with the normalized code and the
+  // workspace id — never the secret or provider text — then travels
+  // unchanged to the caller.
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => { logged.push(args.map(String).join(' ')); };
+  let failing;
+  try {
+    failing = await fetch(`${base}/api/connectors/sync-now`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ spaceId: SPACE, connectionKey: broken.connection.sourceKey }),
+    });
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(failing.status, 500);
+  const failed = await failing.json();
+  assert.equal(failed.error.code, 'CHANNEL_SECRET_UNAVAILABLE');
+  assert.ok(logged.some((line) => line.includes('CHANNEL_SECRET_UNAVAILABLE') && line.includes(SPACE)),
+    'the 5xx is logged with code and workspace id');
+  for (const line of logged) {
+    assert.ok(!line.includes(secret), 'the log carries no secret');
+  }
 });

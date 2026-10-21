@@ -1514,65 +1514,49 @@ export function createChannelOperations(deps) {
    * The feed carries no subject, no payload and no provider wording: a
    * secret or personal handle repeated by the provider must never reach
    * the screen. Read-only: no actor, no mutation.
+   *
+   * Bounded reads only: exact tallies come from COUNT queries and only the
+   * newest rows per source are materialized (at most feedLimit each), so a
+   * long-lived space never pays its whole inbox history for one screen.
+   * Proven sends are deliberately not counted as `out` yet: a successful
+   * send settles in the outbox job row, which has no per-connection index,
+   * and a newest-N job scan could forget older sends (the same reason
+   * `readReply` looks jobs up by id or idempotency root, never by window).
+   * The per-connection outbound signal is a follow-up voice.
    */
+  const SYNC_ACTIVITY_EFFECTS = ['applied', 'quarantined', 'ignored', 'duplicate', 'pending'];
   function readSyncActivity(params) {
     const spaceId = assertSpaceId(params?.spaceId);
     const feedLimit = params?.feedLimit === undefined ? 20 : params.feedLimit;
     if (!Number.isSafeInteger(feedLimit) || feedLimit < 1 || feedLimit > 100) {
       throw new ValidationError('feed limit must be an integer 1-100', { field: 'feedLimit' });
     }
-    const inboxRows = inbox().listWhere({ spaceId });
-    const letterRows = letters().listWhere({ spaceId });
-    const byConnection = new Map();
-    const atConnection = (connectionKey) => {
-      let entry = byConnection.get(connectionKey);
-      if (!entry) {
-        entry = { inbox: [], letters: [] };
-        byConnection.set(connectionKey, entry);
-      }
-      return entry;
-    };
-    for (const row of inboxRows) atConnection(row.connectionKey).inbox.push(row);
-    for (const row of letterRows) atConnection(row.connectionKey).letters.push(row);
-
-    const inboxSummary = (rows) => {
-      const tallies = { applied: 0, quarantined: 0, ignored: 0, duplicate: 0, pending: 0 };
-      let lastReceivedAt = null;
-      for (const row of rows) {
-        if (Object.hasOwn(tallies, row.effect)) tallies[row.effect] += 1;
-        if (typeof row.receivedAt === 'string'
-          && (lastReceivedAt === null || row.receivedAt > lastReceivedAt)) {
-          lastReceivedAt = row.receivedAt;
-        }
-      }
-      return Object.freeze({ received: rows.length, ...tallies, lastReceivedAt });
-    };
-    const outboxSummary = (rows) => {
-      const open = rows.filter((row) => row.state === 'open');
-      let lastFailedAt = null;
-      for (const row of open) {
-        if (typeof row.lastFailedAt === 'string'
-          && (lastFailedAt === null || row.lastFailedAt > lastFailedAt)) {
-          lastFailedAt = row.lastFailedAt;
-        }
-      }
-      return Object.freeze({ openDeadLetters: open.length, lastFailedAt });
-    };
+    const inboxService = inbox();
+    const letterService = letters();
 
     const entries = connections().listWhere({ spaceId }).map((connection) => {
-      const traffic = byConnection.get(connection.sourceKey) ?? { inbox: [], letters: [] };
-      const inboxCount = inboxSummary(traffic.inbox);
-      const outbox = outboxSummary(traffic.letters);
+      const traffic = { spaceId, connectionKey: connection.sourceKey };
+      const inboxCount = { received: inboxService.countWhere(traffic) };
+      for (const effect of SYNC_ACTIVITY_EFFECTS) {
+        inboxCount[effect] = inboxService.countWhere({ ...traffic, effect });
+      }
+      const latestInbox = inboxService.list({ where: traffic, limit: 1 })[0] ?? null;
+      inboxCount.lastReceivedAt = typeof latestInbox?.receivedAt === 'string' ? latestInbox.receivedAt : null;
+      const openDeadLetters = letterService.countWhere({ ...traffic, state: 'open' });
+      const latestLetter = letterService.list({ where: { ...traffic, state: 'open' }, limit: 1 })[0] ?? null;
+      const lastFailedAt = typeof latestLetter?.lastFailedAt === 'string' ? latestLetter.lastFailedAt : null;
+      const outbox = Object.freeze({ openDeadLetters, lastFailedAt });
+      const letterCount = letterService.countWhere(traffic);
       const row = findImportState(spaceId, connection.sourceKey);
       const sync = row ? importStateSummary(row) : null;
-      const fixes = inboxCount.quarantined + outbox.openDeadLetters;
+      const fixes = inboxCount.quarantined + openDeadLetters;
       const health = connection.status !== 'active'
         ? (connection.status === 'pending' ? 'idle' : 'down')
         : fixes > 0 || Boolean(sync && sync.lastErrorCode) ? 'attention'
           : sync === null && isHistoryImportable(connection) && inboxCount.received === 0 ? 'idle' : 'ok';
-      const direction = inboxCount.received > 0 && traffic.letters.length > 0 ? 'both'
+      const direction = inboxCount.received > 0 && letterCount > 0 ? 'both'
         : inboxCount.received > 0 ? 'in'
-          : traffic.letters.length > 0 ? 'out' : null;
+          : letterCount > 0 ? 'out' : null;
       return Object.freeze({
         connectionKey: connection.sourceKey,
         channel: connection.channel,
@@ -1582,7 +1566,7 @@ export function createChannelOperations(deps) {
         status: connection.status,
         importable: isHistoryImportable(connection),
         sync,
-        inbox: inboxCount,
+        inbox: Object.freeze(inboxCount),
         outbox,
         direction,
         health,
@@ -1591,25 +1575,24 @@ export function createChannelOperations(deps) {
     }).sort((left, right) => (left.connectionKey < right.connectionKey ? -1
       : left.connectionKey > right.connectionKey ? 1 : 0));
 
+    const channelOf = new Map(entries.map((entry) => [entry.connectionKey, entry.channel]));
     const feed = [];
-    for (const row of inboxRows) {
+    for (const row of inboxService.list({ where: { spaceId }, limit: feedLimit })) {
       if (typeof row.receivedAt !== 'string') continue;
-      const connection = entries.find((entry) => entry.connectionKey === row.connectionKey);
       feed.push(Object.freeze({
         direction: 'in',
         connectionKey: row.connectionKey,
-        channel: connection?.channel ?? null,
+        channel: channelOf.get(row.connectionKey) ?? null,
         at: row.receivedAt,
         kind: typeof row.effect === 'string' ? row.effect : 'unknown',
       }));
     }
-    for (const row of letterRows) {
-      if (row.state !== 'open' || typeof row.lastFailedAt !== 'string') continue;
-      const connection = entries.find((entry) => entry.connectionKey === row.connectionKey);
+    for (const row of letterService.list({ where: { spaceId, state: 'open' }, limit: feedLimit })) {
+      if (typeof row.lastFailedAt !== 'string') continue;
       feed.push(Object.freeze({
         direction: 'out',
         connectionKey: row.connectionKey,
-        channel: connection?.channel ?? null,
+        channel: channelOf.get(row.connectionKey) ?? null,
         at: row.lastFailedAt,
         kind: 'dead-letter',
         code: typeof row.errorCode === 'string' ? row.errorCode : 'CHANNEL_SEND_FAILED',
@@ -1644,11 +1627,13 @@ export function createChannelOperations(deps) {
    * travels into the import start like the guided connect flow; the page
    * itself runs under the package system actor like every other advance.
    * When no import ever started, this call starts it and pulls the first
-   * page; when one is running, it pulls the next page; when it is done,
-   * it reports done with a null page — a refresh of a finished past is a
-   * new voice, never a silent re-import. New events are stored through
-   * the deduped ingest path, so a re-listed past recounts as duplicates
-   * instead of doubling. Adapters without `historyImport` refuse with
+   * page; when one is running, it pulls the next page; when the past is
+   * exhausted, the same import row re-opens as a refresh run covering only
+   * history since the last completion — so the button keeps fetching what
+   * arrived after the import finished (or while webhooks were unavailable)
+   * instead of going mute. Re-listed events keep their final outcome rows
+   * and recount nothing; only genuinely new events write new rows.
+   * Adapters without `historyImport` refuse with
    * CHANNEL_HISTORY_UNAVAILABLE, so the screen only enables the button
    * where a pull exists.
    */
@@ -1663,13 +1648,36 @@ export function createChannelOperations(deps) {
     const connection = requireActiveConnection(spaceId, connectionKey);
     requireHistoryAdapter(connection);
     let started = false;
+    let refreshed = false;
     if (!findImportState(spaceId, connection.sourceKey)) {
       const created = await startInitialImport({ spaceId, connectionKey, actor });
       started = created.started === true;
+    } else {
+      // A finished past re-opens on the same row: `startInitialImport`
+      // keeps refusing completed rows (one import per connection), and the
+      // reset plus the advance below serialize on the import slot, so two
+      // racing refreshes converge through the outcome rows like racing
+      // advances do — re-listed events replay to their final rows, never
+      // to doubles.
+      refreshed = await withImportCommit(importSourceKey(spaceId, connection.sourceKey), async () => {
+        const live = findImportState(spaceId, connection.sourceKey);
+        if (!live || live.status !== 'done') return false;
+        await importStates().applyManaged(live.id, {
+          status: 'running',
+          windowStart: typeof live.finishedAt === 'string' && live.finishedAt !== ''
+            ? live.finishedAt : live.windowStart,
+          nextPageToken: null,
+          finishedAt: null,
+          lastErrorCode: null,
+          lastErrorReason: null,
+        }, { actor });
+        return true;
+      });
     }
     const advanced = await advanceInitialImport({ spaceId, connectionKey, limit });
     return Object.freeze({
       started,
+      refreshed,
       done: advanced.done,
       state: advanced.state,
       page: advanced.page,

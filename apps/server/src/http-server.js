@@ -552,12 +552,26 @@ function buildRouter(app) {
       throw new NotFoundError('Operation', 'connector sync now');
     }
     const input = stripServerControlledKeys(body);
-    return await app.syncNowChannel({
-      spaceId: typeof input.spaceId === 'string' ? input.spaceId : '',
-      connectionKey: typeof input.connectionKey === 'string' ? input.connectionKey : '',
-      ...(input.limit === undefined ? {} : { limit: input.limit }),
-      actor,
-    });
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    try {
+      return await app.syncNowChannel({
+        spaceId,
+        connectionKey: typeof input.connectionKey === 'string' ? input.connectionKey : '',
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+        actor,
+      });
+    } catch (error) {
+      // A 5xx here would otherwise reach the top-level serializer unlogged:
+      // log the normalized code with the workspace id — never the body, a
+      // secret or provider text — so a production sync failure stays
+      // diagnosable, then let the error travel unchanged.
+      const normalized = normalizeError(error);
+      if (normalized.status >= 500) {
+        const loggedSpace = /^[a-z][a-z0-9-]{0,62}$/.test(spaceId) ? spaceId : 'unknown';
+        console.error(`sync-now failed code=${normalized.code} spaceId=${loggedSpace}`);
+      }
+      throw error;
+    }
   });
 
   router.add('POST', '/api/connectors/authorize', async ({ body, actor, identity, organizationId, headers }) => {
