@@ -24,8 +24,11 @@ export const SPACES_KEY = 'accordo.spaces';
 
 /**
  * Fixed sidebar voices from the prototype, in Italian, in prototype order.
- * `route: null` means the screen is delivered by a later story: the item
- * renders disabled with the story named, never as a dead link.
+ * `route: null` in this static table means the voice cannot link on its own:
+ * `buildShellNav` resolves what the composition allows (Clienti, Pipeline)
+ * and the rest renders disabled with the story named, never as a dead link.
+ * (Calendario and Sequenze have delivered framework reads — BO-F3-01/02 —
+ * but no admin screen, so they stay disabled until one lands.)
  * @typedef {{ id: string, label: string, group: 'home' | 'native' | 'custom' | 'settings', route: string | null, story: string }} ShellItem
  */
 export const SHELL_ITEMS = Object.freeze([
