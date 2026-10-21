@@ -200,7 +200,7 @@ test('price rules: an AI proposal that breaks a rule is blocked exactly like an 
   });
   assert.equal(overLimit.suggestions.length, 1, 'the AI line lands with its proposed discount');
   assert.equal(overLimit.suggestions[0].discountBps, 6000, 'the proposed discount travels through');
-  assert.equal(overLimit.suggestions[0].motive.length > 0, 'the motive travels with it');
+  assert.ok(overLimit.suggestions[0].motive.length > 0, 'the motive travels with it');
 
   for (const bad of [20000, -100, 12.5, '10%', null]) {
     const refused = await suggestQuoteLines({
