@@ -203,7 +203,7 @@ const MANUAL_ROWS = [
 
 test('manual import stores drafts and writes no product until a row is confirmed', async (t) => {
   const app = await bootApp(t, importProject(t));
-  const started = await app.startProductImport({ source: 'manual', rows: MANUAL_ROWS, currency: 'EUR', actor: ACTOR });
+  const started = await app.startProductImport({ source: 'manual', rows: MANUAL_ROWS, currency: 'EUR' }, ACTOR);
   assert.equal(started.import.sourceKind, 'manual');
   assert.equal(started.import.status, 'open');
   assert.equal(started.drafts.length, 2, 'both rows persist as drafts');
@@ -218,9 +218,9 @@ test('manual import stores drafts and writes no product until a row is confirmed
 
 test('confirm writes one product per row through the manual catalog, row by row', async (t) => {
   const app = await bootApp(t, importProject(t));
-  const started = await app.startProductImport({ source: 'manual', rows: MANUAL_ROWS, currency: 'EUR', actor: ACTOR });
+  const started = await app.startProductImport({ source: 'manual', rows: MANUAL_ROWS, currency: 'EUR' }, ACTOR);
   const [first, second] = started.drafts;
-  const confirmed = await app.confirmProductImportRow({ importId: started.import.id, rowId: first.id, actor: ACTOR });
+  const confirmed = await app.confirmProductImportRow({ importId: started.import.id, rowId: first.id }, ACTOR);
   assert.equal(confirmed.row.status, 'confirmed');
   assert.ok(confirmed.product.id, 'the confirmed row names its product');
   assert.equal(confirmed.replay, false);
@@ -229,11 +229,11 @@ test('confirm writes one product per row through the manual catalog, row by row'
   assert.equal(table.products.length, 1, 'exactly one product for one confirmation');
   assert.equal(table.products[0].sku, 'YOGA-10');
   assert.equal(table.products[0].offers[0].components[0].flatAmountCents, 9900, 'the price travels from the draft');
-  const again = await app.confirmProductImportRow({ importId: started.import.id, rowId: first.id, actor: ACTOR });
+  const again = await app.confirmProductImportRow({ importId: started.import.id, rowId: first.id }, ACTOR);
   assert.equal(again.replay, true, 'confirming twice replays the first product');
   assert.equal(again.product.id, confirmed.product.id);
   assert.equal((await app.listCatalogProducts({})).products.length, 1, 'no duplicate product');
-  const rejected = await app.rejectProductImportRow({ importId: started.import.id, rowId: second.id, actor: ACTOR });
+  const rejected = await app.rejectProductImportRow({ importId: started.import.id, rowId: second.id }, ACTOR);
   assert.equal(rejected.row.status, 'rejected');
   assert.equal(rejected.import.status, 'closed', 'the last decision closes the import');
   assert.equal((await app.listCatalogProducts({})).products.length, 1, 'a rejection writes nothing');
@@ -243,21 +243,21 @@ test('confirm writes one product per row through the manual catalog, row by row'
 
 test('decided rows and closed imports refuse with typed codes', async (t) => {
   const app = await bootApp(t, importProject(t));
-  const started = await app.startProductImport({ source: 'manual', rows: MANUAL_ROWS.slice(0, 1), currency: 'EUR', actor: ACTOR });
+  const started = await app.startProductImport({ source: 'manual', rows: MANUAL_ROWS.slice(0, 1), currency: 'EUR' }, ACTOR);
   const [only] = started.drafts;
-  await app.rejectProductImportRow({ importId: started.import.id, rowId: only.id, actor: ACTOR });
+  await app.rejectProductImportRow({ importId: started.import.id, rowId: only.id }, ACTOR);
   assert.equal(
-    await codeOf(() => app.confirmProductImportRow({ importId: started.import.id, rowId: only.id, actor: ACTOR })),
+    await codeOf(() => app.confirmProductImportRow({ importId: started.import.id, rowId: only.id }, ACTOR)),
     'PRODUCT_IMPORT_ROW_DECIDED',
     'a rejected row never confirms',
   );
   assert.equal(
-    await codeOf(() => app.confirmProductImportRow({ importId: started.import.id, rowId: 'row-that-does-not-exist', actor: ACTOR })),
+    await codeOf(() => app.confirmProductImportRow({ importId: started.import.id, rowId: 'row-that-does-not-exist' }, ACTOR)),
     'NOT_FOUND',
     'an unknown row is not found, never confirmed',
   );
   assert.equal(
-    await codeOf(() => app.startProductImport({ source: 'manual', rows: [], currency: 'EUR', actor: ACTOR })),
+    await codeOf(() => app.startProductImport({ source: 'manual', rows: [], currency: 'EUR' }, ACTOR)),
     'VALIDATION_ERROR',
     'an import with no valid draft refuses instead of storing an empty run',
   );
@@ -267,27 +267,27 @@ test('without an llm handover the AI import stays off while the manual one works
   const app = await bootApp(t, importProject(t));
   assert.equal(
     await codeOf(() => app.startProductImport({
-      source: 'ai', documentText: 'Listino: YOGA-10 ...', documentRef: 'listino.pdf', currency: 'EUR', spaceId: 'prova', actor: ACTOR,
-    })),
+      source: 'ai', documentText: 'Listino: YOGA-10 ...', documentRef: 'listino.pdf', currency: 'EUR', spaceId: 'prova',
+    }, ACTOR)),
     PRODUCT_IMPORT_AI_UNAVAILABLE,
     'the AI source refuses with its named code',
   );
   assert.equal(app.modules.get('product-import').service.listWhere({}).length, 0, 'the refused AI import stores nothing');
-  const manual = await app.startProductImport({ source: 'manual', rows: MANUAL_ROWS.slice(0, 1), currency: 'EUR', actor: ACTOR });
+  const manual = await app.startProductImport({ source: 'manual', rows: MANUAL_ROWS.slice(0, 1), currency: 'EUR' }, ACTOR);
   assert.equal(manual.drafts.length, 1, 'the manual path keeps working');
 });
 
 test('with a key the AI extraction lands drafts the operator confirms', async (t) => {
   const app = await bootApp(t, importProject(t, 'key'));
   const started = await app.startProductImport({
-    source: 'ai', documentText: 'Listino palestra: AI-1 ...', documentRef: 'listino.pdf', currency: 'EUR', spaceId: 'prova', actor: ACTOR,
-  });
+    source: 'ai', documentText: 'Listino palestra: AI-1 ...', documentRef: 'listino.pdf', currency: 'EUR', spaceId: 'prova',
+  }, ACTOR);
   assert.equal(started.import.sourceKind, 'ai');
   assert.equal(started.import.documentRef, 'listino.pdf', 'the opaque reference travels, never the provider text');
   assert.equal(started.drafts.length, 2, 'the extracted rows land as drafts');
   assert.equal(started.drafts[0].sku, 'AI-1');
   assert.equal((await app.listCatalogProducts({})).products.length, 0, 'the AI import writes no product itself');
-  const confirmed = await app.confirmProductImportRow({ importId: started.import.id, rowId: started.drafts[0].id, actor: ACTOR });
+  const confirmed = await app.confirmProductImportRow({ importId: started.import.id, rowId: started.drafts[0].id }, ACTOR);
   assert.equal(confirmed.row.status, 'confirmed');
   assert.equal((await app.listCatalogProducts({})).products[0].sku, 'AI-1');
 });
@@ -296,8 +296,8 @@ test('with the handover but no key the AI import stays off: the dry-run never be
   const app = await bootApp(t, importProject(t, 'no-key'));
   assert.equal(
     await codeOf(() => app.startProductImport({
-      source: 'ai', documentText: 'Listino: YOGA-10 ...', documentRef: 'listino.pdf', currency: 'EUR', spaceId: 'prova', actor: ACTOR,
-    })),
+      source: 'ai', documentText: 'Listino: YOGA-10 ...', documentRef: 'listino.pdf', currency: 'EUR', spaceId: 'prova',
+    }, ACTOR)),
     PRODUCT_IMPORT_AI_UNAVAILABLE,
     'the dry-run without a key refuses with the AI-off code',
   );
