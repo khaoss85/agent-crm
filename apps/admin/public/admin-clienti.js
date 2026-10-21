@@ -103,7 +103,7 @@ export function createCustomerListView(deps) {
 
   const state = {
     vista: 'tutti', q: '', canale: 'all', stato: 'all', sort: 'recent',
-    page: 1, pageSize: 10, columns: null, menus: null,
+    page: 1, pageSize: 10, columns: null,
   };
   let data = null;
   let renderToken = 0;
