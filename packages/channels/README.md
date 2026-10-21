@@ -82,6 +82,29 @@ approval; without `llm` only AI drafts refuse
   from `registerChannelSendHandlers(registry, bindings)`; the kit drives
   one attempt at a time instead.
 
+## Channel matrix (BO-F1-01, backlog:ffce3d1cd636)
+
+Every backoffice channel rides the adapter contract above — one named,
+versioned, fingerprinted definition per channel protocol, fake-backed
+until the provider decision (no credentials exist yet, none are
+invented). The five channels the space never sends through are
+inbound-only by contract: both halves of their outbound path refuse
+with `CHANNEL_SEND_UNSUPPORTED` (one shared definition in
+`src/adapter.js`), which the queue path hands back intact and the kit
+asserts instead of a delivery.
+
+| Channel (BO-F1-01) | `channel` | Adapter (fake-backed) | Direction | Kit + test |
+| --- | --- | --- | --- | --- |
+| WhatsApp | `whatsapp` | `whatsapp-cloud@1` (`src/whatsapp.js`) | in + out (24-hour window, templates outside it) | `runChannelAdapterKit`, `tests/channels-whatsapp.test.js` |
+| Instagram | `instagram` | `instagram-graph@1` (`src/instagram.js`) | in + out (24-hour window, 7 days with `HUMAN_AGENT`) | `runChannelAdapterKit`, `tests/channels-instagram.test.js` |
+| Facebook (Messenger) | `facebook` | `messenger-graph@1` (`src/messenger.js`) | in + out (24-hour window, 7 days with `HUMAN_AGENT`) | `runChannelAdapterKit`, `tests/channels-messenger.test.js` |
+| TikTok | `tiktok` | `tiktok-inbox@1` (`src/tiktok.js`) | in only — sends refuse `CHANNEL_SEND_UNSUPPORTED` | `runChannelAdapterKit`, `tests/channels-tiktok.test.js` |
+| Email | `email` | `gmail-api@1` (`src/gmail.js`) | in + out (no service window; 90-day history import) | `runChannelAdapterKit`, `tests/channels-gmail.test.js` |
+| Telefono/centralino | `voice` | `voice-pbx@1` (`src/voice.js`) | in only — sends refuse `CHANNEL_SEND_UNSUPPORTED` | `runChannelAdapterKit`, `tests/channels-voice.test.js` |
+| Form sito | `site-form` | `site-form-inbox@1` (`src/site-form.js`) | in only — sends refuse `CHANNEL_SEND_UNSUPPORTED` | `runChannelAdapterKit`, `tests/channels-site-form.test.js` |
+| Google Calendar | `calendar` | `calendar-push@1` (`src/calendar.js`) | in only — sends refuse `CHANNEL_SEND_UNSUPPORTED` | `runChannelAdapterKit`, `tests/channels-calendar.test.js` |
+| Stripe | `stripe` | `stripe-webhook@1` (`src/stripe.js`) | in only — sends refuse `CHANNEL_SEND_UNSUPPORTED` | `runChannelAdapterKit`, `tests/channels-stripe.test.js` |
+
 ## How it is proven
 
 - `tests/channels-contract.test.js` — pure contract: adapter validation,
@@ -102,16 +125,23 @@ approval; without `llm` only AI drafts refuse
   composed adapter (and refuses without one), approval binds exact bytes
   (drift refuses), double approval sends once, failures read back failed.
 - The kit: `runChannelAdapterKit({ adapter, secrets, harness })` — the
-  same seven checks the acceptance names (receive, send, replay, bad
-  signature, out-of-order) plus no-secrets and space isolation. The
+  checks the acceptance names (receive, send, replay, bad signature,
+  out-of-order) plus no-secrets, space isolation and history. The
   fixture adapter passes it; every real adapter must pass it before it
   ships. The WhatsApp (`tests/channels-whatsapp.test.js`), Instagram
   (`tests/channels-instagram.test.js`), Messenger
-  (`tests/channels-messenger.test.js`) and Gmail
-  (`tests/channels-gmail.test.js`) adapters pass it; for adapters
+  (`tests/channels-messenger.test.js`), Gmail
+  (`tests/channels-gmail.test.js`), TikTok
+  (`tests/channels-tiktok.test.js`), voice
+  (`tests/channels-voice.test.js`), site-form
+  (`tests/channels-site-form.test.js`), calendar
+  (`tests/channels-calendar.test.js`) and Stripe
+  (`tests/channels-stripe.test.js`) adapters pass it; for adapters
   behind a service window the kit seeds one windowed inbound before
   its send check, so the send proves the seeded window rather than an
-  absent one.
+  absent one; for inbound-only adapters the send check proves the
+  contract refusal (`CHANNEL_SEND_UNSUPPORTED` through the real queue
+  path, nothing reaching the provider) instead of a delivery.
 - The WhatsApp Business Cloud adapter (`src/whatsapp.js`, fake-backed
   until the Meta decision): Meta inbound shapes (`messages[]`,
   `statuses[]`) normalized to a list with one inbox row per item in a
@@ -161,6 +191,15 @@ approval; without `llm` only AI drafts refuse
   history-import capability with the 90-day window: threads of the last
   90 days page oldest-first through the same normalizer the push path
   uses, each message carrying its sender for the import reconciliation.
+- The five inbound-only adapters (`src/tiktok.js`, `src/voice.js`,
+  `src/site-form.js`, `src/calendar.js`, `src/stripe.js` with their
+  `tests/channels-*.test.js`): TikTok direct messages, PBX inbound
+  calls, site submissions, calendar change pushes and Stripe event
+  notifications, each with its subject rule (`tiktok:<handle>`,
+  `tel:<E.164>`, `form:<submissionId>`, `calendar:<calendarId>`,
+  `stripe:<type>`), each verified with the channel HMAC scheme, each
+  refusing both outbound halves with the shared
+  `CHANNEL_SEND_UNSUPPORTED` — against a fake transport, no credentials.
 - The progressive initial history import (`tests/channels-initial-import.test.js`,
   backlog:66282d13d81c): adapters that declare readable past (`historyImport`
   with `windowMs` and `listHistory`) import it one bounded page per advance
@@ -199,12 +238,13 @@ approval; without `llm` only AI drafts refuse
 
 ## What it deliberately does not do
 
-- No real provider adapters beyond WhatsApp, Instagram and Gmail:
-  fixture only until credentials exist. No credential is invented,
-  requested or stored. All three are fake-backed until the provider
-  decision: the same modes as the fixture, no provider edge (WhatsApp
-  and Gmail share the channel HMAC scheme, Instagram verifies hub
-  signatures).
+- No real provider adapters beyond WhatsApp, Instagram, Messenger,
+  Gmail, TikTok, voice, site-form, calendar and Stripe: fixture only
+  until credentials exist. No credential is invented, requested or
+  stored. All nine are fake-backed until the provider decision: the same
+  modes as the fixture, no provider edge (WhatsApp, Gmail, TikTok,
+  voice, site-form, calendar and Stripe share the channel HMAC scheme;
+  Instagram and Messenger verify hub signatures).
 - No per-space HTTP route: the pilot owns it and passes `spaceId` from
   the verified path, never from the body.
 - No secret custody or rotation flow: the deployment resolves `secretRef`

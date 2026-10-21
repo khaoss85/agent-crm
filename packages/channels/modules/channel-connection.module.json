@@ -5,7 +5,7 @@
   "fields": [
     { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
     { "name": "spaceId", "type": "string", "index": true, "writable": "managed", "classification": "non-personal" },
-    { "name": "channel", "type": "enum", "values": ["whatsapp", "instagram", "facebook", "tiktok", "sms", "email", "voice", "site-form"], "writable": "managed", "classification": "non-personal" },
+    { "name": "channel", "type": "enum", "values": ["whatsapp", "instagram", "facebook", "tiktok", "sms", "email", "voice", "site-form", "calendar", "stripe"], "writable": "managed", "classification": "non-personal" },
     { "name": "account", "type": "string", "index": true, "writable": "managed", "classification": "identification" },
     { "name": "adapter", "type": "string", "writable": "managed", "classification": "non-personal" },
     { "name": "adapterVersion", "type": "integer", "writable": "managed", "classification": "non-personal" },
