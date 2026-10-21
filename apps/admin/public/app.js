@@ -1,5 +1,11 @@
 import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
 import { createAssistantPanel } from './admin-assistant.js';
+import { resolveAdminBase } from './admin-base.js';
+
+// The mount prefix the shell is served under: '' at the domain root, the
+// mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
+// absolute API path below is prefixed, so the shell works unchanged.
+const ADMIN_BASE = resolveAdminBase();
 
 const elements = {
   metrics: document.querySelector('#metrics'),
@@ -35,7 +41,7 @@ async function api(path, options = {}) {
   if (isMutation(method)) {
     requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
   }
-  const response = await fetch(path, { ...options, headers: requestHeaders });
+  const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
   const body = await response.json();
   if (!response.ok) {
     const error = new Error(body?.error?.message || `Request failed (${response.status})`);
@@ -69,7 +75,7 @@ const moduleClient = {
     if (isMutation(method)) {
       requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
     }
-    const response = await fetch(path, {
+    const response = await fetch(`${ADMIN_BASE}${path}`, {
       ...options,
       headers: requestHeaders,
     });
@@ -420,6 +426,9 @@ const customerCardView = createCustomerCardView({
   mount: moduleView,
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
+  // The shell's active space, read late: the calls read stays
+  // space-explicit and follows the space switcher (BO-F1-08).
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
 });
 
 // Customer Data Foundation (ADR-037): import, duplicate candidates, the data
@@ -522,9 +531,13 @@ if (boSidebar && boTopbar) {
       if (assistantPanel) void assistantPanel.open(currentScreenId);
     },
     onPickSpace: (id) => {
+      shellActiveSpace = id;
       try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
         // The switch still applies to this tab.
       }
+      // The open card shows space-scoped calls (BO-F1-08): re-render it on
+      // the new space instead of leaving the previous space's summaries.
+      if (targetForHash(window.location.hash || '#/').view === 'customer-card') route();
     },
     win: typeof window !== 'undefined' ? window : null,
   });

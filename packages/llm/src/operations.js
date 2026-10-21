@@ -54,13 +54,18 @@ export const LLM_RESOURCES = Object.freeze(['llm-usage-day', 'llm-call-audit']);
 export const LLM_CAPABILITY = 'llm-complete';
 export const LLM_CAPABILITY_VERSION = 1;
 
-/** Where the framework's assistant, Advisor and write/suggest features call from. */
+/** Where the framework's assistant, Advisor, write/suggest and call-summary features call from. */
 export const LLM_PURPOSES = Object.freeze([
   'assistant',
   'advisor',
   'write-assist',
   'suggest',
   'free-question',
+  // BO-F1-08 (backlog:588db7766206): call summaries and buying-signal
+  // extraction are their own audited workload, so their spend is
+  // attributed separately from assistant chatter. Additive: every purpose
+  // accepted before stays accepted.
+  'call-summary',
 ]);
 
 export const LLM_AUDIT_LIMIT = 200;

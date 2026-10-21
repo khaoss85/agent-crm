@@ -17,9 +17,11 @@
  *
  * Every panel the composed packages cannot feed answers "not available" with
  * its reason — never an empty value that could be mistaken for "none". The
- * reply composer (BO-F1-07) and the call summary with transcript (BO-F1-08)
- * are deliberately not here: they are their own stories with their own
- * gates (approval, consent).
+ * reply composer (BO-F1-07) is deliberately not here: it is its own story
+ * with its own gate (approval). The call summary with signals and
+ * transcript (BO-F1-08) IS here, read from the call-intelligence
+ * operations: a call exists only under a recorded start-of-call notice,
+ * and a transcript erased by retention reads as erased, never as missing.
  */
 
 const CHANNEL_LABELS = Object.freeze({
@@ -51,10 +53,20 @@ const SYNC_LABELS = Object.freeze({
 const channelLabel = (channel) => CHANNEL_LABELS[String(channel ?? '').toLowerCase()] ?? String(channel ?? 'canale');
 const syncLabel = (sync) => SYNC_LABELS[String(sync ?? '').toLowerCase()] ?? String(sync ?? 'stato ignoto');
 
-/** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
+/**
+ * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
+ *   spaceId?: string | (() => (string | null | undefined))}} deps
+ * `spaceId` is the shell's active space (string or thunk): the calls read
+ * stays space-explicit, never inferred. Without it the calls section stays
+ * honestly unavailable.
+ */
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   const { client } = deps;
+  const activeSpaceId = () => {
+    const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
+    return typeof raw === 'string' && raw !== '' ? raw : null;
+  };
   const el = (tag, className, text) => {
     const node = doc.createElement(tag);
     if (className) node.setAttribute('class', className);
@@ -72,12 +84,24 @@ export function createCustomerCardView(deps) {
 
   async function load(resource, id) {
     const encoded = `${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
-    const [card, timeline, profile] = await Promise.all([
+    const spaceId = activeSpaceId();
+    const [card, timeline, profile, calls] = await Promise.all([
       client.request(`/api/customer-hub/card/${encoded}`),
       client.request(`/api/customer-hub/timeline/${encoded}`),
       client.request(`/api/customer-data/profile/${encoded}`),
+      // Without intelligence composed (honest 404) or without a space the
+      // calls read stays unavailable — never a failed card. Every other
+      // failure (expired session, network, HTTP 5xx) still rejects, so the
+      // card shows its error instead of a misleading "no calls".
+      spaceId === null
+        ? Promise.resolve(null)
+        : client.request(`/api/call-intelligence/calls/${encoded}?spaceId=${encodeURIComponent(spaceId)}`)
+          .catch((error) => {
+            if (error && error.status === 404) return null;
+            throw error;
+          }),
     ]);
-    return { card, timeline, profile };
+    return { card, timeline, profile, calls };
   }
 
   function header(panel, card, resource, id) {
@@ -300,11 +324,81 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'bo-scheda-appt', `${when}${next?.teamMemberId ? ` · ${next.teamMemberId}` : ''}`));
   }
 
-  function aiSummary(box) {
-    // The per-customer AI summary arrives with the call intelligence stories
-    // (BO-F1-08, BO-F4-03): without a recorded source it stays unavailable.
+  const SIGNAL_LABELS = Object.freeze({
+    budget: 'Budget', timing: 'Tempi', interest: 'Interesse', doubt: 'Dubbi',
+  });
+
+  function latestSummarized(calls) {
+    const items = Array.isArray(calls?.calls) ? calls.calls : [];
+    return items.find((call) => typeof call?.summary === 'string' && call.summary !== '') ?? null;
+  }
+
+  function aiSummary(box, calls) {
+    // BO-F1-08: the per-customer AI summary is the latest summarized call.
+    // Without a recorded source it stays unavailable — never an invented one.
     box.appendChild(el('h4', undefined, 'Riepilogo AI'));
-    box.appendChild(el('p', 'bo-muted', 'non disponibile: nessun riepilogo registrato per questo cliente'));
+    const latest = latestSummarized(calls);
+    if (!latest) {
+      box.appendChild(el('p', 'bo-muted', 'non disponibile: nessun riepilogo registrato per questo cliente'));
+      return;
+    }
+    box.appendChild(el('p', 'bo-scheda-summary', latest.summary));
+  }
+
+  function callsBox(box, calls) {
+    // BO-F1-08, ref "05 Scheda cliente": signals (budget/tempi/interesse/
+    // dubbi) with their transcript source, and the openable transcript.
+    box.appendChild(el('h4', undefined, 'Chiamate'));
+    const items = Array.isArray(calls?.calls) ? calls.calls : [];
+    if (items.length === 0) {
+      box.appendChild(el('p', 'bo-muted',
+        calls === null || calls === undefined
+          ? 'non disponibile: nessun dato di chiamata registrato per questo cliente'
+          : 'nessuna chiamata registrata per questo cliente'));
+      return;
+    }
+    const [latest, ...older] = items;
+    const when = String(latest?.recordedAt ?? '').slice(0, 10);
+    box.appendChild(el('p', 'bo-scheda-call-head',
+      `ultima chiamata${latest?.channel ? ` · ${channelLabel(latest.channel)}` : ''}${when ? ` · ${when}` : ''}`));
+    if (typeof latest?.summary === 'string' && latest.summary !== '') {
+      box.appendChild(el('p', 'bo-scheda-summary', latest.summary));
+    }
+    const signals = Array.isArray(latest?.signals) ? latest.signals : [];
+    if (signals.length > 0) {
+      const list = el('ul', 'bo-scheda-signals');
+      for (const signal of signals) {
+        const label = SIGNAL_LABELS[String(signal?.type ?? '')] ?? String(signal?.type ?? 'segnale');
+        // A purged transcript keeps its signal rows without the quoted words:
+        // the label stays as proof of what was found, never an empty quote.
+        const line = typeof signal?.excerpt === 'string' && signal.excerpt !== ''
+          ? el('li', undefined, `${label}: “${signal.excerpt}”`)
+          : el('li', undefined, `${label} (citazione cancellata: retention scaduta)`);
+        list.appendChild(line);
+      }
+      box.appendChild(list);
+    } else {
+      box.appendChild(el('p', 'bo-muted', 'nessun segnale registrato per questa chiamata'));
+    }
+    const transcript = latest?.transcript;
+    if (transcript?.available === true) {
+      const openable = doc.createElement('details');
+      const caption = doc.createElement('summary');
+      caption.textContent = 'Trascrizione';
+      openable.appendChild(caption);
+      const body = doc.createElement('p');
+      body.textContent = String(transcript.text ?? '');
+      openable.appendChild(body);
+      box.appendChild(openable);
+    } else {
+      box.appendChild(el('p', 'bo-muted',
+        typeof transcript?.reason === 'string' && transcript.reason !== ''
+          ? `trascrizione ${transcript.reason}`
+          : 'trascrizione non disponibile per questa chiamata'));
+    }
+    if (older.length > 0) {
+      box.appendChild(el('p', 'bo-muted', `+ ${older.length} chiamate precedenti`));
+    }
   }
 
   async function renderCard(resource, id) {
@@ -320,7 +414,7 @@ export function createCustomerCardView(deps) {
       mount.appendChild(panel);
       return;
     }
-    const { card, timeline, profile } = loaded;
+    const { card, timeline, profile, calls } = loaded;
     const panel = el('div', 'bo-scheda');
     header(panel, card, resource, id);
     const grid = el('div', 'bo-scheda-grid');
@@ -332,7 +426,8 @@ export function createCustomerCardView(deps) {
     details(left, card);
     enriched(left);
     timelineBox(center, timeline);
-    aiSummary(right);
+    aiSummary(right, calls);
+    callsBox(right, calls);
     nextSteps(right, profile);
     offer(right, profile);
     nextAppointment(right, timeline);

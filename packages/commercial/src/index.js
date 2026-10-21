@@ -335,3 +335,8 @@ export {
   createPackageCreditsCapability, grantPackageEntries, isUniqueConflict as isPackageCreditUniqueConflict,
   readPackageBalance, resolveCreditModule, validateCreditSubject, validatePackageCreditGrant,
 } from './package-credits.js';
+export { VAT_RATE_BPS, vatAmountCents, withVatTotals } from './money.js';
+export {
+  QUOTE_SUGGEST_PURPOSE, MAX_SUGGESTIONS, MAX_EXCERPTS, MAX_EXCERPT_CHARS,
+  MAX_MOTIVE_CHARS, SOURCE_QUOTE_CHARS, buildSuggestMessages, suggestQuoteLines,
+} from './quote-suggest.js';

@@ -52,6 +52,8 @@ const parseTotals = (text) => {
   return {
     oneTimeTotal: totals.oneTimeTotal ?? null,
     recurringTotals: Array.isArray(totals.recurringTotals) ? totals.recurringTotals : [],
+    vatRateBps: totals.vatRateBps ?? null,
+    vat: totals.vat ?? null,
   };
 };
 const parseBreakdown = (text) => {
@@ -75,6 +77,16 @@ export function createQuoteView(deps) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   };
   const money = (cents, currency) => (typeof cents === 'number' ? formatMinorUnits(cents, currency) : '—');
+  /** Frozen VAT text for one group, or '' when the totals predate VAT. */
+  const vatText = (vatEntry, currency, rateBps) => {
+    if (!Number.isSafeInteger(rateBps) || rateBps < 0 || rateBps > 10000
+      || !Number.isSafeInteger(vatEntry?.vatAmountCents)
+      || !Number.isSafeInteger(vatEntry?.grossAmountCents)) {
+      return '';
+    }
+    const label = rateBps % 100 === 0 ? String(rateBps / 100) : (rateBps / 100).toFixed(2);
+    return ` · VAT ${label}% ${money(vatEntry.vatAmountCents, currency)} · total ${money(vatEntry.grossAmountCents, currency)}`;
+  };
 
   async function fetchRows(module, filter) {
     const result = await client.request(`/api/modules/${module}/records?limit=${LIST_LIMIT}`);
@@ -214,18 +226,18 @@ export function createQuoteView(deps) {
     const totalsPanel = el('div', 'quote-totals');
     totalsPanel.setAttribute('data-recurring-groups', String(totals.recurringTotals.length));
     totalsPanel.appendChild(el('h3', undefined, 'Totals by commercial period'));
-    const totalRow = (label, group) => {
+    const totalRow = (label, group, vatEntry) => {
       const row = el('p', 'quote-total-row');
       row.setAttribute('data-total', label);
       row.appendChild(el('strong', undefined, `${label}: `));
       row.appendChild(el('span', undefined,
-        `${money(group.netAmountCents, group.currency ?? quote.currency)} net (list ${money(group.listAmountCents, group.currency ?? quote.currency)}, discount ${money(group.discountAmountCents, group.currency ?? quote.currency)})`));
+        `${money(group.netAmountCents, group.currency ?? quote.currency)} net (list ${money(group.listAmountCents, group.currency ?? quote.currency)}, discount ${money(group.discountAmountCents, group.currency ?? quote.currency)})${vatText(vatEntry, group.currency ?? quote.currency, totals.vatRateBps)}`));
       totalsPanel.appendChild(row);
     };
-    if (totals.oneTimeTotal) totalRow('One-time', totals.oneTimeTotal);
-    for (const group of totals.recurringTotals) {
-      totalRow(`Recurring every ${group.intervalCount} ${group.interval}(s)`, group);
-    }
+    if (totals.oneTimeTotal) totalRow('One-time', totals.oneTimeTotal, totals.vat?.oneTime ?? null);
+    totals.recurringTotals.forEach((group, index) => {
+      totalRow(`Recurring every ${group.intervalCount} ${group.interval}(s)`, group, totals.vat?.recurring?.[index] ?? null);
+    });
     if (!totals.oneTimeTotal && totals.recurringTotals.length === 0) {
       totalsPanel.appendChild(el('p', 'empty', 'No lines yet.'));
     }
@@ -416,8 +428,8 @@ export function createQuoteView(deps) {
       row.setAttribute('data-version', version.id);
       const versionTotals = parseTotals(version.totalsJson);
       const periods = [
-        `one-time ${money(versionTotals.oneTimeTotal?.netAmountCents ?? 0, version.currency)}`,
-        ...versionTotals.recurringTotals.map((group) => `${money(group.netAmountCents, version.currency)} / ${group.intervalCount} ${group.interval}(s)`),
+        `one-time ${money(versionTotals.oneTimeTotal?.netAmountCents ?? 0, version.currency)}${vatText(versionTotals.vat?.oneTime ?? null, version.currency, versionTotals.vatRateBps)}`,
+        ...versionTotals.recurringTotals.map((group, index) => `${money(group.netAmountCents, version.currency)} / ${group.intervalCount} ${group.interval}(s)${vatText(versionTotals.vat?.recurring?.[index] ?? null, version.currency, versionTotals.vatRateBps)}`),
       ].join(' · ');
       const link = el('a', undefined,
         `v${version.versionNumber} · ${version.policyDecision} · ${version.policy}@${version.policyVersion} · ${periods}`);
