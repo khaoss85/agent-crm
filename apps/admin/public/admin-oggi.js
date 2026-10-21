@@ -123,7 +123,7 @@ export function renderOggi({
   const hour = now instanceof Date ? now.getHours() : NaN;
 
   mount.appendChild(el(doc, 'p', 'bo-kicker', oggiDateLine(now)));
-  mount.appendChild(el(doc, 'h2', 'bo-oggi-title', `${greetingForHour(hour)}, ${name}`));
+  mount.appendChild(el(doc, 'h2', undefined, `${greetingForHour(hour)}, ${name}`));
   mount.appendChild(el(
     doc,
     'p',
@@ -131,16 +131,21 @@ export function renderOggi({
     'Le schermate pronte del tuo spazio, in un posto solo.',
   ));
 
-  const list = el(doc, 'div', 'bo-oggi-links');
+  // Same rows as the Impostazioni screen: no new stylesheet needed, and the
+  // home automatically matches the backoffice look.
+  const list = el(doc, 'div', 'bo-settings');
   for (const link of links) {
     if (link == null || typeof link.label !== 'string' || typeof link.route !== 'string') continue;
-    const anchor = el(doc, 'a', 'bo-oggi-link', link.label);
+    const row = el(doc, 'div', 'bo-setting-row');
+    row.appendChild(el(doc, 'span', 'bo-setting-label', link.label));
+    const anchor = el(doc, 'a', 'bo-setting-link', 'Apri');
     anchor.setAttribute('href', link.route);
     anchor.addEventListener('click', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       navigate(link.route);
     });
-    list.appendChild(anchor);
+    row.appendChild(anchor);
+    list.appendChild(row);
   }
   if (list.childNodes.length === 0) {
     list.appendChild(el(
