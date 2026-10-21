@@ -242,16 +242,17 @@ async function main() {
 }
 
 /**
- * The one test file whose own run dominates a piece: with
- * `ACCORDO_FULL_SHELL_ORACLE=1` (the CI measurement) its oracle driver alone
- * takes ~13-20 minutes against its own 40-minute budget, while the other
- * ~250 files share the remaining ~25. `scripts/measure-pieces.sh` gives the
- * piece holding this file the oracle maximum (1800 s) and every other piece
- * the normal maximum (600 s). If this file is renamed, no piece is marked
- * heavy and the holding piece fails red past 600 s instead of silently
- * measuring less: the constant is then updated, not the corpus.
+ * No piece is heavier than another by declaration: the shell-classifier
+ * oracle used to dominate whichever piece held it (with
+ * `ACCORDO_FULL_SHELL_ORACLE=1` its driver alone took ~13-20 minutes), so
+ * that piece once kept a 1,800 s lock maximum. The verifier failed the
+ * exception (backlog:664d5f481a96: every piece declares 900 s), so the
+ * corpus is sliced by grouping pair across tests/shell-oracle-a/b/c.test.js
+ * — same cells, three pieces — and every piece declares the same 900 s
+ * maximum in scripts/measure-pieces.sh. If a slice ever outgrows its
+ * maximum, the corpus is sliced smaller, never capped higher one piece at
+ * a time: the constant is then updated, not the corpus.
  */
-export const HEAVY_MEASURE_FILE = 'tests/agent-tool-selection-prompts.test.js';
 
 /** The `npm run <script>` name a piecemeal measurement record carries. */
 export const MEASURE_COMMAND = 'npm run measure';
@@ -345,14 +346,12 @@ export function shardTestFiles(files, index, total) {
 }
 
 /**
- * The whole dealing: one sorted file list per piece, each marked when it
- * holds the oracle file that needs the long maximum (see
- * HEAVY_MEASURE_FILE). Pure, so `--plan` and the tests drive the same
- * dealing the pieces run.
+ * The whole dealing: one sorted file list per piece. Pure, so `--plan` and
+ * the tests drive the same dealing the pieces run.
  *
  * @param {string[]} files repo-relative test paths
  * @param {number} total piece count
- * @returns {Array<{ shard: number, files: string[], heavy: boolean }>}
+ * @returns {Array<{ shard: number, files: string[] }>}
  */
 export function planShards(files, total) {
   if (!Number.isSafeInteger(total) || total < 1) {
@@ -360,13 +359,13 @@ export function planShards(files, total) {
   }
   return Array.from({ length: total }, (_, k) => {
     const piece = shardTestFiles(files, k + 1, total);
-    return { shard: k + 1, files: piece, heavy: piece.includes(HEAVY_MEASURE_FILE) };
+    return { shard: k + 1, files: piece };
   });
 }
 
 /**
  * Print the dealing for `--plan <i/n>`: commit, corpus fingerprint, and each
- * piece's files with its heavy mark. Runs no tests.
+ * piece's files. Runs no tests.
  *
  * @param {string} text the `--plan` value
  */

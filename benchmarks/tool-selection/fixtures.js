@@ -160,6 +160,13 @@ export const DENY = Object.freeze([
   'tests/agent-tool-selection-prompts.test.js',
   'tests/agent-tool-selection-contract.test.js',
   'tests/agent-tool-selection-scoring.test.js',
+  // The shell-classifier oracle, sliced across a shared helper and three
+  // slice files (backlog:664d5f481a96): the corpus generator and the driver
+  // are the benchmark itself, same as the matrix file above.
+  'tests/helpers/shell-oracle.js',
+  'tests/shell-oracle-a.test.js',
+  'tests/shell-oracle-b.test.js',
+  'tests/shell-oracle-c.test.js',
 ]);
 
 /**

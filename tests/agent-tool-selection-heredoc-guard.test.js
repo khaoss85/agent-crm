@@ -3,20 +3,22 @@
 /**
  * The heredoc min-corpus cannot shrink quietly.
  *
- * The shell oracle in tests/agent-tool-selection-prompts.test.js is a ~240 s
- * benchmark matrix, so the fast gate never runs it (see
- * REPO_WIDE_GUARD_EXCLUSIONS in scripts/ci-touched-tests.js) and this file
- * must never import it: importing a test file registers its tests, which
- * would drag the whole matrix into every run that selects this guard. It
- * reads the matrix file as text instead and pins what "halving the heredoc
- * samples" would move: the sample stays at six spellings covering all six
- * delimiter-quoting paths, every sample stays a member of the full list,
- * the full list does not shrink, the generator still emits every placement,
- * and shellCorpus still crosses the sample (not a hardcoded short list).
+ * The shell-oracle machinery lives in tests/helpers/shell-oracle.js (shared
+ * by the three oracle slices in tests/shell-oracle-a/b/c.test.js,
+ * backlog:664d5f481a96), and a full-oracle slice is far too slow for the
+ * fast gate — so this file must never import it: importing a test file
+ * registers its tests, which would drag the whole matrix into every run
+ * that selects this guard, and importing the helper is one step removed
+ * from the same trap. It reads the helper as text instead and pins what
+ * "halving the heredoc samples" would move: the sample stays at six
+ * spellings covering all six delimiter-quoting paths, every sample stays a
+ * member of the full list, the full list does not shrink, the generator
+ * still emits every placement, and shellCorpus still crosses the sample
+ * (not a hardcoded short list).
  *
- * Thresholds are absolute on purpose: they live here, not in the matrix
- * file, so cutting entries there fails here instead of shrinking the bound
- * along with the corpus. Growing either list stays green.
+ * Thresholds are absolute on purpose: they live here, not in the helper,
+ * so cutting entries there fails here instead of shrinking the bound along
+ * with the corpus. Growing either list stays green.
  */
 
 import test from 'node:test';
@@ -26,7 +28,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const MATRIX_FILE = 'tests/agent-tool-selection-prompts.test.js';
+const MATRIX_FILE = 'tests/helpers/shell-oracle.js';
 
 /** Delimiter spellings the full corpus knows today; removals fail, additions pass. */
 const MIN_FULL_SPELLINGS = 23;

@@ -21,17 +21,16 @@
 # its own aging: never background a piece here). `tests/measure-pieces.test.js`
 # pins the seriality by counting coexisting waiters through test doubles.
 #
-# Budgets (declared maxima, enforced by the wrapper): a normal piece gets
-# 900 s — the ~250 non-oracle files share ~25 minutes, so a normal piece
-# finishes in about five, with room for a loaded machine. `npm run check`
-# gets the same 900 s. The piece holding the full-oracle file
-# (HEAVY_MEASURE_FILE in measure-suite.js, ~13-20 minutes against its own
-# 40-minute driver budget) keeps 1800 s: the machine log shows it holding
-# 907-1070 s on recent scheduled runs, so a 900 s cap would kill healthy
-# runs red (DECISION to be confirmed: split the oracle corpus across pieces
-# so the heavy piece fits 900 s too; until then the exception stays). The
-# dealing (`--plan`) marks that piece, so no index is hardcoded here: the
-# budget follows the file.
+# Budgets (declared maxima, enforced by the wrapper): every piece gets
+# 900 s — the check, then each of the MEASURE_SHARDS pieces. The
+# shell-classifier oracle used to dominate whichever piece held it (~13-20
+# minutes against its own 40-minute driver budget, 907-1070 s on the machine
+# log), so that piece once kept 1800 s. The verifier failed the exception
+# (backlog:664d5f481a96: every piece declares 900 s), so the corpus is
+# sliced by grouping pair across tests/shell-oracle-a/b/c.test.js — same
+# 26,880 cells, three pieces of about a third each — and no piece needs
+# more than the common 900 s. If a slice ever outgrows it, slice smaller,
+# never cap one piece higher.
 #
 # Usage: bash scripts/measure-pieces.sh [--apply]
 #   without --apply prints the { measuredAgainst } block (CI redirects it
@@ -63,19 +62,10 @@ echo "measure-pieces: check piece under its own lock (max 900s)…" >&2
 HEAVY_JOB_WAIT_SEC="${HEAVY_JOB_WAIT_SEC:-5400}" HEAVY_JOB_MAX_SEC=900 \
   scripts/ci-heavy.sh measure-check -- npm run check >&2
 
-node scripts/measure-suite.js --plan "$SHARDS" > "$scratch/plan.json"
 for (( i = 1; i <= SHARDS; i++ )); do
-  if node -e 'process.exit(require(process.argv[1]).pieces[Number(process.argv[2]) - 1].heavy ? 0 : 1)' \
-    "$scratch/plan.json" "$i"; then
-    max=1800
-    why="holds the full-oracle file (DECISION backlog:664d5f481a96: 900 s would kill its healthy 907-1070 s runs)"
-  else
-    max=900
-    why="normal piece"
-  fi
-  echo "measure-pieces: piece $i of $SHARDS ($why, lock max ${max}s)…" >&2
+  echo "measure-pieces: piece $i of $SHARDS (lock max 900s)…" >&2
   start="$(date +%s)"
-  HEAVY_JOB_WAIT_SEC="${HEAVY_JOB_WAIT_SEC:-5400}" HEAVY_JOB_MAX_SEC="$max" \
+  HEAVY_JOB_WAIT_SEC="${HEAVY_JOB_WAIT_SEC:-5400}" HEAVY_JOB_MAX_SEC=900 \
     scripts/ci-heavy.sh "measure-$i-of-$SHARDS" -- \
     node scripts/measure-suite.js --shard "$i/$SHARDS" --out "$scratch/shard-$i.json" >&2
   echo "measure-pieces: piece $i of $SHARDS green in $(( $(date +%s) - start ))s; lock released." >&2

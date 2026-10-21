@@ -226,15 +226,15 @@ export const REPO_WIDE_GUARDS = Object.freeze([
  * joins the list above.
  */
 export const REPO_WIDE_GUARD_EXCLUSIONS = Object.freeze({
-  // Slow benchmark matrix (~240 s idle on the shared Mac, past the 300 s
-  // step budget under load: a driver that shells out per corpus case, and
-  // it hangs the pre-push hook the same way). A test this slow is not a
-  // guard — it can never fit the always-run gate. Its
-  // milestone-identifiers check runs instead through the fast twin
-  // tests/agent-tool-selection-docs-ids.test.js (doubled until the matrix
-  // file itself is split; that split and the hang are their own voice).
+  // The prompt matrix walks docs/ for milestone identifiers, so it still
+  // looks like a repo-wide guard — but the fast twin
+  // tests/agent-tool-selection-docs-ids.test.js already runs that check in
+  // the gate, and running both on every PR would double it. (The oracle
+  // that made this file slow moved to tests/helpers/shell-oracle.js, sliced
+  // across tests/shell-oracle-a/b/c.test.js, backlog:664d5f481a96; the
+  // doubling stays because the walk itself is what the twin covers.)
   'tests/agent-tool-selection-prompts.test.js':
-    'slow benchmark matrix (~240 s): covered by the fast twin tests/agent-tool-selection-docs-ids.test.js',
+    'prompt milestone walk: covered by the fast twin tests/agent-tool-selection-docs-ids.test.js',
 });
 
 const git = (/** @type {string[]} */ args) => {

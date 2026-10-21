@@ -19,7 +19,6 @@ import { fileURLToPath } from 'node:url';
 import { gitIn } from './helpers/isolated-git.js';
 
 import {
-  HEAVY_MEASURE_FILE,
   MEASURE_COMMAND,
   buildCombinedRecord,
   combineShards,
@@ -92,17 +91,11 @@ test('a piece that would run nothing refuses: bare node --test would discover th
   assert.throws(() => planShards(fileNames(2), 5), MeasurementError);
 });
 
-test('the dealing marks exactly the piece holding the oracle file as heavy', () => {
-  const files = [...fileNames(30), HEAVY_MEASURE_FILE];
-  const plan = planShards(files, 6);
-  const heavy = plan.filter((piece) => piece.heavy);
-  assert.equal(heavy.length, 1);
-  assert.ok(heavy[0]?.files.includes(HEAVY_MEASURE_FILE));
-});
-
-test('no piece is heavy when the oracle file is absent from the corpus', () => {
+test('the dealing carries no per-piece maximum: every piece declares the same 900 s', () => {
   const plan = planShards(fileNames(30), 6);
-  assert.ok(plan.every((piece) => !piece.heavy));
+  for (const piece of plan) {
+    assert.deepEqual(Object.keys(piece).sort(), ['files', 'shard'], `a piece carries a key the driver does not read: ${Object.keys(piece)}`);
+  }
 });
 
 test('the 6-piece dealing covers exactly the committed corpus: same files, none lost, none doubled', () => {
@@ -295,7 +288,6 @@ function writeShadowTree(shadow) {
     '  const pieces = Array.from({ length: total }, (_, k) => ({',
     '    shard: k + 1,',
     '    files: [`tests/shadow-${k + 1}.test.js`],',
-    '    heavy: k + 1 === 2,',
     '  }));',
     `  process.stdout.write(JSON.stringify({ sha: '${SHA_A}', testsTree: '${TREE_A}', shards: total, pieces }) + '\\n');`,
     "} else if (args[0] === '--shard') {",
@@ -386,7 +378,7 @@ test('pieces queue one at a time: the driver never holds two lock waiters', () =
   }
 });
 
-test('every piece declares its machine-lock maximum: 900 s, 1800 s the oracle piece', () => {
+test('every piece declares the same machine-lock maximum: 900 s', () => {
   const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
   try {
     writeShadowTree(shadow);
@@ -394,11 +386,10 @@ test('every piece declares its machine-lock maximum: 900 s, 1800 s the oracle pi
     assert.equal(status, 0, `driver must stay green:\n${log}`);
     assert.equal(maxOf(log, 'measure-check'), '900');
     assert.equal(maxOf(log, 'measure-1-of-3'), '900');
-    // The canned dealing marks piece 2 heavy, like --plan marks the piece
-    // holding the oracle file: it keeps 1800 s (DECISION backlog:664d5f481a96 —
-    // the machine log shows the oracle piece holding 907-1070 s, so 900 s
-    // would kill healthy runs red; the oracle corpus split is a follow-up).
-    assert.equal(maxOf(log, 'measure-2-of-3'), '1800');
+    // No heavy piece: the full shell-oracle corpus is sliced across three
+    // oracle files (tests/shell-oracle-a/b/c.test.js, backlog:664d5f481a96),
+    // so no piece needs more than the common 900 s.
+    assert.equal(maxOf(log, 'measure-2-of-3'), '900');
     assert.equal(maxOf(log, 'measure-3-of-3'), '900');
   } finally {
     rmSync(shadow, { recursive: true, force: true });
