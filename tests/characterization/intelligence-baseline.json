@@ -2542,7 +2542,7 @@
     }
   ],
   "source": {
-    "apps/server/src/http-server.js": "c6b3a820bdfc94de843a971d56e1560399d923d66ee043516fb57755624d98e6",
+    "apps/server/src/http-server.js": "f1b960f1bc5f1e0843b0b79bf919feaf190d56a5d41904730ca6d8d182d37dd0",
     "examples/starters/b2b-lead-qualification/actions/disqualify.js": "8e722cf7073ff4d52c0f332391217fd6b4568f24f64bb1c7a058e989d9b07a69",
     "examples/starters/b2b-lead-qualification/actions/qualify.js": "3d5ddd5f51be258f7e65554b74ac9f449ac39f69845aef1d0d858b7660c06b78",
     "examples/starters/b2b-lead-qualification/intelligence.js": "388522415c8a324b3cd2d62028af9a8af2f6e5863c0ceab2ecd3d57ae43f52f5",
@@ -2564,9 +2564,9 @@
     "packages/intelligence/modules/score-contribution.module.json": "24a46c9090b066edca2f9eaa7b4e008c93e983e3b6cd903a0e39980cc5b20e7e",
     "packages/intelligence/modules/score-run.module.json": "a3c985aba54e14d28f7cfebefaea03b679ef92efea7cb90d7676ecef13e19621",
     "packages/intelligence/src/actions.js": "1beb29454e8b6fa6ada9b0df53569a9a989f8780f64e055b94f1745d57c2a378",
-    "packages/intelligence/src/call-intelligence.js": "876707ee0d697e2936f4a707748c4224fe86cffaba1e16283bc0f4b836ef4253",
+    "packages/intelligence/src/call-intelligence.js": "fad11a5a1ca93fb9b6069239a53d6b4c721603f506ba94f8b972c97ebfd79631",
     "packages/intelligence/src/capability.js": "7ce4d157c87e26274f027354adc2a120efd27ee891e67f1268e7b3c754f291ea",
-    "packages/intelligence/src/index.js": "4cf181c8d97cbdb9e0f24c2fbf84d14cfb08447cf75f1136ae10cc9b877f64ee",
+    "packages/intelligence/src/index.js": "7bdc53d6ea1e60645ad819f2206ed9292dbb21f6e7cf190ee9c6f14aa8d2f3ae",
     "packages/intelligence/src/registry.js": "da1f64931cb551917314bd05eede6f3519ac9ae571a58252399054b67b450463",
     "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325",
     "packages/work/modules/work-activity.module.json": "eb0f70649d6663e643982be254c5b2bffcbfa7cdae292a9151c7b0ff2fb1f76d",
