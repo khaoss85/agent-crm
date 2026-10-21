@@ -97,6 +97,50 @@ export async function readCustomerCard({ core, subject, readProfile }) {
  * @param {any} profile the frozen profile from `read-customer-profile`
  * @param {{resource: string, id: string}} subject
  */
+/**
+ * The legacy fallback for a profile without the status verdict: the same
+ * absence-proof discipline the card applied on main, from the profile's own
+ * evidence sections. Production profiles always carry the provider verdict;
+ * this path only keeps previously valid shapes rendering.
+ * @param {any} profile the frozen profile from `read-customer-profile`
+ */
+function deriveStatusFromSections(profile) {
+  const sections = {
+    orders: profile?.orders ?? null,
+    contracts: profile?.contracts ?? null,
+    subscriptions: profile?.subscriptions ?? null,
+  };
+  const keys = Object.freeze(['orders', 'contracts', 'subscriptions']);
+  const found = keys.filter((key) => sections[key]?.available === true && (sections[key]?.count ?? 0) > 0);
+  const describeSection = (key) => {
+    const section = sections[key];
+    if (section?.available !== true) return `${key}: not readable here`;
+    if ((section.count ?? 0) > 0) return `${key}: ${section.count} on record`;
+    if (section.countIsComplete === false) return `${key}: partially readable`;
+    return `${key}: none on record`;
+  };
+  const absenceIsProven = keys.every(
+    (key) => sections[key]?.available === true
+      && (sections[key]?.count ?? 0) === 0
+      && sections[key]?.countIsComplete !== false,
+  );
+  const fallbackNote = ' (derived by the card: the profile carried no status verdict)';
+  if (found.length > 0) {
+    return Object.freeze({ value: 'cliente', reason: `signed business on record: ${found.join(', ')}${fallbackNote}` });
+  }
+  if (absenceIsProven) {
+    return Object.freeze({
+      value: 'contatto',
+      reason: `no orders, contracts or subscriptions reference this customer — quotes and opportunities alone do not promote a contact${fallbackNote}`,
+    });
+  }
+  return Object.freeze({
+    value: 'contatto',
+    reason: `no signed business found in the composed packages (${keys.map(describeSection).join('; ')})`
+      + ` — the evidence packages are not all readable here, so this is not a claim none exist${fallbackNote}`,
+  });
+}
+
 export function shapeCustomerCard(profile, subject) {
   const resource = subject?.resource;
   const id = subject?.id;
@@ -135,12 +179,15 @@ export function shapeCustomerCard(profile, subject) {
     .map((row) => Object.freeze({ system: row.system, handle: row.externalId })));
 
   // Signed business promotes; an absence claim needs proof, not silence. The
-  // verdict arrives with the profile through the declared capability — a card
-  // without it refuses fail-closed rather than computing its own.
-  const status = profile?.status;
-  if (!status || typeof status.value !== 'string' || typeof status.reason !== 'string') {
-    throw new ValidationError('the customer profile reader did not provide a customer status', { field: 'status' });
-  }
+  // verdict arrives with the profile through the declared capability, so both
+  // screens agree by construction. A profile shaped before the verdict was
+  // added (customer-profile@1 on main carried no status) still renders: the
+  // card derives the same verdict from the profile's own evidence sections
+  // with the same absence-proof discipline, and says so in the reason.
+  const provided = profile?.status;
+  const status = provided != null && typeof provided.value === 'string' && typeof provided.reason === 'string'
+    ? provided
+    : deriveStatusFromSections(profile);
 
   const subscriptions = profile.subscriptions?.available === true ? profile.subscriptions : null;
   // The profile count is a floor, not a total, when the owning module offers

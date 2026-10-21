@@ -441,11 +441,16 @@ export async function listCustomerRecords({ modules, core, names }, request) {
   // A derived view over an unreadable dependency refuses with its reason,
   // never with an exact-looking empty page: the two derived views need the
   // work and subscription packages, and without them "no renewals" would be
-  // a claim the application cannot make.
-  if (query.view?.id === 'rinnovi-30-giorni' && evidenceReads.subscriptions.readable !== true) {
+  // a claim the application cannot make. A truncated dependency read
+  // (complete:false from a list-only fallback or a bound the scan hit)
+  // refuses the same way: it would silently omit renewals or callbacks
+  // while totalIsExact stays true.
+  if (query.view?.id === 'rinnovi-30-giorni'
+    && (evidenceReads.subscriptions.readable !== true || evidenceReads.subscriptions.complete === false)) {
     throw new AppError('the rinnovi-30-giorni view needs the subscription records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
-  if (query.view?.id === 'ricontattare-oggi' && tasks.readable !== true) {
+  if (query.view?.id === 'ricontattare-oggi'
+    && (tasks.readable !== true || tasks.complete === false)) {
     throw new AppError('the ricontattare-oggi view needs the work-task records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
 
@@ -479,7 +484,18 @@ export async function listCustomerRecords({ modules, core, names }, request) {
       .reduce((sum, row) => sum + (Number(row?.valueCents ?? 0) || 0), 0);
     const currencies = [...new Set(myOpportunities.map((row) => row?.currency).filter((currency) => typeof currency === 'string' && currency !== ''))];
     const myTasks = tasks.rows.filter(mine).filter((row) => row?.status === 'open');
-    myTasks.sort((a, b) => String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
+    // The callback view filters on this one value, so it must be the most
+    // actionable open task — overdue first, then due today — never the
+    // earliest-sorted row, where an undated task ('') would sort before any
+    // date and hide a callback that is due.
+    const taskRank = (row) => {
+      const day = typeof row?.dueAt === 'string' ? row.dueAt.slice(0, 10) : '';
+      if (day !== '' && day < today) return 0;
+      if (day === today) return 1;
+      return 2;
+    };
+    myTasks.sort((a, b) => (taskRank(a) - taskRank(b))
+      || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
     const next = myTasks[0] ?? null;
     const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
     let lastContactAt = null;

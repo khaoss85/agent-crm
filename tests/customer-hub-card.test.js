@@ -278,6 +278,27 @@ test('the definitive "no signed business" needs every evidence package readable 
   assert.match(partial.status.reason, /contracts: partially readable/);
 });
 
+test('a profile without the status verdict still renders (legacy customer-profile@1)', () => {
+  const section = (available, count, extra = {}) => ({ available, count, items: [], ...extra });
+  const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
+  // No `status` key: a profile cached or shaped before the verdict was added.
+  // The card derives the same verdict from the sections instead of throwing.
+  const proven = shapeCustomerCard({
+    identity, externalIdentities: [],
+    subscriptions: section(true, 0), orders: section(true, 0), contracts: section(true, 0),
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(proven.status.value, 'contatto');
+  assert.match(proven.status.reason, /no orders, contracts or subscriptions reference this customer/);
+  assert.match(proven.status.reason, /no status verdict/,
+    'the reason says where the verdict came from, never silently');
+  const signed = shapeCustomerCard({
+    identity, externalIdentities: [],
+    subscriptions: section(true, 1), orders: section(true, 0), contracts: section(true, 0),
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(signed.status.value, 'cliente');
+  assert.match(signed.status.reason, /subscriptions/);
+});
+
 test('the card renders as one self-contained phone page', async (t) => {
   const root = projectWithHub(t);
   const context = await boot(root, join(root, 'data', 'hub-render.sqlite'));

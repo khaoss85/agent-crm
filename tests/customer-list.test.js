@@ -415,6 +415,52 @@ test('a derived view over an unreadable dependency refuses, never an empty page'
   )).total, 2);
 });
 
+test('ricontattare-oggi sees an overdue callback behind an undated open task', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const modules = fakeModules({
+    contacts, companies, identities,
+    tasks: [
+      { id: 't1', title: 'Senza data', status: 'open', dueAt: null, subjectResource: 'contact', subjectId: 'c1' },
+      { id: 't2', title: 'Richiama', status: 'open', dueAt: '2026-10-20T18:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    ],
+  });
+  const run = (request) => listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, request);
+  const page = await run({ vista: 'ricontattare-oggi' });
+  assert.equal(page.total, 1, 'an undated open task must not hide the overdue callback');
+  const guido = page.items.find((item) => item.name === 'Guido Presti');
+  assert.equal(guido.nextStep.title, 'Richiama', 'the row carries the most actionable task, not the earliest-sorted one');
+  assert.equal(guido.nextStep.overdue, true);
+});
+
+test('a derived view over a truncated dependency refuses instead of omitting rows', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const overdue = [{
+    id: 't1', title: 'Richiama', status: 'open', dueAt: '2026-10-20T18:00:00.000Z',
+    subjectResource: 'contact', subjectId: 'c1',
+  }];
+  // A handwritten service exposing only list(): the batched read is a bounded
+  // page flagged partial (complete:false), never an exact answer.
+  const listOnly = (rows) => ({ list: async () => rows });
+  const base = fakeModules({ contacts, companies, identities, tasks: overdue });
+  const swap = (name, service) => ({ get: (key) => (key === name ? { service } : base.get(key)) });
+  await assert.rejects(
+    listCustomerRecords(
+      { modules: swap('work-task', listOnly(overdue)), core: {}, names: { identity: 'external-identity' } },
+      { vista: 'ricontattare-oggi' },
+    ),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /work-task/.test(error.message),
+    'a truncated work-task read refuses the callback view instead of an exact-looking page',
+  );
+  await assert.rejects(
+    listCustomerRecords(
+      { modules: swap('subscription', listOnly([])), core: {}, names: { identity: 'external-identity' } },
+      { vista: 'rinnovi-30-giorni' },
+    ),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /subscription/.test(error.message),
+    'a truncated subscription read refuses the renewal view instead of an exact-looking page',
+  );
+});
+
 test('budget signals attach with their source only when a space is named', async () => {
   const { contacts, companies, identities } = SCENE();
   const signals = [{
