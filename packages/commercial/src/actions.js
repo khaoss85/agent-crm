@@ -8,6 +8,7 @@ import {
   groupComponentTotals,
   effectiveDiscountBps,
   maxLineDiscountBps,
+  withVatTotals,
 } from './money.js';
 
 /**
@@ -180,7 +181,7 @@ function quoteComponentAmounts(lines) {
  */
 async function recalc(modules, cfg, quote, managed) {
   const lines = await activeLines(modules, cfg, quote.id);
-  const totals = groupComponentTotals(quoteComponentAmounts(lines), quote.currency);
+  const totals = withVatTotals(groupComponentTotals(quoteComponentAmounts(lines), quote.currency));
   return managed(quote.id, {
     totalsJson: toJson(totals),
     oneTimeNetCents: totals.oneTimeTotal.netAmountCents,
@@ -211,7 +212,7 @@ export function buildCreateQuoteAction(config) {
       if (book.active !== true) {
         throw new AppError(`Price book "${book.id}" is not active`, { code: 'PRICE_BOOK_INACTIVE', status: 409 });
       }
-      const emptyTotals = groupComponentTotals([], book.currency);
+      const emptyTotals = withVatTotals(groupComponentTotals([], book.currency));
       const quote = await trusted(modules, cfg.quoteModule).createManaged(
         {
           opportunityId: record.id,
@@ -446,7 +447,10 @@ export function buildSubmitQuoteAction(config, registries) {
         : null;
       const { definition: policy, fingerprint } = registries.getDiscountPolicy(input.policy, input.version);
       const componentAmounts = quoteComponentAmounts(lines);
-      const totals = groupComponentTotals(componentAmounts, quote.currency);
+      // The VAT view freezes with the version: the rate and every amount
+      // below are immutable per version, which is what the version PDF
+      // renders (BO-F2-03: subtotale + IVA 22%).
+      const totals = withVatTotals(groupComponentTotals(componentAmounts, quote.currency));
       const maxDiscountBps = maxLineDiscountBps(lines);
       const effectiveBps = effectiveDiscountBps(totals);
       const submittedAt = now();
@@ -805,6 +809,8 @@ function quoteSummary(quote) {
     currentApprovalId: quote.currentApprovalId,
     oneTimeTotal: totals.oneTimeTotal,
     recurringTotals: totals.recurringTotals,
+    vatRateBps: totals.vatRateBps ?? null,
+    vat: totals.vat ?? null,
   };
 }
 
