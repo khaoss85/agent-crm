@@ -8,6 +8,7 @@ import {
   buildUpdatePayload,
   apiErrorToFormErrors,
   selectGeneratedModules,
+  shellNavInput,
   displayTitle,
   parseModuleRoute,
   SUPPORTED_ADMIN_CONTRACT,
@@ -168,4 +169,51 @@ test('displayTitle prefers the first required string, falls back to id', () => {
   const fields = [{ name: 'name', type: 'string', required: true }, { name: 'tier', type: 'enum', values: [] }];
   assert.equal(displayTitle({ name: 'Acme', id: 'x' }, fields), 'Acme');
   assert.equal(displayTitle({ id: 'x1' }, fields), 'x1');
+});
+
+test('shellNavInput reads a composed envelope: pipelines, modules, Clienti', () => {
+  // Mirrors the real `/api/schema` envelope shape (apps/server http-server):
+  // pipelineContract + pipelines at the top level, the domain contract at
+  // the top level of the domain block (the registry merges metadata() there).
+  const envelope = {
+    generatedResourceContract: SUPPORTED_ADMIN_CONTRACT,
+    generatedModules: [
+      { name: 'magazzino', kind: 'generated', capabilities: ['list'], fields: [] },
+    ],
+    pipelineContract: 1,
+    pipelines: [{ name: 'vendite', label: 'Vendite' }],
+    domains: { 'customer-data': { customerDataContract: 1, resources: [] } },
+  };
+  const input = shellNavInput(envelope);
+  assert.deepEqual(input.pipelines.map((pipeline) => pipeline.name), ['vendite']);
+  assert.deepEqual(input.customModules.map((module) => module.name), ['magazzino']);
+  assert.equal(input.customerDataAvailable, true);
+  assert.equal(input.modulesSupported, true);
+});
+
+test('shellNavInput keeps the legacy customer-data metadata path', () => {
+  const envelope = {
+    pipelineContract: 1,
+    pipelines: [],
+    domains: { 'customer-data': { metadata: { customerDataContract: 1 } } },
+  };
+  assert.equal(shellNavInput(envelope).customerDataAvailable, true);
+});
+
+test('shellNavInput on a bare envelope disables everything honestly', () => {
+  // The default application serves no pipelines and no domains: every
+  // composed voice stays disabled instead of linking a blank screen.
+  const bare = { generatedResourceContract: 1, generatedModules: [], pipelineContract: 1, pipelines: [] };
+  const input = shellNavInput(bare);
+  assert.deepEqual(input.pipelines, []);
+  assert.deepEqual(input.customModules, []);
+  assert.equal(input.customerDataAvailable, false);
+  assert.equal(input.modulesSupported, true);
+
+  for (const envelope of [null, undefined, {}, { pipelineContract: 999 }, { pipelineContract: 1 }]) {
+    const fallback = shellNavInput(envelope);
+    assert.deepEqual(fallback.pipelines, []);
+    assert.deepEqual(fallback.customModules, []);
+    assert.equal(fallback.customerDataAvailable, false);
+  }
 });
