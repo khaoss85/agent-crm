@@ -929,6 +929,168 @@ test('senza finestra di risposta non si invia', async (t) => {
   assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:no-window' }))[0].status, 'active');
 });
 
+test('una finestra malformata non invia: cieca invece di sparare', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:bad-window');
+  await enroll(ops, connectionKey, 'seq:bad-window', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  // A reply is recorded, but the composed window is truthy yet unusable:
+  // "cannot tell" is not "no reply" — the sweep blinds the enrollment and
+  // fires nothing instead of queueing past a reply it cannot see.
+  await replyRow(composed, connectionKey, TO, T0_LATER);
+  composed.clockBox.ms = Date.parse(T0);
+  const blind = await advanceSequences({
+    modules: composed.modules,
+    queueTemplate: queue(composed).queueTemplate,
+    permissionGate: gate(composed),
+    replyWindows: { [connectionKey]: {} },
+    now: () => T0,
+    actor: SYSTEM,
+  });
+  assert.equal(blind.advanced, 0);
+  assert.equal(blind.stoppedReplied, 0);
+  assert.equal(blind.inboxUnavailable.length, 1);
+  assert.equal(blind.inboxUnavailable[0].spaceId, SPACE);
+  assert.equal(blind.inboxUnavailable[0].code, 'SEQUENCES_WINDOW_MALFORMED');
+  const sends = composed.modules.get('sequence-send').service;
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:bad-window' })).length, 0);
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:bad-window' }))[0].status, 'active');
+
+  // The reply was really there: with the composed window the next sweep
+  // stops the enrollment instead of firing step two.
+  const stopped = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(stopped.stoppedReplied, 1);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:bad-window' })).length, 0);
+});
+
+test('una finestra che lancia non invia', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:throwing-window');
+  await enroll(ops, connectionKey, 'seq:throwing-window', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  await replyRow(composed, connectionKey, TO, T0_LATER);
+  const throwingWindow = {
+    subjectForRecipient: () => {
+      throw Object.assign(new Error('recipient the window cannot parse'), { code: 'ADAPTER_BOOM' });
+    },
+    isObservation: () => true,
+  };
+  composed.clockBox.ms = Date.parse(T0);
+  const blind = await advanceSequences({
+    modules: composed.modules,
+    queueTemplate: queue(composed).queueTemplate,
+    permissionGate: gate(composed),
+    replyWindows: { [connectionKey]: throwingWindow },
+    now: () => T0,
+    actor: SYSTEM,
+  });
+  assert.equal(blind.advanced, 0);
+  assert.equal(blind.stoppedReplied, 0);
+  assert.equal(blind.inboxUnavailable.length, 1);
+  assert.equal(blind.inboxUnavailable[0].spaceId, SPACE);
+  assert.equal(blind.inboxUnavailable[0].code, 'ADAPTER_BOOM');
+  const sends = composed.modules.get('sequence-send').service;
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:throwing-window' })).length, 0);
+});
+
+test('una lettura rotta di una sequenza non ferma le altre', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:iso-a');
+  await createActiveSequence(ops, 'seq:iso-b');
+  await enroll(ops, connectionKey, 'seq:iso-a', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+  await enroll(ops, connectionKey, 'seq:iso-b', 'c-maria', TO_2, { name: 'Maria', hour: '18:00' });
+
+  // The step list of one sequence reads as a transient storage failure:
+  // the sweep records it and still fires the healthy sequence in the same
+  // sweep instead of aborting the whole multi-space sweep.
+  const steps = composed.modules.get('sequence-step').service;
+  const original = steps.listWhere.bind(steps);
+  steps.listWhere = (filter) => {
+    if (filter && filter.sequenceSourceKey === 'seq:iso-a') {
+      throw Object.assign(new Error('transient storage failure'), { code: 'SQLITE_IOERR' });
+    }
+    return original(filter);
+  };
+  let swept;
+  try {
+    swept = await advance(composed, connectionKey, T0);
+  } finally {
+    steps.listWhere = original;
+  }
+  assert.equal(swept.advanced, 1);
+  assert.equal(swept.sweepErrors.length, 1);
+  assert.equal(swept.sweepErrors[0].phase, 'due');
+  assert.equal(swept.sweepErrors[0].spaceId, SPACE);
+  assert.equal(swept.sweepErrors[0].code, 'SQLITE_IOERR');
+  const sends = composed.modules.get('sequence-send').service;
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:iso-a' })).length, 0);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:iso-b' })).length, 1);
+
+  // The broken sequence recovers on the next sweep with the store healed.
+  const healed = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(healed.advanced, 1);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:iso-a' })).length, 1);
+});
+
+test('una scrittura di stop rotta non ferma le altre iscrizioni', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:iso-stop');
+  const bad = await enroll(ops, connectionKey, 'seq:iso-stop', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+  await enroll(ops, connectionKey, 'seq:iso-stop', 'c-maria', TO_2, { name: 'Maria', hour: '18:00' });
+
+  // Both replied. Recording the stop of one enrollment fails transiently:
+  // the sweep records it and still stops the healthy enrollment instead of
+  // aborting, and fires nothing for either.
+  await replyRow(composed, connectionKey, TO, T0_LATER);
+  await replyRow(composed, connectionKey, TO_2, T0_LATER, ':maria');
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  const original = enrollments.applyManaged.bind(enrollments);
+  enrollments.applyManaged = (id, patch, opts) => {
+    if (id === bad.id && patch && patch.status === 'stopped-replied') {
+      throw Object.assign(new Error('transient write failure'), { code: 'SQLITE_IOERR' });
+    }
+    return original(id, patch, opts);
+  };
+  let swept;
+  try {
+    swept = await advance(composed, connectionKey, T0_LATER);
+  } finally {
+    enrollments.applyManaged = original;
+  }
+  assert.equal(swept.advanced, 0);
+  assert.equal(swept.stoppedReplied, 1);
+  assert.ok(swept.sweepErrors.length >= 1);
+  assert.ok(swept.sweepErrors.every((entry) => entry.spaceId === SPACE));
+  const sends = composed.modules.get('sequence-send').service;
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:iso-stop' })).length, 0);
+  const people = await enrollments.listWhere({ sequenceSourceKey: 'seq:iso-stop' });
+  assert.equal(people.find((entry) => entry.subjectId === 'c-maria').status, 'stopped-replied');
+  assert.equal(people.find((entry) => entry.subjectId === 'c-guido').status, 'active');
+
+  // The store healed: the next sweep stops the remaining enrollment.
+  const healed = await advance(composed, connectionKey, T1);
+  assert.equal(healed.stoppedReplied, 1);
+  assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:iso-stop' }))
+    .find((entry) => entry.subjectId === 'c-guido').status, 'stopped-replied');
+});
+
 test("l'abilitazione tra gate e propose accoda invece di abortire", async (t) => {
   const composed = compose();
   t.after(() => composed.database.close());

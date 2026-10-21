@@ -239,39 +239,58 @@ export function personalizeVars(templateVarsJson, enrollment) {
  * The first recorded reply of one enrollment: an applied inbox row for the
  * recipient's conversation after the enrollment, where "the recipient's
  * conversation" and "a reply" (not a delivery report) are the connection
- * window's own rule. Without a window there is no reply: a raw-recipient
- * comparison could never equal a normalized conversation subject (such as
- * `wa:<digits>`), so matching here would only miss the reply and send
- * anyway. Callers fail closed on a missing window (blind enrollment, never
- * fired) instead of relying on this null.
+ * window's own rule. Returns the row, or null when no reply is recorded.
+ *
+ * A window the sweep cannot use — missing, truthy but malformed (no
+ * `subjectForRecipient`/`isObservation` functions), a `subjectForRecipient`
+ * that throws for this recipient, or a non-string subject — is NOT "no
+ * reply": it is "cannot tell". This throws (`SEQUENCES_WINDOW_MALFORMED`)
+ * instead of returning null, so callers fail closed (blind enrollment,
+ * never fired) instead of queueing the next follow-up to someone who may
+ * already have replied. A raw-recipient comparison could never equal a
+ * normalized conversation subject (such as `wa:<digits>`), so matching
+ * here would only miss the reply and send anyway.
  */
 export function findReply({ inboxRows, window, to, sinceMs }) {
-  const rows = Array.isArray(inboxRows) ? inboxRows : [];
-  let subject = null;
-  if (window && typeof window.subjectForRecipient === 'function') {
-    try {
-      subject = window.subjectForRecipient(to);
-    } catch {
-      return null;
-    }
-  } else {
-    return null;
+  const usable = window
+    && typeof window.subjectForRecipient === 'function'
+    && typeof window.isObservation === 'function';
+  if (!usable) {
+    throw new AppError('Sequence reply window is missing or malformed', {
+      code: 'SEQUENCES_WINDOW_MALFORMED', status: 500,
+    });
   }
-  if (typeof subject !== 'string' || subject === '') return null;
-  const isObservation = window && typeof window.isObservation === 'function'
-    ? (row) => {
-      try {
-        return window.isObservation(row) === true;
-      } catch {
-        return false;
-      }
-    }
-    : () => true;
+  let subject;
+  try {
+    subject = window.subjectForRecipient(to);
+  } catch (error) {
+    const cause = error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'UNKNOWN';
+    throw new AppError('Sequence reply window cannot determine the conversation', {
+      code: 'SEQUENCES_WINDOW_MALFORMED', status: 500,
+      details: { cause },
+    });
+  }
+  if (typeof subject !== 'string' || subject === '') {
+    throw new AppError('Sequence reply window cannot determine the conversation', {
+      code: 'SEQUENCES_WINDOW_MALFORMED', status: 500,
+    });
+  }
+  const rows = Array.isArray(inboxRows) ? inboxRows : [];
   let earliest = null;
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
     if (row.subject !== subject || row.effect !== 'applied') continue;
-    if (!isObservation(row)) continue;
+    let observation;
+    try {
+      observation = window.isObservation(row) === true;
+    } catch (error) {
+      const cause = error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'UNKNOWN';
+      throw new AppError('Sequence reply window cannot classify an inbox row', {
+        code: 'SEQUENCES_WINDOW_MALFORMED', status: 500,
+        details: { cause },
+      });
+    }
+    if (!observation) continue;
     const at = typeof row.occurredAt === 'string' && row.occurredAt !== '' ? row.occurredAt : row.receivedAt;
     if (typeof at !== 'string') continue;
     const ms = Date.parse(at);
@@ -617,12 +636,21 @@ export async function advanceSequences({
       noteInboxBlind(current, { code: 'SEQUENCES_WINDOW_MISSING' });
       return 'blind';
     }
-    const reply = findReply({
-      inboxRows,
-      window,
-      to: current.recipient,
-      sinceMs: Date.parse(current.enrolledAt),
-    });
+    let reply;
+    try {
+      reply = findReply({
+        inboxRows,
+        window,
+        to: current.recipient,
+        sinceMs: Date.parse(current.enrolledAt),
+      });
+    } catch (error) {
+      // "Cannot tell" is not "no reply": a malformed or throwing window
+      // blinds this enrollment instead of letting the sweep fire past a
+      // reply it cannot see.
+      noteInboxBlind(current, error);
+      return 'blind';
+    }
     if (!reply) return false;
     await enrollments.applyManaged(current.id, { status: 'stopped-replied', decidedAt: nowIso }, { actor: timer });
     summary.stoppedReplied += 1;
@@ -631,12 +659,32 @@ export async function advanceSequences({
 
   for (const sequence of Array.isArray(rows) ? rows : []) {
     if (!sequence || typeof sequence !== 'object') continue;
-    const active = await enrollments.listWhere({
-      sequenceSourceKey: /** @type {any} */ (sequence).sourceKey, status: 'active',
-    });
+    // One sequence's unreadable enrollment list never starves the later
+    // sequences or the due and confirm passes behind it: the throw is
+    // recorded on the summary and the sweep moves on.
+    let active;
+    try {
+      active = await enrollments.listWhere({
+        sequenceSourceKey: /** @type {any} */ (sequence).sourceKey, status: 'active',
+      });
+    } catch (error) {
+      noteSweepError(
+        { sourceKey: '', spaceId: /** @type {any} */ (sequence).spaceId ?? '' },
+        error,
+        'stop',
+      );
+      continue;
+    }
     for (const enrollment of Array.isArray(active) ? active : []) {
       if (!enrollment || typeof enrollment !== 'object') continue;
-      await stopIfReplied(enrollment);
+      try {
+        await stopIfReplied(enrollment);
+      } catch (error) {
+        // A failing stop write (or reread) stays with that enrollment: the
+        // sweep records it and checks the next enrollment instead of
+        // aborting the whole multi-space sweep.
+        noteSweepError(enrollment, error, 'stop');
+      }
     }
   }
 
@@ -644,12 +692,27 @@ export async function advanceSequences({
     if (!sequence || typeof sequence !== 'object') continue;
     const spaceId = /** @type {any} */ (sequence).spaceId;
     const seqKey = /** @type {any} */ (sequence).sourceKey;
-    const ordered = (await steps.listWhere({ sequenceSourceKey: seqKey }))
-      .filter((row) => row && Number.isInteger(row.stepOrder))
-      .sort((a, b) => a.stepOrder - b.stepOrder);
+    // One sequence's unreadable steps or enrollments never starve the later
+    // sequences or the confirm pass behind them: the throw is recorded on
+    // the summary and the sweep moves on to the next sequence.
+    let ordered;
+    try {
+      ordered = (await steps.listWhere({ sequenceSourceKey: seqKey }))
+        .filter((row) => row && Number.isInteger(row.stepOrder))
+        .sort((a, b) => a.stepOrder - b.stepOrder);
+    } catch (error) {
+      noteSweepError({ sourceKey: '', spaceId }, error, 'due');
+      continue;
+    }
     if (ordered.length === 0) continue;
-    const due = (await enrollments.listWhere({ sequenceSourceKey: seqKey, status: 'active' }))
-      .filter((row) => row && typeof row.nextDueAt === 'string' && Date.parse(row.nextDueAt) <= nowMs);
+    let due;
+    try {
+      due = (await enrollments.listWhere({ sequenceSourceKey: seqKey, status: 'active' }))
+        .filter((row) => row && typeof row.nextDueAt === 'string' && Date.parse(row.nextDueAt) <= nowMs);
+    } catch (error) {
+      noteSweepError({ sourceKey: '', spaceId }, error, 'due');
+      continue;
+    }
     for (const enrollment of due) {
       // The due list is only a snapshot: re-read the row before firing, so a
       // pause or a stop between the list and the fire is honored.
@@ -668,11 +731,25 @@ export async function advanceSequences({
         // The final send settles before the enrollment completes: a sweep
         // that queued the last step but never saw the outbox answer leaves
         // the enrollment active so the confirm pass below still finds it.
-        const outstanding = await sends.listWhere({ enrollmentSourceKey: current.sourceKey });
+        // Both storage reads and the completion write below stay with this
+        // enrollment: a transient failure is recorded on the summary and
+        // the sweep fires the next enrollment instead of aborting.
+        let outstanding;
+        try {
+          outstanding = await sends.listWhere({ enrollmentSourceKey: current.sourceKey });
+        } catch (error) {
+          noteSweepError(current, error, 'due');
+          continue;
+        }
         const unsettled = (Array.isArray(outstanding) ? outstanding : [])
           .some((row) => row && (row.status === 'queued' || row.status === 'waiting-approval'));
         if (unsettled) continue;
-        await enrollments.applyManaged(current.id, { status: 'completed', decidedAt: nowIso }, { actor: timer });
+        try {
+          await enrollments.applyManaged(current.id, { status: 'completed', decidedAt: nowIso }, { actor: timer });
+        } catch (error) {
+          noteSweepError(current, error, 'due');
+          continue;
+        }
         summary.confirmed += 1;
         continue;
       }
@@ -681,8 +758,11 @@ export async function advanceSequences({
 
       // 1. Stop on reply: the first recorded reply ends the enrollment.
       // Without the inbox — or without the reply window — this sweep
-      // cannot know, so it fails closed and never fires.
-      const window = replyWindows?.[current.connectionKey] ?? replyWindows?.[step.channel] ?? null;
+      // cannot know, so it fails closed and never fires. The window
+      // resolution is the same connectionKey-then-channel lookup as the
+      // stop pass above, and an unusable window blinds the enrollment
+      // instead of letting the sweep fire past a reply it cannot see.
+      const window = await resolveReplyWindow(current);
       if (!window) {
         noteInboxBlind(current, { code: 'SEQUENCES_WINDOW_MISSING' });
         continue;
@@ -694,14 +774,25 @@ export async function advanceSequences({
         noteInboxBlind(current, error);
         continue;
       }
-      const reply = findReply({
-        inboxRows,
-        window,
-        to: current.recipient,
-        sinceMs: Date.parse(current.enrolledAt),
-      });
+      let reply;
+      try {
+        reply = findReply({
+          inboxRows,
+          window,
+          to: current.recipient,
+          sinceMs: Date.parse(current.enrolledAt),
+        });
+      } catch (error) {
+        noteInboxBlind(current, error);
+        continue;
+      }
       if (reply) {
-        await enrollments.applyManaged(current.id, { status: 'stopped-replied', decidedAt: nowIso }, { actor: timer });
+        try {
+          await enrollments.applyManaged(current.id, { status: 'stopped-replied', decidedAt: nowIso }, { actor: timer });
+        } catch (error) {
+          noteSweepError(current, error, 'due');
+          continue;
+        }
         summary.stoppedReplied += 1;
         continue;
       }
@@ -893,7 +984,20 @@ export async function advanceSequences({
   const queuedRows = [];
   for (const sequence of Array.isArray(rows) ? rows : []) {
     if (!sequence || typeof sequence !== 'object') continue;
-    const pending = await sends.listWhere({ sequenceSourceKey: /** @type {any} */ (sequence).sourceKey, status: 'queued' });
+    // One sequence's unreadable queued rows never skip the confirm rows
+    // already collected or the later sequences: the throw is recorded and
+    // the collection moves on.
+    let pending;
+    try {
+      pending = await sends.listWhere({ sequenceSourceKey: /** @type {any} */ (sequence).sourceKey, status: 'queued' });
+    } catch (error) {
+      noteSweepError(
+        { sourceKey: '', spaceId: /** @type {any} */ (sequence).spaceId ?? '' },
+        error,
+        'confirm',
+      );
+      continue;
+    }
     for (const row of Array.isArray(pending) ? pending : []) queuedRows.push(row);
   }
   for (const row of queuedRows) {
