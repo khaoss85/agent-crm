@@ -230,7 +230,7 @@ export async function suggestQuoteLines({ excerpts, offers, complete, maxSuggest
     let discountBps = 0;
     if (item.discountBps !== undefined) {
       if (!Number.isSafeInteger(item.discountBps) || item.discountBps < 0 || item.discountBps > 10_000) {
-        refuse('SUGGESTION_DISCOUNT_INVALID', 'discountBps must be an integer 0–10000 when present');
+        refuse('SUGGESTION_DISCOUNT_INVALID', 'discountBps must be an integer 0-10000 when present');
         continue;
       }
       discountBps = item.discountBps;
