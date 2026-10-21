@@ -70,7 +70,13 @@ function frozenVatView(totalsJson) {
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== 'object' || typeof parsed.vatRateBps !== 'number' || !parsed.vat || typeof parsed.vat !== 'object') {
+  if (!parsed || typeof parsed !== 'object' || !parsed.vat || typeof parsed.vat !== 'object') {
+    return null;
+  }
+  // The rate is a server-frozen basis-points figure; anything outside the
+  // 0–10000 range is not a rate this document knows how to print, so the
+  // version renders as pre-VAT rather than inventing tax.
+  if (!Number.isInteger(parsed.vatRateBps) || parsed.vatRateBps < 0 || parsed.vatRateBps > 10_000) {
     return null;
   }
   if (!parsed.vat.oneTime || typeof parsed.vat.oneTime !== 'object' || !Array.isArray(parsed.vat.recurring)) {

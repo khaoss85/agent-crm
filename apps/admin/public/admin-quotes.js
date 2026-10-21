@@ -79,7 +79,8 @@ export function createQuoteView(deps) {
   const money = (cents, currency) => (typeof cents === 'number' ? formatMinorUnits(cents, currency) : '—');
   /** Frozen VAT text for one group, or '' when the totals predate VAT. */
   const vatText = (vatEntry, currency, rateBps) => {
-    if (!Number.isSafeInteger(rateBps) || !Number.isSafeInteger(vatEntry?.vatAmountCents)
+    if (!Number.isSafeInteger(rateBps) || rateBps < 0 || rateBps > 10000
+      || !Number.isSafeInteger(vatEntry?.vatAmountCents)
       || !Number.isSafeInteger(vatEntry?.grossAmountCents)) {
       return '';
     }
