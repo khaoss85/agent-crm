@@ -80,13 +80,13 @@ pass settles the priors.
 
 ## Tenant isolation
 
-Every system-derived key carries the space id — the enrollment key
-(`seq-enroll:<spaceId>:<sequence>:<resource>:<id>`), the step key
+Sequence keys are globally unique in storage: reusing another space's
+key fails explicitly with `SEQUENCE_SOURCEKEY_TAKEN`, never with a silent
+replay. Every system-derived key also carries the space id — the enrollment
+key (`seq-enroll:<spaceId>:<sequence>:<resource>:<id>`), the step key
 (`seq-step:<spaceId>:<sequence>:<order>`) and the message key above — and
 every steps, enrollments and sends lookup is filtered by `{spaceId, ...}`.
-Two spaces may reuse the same sequence key and subject without seeing or
-blocking each other: the sweep, the metrics and the elenco never mix rows
-across spaces. A retry that hits a stored step with a different definition
+The sweep, the metrics and the elenco never mix rows across spaces. A retry that hits a stored step with a different definition
 fails with `SEQUENCE_STEP_CONFLICT` instead of silently replaying it.
 
 When the sweep re-proposes a step whose approval was recorded after a crash

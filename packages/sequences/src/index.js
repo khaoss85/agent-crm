@@ -220,7 +220,19 @@ export function createSequencesPackage(options = {}) {
               } catch (error) {
                 if (!isWinnerConflict(error)) throw error;
                 sequence = (await sequences.listWhere({ spaceId, sourceKey }))[0] ?? null;
-                if (!sequence) throw error;
+                if (!sequence) {
+                  // Sequence keys are globally unique in storage: a row the
+                  // space-scoped re-read cannot see belongs to another space.
+                  // Reject the reuse explicitly instead of leaking the generic
+                  // record-layer conflict.
+                  const elsewhere = (await sequences.listWhere({ sourceKey }))[0] ?? null;
+                  if (elsewhere) {
+                    throw new AppError('This sequence key is already used in another space', {
+                      code: 'SEQUENCE_SOURCEKEY_TAKEN', status: 409,
+                    });
+                  }
+                  throw error;
+                }
                 replayed = true;
               }
             }

@@ -1500,7 +1500,7 @@ test('personalize non deterministico più crash non incastra l\u2019invio', asyn
   assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:flaky-hook' }))[0].status, 'sent');
 });
 
-test('due spazi con la stessa chiave di sequenza restano isolati', async (t) => {
+test('due spazi con chiavi diverse restano isolati', async (t) => {
   const composed = compose();
   t.after(() => composed.database.close());
   const connectionKey = await activeConnection(composed);
@@ -1516,17 +1516,27 @@ test('due spazi con la stessa chiave di sequenza restano isolati', async (t) => 
   const OTHER_CONN = 'conn-spazio-b';
   const ops = sequenceOps(composed, connectionKey);
 
-  // The same caller-supplied sequence key lives in two spaces at once.
-  for (const spaceId of [SPACE, OTHER]) {
-    const created = await ops.createSequence({
-      spaceId, sourceKey: 'seq:shared', name: 'Condivisa', steps: STEPS, actor: USER,
-    });
-    assert.equal(created.replayed, false);
-    await ops.activateSequence({ spaceId, sourceKey: 'seq:shared', actor: USER });
-  }
-  const enrollIn = async (spaceId, subjectId, to, conn) => (await ops.enrollSequencePerson({
+  // Sequence keys are globally unique in storage: the second space cannot
+  // reuse the first space's key, and hears an explicit rejection.
+  const created = await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:shared', name: 'Condivisa', steps: STEPS, actor: USER,
+  });
+  assert.equal(created.replayed, false);
+  await assert.rejects(
+    ops.createSequence({
+      spaceId: OTHER, sourceKey: 'seq:shared', name: 'Condivisa', steps: STEPS, actor: USER,
+    }),
+    (error) => error.code === 'SEQUENCE_SOURCEKEY_TAKEN',
+  );
+  await ops.activateSequence({ spaceId: SPACE, sourceKey: 'seq:shared', actor: USER });
+  await ops.createSequence({
+    spaceId: OTHER, sourceKey: 'seq:altra', name: 'Altra', steps: STEPS, actor: USER,
+  });
+  await ops.activateSequence({ spaceId: OTHER, sourceKey: 'seq:altra', actor: USER });
+
+  const enrollIn = async (spaceId, sequenceSourceKey, subjectId, to, conn) => (await ops.enrollSequencePerson({
     spaceId,
-    sequenceSourceKey: 'seq:shared',
+    sequenceSourceKey,
     subject: { resource: 'contact', id: subjectId, owner: 'host' },
     subjectLabel: subjectId,
     recipient: to,
@@ -1534,11 +1544,17 @@ test('due spazi con la stessa chiave di sequenza restano isolati', async (t) => 
     actor: USER,
     vars: {},
   })).enrollment;
-  const home = await enrollIn(SPACE, 'c-guido', TO, connectionKey);
-  const away = await enrollIn(OTHER, 'c-guido', TO_2, OTHER_CONN);
+  const home = await enrollIn(SPACE, 'seq:shared', 'c-guido', TO, connectionKey);
+  const away = await enrollIn(OTHER, 'seq:altra', 'c-guido', TO_2, OTHER_CONN);
   assert.equal(home.status, 'active');
   assert.equal(away.status, 'active');
+
+  // The system-derived identities carry the space: the same subject in two
+  // spaces enrolls and queues under different keys, so neither space can
+  // squat or read the other's rows through the global sourceKey uniqueness.
   assert.notEqual(home.sourceKey, away.sourceKey);
+  assert.ok(home.sourceKey.includes(SPACE));
+  assert.ok(away.sourceKey.includes(OTHER));
 
   const window = composed.adapterDefinition.outboundWindow;
   composed.clockBox.ms = Date.parse(T0);
@@ -1568,7 +1584,7 @@ test('due spazi con la stessa chiave di sequenza restano isolati', async (t) => 
   assert.equal((await steps.listWhere({ spaceId: SPACE })).length, 2);
   assert.equal((await steps.listWhere({ spaceId: OTHER })).length, 2);
   const homeMetrics = await ops.readSequenceMetrics({ spaceId: SPACE, sourceKey: 'seq:shared', actor: USER });
-  const awayMetrics = await ops.readSequenceMetrics({ spaceId: OTHER, sourceKey: 'seq:shared', actor: USER });
+  const awayMetrics = await ops.readSequenceMetrics({ spaceId: OTHER, sourceKey: 'seq:altra', actor: USER });
   assert.equal(homeMetrics.enrolled, 1);
   assert.equal(awayMetrics.enrolled, 1);
   const homeList = await ops.listSequences({ spaceId: SPACE, actor: USER });
