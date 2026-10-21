@@ -172,9 +172,9 @@ function sequenceOps(composed, connectionKey, extras = {}) {
   );
 }
 
-async function activeConnection(composed, account = '+390200000099') {
+async function activeConnection(composed, account = '+390200000099', spaceId = SPACE) {
   const reg = await composed.ops.registerChannelConnection({
-    spaceId: SPACE,
+    spaceId,
     channel: 'whatsapp',
     account,
     adapter: WHATSAPP_ADAPTER_NAME,
@@ -1513,7 +1513,7 @@ test('due spazi con chiavi diverse restano isolati', async (t) => {
     enabled: true,
     updatedBy: 'user:presti-owner',
   }, { actor: USER });
-  const OTHER_CONN = 'conn-spazio-b';
+  const OTHER_CONN = await activeConnection(composed, '+390200000100', OTHER);
   const ops = sequenceOps(composed, connectionKey);
 
   // Sequence keys are globally unique in storage: the second space cannot
