@@ -447,6 +447,21 @@ export function createChannelsPackage(options = {}) {
       },
       {
         operationContract: 1,
+        name: 'sync-now-channel',
+        label: 'Sync one channel now',
+        appMethod: 'syncNowChannel',
+        description: 'Pull one bounded history page of one connection right now ("Sincronizza ora"): starts the initial import when none ever started, advances the running one otherwise, re-opens a finished one as a refresh run covering only history since its completion. New events store through the deduped ingest path; adapters without history refuse with CHANNEL_HISTORY_UNAVAILABLE.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+          { name: 'connectionKey', type: 'string', required: true, hint: 'The active connection source key in that space.' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.syncNowChannel(params);
+        },
+      },
+      {
+        operationContract: 1,
         name: 'read-initial-import',
         label: 'Read initial history import progress',
         appMethod: 'readInitialImport',
@@ -472,6 +487,21 @@ export function createChannelsPackage(options = {}) {
         create(runtime) {
           const ops = operations(runtime);
           return (params) => ops.readSyncState(params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'read-sync-activity',
+        label: 'Read space sync activity',
+        appMethod: 'readSyncActivity',
+        description: 'Read the sync activity of every connection in one space for the Stato sync screen: per-connection inbox tallies, open dead letters, observed direction, health and the same import progress read-initial-import returns, plus the newest-first feed and the needsFix total for the badge. Read from the real inbox and dead-letter rows; the feed carries no subject, payload or provider wording.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug.' },
+          { name: 'feedLimit', type: 'integer', required: false, hint: 'Feed entries, newest first (default 20, at most 100).' },
+        ],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.readSyncActivity(params);
         },
       },
       {
