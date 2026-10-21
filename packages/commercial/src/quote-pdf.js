@@ -5,7 +5,8 @@ import { AppError, ValidationError } from '../../core/index.js';
 import { TERMS_SNAPSHOT_AMBIGUOUS, verifySelfConsistent } from './verify-terms.js';
 
 /**
- * Frozen-version quote PDF (accordo BO-F2-03, first slice).
+ * Frozen-version quote PDF (accordo BO-F2-03): subtotale, IVA and totale
+ * per commercial period, all read from the frozen version — never the draft.
  *
  * The backoffice "06 Pipeline" scheda Offerta previews the quote as a PDF.
  * That preview must render the FROZEN quote version — the immutable rows
@@ -28,11 +29,13 @@ import { TERMS_SNAPSHOT_AMBIGUOUS, verifySelfConsistent } from './verify-terms.j
  * already writes (quote-version, quote-version-line,
  * quote-version-component, quote-version-total, quote-version-term), the
  * same byte-order discipline the signature document package uses
- * (locale-independent ordering, never `localeCompare`), and the integer-cents
- * money vocabulary of `./money.js`.
+ * (locale-independent ordering, never `localeCompare`), the frozen VAT view
+ * inside the version row's `totalsJson` (rate and amounts pinned at submit,
+ * never read from the live catalog), and the integer-cents money vocabulary
+ * of `./money.js`.
  *
- * What it does NOT do (follow-ups, named in the PR): totals with VAT,
- * AI-suggested lines, and wiring as a `quote.preview-pdf` action.
+ * What it does NOT do (follow-ups, named in the PR): AI-suggested lines,
+ * and wiring as a `quote.preview-pdf` action.
  */
 
 /**
@@ -51,6 +54,61 @@ import { TERMS_SNAPSHOT_AMBIGUOUS, verifySelfConsistent } from './verify-terms.j
  */
 function byteOrder(a, b) {
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Parse the frozen VAT view out of a version row's totalsJson. Anything
+ * malformed degrades to null (a pre-VAT version), never throws: the rows
+ * above are the authoritative frozen amounts, the view only adds tax.
+ * @param {unknown} totalsJson
+ */
+function frozenVatView(totalsJson) {
+  if (typeof totalsJson !== 'string' || totalsJson === '') return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(totalsJson);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || !parsed.vat || typeof parsed.vat !== 'object') {
+    return null;
+  }
+  // The rate is a server-frozen basis-points figure; anything outside the
+  // 0–10000 range is not a rate this document knows how to print, so the
+  // version renders as pre-VAT rather than inventing tax.
+  if (!Number.isInteger(parsed.vatRateBps) || parsed.vatRateBps < 0 || parsed.vatRateBps > 10_000) {
+    return null;
+  }
+  if (!parsed.vat.oneTime || typeof parsed.vat.oneTime !== 'object' || !Array.isArray(parsed.vat.recurring)) {
+    return null;
+  }
+  const keyOf = (entry) => `${entry?.currency ?? ''}|${entry?.interval ?? ''}|${entry?.intervalCount ?? ''}`;
+  const recurringByKey = new Map();
+  for (const entry of parsed.vat.recurring) {
+    if (entry && typeof entry === 'object' && Number.isSafeInteger(entry.vatAmountCents) && Number.isSafeInteger(entry.grossAmountCents)) {
+      recurringByKey.set(keyOf(entry), { vatAmountCents: entry.vatAmountCents, grossAmountCents: entry.grossAmountCents });
+    }
+  }
+  const oneTime = parsed.vat.oneTime;
+  if (!Number.isSafeInteger(oneTime.vatAmountCents) || !Number.isSafeInteger(oneTime.grossAmountCents)) return null;
+  return {
+    rateBps: parsed.vatRateBps,
+    oneTime: { vatAmountCents: oneTime.vatAmountCents, grossAmountCents: oneTime.grossAmountCents },
+    recurringByKey,
+  };
+}
+
+/**
+ * The frozen tax figures for one evidence total, or nulls when the version
+ * predates VAT. Matched from the frozen view by commercial period — never
+ * recomputed from the live catalog.
+ */
+function frozenTaxFor(frozenVat, total) {
+  if (!frozenVat) return { vatAmountCents: null, grossAmountCents: null };
+  if (total.kind === 'one_time') return { ...frozenVat.oneTime };
+  const entry = frozenVat.recurringByKey.get(`${total.currency ?? ''}|${total.interval ?? ''}|${total.intervalCount ?? ''}`);
+  if (!entry) return { vatAmountCents: null, grossAmountCents: null };
+  return { ...entry };
 }
 
 /**
@@ -85,6 +143,11 @@ export async function readQuoteVersionEvidence(services, versionId) {
   if (totals.length === 0) {
     throw new AppError('The quote version carries no frozen totals', { code: 'VERSION_SNAPSHOT_INCOMPLETE', status: 409 });
   }
+  // The frozen VAT view rides inside the version row's totalsJson (pinned at
+  // submit, same transaction as the rows above). A version frozen before VAT
+  // carries no view and renders no VAT section, exactly as before — the
+  // evidence never derives tax from the live catalog.
+  const frozenVat = frozenVatView(version.totalsJson);
   const termRows = services.terms ? await services.terms.listWhere({ versionId: version.id }) : [];
   // The document below prints the term and hashes it into the document hash,
   // so it presents the term as signed evidence. It therefore verifies the
@@ -116,6 +179,7 @@ export async function readQuoteVersionEvidence(services, versionId) {
       policyDecision: version.policyDecision ?? null,
       maxLineDiscountBps: version.maxLineDiscountBps ?? null,
       effectiveDiscountBps: version.effectiveDiscountBps ?? null,
+      vatRateBps: frozenVat?.rateBps ?? null,
     },
     lines: lines.map((line) => ({
       offerName: line.offerName ?? null,
@@ -155,6 +219,7 @@ export async function readQuoteVersionEvidence(services, versionId) {
       listAmountCents: total.listAmountCents,
       discountAmountCents: total.discountAmountCents,
       netAmountCents: total.netAmountCents,
+      ...frozenTaxFor(frozenVat, total),
     })),
     terms: verifiedTerm
       ? {
@@ -177,6 +242,25 @@ function canonical(value) {
     return `{${Object.keys(value).sort(byteOrder).map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
   }
   return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * VAT + gross lines for one evidence total, from the FROZEN figures only.
+ * A total from a pre-VAT version carries no frozen tax and yields no lines —
+ * the document never invents tax from the live catalog.
+ */
+function vatLines(rateBps, total) {
+  if (!Number.isSafeInteger(rateBps)
+    || !Number.isSafeInteger(total?.vatAmountCents)
+    || !Number.isSafeInteger(total?.grossAmountCents)) {
+    return [];
+  }
+  const label = rateBps % 100 === 0 ? String(rateBps / 100) : (rateBps / 100).toFixed(2);
+  const period = total.kind === 'recurring' ? ` (${total.interval} x${total.intervalCount})` : ' (una tantum)';
+  return [
+    `  IVA ${label}%${period}: ${formatMoney(total.vatAmountCents, total.currency)}`,
+    `  Totale IVA inclusa${period}: ${formatMoney(total.grossAmountCents, total.currency)}`,
+  ];
 }
 
 /** Format integer cents as `1234.56 EUR` with integer arithmetic only. */
@@ -245,7 +329,8 @@ export function renderQuoteVersionPdf(evidence) {
   text.push('Totali della versione congelata');
   for (const total of totals) {
     const period = total.kind === 'recurring' ? ` (${total.interval} x${total.intervalCount})` : ' (una tantum)';
-    text.push(`  Subtotale${period}: ${formatMoney(total.netAmountCents, total.currency)}`);
+    text.push(`  Subtotale${period}: ${formatMoney(total.netAmountCents, total.currency)} netti`);
+    for (const line of vatLines(version.vatRateBps, total)) text.push(line);
   }
   if (terms) {
     text.push('');

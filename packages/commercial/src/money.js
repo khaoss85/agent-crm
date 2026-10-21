@@ -22,6 +22,8 @@ import {
  *   componentList = per the pricing model below (integer arithmetic only)
  *   componentDiscount = trunc(componentList × bps ÷ 10000)   (never rounds up)
  *   componentNet      = componentList − componentDiscount     (authoritative)
+ *   vatAmount         = trunc(netAmount × VAT_RATE_BPS ÷ 10000) (never rounds up)
+ *   grossAmount       = netAmount + vatAmount                 (authoritative, per period)
  * A quote line's amounts are the checked sums of its components' amounts;
  * quote totals are the checked sums of line component amounts GROUPED by
  * commercial period (see groupComponentTotals) — unlike periods are never
@@ -404,4 +406,61 @@ export function effectiveDiscountBps({ oneTimeTotal, recurringTotals }) {
   }
   if (list <= 0) return 0;
   return Math.trunc(checkedMultiply(discount, MAX_DISCOUNT_BPS, 'effectiveDiscountBps') / list);
+}
+
+/**
+ * Italian standard VAT for the backoffice quote (accordo BO-F2-03): 22%,
+ * stored as integer basis points like every other rate in this file. The
+ * rate is a statutory constant pinned per quote version (see
+ * `withVatTotals`), never read from the live catalog — so a frozen version
+ * renders the same VAT forever, whatever the law or the catalog does next.
+ */
+export const VAT_RATE_BPS = 2200;
+
+/**
+ * VAT on one net amount, integer-only: trunc(net × rate ÷ 10000), the same
+ * never-rounds-up policy as `applyDiscount`. Overflow-checked.
+ * @param {number} netAmountCents @param {number} [rateBps]
+ */
+export function vatAmountCents(netAmountCents, rateBps = VAT_RATE_BPS) {
+  const net = requireAmount(netAmountCents, 'netAmountCents');
+  const rate = requireBps(rateBps, 'vatRateBps');
+  return Math.trunc(checkedMultiply(net, rate, 'vatAmountCents') / MAX_DISCOUNT_BPS);
+}
+
+/**
+ * Attach the frozen VAT view to grouped totals. Returns the groups
+ * unchanged plus `vatRateBps` and a `vat` view with one entry per group —
+ * each entry carries the group's own amounts verbatim plus
+ * `vatAmountCents` and `grossAmountCents` (net + VAT, overflow-checked).
+ * Unlike periods are still never summed: there is one gross figure per
+ * commercial period, no single grand total.
+ *
+ * The caller freezes the return value (quote `totalsJson` at submit): the
+ * rate and every amount are then immutable per version, which is what the
+ * version PDF renders. A version frozen before VAT carries no `vat` view
+ * and renders no VAT section, exactly as before.
+ *
+ * @param {{oneTimeTotal: any, recurringTotals: any[]}} totals
+ * @param {number} [rateBps]
+ */
+export function withVatTotals(totals, rateBps = VAT_RATE_BPS) {
+  const rate = requireBps(rateBps, 'vatRateBps');
+  if (!totals || typeof totals !== 'object' || !totals.oneTimeTotal || !Array.isArray(totals.recurringTotals)) {
+    throw new ValidationError('withVatTotals needs grouped totals with oneTimeTotal and recurringTotals', { field: 'totals' });
+  }
+  const taxed = (group, label) => {
+    const net = requireAmount(group.netAmountCents, `${label} netAmountCents`);
+    const vat = vatAmountCents(net, rate);
+    return { ...group, vatAmountCents: vat, grossAmountCents: checkedAdd(net, vat, `${label} grossAmountCents`) };
+  };
+  return {
+    oneTimeTotal: totals.oneTimeTotal,
+    recurringTotals: totals.recurringTotals,
+    vatRateBps: rate,
+    vat: {
+      oneTime: taxed(totals.oneTimeTotal, 'one-time'),
+      recurring: totals.recurringTotals.map((group, index) => taxed(group, `recurring[${index}]`)),
+    },
+  };
 }
