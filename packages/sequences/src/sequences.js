@@ -389,6 +389,7 @@ export async function advanceSequences({
   const summary = {
     advanced: 0, stoppedReplied: 0, waitingApproval: 0, confirmed: 0, skipped: 0,
     inboxUnavailable: [],
+    sweepErrors: [],
   };
   /** Enrollments the sweep cannot see the inbox of: never fired blind. */
   const blindEnrollments = new Set();
@@ -402,6 +403,21 @@ export async function advanceSequences({
       enrollmentSourceKey: enrollment.sourceKey, spaceId: enrollment.spaceId, code,
     }));
     blindEnrollments.add(blindKey(enrollment));
+  };
+  /**
+   * One enrollment (or confirm row) failed with a non-terminal error: a bad
+   * personalize output, a gate failure, a transient queue failure. The sweep
+   * records it here and moves on — one broken enrollment never starves the
+   * later enrollments or the confirm pass behind it.
+   */
+  const noteSweepError = (enrollment, error, phase) => {
+    const code = error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'UNKNOWN';
+    summary.sweepErrors.push(Object.freeze({
+      enrollmentSourceKey: enrollment?.sourceKey ?? '',
+      spaceId: enrollment?.spaceId ?? '',
+      phase,
+      code,
+    }));
   };
 
   /**
@@ -694,156 +710,180 @@ export async function advanceSequences({
       // a human-decided proposal and waits — never queued. An approval the
       // human already recorded for this exact step unblocks it even while
       // the global switch stays off; a refusal ends the step as skipped.
-      const verdict = await gateFor(current.spaceId);
-      if (!verdict || verdict.decision !== 'allow') {
-        const pre = await sends.listWhere({ sourceKey: messageKey });
-        const decided = await readStoredProposal(current.spaceId, pre[0] ?? null);
-        if (decided === 'refused') {
-          await recordTerminalSkip({
-            seqKey, current, step, messageKey, nowIso,
-            detail: 'SPACE_PROPOSAL_REFUSED', pre: pre[0] ?? null,
-          });
-          await moveCursorPast({ current, ordered, step, nowIso, nowMs });
-          summary.skipped += 1;
-          continue;
-        }
-        if (decided !== 'approved') {
-          let proposed = null;
-          let approvedRacing = false;
-          try {
-            proposed = await permissionGate.propose({
-              spaceId: current.spaceId,
-              permission: SEQUENCE_SEND_PERMISSION,
-              actionKind: 'sequence-step-send',
-              actionKey: messageKey,
-              summary: `Sequence step ${step.stepOrder + 1} for ${current.subjectLabel || current.subjectId} waits for send approval`,
-              actor: timer,
+      // The gate-and-queue section below runs isolated per enrollment (the
+      // catch at its end): one enrollment's gate failure, bad personalize
+      // output, or transient queue failure is recorded on the summary and
+      // the sweep fires the next enrollment instead of throwing out.
+      try {
+        const verdict = await gateFor(current.spaceId);
+        if (!verdict || verdict.decision !== 'allow') {
+          const pre = await sends.listWhere({ sourceKey: messageKey });
+          const decided = await readStoredProposal(current.spaceId, pre[0] ?? null);
+          if (decided === 'refused') {
+            await recordTerminalSkip({
+              seqKey, current, step, messageKey, nowIso,
+              detail: 'SPACE_PROPOSAL_REFUSED', pre: pre[0] ?? null,
             });
-          } catch (error) {
-            if (!error || typeof error !== 'object' || error.code !== 'SPACE_PROPOSAL_DECIDED') throw error;
-            const raced = await sends.listWhere({ sourceKey: messageKey });
-            const late = await readStoredProposal(current.spaceId, raced[0] ?? null);
-            if (late === 'refused') {
-              await recordTerminalSkip({
-                seqKey, current, step, messageKey, nowIso,
-                detail: 'SPACE_PROPOSAL_REFUSED', pre: raced[0] ?? null,
-              });
-              await moveCursorPast({ current, ordered, step, nowIso, nowMs });
-              summary.skipped += 1;
-              continue;
-            }
-            if (late !== 'approved') throw error;
-            approvedRacing = true;
-          }
-          if (!approvedRacing) {
-            const proposalId = proposed.proposalId;
-            const waiting = await sends.listWhere({ sourceKey: messageKey });
-            if (!waiting[0]) {
-              try {
-                await sends.createManaged({
-                  sourceKey: messageKey,
-                  enrollmentSourceKey: current.sourceKey,
-                  sequenceSourceKey: seqKey,
-                  stepOrder: step.stepOrder,
-                  messageKey,
-                  jobId: '',
-                  status: 'waiting-approval',
-                  queuedAt: nowIso,
-                  decidedAt: nowIso,
-                  detail: proposalId,
-                  variables: '[]',
-                  actorType: timer.type,
-                  actorId: timer.id,
-                }, { actor: timer });
-              } catch (error) {
-                if (!isWinnerConflict(error)) throw error;
-              }
-            }
-            summary.waitingApproval += 1;
+            await moveCursorPast({ current, ordered, step, nowIso, nowMs });
+            summary.skipped += 1;
             continue;
           }
+          if (decided !== 'approved') {
+            let proposed = null;
+            let queueAllowedRacing = false;
+            try {
+              proposed = await permissionGate.propose({
+                spaceId: current.spaceId,
+                permission: SEQUENCE_SEND_PERMISSION,
+                actionKind: 'sequence-step-send',
+                actionKey: messageKey,
+                summary: `Sequence step ${step.stepOrder + 1} for ${current.subjectLabel || current.subjectId} waits for send approval`,
+                actor: timer,
+              });
+            } catch (error) {
+              const race = error && typeof error === 'object' ? /** @type {any} */ (error).code : null;
+              if (race === 'SPACE_PERMISSION_ENABLED') {
+                // The owner enabled send-without-approval between the gate
+                // verdict above and this propose call: propose re-read the
+                // switch and refused to open a proposal. The step is allowed
+                // now, so fall through to the queue branch below — the same
+                // path as a racing approval — instead of throwing out of the
+                // sweep and skipping every later enrollment.
+                queueAllowedRacing = true;
+              } else {
+                if (race !== 'SPACE_PROPOSAL_DECIDED') throw error;
+                const raced = await sends.listWhere({ sourceKey: messageKey });
+                const late = await readStoredProposal(current.spaceId, raced[0] ?? null);
+                if (late === 'refused') {
+                  await recordTerminalSkip({
+                    seqKey, current, step, messageKey, nowIso,
+                    detail: 'SPACE_PROPOSAL_REFUSED', pre: raced[0] ?? null,
+                  });
+                  await moveCursorPast({ current, ordered, step, nowIso, nowMs });
+                  summary.skipped += 1;
+                  continue;
+                }
+                if (late !== 'approved') throw error;
+                queueAllowedRacing = true;
+              }
+            }
+            if (!queueAllowedRacing) {
+              const proposalId = proposed.proposalId;
+              const waiting = await sends.listWhere({ sourceKey: messageKey });
+              if (!waiting[0]) {
+                try {
+                  await sends.createManaged({
+                    sourceKey: messageKey,
+                    enrollmentSourceKey: current.sourceKey,
+                    sequenceSourceKey: seqKey,
+                    stepOrder: step.stepOrder,
+                    messageKey,
+                    jobId: '',
+                    status: 'waiting-approval',
+                    queuedAt: nowIso,
+                    decidedAt: nowIso,
+                    detail: proposalId,
+                    variables: '[]',
+                    actorType: timer.type,
+                    actorId: timer.id,
+                  }, { actor: timer });
+                } catch (error) {
+                  if (!isWinnerConflict(error)) throw error;
+                }
+              }
+              summary.waitingApproval += 1;
+              continue;
+            }
+          }
         }
-      }
 
-      // 3. Allowed: personalize and queue through the channels outbox. The
-      // persistent enqueue IS the cross-process claim — two sweeps racing
-      // queue the byte-identical job and the second gets the first row back.
-      const stored = await sends.listWhere({ sourceKey: messageKey });
-      if (stored[0] && stored[0].status === 'skipped') continue;
-      if (stored[0] && stored[0].status !== 'waiting-approval') {
-        // Already queued, sent or dead: a crash between the send row and
-        // the cursor left the cursor behind, so repair it idempotently —
-        // never a second job for the same step, and never a completion on
-        // an unsettled send (the live-empty branch completes once settled).
-        await moveCursorPast({ current, ordered, step, nowIso, nowMs, completeWhenLast: false });
-        continue;
-      }
-      const variables = await resolveSendVariables(step, current, null);
-      let queued;
-      try {
-        queued = await queueTemplate({
-          spaceId: current.spaceId,
-          connectionKey: current.connectionKey,
-          to: current.recipient,
-          template: { name: step.templateName, language: step.templateLanguage, variables },
-          messageKey,
-          actor: timer,
-        });
-      } catch (error) {
-        if (error && typeof error === 'object' && QUEUE_REFUSAL_SKIPS.has(/** @type {any} */ (error).code)) {
-          await recordTerminalSkip({
-            seqKey, current, step, messageKey, nowIso,
-            detail: /** @type {any} */ (error).code, pre: stored[0] ?? null,
-          });
-          await moveCursorPast({ current, ordered, step, nowIso, nowMs });
-          summary.skipped += 1;
+        // 3. Allowed: personalize and queue through the channels outbox. The
+        // persistent enqueue IS the cross-process claim — two sweeps racing
+        // queue the byte-identical job and the second gets the first row back.
+        const stored = await sends.listWhere({ sourceKey: messageKey });
+        if (stored[0] && stored[0].status === 'skipped') continue;
+        if (stored[0] && stored[0].status !== 'waiting-approval') {
+          // Already queued, sent or dead: a crash between the send row and
+          // the cursor left the cursor behind, so repair it idempotently —
+          // never a second job for the same step, and never a completion on
+          // an unsettled send (the live-empty branch completes once settled).
+          await moveCursorPast({ current, ordered, step, nowIso, nowMs, completeWhenLast: false });
           continue;
         }
-        throw error;
-      }
-      const jobId = typeof queued?.jobId === 'string' ? queued.jobId : '';
-      const jobState = typeof queued?.state === 'string' ? queued.state : '';
-      const variablesJson = JSON.stringify(variables);
-      if (stored[0]) {
-        await sends.applyManaged(stored[0].id, {
-          jobId, status: 'queued', queuedAt: nowIso, decidedAt: nowIso, variables: variablesJson,
-        }, { actor: timer });
-      } else {
+        const variables = await resolveSendVariables(step, current, null);
+        let queued;
         try {
-          await sends.createManaged({
-            sourceKey: messageKey,
-            enrollmentSourceKey: current.sourceKey,
-            sequenceSourceKey: seqKey,
-            stepOrder: step.stepOrder,
+          queued = await queueTemplate({
+            spaceId: current.spaceId,
+            connectionKey: current.connectionKey,
+            to: current.recipient,
+            template: { name: step.templateName, language: step.templateLanguage, variables },
             messageKey,
-            jobId,
-            status: 'queued',
-            queuedAt: nowIso,
-            decidedAt: nowIso,
-            detail: '',
-            variables: variablesJson,
-            actorType: timer.type,
-            actorId: timer.id,
-          }, { actor: timer });
+            actor: timer,
+          });
         } catch (error) {
-          if (!isWinnerConflict(error)) throw error;
+          if (error && typeof error === 'object' && QUEUE_REFUSAL_SKIPS.has(/** @type {any} */ (error).code)) {
+            await recordTerminalSkip({
+              seqKey, current, step, messageKey, nowIso,
+              detail: /** @type {any} */ (error).code, pre: stored[0] ?? null,
+            });
+            await moveCursorPast({ current, ordered, step, nowIso, nowMs });
+            summary.skipped += 1;
+            continue;
+          }
+          throw error;
         }
-      }
-      if (jobState === 'succeeded') {
-        const rows = await sends.listWhere({ sourceKey: messageKey });
-        if (rows[0] && rows[0].status === 'queued') {
-          await sends.applyManaged(rows[0].id, { status: 'sent', decidedAt: nowIso }, { actor: timer });
+        const jobId = typeof queued?.jobId === 'string' ? queued.jobId : '';
+        const jobState = typeof queued?.state === 'string' ? queued.state : '';
+        const variablesJson = JSON.stringify(variables);
+        if (stored[0]) {
+          await sends.applyManaged(stored[0].id, {
+            jobId, status: 'queued', queuedAt: nowIso, decidedAt: nowIso, variables: variablesJson,
+          }, { actor: timer });
+        } else {
+          try {
+            await sends.createManaged({
+              sourceKey: messageKey,
+              enrollmentSourceKey: current.sourceKey,
+              sequenceSourceKey: seqKey,
+              stepOrder: step.stepOrder,
+              messageKey,
+              jobId,
+              status: 'queued',
+              queuedAt: nowIso,
+              decidedAt: nowIso,
+              detail: '',
+              variables: variablesJson,
+              actorType: timer.type,
+              actorId: timer.id,
+            }, { actor: timer });
+          } catch (error) {
+            if (!isWinnerConflict(error)) throw error;
+          }
         }
+        if (jobState === 'succeeded') {
+          const rows = await sends.listWhere({ sourceKey: messageKey });
+          if (rows[0] && rows[0].status === 'queued') {
+            await sends.applyManaged(rows[0].id, { status: 'sent', decidedAt: nowIso }, { actor: timer });
+          }
+        }
+        let cursor = current;
+        try {
+          const reread = await enrollments.get(current.id);
+          if (reread && reread.status === 'active') cursor = reread;
+        } catch {
+          cursor = current;
+        }
+        await moveCursorPast({ current: cursor, ordered, step, nowIso, nowMs, completeWhenLast: false });
+        summary.advanced += 1;
+      } catch (error) {
+        // One enrollment's gate failure, bad personalize output, or
+        // transient queue failure stays with that enrollment: record it on
+        // the summary and fire the next enrollment instead of aborting the
+        // whole multi-space sweep and skipping the confirm pass behind it.
+        noteSweepError(current, error, 'due');
+        continue;
       }
-      let cursor = current;
-      try {
-        const reread = await enrollments.get(current.id);
-        if (reread && reread.status === 'active') cursor = reread;
-      } catch {
-        cursor = current;
-      }
-      await moveCursorPast({ current: cursor, ordered, step, nowIso, nowMs, completeWhenLast: false });
-      summary.advanced += 1;
     }
   }
 
@@ -857,72 +897,81 @@ export async function advanceSequences({
     for (const row of Array.isArray(pending) ? pending : []) queuedRows.push(row);
   }
   for (const row of queuedRows) {
-    const enrollmentRows = await enrollments.listWhere({ sourceKey: row.enrollmentSourceKey });
-    const enrollment = enrollmentRows[0] ?? null;
-    if (!enrollment || enrollment.status !== 'active') continue;
-    const stepRows = await steps.listWhere({ sequenceSourceKey: row.sequenceSourceKey });
-    const step = (Array.isArray(stepRows) ? stepRows : []).find((entry) => entry && entry.stepOrder === row.stepOrder) ?? null;
-    if (!step) continue;
-    let requeue = null;
-    const confirmVariables = await resolveSendVariables(step, enrollment, row.variables ?? null);
+    // One broken confirm row never aborts the confirm pass: its failure is
+    // recorded on the summary and the sweep confirms the next row instead.
+    let enrollment = null;
     try {
-      requeue = await queueTemplate({
-        spaceId: enrollment.spaceId,
-        connectionKey: enrollment.connectionKey,
-        to: enrollment.recipient,
-        template: {
-          name: step.templateName,
-          language: step.templateLanguage,
-          variables: confirmVariables,
-        },
-        messageKey: row.messageKey,
-        actor: timer,
-      });
-    } catch (error) {
-      if (error && typeof error === 'object' && QUEUE_REFUSAL_SKIPS.has(/** @type {any} */ (error).code)) {
-        // Terminal refusal on confirm: the connection died or the template
-        // was revoked after queueing, so this row can never send. Move it
-        // out of queued (dead-letter with the refusal code) instead of
-        // leaving it queued forever — the enrollment then settles on the
-        // next sweep like every other terminal row.
+      const enrollmentRows = await enrollments.listWhere({ sourceKey: row.enrollmentSourceKey });
+      enrollment = enrollmentRows[0] ?? null;
+      if (!enrollment || enrollment.status !== 'active') continue;
+      const stepRows = await steps.listWhere({ sequenceSourceKey: row.sequenceSourceKey });
+      const step = (Array.isArray(stepRows) ? stepRows : []).find((entry) => entry && entry.stepOrder === row.stepOrder) ?? null;
+      if (!step) continue;
+      let requeue = null;
+      const confirmVariables = await resolveSendVariables(step, enrollment, row.variables ?? null);
+      try {
+        requeue = await queueTemplate({
+          spaceId: enrollment.spaceId,
+          connectionKey: enrollment.connectionKey,
+          to: enrollment.recipient,
+          template: {
+            name: step.templateName,
+            language: step.templateLanguage,
+            variables: confirmVariables,
+          },
+          messageKey: row.messageKey,
+          actor: timer,
+        });
+      } catch (error) {
+        if (error && typeof error === 'object' && QUEUE_REFUSAL_SKIPS.has(/** @type {any} */ (error).code)) {
+          // Terminal refusal on confirm: the connection died or the template
+          // was revoked after queueing, so this row can never send. Move it
+          // out of queued (dead-letter with the refusal code) instead of
+          // leaving it queued forever — the enrollment then settles on the
+          // next sweep like every other terminal row.
+          const latest = await sends.listWhere({ sourceKey: row.sourceKey });
+          if (latest[0] && latest[0].status === 'queued') {
+            await sends.applyManaged(latest[0].id, {
+              status: 'dead-letter', decidedAt: nowIso, detail: /** @type {any} */ (error).code,
+            }, { actor: timer });
+          }
+          summary.skipped += 1;
+          continue;
+        }
+        throw error;
+      }
+      const state = requeue && typeof requeue.state === 'string' ? requeue.state : '';
+      const jobId = requeue && typeof requeue.jobId === 'string' ? requeue.jobId : row.jobId;
+      if (state === 'succeeded') {
         const latest = await sends.listWhere({ sourceKey: row.sourceKey });
         if (latest[0] && latest[0].status === 'queued') {
-          await sends.applyManaged(latest[0].id, {
-            status: 'dead-letter', decidedAt: nowIso, detail: /** @type {any} */ (error).code,
-          }, { actor: timer });
+          await sends.applyManaged(latest[0].id, { jobId, status: 'sent', decidedAt: nowIso }, { actor: timer });
+          summary.confirmed += 1;
         }
-        summary.skipped += 1;
-        continue;
-      }
-      throw error;
-    }
-    const state = requeue && typeof requeue.state === 'string' ? requeue.state : '';
-    const jobId = requeue && typeof requeue.jobId === 'string' ? requeue.jobId : row.jobId;
-    if (state === 'succeeded') {
-      const latest = await sends.listWhere({ sourceKey: row.sourceKey });
-      if (latest[0] && latest[0].status === 'queued') {
-        await sends.applyManaged(latest[0].id, { jobId, status: 'sent', decidedAt: nowIso }, { actor: timer });
-        summary.confirmed += 1;
-      }
-      const siblings = await steps.listWhere({ sequenceSourceKey: row.sequenceSourceKey });
-      const last = (Array.isArray(siblings) ? siblings : [])
-        .filter((entry) => entry && Number.isInteger(entry.stepOrder))
-        .sort((a, b) => b.stepOrder - a.stepOrder)[0] ?? null;
-      if (last && row.stepOrder >= last.stepOrder) {
-        const target = await enrollments.listWhere({ sourceKey: row.enrollmentSourceKey });
-        if (target[0] && target[0].status === 'active') {
-          await enrollments.applyManaged(target[0].id, { status: 'completed', decidedAt: nowIso }, { actor: timer });
+        const siblings = await steps.listWhere({ sequenceSourceKey: row.sequenceSourceKey });
+        const last = (Array.isArray(siblings) ? siblings : [])
+          .filter((entry) => entry && Number.isInteger(entry.stepOrder))
+          .sort((a, b) => b.stepOrder - a.stepOrder)[0] ?? null;
+        if (last && row.stepOrder >= last.stepOrder) {
+          const target = await enrollments.listWhere({ sourceKey: row.enrollmentSourceKey });
+          if (target[0] && target[0].status === 'active') {
+            await enrollments.applyManaged(target[0].id, { status: 'completed', decidedAt: nowIso }, { actor: timer });
+          }
+        }
+      } else if (state === 'failed_terminal' || state === 'cancelled') {
+        const latest = await sends.listWhere({ sourceKey: row.sourceKey });
+        if (latest[0] && latest[0].status === 'queued') {
+          await sends.applyManaged(latest[0].id, { jobId, status: 'dead-letter', decidedAt: nowIso }, { actor: timer });
         }
       }
-    } else if (state === 'failed_terminal' || state === 'cancelled') {
-      const latest = await sends.listWhere({ sourceKey: row.sourceKey });
-      if (latest[0] && latest[0].status === 'queued') {
-        await sends.applyManaged(latest[0].id, { jobId, status: 'dead-letter', decidedAt: nowIso }, { actor: timer });
-      }
+    } catch (error) {
+      noteSweepError(enrollment ?? { sourceKey: row.enrollmentSourceKey, spaceId: '' }, error, 'confirm');
+      continue;
     }
   }
 
   summary.inboxUnavailable = Object.freeze(summary.inboxUnavailable.map((entry) => Object.freeze({ ...entry })));
+  summary.sweepErrors = Object.freeze(summary.sweepErrors.map((entry) => Object.freeze({ ...entry })));
   return Object.freeze({ ...summary });
 }
 

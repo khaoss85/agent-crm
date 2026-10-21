@@ -29,6 +29,7 @@ import {
   advanceSequences,
   computeSequenceMetrics,
   createSequencesPackage,
+  sequenceMessageKey,
 } from '../packages/sequences/src/index.js';
 
 /**
@@ -926,4 +927,149 @@ test('senza finestra di risposta non si invia', async (t) => {
   assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:no-window' })).length, 0);
   const enrollments = composed.modules.get('sequence-enrollment').service;
   assert.equal((await enrollments.listWhere({ sequenceSourceKey: 'seq:no-window' }))[0].status, 'active');
+});
+
+test("l'abilitazione tra gate e propose accoda invece di abortire", async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  // No override: the gate verdict is proposal, like the gated test above.
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:enable-race');
+  await enroll(ops, connectionKey, 'seq:enable-race', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  // The owner enables send-without-approval between the gate verdict and
+  // the propose call: propose re-reads the switch and throws
+  // SPACE_PERMISSION_ENABLED instead of opening a proposal. The sweep must
+  // queue the now-allowed step — never throw out and skip the enrollment.
+  const realGate = gate(composed);
+  const racingGate = {
+    gate: (...args) => realGate.gate(...args),
+    proposal: (...args) => realGate.proposal(...args),
+    propose: async () => {
+      throw Object.assign(new Error('permission enabled mid-sweep'), { code: 'SPACE_PERMISSION_ENABLED' });
+    },
+  };
+  composed.clockBox.ms = Date.parse(T0);
+  const raced = await advanceSequences({
+    modules: composed.modules,
+    queueTemplate: queue(composed).queueTemplate,
+    permissionGate: racingGate,
+    replyWindows: windows(composed, connectionKey),
+    now: () => T0,
+    actor: SYSTEM,
+  });
+  assert.equal(raced.advanced, 1);
+  assert.equal(raced.waitingApproval, 0);
+  assert.equal(raced.sweepErrors.length, 0);
+  const sends = composed.modules.get('sequence-send').service;
+  const rows = await sends.listWhere({ sequenceSourceKey: 'seq:enable-race' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'queued');
+  const proposals = composed.modules.get('space-ai-proposal').service;
+  assert.equal((await proposals.listWhere({ spaceId: SPACE })).length, 0);
+
+  // The next sweep replays the queued row instead of queueing twice.
+  const again = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(again.advanced, 0);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:enable-race' })).length, 1);
+});
+
+test("un'iscrizione rotta non ferma le altre", async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:one-bad');
+  const bad = await enroll(ops, connectionKey, 'seq:one-bad', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+  await enroll(ops, connectionKey, 'seq:one-bad', 'c-maria', TO_2, { name: 'Maria', hour: '18:00' });
+
+  // One enrollment's personalize hook throws: the sweep records it and
+  // still fires the healthy enrollment in the same sweep — and the confirm
+  // pass behind it still runs instead of being skipped with the throw.
+  const personalize = async ({ enrollment, variables }) => {
+    if (enrollment.subjectId === 'c-guido') {
+      throw Object.assign(new Error('bad personalize output'), { code: 'SEQUENCES_PERSONALIZE_INVALID' });
+    }
+    return variables;
+  };
+  const swept = await advance(composed, connectionKey, T0, { personalize });
+  assert.equal(swept.advanced, 1);
+  assert.equal(swept.sweepErrors.length, 1);
+  assert.equal(swept.sweepErrors[0].phase, 'due');
+  assert.equal(swept.sweepErrors[0].spaceId, SPACE);
+  assert.equal(swept.sweepErrors[0].enrollmentSourceKey, bad.sourceKey);
+  assert.equal(swept.sweepErrors[0].code, 'SEQUENCES_PERSONALIZE_INVALID');
+  const sends = composed.modules.get('sequence-send').service;
+  const rows = await sends.listWhere({ sequenceSourceKey: 'seq:one-bad' });
+  assert.equal(rows.length, 1);
+  assert.notEqual(rows[0].enrollmentSourceKey, bad.sourceKey);
+
+  // The broken enrollment stays active and is reported again — never fired
+  // blind, never blocking the healthy one, which is already past step one.
+  const retry = await advance(composed, connectionKey, T0_LATER, { personalize });
+  assert.equal(retry.advanced, 0);
+  assert.equal(retry.sweepErrors.length, 1);
+  assert.equal(retry.sweepErrors[0].enrollmentSourceKey, bad.sourceKey);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:one-bad' })).length, 1);
+});
+
+test('una conferma rotta non ferma le altre', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:confirm-iso');
+  await enroll(ops, connectionKey, 'seq:confirm-iso', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+  await enroll(ops, connectionKey, 'seq:confirm-iso', 'c-maria', TO_2, { name: 'Maria', hour: '18:00' });
+
+  const queued = await advance(composed, connectionKey, T0);
+  assert.equal(queued.advanced, 2);
+
+  // Both outbox jobs settle: the confirm pass would mark both sent.
+  const sends = composed.modules.get('sequence-send').service;
+  const { worker } = workerKit(composed, () => T0_LATER);
+  worker.start();
+  t.after(() => worker.close());
+  for (const row of await sends.listWhere({ sequenceSourceKey: 'seq:confirm-iso' })) {
+    const settled = await worker.run(row.jobId);
+    assert.ok(settled && settled.state === 'succeeded', 'the channel job settles');
+  }
+
+  // The confirm requeue throws a transient error for one row only: the
+  // sweep records it and still confirms the healthy row in the same pass.
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  const people = await enrollments.listWhere({ sequenceSourceKey: 'seq:confirm-iso' });
+  const badKey = sequenceMessageKey(people.find((entry) => entry.subjectId === 'c-guido').sourceKey, 0);
+  const realQueue = queue(composed).queueTemplate;
+  const flaky = async (request) => {
+    if (request.messageKey === badKey) {
+      throw Object.assign(new Error('transient queue outage'), { code: 'CHANNEL_QUEUE_TRANSIENT' });
+    }
+    return realQueue(request);
+  };
+  composed.clockBox.ms = Date.parse(T0_LATER);
+  const confirmed = await advanceSequences({
+    modules: composed.modules,
+    queueTemplate: flaky,
+    permissionGate: gate(composed),
+    replyWindows: windows(composed, connectionKey),
+    now: () => T0_LATER,
+    actor: SYSTEM,
+  });
+  assert.equal(confirmed.confirmed, 1);
+  assert.equal(confirmed.sweepErrors.length, 1);
+  assert.equal(confirmed.sweepErrors[0].phase, 'confirm');
+  assert.equal(confirmed.sweepErrors[0].code, 'CHANNEL_QUEUE_TRANSIENT');
+  const after = await sends.listWhere({ sequenceSourceKey: 'seq:confirm-iso' });
+  assert.equal(after.find((row) => row.messageKey === badKey).status, 'queued');
+  assert.equal(after.find((row) => row.messageKey !== badKey).status, 'sent');
+
+  // The broken row is retried, not poisoned: the next sweep confirms it.
+  const healed = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(healed.confirmed, 1);
+  assert.equal(healed.sweepErrors.length, 0);
+  assert.ok((await sends.listWhere({ sequenceSourceKey: 'seq:confirm-iso' })).every((row) => row.status === 'sent'));
 });
