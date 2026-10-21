@@ -305,8 +305,10 @@ async function readSectionRows(service, references) {
  * Does this row belong to the customer? Only by explicit reference — this
  * never guesses from a name or an email string, because a projection that
  * guesses is a projection that quietly attributes somebody else's contract.
+ * Shared with the customer list (BO-F1-05), which attributes the same batched
+ * rows to the same customers by the same rule.
  */
-function belongsToCustomer(row, { companyIds, contactIds, opportunityIds }) {
+export function belongsToCustomer(row, { companyIds, contactIds, opportunityIds }) {
   if (row.companyId && companyIds.has(row.companyId)) return true;
   if (row.contactId && contactIds.has(row.contactId)) return true;
   if (row.opportunityId && opportunityIds.has(row.opportunityId)) return true;

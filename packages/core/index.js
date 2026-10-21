@@ -78,6 +78,12 @@ export {
 // so a package-owned operation records the identical failure shape.
 export { AppError, ValidationError, NotFoundError, ConflictError, ForbiddenError, normalizeError } from './src/errors.js';
 
+// ---- one customer status rule ----
+// Signed business promotes a contact to `cliente`; anything less stays
+// `contatto` with the reason. The customer card and the customer list share
+// this rule so the two screens can never disagree about who is a customer.
+export { CUSTOMER_EVIDENCE_KEYS, deriveCustomerStatus } from './src/customer-status.js';
+
 // ---- bounded outbound calls ----
 // A package that calls a provider bounds it with the framework's timeout
 // rather than racing its own, so the refusal a caller sees is the same one the

@@ -9,6 +9,7 @@ import { AppError, definePackage, selectPackageGraph } from '../../core/index.js
 // package's options, and the two resolutions could diverge; consuming the
 // created handle means there is exactly one name resolution: the provider's.
 import { CUSTOMER_CARD_CONTRACT, readCustomerCard, shapeCustomerCard } from './card.js';
+import { deriveCustomerStatus } from '../../core/index.js';
 import { renderCustomerCardHtml } from './render.js';
 import { CUSTOMER_TIMELINE_CONTRACT, readCustomerTimeline, shapeCustomerTimeline } from './timeline.js';
 
@@ -33,6 +34,7 @@ export const CUSTOMER_HUB_DOMAIN = 'customer-hub';
 export {
   CUSTOMER_CARD_CONTRACT,
   CUSTOMER_TIMELINE_CONTRACT,
+  deriveCustomerStatus,
   readCustomerCard,
   readCustomerTimeline,
   renderCustomerCardHtml,
