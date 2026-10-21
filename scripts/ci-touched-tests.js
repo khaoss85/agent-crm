@@ -231,7 +231,7 @@ export const REPO_WIDE_GUARD_EXCLUSIONS = Object.freeze({
   // tests/agent-tool-selection-docs-ids.test.js already runs that check in
   // the gate, and running both on every PR would double it. (The oracle
   // that made this file slow moved to tests/helpers/shell-oracle.js, sliced
-  // across tests/shell-oracle-a/b/c.test.js, backlog:664d5f481a96; the
+  // across tests/shell-oracle-a/b/c/d/e/f.test.js, backlog:664d5f481a96; the
   // doubling stays because the walk itself is what the twin covers.)
   'tests/agent-tool-selection-prompts.test.js':
     'prompt milestone walk: covered by the fast twin tests/agent-tool-selection-docs-ids.test.js',

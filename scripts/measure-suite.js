@@ -189,7 +189,7 @@ async function main() {
     const run = spawnSync('npm', ['run', 'verify', '--', '--',
       `--test-reporter=${reporter}`, '--test-reporter-destination=stdout',
       `--test-reporter-destination=${reportPath}`], {
-      cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: standaloneEnv(),
+      cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: measurementEnv(),
     });
     if (run.status !== 0 || run.error || run.signal) {
       // Synchronous, all of it: an async write of the suite's stdout is cut when
@@ -247,11 +247,15 @@ async function main() {
  * `ACCORDO_FULL_SHELL_ORACLE=1` its driver alone took ~13-20 minutes), so
  * that piece once kept a 1,800 s lock maximum. The verifier failed the
  * exception (backlog:664d5f481a96: every piece declares 900 s), so the
- * corpus is sliced by grouping pair across tests/shell-oracle-a/b/c.test.js
- * — same cells, three pieces — and every piece declares the same 900 s
- * maximum in scripts/measure-pieces.sh. If a slice ever outgrows its
- * maximum, the corpus is sliced smaller, never capped higher one piece at
- * a time: the constant is then updated, not the corpus.
+ * corpus is sliced one grouping per file across
+ * tests/shell-oracle-a/b/c/d/e/f.test.js — same cells, six pieces — and
+ * every piece declares the same 900 s maximum in scripts/measure-pieces.sh.
+ * If a slice ever outgrows its maximum, the corpus is sliced smaller, never
+ * capped higher one piece at a time: the constant is then updated, not the
+ * corpus. Six slices need six pieces: scripts/measure-pieces.sh refuses
+ * fewer before taking any lock, and tests/measure-pieces.test.js pins the
+ * six slices in six distinct pieces over the committed corpus — the
+ * round-robin dealing separates them today, the test keeps it that way.
  */
 
 /** The `npm run <script>` name a piecemeal measurement record carries. */
@@ -444,7 +448,7 @@ function runShard(text, outPath) {
       ['--no-warnings', '--test', '--test-concurrency=2',
         '--test-reporter=spec', '--test-reporter-destination=stdout',
         `--test-reporter=${reporter}`, `--test-reporter-destination=${reportPath}`, ...piece], {
-        cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: standaloneEnv(),
+        cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: measurementEnv(),
       });
     if (run.status !== 0 || run.error || run.signal) {
       writeAllSync(2, `${run.stdout ?? ''}\n${run.stderr ?? ''}\n`);
@@ -738,7 +742,7 @@ export function runTestFile(root, relpath) {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
     timeout: 600_000,
-    env: standaloneEnv(),
+    env: measurementEnv(),
   });
   if (run.error) {
     process.stderr.write(`measure-suite: ${relpath}: runner did not answer (${run.error.message}). Nothing recorded.\n`);
@@ -770,6 +774,21 @@ function standaloneEnv() {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   return env;
+}
+
+/**
+ * The environment every measurement runs its tests in: standalone (see
+ * above) plus the oracle driver forced on. The shell-classifier agreement
+ * is the measurement, not an optional extra — a record over skipped oracle
+ * tests would publish green without ever checking the classifier, which is
+ * how the slicing regression read green locally while proving nothing
+ * (backlog:664d5f481a96). So the measurement owns this flag; no caller sets
+ * it and no entry point may clear it. Direct `node --test` runs (the PR
+ * gate, the pre-push hook) never go through here and keep running only the
+ * slices' wiring, in seconds.
+ */
+function measurementEnv() {
+  return { ...standaloneEnv(), ACCORDO_ORACLE_DRIVER: '1' };
 }
 
 /**

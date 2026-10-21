@@ -1,7 +1,7 @@
 // @ts-check
 
 /**
- * The slicing contract (backlog:664d5f481a96): the three oracle slices
+ * The slicing contract (backlog:664d5f481a96): the six oracle slices
  * partition the corpus — no cell runs twice, none is lost. The measure
  * combine pins the union of *files*, not of cells, so a slice that quietly
  * dropped cells (or two slices covering the same grouping) would still
@@ -13,7 +13,11 @@
  * The slices are read as text, never imported: importing a test file
  * registers its tests in this run. Fail-loud anchors (same discipline as
  * tests/agent-tool-selection-heredoc-guard.test.js): a slice that moves
- * its spec reddens here instead of passing vacuously.
+ * its spec reddens here instead of passing vacuously. The declaration is
+ * also pinned to the call-sites: a slice that hardcodes a smaller set in
+ * its agreement call while leaving SLICE_GROUPINGS intact would pass the
+ * partition below and still measure less, so each slice must call
+ * shellCorpus with the identifiers it declares.
  */
 
 import test from 'node:test';
@@ -25,7 +29,14 @@ import { fileURLToPath } from 'node:url';
 import { ORACLE_GROUPINGS, shellCorpus } from './helpers/shell-oracle.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SLICES = ['tests/shell-oracle-a.test.js', 'tests/shell-oracle-b.test.js', 'tests/shell-oracle-c.test.js'];
+const SLICES = [
+  'tests/shell-oracle-a.test.js',
+  'tests/shell-oracle-b.test.js',
+  'tests/shell-oracle-c.test.js',
+  'tests/shell-oracle-d.test.js',
+  'tests/shell-oracle-e.test.js',
+  'tests/shell-oracle-f.test.js',
+];
 
 /**
  * Read a slice's declared spec from its text.
@@ -53,10 +64,21 @@ function sliceSpec(relative) {
     heredocValue.startsWith('true') || heredocValue.startsWith('false'),
     `could not read SLICE_WITH_HEREDOC in ${relative}: update this test`,
   );
+  // The declaration must reach the driver: a slice that hardcodes a smaller
+  // set in its shellCorpus call while leaving the constants intact would
+  // pass the partition below and measure less on the scheduled run.
+  assert.ok(
+    source.includes('groupings: SLICE_GROUPINGS'),
+    `${relative} no longer drives shellCorpus with its declared SLICE_GROUPINGS: the spec and the run have diverged`,
+  );
+  assert.ok(
+    source.includes('withHeredoc: SLICE_WITH_HEREDOC'),
+    `${relative} no longer drives shellCorpus with its declared SLICE_WITH_HEREDOC: the spec and the run have diverged`,
+  );
   return { groupings, withHeredoc: heredocValue.startsWith('true') };
 }
 
-test('the three oracle slices partition the corpus: no cell twice, none lost', () => {
+test('the six oracle slices partition the corpus: no cell twice, none lost', () => {
   const full = new Map(shellCorpus().map((entry) => [entry.label, entry]));
   const seen = new Map();
   const groupingOwners = new Map();

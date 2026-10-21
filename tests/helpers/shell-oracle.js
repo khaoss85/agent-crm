@@ -1,16 +1,17 @@
 // @ts-check
 
 /**
- * The shell-oracle corpus and driver, shared by the three oracle slices
- * (tests/shell-oracle-a/b/c.test.js, backlog:664d5f481a96).
+ * The shell-oracle corpus and driver, shared by the six oracle slices
+ * (tests/shell-oracle-a/b/c/d/e/f.test.js, backlog:664d5f481a96).
  *
  * The oracle used to live in one test file, so one measure piece held the
  * whole 26,880-cell full corpus and needed a 1,800 s lock maximum while
  * every other piece declared 900 s. The independent verifier failed that
  * exception (every piece must declare 900 s), so the corpus is sliced here
- * by grouping pair — each slice about a third of the cells — and each slice
- * file lands in its own measure piece under the same 900 s maximum as
- * everything else. The cells are unchanged: the union of the three slices
+ * by grouping singleton — each slice about a sixth of the cells, the
+ * heaviest full slice holding documented margin under 900 s — and each
+ * slice file lands in its own measure piece under the same 900 s maximum
+ * as everything else. The cells are unchanged: the union of the six slices
  * is exactly the corpus the single file generated.
  *
  * A test slice must never import a `*.test.js` file (importing one
@@ -264,14 +265,14 @@ function heredocCrossProduct(spellings = HEREDOC_DELIMITER_SPELLINGS) {
  * legitimate but slow: give it its own timeout and never hold the shared
  * machine lock for it.
  *
- * The driver itself runs only with `ACCORDO_ORACLE_DRIVER=1` (beside the
- * full flag for the complete product): the three slices' share of the
- * default subset is minutes of bash per slice, which fits neither the
- * pre-push hook's 300 s timeout nor the PR gate's run bound now that every
- * oracle change selects all three. Without the flag the slices run only
- * their wiring (imports, corpus shape, counts — seconds): a skipped driver
- * shows as skipped, never as green, and the full proof lives in the
- * author's run plus the scheduled main measurement.
+ * The driver runs in every measurement: scripts/measure-suite.js forces
+ * `ACCORDO_ORACLE_DRIVER=1` on every piece and count it runs (beside the
+ * full flag for the complete product on the scheduled main measurement),
+ * so no record can publish over skipped oracle tests. A direct `node
+ * --test` run — the pre-push hook, the PR gate, a developer timing one
+ * slice — never goes through the measurement and runs only the slices'
+ * wiring (imports, corpus shape, counts — seconds): a skipped driver shows
+ * as skipped, never as green.
  */
 export const SHELL_ORACLE_FULL = process.env.ACCORDO_FULL_SHELL_ORACLE === '1';
 /** One representative per wrapper-grammar path; every name must be a key of ORACLE_WRAPPERS. */
@@ -311,11 +312,12 @@ for (const spelling of SHELL_ORACLE_HEREDOC_SPELLINGS) {
 /**
  * The whole corpus: one cross-product for command shape, one for heredoc shape.
  *
- * Sliced by grouping for the three oracle test files (each about a third of
- * the cells, each in its own measure piece under 900 s): `groupings` names
- * the grouping values this slice covers, `withHeredoc` carries the
- * heredoc/arithmetic cells (only one slice sets it, so no cell runs twice).
- * An unknown grouping name fails here, not as a silently smaller corpus.
+ * Sliced by grouping singleton for the six oracle test files (each about a
+ * sixth of the cells, each in its own measure piece under 900 s):
+ * `groupings` names the grouping values this slice covers, `withHeredoc`
+ * carries the heredoc/arithmetic cells (only one slice sets it, so no cell
+ * runs twice). An unknown grouping name fails here, not as a silently
+ * smaller corpus.
  *
  * @param {{ groupings?: string[], withHeredoc?: boolean }} [options]
  */

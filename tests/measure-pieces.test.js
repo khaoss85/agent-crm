@@ -112,6 +112,51 @@ test('the 6-piece dealing covers exactly the committed corpus: same files, none 
   assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1, `pieces are unbalanced: ${sizes.join(',')}`);
 });
 
+test('the six oracle slices land in six distinct pieces at every supported shard count', () => {
+  // The load-bearing assumption of the 900 s uniform maximum: each full
+  // oracle slice must run alone in its piece. Round-robin dealing separates
+  // consecutive filenames by accident of adjacency, so this pins the fact
+  // over the committed corpus — a rename, a reorder or a seventh oracle
+  // file fails here instead of silently co-locating two full slices in one
+  // piece (backlog:664d5f481a96). Smaller counts cannot separate six
+  // slices at all and are refused by scripts/measure-pieces.sh.
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const listed = gitIn(root)(['ls-tree', '-r', '--name-only', 'HEAD', 'tests/']);
+  assert.equal(listed.status, 0, 'the corpus list must read from the commit');
+  const files = String(listed.stdout).split('\n').filter((path) => path.endsWith('.test.js'));
+  const slices = files.filter((path) => /^tests\/shell-oracle-[a-z]\.test\.js$/.test(path)).sort();
+  assert.deepEqual(
+    slices,
+    [
+      'tests/shell-oracle-a.test.js',
+      'tests/shell-oracle-b.test.js',
+      'tests/shell-oracle-c.test.js',
+      'tests/shell-oracle-d.test.js',
+      'tests/shell-oracle-e.test.js',
+      'tests/shell-oracle-f.test.js',
+    ],
+    'the oracle slice set changed: update the dealing floor in scripts/measure-pieces.sh alongside it',
+  );
+  for (const total of [6, 7, 12]) {
+    const plan = planShards(files, total);
+    const holders = new Map();
+    for (const piece of plan) {
+      for (const slice of slices) {
+        if (piece.files.includes(slice)) {
+          assert.ok(!holders.has(slice), `${slice} runs in two pieces at ${total} pieces`);
+          holders.set(slice, piece.shard);
+        }
+      }
+    }
+    assert.equal(holders.size, slices.length, `an oracle slice runs in no piece at ${total} pieces`);
+    assert.equal(
+      new Set(holders.values()).size,
+      slices.length,
+      `two oracle slices share one piece at ${total} pieces: ${[...holders].map(([s, p]) => `${s}->${p}`).join(', ')}`,
+    );
+  }
+});
+
 test('the join adds green pieces into one record', () => {
   const files = fileNames(7);
   const reports = [makeReport(1, 3, files.slice(0, 3)), makeReport(2, 3, files.slice(3, 5)), makeReport(3, 3, files.slice(5))];
@@ -363,13 +408,21 @@ test('pieces queue one at a time: the driver never holds two lock waiters', () =
   const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
   try {
     writeShadowTree(shadow);
-    const { status, stdout, log } = runDriver(shadow, { shards: 3 });
+    const { status, stdout, log } = runDriver(shadow, { shards: 6 });
     assert.equal(status, 0, `driver must stay green:\n${log}`);
     assert.doesNotThrow(() => JSON.parse(stdout), `driver stdout must stay parsable JSON, got: ${stdout}`);
     const starts = log.split('\n').filter((line) => line.startsWith('start ')).map((line) => line.split(' ')[1]);
-    assert.deepEqual(starts, ['measure-check', 'measure-1-of-3', 'measure-2-of-3', 'measure-3-of-3']);
+    assert.deepEqual(starts, [
+      'measure-check',
+      'measure-1-of-6',
+      'measure-2-of-6',
+      'measure-3-of-6',
+      'measure-4-of-6',
+      'measure-5-of-6',
+      'measure-6-of-6',
+    ]);
     const ends = log.split('\n').filter((line) => line.startsWith('end '));
-    assert.equal(ends.length, 4, `check plus 3 pieces must each finish:\n${log}`);
+    assert.equal(ends.length, 7, `check plus 6 pieces must each finish:\n${log}`);
     for (const line of ends) {
       assert.match(line, /waiters=1$/, `two lock waiters at once: ${line}\n${log}`);
     }
@@ -382,17 +435,34 @@ test('every piece declares the same machine-lock maximum: 900 s', () => {
   const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
   try {
     writeShadowTree(shadow);
-    const { status, log } = runDriver(shadow, { shards: 3 });
+    const { status, log } = runDriver(shadow, { shards: 6 });
     assert.equal(status, 0, `driver must stay green:\n${log}`);
     assert.equal(maxOf(log, 'measure-check'), '900');
-    assert.equal(maxOf(log, 'measure-1-of-3'), '900');
-    // No heavy piece: the full shell-oracle corpus is sliced across three
-    // oracle files (tests/shell-oracle-a/b/c.test.js, backlog:664d5f481a96),
+    // No heavy piece: the full shell-oracle corpus is sliced one grouping
+    // per file (tests/shell-oracle-a/b/c/d/e/f.test.js, backlog:664d5f481a96),
     // so no piece needs more than the common 900 s.
-    assert.equal(maxOf(log, 'measure-2-of-3'), '900');
-    assert.equal(maxOf(log, 'measure-3-of-3'), '900');
+    for (let i = 1; i <= 6; i += 1) {
+      assert.equal(maxOf(log, `measure-${i}-of-6`), '900');
+    }
   } finally {
     rmSync(shadow, { recursive: true, force: true });
+  }
+});
+
+test('fewer than six pieces refuse before taking any lock: two oracle slices would share one', () => {
+  for (const shards of [5, 2, 1]) {
+    const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
+    try {
+      writeShadowTree(shadow);
+      const { status, log } = runDriver(shadow, { shards });
+      assert.notEqual(status, 0, `${shards} pieces must refuse, got status ${status}:\n${log}`);
+      assert.ok(
+        !log.split('\n').some((line) => line.startsWith('start ')),
+        `${shards} pieces took a lock before refusing:\n${log}`,
+      );
+    } finally {
+      rmSync(shadow, { recursive: true, force: true });
+    }
   }
 });
 
@@ -400,11 +470,11 @@ test('a red piece reddens the measure: the driver exits non-zero and never combi
   const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
   try {
     writeShadowTree(shadow);
-    const { status, log } = runDriver(shadow, { shards: 3, failPiece: 'measure-2-of-3' });
+    const { status, log } = runDriver(shadow, { shards: 6, failPiece: 'measure-2-of-6' });
     assert.notEqual(status, 0, `a red piece must redden the measure, got status ${status}:\n${log}`);
     assert.ok(!log.split('\n').some((line) => line.startsWith('combine ')), `no combine after a red piece:\n${log}`);
     assert.ok(
-      !log.split('\n').some((line) => line.startsWith('start measure-3-of-3 ')),
+      !log.split('\n').some((line) => line.startsWith('start measure-3-of-6 ')),
       `pieces after the red one must not run:\n${log}`,
     );
   } finally {

@@ -27,15 +27,21 @@
 # minutes against its own 40-minute driver budget, 907-1070 s on the machine
 # log), so that piece once kept 1800 s. The verifier failed the exception
 # (backlog:664d5f481a96: every piece declares 900 s), so the corpus is
-# sliced by grouping pair across tests/shell-oracle-a/b/c.test.js — same
-# 26,880 cells, three pieces of about a third each — and no piece needs
-# more than the common 900 s. If a slice ever outgrows it, slice smaller,
-# never cap one piece higher.
+# sliced one grouping per file across tests/shell-oracle-a/b/c/d/e/f.test.js
+# — same cells, six pieces of about a sixth each. The heaviest full slice
+# (F: trap plus the heredoc/arithmetic cells, 6,040 bash snippets) is under
+# a fifth of the old single-piece full corpus (31,640 snippets at
+# 907-1,070 s on the machine log), and its shard-mate files cost the same in
+# default and full mode — so the heaviest full piece holds documented margin
+# under the common 900 s. If a slice ever outgrows it, slice smaller, never
+# cap one piece higher.
 #
 # Usage: bash scripts/measure-pieces.sh [--apply]
 #   without --apply prints the { measuredAgainst } block (CI redirects it
 #   into the measurement artifact); with --apply writes site/claims.json.
-#   MEASURE_SHARDS sets the piece count (default 6).
+#   MEASURE_SHARDS sets the piece count (default 6, minimum 6: the six
+#   oracle slices need one piece each, and any smaller count would
+#   co-locate two slices in one piece past the 900 s maximum).
 # Stdout carries ONLY the combined record: every progress line and every
 # heavy child (check included) is redirected to stderr, so a redirected
 # stdout stays parsable JSON for apply-ci-measurement.js.
@@ -52,6 +58,13 @@ done
 SHARDS="${MEASURE_SHARDS:-6}"
 if ! [[ "$SHARDS" =~ ^[0-9]+$ ]] || [ "$SHARDS" -lt 1 ]; then
   echo "measure-pieces: MEASURE_SHARDS must be a positive whole number, got ${MEASURE_SHARDS:-(unset)}." >&2
+  exit 2
+fi
+if [ "$SHARDS" -lt 6 ]; then
+  echo "measure-pieces: MEASURE_SHARDS must be at least 6: the six oracle slices" >&2
+  echo "  (tests/shell-oracle-a/b/c/d/e/f.test.js) need one piece each, and fewer" >&2
+  echo "  pieces would co-locate two full slices past the 900 s lock maximum." >&2
+  echo "  Refusing before taking any lock; use the default 6 or more." >&2
   exit 2
 fi
 

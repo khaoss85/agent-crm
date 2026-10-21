@@ -4,7 +4,7 @@
  * The heredoc min-corpus cannot shrink quietly.
  *
  * The shell-oracle machinery lives in tests/helpers/shell-oracle.js (shared
- * by the three oracle slices in tests/shell-oracle-a/b/c.test.js,
+ * by the six oracle slices in tests/shell-oracle-a/b/c/d/e/f.test.js,
  * backlog:664d5f481a96), and a full-oracle slice is far too slow for the
  * fast gate — so this file must never import it: importing a test file
  * registers its tests, which would drag the whole matrix into every run

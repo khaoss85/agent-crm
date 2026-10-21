@@ -274,8 +274,10 @@ backlog:9fff957f3968 the measurement itself runs in short pieces
 (`npm run measure`, `scripts/measure-pieces.sh`): `npm run check`, then one
 `measure-suite.js --shard i/n` per piece, each under its own heavy-job
 acquisition with its own declared maximum (900 s every piece — the
-shell-classifier oracle corpus is sliced across tests/shell-oracle-a/b/c.test.js,
-so no piece needs more: backlog:664d5f481a96, see scripts/measure-pieces.sh) —
+shell-classifier oracle corpus is sliced one grouping per file across
+tests/shell-oracle-a/b/c/d/e/f.test.js, six slices needing six pieces at
+minimum, so no piece needs more: backlog:664d5f481a96, see
+scripts/measure-pieces.sh) —
 the lock is free between two pieces, the pieces run strictly one at a time so
 the run never holds two waiters at once, and a piece past its maximum fails red
 instead of holding the machine. The combine runs no tests and takes no lock;
