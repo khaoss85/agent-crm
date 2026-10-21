@@ -207,7 +207,7 @@ export function createIntelligenceDomain(options = {}) {
         name: 'purge-expired-transcripts',
         label: 'Purge expired transcripts',
         appMethod: 'purgeExpiredTranscripts',
-        description: 'Erase every transcript whose per-space retention expired: text and summary are wiped, purgedAt is stamped, the row remains as the erasure proof.',
+        description: 'Erase every transcript whose per-space retention expired: text, summary and the quoted signal excerpts are wiped, purgedAt is stamped, the rows remain as the erasure proof.',
         input: [
           { name: 'spaceId', type: 'string', required: false, hint: 'Scope the purge to one space; omit to purge every space.' },
         ],
