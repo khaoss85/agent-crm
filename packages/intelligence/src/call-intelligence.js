@@ -25,13 +25,17 @@ import { AppError, ConflictError, ValidationError, nowIso, requireActor, trusted
  *
  * Storage: three managed record modules, created only here —
  * `call-notice` (append-only), `call-transcript` (summary added once by the
- * summarize step, text wiped by the purge), `call-signal` (append-only,
- * immutable). No public create/update exists on any of them.
+ * summarize step, text wiped by the purge), `call-signal` (append-only, no
+ * public create/update: only the retention purge wipes its excerpts). No
+ * public create/update exists on any of them.
  *
  * Retention erasure wipes the personal data (text and summary become null,
  * `purgedAt` is stamped) instead of deleting the row, so the retention
  * proof survives the erasure. The framework's storage has no row delete,
- * and an erasure that leaves no trace cannot be audited.
+ * and an erasure that leaves no trace cannot be audited. The call-signal
+ * excerpts quoting the transcript word for word are personal data too, so
+ * the purge wipes them in the same unit: signal rows stay (type, source
+ * and proof of what was found), only the quoted text goes.
  */
 
 export const CALL_INTELLIGENCE_MODULES = Object.freeze(['call-notice', 'call-transcript', 'call-signal']);
@@ -65,6 +69,8 @@ const MAX_SUMMARY_CHARS = 2000;
 const MAX_EXCERPT_CHARS = 500;
 const MAX_SIGNALS_PER_CALL = 20;
 const MAX_CALLS_READ = 50;
+/** A phone clock ahead of the server is tolerated this far; beyond it the stamp would push the retention deadline out. */
+const MAX_RECORDED_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 /**
  * @param {unknown} value @param {string} field
@@ -271,7 +277,10 @@ export function createCallIntelligence(options = {}) {
   /**
    * Save the call transcript. Refused with CALL_NOTICE_MISSING when no
    * start-of-call notice is on file — neither audio nor text is stored
-   * before the notice, and the refusal writes nothing.
+   * before the notice, and the refusal writes nothing. The recording
+   * cannot predate the notice (Q-G2: the notice is recorded before any
+   * audio or text) and cannot be stamped beyond clock tolerance in the
+   * future, which would push the retention deadline out.
    */
   async function saveCallTranscript(input = {}) {
     const actor = requireActor(input.actor);
@@ -292,6 +301,16 @@ export function createCallIntelligence(options = {}) {
     if (!notice) {
       throw new AppError('No start-of-call notice is recorded for this call: nothing is saved', {
         code: 'CALL_NOTICE_MISSING', status: 409,
+      });
+    }
+    if (recordedAt < notice.noticedAt) {
+      throw new AppError('This transcript predates the recorded start-of-call notice: nothing is saved', {
+        code: 'CALL_TRANSCRIPT_PREDATED', status: 409,
+      });
+    }
+    if (Date.parse(recordedAt) > Date.parse(clock()) + MAX_RECORDED_FUTURE_SKEW_MS) {
+      throw new AppError('This transcript is stamped beyond clock tolerance in the future: nothing is saved', {
+        code: 'CALL_TRANSCRIPT_FUTURE', status: 409,
       });
     }
     if (notice.subjectResource !== subjectResource || notice.subjectId !== subjectId) {
@@ -477,24 +496,37 @@ export function createCallIntelligence(options = {}) {
   /**
    * Erase every transcript whose retention expired at `now`: the personal
    * data (text and summary) is wiped and `purgedAt` is stamped, so the row
-   * that remains proves the erasure instead of hiding it. Signals keep
-   * their transcript reference and excerpt — they are the team's working
-   * evidence, quoted from a transcript that no longer exists.
+   * that remains proves the erasure instead of hiding it. The call-signal
+   * excerpts quoting the transcript word for word are wiped in the same
+   * unit — they are personal data too, and a purge that kept them would
+   * serve the erased words back through the reads. `now` is the server
+   * clock (the sweep and the operator route never forward caller time);
+   * the parameter stays for the in-process sweep and the tests.
    */
   async function purgeExpiredTranscripts(input = {}) {
     const actor = requireActor(input.actor);
     const at = input.now === undefined ? clock() : assertIsoDate(input.now, 'now');
     const scoped = input.spaceId === undefined ? {} : { spaceId: assertSpaceId(input.spaceId) };
-    const candidates = await trusted(modules, 'call-transcript').listWhere(scoped);
-    const service = trusted(modules, 'call-transcript');
-    const purged = [];
-    for (const row of candidates) {
-      if (row.purgedAt) continue;
-      if (typeof row.expiresAt !== 'string' || row.expiresAt > at) continue;
-      const wiped = await service.applyManaged(row.id, { text: null, summary: null, purgedAt: at }, { actor });
-      purged.push(wiped);
-    }
-    return { purged: purged.map((row) => ({ callRef: row.callRef, purgedAt: row.purgedAt })) };
+    const sweep = async () => {
+      const candidates = await trusted(modules, 'call-transcript').listWhere(scoped);
+      const transcriptService = trusted(modules, 'call-transcript');
+      const signalService = trusted(modules, 'call-signal');
+      const purged = [];
+      for (const row of candidates) {
+        if (row.purgedAt) continue;
+        if (typeof row.expiresAt !== 'string' || row.expiresAt > at) continue;
+        const wiped = await transcriptService.applyManaged(row.id, { text: null, summary: null, purgedAt: at }, { actor });
+        const quoted = await signalService.listWhere({ spaceId: row.spaceId, callRef: row.callRef });
+        for (const signal of quoted) {
+          if (signal.excerpt !== null && signal.excerpt !== undefined) {
+            await signalService.applyManaged(signal.id, { excerpt: null }, { actor });
+          }
+        }
+        purged.push(wiped);
+      }
+      return { purged: purged.map((row) => ({ callRef: row.callRef, purgedAt: row.purgedAt })) };
+    };
+    return inTransaction(sweep);
   }
 
   /**
@@ -529,7 +561,10 @@ export function createCallIntelligence(options = {}) {
         summarized: transcript.summary !== null && transcript.summary !== undefined,
         purgedAt: transcript.purgedAt,
         signals: signals.map((row) => ({
-          type: row.signalType, excerpt: row.excerpt, transcriptRef: row.transcriptRef,
+          // A purged transcript keeps its signal rows as proof of what was
+          // found, but the quoted words went with the purge: the read serves
+          // no excerpt for them, even if a row somehow still carries one.
+          type: row.signalType, excerpt: transcript.purgedAt ? null : row.excerpt, transcriptRef: row.transcriptRef,
         })),
         transcript: transcript.purgedAt
           ? { available: false, reason: `cancellata il ${transcript.purgedAt.slice(0, 10)} (retention scaduta)` }

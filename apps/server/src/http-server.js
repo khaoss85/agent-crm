@@ -489,12 +489,17 @@ function buildRouter(app) {
   // The explicit operator path for the retention purge (BO-F1-08): the same
   // operation the scheduled sweep runs, triggerable by hand when no beat is
   // seeded. Without intelligence composed it answers the honest 404 above.
+  // The instant is server-controlled: a caller-supplied `now` could erase
+  // every transcript early by naming a far-future date, so only the space
+  // scope is read from the body and `now` is never forwarded.
   router.add('POST', '/api/call-intelligence/purge', async ({ body, actor, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.write');
     if (typeof app.purgeExpiredTranscripts !== 'function') {
       throw new NotFoundError('Operation', 'call purge');
     }
-    return await app.purgeExpiredTranscripts({ ...stripServerControlledKeys(body), actor });
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : undefined;
+    return await app.purgeExpiredTranscripts(spaceId === undefined ? { actor } : { spaceId, actor });
   });
 
   router.add('GET', '/api/call-intelligence/calls/:resource/:id', async ({ params, searchParams, identity, organizationId }) => {

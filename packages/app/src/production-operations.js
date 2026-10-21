@@ -15,6 +15,9 @@
  *
  * - constructing this handle starts nothing, claims no work and arms no timer,
  *   exactly as `createDurableJobWorker` already behaves one level down;
+ *   composing the call-transcript retention sweep registers its handler, and
+ *   nothing more — no beat is seeded here, so without a deployment-owned
+ *   beat the worker fires nothing and expired transcripts survive;
  * - the composing application supplies the actor, and it must carry system
  *   authority: a worker executes on the framework's behalf. The application
  *   claims that authority itself, through the public `trustedSystemActor`, for
@@ -28,10 +31,11 @@
  * that never composed them. That is v3C's "nothing runs on a clock", one level
  * up, and it is the first time an application factory knows workers exist.
  *
- * One registry, one store, one worker, three handler families. That the outbox
- * and the timers both register into a registry a caller owns is not a
- * coincidence to exploit — it is the seam those two slices were built with, and
- * it is why this file composes instead of inventing.
+ * One registry, one store, one worker, and the handler families the
+ * application composed: the outbox, the timers, and the call-transcript
+ * retention sweep. That the families register into a registry a caller owns
+ * is not a coincidence to exploit — it is the seam those slices were built
+ * with, and it is why this file composes instead of inventing.
  */
 
 import { AppError } from '../../core/src/errors.js';
@@ -51,6 +55,11 @@ import {
 } from '../../core/src/domain-timers.js';
 import { createBackupOperations } from '../../core/src/backup-restore.js';
 import { requireTelemetrySink } from '../../core/src/observability-export.js';
+import {
+  CALL_INTELLIGENCE_MODULES,
+  createCallIntelligence,
+  registerCallTranscriptPurge,
+} from '../../intelligence/src/call-intelligence.js';
 
 /** Bumped when the shape below stops being a superset of the previous one. */
 export const PRODUCTION_OPERATIONS_CONTRACT = 1;
@@ -109,13 +118,25 @@ function optionalSection(value, allowed, required, label) {
  *   jobs?: true | { workerId?: string, pollIntervalMs?: number, leaseMs?: number, backoff?: any },
  *   outbox?: { events: any, resolveExternalFinalize?: any },
  *   timers?: true,
+ *   callRetention?: true,
  *   backup?: object,
  * }} options
+ *
+ * `callRetention` composes the call-transcript retention sweep (BO-F1-08):
+ * the purge handler is registered on the composed registry and the started
+ * worker fires it. Beats stay deployment-owned, like the reminder sweep —
+ * nothing here seeds one. The deployment seeds one beat per interval with
+ * `seedCallTranscriptPurge` on the composed `jobs` store (daily is the
+ * honest cadence for a 12-month retention; the operator route
+ * POST /api/call-intelligence/purge covers a missed beat by hand), and the
+ * posture (`status().composed.callRetention`, `status().backlog`) is what a
+ * receipt reads to prove beats exist. Composing without the intelligence
+ * record modules refuses at the wiring, naming them.
  */
 export function createProductionOperations(options) {
   closedObject(
     options,
-    ['database', 'tenantId', 'actor', 'adapter', 'domains', 'modules', 'clock', 'telemetry', 'jobs', 'outbox', 'timers', 'backup'],
+    ['database', 'tenantId', 'actor', 'adapter', 'domains', 'modules', 'clock', 'telemetry', 'jobs', 'outbox', 'timers', 'callRetention', 'backup'],
     ['database', 'tenantId', 'actor', 'adapter'],
     'Production-operations options',
   );
@@ -133,15 +154,16 @@ export function createProductionOperations(options) {
   const jobs = optionalSection(options.jobs, ['workerId', 'pollIntervalMs', 'leaseMs', 'backoff'], [], 'Production-operations jobs options');
   const outbox = optionalSection(options.outbox, ['events', 'resolveExternalFinalize'], ['events'], 'Production-operations outbox options');
   const timers = optionalSection(options.timers, [], [], 'Production-operations timers options');
+  const callRetention = optionalSection(options.callRetention, [], [], 'Production-operations call retention options');
   const backupConfiguration = options.backup ?? null;
 
   // A worker with an empty registry is a poll loop that can never do anything.
   // Refusing is the honest answer: it says the composition is incomplete rather
   // than running something that looks alive and is not.
-  if (!outbox && !timers) {
+  if (!outbox && !timers && !callRetention) {
     refuse(
       'PRODUCTION_OPERATIONS_EMPTY',
-      'production operations compose at least one handler family: pass outbox, timers, or both',
+      'production operations compose at least one handler family: pass outbox, timers, callRetention, or a combination',
     );
   }
 
@@ -170,6 +192,34 @@ export function createProductionOperations(options) {
       modules: options.modules ?? { get: () => null },
       ...(clock ? { clock } : {}),
     });
+  }
+  if (callRetention) {
+    // The retention sweep reaches the call records through the same composed
+    // module registry the application reads: no second store, no new seam.
+    // A composition without the intelligence records refuses here, naming
+    // them, instead of registering a handler whose first beat would fail.
+    const composedModules = options.modules ?? null;
+    for (const name of CALL_INTELLIGENCE_MODULES) {
+      let service = null;
+      try {
+        const entry = composedModules?.get?.(name) ?? null;
+        service = entry?.service ?? entry ?? null;
+      } catch {
+        service = null;
+      }
+      if (!service || typeof service.createManaged !== 'function' || typeof service.listWhere !== 'function') {
+        refuse(
+          'PRODUCTION_OPERATIONS_INVALID',
+          `composed call retention needs the "${name}" record service: compose the intelligence record modules`,
+        );
+      }
+    }
+    const calls = createCallIntelligence({
+      modules: composedModules,
+      database,
+      ...(clock ? { now: clock } : {}),
+    });
+    registerCallTranscriptPurge(registry, { calls });
   }
 
   const store = createDurableJobStore({ storage: database.storage, tenantId, ...(clock ? { clock } : {}) });
@@ -294,6 +344,7 @@ export function createProductionOperations(options) {
         composed: Object.freeze({
           outbox: outbox !== null,
           timers: timers !== null,
+          callRetention: callRetention !== null,
           backup: backup !== null,
           telemetry: telemetry !== null,
         }),

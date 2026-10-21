@@ -369,7 +369,11 @@ export function createCustomerCardView(deps) {
       const list = el('ul', 'bo-scheda-signals');
       for (const signal of signals) {
         const label = SIGNAL_LABELS[String(signal?.type ?? '')] ?? String(signal?.type ?? 'segnale');
-        const line = el('li', undefined, `${label}: “${String(signal?.excerpt ?? '')}”`);
+        // A purged transcript keeps its signal rows without the quoted words:
+        // the label stays as proof of what was found, never an empty quote.
+        const line = typeof signal?.excerpt === 'string' && signal.excerpt !== ''
+          ? el('li', undefined, `${label}: “${signal.excerpt}”`)
+          : el('li', undefined, `${label} (citazione cancellata: retention scaduta)`);
         list.appendChild(line);
       }
       box.appendChild(list);

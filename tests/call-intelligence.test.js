@@ -135,7 +135,7 @@ const outcome = (promise) => promise.then(
 
 const NOTICE = {
   spaceId: SPACE, subjectResource: 'contact', subjectId: 'c1',
-  callRef: 'call-1', channel: 'phone', actor: USER,
+  callRef: 'call-1', channel: 'phone', noticedAt: '2026-10-01T09:00:00.000Z', actor: USER,
 };
 
 async function noticeAndSave(ops, overrides = {}) {
@@ -262,12 +262,19 @@ test('after 12 months the purge wipes text and summary and stamps the proof', as
   assert.equal(row.summary, null, 'the summary is gone');
   assert.ok(!String(row.text ?? '').includes('800'), 'no personal data survives in the row');
   const signals = await harness.signals();
-  assert.equal(signals.length, 4, 'signals stay: they are the working evidence quoting the erased transcript');
+  assert.equal(signals.length, 4, 'signal rows stay as proof of what was found');
+  for (const signal of signals) {
+    assert.equal(signal.excerpt, null, 'the purge wipes the quoted words, not the rows');
+  }
 
   const read = await harness.ops.readCustomerCalls({ spaceId: SPACE, subjectResource: 'contact', subjectId: 'c1' });
   assert.equal(read.calls.length, 1);
   assert.equal(read.calls[0].transcript.available, false);
   assert.match(read.calls[0].transcript.reason, /retention/);
+  assert.equal(read.calls[0].signals.length, 4, 'purged calls keep their signal labels');
+  for (const signal of read.calls[0].signals) {
+    assert.equal(signal.excerpt, null, 'the read serves no excerpt for a purged call');
+  }
   const summarized = await outcome(harness.ops.summarizeCall({ spaceId: SPACE, callRef: 'call-1', actor: USER }));
   assert.equal(summarized.accepted, false);
   assert.equal(summarized.code, 'CALL_TRANSCRIPT_PURGED');
@@ -276,7 +283,7 @@ test('after 12 months the purge wipes text and summary and stamps the proof', as
 test('the customer read returns the latest call first with summary, signals and openable transcript', async (t) => {
   const harness = setupCallHarness({ withLlm: true });
   t.after(() => harness.close());
-  await harness.ops.recordCallNotice({ ...NOTICE, callRef: 'call-old' });
+  await harness.ops.recordCallNotice({ ...NOTICE, callRef: 'call-old', noticedAt: '2026-09-01T09:00:00.000Z' });
   await harness.ops.saveCallTranscript({
     spaceId: SPACE, subjectResource: 'contact', subjectId: 'c1',
     callRef: 'call-old', text: TRANSCRIPT, recordedAt: '2026-09-01T10:00:00.000Z', actor: USER,
@@ -441,7 +448,7 @@ test('a purge that lands while the LLM works stops the commit: nothing is restor
 test('a transcript past its retention deadline cannot be summarized anymore', async (t) => {
   const harness = setupCallHarness({ withLlm: true });
   t.after(() => harness.close());
-  await harness.ops.recordCallNotice(NOTICE);
+  await harness.ops.recordCallNotice({ ...NOTICE, noticedAt: '2025-10-01T09:00:00.000Z' });
   await harness.ops.saveCallTranscript({
     spaceId: SPACE, subjectResource: 'contact', subjectId: 'c1',
     callRef: 'call-1', text: TRANSCRIPT, recordedAt: '2025-10-01T10:00:00.000Z', actor: USER,
@@ -463,7 +470,7 @@ test('the purge sweep is registered and seeded like the reminder sweep', async (
   const short = createCallIntelligence({
     modules: harness.modules, retention: { bySpace: { [SPACE_SHORT]: 1 } }, now: () => '2026-12-01T00:00:00.000Z',
   });
-  await short.recordCallNotice({ ...NOTICE, spaceId: SPACE_SHORT });
+  await short.recordCallNotice({ ...NOTICE, spaceId: SPACE_SHORT, noticedAt: '2026-10-01T09:00:00.000Z' });
   await short.saveCallTranscript({
     spaceId: SPACE_SHORT, subjectResource: 'contact', subjectId: 'c1',
     callRef: 'call-1', text: TRANSCRIPT, recordedAt: '2026-10-01T10:00:00.000Z', actor: USER,
@@ -478,7 +485,7 @@ test('the purge sweep is registered and seeded like the reminder sweep', async (
 
   // The beat purges what expired before it fires: the 1-month space goes,
   // the 12-month default space stays. Notices are per call, like the saves.
-  await harness.ops.recordCallNotice({ ...NOTICE, callRef: 'call-2' });
+  await harness.ops.recordCallNotice({ ...NOTICE, callRef: 'call-2', noticedAt: '2026-10-01T09:00:00.000Z' });
   await harness.ops.saveCallTranscript({
     spaceId: SPACE, subjectResource: 'contact', subjectId: 'c1',
     callRef: 'call-2', text: TRANSCRIPT, recordedAt: '2026-10-01T10:00:00.000Z', actor: USER,
@@ -512,4 +519,43 @@ test('the purge sweep is registered and seeded like the reminder sweep', async (
   assert.equal(refused.accepted, false, 'a registry without register refuses');
   const noStore = await outcome(seedCallTranscriptPurge({ at: '2026-12-01T00:00:00.000Z' }));
   assert.equal(noStore.accepted, false, 'seeding without a store refuses');
+});
+
+test('a transcript predating the recorded notice is refused, and nothing is stored', async (t) => {
+  const harness = setupCallHarness();
+  t.after(() => harness.close());
+  await harness.ops.recordCallNotice(NOTICE);
+  const answer = await outcome(harness.ops.saveCallTranscript({
+    spaceId: SPACE, subjectResource: 'contact', subjectId: 'c1',
+    callRef: 'call-1', text: TRANSCRIPT, recordedAt: '2026-10-01T08:00:00.000Z', actor: USER,
+  }));
+  assert.equal(answer.accepted, false);
+  assert.equal(answer.code, 'CALL_TRANSCRIPT_PREDATED');
+  assert.equal(answer.status, 409);
+  assert.equal((await harness.transcripts()).length, 0, 'a predated save writes nothing');
+});
+
+test('a transcript stamped beyond clock tolerance in the future is refused', async (t) => {
+  const harness = setupCallHarness();
+  t.after(() => harness.close());
+  await harness.ops.recordCallNotice({ ...NOTICE, noticedAt: NOW });
+  const answer = await outcome(harness.ops.saveCallTranscript({
+    spaceId: SPACE, subjectResource: 'contact', subjectId: 'c1',
+    callRef: 'call-1', text: TRANSCRIPT, recordedAt: '2026-10-20T12:10:00.000Z', actor: USER,
+  }));
+  assert.equal(answer.accepted, false);
+  assert.equal(answer.code, 'CALL_TRANSCRIPT_FUTURE');
+  assert.equal(answer.status, 409);
+  assert.equal((await harness.transcripts()).length, 0, 'a future-stamped save writes nothing');
+});
+
+test('a transcript stamped at the notice instant lands: the boundary is inclusive', async (t) => {
+  const harness = setupCallHarness();
+  t.after(() => harness.close());
+  await harness.ops.recordCallNotice(NOTICE);
+  const saved = await harness.ops.saveCallTranscript({
+    spaceId: SPACE, subjectResource: 'contact', subjectId: 'c1',
+    callRef: 'call-1', text: TRANSCRIPT, recordedAt: '2026-10-01T09:00:00.000Z', actor: USER,
+  });
+  assert.equal(saved.replayed, false, 'recordedAt equal to noticedAt is a same-instant recording, not a predated one');
 });

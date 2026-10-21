@@ -320,14 +320,13 @@ test('BO-F1-08: the scheda shows the AI summary, the signals and the openable tr
   assert.ok(details[0].textContent.includes('Operatrice: buongiorno'), 'the transcript text is inside the opener');
 });
 
-test('BO-F1-08: a purged transcript reads as erased, never as missing, and hostile excerpts stay text', async () => {
-  const nasty = '<script>alert(1)</script>';
+test('BO-F1-08: a purged transcript reads as erased, never as missing, and wiped excerpts read as erased', async () => {
   const purged = {
     calls: [{
       ...CALLS.calls[0],
       summary: null,
       summarized: false,
-      signals: [{ type: 'doubt', excerpt: nasty, transcriptRef: 'call-transcript:call-a:call-1' }],
+      signals: [{ type: 'doubt', excerpt: null, transcriptRef: 'call-transcript:call-a:call-1' }],
       transcript: { available: false, reason: 'cancellata il 2027-10-01 (retention scaduta)' },
     }],
   };
@@ -335,10 +334,22 @@ test('BO-F1-08: a purged transcript reads as erased, never as missing, and hosti
   const text = mount.textContent;
   assert.ok(text.includes('non disponibile: nessun riepilogo registrato'), 'no summary is invented after erasure');
   assert.ok(text.includes('Dubbi'), 'the surviving signal label is shown');
-  assert.ok(text.includes(nasty), 'the excerpt is shown as text');
-  assert.deepEqual(mount.findAll('script'), [], 'and no element was created from it');
+  assert.ok(text.includes('citazione cancellata: retention scaduta'), 'the wiped excerpt reads as erased, never as an empty quote');
   assert.deepEqual(mount.findAll('details'), [], 'an erased transcript has no opener');
   assert.ok(text.includes('cancellata il 2027-10-01 (retention scaduta)'), 'the erasure reads as erased with its date');
+});
+
+test('BO-F1-08: a hostile excerpt on an available transcript stays text', async () => {
+  const nasty = '<script>alert(1)</script>';
+  const hostile = {
+    calls: [{
+      ...CALLS.calls[0],
+      signals: [{ type: 'doubt', excerpt: nasty, transcriptRef: 'call-transcript:call-a:call-1' }],
+    }],
+  };
+  const mount = await renderCard(stubClient({ calls: hostile }), 'call-a');
+  assert.ok(mount.textContent.includes(nasty), 'the excerpt is shown as text');
+  assert.deepEqual(mount.findAll('script'), [], 'and no element was created from it');
 });
 
 test('BO-F1-08: without a space or without intelligence composed the card stays honest', async () => {
