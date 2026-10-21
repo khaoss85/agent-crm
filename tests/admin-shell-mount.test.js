@@ -225,6 +225,26 @@ test('framework errors keep their status and code through the mount', async () =
   assert.equal(jsonBody(answer).error.code, 'NOT_FOUND');
 });
 
+test('thrown errors echo the idempotency key like the standalone server', async () => {
+  const { AppError } = await import('../packages/core/src/errors.js');
+  const app = readApp();
+  try {
+    const mount = createAdminShellMount(app, {
+      basePath: '/bo',
+      identityFor: () => {
+        throw new AppError('denied', { code: 'FORBIDDEN', status: 403, details: { idempotencyKey: 'k-9' } });
+      },
+    });
+    const answer = await mount.handle({ method: 'GET', path: '/bo/api/schema', headers: {} });
+    assert.equal(answer.status, 403);
+    assert.equal(jsonBody(answer).error.code, 'FORBIDDEN');
+    assert.equal(answer.headers['idempotency-key'], 'k-9');
+    assert.equal(answer.headers['content-length'], String(Buffer.byteLength(answer.body)));
+  } finally {
+    app.close();
+  }
+});
+
 test('injectAdminBase prefixes served HTML, or prepends without a head', () => {
   const withHead = injectAdminBase('<html><head><title>x</title></head><body></body></html>', '/bo');
   assert.match(withHead, /<head><base href="\/bo\/"><meta name="admin-base" content="\/bo"><title>/);

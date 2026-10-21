@@ -250,11 +250,17 @@ export function createAdminShellMount(app, options = {}) {
           return serializeEnvelope(envelope);
         } catch (error) {
           const normalized = normalizeError(error);
-          return json(normalized.status, {
-            error: {
-              code: normalized.code,
-              message: normalized.message,
-              details: normalized.details ?? null,
+          // The standalone server answers handler errors with `sendJson`,
+          // which echoes the idempotency key — the mount serializes the same
+          // envelope shape instead of the bare `json` helper.
+          return serializeEnvelope({
+            status: normalized.status,
+            body: {
+              error: {
+                code: normalized.code,
+                message: normalized.message,
+                details: normalized.details ?? null,
+              },
             },
           });
         }
