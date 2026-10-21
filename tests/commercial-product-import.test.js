@@ -162,12 +162,13 @@ function importProject(t, llm = null) {
     applyManifests(root, 'packages/llm/modules', LLM_MANIFESTS);
     writeFileSync(join(root, 'llm-fixture.mjs'), [
       "import { createFixtureLlmAdapter, createLlmPackage, FIXTURE_LLM_SECRET } from './packages/llm/src/index.js';",
-      'export const fixture = createFixtureLlmAdapter();',
+      'const created = createFixtureLlmAdapter();',
+      'export const fixture = created.api;',
       llm === 'key'
         ? "fixture.answer(JSON.stringify([{ sku: 'AI-1', name: 'Prodotto dal documento', description: 'Letto dal PDF.', category: 'corsi', amountCents: 4900 }, { sku: 'AI-2', name: 'Secondo prodotto', amountCents: 1900 }]));"
         : '',
       'export const llm = createLlmPackage({',
-      '  adapters: [fixture.definition],',
+      '  adapters: [created.definition],',
       "  spaces: { prova: { enabled: true, secretRef: 'secret://prova/llm' } },",
       llm === 'key'
         ? '  resolveSecret: async () => FIXTURE_LLM_SECRET,'
