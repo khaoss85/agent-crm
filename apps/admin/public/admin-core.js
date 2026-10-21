@@ -219,6 +219,29 @@ export function selectGeneratedModules(schema) {
 }
 
 /**
+ * Read the shell nav inputs from a `/api/schema` envelope (backlog:42fd49b8).
+ * The same sniffing the shell runs after the schema arrives, in one pure,
+ * unit-tested place instead of inline in the router: pipelines from the
+ * code-first registry block, generated modules from their contract block,
+ * Clienti from the customer-data domain block (the contract travels at the
+ * top level of the domain block since the registry merge; `.metadata` is
+ * kept as the legacy path). A block that is absent means "not composed":
+ * the voice stays disabled with its story, never a link to a blank screen.
+ *
+ * @param {any} envelope
+ */
+export function shellNavInput(envelope) {
+  const pipelines = envelope?.pipelineContract === 1 && Array.isArray(envelope?.pipelines)
+    ? envelope.pipelines
+    : [];
+  const { supported: modulesSupported, modules: customModules } = selectGeneratedModules(envelope);
+  const customerData = envelope?.domains?.['customer-data'];
+  const customerDataAvailable = customerData?.metadata?.customerDataContract === 1
+    || customerData?.customerDataContract === 1;
+  return { pipelines, customModules, customerDataAvailable, modulesSupported };
+}
+
+/**
  * A short human title for a record: first required string field value, else id.
  * @param {any} record @param {Array<{name: string, type: string, required?: boolean}>} fields
  */

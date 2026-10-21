@@ -130,6 +130,16 @@ function escapeHtmlAttr(value) {
 }
 
 /**
+ * The framework-technical footer of the Admin shell (version and the
+ * "same services" line, marked `data-bo-technical` in index.html). A space
+ * user under a mount never sees it (backlog:42fd49b8); the standalone
+ * server path serves the shell unchanged, footer included. Only the marked
+ * footer is ever removed, so an unmarked footer stays put even if the
+ * markup moves.
+ */
+const TECHNICAL_FOOTER_RE = /<footer\b[^>]*\bdata-bo-technical\b[^>]*>[\s\S]*?<\/footer\s*>/i;
+
+/**
  * @param {string} html
  * @param {string} basePath
  */
@@ -137,8 +147,11 @@ export function injectAdminBase(html, basePath) {
   const escaped = escapeHtmlAttr(basePath);
   const base = `<base href="${escaped === '' ? '/' : `${escaped}/`}">`;
   const meta = `<meta name="admin-base" content="${escaped}">`;
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (head) => `${head}${base}${meta}`);
-  return `${base}${meta}${html}`;
+  const injected = /<head[^>]*>/i.test(html)
+    ? html.replace(/<head[^>]*>/i, (head) => `${head}${base}${meta}`)
+    : `${base}${meta}${html}`;
+  if (basePath === '') return injected;
+  return injected.replace(TECHNICAL_FOOTER_RE, '');
 }
 
 /**

@@ -19,6 +19,8 @@ import {
   createShellView,
   renderSettingsPanel,
 } from '../apps/admin/public/admin-shell.js';
+import { shellNavInput } from '../apps/admin/public/admin-core.js';
+import { buildOggiLinks } from '../apps/admin/public/admin-oggi.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 test('sidebar voices are the prototype voices, in Italian', () => {
@@ -137,6 +139,16 @@ test('buildShellNav resolves Pipeline from the schema and leaves future screens 
   assert.equal(calendar.available, false);
   assert.match(calendar.disabledReason, /BO-F3/);
 
+  // Sequenze and Reporting have no admin screen either (framework reads for
+  // Calendario/Sequenze exist, but no screen): they stay disabled with the
+  // story named instead of linking anywhere.
+  for (const [id, story] of [['sequenze', /BO-F3/], ['reporting', /BO-F5/]]) {
+    const voice = bare.find((item) => item.id === id);
+    assert.equal(voice.available, false);
+    assert.equal(voice.route, null);
+    assert.match(voice.disabledReason, story);
+  }
+
   const withCustom = buildShellNav({ customModules: [{ name: 'partner' }, { name: 'BAD NAME' }, {}] });
   const custom = withCustom.filter((item) => item.group === 'custom' && item.id.startsWith('module-'));
   assert.deepEqual(custom.map((item) => item.route), ['#/modules/partner']);
@@ -153,6 +165,37 @@ test('Clienti is available only when the customer-data package is composed', () 
     assert.equal(off.route, null);
     assert.match(off.disabledReason, /non composto/);
     assert.equal(off.story, 'BO-F1');
+  }
+});
+
+test('a composed schema envelope links every delivered screen (backlog:42fd49b8)', () => {
+  // The whole chain the shell runs after the schema arrives: envelope in,
+  // sidebar voices out. Every link is a hash route, so it reaches the same
+  // screen under a space mount (/bo) as standalone. Voices with no admin
+  // screen stay out, and Oggi lists exactly the screens that are there.
+  const envelope = {
+    generatedResourceContract: 1,
+    generatedModules: [],
+    pipelineContract: 1,
+    pipelines: [{ name: 'vendite', label: 'Vendite' }],
+    domains: { 'customer-data': { customerDataContract: 1, resources: [] } },
+  };
+  const nav = buildShellNav(shellNavInput(envelope));
+  const byId = Object.fromEntries(nav.map((item) => [item.id, item]));
+  assert.equal(byId.clienti.route, '#/customer-data');
+  assert.equal(byId.pipeline.route, '#/pipelines/vendite');
+  assert.equal(byId.impostazioni.route, '#/impostazioni');
+  assert.equal(byId.oggi.route, '#/');
+  for (const id of ['clienti', 'pipeline', 'impostazioni', 'oggi']) {
+    assert.equal(byId[id].available, true, `${id} links its delivered screen`);
+  }
+  for (const id of ['calendario', 'sequenze', 'reporting']) {
+    assert.equal(byId[id].available, false, `${id} has no admin screen yet`);
+    assert.equal(byId[id].route, null);
+  }
+  const oggiRoutes = buildOggiLinks(nav).map((link) => link.route);
+  for (const href of ['#/customer-data', '#/pipelines/vendite', '#/impostazioni']) {
+    assert.ok(oggiRoutes.includes(href), `Oggi lists the ready screen ${href}`);
   }
 });
 

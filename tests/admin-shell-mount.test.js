@@ -85,6 +85,32 @@ test('served shell HTML carries no demo text, mounted or standalone', async () =
   }
 });
 
+test('the space mount strips the technical footer; standalone keeps it', async () => {
+  const app = readApp();
+  try {
+    const mount = createAdminShellMount(app, { basePath: '/bo' });
+    const answer = await mount.handle({ method: 'GET', path: '/bo/', headers: {} });
+    assert.equal(answer.status, 200);
+    const html = answer.body.toString('utf8');
+    assert.ok(!html.includes('<footer'), 'no footer element under the mount');
+    assert.ok(!html.includes('Same services behind Admin'), 'no technical line under the mount');
+    assert.ok(!html.includes('Accordo v0.1.0'), 'no version line under the mount');
+    // The shell itself still renders: base, mount flag, chrome mounts.
+    assert.match(html, /<meta name="admin-base" content="\/bo">/);
+    assert.match(html, /id="boSidebar"/);
+
+    const rootMount = createAdminShellMount(app, {});
+    const root = await rootMount.handle({ method: 'GET', path: '/', headers: {} });
+    assert.equal(root.status, 200);
+    const standalone = root.body.toString('utf8');
+    assert.ok(standalone.includes('<footer data-bo-technical>'), 'standalone keeps the footer');
+    assert.ok(standalone.includes('Same services behind Admin'), 'standalone keeps the technical line');
+    assert.ok(standalone.includes('Accordo v0.1.0'), 'standalone keeps the version line');
+  } finally {
+    app.close();
+  }
+});
+
 test('static files keep their types; traversal and misses are 404', async () => {
   const app = readApp();
   try {
@@ -267,6 +293,19 @@ test('thrown errors echo the idempotency key like the standalone server', async 
   } finally {
     app.close();
   }
+});
+
+test('injectAdminBase strips only the marked footer under a mount', () => {
+  const withFooter = '<html><head></head><body><footer data-bo-technical><span>Accordo v0.1.0</span></footer></body></html>';
+  const stripped = injectAdminBase(withFooter, '/bo');
+  assert.ok(!stripped.includes('<footer'), 'marked footer goes under the mount');
+  assert.ok(!stripped.includes('Accordo v0.1.0'), 'its text goes with it');
+  const kept = injectAdminBase(withFooter, '');
+  assert.ok(kept.includes('<footer data-bo-technical>'), 'standalone keeps the marked footer');
+  // An unmarked footer is never stripped: the marker is the whole contract.
+  const plain = injectAdminBase('<html><head></head><body><footer><span>x</span></footer></body></html>', '/bo');
+  assert.ok(plain.includes('<footer>'), 'unmarked footer stays');
+  assert.match(plain, /<meta name="admin-base" content="\/bo">/);
 });
 
 test('injectAdminBase prefixes served HTML, or prepends without a head', () => {
