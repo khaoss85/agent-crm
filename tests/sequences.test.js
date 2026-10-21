@@ -1235,3 +1235,43 @@ test('una conferma rotta non ferma le altre', async (t) => {
   assert.equal(healed.sweepErrors.length, 0);
   assert.ok((await sends.listWhere({ sequenceSourceKey: 'seq:confirm-iso' })).every((row) => row.status === 'sent'));
 });
+
+test('una pausa della sequenza in gara con lo sweep non invia', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:race');
+  await enroll(ops, connectionKey, 'seq:race', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  // The sweep snapshots active sequences first: pause the sequence from
+  // inside the sweep — after the snapshot, before the fire — through the
+  // enrollment reread both passes perform.
+  const enrollService = composed.modules.get('sequence-enrollment').service;
+  const realGet = enrollService.get.bind(enrollService);
+  let paused = false;
+  enrollService.get = async (id) => {
+    const row = await realGet(id);
+    if (!paused) {
+      paused = true;
+      await ops.pauseSequence({ spaceId: SPACE, sourceKey: 'seq:race', actor: USER });
+    }
+    return row;
+  };
+  t.after(() => { enrollService.get = realGet; });
+
+  const raced = await advance(composed, connectionKey, T0);
+  assert.equal(raced.advanced, 0);
+  const sends = composed.modules.get('sequence-send').service;
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:race' })).length, 0);
+  const people = await enrollService.listWhere({ sequenceSourceKey: 'seq:race' });
+  assert.equal(people[0].status, 'active');
+
+  // Resume fires the step the paused sweep skipped — exactly once.
+  enrollService.get = realGet;
+  await ops.resumeSequence({ spaceId: SPACE, sourceKey: 'seq:race', actor: USER });
+  const resumed = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(resumed.advanced, 1);
+  assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:race' })).length, 1);
+});

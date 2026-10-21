@@ -724,6 +724,20 @@ export async function advanceSequences({
       }
       if (!current || current.status !== 'active' || Date.parse(current.nextDueAt) > nowMs) continue;
       if (current.sequenceSourceKey !== seqKey) continue;
+      // The active-sequence snapshot above may predate a pause-sequence
+      // racing this sweep: re-read the sequence row space-scoped before
+      // firing, and fire nothing — no queue and no completion — for a
+      // sequence that is no longer active. Confirm of already-queued rows
+      // is unchanged: the provider send was already claimed or answered.
+      let liveSequence = null;
+      try {
+        const fresh = await sequences.listWhere({ spaceId, sourceKey: seqKey });
+        liveSequence = fresh[0] ?? null;
+      } catch (error) {
+        noteSweepError(current, error, 'due');
+        continue;
+      }
+      if (!liveSequence || liveSequence.status !== 'active') continue;
       if (blindEnrollments.has(blindKey(current))) continue;
 
       const live = ordered.filter((row) => row.stepOrder >= current.currentStep);
