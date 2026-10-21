@@ -108,22 +108,32 @@ export function createCustomerListView(deps) {
   let data = null;
   let renderToken = 0;
 
+  /**
+   * Every known column carries an explicit boolean: a stored choice where the
+   * operator made one, the server default otherwise. A missing key must read
+   * as off (`=== true` everywhere below), never as on — otherwise an opt-in
+   * column like the AI budget renders before the operator asks for it, and
+   * its toggle can never switch it on.
+   */
+  function normalizeColumns(columnsMeta, stored) {
+    const normalized = {};
+    for (const column of columnsMeta) {
+      if (column.always) continue;
+      if (stored && typeof stored[column.id] === 'boolean') normalized[column.id] = stored[column.id];
+      else normalized[column.id] = column.def === true;
+    }
+    return normalized;
+  }
+
   function readStoredColumns() {
-    const fallback = Object.fromEntries(FALLBACK_COLUMNS.filter((column) => column.def).map((column) => [column.id, true]));
     try {
       const raw = store?.getItem?.(CLIENTI_COLUMNS_KEY);
-      if (typeof raw !== 'string' || raw === '') return fallback;
+      if (typeof raw !== 'string' || raw === '') return null;
       const parsed = JSON.parse(raw);
-      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback;
-      const cleaned = {};
-      for (const column of FALLBACK_COLUMNS) {
-        if (column.always) continue;
-        if (typeof parsed[column.id] === 'boolean') cleaned[column.id] = parsed[column.id];
-        else cleaned[column.id] = Boolean(column.def);
-      }
-      return cleaned;
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      return parsed;
     } catch {
-      return fallback;
+      return null;
     }
   }
 
@@ -197,7 +207,8 @@ export function createCustomerListView(deps) {
     const sorts = data?.sorts ?? FALLBACK_SORTS;
     const columnsMeta = data?.columns ?? FALLBACK_COLUMNS;
     const sizes = data?.pageSizes ?? FALLBACK_SIZES;
-    if (state.columns === null) state.columns = readStoredColumns();
+    if (state.columns === null) state.columns = normalizeColumns(columnsMeta, readStoredColumns());
+    else state.columns = normalizeColumns(columnsMeta, state.columns);
 
     // ── quick views ─────────────────────────────────────────────────────
     const viewsRow = el('div', 'bo-clienti-views');
@@ -290,12 +301,12 @@ export function createCustomerListView(deps) {
     toolbar.appendChild(menuBox('Colonne', (menu) => {
       for (const column of columnsMeta) {
         if (column.always) continue;
-        const on = state.columns[column.id] !== false;
+        const on = state.columns[column.id] === true;
         const label = `${on ? '✓' : '○'} ${column.label}${column.ai ? ' ✦' : ''}`;
         const item = el('button', 'bo-clienti-item', label);
         item.setAttribute('data-column', column.id);
         item.addEventListener('click', () => {
-          state.columns = { ...state.columns, [column.id]: !(state.columns[column.id] !== false) };
+          state.columns = { ...state.columns, [column.id]: state.columns[column.id] !== true };
           writeStoredColumns();
           drawShell();
         });
@@ -304,7 +315,7 @@ export function createCustomerListView(deps) {
       const reset = el('button', 'bo-clienti-item', 'Ripristina');
       reset.setAttribute('data-action', 'reset-columns');
       reset.addEventListener('click', () => {
-        state.columns = Object.fromEntries(columnsMeta.filter((column) => column.def).map((column) => [column.id, true]));
+        state.columns = normalizeColumns(columnsMeta, null);
         writeStoredColumns();
         drawShell();
       });
@@ -413,7 +424,7 @@ export function createCustomerListView(deps) {
       panel.appendChild(el('p', 'bo-muted', total === 0 ? 'Prova ad allargare i filtri.' : ''));
       return;
     }
-    const visible = columnsMeta.filter((column) => !column.always && state.columns[column.id] !== false);
+    const visible = columnsMeta.filter((column) => !column.always && state.columns[column.id] === true);
     const list = el('div', 'bo-clienti-list');
     for (const row of items) {
       const card = el('article', 'bo-clienti-row');

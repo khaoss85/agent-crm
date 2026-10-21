@@ -107,11 +107,6 @@ export function createCustomerDataView(deps) {
   async function render() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     busy = [];
-    // BO-F1-05: the customer list renders first and owns its refresh; the
-    // section below re-renders without resetting the operator's filters.
-    mount.appendChild(listBox);
-    void customerList.render().catch(() => {});
-
     let schema;
     try {
       schema = await client.request('/api/schema');
@@ -125,6 +120,22 @@ export function createCustomerDataView(deps) {
       // surface that cannot work.
       return;
     }
+
+    // BO-F1-05: the customer list renders first and owns its refresh; the
+    // section below re-renders without resetting the operator's filters.
+    // It mounts only here, past the composed-package gate above, so an
+    // absent package still renders nothing at all.
+    mount.appendChild(listBox);
+    // The list renders its own request errors (unknown space, offline
+    // package) inside listBox; this catch is only for an unexpected throw,
+    // which must still read as an honest line, never a blank box.
+    void customerList.render().catch((error) => {
+      listBox.textContent = '';
+      const fallback = doc.createElement('p');
+      fallback.setAttribute('class', 'bo-muted');
+      fallback.textContent = `Clienti non disponibili: ${error?.message ?? 'errore sconosciuto'}`;
+      listBox.appendChild(fallback);
+    });
 
     const panel = el('div', 'customer-data-section');
     panel.setAttribute('data-contract', String(meta.customerDataContract ?? ''));

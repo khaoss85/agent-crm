@@ -471,3 +471,46 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
   border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px;
 }
 .bo-assistant-busy { margin: 0; font-size: 13px; color: var(--muted); }
+
+/*
+ * Customer list (BO-F1-05): quick views, search, grouped filters with the AI
+ * entry point, removable chips, sorting, configurable columns and server
+ * pagination with ellipses. Cards stack in one column, so the list is fluid
+ * under 700px once the toolbar and the pager wrap instead of overflowing.
+ */
+.bo-clienti { display: grid; gap: 10px; }
+.bo-clienti-views { display: flex; flex-wrap: wrap; gap: 8px; }
+.bo-clienti-view { font-size: 13px; font-weight: 700; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); color: var(--ink); padding: 6px 12px; cursor: pointer; }
+.bo-clienti-view.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.bo-clienti-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.bo-clienti-search { display: flex; gap: 8px; flex: 1 1 220px; min-width: 0; }
+.bo-clienti-search input { flex: 1; min-width: 0; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px; }
+.bo-clienti-menuwrap { position: relative; }
+.bo-clienti-menu { position: absolute; z-index: 5; margin-top: 6px; min-width: 200px; max-width: min(78vw, 320px); border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 8px; box-shadow: var(--shadow); }
+.bo-clienti-menu.hidden { display: none; }
+.bo-clienti-group { margin: 6px 4px 2px; font-size: 11px; color: var(--dim); }
+.bo-clienti-item { display: block; width: 100%; text-align: left; font-size: 13px; border: 0; background: transparent; color: var(--ink); padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+.bo-clienti-item.active { font-weight: 700; }
+.bo-clienti-ai { font-size: 13px; font-weight: 700; border: 1px dashed var(--line); border-radius: 99px; background: transparent; color: var(--ink); padding: 6px 12px; cursor: pointer; }
+.bo-clienti-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.bo-clienti-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; border: 1px solid var(--line); border-radius: 99px; padding: 3px 6px 3px 10px; background: var(--surface); }
+.bo-clienti-chipx { border: 0; background: transparent; color: var(--ink); font-size: 14px; cursor: pointer; padding: 0 4px; }
+.bo-clienti-clear { font-size: 12px; border: 0; background: transparent; color: var(--accent); cursor: pointer; }
+.bo-clienti-list { display: grid; gap: 10px; }
+.bo-clienti-row { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.bo-clienti-head { margin-bottom: 4px; }
+.bo-clienti-head a { font-size: 14px; font-weight: 700; color: var(--accent); overflow-wrap: anywhere; }
+.bo-clienti-fact { margin: 4px 0; font-size: 13px; overflow-wrap: anywhere; }
+.bo-clienti-label { font-weight: 700; }
+.bo-clienti-pager { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.bo-clienti-pager button { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 5px 10px; cursor: pointer; }
+.bo-clienti-pager button.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.bo-clienti-pager button[disabled] { opacity: .45; cursor: default; }
+.bo-clienti-gap { font-size: 13px; color: var(--dim); }
+
+@media (max-width: 700px) {
+  .bo-clienti-toolbar { align-items: stretch; }
+  .bo-clienti-search { flex-basis: 100%; }
+  .bo-clienti-menu { position: static; margin-top: 8px; max-width: none; box-shadow: none; }
+  .bo-clienti-pager { row-gap: 8px; }
+}
