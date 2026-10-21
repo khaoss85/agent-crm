@@ -668,12 +668,18 @@ export function buildSubmitQuoteAction(config, registries) {
         status = 'pending_approval';
         step('quote.approval-requested', { approvalId, requiredApprovalKey: result.requiredApprovalKey });
       } else if (result.decision === 'reject') {
-        status = 'rejected';
+        // BO-F2-04: a refused submit stays an editable draft — the refusal
+        // reason freezes onto the immutable version, never onto a terminal
+        // quote state. currentVersionId keeps naming the signable version
+        // (never a policy-rejected one); the number still advances so the
+        // next submit freezes a new version under a fresh source key.
+        status = 'draft';
+        step('quote.submit-refused', { versionId: version.id, reason: result.reason });
       }
       await versions.applyManaged(version.id, { approvalId }, { actor });
       const updated = await managed(quote.id, {
         status,
-        currentVersionId: version.id,
+        currentVersionId: result.decision === 'reject' ? (quote.currentVersionId ?? null) : version.id,
         currentVersionNumber: versionNumber,
         currentApprovalId: approvalId,
       });
