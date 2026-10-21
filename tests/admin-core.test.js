@@ -101,6 +101,17 @@ test('selectGeneratedModules gates on contract version and sorts deterministical
   assert.equal(legacy.supported, false);
 });
 
+test('parseModuleRoute routes the catalog table to its view', () => {
+  assert.deepEqual(parseModuleRoute('#/catalogo'), { view: 'catalog' });
+  assert.deepEqual(parseModuleRoute('#/catalogo/'), { view: 'catalog' });
+  for (const hash of [
+    '#/catalogo/extra',
+    '#/catalogo//',
+  ]) {
+    assert.equal(parseModuleRoute(hash).view, 'invalid', hash);
+  }
+});
+
 test('parseModuleRoute routes the customer scheda to its three-column view', () => {
   assert.deepEqual(parseModuleRoute('#/customer-card/contact/c1'), { view: 'customer-card', resource: 'contact', subjectId: 'c1' });
   for (const hash of [

@@ -340,6 +340,7 @@ import {
 import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
+import { createCatalogView, commercialBlock } from './admin-catalog.js';
 import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
@@ -377,6 +378,16 @@ const quoteView = createQuoteView({
   mount: moduleView,
   client: moduleClient,
   submissions,
+  navigate: (hash) => { window.location.hash = hash; },
+});
+
+// Product catalog (BO-F2-05): the backoffice product table with its source
+// summary. Renders only while the server publishes the commercial package;
+// otherwise the view itself says so.
+const catalogView = createCatalogView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -553,6 +564,7 @@ function shellScreenFor(target) {
     case 'marketing': return { id: null, label: 'Proposte' };
     case 'marketing-proposal': return { id: null, label: 'Proposta' };
     case 'quotes': return { id: null, label: 'Preventivi' };
+    case 'catalog': return { id: null, label: 'Catalogo prodotti' };
     case 'quote-detail': return { id: null, label: 'Preventivo' };
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
     case 'invalid': return { id: null, label: 'Percorso non valido' };
@@ -617,6 +629,17 @@ async function populateNav() {
       link.setAttribute('href', '#/quotes');
       link.setAttribute('data-nav', 'quotes');
       link.textContent = 'Quotes';
+      generatedNav.appendChild(link);
+    }
+    // Product catalog (BO-F2-05): one nav link when the commercial product
+    // records are composed — the table reads `product`, so without it the
+    // view would only ever say it is unavailable. The block lives under
+    // `domains.commercial` (same helper as the view), never top-level.
+    if (commercialBlock(schema)?.commercialContract === 1 && modules.some((module) => module.name === 'product')) {
+      const link = document.createElement('a');
+      link.setAttribute('href', '#/catalogo');
+      link.setAttribute('data-nav', 'catalog');
+      link.textContent = 'Catalogo';
       generatedNav.appendChild(link);
     }
     // Marketing (MK1): one nav link when the project composes the marketing package.
@@ -704,6 +727,7 @@ async function route() {
       link.getAttribute('href') === `#/modules/${target.moduleName}` ||
       (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`) ||
       ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
+      (target.view === 'catalog' && link.getAttribute('href') === '#/catalogo') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
       ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card') && link.getAttribute('href') === '#/customer-data')
@@ -728,6 +752,7 @@ async function route() {
     else if (target.view === 'new') await moduleAdmin.renderNew(target.moduleName);
     else if (target.view === 'detail') await moduleAdmin.renderDetail(target.moduleName, target.id);
     else if (target.view === 'pipeline') await pipelineBoard.renderBoard(target.pipelineName);
+    else if (target.view === 'catalog') await catalogView.renderTable();
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
     else if (target.view === 'spine') await spineView.render();

@@ -151,6 +151,14 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   // amounts, refusal strings and document hash a quote preview shows, so it
   // is behaviour-bearing by definition.
   'packages/commercial/src/quote-pdf.js',
+  // The Stripe catalog provider (BO-F2-05): it decides how Stripe products
+  // and prices map to products, offers and components, so it is
+  // behaviour-bearing by definition.
+  'packages/commercial/src/stripe-catalog.js',
+  // The manual catalog operations (BO-F2-05): they decide how manually
+  // managed products, prices and active flags are written and read, so they
+  // are behaviour-bearing by definition.
+  'packages/commercial/src/manual-catalog.js',
   'packages/commercial/modules/quote-term.module.json',
   'packages/commercial/modules/quote-version-term.module.json',
   'packages/core/src/money.js',
