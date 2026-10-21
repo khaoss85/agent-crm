@@ -1464,7 +1464,9 @@ export function createChannelOperations(deps) {
    * report. Entries sort by connection key, so two reads of one space
    * always agree. Read-only like the other progress surface: no actor, no
    * mutation, no secret material — the entry carries the binding identity
-   * and the adapter, never the secret reference.
+   * (including the account, so the backoffice can resume an incomplete
+   * connection through authorize) and the adapter, never the secret
+   * reference.
    */
   function readSyncState(params) {
     const spaceId = assertSpaceId(params?.spaceId);
@@ -1473,6 +1475,7 @@ export function createChannelOperations(deps) {
       return Object.freeze({
         connectionKey: connection.sourceKey,
         channel: connection.channel,
+        account: connection.account,
         adapter: connection.adapter,
         adapterVersion: connection.adapterVersion,
         status: connection.status,
@@ -1488,6 +1491,196 @@ export function createChannelOperations(deps) {
       connectors: Object.freeze(entries),
       connected,
       completed,
+    });
+  }
+
+  /**
+   * Read the sync activity of every connection in one space
+   * (backlog:8fdbc5f21cd0, BO-F1-03): the counters and the live feed the
+   * "Stato sync" screen renders, all read from the real inbox and
+   * dead-letter rows — never invented, never provider text. One entry per
+   * connection — its binding, the same import progress surface
+   * `readInitialImport` returns, inbox tallies by effect, open dead
+   * letters, the observed direction (`in` when inbox rows exist, `out`
+   * when dead-letter rows exist, `both` when both do, null before any
+   * traffic), and a health verdict (`idle` while a binding waits for
+   * activation or before the first pull of an importable connection
+   * with no traffic yet, `down` when a binding is suspended or revoked,
+   * `attention` when quarantined rows, open dead letters or a failed
+   * import need a human, `ok` otherwise) — plus the space feed (latest inbox rows as `in` with
+   * their effect, latest open dead letters as `out` with their normalized
+   * error code, newest first) and the `needsFix` total that lights the
+   * Impostazioni badge (quarantined inbox rows plus open dead letters).
+   * The feed carries no subject, no payload and no provider wording: a
+   * secret or personal handle repeated by the provider must never reach
+   * the screen. Read-only: no actor, no mutation.
+   *
+   * Bounded reads only: exact tallies come from COUNT queries and only the
+   * newest rows per source are materialized (at most feedLimit each), so a
+   * long-lived space never pays its whole inbox history for one screen.
+   * Proven sends are deliberately not counted as `out` yet: a successful
+   * send settles in the outbox job row, which has no per-connection index,
+   * and a newest-N job scan could forget older sends (the same reason
+   * `readReply` looks jobs up by id or idempotency root, never by window).
+   * The per-connection outbound signal is a follow-up voice.
+   */
+  const SYNC_ACTIVITY_EFFECTS = ['applied', 'quarantined', 'ignored', 'duplicate', 'pending'];
+  function readSyncActivity(params) {
+    const spaceId = assertSpaceId(params?.spaceId);
+    const feedLimit = params?.feedLimit === undefined ? 20 : params.feedLimit;
+    if (!Number.isSafeInteger(feedLimit) || feedLimit < 1 || feedLimit > 100) {
+      throw new ValidationError('feed limit must be an integer 1-100', { field: 'feedLimit' });
+    }
+    const inboxService = inbox();
+    const letterService = letters();
+
+    const entries = connections().listWhere({ spaceId }).map((connection) => {
+      const traffic = { spaceId, connectionKey: connection.sourceKey };
+      const inboxCount = { received: inboxService.countWhere(traffic) };
+      for (const effect of SYNC_ACTIVITY_EFFECTS) {
+        inboxCount[effect] = inboxService.countWhere({ ...traffic, effect });
+      }
+      const latestInbox = inboxService.list({ where: traffic, limit: 1 })[0] ?? null;
+      inboxCount.lastReceivedAt = typeof latestInbox?.receivedAt === 'string' ? latestInbox.receivedAt : null;
+      const openDeadLetters = letterService.countWhere({ ...traffic, state: 'open' });
+      const latestLetter = letterService.list({ where: { ...traffic, state: 'open' }, limit: 1 })[0] ?? null;
+      const lastFailedAt = typeof latestLetter?.lastFailedAt === 'string' ? latestLetter.lastFailedAt : null;
+      const outbox = Object.freeze({ openDeadLetters, lastFailedAt });
+      const letterCount = letterService.countWhere(traffic);
+      const row = findImportState(spaceId, connection.sourceKey);
+      const sync = row ? importStateSummary(row) : null;
+      const fixes = inboxCount.quarantined + openDeadLetters;
+      const health = connection.status !== 'active'
+        ? (connection.status === 'pending' ? 'idle' : 'down')
+        : fixes > 0 || Boolean(sync && sync.lastErrorCode) ? 'attention'
+          : sync === null && isHistoryImportable(connection) && inboxCount.received === 0 ? 'idle' : 'ok';
+      const direction = inboxCount.received > 0 && letterCount > 0 ? 'both'
+        : inboxCount.received > 0 ? 'in'
+          : letterCount > 0 ? 'out' : null;
+      return Object.freeze({
+        connectionKey: connection.sourceKey,
+        channel: connection.channel,
+        account: connection.account,
+        adapter: connection.adapter,
+        adapterVersion: connection.adapterVersion,
+        status: connection.status,
+        importable: isHistoryImportable(connection),
+        sync,
+        inbox: Object.freeze(inboxCount),
+        outbox,
+        direction,
+        health,
+        needsFix: fixes,
+      });
+    }).sort((left, right) => (left.connectionKey < right.connectionKey ? -1
+      : left.connectionKey > right.connectionKey ? 1 : 0));
+
+    const channelOf = new Map(entries.map((entry) => [entry.connectionKey, entry.channel]));
+    const feed = [];
+    for (const row of inboxService.list({ where: { spaceId }, limit: feedLimit })) {
+      if (typeof row.receivedAt !== 'string') continue;
+      feed.push(Object.freeze({
+        direction: 'in',
+        connectionKey: row.connectionKey,
+        channel: channelOf.get(row.connectionKey) ?? null,
+        at: row.receivedAt,
+        kind: typeof row.effect === 'string' ? row.effect : 'unknown',
+      }));
+    }
+    for (const row of letterService.list({ where: { spaceId, state: 'open' }, limit: feedLimit })) {
+      if (typeof row.lastFailedAt !== 'string') continue;
+      feed.push(Object.freeze({
+        direction: 'out',
+        connectionKey: row.connectionKey,
+        channel: channelOf.get(row.connectionKey) ?? null,
+        at: row.lastFailedAt,
+        kind: 'dead-letter',
+        code: typeof row.errorCode === 'string' ? row.errorCode : 'CHANNEL_SEND_FAILED',
+      }));
+    }
+    feed.sort((left, right) => (left.at > right.at ? -1 : left.at < right.at ? 1
+      : left.connectionKey < right.connectionKey ? -1
+        : left.connectionKey > right.connectionKey ? 1 : 0));
+    const capped = feed.slice(0, feedLimit);
+
+    let lastActivityAt = null;
+    for (const entry of entries) {
+      for (const at of [entry.inbox.lastReceivedAt, entry.outbox.lastFailedAt]) {
+        if (typeof at === 'string' && (lastActivityAt === null || at > lastActivityAt)) lastActivityAt = at;
+      }
+    }
+    const needsFix = entries.reduce((total, entry) => total + entry.needsFix, 0);
+    return Object.freeze({
+      spaceId,
+      connections: Object.freeze(entries),
+      feed: Object.freeze(capped),
+      needsFix,
+      lastActivityAt,
+    });
+  }
+
+  /**
+   * Pull one bounded history page of a connection right now
+   * (backlog:8fdbc5f21cd0, BO-F1-03 "Sincronizza ora"): the same paged
+   * pull the progressive import walks, driven by a human instead of the
+   * scheduler. Starting is a human decision, so the actor is required and
+   * travels into the import start like the guided connect flow; the page
+   * itself runs under the package system actor like every other advance.
+   * When no import ever started, this call starts it and pulls the first
+   * page; when one is running, it pulls the next page; when the past is
+   * exhausted, the same import row re-opens as a refresh run covering only
+   * history since the last completion — so the button keeps fetching what
+   * arrived after the import finished (or while webhooks were unavailable)
+   * instead of going mute. Re-listed events keep their final outcome rows
+   * and recount nothing; only genuinely new events write new rows.
+   * Adapters without `historyImport` refuse with
+   * CHANNEL_HISTORY_UNAVAILABLE, so the screen only enables the button
+   * where a pull exists.
+   */
+  async function syncNowChannel(params) {
+    const actor = requireUser(params?.actor);
+    const spaceId = assertSpaceId(params?.spaceId);
+    const limit = params?.limit === undefined ? CHANNEL_HISTORY_DEFAULT_PAGE : params.limit;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > CHANNEL_HISTORY_PAGE_MAX) {
+      throw new ValidationError(`history page limit must be an integer 1-${CHANNEL_HISTORY_PAGE_MAX}`, { field: 'limit' });
+    }
+    const connectionKey = typeof params?.connectionKey === 'string' ? params.connectionKey : '';
+    const connection = requireActiveConnection(spaceId, connectionKey);
+    requireHistoryAdapter(connection);
+    let started = false;
+    let refreshed = false;
+    if (!findImportState(spaceId, connection.sourceKey)) {
+      const created = await startInitialImport({ spaceId, connectionKey, actor });
+      started = created.started === true;
+    } else {
+      // A finished past re-opens on the same row: `startInitialImport`
+      // keeps refusing completed rows (one import per connection), and the
+      // reset plus the advance below serialize on the import slot, so two
+      // racing refreshes converge through the outcome rows like racing
+      // advances do — re-listed events replay to their final rows, never
+      // to doubles.
+      refreshed = await withImportCommit(importSourceKey(spaceId, connection.sourceKey), async () => {
+        const live = findImportState(spaceId, connection.sourceKey);
+        if (!live || live.status !== 'done') return false;
+        await importStates().applyManaged(live.id, {
+          status: 'running',
+          windowStart: typeof live.finishedAt === 'string' && live.finishedAt !== ''
+            ? live.finishedAt : live.windowStart,
+          nextPageToken: null,
+          finishedAt: null,
+          lastErrorCode: null,
+          lastErrorReason: null,
+        }, { actor });
+        return true;
+      });
+    }
+    const advanced = await advanceInitialImport({ spaceId, connectionKey, limit });
+    return Object.freeze({
+      started,
+      refreshed,
+      done: advanced.done,
+      state: advanced.state,
+      page: advanced.page,
     });
   }
 
@@ -2327,5 +2520,7 @@ export function createChannelOperations(deps) {
     advanceInitialImport,
     readInitialImport,
     readSyncState,
+    readSyncActivity,
+    syncNowChannel,
   });
 }

@@ -97,6 +97,27 @@ export function assertSpaceId(value) {
   }
 }
 
+/**
+ * The vault slot authorize records for one space account: one
+ * space+channel+account maps to one slot, so two accounts on one channel in
+ * one space never share a credential. The account travels only as its sha256
+ * fingerprint — a phone number or handle is customer data and would not
+ * survive the locator pattern unescaped — lowercased like the connection
+ * sourceKey, so `Foo` and `foo` resolve to the same slot and a reconnect
+ * reuses it instead of orphaning the first grant.
+ */
+export function connectionSecretRef({ spaceId, channel, account }) {
+  const space = assertSpaceId(spaceId);
+  if (!CHANNELS.includes(channel)) {
+    throw new ValidationError(`channel must be one of: ${CHANNELS.join(', ')}`, { field: 'channel' });
+  }
+  if (typeof account !== 'string' || account.trim() === '' || account.length > MAX_ACCOUNT || CONTROL_RE.test(account)) {
+    throw new ValidationError('account must be bounded single-line text (at most 256 characters)', { field: 'account' });
+  }
+  const fingerprint = createHash('sha256').update(account.trim().toLowerCase(), 'utf8').digest('hex');
+  return `vault://${space}/${channel}/${fingerprint}`;
+}
+
 /** A secret reference is a namespaced locator. Anything else is refused before storage. */
 export function assertSecretReference(value) {
   if (typeof value !== 'string' || value.length > MAX_SECRET_REF

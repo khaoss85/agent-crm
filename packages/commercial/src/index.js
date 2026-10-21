@@ -4,6 +4,7 @@ import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { CommercialRegistries } from './registry.js';
 import { buildCommercialActions } from './actions.js';
 import { createCatalogSync } from './catalog-sync.js';
+import { createManualCatalog } from './manual-catalog.js';
 import {
   createCommercialQuotesVerifiedAsyncCapability,
   createCommercialQuotesVerifiedCapability, createCommercialQuoteBindingCapability,
@@ -39,6 +40,26 @@ import { createPackageCreditsCapability } from './package-credits.js';
  */
 
 export const COMMERCIAL_DOMAIN = 'commercial';
+
+/**
+ * Build the manual-catalog helper for an operation runtime, honoring the
+ * record-module renames the package accepts at its composition boundary.
+ */
+function manualFor(runtime, config) {
+  return createManualCatalog({
+    database: runtime.database,
+    events: runtime.events,
+    modules: runtime.modules,
+    moduleNames: config ? {
+      product: config.productModule,
+      productVersion: config.productVersionModule,
+      priceBook: config.priceBookModule,
+      offer: config.offerModule,
+      component: config.componentModule,
+      tier: config.tierModule,
+    } : {},
+  });
+}
 
 /**
  * The record modules this package owns. `resources` declares ownership, so a
@@ -108,7 +129,10 @@ export function createCommercialDomain(options = {}) {
     // appointment rows. Additive: every pre-existing record, action contract
     // and capability answer is byte-identical (held by the LA0-Commercial
     // baseline, regenerated for the new files only).
-    version: 5,
+    // 6: manual catalog operations (BO-F2-05) — create/update/reprice/
+    // activate manual products plus the product-table read. Additive:
+    // provider sync, quotes and capabilities are untouched.
+    version: 6,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',
@@ -177,6 +201,92 @@ export function createCommercialDomain(options = {}) {
           });
         },
       },
+      {
+        operationContract: 1,
+        name: 'create-manual-product',
+        label: 'Create manual product',
+        appMethod: 'createManualProduct',
+        description:
+          'Create a manually managed product with its prices, without any provider: product, version 1 and one offer revision 1 per declared offer, in one transaction.',
+        input: [
+          { name: 'sku', type: 'string', required: true, hint: 'Product code shown in the backoffice table.' },
+          { name: 'name', type: 'string', required: true, hint: 'Product name.' },
+          { name: 'currency', type: 'string', required: true, hint: 'Uppercase three-letter currency code.' },
+          { name: 'priceBookId', type: 'string', required: false, hint: 'Manual price book id; omitted finds or creates the manual book of the currency.' },
+          { name: 'offers', type: 'json', required: false, hint: 'Offer list with price components; or shorthand components for one offer.' },
+        ],
+        create(runtime) {
+          const manual = manualFor(runtime, config);
+          return (input, actor) => manual.createProduct(input, actor);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'update-manual-product',
+        label: 'Update manual product',
+        appMethod: 'updateManualProduct',
+        description:
+          'Edit a manually managed product description (sku, name, description, category): opens version n+1, never rewrites. Provider-owned products refuse.',
+        input: [
+          { name: 'productId', type: 'string', required: true, hint: 'Manual product id.' },
+          { name: 'name', type: 'string', required: false, hint: 'New product name.' },
+        ],
+        create(runtime) {
+          const manual = manualFor(runtime, config);
+          return (input, actor) => manual.updateProduct(input, actor);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'set-manual-prices',
+        label: 'Set manual prices',
+        appMethod: 'setManualPrices',
+        description:
+          'Replace a manually managed product prices: one new offer revision per declared offer, previous revisions deactivate. Provider-owned offers refuse.',
+        input: [
+          { name: 'productId', type: 'string', required: true, hint: 'Manual product id.' },
+          { name: 'offerIds', type: 'json', required: true, hint: 'Offer row ids replaced, in the order of the declared offers.' },
+          { name: 'offers', type: 'json', required: true, hint: 'Replacement offers with price components.' },
+        ],
+        create(runtime) {
+          const manual = manualFor(runtime, config);
+          return (input, actor) => manual.setPrices(input, actor);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'set-manual-product-active',
+        label: 'Set manual product active',
+        appMethod: 'setManualProductActive',
+        description:
+          'Activate or deactivate a manually managed product and its current offers. Provider-owned products refuse.',
+        input: [
+          { name: 'productId', type: 'string', required: true, hint: 'Manual product id.' },
+          { name: 'active', type: 'json', required: true, hint: 'Target active flag (JSON boolean).' },
+        ],
+        create(runtime) {
+          const manual = manualFor(runtime, config);
+          return (input, actor) => manual.setActive(input, actor);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'list-catalog-products',
+        label: 'List catalog products',
+        appMethod: 'listCatalogProducts',
+        description:
+          'The backoffice product table: one row per product with current description, price source, active flag and current prices. Filters: category, active, source.',
+        input: [
+          { name: 'category', type: 'string', required: false, hint: 'Exact category filter.' },
+          { name: 'active', type: 'json', required: false, hint: 'Active flag filter (JSON boolean).' },
+          { name: 'source', type: 'string', required: false, hint: "'manual' or a provider name." },
+          { name: 'limit', type: 'integer', required: false, hint: 'Max rows (default 200, at most 1000).' },
+        ],
+        create(runtime) {
+          const manual = manualFor(runtime, config);
+          return (input) => manual.listProducts(input);
+        },
+      },
     ],
     /** Function-free, additive schema metadata — the same block as before the move. */
     metadata() {
@@ -210,8 +320,10 @@ export function createCommercialDomainV2(options = {}) {
 
 export { CommercialRegistries } from './registry.js';
 export { createPriceListCatalogProvider, validatePriceListConfig } from './price-list.js';
+export { createStripeCatalogProvider, createFixtureStripeCatalogClient } from './stripe-catalog.js';
 export { buildCommercialActions } from './actions.js';
 export { createCatalogSync } from './catalog-sync.js';
+export { createManualCatalog, MANUAL_PROVIDER, PRICE_SOURCE_READONLY } from './manual-catalog.js';
 export {
   createCommercialQuotesAsyncCapability,
   createCommercialQuotesCapability, createCommercialQuotesVerifiedAsyncCapability,
@@ -223,3 +335,8 @@ export {
   createPackageCreditsCapability, grantPackageEntries, isUniqueConflict as isPackageCreditUniqueConflict,
   readPackageBalance, resolveCreditModule, validateCreditSubject, validatePackageCreditGrant,
 } from './package-credits.js';
+export { VAT_RATE_BPS, vatAmountCents, withVatTotals } from './money.js';
+export {
+  QUOTE_SUGGEST_PURPOSE, MAX_SUGGESTIONS, MAX_EXCERPTS, MAX_EXCERPT_CHARS,
+  MAX_MOTIVE_CHARS, SOURCE_QUOTE_CHARS, buildSuggestMessages, suggestQuoteLines,
+} from './quote-suggest.js';

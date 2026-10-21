@@ -12,14 +12,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gitIn } from './helpers/isolated-git.js';
 
 import {
-  HEAVY_MEASURE_FILE,
   MEASURE_COMMAND,
   buildCombinedRecord,
   combineShards,
@@ -92,17 +91,11 @@ test('a piece that would run nothing refuses: bare node --test would discover th
   assert.throws(() => planShards(fileNames(2), 5), MeasurementError);
 });
 
-test('the dealing marks exactly the piece holding the oracle file as heavy', () => {
-  const files = [...fileNames(30), HEAVY_MEASURE_FILE];
-  const plan = planShards(files, 6);
-  const heavy = plan.filter((piece) => piece.heavy);
-  assert.equal(heavy.length, 1);
-  assert.ok(heavy[0]?.files.includes(HEAVY_MEASURE_FILE));
-});
-
-test('no piece is heavy when the oracle file is absent from the corpus', () => {
+test('the dealing carries no per-piece maximum: every piece declares the same 900 s', () => {
   const plan = planShards(fileNames(30), 6);
-  assert.ok(plan.every((piece) => !piece.heavy));
+  for (const piece of plan) {
+    assert.deepEqual(Object.keys(piece).sort(), ['files', 'shard'], `a piece carries a key the driver does not read: ${Object.keys(piece)}`);
+  }
 });
 
 test('the 6-piece dealing covers exactly the committed corpus: same files, none lost, none doubled', () => {
@@ -117,6 +110,51 @@ test('the 6-piece dealing covers exactly the committed corpus: same files, none 
   assert.equal(new Set(union).size, union.length, 'a committed file runs in two pieces');
   const sizes = plan.map((piece) => piece.files.length);
   assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1, `pieces are unbalanced: ${sizes.join(',')}`);
+});
+
+test('the six oracle slices land in six distinct pieces at every supported shard count', () => {
+  // The load-bearing assumption of the 900 s uniform maximum: each full
+  // oracle slice must run alone in its piece. Round-robin dealing separates
+  // consecutive filenames by accident of adjacency, so this pins the fact
+  // over the committed corpus — a rename, a reorder or a seventh oracle
+  // file fails here instead of silently co-locating two full slices in one
+  // piece (backlog:664d5f481a96). Smaller counts cannot separate six
+  // slices at all and are refused by scripts/measure-pieces.sh.
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const listed = gitIn(root)(['ls-tree', '-r', '--name-only', 'HEAD', 'tests/']);
+  assert.equal(listed.status, 0, 'the corpus list must read from the commit');
+  const files = String(listed.stdout).split('\n').filter((path) => path.endsWith('.test.js'));
+  const slices = files.filter((path) => /^tests\/shell-oracle-[a-z]\.test\.js$/.test(path)).sort();
+  assert.deepEqual(
+    slices,
+    [
+      'tests/shell-oracle-a.test.js',
+      'tests/shell-oracle-b.test.js',
+      'tests/shell-oracle-c.test.js',
+      'tests/shell-oracle-d.test.js',
+      'tests/shell-oracle-e.test.js',
+      'tests/shell-oracle-f.test.js',
+    ],
+    'the oracle slice set changed: update the dealing floor in scripts/measure-pieces.sh alongside it',
+  );
+  for (const total of [6, 7, 12]) {
+    const plan = planShards(files, total);
+    const holders = new Map();
+    for (const piece of plan) {
+      for (const slice of slices) {
+        if (piece.files.includes(slice)) {
+          assert.ok(!holders.has(slice), `${slice} runs in two pieces at ${total} pieces`);
+          holders.set(slice, piece.shard);
+        }
+      }
+    }
+    assert.equal(holders.size, slices.length, `an oracle slice runs in no piece at ${total} pieces`);
+    assert.equal(
+      new Set(holders.values()).size,
+      slices.length,
+      `two oracle slices share one piece at ${total} pieces: ${[...holders].map(([s, p]) => `${s}->${p}`).join(', ')}`,
+    );
+  }
 });
 
 test('the join adds green pieces into one record', () => {
@@ -245,4 +283,206 @@ test('the combined record keeps the ledger shape and names the piecemeal runner'
   assert.match(record.sha, /^[0-9a-f]{7}$/);
   assert.deepEqual(Object.keys(record.files), [...files].sort());
   assert.match(record.note, /--combine/);
+});
+
+/**
+ * Driver-level proofs (backlog:664d5f481a96). The real children are too heavy
+ * for a unit test — the check piece runs the typecheck, a shard piece runs
+ * the suite — so these tests run the REAL scripts/measure-pieces.sh against
+ * a shadow tree: a stub `scripts/ci-heavy.sh` (waiter file while it waits
+ * and runs, like heavy-job.sh, then runs its child), a stub
+ * `scripts/measure-suite.js` (`--plan` prints a canned dealing, `--shard`
+ * writes a canned report, `--combine` records and succeeds) and a stub `npm`
+ * first on PATH (the check child). The driver logic under test — the serial
+ * loop, the declared maxima, the fail-fast — is the repository's own: the
+ * stubs only make it observable in seconds.
+ *
+ * MEASURE_TEST_DRIVER overrides which driver runs (default: the repository's
+ * own): sensitivity probes run these same tests against an intentionally
+ * parallelised copy to prove they redden.
+ */
+function writeShadowTree(shadow) {
+  const scriptsDir = join(shadow, 'scripts');
+  const binDir = join(shadow, 'bin');
+  mkdirSync(scriptsDir, { recursive: true });
+  mkdirSync(binDir, { recursive: true });
+  // The stub below uses ESM `import` syntax: pin the shadow tree to ESM, or
+  // node resolves the stub's module kind from the nearest ambient
+  // package.json and a CommonJS one above TMPDIR breaks piece 1 with no
+  // shard-child (backlog:664d5f481a96).
+  writeFileSync(join(shadow, 'package.json'), `${JSON.stringify({ type: 'module' })}\n`);
+  writeFileSync(join(scriptsDir, 'ci-heavy.sh'), [
+    '#!/usr/bin/env bash',
+    'set -u',
+    'log="${MEASURE_TEST_LOG:?}"',
+    'lockdir="${MEASURE_TEST_LOCKDIR:?}"',
+    'name="$1"; shift',
+    '[ "${1:-}" = "--" ] && shift',
+    'printf \'start %s MAX=%s\\n\' "$name" "${HEAVY_JOB_MAX_SEC:-unset}" >> "$log"',
+    'touch "$lockdir/wait-$name"',
+    'sleep "${MEASURE_TEST_SLEEP:-0.2}"',
+    'waiters=$(ls "$lockdir"/wait-* 2>/dev/null | wc -l | tr -d " ")',
+    'printf \'end %s waiters=%s\\n\' "$name" "$waiters" >> "$log"',
+    'rm -f "$lockdir/wait-$name"',
+    'if [ "${MEASURE_TEST_FAIL_PIECE:-}" = "$name" ]; then exit 1; fi',
+    'exec "$@"',
+    '',
+  ].join('\n'));
+  writeFileSync(join(scriptsDir, 'measure-suite.js'), [
+    '// Test double for scripts/measure-suite.js: canned dealing and reports.',
+    "import { appendFileSync, writeFileSync } from 'node:fs';",
+    'const args = process.argv.slice(2);',
+    'const log = process.env.MEASURE_TEST_LOG;',
+    "if (args[0] === '--plan') {",
+    '  const total = Number(args[1]);',
+    '  const pieces = Array.from({ length: total }, (_, k) => ({',
+    '    shard: k + 1,',
+    '    files: [`tests/shadow-${k + 1}.test.js`],',
+    '  }));',
+    `  process.stdout.write(JSON.stringify({ sha: '${SHA_A}', testsTree: '${TREE_A}', shards: total, pieces }) + '\\n');`,
+    "} else if (args[0] === '--shard') {",
+    "  const [index, total] = args[1].split('/').map(Number);",
+    "  const out = args[args.indexOf('--out') + 1];",
+    "  appendFileSync(log, `shard-child ${index}/${total}\\n`);",
+    "  writeFileSync(out, JSON.stringify({ shard: index, shards: total }) + '\\n');",
+    "} else if (args[0] === '--combine') {",
+    "  appendFileSync(log, `combine ${args.slice(1).join(' ')}\\n`);",
+    "  process.stdout.write(JSON.stringify({ ok: true }) + '\\n');",
+    '} else {',
+    '  process.stderr.write(`shadow measure-suite: unexpected args ${args.join(\' \')}\\n`);',
+    '  process.exit(2);',
+    '}',
+    '',
+  ].join('\n'));
+  writeFileSync(join(binDir, 'npm'), [
+    '#!/usr/bin/env bash',
+    'printf \'npm %s\\n\' "$*" >> "${MEASURE_TEST_LOG:?}"',
+    'exit 0',
+    '',
+  ].join('\n'));
+  chmodSync(join(scriptsDir, 'ci-heavy.sh'), 0o755);
+  chmodSync(join(binDir, 'npm'), 0o755);
+}
+
+/**
+ * @param {string} shadow
+ * @param {{ shards?: number, failPiece?: string }} [options]
+ */
+function runDriver(shadow, { shards = 6, failPiece = null } = {}) {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const driver = process.env.MEASURE_TEST_DRIVER ?? join(root, 'scripts', 'measure-pieces.sh');
+  const log = join(shadow, 'driver.log');
+  const lockdir = join(shadow, 'lock');
+  mkdirSync(lockdir, { recursive: true });
+  writeFileSync(log, '');
+  let status = 0;
+  let stdout = '';
+  try {
+    stdout = execFileSync('bash', [driver], {
+      cwd: shadow,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${join(shadow, 'bin')}${delimiter}${process.env.PATH ?? ''}`,
+        MEASURE_SHARDS: String(shards),
+        MEASURE_TEST_LOG: log,
+        MEASURE_TEST_LOCKDIR: lockdir,
+        MEASURE_TEST_SLEEP: '0.2',
+        ...(failPiece ? { MEASURE_TEST_FAIL_PIECE: failPiece } : {}),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    status = /** @type {{ status?: number }} */ (error).status ?? 1;
+    stdout = /** @type {{ stdout?: string }} */ (error).stdout ?? '';
+  }
+  return { status, stdout, log: readFileSync(log, 'utf8') };
+}
+
+/**
+ * @param {string} log
+ * @param {string} name
+ */
+function maxOf(log, name) {
+  const line = log.split('\n').find((entry) => entry.startsWith(`start ${name} MAX=`));
+  assert.ok(line, `no lock acquisition recorded for ${name}:\n${log}`);
+  return line.split('MAX=')[1];
+}
+
+test('pieces queue one at a time: the driver never holds two lock waiters', () => {
+  const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
+  try {
+    writeShadowTree(shadow);
+    const { status, stdout, log } = runDriver(shadow, { shards: 6 });
+    assert.equal(status, 0, `driver must stay green:\n${log}`);
+    assert.doesNotThrow(() => JSON.parse(stdout), `driver stdout must stay parsable JSON, got: ${stdout}`);
+    const starts = log.split('\n').filter((line) => line.startsWith('start ')).map((line) => line.split(' ')[1]);
+    assert.deepEqual(starts, [
+      'measure-check',
+      'measure-1-of-6',
+      'measure-2-of-6',
+      'measure-3-of-6',
+      'measure-4-of-6',
+      'measure-5-of-6',
+      'measure-6-of-6',
+    ]);
+    const ends = log.split('\n').filter((line) => line.startsWith('end '));
+    assert.equal(ends.length, 7, `check plus 6 pieces must each finish:\n${log}`);
+    for (const line of ends) {
+      assert.match(line, /waiters=1$/, `two lock waiters at once: ${line}\n${log}`);
+    }
+  } finally {
+    rmSync(shadow, { recursive: true, force: true });
+  }
+});
+
+test('every piece declares the same machine-lock maximum: 900 s', () => {
+  const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
+  try {
+    writeShadowTree(shadow);
+    const { status, log } = runDriver(shadow, { shards: 6 });
+    assert.equal(status, 0, `driver must stay green:\n${log}`);
+    assert.equal(maxOf(log, 'measure-check'), '900');
+    // No heavy piece: the full shell-oracle corpus is sliced one grouping
+    // per file (tests/shell-oracle-a/b/c/d/e/f.test.js, backlog:664d5f481a96),
+    // so no piece needs more than the common 900 s.
+    for (let i = 1; i <= 6; i += 1) {
+      assert.equal(maxOf(log, `measure-${i}-of-6`), '900');
+    }
+  } finally {
+    rmSync(shadow, { recursive: true, force: true });
+  }
+});
+
+test('fewer than six pieces refuse before taking any lock: two oracle slices would share one', () => {
+  for (const shards of [5, 2, 1]) {
+    const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
+    try {
+      writeShadowTree(shadow);
+      const { status, log } = runDriver(shadow, { shards });
+      assert.notEqual(status, 0, `${shards} pieces must refuse, got status ${status}:\n${log}`);
+      assert.ok(
+        !log.split('\n').some((line) => line.startsWith('start ')),
+        `${shards} pieces took a lock before refusing:\n${log}`,
+      );
+    } finally {
+      rmSync(shadow, { recursive: true, force: true });
+    }
+  }
+});
+
+test('a red piece reddens the measure: the driver exits non-zero and never combines', () => {
+  const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
+  try {
+    writeShadowTree(shadow);
+    const { status, log } = runDriver(shadow, { shards: 6, failPiece: 'measure-2-of-6' });
+    assert.notEqual(status, 0, `a red piece must redden the measure, got status ${status}:\n${log}`);
+    assert.ok(!log.split('\n').some((line) => line.startsWith('combine ')), `no combine after a red piece:\n${log}`);
+    assert.ok(
+      !log.split('\n').some((line) => line.startsWith('start measure-3-of-6 ')),
+      `pieces after the red one must not run:\n${log}`,
+    );
+  } finally {
+    rmSync(shadow, { recursive: true, force: true });
+  }
 });

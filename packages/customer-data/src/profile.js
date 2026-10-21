@@ -1,6 +1,7 @@
 // @ts-check
 
 import { deciding, newestFirst, optional, subjectKey, subjectOf, trusted } from './store.js';
+import { deriveCustomerStatus } from './customer-status.js';
 
 /**
  * **The consolidated profile: a projection, never a table.**
@@ -220,6 +221,13 @@ export async function profileFor({ modules, core, names, subject }) {
     identity,
     externalIdentities: Object.freeze(identities),
     ...sections,
+    // The one status verdict, computed here by the owning package's rule so
+    // the card and the list share it through the capability, never by each
+    // importing the rule. Reads the same three evidence shapes the card and
+    // the list both need.
+    status: deriveCustomerStatus({
+      orders: sections.orders, contracts: sections.contracts, subscriptions: sections.subscriptions,
+    }),
     dataQualityIssues: Object.freeze(issues),
     duplicateCandidates: Object.freeze(candidates),
     completeTimeline: false,
@@ -305,8 +313,10 @@ async function readSectionRows(service, references) {
  * Does this row belong to the customer? Only by explicit reference — this
  * never guesses from a name or an email string, because a projection that
  * guesses is a projection that quietly attributes somebody else's contract.
+ * Shared with the customer list (BO-F1-05), which attributes the same batched
+ * rows to the same customers by the same rule.
  */
-function belongsToCustomer(row, { companyIds, contactIds, opportunityIds }) {
+export function belongsToCustomer(row, { companyIds, contactIds, opportunityIds }) {
   if (row.companyId && companyIds.has(row.companyId)) return true;
   if (row.contactId && contactIds.has(row.contactId)) return true;
   if (row.opportunityId && opportunityIds.has(row.opportunityId)) return true;

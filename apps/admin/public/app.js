@@ -1,19 +1,40 @@
 import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
+import { createAssistantPanel } from './admin-assistant.js';
+import { resolveAdminBase } from './admin-base.js';
+
+// The mount prefix the shell is served under: '' at the domain root, the
+// mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
+// absolute API path below is prefixed, so the shell works unchanged.
+const ADMIN_BASE = resolveAdminBase();
+
+// Under a space mount (e.g. `/bo`) the home is the Oggi frame and the
+// framework demo is never rendered (backlog:7eee63a5). The standalone
+// development server owns the domain root and keeps the demo.
+const MOUNTED = isSpaceMount(ADMIN_BASE);
+
+const boMain = document.querySelector('.bo-main');
+const dashboardView = document.querySelector('#view-dashboard');
+const moduleView = document.querySelector('#view-module');
+// Standalone only: the served HTML carries no demo markup, so the demo
+// chrome is rendered here, before any ref below is captured.
+const demoRefs = MOUNTED
+  ? null
+  : renderDemoChrome({ doc: document, main: boMain, moduleView, dashboardView });
 
 const elements = {
-  metrics: document.querySelector('#metrics'),
-  opportunities: document.querySelector('#opportunities'),
-  opportunitiesEmpty: document.querySelector('#opportunitiesEmpty'),
-  approvals: document.querySelector('#approvals'),
-  approvalsEmpty: document.querySelector('#approvalsEmpty'),
-  traces: document.querySelector('#traces'),
-  tracesEmpty: document.querySelector('#tracesEmpty'),
-  demoButton: document.querySelector('#demoButton'),
-  refreshButton: document.querySelector('#refreshButton'),
-  traceDetail: document.querySelector('#traceDetail'),
-  traceTitle: document.querySelector('#traceTitle'),
-  traceSpans: document.querySelector('#traceSpans'),
-  closeTrace: document.querySelector('#closeTrace'),
+  metrics: demoRefs?.metrics ?? null,
+  opportunities: demoRefs?.opportunities ?? null,
+  opportunitiesEmpty: demoRefs?.opportunitiesEmpty ?? null,
+  approvals: demoRefs?.approvals ?? null,
+  approvalsEmpty: demoRefs?.approvalsEmpty ?? null,
+  traces: demoRefs?.traces ?? null,
+  tracesEmpty: demoRefs?.tracesEmpty ?? null,
+  demoButton: demoRefs?.demoButton ?? null,
+  refreshButton: demoRefs?.refreshButton ?? null,
+  traceDetail: demoRefs?.traceDetail ?? null,
+  traceTitle: demoRefs?.traceTitle ?? null,
+  traceSpans: demoRefs?.traceSpans ?? null,
+  closeTrace: demoRefs?.closeTrace ?? null,
   toast: document.querySelector('#toast'),
 };
 
@@ -34,7 +55,7 @@ async function api(path, options = {}) {
   if (isMutation(method)) {
     requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
   }
-  const response = await fetch(path, { ...options, headers: requestHeaders });
+  const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
   const body = await response.json();
   if (!response.ok) {
     const error = new Error(body?.error?.message || `Request failed (${response.status})`);
@@ -68,7 +89,7 @@ const moduleClient = {
     if (isMutation(method)) {
       requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
     }
-    const response = await fetch(path, {
+    const response = await fetch(`${ADMIN_BASE}${path}`, {
       ...options,
       headers: requestHeaders,
     });
@@ -322,9 +343,11 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
-elements.demoButton.addEventListener('click', runDemo);
-elements.refreshButton.addEventListener('click', refresh);
-elements.closeTrace.addEventListener('click', () => elements.traceDetail.classList.add('hidden'));
+if (elements.demoButton) elements.demoButton.addEventListener('click', runDemo);
+if (elements.refreshButton) elements.refreshButton.addEventListener('click', refresh);
+if (elements.closeTrace) {
+  elements.closeTrace.addEventListener('click', () => elements.traceDetail.classList.add('hidden'));
+}
 
 // ---- Hash routing + generated-module navigation -------------------------
 
@@ -336,18 +359,20 @@ import {
   readSpaces,
   renderSettingsPanel,
 } from './admin-shell.js';
+import { buildOggiLinks, isSpaceMount, renderOggi } from './admin-oggi.js';
+import { renderDemoChrome } from './admin-demo.js';
 import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
+import { createCatalogView, commercialBlock } from './admin-catalog.js';
 import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
 import { createCustomerDataView } from './admin-customer-data.js';
+import { createConnectorsView } from './admin-connectors.js';
 import { createSpineView } from './admin-spine.js';
 import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
 
-const dashboardView = document.querySelector('#view-dashboard');
-const moduleView = document.querySelector('#view-module');
 const generatedNav = document.querySelector('#generatedNav');
 
 const moduleAdmin = createModuleAdmin({
@@ -378,6 +403,16 @@ const quoteView = createQuoteView({
   navigate: (hash) => { window.location.hash = hash; },
 });
 
+// Product catalog (BO-F2-05): the backoffice product table with its source
+// summary. Renders only while the server publishes the commercial package;
+// otherwise the view itself says so.
+const catalogView = createCatalogView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  navigate: (hash) => { window.location.hash = hash; },
+});
+
 // Work (ADR-030): the package-scoped task queue and its activity timeline. The
 // section renders only while the server publishes the work package.
 const workView = createWorkView({
@@ -399,6 +434,20 @@ const marketingView = createMarketingView({
   navigate: (hash) => { window.location.hash = hash; },
 });
 
+// Shell persistence first: the views below read this at construction, so it
+// must exist before any of them (a later `const` would throw a temporal-dead-zone
+// error on every page load). Private mode keeps tab state without persisting.
+function guardedStorage() {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) return window.localStorage;
+  } catch {
+    // Private mode: shell state simply does not persist.
+  }
+  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+}
+
+const shellStorage = guardedStorage();
+
 // Customer scheda (BO-F1-06): the three-column customer view, a read-only
 // projection over the hub. Renders only while the server publishes the
 // customer-hub package; otherwise the view itself says so.
@@ -407,6 +456,9 @@ const customerCardView = createCustomerCardView({
   mount: moduleView,
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
+  // The shell's active space, read late: the calls read stays
+  // space-explicit and follows the space switcher (BO-F1-08).
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
 });
 
 // Customer Data Foundation (ADR-037): import, duplicate candidates, the data
@@ -418,7 +470,19 @@ const customerDataView = createCustomerDataView({
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
+  notify: (message) => toast(message),
+  // BO-F1-05: the space the calls read stays space-explicit, and the AI
+  // filter entry opens the BO-F0-04 assistant on the Clienti screen (its
+  // dry-run answers the key notice when no LLM backend is present).
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  onAskAi: () => {
+    if (assistantPanel) void assistantPanel.open('clienti');
+    else toast('Apri la barra AI (⌘K) e descrivi chi vuoi vedere.');
+  },
+  storage: shellStorage,
 });
+
+// Connectors (BO-F1-02).
 
 // Production Spine (ADR-038): verified identity, the tenant, memberships and
 // what this build cannot promise. Always available — an application with no
@@ -434,19 +498,21 @@ const spineView = createSpineView({
 // ---- Backoffice shell (BO-F0-02) ------------------------------------------
 // Sidebar + topbar chrome on every screen: Italian voices from the approved
 // prototype, space selector (⌘1/2/3), Impostazioni badge from the real
-// data-quality count, AI bar entry (⌘K; the assistant itself is BO-F0-04).
+// data-quality count, AI bar (⌘K) opening the BO-F0-04 assistant panel.
 // Spaces are local shell state until space records exist (BO-F0-06).
 
-function guardedStorage() {
-  try {
-    if (typeof window !== 'undefined' && window.localStorage) return window.localStorage;
-  } catch {
-    // Private mode: shell state simply does not persist.
-  }
-  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-}
-
-const shellStorage = guardedStorage();
+// Connectors (BO-F1-02): the 3-step connect flow over the channels package.
+// Renders only while the server publishes the channels package; otherwise
+// the view itself says so.
+const connectorsView = createConnectorsView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  submissions,
+  navigate: (hash) => { window.location.hash = hash; },
+  storage: shellStorage,
+  toast,
+});
 const shellSpaces = readSpaces(shellStorage);
 let shellActiveSpace = null;
 try {
@@ -454,6 +520,19 @@ try {
   if (typeof stored === 'string' && shellSpaces.some((space) => space.id === stored)) shellActiveSpace = stored;
 } catch {
   // Keep the default space.
+}
+
+let currentScreenId = 'oggi';
+let assistantPanel = null;
+const boAssistant = document.querySelector('#boAssistant');
+if (boAssistant) {
+  assistantPanel = createAssistantPanel({
+    doc: document,
+    mount: boAssistant,
+    client: moduleClient,
+    navigate: (hash) => { window.location.hash = hash; },
+    notify: (message) => toast(message),
+  });
 }
 
 let shellView = null;
@@ -477,10 +556,19 @@ if (boSidebar && boTopbar) {
       window.location.hash = '#/';
       toast('Spazio locale reimpostato.');
     },
+    onAiSubmit: () => {
+      if (assistantPanel) void assistantPanel.open(currentScreenId);
+    },
     onPickSpace: (id) => {
+      shellActiveSpace = id;
       try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
         // The switch still applies to this tab.
       }
+      // The open card shows space-scoped calls (BO-F1-08): re-render it on
+      // the new space instead of leaving the previous space's summaries.
+      // The mounted home greets with the space name: re-render it too.
+      const openView = targetForHash(window.location.hash || '#/').view;
+      if (openView === 'customer-card' || (MOUNTED && openView === 'dashboard')) route();
     },
     win: typeof window !== 'undefined' ? window : null,
   });
@@ -490,6 +578,11 @@ if (boSidebar && boTopbar) {
 let shellItems = buildShellNav();
 let shellFixCount = null;
 let shellCustomerData = false;
+
+function currentSpaceName() {
+  const active = shellSpaces.find((space) => space.id === shellActiveSpace) ?? shellSpaces[0];
+  return typeof active?.name === 'string' ? active.name : '';
+}
 
 function shellScreenFor(target) {
   switch (target.view) {
@@ -513,7 +606,9 @@ function shellScreenFor(target) {
     case 'marketing': return { id: null, label: 'Proposte' };
     case 'marketing-proposal': return { id: null, label: 'Proposta' };
     case 'quotes': return { id: null, label: 'Preventivi' };
+    case 'catalog': return { id: null, label: 'Catalogo prodotti' };
     case 'quote-detail': return { id: null, label: 'Preventivo' };
+    case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
     case 'invalid': return { id: null, label: 'Percorso non valido' };
     default: return { id: null, label: 'Vista' };
   }
@@ -522,6 +617,7 @@ function shellScreenFor(target) {
 function syncShell(target) {
   if (!shellView) return;
   const screen = shellScreenFor(target);
+  currentScreenId = typeof screen?.id === 'string' && screen.id !== '' ? screen.id : 'oggi';
   shellView.update({
     fixCount: shellFixCount,
     items: shellItems,
@@ -553,6 +649,13 @@ async function populateNav() {
     // shell items update, so a cold deep link keeps its screen.
     syncShell(targetForHash(window.location.hash || '#/'));
     await refreshShellBadge();
+    // Mounted home (backlog:7eee63a5): the Oggi links follow the delivered
+    // screens, which are known only after the schema arrives — re-render an
+    // open home so it never shows the pre-schema voices.
+    if (MOUNTED && targetForHash(window.location.hash || '#/').view === 'dashboard') route();
+    // The legacy module nav lives inside the demo chrome, which is rendered
+    // standalone only: under a mount there is nothing to fill here.
+    if (!generatedNav) return;
     while (generatedNav.firstChild) generatedNav.removeChild(generatedNav.firstChild);
     if (!supported) {
       const note = document.createElement('span');
@@ -575,6 +678,17 @@ async function populateNav() {
       link.setAttribute('href', '#/quotes');
       link.setAttribute('data-nav', 'quotes');
       link.textContent = 'Quotes';
+      generatedNav.appendChild(link);
+    }
+    // Product catalog (BO-F2-05): one nav link when the commercial product
+    // records are composed — the table reads `product`, so without it the
+    // view would only ever say it is unavailable. The block lives under
+    // `domains.commercial` (same helper as the view), never top-level.
+    if (commercialBlock(schema)?.commercialContract === 1 && modules.some((module) => module.name === 'product')) {
+      const link = document.createElement('a');
+      link.setAttribute('href', '#/catalogo');
+      link.setAttribute('data-nav', 'catalog');
+      link.textContent = 'Catalogo';
       generatedNav.appendChild(link);
     }
     // Marketing (MK1): one nav link when the project composes the marketing package.
@@ -653,15 +767,31 @@ async function route() {
   const target = targetForHash(hash);
   syncShell(target);
   const onDashboard = target.view === 'dashboard';
+  if (onDashboard && MOUNTED) {
+    // Space home (backlog:7eee63a5): the Oggi frame, never the demo. The
+    // demo dashboard stays hidden for the whole session under a mount.
+    dashboardView.classList.add('hidden');
+    moduleView.classList.remove('hidden');
+    renderOggi({
+      doc: document,
+      mount: moduleView,
+      spaceName: currentSpaceName(),
+      links: buildOggiLinks(shellItems),
+      navigate: (next) => { window.location.hash = next; },
+      now: new Date(),
+    });
+    return;
+  }
   dashboardView.classList.toggle('hidden', !onDashboard);
   moduleView.classList.toggle('hidden', onDashboard);
   // Set the active nav link by comparing the safe href we built ourselves,
   // never by constructing a selector from route input.
-  for (const link of generatedNav.querySelectorAll('a')) {
+  for (const link of (generatedNav?.querySelectorAll('a') ?? [])) {
     const active = !onDashboard && (
       link.getAttribute('href') === `#/modules/${target.moduleName}` ||
       (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`) ||
       ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
+      (target.view === 'catalog' && link.getAttribute('href') === '#/catalogo') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
       ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card') && link.getAttribute('href') === '#/customer-data')
@@ -686,10 +816,12 @@ async function route() {
     else if (target.view === 'new') await moduleAdmin.renderNew(target.moduleName);
     else if (target.view === 'detail') await moduleAdmin.renderDetail(target.moduleName, target.id);
     else if (target.view === 'pipeline') await pipelineBoard.renderBoard(target.pipelineName);
+    else if (target.view === 'catalog') await catalogView.renderTable();
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
     else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') await customerDataView.render();
+    else if (target.view === 'connectors') await connectorsView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'customer-card') await customerCardView.renderCard(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();
@@ -704,4 +836,6 @@ async function route() {
 window.addEventListener('hashchange', route);
 populateNav();
 route();
-refresh();
+// The demo dashboard fetches framework records: standalone only. Under a
+// mount the home is the Oggi frame, which reads no record at all.
+if (!MOUNTED) refresh();

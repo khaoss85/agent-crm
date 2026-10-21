@@ -2,6 +2,8 @@
 
 The Admin is a zero-build, dependency-free static app (`apps/admin/public/`) served by the HTTP server at `/`. It has two parts: the handwritten CRM dashboard (opportunities, approvals, traces) and, since Milestone 4, an automatic experience for **generated modules**.
 
+When the same shell is mounted for a space (`createAdminShellMount` with a basePath such as `/bo`, backlog:7eee63a5), the home is the Oggi frame (`admin-oggi.js`: greeting plus links to the delivered screens, no invented data) and the demo dashboard is never rendered — the served HTML carries no demo markup. The standalone development server keeps the demo (`admin-demo.js`, rendered at startup).
+
 > Local development only. The Admin sends a declared actor identity for audit — it is **not** authentication and a local caller can set any actor. Do not expose the server publicly until authentication, tenancy and RBAC exist.
 
 ## From manifest to a managed record
@@ -23,7 +25,7 @@ The module now appears under **Generated modules** in the Admin nav — no page 
 ## Routes (hash-based)
 
 ```text
-#/                          dashboard (shell: Oggi)
+#/                          Oggi frame under a space mount, demo dashboard standalone
 #/impostazioni               settings entry (BO-F0-02; tabs land in BO-F0-03)
 #/modules/:module           collection / list
 #/modules/:module/new       create form
@@ -45,9 +47,39 @@ Sidebar on every screen plus topbar, with the prototype's Italian voices
   local shell state (localStorage) until space records exist (BO-F0-06).
 - Impostazioni badge from the real count of open data-quality issues plus
   unresolved duplicate candidates; zero or unknown renders no badge.
-- Topbar with the "<spazio> / <schermata>" path and the AI bar entry (⌘K).
-  The bar is an entry only — the assistant is BO-F0-04.
+- Topbar with the "<spazio> / <schermata>" path and the AI bar (⌘K), which
+  opens the BO-F0-04 assistant panel (see below).
 - Fluid under 700px: single column, horizontal nav strip, stacked topbar.
+
+## Backoffice assistant (BO-F0-04)
+
+The ⌘K bar opens the assistant side panel
+(`apps/admin/public/admin-assistant.js`, unit-tested in
+`tests/admin-assistant.test.js`):
+
+- Every backoffice screen offers different deterministic suggestions
+  (Oggi, Clienti, Pipeline, Calendario, Sequenze, Reporting, Impostazioni);
+  unknown screens get the generic pair, never an empty panel.
+- Every answer cites clickable sources that point at real records: sources
+  are built only from ids the panel just read (conversations, calls and
+  messages from `packages/interactions`, signals from
+  `packages/intelligence`, AI audit rows from `packages/llm`), each linking
+  to the record route. Opportunities are a core module with no
+  generated-module detail route, so their sources link the pipeline board
+  (`#/pipelines/<name>`) that renders them — or name the record as text
+  when no board covers them. A module that is not composed names itself as
+  unavailable instead of failing the answer; hostile record strings render
+  as text, never markup.
+- Linked actions execute really: navigation filters/opens records, and the
+  `mark-read`/`close` record actions run through the same module action
+  surface as the handwritten views. An action flagged customer-facing never
+  runs without an explicit per-action confirmation first — unconfirmed, it
+  neither requests nor navigates.
+- Without a configured LLM key the backend probe
+  (`GET /api/assistant/status`, published by a future backend) misses and
+  the panel runs in dry-run: suggestions stay usable on real data, and the
+  free-question box is disabled with the message that free questions arrive
+  with the key. With the backend live the box posts to its endpoint.
 
 ## How it works
 

@@ -276,6 +276,13 @@ test('framework self-authority stays at its reviewed named outbox boundary', asy
     // a person moves it. The provider bytes belong to the channel outbox
     // job queued under the reminder key, never to this actor.
     "packages/appointments/src/reminder-dispatch.js:<line>:const TIMER_ACTOR = trustedSystemActor('sending due appointment reminders');",
+    // Intelligence. The retention purge fires at the deadline the space
+    // configured (12 months by default, Q-G2): erasing expired personal data
+    // is not a human decision, so the caller-supplied actor is ignored here.
+    // The purge only wipes text and summary and stamps purgedAt — it creates
+    // no record and restores nothing — while notices, saves and summaries
+    // still require a human user actor (requireActor).
+    "packages/intelligence/src/call-intelligence.js:<line>:const PURGE_ACTOR = trustedSystemActor('purging expired call transcripts');",
     // Channels. Provider-driven inbox writes and dead-letter rows are not a
     // human decision: the caller-supplied actor is ignored and the package
     // system actor attributes the write, while sends and connection changes

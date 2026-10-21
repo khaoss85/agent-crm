@@ -16,6 +16,7 @@ import { isExposableGeneratedModule } from '../../../packages/core/src/generated
 import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
 import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
 import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
+import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
 
 const DEFAULT_PUBLIC_DIR = resolve(
   fileURLToPath(new URL('../../admin/public', import.meta.url)),
@@ -63,8 +64,21 @@ function writeContext(app, ctx) {
   };
 }
 
-/** @param {unknown} value */
-function isResponseEnvelope(value) {
+// Connectors (BO-F1-02): one finish request pulls at most this many history
+// pages of this many events. Exported so the bound test pins the exact page
+// budget instead of a magic number.
+/** @type {number} */
+export const CONNECTORS_FINISH_PAGE_LIMIT = 50;
+/** @type {number} */
+export const CONNECTORS_FINISH_MAX_PAGES = 5;
+
+/**
+ * Whether a handler return value is an explicit `{ status, body }` envelope.
+ * Exported for embedding mounts (backlog:ecdf7dc4), which normalize handler
+ * results exactly the way the standalone server does.
+ *
+ * @param {unknown} value */
+export function isResponseEnvelope(value) {
   return typeof value === 'object' && value !== null && /** @type {any} */ (value)[RESPONSE_ENVELOPE] === true;
 }
 
@@ -289,8 +303,14 @@ function publicStorageDescriptor(app) {
     ?? { adapter: 'sqlite', available: true };
 }
 
-/** @param {any} app */
-function buildRouter(app) {
+/**
+ * The route table of the Admin server, exported so an embedder can mount the
+ * same routes under its own session and path prefix (backlog:ecdf7dc4). The
+ * handlers are pure request/response functions: they never touch the socket,
+ * so both the standalone server above and an embedding mount can drive them.
+ *
+ * @param {any} app */
+export function buildRouter(app) {
   const router = new Router();
 
   router.add('GET', '/health', async () => operationalHealth(app), { skipIdentity: true });
@@ -355,6 +375,61 @@ function buildRouter(app) {
       throw new ValidationError('provider is required', { field: 'provider' });
     }
     return await app.syncCatalog({ provider: input.provider, input: input.input, actor });
+  });
+
+  // Manual catalog (BO-F2-05). Enumerated adapters over the commercial manual
+  // operations — the kernel owns the paths and gates the role boundary, the
+  // package owns the writes. Without the package composed each answers an
+  // honest 404. Reads gate `records.read`, writes gate `records.write` like
+  // every other write route. Query flags arrive as strings and are parsed
+  // here; bodies pass through (server-controlled keys stripped) because the
+  // operations validate their own input fail-closed.
+  router.add('GET', '/api/catalog/products', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.listCatalogProducts !== 'function') {
+      throw new NotFoundError('Operation', 'manual catalog');
+    }
+    if (query.active !== undefined && query.active !== 'true' && query.active !== 'false') {
+      throw new ValidationError('active must be true or false', { field: 'active' });
+    }
+    return await app.listCatalogProducts({
+      category: query.category,
+      active: query.active === undefined ? undefined : query.active === 'true',
+      source: query.source,
+      limit: parseLimit(query.limit),
+    });
+  });
+  router.add('POST', '/api/catalog/products', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.createManualProduct !== 'function') {
+      throw new NotFoundError('Operation', 'manual catalog');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return respond(201, await app.createManualProduct({ ...stripServerControlledKeys(input) }, actor));
+  });
+  router.add('POST', '/api/catalog/products/:id', async ({ params, body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.updateManualProduct !== 'function') {
+      throw new NotFoundError('Operation', 'manual catalog');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.updateManualProduct({ ...stripServerControlledKeys(input), productId: params.id }, actor);
+  });
+  router.add('POST', '/api/catalog/products/:id/prices', async ({ params, body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.setManualPrices !== 'function') {
+      throw new NotFoundError('Operation', 'manual catalog');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.setManualPrices({ ...stripServerControlledKeys(input), productId: params.id }, actor);
+  });
+  router.add('POST', '/api/catalog/products/:id/active', async ({ params, body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.setManualProductActive !== 'function') {
+      throw new NotFoundError('Operation', 'manual catalog');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.setManualProductActive({ ...stripServerControlledKeys(input), productId: params.id }, actor);
   });
 
   // Signature provider events (ADR-017). A dedicated route, NOT a record
@@ -424,6 +499,29 @@ function buildRouter(app) {
     return await app.readCustomerProfile({ resource: params.resource, id: params.id });
   });
 
+  // Customer list (BO-F1-05): one server page over the host records with
+  // views-as-saved-queries, channel and status filters, sorting and the
+  // AI budget column. Same enumerated-adapter shape as the profile route:
+  // without the package composed each answers an honest 404. Query values
+  // arrive as strings and are validated by the operation, which refuses
+  // unknown values fail-closed rather than answering a page nobody asked.
+  router.add('GET', '/api/customer-data/customers', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.listCustomers !== 'function') {
+      throw new NotFoundError('Operation', 'customer list');
+    }
+    return await app.listCustomers({
+      q: query.q,
+      canale: query.canale,
+      stato: query.stato,
+      sort: query.sort,
+      vista: query.vista,
+      page: query.page,
+      pageSize: query.pageSize,
+      spaceId: query.spaceId,
+    });
+  });
+
   // Customer Hub (BO-F1-06): the scheda cliente reads the card and the
   // timeline through two enumerated adapters, the same shape as the profile
   // route above. The kernel owns the path, gates the role boundary, and
@@ -445,6 +543,215 @@ function buildRouter(app) {
       throw new NotFoundError('Operation', 'customer timeline');
     }
     return await app.readCustomerTimeline({ resource: params.resource, id: params.id });
+  });
+
+  // Call intelligence (BO-F1-08): the notice, the transcript, its summary
+  // and the customer calls read for the scheda cliente. The same
+  // enumerated-adapter shape as the hub routes above: the kernel owns the
+  // path, gates the role boundary, and delegates to the composed
+  // application operations — without intelligence composed each answers an
+  // honest 404. The space stays explicit on every call, never inferred.
+  router.add('POST', '/api/call-intelligence/notice', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.recordCallNotice !== 'function') {
+      throw new NotFoundError('Operation', 'call notice');
+    }
+    return await app.recordCallNotice({ ...stripServerControlledKeys(body), actor });
+  });
+
+  router.add('POST', '/api/call-intelligence/transcript', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.saveCallTranscript !== 'function') {
+      throw new NotFoundError('Operation', 'call transcript');
+    }
+    return await app.saveCallTranscript({ ...stripServerControlledKeys(body), actor });
+  });
+
+  router.add('POST', '/api/call-intelligence/summarize', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.summarizeCall !== 'function') {
+      throw new NotFoundError('Operation', 'call summary');
+    }
+    return await app.summarizeCall({ ...stripServerControlledKeys(body), actor });
+  });
+
+  // The explicit operator path for the retention purge (BO-F1-08): the same
+  // operation the scheduled sweep runs, triggerable by hand when no beat is
+  // seeded. Without intelligence composed it answers the honest 404 above.
+  // The instant is server-controlled: a caller-supplied `now` could erase
+  // every transcript early by naming a far-future date, so only the space
+  // scope is read from the body and `now` is never forwarded.
+  router.add('POST', '/api/call-intelligence/purge', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.purgeExpiredTranscripts !== 'function') {
+      throw new NotFoundError('Operation', 'call purge');
+    }
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : undefined;
+    return await app.purgeExpiredTranscripts(spaceId === undefined ? { actor } : { spaceId, actor });
+  });
+
+  router.add('GET', '/api/call-intelligence/calls/:resource/:id', async ({ params, searchParams, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readCustomerCalls !== 'function') {
+      throw new NotFoundError('Operation', 'customer calls');
+    }
+    return await app.readCustomerCalls({
+      spaceId: searchParams.get('spaceId'),
+      subjectResource: params.resource,
+      subjectId: params.id,
+    });
+  });
+  // Connectors (BO-F1-02): the backoffice 3-step connect flow. The same
+  // enumerated-adapter shape as the routes above: the kernel owns the path,
+  // gates the role boundary, and delegates to the composed application
+  // operations — without the channels package composed each answers an
+  // honest 404. No new table, no new record: every write below runs through
+  // the package's own register operation and its audited status action, so
+  // validation, audit and trace stay exactly where they already are.
+  router.add('GET', '/api/connectors', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readSyncState !== 'function') {
+      throw new NotFoundError('Operation', 'connector sync state');
+    }
+    return await app.readSyncState({ spaceId: query.spaceId });
+  });
+
+  // Stato sync (BO-F1-03): the screen reads one activity payload — real
+  // inbox tallies, the open dead letters, the newest-first feed and the
+  // needsFix badge count — and "Sincronizza ora" pulls one bounded page
+  // through the same route. Same enumerated shape as the routes above:
+  // the kernel gates the role boundary and delegates to the composed
+  // application operations; without the channels package composed each
+  // answers an honest 404. The pull is a human decision, so sync-now
+  // gates `records.write` like authorize and finish.
+  router.add('GET', '/api/connectors/activity', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readSyncActivity !== 'function') {
+      throw new NotFoundError('Operation', 'connector sync activity');
+    }
+    const feedLimit = query.feedLimit === undefined ? undefined : Number(query.feedLimit);
+    return await app.readSyncActivity({
+      spaceId: query.spaceId,
+      ...(feedLimit === undefined ? {} : { feedLimit }),
+    });
+  });
+
+  router.add('POST', '/api/connectors/sync-now', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.syncNowChannel !== 'function') {
+      throw new NotFoundError('Operation', 'connector sync now');
+    }
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    try {
+      return await app.syncNowChannel({
+        spaceId,
+        connectionKey: typeof input.connectionKey === 'string' ? input.connectionKey : '',
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+        actor,
+      });
+    } catch (error) {
+      // A 5xx here would otherwise reach the top-level serializer unlogged:
+      // log the normalized code with the workspace id — never the body, a
+      // secret or provider text — so a production sync failure stays
+      // diagnosable, then let the error travel unchanged.
+      const normalized = normalizeError(error);
+      if (normalized.status >= 500) {
+        const loggedSpace = /^[a-z][a-z0-9-]{0,62}$/.test(spaceId) ? spaceId : 'unknown';
+        console.error(`sync-now failed code=${normalized.code} spaceId=${loggedSpace}`);
+      }
+      throw error;
+    }
+  });
+
+  router.add('POST', '/api/connectors/authorize', async ({ body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.registerChannelConnection !== 'function' || typeof app.readSyncState !== 'function') {
+      throw new NotFoundError('Operation', 'connector authorize');
+    }
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    const channel = typeof input.channel === 'string' ? input.channel : '';
+    const account = typeof input.account === 'string' ? input.account : '';
+    const adapter = typeof input.adapter === 'string' ? input.adapter : '';
+    const adapterVersion = Number.isSafeInteger(input.adapterVersion) ? input.adapterVersion : 0;
+    // The secret itself is never collected here and never stored anywhere:
+    // authorize records the vault slot the deployment fills later — one slot
+    // per space+channel+account, so two accounts on one channel in one space
+    // never share a credential. Resolution happens at call time through the
+    // deployment's resolver — a fake-backed adapter never dials anything
+    // real (MEM_ACC_DECISIONS).
+    const secretRef = connectionSecretRef({ spaceId, channel, account });
+    const reg = await app.registerChannelConnection({
+      spaceId, channel, account, adapter, adapterVersion, secretRef, actor,
+    });
+    const state = await app.readSyncState({ spaceId });
+    const entry = state.connectors.find((row) => row.connectionKey === reg.connection.sourceKey) ?? null;
+    if (entry !== null && (entry.status === 'pending' || entry.status === 'suspended')) {
+      const context = writeContext(app, { actor, identity, organizationId, headers });
+      await app.runAction({
+        module: 'channel-connection',
+        action: 'activate-connection',
+        recordId: reg.connection.id,
+        input: { reason: 'connected from the guided Connectors flow (BO-F1-02)' },
+        actor,
+        identity,
+        organizationId,
+        tenantId: context.tenantId,
+        idempotencyKey: context.idempotencyKey,
+      });
+      const next = await app.readSyncState({ spaceId });
+      return {
+        duplicate: reg.duplicate,
+        connection: next.connectors.find((row) => row.connectionKey === reg.connection.sourceKey) ?? entry,
+      };
+    }
+    if (entry !== null && entry.status === 'revoked') {
+      throw new AppError('This connection was revoked: register a new account to reconnect', {
+        code: 'CHANNEL_CONNECTION_REVOKED', status: 409,
+      });
+    }
+    return { duplicate: reg.duplicate, connection: entry };
+  });
+
+  router.add('POST', '/api/connectors/finish', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    const connectionKey = typeof input.connectionKey === 'string' ? input.connectionKey : '';
+    // Passo 2 "cosa sincronizzare": nuovi messaggi fluiscono sempre una
+    // volta che la connessione è attiva; la cronologia passata è la scelta.
+    // Skipping it starts nothing — there is no import row to resume — and
+    // conflicts found later still become duplicate candidates, never merges.
+    if (input.history === false) {
+      return { started: false, skipped: 'history', connectionKey };
+    }
+    if (typeof app.startInitialImport !== 'function' || typeof app.advanceInitialImport !== 'function') {
+      throw new NotFoundError('Operation', 'connector initial import');
+    }
+    const started = await app.startInitialImport({ spaceId, connectionKey, actor });
+    // Pulling starts with the first advance call, and no scheduler advances
+    // running imports — but one HTTP request cannot pull an unbounded past:
+    // at most CONNECTORS_FINISH_MAX_PAGES pages of CONNECTORS_FINISH_PAGE_LIMIT
+    // events each, so one request costs at most a few provider round-trips
+    // (one timeout each) and always fits inside gateway timeouts. A large past
+    // needs several fatto continuations; every continuation resumes from the
+    // stored cursor, and the reply carries done:false plus the progress so far
+    // instead of an unconditional done:true. A transient failure aborts with
+    // the cursor unmoved, and retrying finish resumes from the stored cursor.
+    let advance = null;
+    for (let page = 0; page < CONNECTORS_FINISH_MAX_PAGES; page += 1) {
+      advance = await app.advanceInitialImport({ spaceId, connectionKey, limit: CONNECTORS_FINISH_PAGE_LIMIT });
+      if (advance?.done === true) break;
+    }
+    return {
+      started: started.started,
+      resumed: started.resumed ?? false,
+      connectionKey,
+      done: advance?.done === true,
+      import: advance?.state ?? started.state ?? null,
+    };
   });
 
   // Customer Data Operations v2: bulk decisions and scale-safe export. The
@@ -807,9 +1114,13 @@ async function gate(app, identity, organizationId, permission) {
  * override that C9 forbids — so a mismatch is refused by the authorizer rather
  * than resolved in the caller's favour.
  *
- * @param {any} app @param {import('node:http').IncomingMessage} request
+ * The request may be a live `IncomingMessage` or a plain `{ headers, method,
+ * url }` triple — an embedding mount passes the latter, and only the three
+ * fields above are ever read.
+ *
+ * @param {any} app @param {{ headers?: any, method?: string, url?: string }} request
  */
-async function requestIdentity(app, request) {
+export async function requestIdentity(app, request) {
   const spine = app?.spine ?? null;
 
   if (!spine) {
@@ -951,25 +1262,39 @@ function sendJson(response, status, body, extraHeaders = {}) {
   response.end(payload);
 }
 
-/** @param {string} publicDir @param {string} pathname @param {import('node:http').ServerResponse} response */
-async function serveStatic(publicDir, pathname, response) {
+/**
+ * Read a static file of the Admin shell without touching a socket. Returns
+ * `{ data, contentType }`, or `null` when the path escapes the directory or
+ * names no file — the same two cases `serveStatic` answers `false` for.
+ * Anything else (an unreadable-but-present file) throws, as before.
+ *
+ * @param {string} publicDir @param {string} pathname
+ */
+export async function readStaticFile(publicDir, pathname) {
   const requestPath = pathname === '/' ? '/index.html' : pathname;
   const safePath = normalize(requestPath).replace(/^(\.\.(\/|\\|$))+/, '');
   const filePath = resolve(join(publicDir, safePath));
-  if (!filePath.startsWith(publicDir)) return false;
+  if (!filePath.startsWith(publicDir)) return null;
   try {
     const data = await readFile(filePath);
-    response.writeHead(200, {
-      'content-type': mimeType(extname(filePath)),
-      'content-length': data.byteLength,
-      'cache-control': 'no-cache',
-    });
-    response.end(data);
-    return true;
+    return { data, contentType: mimeType(extname(filePath)) };
   } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return false;
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
     throw error;
   }
+}
+
+/** @param {string} publicDir @param {string} pathname @param {import('node:http').ServerResponse} response */
+async function serveStatic(publicDir, pathname, response) {
+  const found = await readStaticFile(publicDir, pathname);
+  if (!found) return false;
+  response.writeHead(200, {
+    'content-type': found.contentType,
+    'content-length': found.data.byteLength,
+    'cache-control': 'no-cache',
+  });
+  response.end(found.data);
+  return true;
 }
 
 /** @param {string | undefined} value */

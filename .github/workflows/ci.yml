@@ -154,8 +154,14 @@ jobs:
       # (plus the heredoc delimiter corpus) here; the default local run
       # covers a documented 10,080-cell subset plus a 120-cell heredoc sample,
       # so `npm test` finishes in minutes on a developer machine.
-      # See tests/agent-tool-selection-prompts.test.js.
+      # See tests/helpers/shell-oracle.js (sliced across
+      # tests/shell-oracle-a/b/c/d/e/f.test.js).
       ACCORDO_FULL_SHELL_ORACLE: '1'
+      # No ACCORDO_ORACLE_DRIVER here on purpose: the measurement forces the
+      # driver on for every piece it runs (scripts/measure-suite.js), so no
+      # entry point can publish a record over skipped oracle tests. Direct
+      # `node --test` runs (the PR gate, the pre-push hook) still run only
+      # the slices' wiring. Same backlog as the slicing above.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -220,10 +226,14 @@ jobs:
       # The measurement runs piece by piece (`npm run measure`,
       # `scripts/measure-pieces.sh`) on this clean checkout: `npm run check`,
       # then one `measure-suite.js --shard i/n` per piece, each under its OWN
-      # heavy-job acquisition with its OWN declared maximum (600 s a normal
-      # piece, 1800 s the piece holding the full-oracle file) — the machine
-      # lock is free between two pieces, so Arvo's heavy steps slot in
-      # instead of queueing behind one ~40-minute hold (backlog:9fff957f3968).
+      # heavy-job acquisition with its OWN declared maximum (900 s every
+      # piece — the shell-oracle corpus is sliced one grouping per file
+      # across six files, so no
+      # piece needs more: backlog:9fff957f3968, backlog:664d5f481a96) — the
+      # machine lock is free between two pieces,
+      # and the pieces run strictly one at a time, so Arvo's heavy steps slot
+      # in instead of queueing behind one ~40-minute hold or beside several
+      # Accordo waiters at once.
       # No outer ci-heavy wrapper on this step: wrapping the loop would hold
       # the lock across the pieces the loop exists to release. The combine
       # runs no tests and takes no lock, and the record it prints has the

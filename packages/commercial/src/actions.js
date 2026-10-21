@@ -8,6 +8,7 @@ import {
   groupComponentTotals,
   effectiveDiscountBps,
   maxLineDiscountBps,
+  withVatTotals,
 } from './money.js';
 
 /**
@@ -38,7 +39,7 @@ import {
  *   versionLineModule?: string, versionComponentModule?: string,
  *   versionTotalModule?: string, approvalModule?: string,
  *   priceBookModule?: string, offerModule?: string, componentModule?: string,
- *   tierModule?: string, productVersionModule?: string,
+ *   tierModule?: string, productVersionModule?: string, productModule?: string,
  *   quoteTermModule?: string, versionTermModule?: string,
  * }} CommercialActionConfig */
 
@@ -57,6 +58,7 @@ function resolved(config = {}) {
     componentModule: config.componentModule ?? 'price-component',
     tierModule: config.tierModule ?? 'price-tier',
     productVersionModule: config.productVersionModule ?? 'product-version',
+    productModule: config.productModule ?? 'product',
     quoteTermModule: config.quoteTermModule ?? 'quote-term',
     versionTermModule: config.versionTermModule ?? 'quote-version-term',
   };
@@ -179,7 +181,7 @@ function quoteComponentAmounts(lines) {
  */
 async function recalc(modules, cfg, quote, managed) {
   const lines = await activeLines(modules, cfg, quote.id);
-  const totals = groupComponentTotals(quoteComponentAmounts(lines), quote.currency);
+  const totals = withVatTotals(groupComponentTotals(quoteComponentAmounts(lines), quote.currency));
   return managed(quote.id, {
     totalsJson: toJson(totals),
     oneTimeNetCents: totals.oneTimeTotal.netAmountCents,
@@ -210,7 +212,7 @@ export function buildCreateQuoteAction(config) {
       if (book.active !== true) {
         throw new AppError(`Price book "${book.id}" is not active`, { code: 'PRICE_BOOK_INACTIVE', status: 409 });
       }
-      const emptyTotals = groupComponentTotals([], book.currency);
+      const emptyTotals = withVatTotals(groupComponentTotals([], book.currency));
       const quote = await trusted(modules, cfg.quoteModule).createManaged(
         {
           opportunityId: record.id,
@@ -268,6 +270,13 @@ export function buildQuoteLineActions(config) {
       }
       if (offer.active !== true) {
         throw new AppError('The offer revision is no longer active', { code: 'OFFER_INACTIVE', status: 409 });
+      }
+      // The product carries the sellable flag independently of its offers: an
+      // archived product never quotes even when a stale active offer row
+      // survives (a writer that forgot to propagate the deactivation).
+      const product = await trusted(modules, cfg.productModule).get(offer.productId);
+      if (product.active !== true) {
+        throw new AppError(`The product "${product.id}" is not active and cannot be quoted`, { code: 'PRODUCT_INACTIVE', status: 409 });
       }
       if (offer.quoteEligible !== true) {
         throw new AppError(
@@ -438,7 +447,10 @@ export function buildSubmitQuoteAction(config, registries) {
         : null;
       const { definition: policy, fingerprint } = registries.getDiscountPolicy(input.policy, input.version);
       const componentAmounts = quoteComponentAmounts(lines);
-      const totals = groupComponentTotals(componentAmounts, quote.currency);
+      // The VAT view freezes with the version: the rate and every amount
+      // below are immutable per version, which is what the version PDF
+      // renders (BO-F2-03: subtotale + IVA 22%).
+      const totals = withVatTotals(groupComponentTotals(componentAmounts, quote.currency));
       const maxDiscountBps = maxLineDiscountBps(lines);
       const effectiveBps = effectiveDiscountBps(totals);
       const submittedAt = now();
@@ -797,6 +809,8 @@ function quoteSummary(quote) {
     currentApprovalId: quote.currentApprovalId,
     oneTimeTotal: totals.oneTimeTotal,
     recurringTotals: totals.recurringTotals,
+    vatRateBps: totals.vatRateBps ?? null,
+    vat: totals.vat ?? null,
   };
 }
 

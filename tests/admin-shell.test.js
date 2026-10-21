@@ -269,9 +269,11 @@ test('settings panel lists the four areas with honest availability', () => {
   }
   assert.ok(text.includes('2 cose da sistemare'));
   const links = mount.findAll('a');
-  assert.equal(links.length, 1);
-  links[0].dispatch('click', { preventDefault: () => {} });
-  assert.deepEqual(navigated, ['#/customer-data']);
+  // Personalizzazione (BO-F1-02) and Catalogo prodotti (BO-F2-05) both link
+  // beside the Stato sync link, in area order.
+  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/connettori', '#/catalogo', '#/customer-data']);
+  for (const link of links) link.dispatch('click', { preventDefault: () => {} });
+  assert.deepEqual(navigated, ['#/connettori', '#/catalogo', '#/customer-data']);
 
   const empty = createMount();
   renderSettingsPanel({ doc, mount: empty, fixCount: 0 });
@@ -287,13 +289,15 @@ test('Stato sync links only when the customer-data package is composed', () => {
   const doc = createFakeDocument();
   const off = createMount();
   renderSettingsPanel({ doc, mount: off, fixCount: 2, customerDataAvailable: false });
-  assert.equal(off.findAll('a').length, 0);
+  // Personalizzazione and Catalogo prodotti link; Stato sync stays an honest
+  // note until the customer-data package is composed.
+  assert.deepEqual(off.findAll('a').map((link) => link.getAttribute('href')), ['#/connettori', '#/catalogo']);
   assert.ok(off.textContent.includes('Stato sync'));
   assert.ok(off.textContent.includes('non composto'));
 
   const implicit = createMount();
   renderSettingsPanel({ doc, mount: implicit, fixCount: 2 });
-  assert.equal(implicit.findAll('a').length, 0);
+  assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/connettori', '#/catalogo']);
 });
 
 test('shell stylesheet stays fluid under 700px', () => {

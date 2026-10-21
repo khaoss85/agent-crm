@@ -149,6 +149,7 @@ export async function loadNeutralHelpers() {
  */
 export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/intelligence/src/index.js',
+  'packages/intelligence/src/call-intelligence.js',
   'packages/intelligence/src/actions.js',
   'packages/intelligence/src/registry.js',
   'packages/intelligence/src/capability.js',
@@ -181,6 +182,9 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/intelligence/modules/routing-run.module.json',
   'packages/intelligence/modules/route-evaluation.module.json',
   'packages/intelligence/modules/assignment.module.json',
+  'packages/intelligence/modules/call-notice.module.json',
+  'packages/intelligence/modules/call-signal.module.json',
+  'packages/intelligence/modules/call-transcript.module.json',
   'examples/starters/b2b-lead-qualification/lead.module.json',
   'packages/work/modules/work-task.module.json',
   'packages/work/modules/work-activity.module.json',
