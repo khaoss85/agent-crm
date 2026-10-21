@@ -1,5 +1,6 @@
 {
   "manifestVersion": 1,
+  "revision": 2,
   "name": "channel-connection",
   "description": "One channel account bound to one space (backlog:e5532d1c9146). Read-only publicly: every field is managed, so a connection exists only through the package's register operation and changes only through its audited actions. The secret itself is never stored here — only the reference the deployment's secret resolver understands.",
   "fields": [
