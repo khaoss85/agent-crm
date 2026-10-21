@@ -594,6 +594,54 @@ export function buildRouter(app) {
     return await app.readSyncState({ spaceId: query.spaceId });
   });
 
+  // Stato sync (BO-F1-03): the screen reads one activity payload — real
+  // inbox tallies, the open dead letters, the newest-first feed and the
+  // needsFix badge count — and "Sincronizza ora" pulls one bounded page
+  // through the same route. Same enumerated shape as the routes above:
+  // the kernel gates the role boundary and delegates to the composed
+  // application operations; without the channels package composed each
+  // answers an honest 404. The pull is a human decision, so sync-now
+  // gates `records.write` like authorize and finish.
+  router.add('GET', '/api/connectors/activity', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readSyncActivity !== 'function') {
+      throw new NotFoundError('Operation', 'connector sync activity');
+    }
+    const feedLimit = query.feedLimit === undefined ? undefined : Number(query.feedLimit);
+    return await app.readSyncActivity({
+      spaceId: query.spaceId,
+      ...(feedLimit === undefined ? {} : { feedLimit }),
+    });
+  });
+
+  router.add('POST', '/api/connectors/sync-now', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.syncNowChannel !== 'function') {
+      throw new NotFoundError('Operation', 'connector sync now');
+    }
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    try {
+      return await app.syncNowChannel({
+        spaceId,
+        connectionKey: typeof input.connectionKey === 'string' ? input.connectionKey : '',
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+        actor,
+      });
+    } catch (error) {
+      // A 5xx here would otherwise reach the top-level serializer unlogged:
+      // log the normalized code with the workspace id — never the body, a
+      // secret or provider text — so a production sync failure stays
+      // diagnosable, then let the error travel unchanged.
+      const normalized = normalizeError(error);
+      if (normalized.status >= 500) {
+        const loggedSpace = /^[a-z][a-z0-9-]{0,62}$/.test(spaceId) ? spaceId : 'unknown';
+        console.error(`sync-now failed code=${normalized.code} spaceId=${loggedSpace}`);
+      }
+      throw error;
+    }
+  });
+
   router.add('POST', '/api/connectors/authorize', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
     if (typeof app.registerChannelConnection !== 'function' || typeof app.readSyncState !== 'function') {
