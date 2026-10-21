@@ -6,10 +6,11 @@
  * Signed business promotes a contact to `cliente`; the negative claim is
  * definitive only when all three evidence sections are readable with
  * complete zero counts, otherwise `contatto` with the reason naming what
- * was not readable. Shared by the customer card
- * (`packages/customer-hub/src/card.js`) and the customer list
- * (`packages/customer-data/src/customers.js`) so the two screens can never
- * disagree about who is a customer.
+ * was not readable. Owned by customer-data (the consolidation authority):
+ * the profile carries the verdict and the customer card reads it through
+ * the declared `customer-profile@1` capability, so the two screens can
+ * never disagree about who is a customer. Never imported by another
+ * domain package — the hub consumes the capability, not this module.
  *
  * Each evidence section is `{ available, count, countIsComplete }` — the
  * same shape the consolidated profile sections carry, where a count taken

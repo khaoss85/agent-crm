@@ -150,6 +150,13 @@ export function channelWordsIn(q) {
   return [...hit];
 }
 
+/**
+ * Glue words of the supported natural-language grammar ("clienti di Milano
+ * su WhatsApp"): they join the place to the channel and carry no search
+ * meaning, so they leave the text needle like the channel words do.
+ */
+const NL_GLUE_WORDS = Object.freeze(new Set(['di', 'su']));
+
 /** All the words (canonical + aliases) that name one channel. */
 function channelAliases(channel) {
   return {
@@ -194,7 +201,7 @@ export function applyCustomerListQuery(rows, query, todayIso) {
     .replace(/^(chi è di|chi e di|clienti di|clienti)\s+/i, '')
     .toLowerCase()
     .split(/[^a-zà-öø-ÿ0-9+]+/i)
-    .filter((word) => word !== '' && !channelWordSet.has(word))
+    .filter((word) => word !== '' && !channelWordSet.has(word) && !NL_GLUE_WORDS.has(word))
     .join(' ');
 
   const today = typeof todayIso === 'string' && todayIso !== '' ? todayIso : new Date().toISOString().slice(0, 10);

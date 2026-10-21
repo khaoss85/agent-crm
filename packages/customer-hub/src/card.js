@@ -1,12 +1,12 @@
 // @ts-check
 
-import { CUSTOMER_EVIDENCE_KEYS, NotFoundError, ValidationError, deriveCustomerStatus } from '../../core/index.js';
+import { NotFoundError, ValidationError } from '../../core/index.js';
 // This module imports nothing from customer-data — not even its entry. The
 // consolidated profile arrives as a bound reader opened by `src/index.js`
 // through the declared `customer-profile@1` capability, so the shaping below
-// cannot diverge from the provider's name resolution. The status rule itself
-// is shared with the customer list through the core (same `cliente` verdict
-// on both screens, by construction).
+// cannot diverge from the provider's name resolution. The status verdict
+// arrives with the profile (computed by customer-data's own rule, shared with
+// the customer list), so both screens agree by construction.
 
 /**
  * **The customer card: one readable projection, zero new records.**
@@ -56,9 +56,6 @@ export function toDialablePhone(value) {
 
 /** Identity systems shown as social profiles on the card. */
 export const SOCIAL_SYSTEMS = Object.freeze(['instagram', 'facebook', 'tiktok']);
-
-/** Signed business: the only evidence that promotes a contact to cliente. */
-export const CUSTOMER_EVIDENCE_SECTIONS = CUSTOMER_EVIDENCE_KEYS;
 
 /** Sections flattened into the card history, in card order. */
 const HISTORY_SECTIONS = Object.freeze([
@@ -137,11 +134,13 @@ export function shapeCustomerCard(profile, subject) {
     .filter((row) => SOCIAL_SYSTEMS.includes(String(row.system).toLowerCase()))
     .map((row) => Object.freeze({ system: row.system, handle: row.externalId })));
 
-  // Signed business promotes; an absence claim needs proof, not silence: the
-  // one shared rule below refuses the claim when evidence is unreadable.
-  const status = deriveCustomerStatus({
-    orders: profile.orders, contracts: profile.contracts, subscriptions: profile.subscriptions,
-  });
+  // Signed business promotes; an absence claim needs proof, not silence. The
+  // verdict arrives with the profile through the declared capability — a card
+  // without it refuses fail-closed rather than computing its own.
+  const status = profile?.status;
+  if (!status || typeof status.value !== 'string' || typeof status.reason !== 'string') {
+    throw new ValidationError('the customer profile reader did not provide a customer status', { field: 'status' });
+  }
 
   const subscriptions = profile.subscriptions?.available === true ? profile.subscriptions : null;
   // The profile count is a floor, not a total, when the owning module offers

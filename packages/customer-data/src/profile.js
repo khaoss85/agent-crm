@@ -1,6 +1,7 @@
 // @ts-check
 
 import { deciding, newestFirst, optional, subjectKey, subjectOf, trusted } from './store.js';
+import { deriveCustomerStatus } from './customer-status.js';
 
 /**
  * **The consolidated profile: a projection, never a table.**
@@ -220,6 +221,13 @@ export async function profileFor({ modules, core, names, subject }) {
     identity,
     externalIdentities: Object.freeze(identities),
     ...sections,
+    // The one status verdict, computed here by the owning package's rule so
+    // the card and the list share it through the capability, never by each
+    // importing the rule. Reads the same three evidence shapes the card and
+    // the list both need.
+    status: deriveCustomerStatus({
+      orders: sections.orders, contracts: sections.contracts, subscriptions: sections.subscriptions,
+    }),
     dataQualityIssues: Object.freeze(issues),
     duplicateCandidates: Object.freeze(candidates),
     completeTimeline: false,

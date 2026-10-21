@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { CLIENTI_COLUMNS_KEY, createCustomerListView, pageNumbers } from '../apps/admin/public/admin-clienti.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
@@ -226,4 +227,15 @@ test('a space the server does not compose reads as unavailable, never blank', as
   const failing = { calls: [], async request() { throw Object.assign(new Error('no such space'), { status: 404 }); } };
   const { mount } = await render(failing);
   assert.ok(mount.textContent.includes('Clienti non composto in questo spazio'));
+});
+
+test('the shell storage initializes before the views that read it', () => {
+  const source = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  const initialized = source.indexOf('const shellStorage = guardedStorage();');
+  assert.ok(initialized !== -1, 'shell storage has one initialization');
+  for (const use of ['createCustomerCardView({', 'createCustomerDataView({', 'createConnectorsView({']) {
+    const at = source.indexOf(use);
+    assert.ok(at !== -1, `${use} is constructed in the shell`);
+    assert.ok(initialized < at, `shell storage initializes before ${use}, never in a temporal dead zone`);
+  }
 });

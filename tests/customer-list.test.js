@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveCustomerStatus } from '../packages/core/src/customer-status.js';
+import { deriveCustomerStatus } from '../packages/customer-data/src/customer-status.js';
 import { listCustomerRecords } from '../packages/customer-data/src/operations.js';
 import {
   CUSTOMER_COLUMNS,
@@ -93,6 +93,17 @@ test('channel words in the search act as a channel filter, without any LLM', () 
   const page = applyCustomerListQuery([wa, mail], query);
   assert.equal(page.total, 1);
   assert.equal(page.items[0].channels[0], 'whatsapp');
+});
+
+test('glue words of the phrase grammar leave the text needle, they do not join it', () => {
+  const milano = rowOf({
+    contact: { firstName: 'Marco', lastName: 'Rossi', email: 'marco@example.it' },
+    company: { name: 'Palestra Milano', domain: 'milano.example.it' },
+  }, baseReads());
+  const page = applyCustomerListQuery([milano], parseCustomerListQuery({ q: 'clienti di Milano su WhatsApp' }));
+  assert.equal(page.total, 1, '"su" is a connector, not part of the place name');
+  const bare = applyCustomerListQuery([milano], parseCustomerListQuery({ q: 'Milano' }));
+  assert.equal(bare.total, 1);
 });
 
 /* ------------------------------------------------------------- filtering */
@@ -268,7 +279,7 @@ const matchShape = (rows, filters) => rows.filter((row) => Object.entries(filter
 }));
 
 /** A module map with exact-match reads and no writes: any write attempt throws. */
-function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [] }) {
+function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [], omit = [] }) {
   const exact = (rows) => ({
     listWhere: async (filters) => matchShape(rows, filters),
     createManaged: async () => { throw new Error('the list writes nothing'); },
@@ -282,6 +293,7 @@ function fakeModules({ contacts, companies, identities = [], orders = [], opport
     ['work-task', { service: exact(tasks) }],
     ['call-signal', { service: exact(signals) }],
   ]);
+  for (const name of omit) map.delete(name);
   return {
     get: (name) => {
       const entry = map.get(name);
@@ -349,6 +361,58 @@ test('views, filters and search run on the same page the server returns', async 
   assert.equal((await run({ q: 'anna' })).total, 1);
   assert.equal((await run({ q: 'guido whatsapp' })).total, 1);
   assert.equal((await run({ q: 'anna whatsapp' })).total, 0);
+});
+
+test('evidence through another customer\u2019s opportunity never promotes this customer', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const modules = fakeModules({
+    contacts,
+    companies,
+    identities,
+    opportunities: [{ id: 'op9', contactId: 'c1', valueCents: 50000, currency: 'EUR', stage: 'proposal' }],
+    // An order that names only Guido's opportunity: no company, no contact.
+    orders: [{ id: 'ord9', opportunityId: 'op9' }],
+  });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const guido = page.items.find((item) => item.name === 'Guido Presti');
+  const anna = page.items.find((item) => item.name === 'Anna Bianchi');
+  assert.equal(guido.status.value, 'cliente', 'the opportunity owner is promoted through the scoped hop');
+  assert.equal(anna.status.value, 'contatto', 'an order on another customer\u2019s opportunity is not mine');
+  assert.match(anna.status.reason, /no signed business found/,
+    'the negative claim still explains itself instead of going silent');
+});
+
+test('a derived view over an unreadable dependency refuses, never an empty page', async () => {
+  const { contacts, companies, identities } = SCENE();
+  // No subscription package composed: the renewal view cannot know.
+  const noSubs = fakeModules({ contacts, companies, identities });
+  await assert.rejects(
+    listCustomerRecords(
+      { modules: noSubs, core: {}, names: { identity: 'external-identity' } },
+      { vista: 'rinnovi-30-giorni' },
+    ),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /subscription/.test(error.message),
+    'rinnovi-30-giorni without subscriptions refuses with its reason',
+  );
+  // No work-task package composed: the callback view cannot know.
+  const noTasks = fakeModules({ contacts, companies, identities, omit: ['work-task'] });
+  await assert.rejects(
+    listCustomerRecords(
+      { modules: noTasks, core: {}, names: { identity: 'external-identity' } },
+      { vista: 'ricontattare-oggi' },
+    ),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /work-task/.test(error.message),
+    'ricontattare-oggi without work tasks refuses with its reason',
+  );
+  // The plain views still answer over the same map: the refusal is scoped
+  // to the derived view, not a blanket outage.
+  assert.equal((await listCustomerRecords(
+    { modules: noTasks, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti' },
+  )).total, 2);
 });
 
 test('budget signals attach with their source only when a space is named', async () => {

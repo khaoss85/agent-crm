@@ -1,7 +1,8 @@
 // @ts-check
 
-import { AppError, ValidationError, deriveCustomerStatus, normalizeActor } from '../../core/index.js';
+import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
 import { createBulkRunner } from './bulk.js';
+import { deriveCustomerStatus } from './customer-status.js';
 import {
   CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT, CUSTOMER_SORTS,
   CUSTOMER_VIEWS, applyCustomerListQuery, parseCustomerListQuery, shapeCustomerRow,
@@ -437,22 +438,42 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     }
   }
 
+  // A derived view over an unreadable dependency refuses with its reason,
+  // never with an exact-looking empty page: the two derived views need the
+  // work and subscription packages, and without them "no renewals" would be
+  // a claim the application cannot make.
+  if (query.view?.id === 'rinnovi-30-giorni' && evidenceReads.subscriptions.readable !== true) {
+    throw new AppError('the rinnovi-30-giorni view needs the subscription records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
+  if (query.view?.id === 'ricontattare-oggi' && tasks.readable !== true) {
+    throw new AppError('the ricontattare-oggi view needs the work-task records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   const rows = subjects.map(({ contact, company }) => {
     const resource = contact ? 'contact' : 'company';
     const id = contact?.id ?? company?.id;
     const key = keyOf(resource, id);
-    const mine = (row) => belongsToCustomer(row, {
+    const directIds = {
       companyIds: new Set(company ? [company.id] : []),
       contactIds: new Set(contact ? [contact.id] : []),
-      opportunityIds: refs.opportunityIds,
+    };
+    // This customer's own opportunities first (company/contact reference),
+    // so the opportunity hop below is scoped to this customer: an order
+    // that names another customer's opportunity must not promote this one.
+    const myOpportunities = opportunities.rows.filter((row) => belongsToCustomer(row, {
+      ...directIds,
+      opportunityIds: new Set(),
+    }));
+    const mine = (row) => belongsToCustomer(row, {
+      ...directIds,
+      opportunityIds: new Set(myOpportunities.map((entry) => entry?.id).filter((entry) => entry != null)),
     });
     const statusBySubject = new Map([[key, deriveCustomerStatus({
       orders: sectionSummary(evidenceReads.orders, mine),
       contracts: sectionSummary(evidenceReads.contracts, mine),
       subscriptions: sectionSummary(evidenceReads.subscriptions, mine),
     })]]);
-    const myOpportunities = opportunities.rows.filter(mine);
     const openValue = myOpportunities
       .filter((row) => row?.stage !== 'won' && row?.stage !== 'lost')
       .reduce((sum, row) => sum + (Number(row?.valueCents ?? 0) || 0), 0);
