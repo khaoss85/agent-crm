@@ -98,7 +98,7 @@ export function normalizeDraftRow(candidate, label) {
 
 /** @param {unknown} value @param {string} field */
 function requireDocumentRef(value, field) {
-  if (value === undefined || value === null) return '';
+  if (value === undefined || value === null) return null;
   if (typeof value !== 'string' || value.trim() === '' || value.length > MAX_DOCUMENT_REF) {
     throw new ValidationError(`${field} must be a short opaque reference of at most ${MAX_DOCUMENT_REF} characters`, { field });
   }
@@ -339,7 +339,7 @@ export function createProductImport({ database, events, modules, moduleNames = {
         }
         priceBookId = record.priceBookId;
       }
-      const documentRef = source === 'ai' ? requireDocumentRef(record.documentRef, 'documentRef') : '';
+      const documentRef = source === 'ai' ? requireDocumentRef(record.documentRef, 'documentRef') : null;
       /** @type {Array<{sku: string, name: string, description: string|null, category: string|null, amountCents: number}>} */
       let drafts;
       let refused = [];
@@ -376,9 +376,9 @@ export function createProductImport({ database, events, modules, moduleNames = {
           sourceKind: source,
           status: 'open',
           currency,
-          priceBookId: priceBookId ?? '',
+          priceBookId,
           documentRef,
-          errorCode: '',
+          errorCode: null,
         }, context);
         const stored = [];
         for (let index = 0; index < drafts.length; index += 1) {
@@ -389,12 +389,12 @@ export function createProductImport({ database, events, modules, moduleNames = {
             status: 'pending',
             sku: draft.sku,
             name: draft.name,
-            description: draft.description ?? '',
-            category: draft.category ?? '',
+            description: draft.description ?? null,
+            category: draft.category ?? null,
             currency,
             amountCents: draft.amountCents,
-            productId: '',
-            errorCode: '',
+            productId: null,
+            errorCode: null,
           }, context));
         }
         return Object.freeze({
@@ -439,10 +439,10 @@ export function createProductImport({ database, events, modules, moduleNames = {
       const created = await manual.createProduct({
         sku: row.sku,
         name: row.name,
-        description: row.description === '' ? undefined : row.description,
-        category: row.category === '' ? undefined : row.category,
+        description: row.description ?? undefined,
+        category: row.category ?? undefined,
         currency: row.currency,
-        priceBookId: current.priceBookId === '' ? undefined : current.priceBookId,
+        priceBookId: current.priceBookId ?? undefined,
         components: [{
           key: 'import-price',
           label: row.name,
