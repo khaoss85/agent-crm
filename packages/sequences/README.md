@@ -48,10 +48,10 @@ keeps a composition without the gate fail-closed at startup.
    off; a refusal records the step `skipped` and moves past it. Nothing is
    ever queued without the gate or a recorded approval.
 3. **Pause/resume without doubles.** A send row is keyed by the
-   deterministic message key (`seq:<enrollment>:<stepOrder>`, bounded like
-   every outbox key): a retry or a resume replays the stored row, and the
-   outbox returns the same job for the same key. Pause fires nothing;
-   resume re-fires only steps with no send row.
+   deterministic message key (`seq:<spaceId>:<enrollment>:<stepOrder>`,
+   bounded like every outbox key): a retry or a resume replays the stored
+   row, and the outbox returns the same job for the same key. Pause fires
+   nothing; resume re-fires only steps with no send row.
 4. **Metrics from records.** `read-sequence-metrics` and `list-sequences`
    count enrollment and send rows on every read — people by state
    (`active`, `paused`, `stopped-replied`, `completed`) and fires by step
@@ -77,6 +77,22 @@ sequence with no steps (or fewer than the caller-supplied `expectedSteps`).
 A terminal skip on the last step completes the enrollment only once every
 prior send settled; otherwise the enrollment stays active until the confirm
 pass settles the priors.
+
+## Tenant isolation
+
+Every system-derived key carries the space id — the enrollment key
+(`seq-enroll:<spaceId>:<sequence>:<resource>:<id>`), the step key
+(`seq-step:<spaceId>:<sequence>:<order>`) and the message key above — and
+every steps, enrollments and sends lookup is filtered by `{spaceId, ...}`.
+Two spaces may reuse the same sequence key and subject without seeing or
+blocking each other: the sweep, the metrics and the elenco never mix rows
+across spaces. A retry that hits a stored step with a different definition
+fails with `SEQUENCE_STEP_CONFLICT` instead of silently replaying it.
+
+When the sweep re-proposes a step whose approval was recorded after a crash
+lost the local waiting row, `propose` answers `SPACE_PROPOSAL_DECIDED`; the
+sweep recovers the winner by action key (`proposalForAction`) and queues on
+an approval or skips on a refusal, instead of wedging due forever.
 
 ## What is deliberately NOT here
 

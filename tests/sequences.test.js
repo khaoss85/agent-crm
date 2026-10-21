@@ -29,6 +29,7 @@ import {
   advanceSequences,
   computeSequenceMetrics,
   createSequencesPackage,
+  sequenceKey,
   sequenceMessageKey,
 } from '../packages/sequences/src/index.js';
 
@@ -796,7 +797,7 @@ test('la create interrotta riprende i passi mancanti', async (t) => {
 
   // A crash after the first step row: the retry carries the same payload and
   // completes the deterministic step rows instead of returning a truncated set.
-  composed.database.raw.exec("DELETE FROM sequence_steps WHERE source_key = 'seq-step:seq:partial:1'");
+  composed.database.raw.exec("DELETE FROM sequence_steps WHERE source_key = 'seq-step:presti:seq%3Apartial:1'");
   const replayed = await ops.createSequence({
     spaceId: SPACE, sourceKey: 'seq:partial', name: 'Parziale', steps: STEPS, actor: USER,
   });
@@ -1204,7 +1205,7 @@ test('una conferma rotta non ferma le altre', async (t) => {
   // sweep records it and still confirms the healthy row in the same pass.
   const enrollments = composed.modules.get('sequence-enrollment').service;
   const people = await enrollments.listWhere({ sequenceSourceKey: 'seq:confirm-iso' });
-  const badKey = sequenceMessageKey(people.find((entry) => entry.subjectId === 'c-guido').sourceKey, 0);
+  const badKey = sequenceMessageKey(SPACE, people.find((entry) => entry.subjectId === 'c-guido').sourceKey, 0);
   const realQueue = queue(composed).queueTemplate;
   const flaky = async (request) => {
     if (request.messageKey === badKey) {
@@ -1288,11 +1289,12 @@ test('il replay di uno skip ripara il cursore senza restare fermo', async (t) =>
   // Crash between the skip record and the cursor move: the skipped row for
   // step zero exists while the cursor still points at it.
   const sends = composed.modules.get('sequence-send').service;
-  const messageKey = sequenceMessageKey(enrollment.sourceKey, 0);
+  const messageKey = sequenceMessageKey(SPACE, enrollment.sourceKey, 0);
   await sends.createManaged({
     sourceKey: messageKey,
     enrollmentSourceKey: enrollment.sourceKey,
     sequenceSourceKey: 'seq:skip-replay',
+    spaceId: SPACE,
     stepOrder: 0,
     messageKey,
     jobId: '',
@@ -1345,7 +1347,7 @@ test('la create riprodotta non tocca una sequenza attiva e activate rifiuta il t
     spaceId: SPACE, sourceKey: 'seq:trunc', name: 'Troncata', steps: STEPS.slice(0, 1), actor: USER,
   });
   // Step keys escape ':' as '%3A' (sequenceKey), like every outbox key.
-  composed.database.raw.exec("DELETE FROM sequence_steps WHERE source_key = 'seq-step:seq%3Atrunc:0'");
+  composed.database.raw.exec("DELETE FROM sequence_steps WHERE source_key = 'seq-step:presti:seq%3Atrunc:0'");
   await assert.rejects(
     ops.activateSequence({ spaceId: SPACE, sourceKey: 'seq:trunc', actor: USER }),
     (error) => error.code === 'SEQUENCE_NO_STEPS',
@@ -1496,4 +1498,222 @@ test('personalize non deterministico più crash non incastra l\u2019invio', asyn
   const confirmed = await advance(composed, connectionKey, T0_LATER, { personalize });
   assert.equal(confirmed.confirmed, 1);
   assert.equal((await sends.listWhere({ sequenceSourceKey: 'seq:flaky-hook' }))[0].status, 'sent');
+});
+
+test('due spazi con la stessa chiave di sequenza restano isolati', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  const OTHER = 'spazio-b';
+  await composed.modules.get('space-permission-override').service.createManaged({
+    spaceId: OTHER,
+    scopeKey: `${OTHER}:send-without-approval`,
+    permission: 'send-without-approval',
+    enabled: true,
+    updatedBy: 'user:presti-owner',
+  }, { actor: USER });
+  const OTHER_CONN = 'conn-spazio-b';
+  const ops = sequenceOps(composed, connectionKey);
+
+  // The same caller-supplied sequence key lives in two spaces at once.
+  for (const spaceId of [SPACE, OTHER]) {
+    const created = await ops.createSequence({
+      spaceId, sourceKey: 'seq:shared', name: 'Condivisa', steps: STEPS, actor: USER,
+    });
+    assert.equal(created.replayed, false);
+    await ops.activateSequence({ spaceId, sourceKey: 'seq:shared', actor: USER });
+  }
+  const enrollIn = async (spaceId, subjectId, to, conn) => (await ops.enrollSequencePerson({
+    spaceId,
+    sequenceSourceKey: 'seq:shared',
+    subject: { resource: 'contact', id: subjectId, owner: 'host' },
+    subjectLabel: subjectId,
+    recipient: to,
+    connectionKey: conn,
+    actor: USER,
+    vars: {},
+  })).enrollment;
+  const home = await enrollIn(SPACE, 'c-guido', TO, connectionKey);
+  const away = await enrollIn(OTHER, 'c-guido', TO_2, OTHER_CONN);
+  assert.equal(home.status, 'active');
+  assert.equal(away.status, 'active');
+  assert.notEqual(home.sourceKey, away.sourceKey);
+
+  const window = composed.adapterDefinition.outboundWindow;
+  composed.clockBox.ms = Date.parse(T0);
+  const swept = await advanceSequences({
+    modules: composed.modules,
+    queueTemplate: queue(composed).queueTemplate,
+    permissionGate: gate(composed),
+    replyWindows: { [connectionKey]: window, [OTHER_CONN]: window },
+    now: () => T0,
+    actor: SYSTEM,
+  });
+  assert.equal(swept.advanced, 2);
+  assert.equal(swept.sweepErrors.length, 0);
+
+  // Each space queued exactly its own step, under different identities.
+  const sends = composed.modules.get('sequence-send').service;
+  const homeSends = await sends.listWhere({ spaceId: SPACE });
+  const awaySends = await sends.listWhere({ spaceId: OTHER });
+  assert.equal(homeSends.length, 1);
+  assert.equal(awaySends.length, 1);
+  assert.notEqual(homeSends[0].sourceKey, awaySends[0].sourceKey);
+  assert.equal(homeSends[0].enrollmentSourceKey, home.sourceKey);
+  assert.equal(awaySends[0].enrollmentSourceKey, away.sourceKey);
+
+  // Steps, metrics and the elenco never mix rows across spaces.
+  const steps = composed.modules.get('sequence-step').service;
+  assert.equal((await steps.listWhere({ spaceId: SPACE })).length, 2);
+  assert.equal((await steps.listWhere({ spaceId: OTHER })).length, 2);
+  const homeMetrics = await ops.readSequenceMetrics({ spaceId: SPACE, sourceKey: 'seq:shared', actor: USER });
+  const awayMetrics = await ops.readSequenceMetrics({ spaceId: OTHER, sourceKey: 'seq:shared', actor: USER });
+  assert.equal(homeMetrics.enrolled, 1);
+  assert.equal(awayMetrics.enrolled, 1);
+  const homeList = await ops.listSequences({ spaceId: SPACE, actor: USER });
+  const awayList = await ops.listSequences({ spaceId: OTHER, actor: USER });
+  assert.equal(homeList.length, 1);
+  assert.equal(awayList.length, 1);
+  assert.equal(homeList[0].enrolled, 1);
+  assert.equal(awayList[0].enrolled, 1);
+});
+
+test("l'ok registrato dopo il crash senza riga locale sblocca lo stesso", async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:decided-lost');
+  await enroll(ops, connectionKey, 'seq:decided-lost', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  const gated = await advance(composed, connectionKey, T0);
+  assert.equal(gated.waitingApproval, 1);
+
+  // Crash between propose() and the waiting-row write: the decided proposal
+  // survives in the gate, the local row does not.
+  const sends = composed.modules.get('sequence-send').service;
+  assert.equal((await sends.listWhere({ spaceId: SPACE, sequenceSourceKey: 'seq:decided-lost' })).length, 1);
+  composed.database.raw.exec("DELETE FROM sequence_sends WHERE sequence_source_key = 'seq:decided-lost'");
+  await decideProposal(composed, 'approved', T0_LATER);
+
+  // The next sweep re-proposes, hears SPACE_PROPOSAL_DECIDED, recovers the
+  // approved winner by action key and queues — no wedge, no second proposal.
+  const unblocked = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(unblocked.advanced, 1);
+  assert.equal(unblocked.waitingApproval, 0);
+  const rows = await sends.listWhere({ spaceId: SPACE, sequenceSourceKey: 'seq:decided-lost' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'queued');
+});
+
+test('il rifiuto registrato dopo il crash senza riga locale salta il passo', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:decided-refused');
+  await enroll(ops, connectionKey, 'seq:decided-refused', 'c-guido', TO, { name: 'Guido', hour: '17:00' });
+
+  const gated = await advance(composed, connectionKey, T0);
+  assert.equal(gated.waitingApproval, 1);
+  composed.database.raw.exec("DELETE FROM sequence_sends WHERE sequence_source_key = 'seq:decided-refused'");
+  await decideProposal(composed, 'refused', T0_LATER);
+
+  const refused = await advance(composed, connectionKey, T0_LATER);
+  assert.equal(refused.skipped, 1);
+  assert.equal(refused.advanced, 0);
+  assert.equal(composed.api.state.sendCalls, 0);
+  const sends = composed.modules.get('sequence-send').service;
+  const rows = await sends.listWhere({ spaceId: SPACE, sequenceSourceKey: 'seq:decided-refused' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'skipped');
+  assert.equal(rows[0].detail, 'SPACE_PROPOSAL_REFUSED');
+});
+
+test('un passo diverso allo stesso ordine fallisce invece di sparire', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  await activeConnection(composed);
+  const ops = sequenceOps(composed, 'unused-connection-key');
+  await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:clash', name: 'Urto', steps: STEPS.slice(0, 1), actor: USER,
+  });
+
+  // A retry with a different definition at the same order is a conflict,
+  // not an idempotent replay — and the stored step stays untouched.
+  const different = { ...STEPS[0], templateVars: ['testo diverso'] };
+  await assert.rejects(
+    ops.createSequence({
+      spaceId: SPACE, sourceKey: 'seq:clash', name: 'Urto', steps: [different], actor: USER,
+    }),
+    (error) => error.code === 'SEQUENCE_STEP_CONFLICT',
+  );
+  const steps = composed.modules.get('sequence-step').service;
+  const rows = await steps.listWhere({ spaceId: SPACE, sequenceSourceKey: 'seq:clash' });
+  assert.equal(rows.length, 1);
+  assert.deepEqual(JSON.parse(rows[0].templateVars), STEPS[0].templateVars);
+});
+
+test('due append concorrenti allo stesso ordine: il secondo fallisce o rigioca', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  await activeConnection(composed);
+  const ops = sequenceOps(composed, 'unused-connection-key');
+  await ops.createSequence({
+    spaceId: SPACE, sourceKey: 'seq:race', name: 'Gara', steps: STEPS.slice(0, 1), actor: USER,
+  });
+  const stepService = composed.modules.get('sequence-step').service;
+
+  // The race winner: a concurrent append stored order 1 first.
+  const winnerKey = sequenceKey('seq-step', SPACE, 'seq:race', '1');
+  const winnerVars = ['passo vincente'];
+  await stepService.createManaged({
+    sourceKey: winnerKey,
+    sequenceSourceKey: 'seq:race',
+    spaceId: SPACE,
+    stepOrder: 1,
+    dayOffset: 5,
+    channel: 'whatsapp',
+    templateName: 'presti_seq',
+    templateLanguage: 'it',
+    templateVars: JSON.stringify(winnerVars),
+    actorType: USER.type,
+    actorId: USER.id,
+  }, { actor: USER });
+
+  // The loser read the step list before the winner committed, so it appends
+  // at the winner's order and hits the deterministic-order UNIQUE conflict.
+  const realListWhere = stepService.listWhere.bind(stepService);
+  let reads = 0;
+  stepService.listWhere = async (filter) => {
+    reads += 1;
+    const rows = await realListWhere(filter);
+    if (reads === 1) return rows.filter((row) => row && row.stepOrder === 0);
+    return rows;
+  };
+  try {
+    await assert.rejects(
+      ops.addSequenceStep({
+        spaceId: SPACE,
+        sourceKey: 'seq:race',
+        step: { dayOffset: 7, channel: 'whatsapp', templateName: 'presti_seq', templateLanguage: 'it', templateVars: ['passo perdente'] },
+        actor: USER,
+      }),
+      (error) => error.code === 'SEQUENCE_STEP_CONFLICT',
+    );
+
+    // The same definition replays the winner instead of failing.
+    reads = 0;
+    const replayed = await ops.addSequenceStep({
+      spaceId: SPACE,
+      sourceKey: 'seq:race',
+      step: { dayOffset: 5, channel: 'whatsapp', templateName: 'presti_seq', templateLanguage: 'it', templateVars: winnerVars },
+      actor: USER,
+    });
+    assert.equal(replayed.replayed, true);
+    assert.equal(replayed.step.sourceKey, winnerKey);
+  } finally {
+    stepService.listWhere = realListWhere;
+  }
 });

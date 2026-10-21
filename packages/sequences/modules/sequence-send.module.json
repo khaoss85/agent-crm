@@ -1,5 +1,6 @@
 {
   "manifestVersion": 1,
+  "revision": 2,
   "name": "sequence-send",
   "table": "sequence_sends",
   "description": "One fired step of one enrollment (BO-F3-03): the evidence a step was queued into the channels outbox under its deterministic key, is waiting for a human approval, was confirmed sent, or died there. Metrics count these rows, never stored counters, so a crash or a retry cannot drift them. (backlog:22bb154a72ea)",
@@ -7,6 +8,7 @@
     { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
     { "name": "enrollmentSourceKey", "type": "string", "index": true, "writable": "managed" },
     { "name": "sequenceSourceKey", "type": "string", "index": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
     { "name": "stepOrder", "type": "integer", "writable": "managed" },
     { "name": "messageKey", "type": "string", "writable": "managed" },
     { "name": "jobId", "type": "string", "writable": "managed" },

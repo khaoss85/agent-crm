@@ -89,9 +89,14 @@ export function sequenceKey(...parts) {
   return `${safe[0]}:${tailHash}`;
 }
 
-/** The deterministic send identity of one enrollment step. */
-export function sequenceMessageKey(enrollmentSourceKey, stepOrder) {
-  return sequenceKey('seq', enrollmentSourceKey, String(stepOrder));
+/**
+ * The deterministic send identity of one enrollment step. The space id is
+ * an explicit part: two spaces running the same sequence key enroll and
+ * queue under different identities, so neither space can squat or read the
+ * other's rows through the global sourceKey uniqueness.
+ */
+export function sequenceMessageKey(spaceId, enrollmentSourceKey, stepOrder) {
+  return sequenceKey('seq', spaceId, enrollmentSourceKey, String(stepOrder));
 }
 
 /** @param {unknown} value @param {string} field */
@@ -204,6 +209,21 @@ export function checkStepInput(step, order) {
     templateLanguage,
     templateVars: JSON.stringify(templateVars),
   };
+}
+
+/**
+ * True when a stored step row carries exactly the checked step definition.
+ * A deterministic-order UNIQUE collision is only an idempotent replay when
+ * the content matches: two operators appending different steps at the same
+ * order must hear a conflict, never a silent drop of their step.
+ */
+export function sameSequenceStepContent(stored, checked) {
+  return !!stored && !!checked
+    && stored.dayOffset === checked.dayOffset
+    && stored.channel === checked.channel
+    && stored.templateName === checked.templateName
+    && stored.templateLanguage === checked.templateLanguage
+    && stored.templateVars === checked.templateVars;
 }
 
 /** Substitute `{{key}}` slots from the enrolled person's vars. Unknown slots stay empty, never undefined. */
@@ -451,7 +471,7 @@ export async function advanceSequences({
     const direct = replyWindows?.[enrollment.connectionKey] ?? null;
     if (direct) return direct;
     try {
-      const sibs = await steps.listWhere({ sequenceSourceKey: enrollment.sequenceSourceKey });
+      const sibs = await steps.listWhere({ spaceId: enrollment.spaceId, sequenceSourceKey: enrollment.sequenceSourceKey });
       const ordered = (Array.isArray(sibs) ? sibs : [])
         .filter((row) => row && Number.isInteger(row.stepOrder))
         .sort((a, b) => a.stepOrder - b.stepOrder);
@@ -525,8 +545,8 @@ export async function advanceSequences({
    * queued row the outbox has not settled, or a step waiting for a human
    * ok. Skipped, sent and dead rows are settled and never block completion.
    */
-  const hasUnsettledSends = async (enrollmentSourceKey) => {
-    const outstanding = await sends.listWhere({ enrollmentSourceKey });
+  const hasUnsettledSends = async (spaceId, enrollmentSourceKey) => {
+    const outstanding = await sends.listWhere({ spaceId, enrollmentSourceKey });
     return (Array.isArray(outstanding) ? outstanding : [])
       .some((row) => row && (row.status === 'queued' || row.status === 'waiting-approval'));
   };
@@ -544,7 +564,7 @@ export async function advanceSequences({
   const moveCursorAfterSkip = async (current, ordered, step) => {
     let unsettled = true;
     try {
-      unsettled = await hasUnsettledSends(current.sourceKey);
+      unsettled = await hasUnsettledSends(current.spaceId, current.sourceKey);
     } catch (error) {
       noteSweepError(current, error, 'due');
     }
@@ -588,6 +608,7 @@ export async function advanceSequences({
           sourceKey: messageKey,
           enrollmentSourceKey: current.sourceKey,
           sequenceSourceKey: seqKey,
+          spaceId: current.spaceId,
           stepOrder: step.stepOrder,
           messageKey,
           jobId: '',
@@ -711,6 +732,7 @@ export async function advanceSequences({
     let active;
     try {
       active = await enrollments.listWhere({
+        spaceId: /** @type {any} */ (sequence).spaceId,
         sequenceSourceKey: /** @type {any} */ (sequence).sourceKey, status: 'active',
       });
     } catch (error) {
@@ -743,7 +765,7 @@ export async function advanceSequences({
     // the summary and the sweep moves on to the next sequence.
     let ordered;
     try {
-      ordered = (await steps.listWhere({ sequenceSourceKey: seqKey }))
+      ordered = (await steps.listWhere({ spaceId, sequenceSourceKey: seqKey }))
         .filter((row) => row && Number.isInteger(row.stepOrder))
         .sort((a, b) => a.stepOrder - b.stepOrder);
     } catch (error) {
@@ -753,7 +775,7 @@ export async function advanceSequences({
     if (ordered.length === 0) continue;
     let due;
     try {
-      due = (await enrollments.listWhere({ sequenceSourceKey: seqKey, status: 'active' }))
+      due = (await enrollments.listWhere({ spaceId, sequenceSourceKey: seqKey, status: 'active' }))
         .filter((row) => row && typeof row.nextDueAt === 'string' && Date.parse(row.nextDueAt) <= nowMs);
     } catch (error) {
       noteSweepError({ sourceKey: '', spaceId }, error, 'due');
@@ -796,7 +818,7 @@ export async function advanceSequences({
         // the sweep fires the next enrollment instead of aborting.
         let outstanding;
         try {
-          outstanding = await sends.listWhere({ enrollmentSourceKey: current.sourceKey });
+          outstanding = await sends.listWhere({ spaceId: current.spaceId, enrollmentSourceKey: current.sourceKey });
         } catch (error) {
           noteSweepError(current, error, 'due');
           continue;
@@ -814,7 +836,7 @@ export async function advanceSequences({
         continue;
       }
       const step = live[0];
-      const messageKey = sequenceMessageKey(current.sourceKey, step.stepOrder);
+      const messageKey = sequenceMessageKey(current.spaceId, current.sourceKey, step.stepOrder);
 
       // 1. Stop on reply: the first recorded reply ends the enrollment.
       // Without the inbox — or without the reply window — this sweep
@@ -868,7 +890,7 @@ export async function advanceSequences({
       try {
         const verdict = await gateFor(current.spaceId);
         if (!verdict || verdict.decision !== 'allow') {
-          const pre = await sends.listWhere({ sourceKey: messageKey });
+          const pre = await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey });
           const decided = await readStoredProposal(current.spaceId, pre[0] ?? null);
           if (decided === 'refused') {
             const recorded = await recordTerminalSkip({
@@ -903,8 +925,19 @@ export async function advanceSequences({
                 queueAllowedRacing = true;
               } else {
                 if (race !== 'SPACE_PROPOSAL_DECIDED') throw error;
-                const raced = await sends.listWhere({ sourceKey: messageKey });
-                const late = await readStoredProposal(current.spaceId, raced[0] ?? null);
+                const raced = await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey });
+                let late = await readStoredProposal(current.spaceId, raced[0] ?? null);
+                if (late === null) {
+                  // No local waiting row: a crash between propose() and the
+                  // row write above, decided by the human while this sweep
+                  // re-proposes. propose() answers with SPACE_PROPOSAL_DECIDED
+                  // and no id, so recover the winner by action key instead of
+                  // wedging the enrollment on every later sweep.
+                  const winner = typeof permissionGate.proposalForAction === 'function'
+                    ? await permissionGate.proposalForAction(current.spaceId, SEQUENCE_SEND_PERMISSION, messageKey)
+                    : null;
+                  late = winner && typeof winner.status === 'string' ? winner.status : null;
+                }
                 if (late === 'refused') {
                   const recorded = await recordTerminalSkip({
                     seqKey, current, step, messageKey, nowIso,
@@ -920,13 +953,14 @@ export async function advanceSequences({
             }
             if (!queueAllowedRacing) {
               const proposalId = proposed.proposalId;
-              const waiting = await sends.listWhere({ sourceKey: messageKey });
+              const waiting = await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey });
               if (!waiting[0]) {
                 try {
                   await sends.createManaged({
                     sourceKey: messageKey,
                     enrollmentSourceKey: current.sourceKey,
                     sequenceSourceKey: seqKey,
+                    spaceId: current.spaceId,
                     stepOrder: step.stepOrder,
                     messageKey,
                     jobId: '',
@@ -957,7 +991,7 @@ export async function advanceSequences({
         // personalize hook is non-deterministic. Two sweeps racing the first
         // claim collide on the deterministic row and the loser reuses the
         // winner's payload.
-        const stored = await sends.listWhere({ sourceKey: messageKey });
+        const stored = await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey });
         if (stored[0] && stored[0].status === 'skipped') {
           // A crash between the skip record and the cursor move left the
           // cursor behind: repair it idempotently — the skip was already
@@ -988,6 +1022,7 @@ export async function advanceSequences({
               sourceKey: messageKey,
               enrollmentSourceKey: current.sourceKey,
               sequenceSourceKey: seqKey,
+              spaceId: current.spaceId,
               stepOrder: step.stepOrder,
               messageKey,
               jobId: '',
@@ -1011,7 +1046,7 @@ export async function advanceSequences({
             variables: JSON.stringify(computed),
           }, { actor: timer });
         }
-        const claim = (await sends.listWhere({ sourceKey: messageKey }))[0] ?? null;
+        const claim = (await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey }))[0] ?? null;
         if (!claim) {
           throw new AppError('Sequence send claim vanished before the outbox enqueue', {
             code: 'SEQUENCES_SEND_MISSING', status: 500,
@@ -1058,7 +1093,7 @@ export async function advanceSequences({
         const jobState = typeof queued?.state === 'string' ? queued.state : '';
         const variablesJson = JSON.stringify(variables);
         {
-          const latest = (await sends.listWhere({ sourceKey: messageKey }))[0] ?? null;
+          const latest = (await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey }))[0] ?? null;
           if (latest && (latest.status === 'queued' || latest.status === 'waiting-approval')) {
             await sends.applyManaged(latest.id, {
               jobId, status: 'queued', queuedAt: nowIso, decidedAt: nowIso, variables: variablesJson,
@@ -1066,7 +1101,7 @@ export async function advanceSequences({
           }
         }
         if (jobState === 'succeeded') {
-          const rows = await sends.listWhere({ sourceKey: messageKey });
+          const rows = await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey });
           if (rows[0] && rows[0].status === 'queued') {
             await sends.applyManaged(rows[0].id, { status: 'sent', decidedAt: nowIso }, { actor: timer });
           }
@@ -1102,7 +1137,10 @@ export async function advanceSequences({
     // the collection moves on.
     let pending;
     try {
-      pending = await sends.listWhere({ sequenceSourceKey: /** @type {any} */ (sequence).sourceKey, status: 'queued' });
+      pending = await sends.listWhere({
+        spaceId: /** @type {any} */ (sequence).spaceId,
+        sequenceSourceKey: /** @type {any} */ (sequence).sourceKey, status: 'queued',
+      });
     } catch (error) {
       noteSweepError(
         { sourceKey: '', spaceId: /** @type {any} */ (sequence).spaceId ?? '' },
@@ -1118,10 +1156,10 @@ export async function advanceSequences({
     // recorded on the summary and the sweep confirms the next row instead.
     let enrollment = null;
     try {
-      const enrollmentRows = await enrollments.listWhere({ sourceKey: row.enrollmentSourceKey });
+      const enrollmentRows = await enrollments.listWhere({ spaceId: row.spaceId, sourceKey: row.enrollmentSourceKey });
       enrollment = enrollmentRows[0] ?? null;
       if (!enrollment || enrollment.status !== 'active') continue;
-      const stepRows = await steps.listWhere({ sequenceSourceKey: row.sequenceSourceKey });
+      const stepRows = await steps.listWhere({ spaceId: row.spaceId, sequenceSourceKey: row.sequenceSourceKey });
       const step = (Array.isArray(stepRows) ? stepRows : []).find((entry) => entry && entry.stepOrder === row.stepOrder) ?? null;
       if (!step) continue;
       let requeue = null;
@@ -1146,7 +1184,7 @@ export async function advanceSequences({
           // out of queued (dead-letter with the refusal code) instead of
           // leaving it queued forever — the enrollment then settles on the
           // next sweep like every other terminal row.
-          const latest = await sends.listWhere({ sourceKey: row.sourceKey });
+          const latest = await sends.listWhere({ spaceId: row.spaceId, sourceKey: row.sourceKey });
           if (latest[0] && latest[0].status === 'queued') {
             await sends.applyManaged(latest[0].id, {
               status: 'dead-letter', decidedAt: nowIso, detail: /** @type {any} */ (error).code,
@@ -1160,29 +1198,29 @@ export async function advanceSequences({
       const state = requeue && typeof requeue.state === 'string' ? requeue.state : '';
       const jobId = requeue && typeof requeue.jobId === 'string' ? requeue.jobId : row.jobId;
       if (state === 'succeeded') {
-        const latest = await sends.listWhere({ sourceKey: row.sourceKey });
+        const latest = await sends.listWhere({ spaceId: row.spaceId, sourceKey: row.sourceKey });
         if (latest[0] && latest[0].status === 'queued') {
           await sends.applyManaged(latest[0].id, { jobId, status: 'sent', decidedAt: nowIso }, { actor: timer });
           summary.confirmed += 1;
         }
-        const siblings = await steps.listWhere({ sequenceSourceKey: row.sequenceSourceKey });
+        const siblings = await steps.listWhere({ spaceId: row.spaceId, sequenceSourceKey: row.sequenceSourceKey });
         const last = (Array.isArray(siblings) ? siblings : [])
           .filter((entry) => entry && Number.isInteger(entry.stepOrder))
           .sort((a, b) => b.stepOrder - a.stepOrder)[0] ?? null;
         if (last && row.stepOrder >= last.stepOrder) {
-          const target = await enrollments.listWhere({ sourceKey: row.enrollmentSourceKey });
+          const target = await enrollments.listWhere({ spaceId: row.spaceId, sourceKey: row.enrollmentSourceKey });
           if (target[0] && target[0].status === 'active') {
             await enrollments.applyManaged(target[0].id, { status: 'completed', decidedAt: nowIso }, { actor: timer });
           }
         }
       } else if (state === 'failed_terminal' || state === 'cancelled') {
-        const latest = await sends.listWhere({ sourceKey: row.sourceKey });
+        const latest = await sends.listWhere({ spaceId: row.spaceId, sourceKey: row.sourceKey });
         if (latest[0] && latest[0].status === 'queued') {
           await sends.applyManaged(latest[0].id, { jobId, status: 'dead-letter', decidedAt: nowIso }, { actor: timer });
         }
       }
     } catch (error) {
-      noteSweepError(enrollment ?? { sourceKey: row.enrollmentSourceKey, spaceId: '' }, error, 'confirm');
+      noteSweepError(enrollment ?? { sourceKey: row.enrollmentSourceKey, spaceId: row.spaceId ?? '' }, error, 'confirm');
       continue;
     }
   }
@@ -1227,7 +1265,10 @@ export async function enrollSequencePerson({ modules, input, at }) {
       vars[key] = value;
     }
   }
-  const key = sequenceKey('seq-enroll', sequenceSourceKey, subjectResource, subjectId);
+  // Space-scoped by construction: the same sequence key and subject in two
+  // spaces enroll under different identities, so neither space can block or
+  // read the other's enrollment through the global sourceKey uniqueness.
+  const key = sequenceKey('seq-enroll', spaceId, sequenceSourceKey, subjectResource, subjectId);
   const sequences = trusted(modules, 'sequence');
   const found = await sequences.listWhere({ spaceId, sourceKey: sequenceSourceKey });
   const sequence = found[0] ?? null;
@@ -1280,14 +1321,14 @@ export async function transitionSequence({ sequences, sequence, event, at, actor
   const target = event === 'activate' || event === 'resume' ? 'active' : 'paused';
   let current = sequence;
   try {
-    const reread = await sequences.listWhere({ sourceKey: sequence.sourceKey });
+    const reread = await sequences.listWhere({ spaceId: sequence.spaceId, sourceKey: sequence.sourceKey });
     if (reread[0]) current = reread[0];
   } catch {
     current = sequence;
   }
   assertSequenceTransition(current.status, event);
   await sequences.applyManaged(current.id, { status: target, decidedAt: at }, { actor });
-  const rows = await sequences.listWhere({ sourceKey: sequence.sourceKey });
+  const rows = await sequences.listWhere({ spaceId: sequence.spaceId, sourceKey: sequence.sourceKey });
   return { sequence: rows[0] ?? { ...current, status: target }, event };
 }
 
@@ -1318,6 +1359,9 @@ export async function transitionEnrollment({ enrollments, enrollment, event, at,
     if (!Number.isFinite(due) || due < Date.parse(at)) patch.nextDueAt = at;
   }
   await enrollments.applyManaged(current.id, patch, { actor });
-  const rows = await enrollments.listWhere({ sourceKey: enrollment.sourceKey });
+  const knownSpace = spaceId ?? enrollment.spaceId ?? current.spaceId ?? null;
+  const rows = await enrollments.listWhere(
+    knownSpace === null ? { sourceKey: enrollment.sourceKey } : { spaceId: knownSpace, sourceKey: enrollment.sourceKey },
+  );
   return { enrollment: rows[0] ?? { ...current, ...patch }, event };
 }

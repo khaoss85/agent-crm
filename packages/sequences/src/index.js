@@ -21,6 +21,7 @@ import {
   computeSequenceMetrics,
   enrollSequencePerson,
   requireSequenceActor,
+  sameSequenceStepContent,
   sequenceKey,
   transitionEnrollment,
   transitionSequence,
@@ -87,6 +88,22 @@ function isWinnerConflict(error) {
 }
 
 /**
+ * A deterministic-order UNIQUE hit is an idempotent replay only when the
+ * stored row carries the same step definition. A concurrent append of a
+ * different step at the same order fails loudly (409) instead of returning
+ * the winner as if it were the caller's own step, which would silently drop
+ * the caller's template.
+ */
+function assertSameStep(stored, checked) {
+  if (!sameSequenceStepContent(stored, checked)) {
+    throw new AppError(
+      `A different step already occupies order ${stored?.stepOrder ?? '?'} of this sequence: read it before appending`,
+      { code: 'SEQUENCE_STEP_CONFLICT', status: 409 },
+    );
+  }
+}
+
+/**
  * @param {{
  *   spacePermissions?: { capabilities?: Array<any> },
  *   queueTemplate?: (params: any) => Promise<any>,
@@ -139,9 +156,9 @@ export function createSequencesPackage(options = {}) {
     return sequence;
   };
 
-  /** Steps of one sequence, order-ascending. */
-  const loadSteps = async (modules, sequenceSourceKey) => (await trusted(modules, 'sequence-step')
-    .listWhere({ sequenceSourceKey }))
+  /** Steps of one space's sequence, order-ascending. */
+  const loadSteps = async (modules, spaceId, sequenceSourceKey) => (await trusted(modules, 'sequence-step')
+    .listWhere({ spaceId, sequenceSourceKey }))
     .filter((row) => row && Number.isInteger(row.stepOrder))
     .sort((a, b) => a.stepOrder - b.stepOrder);
 
@@ -214,7 +231,7 @@ export function createSequencesPackage(options = {}) {
             // operator who activated the sequence approved that exact set.
             if (replayed && sequence.status !== 'draft') {
               const liveSteps = trusted(runtime.modules, 'sequence-step');
-              const existing = await liveSteps.listWhere({ sequenceSourceKey: sourceKey });
+              const existing = await liveSteps.listWhere({ spaceId, sequenceSourceKey: sourceKey });
               existing.sort((a, b) => a.stepOrder - b.stepOrder);
               return { sequence, steps: existing, replayed };
             }
@@ -225,9 +242,10 @@ export function createSequencesPackage(options = {}) {
             const stepService = trusted(runtime.modules, 'sequence-step');
             const stored = [];
             for (const step of checked) {
-              const stepKey = sequenceKey('seq-step', sourceKey, String(step.stepOrder));
-              const found = await stepService.listWhere({ sourceKey: stepKey });
+              const stepKey = sequenceKey('seq-step', spaceId, sourceKey, String(step.stepOrder));
+              const found = await stepService.listWhere({ spaceId, sourceKey: stepKey });
               if (found[0]) {
+                assertSameStep(found[0], step);
                 stored.push(found[0]);
                 continue;
               }
@@ -235,6 +253,7 @@ export function createSequencesPackage(options = {}) {
                 stored.push(await stepService.createManaged({
                   sourceKey: stepKey,
                   sequenceSourceKey: sourceKey,
+                  spaceId,
                   stepOrder: step.stepOrder,
                   dayOffset: step.dayOffset,
                   channel: step.channel,
@@ -245,8 +264,10 @@ export function createSequencesPackage(options = {}) {
                 }, { actor }));
               } catch (error) {
                 if (!isWinnerConflict(error)) throw error;
-                const winner = await stepService.listWhere({ sourceKey: stepKey });
-                if (winner[0]) stored.push(winner[0]);
+                const winner = (await stepService.listWhere({ spaceId, sourceKey: stepKey }))[0] ?? null;
+                if (!winner) throw error;
+                assertSameStep(winner, step);
+                stored.push(winner);
               }
             }
             return {
@@ -264,7 +285,8 @@ export function createSequencesPackage(options = {}) {
         label: 'Append a step to a draft sequence',
         description:
           'Append one ordered day+channel step to a draft sequence; an active or paused sequence refuses, '
-          + 'so a running person never sees a step change under them.',
+          + 'so a running person never sees a step change under them. A retry with the same definition replays '
+          + 'the stored row; a different step at the same order fails with SEQUENCE_STEP_CONFLICT.',
         input: [
           { name: 'spaceId', type: 'string', hint: 'The Accordo space id.' },
           { name: 'sourceKey', type: 'string', hint: 'The sequence source key.' },
@@ -280,14 +302,15 @@ export function createSequencesPackage(options = {}) {
                 code: 'SEQUENCE_NOT_DRAFT', status: 409,
               });
             }
-            const existing = await loadSteps(runtime.modules, sequence.sourceKey);
+            const existing = await loadSteps(runtime.modules, spaceId, sequence.sourceKey);
             const checked = checkStepInput(record.step ?? {}, existing.length);
             const stepService = trusted(runtime.modules, 'sequence-step');
-            const stepKey = sequenceKey('seq-step', sequence.sourceKey, String(checked.stepOrder));
+            const stepKey = sequenceKey('seq-step', spaceId, sequence.sourceKey, String(checked.stepOrder));
             try {
               const step = await stepService.createManaged({
                 sourceKey: stepKey,
                 sequenceSourceKey: sequence.sourceKey,
+                spaceId,
                 stepOrder: checked.stepOrder,
                 dayOffset: checked.dayOffset,
                 channel: checked.channel,
@@ -300,8 +323,10 @@ export function createSequencesPackage(options = {}) {
               return { step, replayed: false };
             } catch (error) {
               if (!isWinnerConflict(error)) throw error;
-              const winner = await stepService.listWhere({ sourceKey: stepKey });
-              return { step: winner[0] ?? null, replayed: true };
+              const winner = (await stepService.listWhere({ spaceId, sourceKey: stepKey }))[0] ?? null;
+              if (!winner) throw error;
+              assertSameStep(winner, checked);
+              return { step: winner, replayed: true };
             }
           };
         },
@@ -325,7 +350,7 @@ export function createSequencesPackage(options = {}) {
             const record = request && typeof request === 'object' ? request : {};
             const actor = requireSequenceActor(record.actor, 'Activating a sequence');
             const sequence = await loadSequence(runtime.modules, checkSpaceId(record.spaceId), record.sourceKey);
-            const present = await loadSteps(runtime.modules, sequence.sourceKey);
+            const present = await loadSteps(runtime.modules, sequence.spaceId, sequence.sourceKey);
             if (present.length === 0) {
               throw new AppError('Cannot activate a sequence with no steps', {
                 code: 'SEQUENCE_NO_STEPS', status: 409,
@@ -506,9 +531,9 @@ export function createSequencesPackage(options = {}) {
             const record = request && typeof request === 'object' ? request : {};
             const sequence = await loadSequence(runtime.modules, checkSpaceId(record.spaceId), record.sourceKey);
             const enrollments = await trusted(runtime.modules, 'sequence-enrollment')
-              .listWhere({ sequenceSourceKey: sequence.sourceKey });
+              .listWhere({ spaceId: sequence.spaceId, sequenceSourceKey: sequence.sourceKey });
             const sends = await trusted(runtime.modules, 'sequence-send')
-              .listWhere({ sequenceSourceKey: sequence.sourceKey });
+              .listWhere({ spaceId: sequence.spaceId, sequenceSourceKey: sequence.sourceKey });
             return {
               sequence: { sourceKey: sequence.sourceKey, name: sequence.name, status: sequence.status },
               ...computeSequenceMetrics({ enrollments, sends }),
@@ -537,8 +562,8 @@ export function createSequencesPackage(options = {}) {
             const sends = trusted(runtime.modules, 'sequence-send');
             const out = [];
             for (const sequence of rows) {
-              const people = await enrollments.listWhere({ sequenceSourceKey: sequence.sourceKey });
-              const fires = await sends.listWhere({ sequenceSourceKey: sequence.sourceKey });
+              const people = await enrollments.listWhere({ spaceId: sequence.spaceId, sequenceSourceKey: sequence.sourceKey });
+              const fires = await sends.listWhere({ spaceId: sequence.spaceId, sequenceSourceKey: sequence.sourceKey });
               out.push({
                 sourceKey: sequence.sourceKey,
                 name: sequence.name,
