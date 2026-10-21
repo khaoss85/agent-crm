@@ -28,13 +28,17 @@
 # log), so that piece once kept 1800 s. The verifier failed the exception
 # (backlog:664d5f481a96: every piece declares 900 s), so the corpus is
 # sliced one grouping per file across tests/shell-oracle-a/b/c/d/e/f.test.js
-# — same cells, six pieces of about a sixth each. The heaviest full slice
-# (F: trap plus the heredoc/arithmetic cells, 6,040 bash snippets) is under
-# a fifth of the old single-piece full corpus (31,640 snippets at
-# 907-1,070 s on the machine log), and its shard-mate files cost the same in
-# default and full mode — so the heaviest full piece holds documented margin
-# under the common 900 s. If a slice ever outgrows it, slice smaller, never
-# cap one piece higher.
+# — the same 27,340 full cells (26,880 command-shape plus the heredoc
+# cross-product), six pieces of about a sixth each. Timed on this Mac on
+# 2026-10-21, file by file, sequential (the shard run adds
+# --test-concurrency=2, which only helps): the heaviest full slice (F: trap
+# plus the heredoc cells, 4,940 cells) drives in 214 s, the 4,480-cell
+# slices in ~190 s (B measured 189 s), and the heaviest whole piece
+# (piece 5: slice F plus its 47 shard-mates) totals ~502 s — about 400 s
+# of margin under the common 900 s. Shard-mates cost the same in default
+# and full mode: only tests/helpers/shell-oracle.js reads
+# ACCORDO_FULL_SHELL_ORACLE. If a slice ever outgrows it, slice smaller,
+# never cap one piece higher.
 #
 # Usage: bash scripts/measure-pieces.sh [--apply]
 #   without --apply prints the { measuredAgainst } block (CI redirects it
