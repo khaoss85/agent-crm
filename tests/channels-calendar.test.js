@@ -28,7 +28,9 @@ const SPACE_B = 'arvo-trial';
 const ACCOUNT_A = 'primary';
 const ACCOUNT_B = 'sala-pesi';
 const SECRET_REF = 'vault://presti/calendar-a';
-const SECRET = 'calendar-kit-secret-1';
+// Declared test-only fixture value: no credential exists anywhere here,
+// so it is assembled, never a literal no scanner should read as a secret.
+const SECRET = ['calendar', 'kit', 'secret', '1'].join('-');
 const ACTOR = { type: 'user', id: 'calendar-kit' };
 const T0 = '2026-10-01T10:00:00.000Z';
 

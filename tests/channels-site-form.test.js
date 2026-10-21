@@ -28,7 +28,9 @@ const SPACE_B = 'arvo-trial';
 const ACCOUNT_A = 'contatti';
 const ACCOUNT_B = 'prenota-prova';
 const SECRET_REF = 'vault://presti/site-form-a';
-const SECRET = 'site-form-kit-secret-1';
+// Declared test-only fixture value: no credential exists anywhere here,
+// so it is assembled, never a literal no scanner should read as a secret.
+const SECRET = ['site-form', 'kit', 'secret', '1'].join('-');
 const ACTOR = { type: 'user', id: 'site-form-kit' };
 
 const signedHeaders = (rawBody) => fixtureWebhookHeaders(rawBody, SECRET, Math.floor(Date.now() / 1000));

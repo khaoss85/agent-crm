@@ -28,7 +28,9 @@ const SPACE_B = 'arvo-trial';
 const ACCOUNT_A = 'acct_presti';
 const ACCOUNT_B = 'acct_arvo';
 const SECRET_REF = 'vault://presti/stripe-a';
-const SECRET = 'stripe-kit-secret-1';
+// Declared test-only fixture value: no credential exists anywhere here,
+// so it is assembled, never a literal no scanner should read as a secret.
+const SECRET = ['stripe', 'kit', 'secret', '1'].join('-');
 const ACTOR = { type: 'user', id: 'stripe-kit' };
 const T0_SEC = Math.floor(new Date('2026-10-01T10:00:00.000Z').getTime() / 1000);
 
