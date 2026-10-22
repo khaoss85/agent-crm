@@ -30,6 +30,7 @@ import { createOpportunityModule } from '../../modules/opportunity/src/index.js'
 import { createApprovalModule } from '../../modules/approval/src/index.js';
 import { PipelineRegistry, pipelineMetadata } from '../../core/src/pipeline-registry.js';
 import { PackageRegistry } from '../../core/src/package-registry.js';
+import { isDefinitionVersionDrift } from '../../core/src/definition-version-store.js';
 import { createOperationRuntime, composePackageOperations } from '../../core/src/operation-runtime.js';
 import { NotFoundError, ValidationError } from '../../core/src/errors.js';
 import { ActionRegistry, actionMetadata } from '../../core/src/action-registry.js';
@@ -228,6 +229,69 @@ export function postgresqlTestStorage(app) {
   return POSTGRES_TEST_STORAGE.get(app) ?? null;
 }
 
+/**
+ * Name a drift refusal after the workspace whose registered definitions
+ * moved. The message names the workspace and carries the stable
+ * `DEFINITION_VERSION_DRIFT` code with the store's own identity fields in
+ * `details`, followed by the store's refusal text unchanged — so a person
+ * reading the log and a host matching the code read the same failure.
+ *
+ * Contract migration (backlog 4170bcf43e5b): without a workspace to name the
+ * store refusal stays `VALIDATION_ERROR`/400; with one, the composition
+ * refusal is `DEFINITION_VERSION_DRIFT`/503. The store error is preserved as
+ * `cause`, the message carries the workspace id and the code (the 5xx
+ * logging rule's diagnosable minimum), and hosts match with
+ * `isDefinitionVersionDrift` — never with the 400 branch or the prose. No
+ * in-repo caller matches `VALIDATION_ERROR` on the composition path, so no
+ * caller migration was needed inside this repo.
+ * @param {string} workspaceId
+ * @param {unknown} error
+ */
+function workspaceDriftRefusal(workspaceId, error) {
+  const raw = (error && typeof error === 'object'
+    && /** @type {{details?: unknown}} */ (error).details) ?? null;
+  const identity = raw !== null && typeof raw === 'object'
+    ? /** @type {Record<string, unknown>} */ (raw)
+    : {};
+  // The workspace is the caller's fact: a store- or package-supplied
+  // workspaceId never overwrites it. Otherwise a forged `workspaceId` in a
+  // package-thrown error would quarantine the wrong workspace while the
+  // truly drifted one keeps serving poisoned definitions.
+  const rest = { ...identity };
+  delete rest.workspaceId;
+  return new AppError(
+    `workspace unavailable ${workspaceId} DEFINITION_VERSION_DRIFT: ${
+      error instanceof Error ? error.message : String(error)
+    }`,
+    {
+      code: 'DEFINITION_VERSION_DRIFT',
+      status: 503,
+      details: { ...rest, workspaceId, definitionVersionDrift: true },
+      cause: error,
+    },
+  );
+}
+
+/**
+ * Persist one fingerprint batch, naming a drift refusal after the workspace
+ * when the workspace is known. Anything that is not drift — and drift without
+ * a workspace to name — propagates exactly as before.
+ * @param {() => unknown} persist
+ * @param {string | null} workspaceId
+ */
+async function persistWorkspaceFingerprints(persist, workspaceId) {
+  if (workspaceId === null) {
+    await persist();
+    return;
+  }
+  try {
+    await persist();
+  } catch (error) {
+    if (isDefinitionVersionDrift(error)) throw workspaceDriftRefusal(workspaceId, error);
+    throw error;
+  }
+}
+
 async function assemblePortableGraph({ accepted, storage, options = {} }) {
   const now = resolveClock(options.clock);
   const handle = {
@@ -309,11 +373,22 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
     moduleExists: (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name),
   });
 
+  // A drifted definition in one workspace reads as that workspace being
+  // unavailable — never as the process being broken. On 2026-10-22 a single
+  // workspace's `catalog-provider "<name>@1"` drift reached a shared worker as
+  // a bare `ValidationError`, which the host could not tell apart from any
+  // other startup failure; the composition escaped as an unhandled exception
+  // and the process restarted, taking every healthy workspace with it. The
+  // store's own refusal is unchanged (same message, same code); here, where
+  // the workspace identity is known, it is named per workspace so a host
+  // composing several workspaces in one process can refuse one and keep
+  // serving the rest.
+  const workspaceId = typeof options.tenantId === 'string' && options.tenantId !== '' ? options.tenantId : null;
   const domains = new PackageRegistry({ packages: [...accepted.packages] });
-  await domains.persistFingerprints(handle);
+  await persistWorkspaceFingerprints(() => domains.persistFingerprints(handle), workspaceId);
   for (const pkg of accepted.packages) {
     if (typeof pkg.persistFingerprints === 'function') {
-      await pkg.persistFingerprints(handle);
+      await persistWorkspaceFingerprints(() => pkg.persistFingerprints(handle), workspaceId);
     }
   }
   for (const definition of domains.actions()) actions.register(definition);
