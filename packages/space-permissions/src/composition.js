@@ -329,7 +329,7 @@ export function createSpacePackageOperations(context = {}) {
     }
     if (existing) {
       const patched = await compositionStore().applyManaged(
-        existing.id, { status: 'active', activatedBy: by, activatedAt: at }, { actor: record.actor },
+        existing.id, { status: 'active', activatedBy: by, activatedAt: at, removedAt: null }, { actor: record.actor },
       );
       return Object.freeze({ spaceId, unit: entry.name, kind: entry.kind, status: 'active', replayed: false, reactivated: true, id: patched?.id ?? existing.id });
     }
@@ -353,7 +353,7 @@ export function createSpacePackageOperations(context = {}) {
         return Object.freeze({ spaceId, unit: entry.name, kind: entry.kind, status: 'active', replayed: true, id: winner.id });
       }
       const patched = await compositionStore().applyManaged(
-        winner.id, { status: 'active', activatedBy: by, activatedAt: at }, { actor: record.actor },
+        winner.id, { status: 'active', activatedBy: by, activatedAt: at, removedAt: null }, { actor: record.actor },
       );
       return Object.freeze({ spaceId, unit: entry.name, kind: entry.kind, status: 'active', replayed: false, reactivated: true, id: patched?.id ?? winner.id });
     }
