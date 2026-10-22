@@ -111,13 +111,8 @@ export function createReportingView(deps) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   }
 
-  /** @param {string} message */
-  function showMessage(message) {
-    clear();
-    const box = el(doc, 'div', { class: 'panel' });
-    box.appendChild(el(doc, 'p', { class: 'empty', text: message }));
-    mount.appendChild(box);
-  }
+  /** Guard against stale async responses overwriting a newer view. */
+  let renderToken = 0;
 
   function kicker(title, subtitle) {
     const panel = el(doc, 'section', { class: 'panel panel-wide' });
@@ -137,14 +132,12 @@ export function createReportingView(deps) {
     button.addEventListener('click', () => navigate(NUOVO_MODULO_ROUTE));
     actions.appendChild(button);
     panel.appendChild(actions);
-    mount.appendChild(panel);
   }
 
   function reportingTable(panel, rows, capped) {
     const summary = reportingSummary(rows);
     if (summary.length === 0) {
       panel.appendChild(el(doc, 'div', { class: 'empty', text: 'Nessuna riga di reporting in questo spazio.' }));
-      mount.appendChild(panel);
       return;
     }
     const wrap = el(doc, 'div', { class: 'table-wrap' });
@@ -171,10 +164,10 @@ export function createReportingView(deps) {
     if (capped) {
       panel.appendChild(el(doc, 'p', { class: 'lede', text: `Prime ${rows.length} righe lette: la pagina può nasconderne altre.` }));
     }
-    mount.appendChild(panel);
   }
 
   async function renderReporting() {
+    const token = ++renderToken;
     clear();
     mount.appendChild(el(doc, 'p', { class: 'empty', text: 'Loading…' }));
     let rows = null;
@@ -184,6 +177,7 @@ export function createReportingView(deps) {
     } catch {
       rows = null; // not composed here: the screen says so, never a blank page
     }
+    if (token !== renderToken) return;
     clear();
     const panel = kicker('Moduli personalizzati', 'Reporting');
     panel.appendChild(el(doc, 'p', {
@@ -196,6 +190,7 @@ export function createReportingView(deps) {
         text: 'Reporting non composto in questo spazio: nessun dato inventato. Crea il bundle con + Nuovo modulo.',
       }));
       nuovoModuloButton(panel);
+      mount.appendChild(panel);
       return;
     }
     reportingTable(panel, rows, rows.length >= REPORTING_LIMIT);
@@ -277,5 +272,5 @@ export function createReportingView(deps) {
     mount.appendChild(svilluppaCard());
   }
 
-  return { renderReporting, renderNuovoModulo, showMessage };
+  return { renderReporting, renderNuovoModulo };
 }

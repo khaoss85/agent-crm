@@ -96,6 +96,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .panel-wide { grid-row: span 2; }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
 .panel h2 { margin: 0; font-size: 22px; letter-spacing: -.024em; }
+/* BO-F5-01: option titles inside a screen (AI vs manuale). Same size as the
+   other section titles, never the browser default. */
+.panel h3 { margin: 0 0 8px; font-size: 14px; }
 .panel code { max-width: 340px; overflow: hidden; text-overflow: ellipsis; background: var(--surface-soft); border-radius: 6px; padding: 8px 10px; color: var(--dim); font-family: var(--mono); font-size: 11px; }
 /* BO-F5-01: exact CLI commands on the "+ Nuovo modulo" screen. Full-width
    and scrollable, never clipped: a truncated command copied half is worse

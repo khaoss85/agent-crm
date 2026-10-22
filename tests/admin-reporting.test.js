@@ -102,6 +102,33 @@ test('reporting screen without the bundle says so honestly, never blank', async 
   assert.deepEqual(seen, [NUOVO_MODULO_ROUTE]);
 });
 
+test('a stale reporting response never overwrites the newer view', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let calls = 0;
+  const view = createReportingView({
+    doc,
+    mount,
+    client: {
+      request: async () => {
+        calls += 1;
+        if (calls === 1) await gate;
+        return { items: [{ metric: 'tardiva', period: '2026-10', value: 1 }] };
+      },
+    },
+    navigate: () => {},
+  });
+  const first = view.renderReporting();
+  const second = view.renderReporting();
+  release();
+  await first;
+  await second;
+  const cells = mount.findAll('td').map((node) => node.textContent);
+  assert.equal(cells.filter((cell) => cell === 'tardiva').length, 1, 'the stale response renders exactly once');
+});
+
 test('nuovo modulo shows the double option and the Sviluppa card, AI forwards to the panel', () => {
   const doc = createFakeDocument();
   const mount = createMount();
