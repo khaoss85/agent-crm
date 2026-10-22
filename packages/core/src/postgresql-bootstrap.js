@@ -8,6 +8,7 @@ import { SCHEMA_MIGRATIONS_CHECKSUM_VERSION, isPinnedModuleBootstrapPredecessor,
 import {
   createPostgresqlPool,
   createPostgresqlStorage,
+  toSafeCause,
 } from './postgresql-storage.js';
 import { createWriterReadinessObserver, requireTelemetrySink } from './observability-export.js';
 import { createWriterLeaseRenewer } from './writer-lease-renewer.js';
@@ -39,6 +40,20 @@ const DESTROYED = new WeakSet();
  */
 function refuse(code, message, details = {}) {
   throw new AppError(message, { code, status: 500, details });
+}
+
+/**
+ * A startup failure that keeps the driver's reason as a redacted cause
+ * ({code, name}, never its message, which can carry host, user or URL), as
+ * postgresql-storage does for mapped errors (#321). Without it a failed
+ * migration in a sealed space prints STORAGE_UNAVAILABLE and nothing else
+ * (backlog:112ff66d, 2026-10-22: step=compose causes=none).
+ * @param {unknown} error
+ */
+function startupStorageFailure(error) {
+  return new AppError('PostgreSQL startup storage failed', {
+    code: 'STORAGE_UNAVAILABLE', status: 500, cause: toSafeCause(error),
+  });
 }
 
 function qualify(name) {
@@ -156,7 +171,7 @@ async function exec(client, sql, params = [], queryDeadlineMs = DEFAULT_QUERY_MS
       throw error;
     }
     if (error instanceof AppError) throw error;
-    refuse('STORAGE_UNAVAILABLE', 'PostgreSQL startup storage failed');
+    throw startupStorageFailure(error);
   }
 }
 
@@ -172,7 +187,7 @@ async function connectBounded(pool, acquisitionDeadlineMs = DEFAULT_ACQUISITION_
   } catch (error) {
     timedOut = true;
     if (error instanceof AppError) throw error;
-    refuse('STORAGE_UNAVAILABLE', 'PostgreSQL startup storage failed');
+    throw startupStorageFailure(error);
   }
 }
 
@@ -636,9 +651,7 @@ async function bootstrapPlane(pool, {
     return extra;
   } catch (error) {
     if (active) await rollbackQuietly(client);
-    throw error instanceof AppError ? error : new AppError('PostgreSQL startup storage failed', {
-      code: 'STORAGE_UNAVAILABLE', status: 500,
-    });
+    throw error instanceof AppError ? error : startupStorageFailure(error);
   } finally {
     releaseClient(client);
   }
@@ -872,9 +885,7 @@ export async function bootstrapPostgresqlApplication(options) {
     } catch (error) {
       if (dataActive && dataClient) await rollbackQuietly(dataClient);
       if (controlActive) await rollbackQuietly(controlClient);
-      throw error instanceof AppError ? error : new AppError('PostgreSQL startup storage failed', {
-        code: 'STORAGE_UNAVAILABLE', status: 500,
-      });
+      throw error instanceof AppError ? error : startupStorageFailure(error);
     } finally {
       if (dataClient) releaseClient(dataClient);
       releaseClient(controlClient);
@@ -1019,7 +1030,7 @@ export async function bootstrapPostgresqlApplication(options) {
   }
 }
 
-export { fingerprintMigrationSet, describeWriterHealth };
+export { fingerprintMigrationSet, describeWriterHealth, startupStorageFailure };
 
 /**
  * Verify, without writing, that the schema this code renders is the schema the
