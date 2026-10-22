@@ -24,7 +24,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** The scheduled-measure window in `.github/workflows/ci.yml`. Keep the two equal. */
-export const MEASURE_WINDOW_HOURS = 6;
+export const MEASURE_WINDOW_HOURS = 24;
 
 /**
  * Where the scheduled run records its successful measurements (written by

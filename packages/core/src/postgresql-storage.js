@@ -76,7 +76,7 @@ async function loadPgDriver() {
  * untouched.
  * @param {unknown} error
  */
-function toSafeCause(error) {
+export function toSafeCause(error) {
   if (error === undefined || error === null) return undefined;
   if (error instanceof AppError) return error;
   if (error instanceof Error) {
