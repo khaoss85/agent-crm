@@ -60,9 +60,10 @@ test('Oggi links are the delivered screens only, never Oggi itself', () => {
   assert.ok(routes.includes('#/impostazioni'), 'Impostazioni links the settings entry');
   assert.ok(!routes.includes('#/'), 'Oggi never links itself');
   assert.ok(links.every((link) => typeof link.label === 'string' && link.label !== ''));
-  // Without composed packages only Oggi and Impostazioni are available.
+  // Without composed packages Oggi links the always-available entries:
+  // Reporting, Nuovo modulo (BO-F5-01) and Impostazioni.
   const bare = buildOggiLinks(buildShellNav());
-  assert.deepEqual(bare.map((link) => link.route), ['#/impostazioni']);
+  assert.deepEqual(bare.map((link) => link.route), ['#/reporting', '#/nuovo-modulo', '#/impostazioni']);
   assert.deepEqual(buildOggiLinks(null), []);
   assert.deepEqual(buildOggiLinks('nope'), []);
 });

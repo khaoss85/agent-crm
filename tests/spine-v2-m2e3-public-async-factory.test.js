@@ -231,7 +231,13 @@ async function asyncAppFor(t, options = {}) {
 }
 
 test('public surfaces export both factories and do not leak portable internals', () => {
-  assert.deepEqual(Object.keys(publicApp).sort(), ['createAccordoApp', 'createAccordoAppAsync']);
+  // The two factories, plus the Admin shell mount an embedding host (the
+  // shared web of a pilot) composes on its own route (#307): a deliberate
+  // public entry point, not a portable internal.
+  assert.deepEqual(
+    Object.keys(publicApp).sort(),
+    ['createAccordoApp', 'createAccordoAppAsync', 'createAdminShellMount', 'injectAdminBase'],
+  );
   assert.equal(typeof publicApp.createAccordoApp, 'function');
   assert.equal(typeof publicApp.createAccordoAppAsync, 'function');
   assert.equal(publicApp.createAccordoApp.constructor.name, 'Function');

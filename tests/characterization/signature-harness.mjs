@@ -276,6 +276,12 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   'packages/commercial/modules/quote-term.module.json',
   'packages/commercial/modules/quote-version-term.module.json',
   'packages/signature/modules/order-term.module.json',
+  // BO-F2-07 product import drafts: digest-owned so a change stales this
+  // baseline, deliberately NOT in SIGNATURE_MANIFESTS — the baseline
+  // application never runs an import, so its applied-manifest set stays
+  // frozen and the drafts change no observed value.
+  'packages/commercial/modules/product-import.module.json',
+  'packages/commercial/modules/product-import-row.module.json',
   'packages/app/src/create-app.js',
   'apps/server/src/http-server.js',
   'packages/sdk/src/index.js',

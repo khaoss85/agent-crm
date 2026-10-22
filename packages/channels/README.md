@@ -6,9 +6,13 @@ The shared, space-scoped foundation every messaging channel builds on
 ## What it owns
 
 - `channel-connection` — one channel account bound to one space:
-  `{spaceId, channel, account, adapter, adapterVersion, status, secretRef}`.
-  Every field is managed: registration is the only writer and every later
-  change (activate, suspend, revoke, secret rotation) is an audited action.
+  `{spaceId, channel, account, adapter, adapterVersion, status, secretRef,
+  grantExpiresAt}`. Every field is managed: registration is the only writer
+  and every later change (activate, suspend, revoke, secret rotation, grant
+  renewal) is an audited action. `grantExpiresAt` is the provider-stated
+  expiry of the grant, recorded as observed (null when the provider states
+  none); `renew-connection-grant` records the new expiry after the human
+  re-authorizes at the provider (BO-F1-04).
 - `channel-inbox-event` — append-only inbox of verified webhook
   deliveries: DB-unique per (space, connection, provider event id), payload
   fingerprint, explicit `effect` (`applied | ignored | quarantined |

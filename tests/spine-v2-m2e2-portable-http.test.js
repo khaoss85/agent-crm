@@ -113,7 +113,11 @@ async function jsonRequest(url, { method = 'GET', body } = {}) {
 }
 
 test('public surfaces do not leak the portable HTTP starter', () => {
-  assert.deepEqual(Object.keys(publicApp).sort(), ['createAccordoApp', 'createAccordoAppAsync']);
+  // The factories plus the Admin shell mount exports (#307), on purpose.
+  assert.deepEqual(
+    Object.keys(publicApp).sort(),
+    ['createAccordoApp', 'createAccordoAppAsync', 'createAdminShellMount', 'injectAdminBase'],
+  );
   assert.equal(Object.hasOwn(publicApp, 'startPortableSqliteApp'), false);
   assert.equal(Object.hasOwn(publicApp, 'startPortableHttpServer'), false);
   assert.equal(Object.hasOwn(publicKernel, 'createAccordoAppAsync'), false);

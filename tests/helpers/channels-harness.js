@@ -66,7 +66,16 @@ export function createChannelsHarness(options) {
 
   const database = createDatabase({ path: options.dbPath ?? ':memory:' });
   for (const { sql } of recordModuleMigrations(CHANNEL_MANIFEST_NAMES.map((name) => ({ name, manifest: loadManifest(name) })))) {
-    database.raw.exec(sql);
+    try {
+      database.raw.exec(sql);
+    } catch (error) {
+      // Evolutions are ALTERs without IF NOT EXISTS: a second harness on the
+      // same shared store replays an already-applied evolution. At boot the
+      // migration ledger skips recorded migrations; this harness keeps no
+      // ledger, so a duplicate column means exactly that replay — anything
+      // else still throws.
+      if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error;
+    }
   }
   const audit = new AuditLog(database);
   const events = new EventBus();

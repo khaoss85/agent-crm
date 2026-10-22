@@ -65,17 +65,55 @@ async function loadPgDriver() {
  * }} TxBind
  */
 
-function publicUnavailable() {
+/**
+ * A mapped error's `cause` never carries the raw driver error: its message
+ * and stack can hold host, port, db user or URL text, and the repo's own
+ * leak detector walks the whole error graph including `cause`
+ * (backlog:112ff66d). Only safe tokens survive — the driver `code`
+ * (SQLSTATE or Node errno) and the error `name` — so a diagnostic layer can
+ * still walk the chain and print one token pair per level. Errors the
+ * framework created already carry bounded messages and pass through
+ * untouched.
+ * @param {unknown} error
+ */
+export function toSafeCause(error) {
+  if (error === undefined || error === null) return undefined;
+  if (error instanceof AppError) return error;
+  if (error instanceof Error) {
+    const rawCode = /** @type {any} */ (error).code;
+    const code = typeof rawCode === 'string' && rawCode.length > 0 ? rawCode : 'UNKNOWN';
+    return Object.freeze({ code, name: error.name ?? 'Error' });
+  }
+  if (typeof error === 'object') {
+    const rawCode = /** @type {any} */ (error).code;
+    const rawName = /** @type {any} */ (error).name;
+    return Object.freeze({
+      code: typeof rawCode === 'string' && rawCode.length > 0 ? rawCode : 'UNKNOWN',
+      name: typeof rawName === 'string' && rawName.length > 0 ? rawName : 'Error',
+    });
+  }
+  return Object.freeze({ code: 'UNKNOWN', name: 'Error' });
+}
+
+function publicUnavailable(cause) {
   return new AppError('PostgreSQL storage is unavailable', {
     code: 'STORAGE_UNAVAILABLE',
     status: 503,
+    // The message stays bounded — no driver text, host, user or URL — but a
+    // redacted cause survives, so a diagnostic layer can walk the chain and
+    // print safe tokens (code/name per level) from it. Without this, a
+    // mapped failure (backlog:112ff66d) prints STORAGE_UNAVAILABLE with no
+    // SQLSTATE and nothing to diagnose.
+    cause: toSafeCause(cause),
   });
 }
 
-function publicTimeout(kind) {
+function publicTimeout(kind, cause) {
   return new AppError(`PostgreSQL ${kind} deadline exceeded`, {
     code: 'STORAGE_TIMEOUT',
     status: 504,
+    // Same rule as above: bounded message, redacted chain.
+    cause: toSafeCause(cause),
   });
 }
 
@@ -125,12 +163,12 @@ function sanitizePgError(error) {
       transient: true, reason: 'deadlock', dialect: 'postgresql',
     });
   }
-  if (code === '57014' || code === '55P03') return publicTimeout('statement');
-  if (code === '53300' || code === '53400' || code === '57P03') return publicUnavailable();
+  if (code === '57014' || code === '55P03') return publicTimeout('statement', error);
+  if (code === '53300' || code === '53400' || code === '57P03') return publicUnavailable(error);
   if (code === '28P01' || code === '28000' || code === '3D000' || connectionLost(error)) {
-    return publicUnavailable();
+    return publicUnavailable(error);
   }
-  return new AppError('PostgreSQL storage failed', { code: 'STORAGE_UNAVAILABLE', status: 503 });
+  return new AppError('PostgreSQL storage failed', { code: 'STORAGE_UNAVAILABLE', status: 503, cause: toSafeCause(error) });
 }
 
 function withDeadline(promise, ms, kind) {
@@ -358,7 +396,7 @@ export function createPostgresqlStorage(pool, options = {}) {
     } catch (error) {
       timedOut = isPoolCheckoutTimeout(error);
       settled = true;
-      if (timedOut) throw publicTimeout('acquisition');
+      if (timedOut) throw publicTimeout('acquisition', error);
       throw error instanceof AppError ? error : sanitizePgError(error);
     }
   }
@@ -458,7 +496,7 @@ export function createPostgresqlStorage(pool, options = {}) {
         || connectionLost(error);
       if (lost) {
         throw new AppError('PostgreSQL commit outcome is unknown', {
-          code: 'COMMIT_OUTCOME_UNKNOWN', status: 503,
+          code: 'COMMIT_OUTCOME_UNKNOWN', status: 503, cause: mapped,
         });
       }
       throw mapped;
