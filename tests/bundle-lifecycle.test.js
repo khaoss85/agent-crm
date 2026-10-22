@@ -13,7 +13,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -111,6 +111,39 @@ test('bundle create writes only under bundles/ and versions are immutable', asyn
   // …while a new version plans cleanly.
   const next = planBundleCreate({ manifest: probeManifest, name: 'lifecycle-probe', version: '0.0.2', createdBy: 'ai', rootDir: root });
   assert.equal(next.version, '0.0.2');
+});
+
+test('bundle create --apply is atomic: a second-phase collision leaves no half-bundle', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-bundle-atomic-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const copy = await import('../packages/cli/src/bundle-manager.js');
+
+  // The bundle-local test file already exists (an interrupted apply, a disk
+  // that filled mid-write): the second phase must refuse…
+  const stray = join(root, 'bundles', 'lifecycle-probe', '0.0.1', 'tests', 'lifecycle-probe-bundle.test.js');
+  mkdirSync(dirname(stray), { recursive: true });
+  writeFileSync(stray, '// stray file from an interrupted apply\n', 'utf8');
+
+  const plan = copy.planBundleCreate({ manifest: probeManifest, name: 'lifecycle-probe', version: '0.0.1', createdBy: 'ai', rootDir: root });
+  assert.throws(() => copy.applyBundleCreate(plan), /already exists|refusing to overwrite/i);
+
+  // …and NOTHING else may remain: no bundle.json, no module sources, no
+  // orphan module that scanBundleModules would see and that would block a
+  // retry or another bundle claiming the name.
+  const versionDir = join(root, 'bundles', 'lifecycle-probe', '0.0.1');
+  assert.ok(!existsSync(join(versionDir, 'bundle.json')), 'no half-bundle manifest remains');
+  assert.ok(!existsSync(join(versionDir, 'module.manifest.json')), 'no half-bundle module manifest remains');
+  assert.ok(!existsSync(join(versionDir, 'module.state.json')), 'no half-bundle module state remains');
+  assert.ok(!existsSync(join(versionDir, 'src')), 'no half-bundle sources remain');
+  assert.deepEqual(copy.scanBundleModules(root), [], 'no orphan module blocks other bundles');
+  // The stray file itself is untouched: it is not ours to delete.
+  assert.equal(readFileSync(stray, 'utf8'), '// stray file from an interrupted apply\n');
+  // A retry after removing the stray file succeeds: no stale state blocks it.
+  rmSync(stray);
+  const retry = copy.applyBundleCreate(
+    copy.planBundleCreate({ manifest: probeManifest, name: 'lifecycle-probe', version: '0.0.1', createdBy: 'ai', rootDir: root }),
+  );
+  assert.equal(retry.bundle, 'lifecycle-probe');
 });
 
 /**
@@ -221,13 +254,33 @@ test('dalla descrizione al bundle installato ("Crea con l\'AI"): genera, verific
   }
   assert.ok(!(probeTable in after), 'bundle table is gone');
   for (const table of kernelTablesBefore) {
+    if (table === 'module_migrations') continue; // checked below: the uninstall forgets exactly the bundle's rows
     assert.ok(table in after, `kernel table ${table} survives the uninstall`);
     assert.equal(after[table], snapshot[table], `kernel table ${table} keeps its rows`);
   }
+  assert.equal(
+    after.module_migrations,
+    snapshot.module_migrations - entries[0].migrations.length,
+    'uninstall forgets exactly the bundle ledger rows (reinstall re-applies the CREATE)',
+  );
   assert.equal(reopened.services.contacts.get(contact.id).id, contact.id);
   assert.equal(reopened.services.opportunities.get(opportunity.id).id, opportunity.id);
   assert.equal(reopened.modules.get('appointment').service.get(appointment.id).id, appointment.id);
   assert.deepEqual(copy.listBundles({ rootDir: root }).bundles.map((entry) => entry.installed), [false]);
+
+  // Reinstall the SAME version on the SAME file: the uninstall dropped the
+  // bundle's ledger rows with its tables, so the CREATE re-applies and the
+  // bundle serves again — never a boot with the service registered but the
+  // table missing ("no such table" on the first create/list).
+  const reinstalled = await copy.installBundle({ name: 'lifecycle-probe', version: '0.0.1', rootDir: root });
+  assert.deepEqual(reinstalled.installed, [{ name: 'lifecycle-probe', version: '0.0.1' }]);
+  const reentries = await copy.createBundleEntries({ rootDir: root, bundles: [{ name: 'lifecycle-probe', version: '0.0.1' }] });
+  const rebooted = createCopyApp({ dbPath, bundles: reentries });
+  t.after(() => rebooted.close());
+  const again = await rebooted.modules.get('lifecycle-probe').service.create({ label: 'kpi dopo reinstall', count: 1 }, { actor: ACTOR });
+  assert.ok(typeof again.id === 'string' && again.id !== '', 'the reinstalled bundle serves a real record');
+  assert.equal(rebooted.modules.get('lifecycle-probe').service.list().length, 1);
+  assert.equal(rebooted.services.contacts.get(contact.id).id, contact.id, 'kernel rows survive the reinstall');
 });
 
 test('la guardia copre ogni tabella kernel viva (nessuna nuova tabella resta fuori)', async () => {

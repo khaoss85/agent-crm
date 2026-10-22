@@ -26,7 +26,7 @@ import {
  *   close: () => void,
  *   transaction: <T>(fn: () => T) => T,
  *   transactionAsync: <T>(fn: () => Promise<T>) => Promise<T>,
- *   dropTables: (tables: string[]) => string[]
+ *   dropTables: (tables: string[], options?: { removeMigrations?: string[] }) => string[]
  * }} AccordoDatabase
  */
 
@@ -869,14 +869,20 @@ export function createDatabase(options = {}) {
    * protected kernel set before calling — inside this handle's own
    * transaction, so a failed drop leaves every table standing.
    *
+   * `options.removeMigrations` forgets the named module-migration ledger
+   * rows in the SAME transaction as the drops: reinstalling the same bundle
+   * version re-applies its CREATE instead of skipping it on a stale checksum
+   * and booting with the service registered but the table missing.
+   *
    * Raw driver access never leaves this closure: callers pass table names,
    * never the driver (Spine v2 M2 raw boundary). Names are strict SQLite
    * identifiers; anything else is refused, never quoted around.
    *
    * @param {unknown} tables
+   * @param {{ removeMigrations?: unknown }} [options]
    * @returns {string[]}
    */
-  const dropTables = (tables) => {
+  const dropTables = (tables, options = {}) => {
     const names = Array.isArray(tables) ? [...tables] : [];
     for (const name of names) {
       if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
@@ -885,9 +891,20 @@ export function createDatabase(options = {}) {
         );
       }
     }
+    const migrations = Array.isArray(options?.removeMigrations) ? [...options.removeMigrations] : [];
+    for (const name of migrations) {
+      if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        throw new ValidationError(
+          `Refusing to forget a module migration with a non-identifier name: ${JSON.stringify(name)}`,
+        );
+      }
+    }
     return transaction(() => {
       for (const name of names) {
         raw.exec(`DROP TABLE IF EXISTS "${name}"`);
+      }
+      for (const name of migrations) {
+        raw.prepare('DELETE FROM module_migrations WHERE name = ?').run(name);
       }
       return names;
     });

@@ -16,7 +16,7 @@
 // simulated.
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ConflictError, ValidationError } from '../../core/src/errors.js';
@@ -320,6 +320,24 @@ export function planBundleCreate(input) {
  * @param {ReturnType<typeof planBundleCreate>} plan
  */
 export function applyBundleCreate(plan) {
+  // Atomic as documented ("one apply, one rollback"): NOTHING is written
+  // unless every target is free. The factory apply below refuses its own
+  // collisions, but it used to run BEFORE this second phase — a collision
+  // here (an interrupted apply, a stray test file) left the factory files
+  // behind without a bundle.json: a half-bundle whose stale
+  // module.state.json blocks a retry ("create a new bundle version instead
+  // of regenerating") and whose orphan module name blocks other bundles via
+  // scanBundleModules. So collisions fail fast here, before any write, and
+  // the per-file check below stays as the TOCTOU guard.
+  const secondPhaseCollisions = plan.files
+    .filter((file) => existsSync(resolve(plan.rootDir, file.path)))
+    .map((file) => file.path);
+  if (secondPhaseCollisions.length > 0) {
+    throw new ConflictError(
+      `Bundle files already exist for ${plan.bundle}@${plan.version}; refusing to overwrite`,
+      { collisions: secondPhaseCollisions },
+    );
+  }
   const applied = applyModulePlan(plan.modulePlan);
   /** @type {string[]} */
   const createdPaths = [];
@@ -340,6 +358,15 @@ export function applyBundleCreate(plan) {
     }
   } catch (error) {
     for (const created of createdPaths) rmSync(created, { force: true });
+    // Roll the first phase back too: remove every file the factory apply
+    // wrote, then prune directories left empty (deepest first, one bare
+    // rmdir each — a directory that still holds anything, such as the
+    // colliding file, is left alone, never removed recursively).
+    for (const file of applied.files) rmSync(resolve(plan.rootDir, file.path), { force: true });
+    pruneEmptyAncestors(
+      applied.files.map((file) => resolve(plan.rootDir, file.path)),
+      resolve(plan.rootDir, plan.dir),
+    );
     throw error;
   }
   return {
@@ -354,6 +381,35 @@ export function applyBundleCreate(plan) {
       ...plan.files.map(({ content: _content, ...file }) => file),
     ],
   };
+}
+
+/**
+ * Remove directories left empty by a rolled-back apply: every ancestor of a
+ * removed file up to (and including) `stopDir`, deepest first, one bare
+ * `rmdirSync` each. A directory that still holds anything — the colliding
+ * file, a sibling version — fails the rmdir and is left alone, so pruning
+ * never deletes content this apply did not create.
+ *
+ * @param {string[]} removedFiles @param {string} stopDir
+ */
+function pruneEmptyAncestors(removedFiles, stopDir) {
+  /** @type {Set<string>} */
+  const dirs = new Set();
+  for (const file of removedFiles) {
+    let dir = dirname(file);
+    while (dir.length >= stopDir.length && (dir === stopDir || dir.startsWith(stopDir + sep))) {
+      dirs.add(dir);
+      if (dir === stopDir) break;
+      dir = dirname(dir);
+    }
+  }
+  for (const dir of [...dirs].sort((a, b) => b.length - a.length)) {
+    try {
+      rmdirSync(dir);
+    } catch {
+      // Still holds something that is not ours: leave it alone.
+    }
+  }
 }
 
 /**
@@ -556,9 +612,10 @@ export async function installBundle(input) {
 /**
  * Uninstall a bundle: drop ONLY its own tables (every one named in its
  * bundle.json, each re-checked against the protected set — a table that
- * became kernel-owned since install is refused, never dropped), then remove
- * the registry entry. Kernel data is never touched: the lifecycle test
- * proves it on real rows.
+ * became kernel-owned since install is refused, never dropped) plus its own
+ * module_migrations ledger rows (same transaction, so a reinstall
+ * re-applies the CREATE), then remove the registry entry. Kernel data is
+ * never touched: the lifecycle test proves it on real rows.
  *
  * @param {{name: string, version: string, rootDir?: string, database?: any}} input
  */
@@ -590,7 +647,23 @@ export async function uninstallBundle(input) {
       }
       tables.push(module.table);
     }
-    dropped.push(...handle.dropTables(tables));
+    // The bundle's ledger rows die with its tables, in the same transaction:
+    // reinstalling the same version re-applies the CREATE instead of
+    // skipping it on a stale checksum and booting with a missing table.
+    // Names come from the manifest plus the live entries (evolutions the
+    // framework added after the bundle shipped); a bundle whose code no
+    // longer loads still uninstalls by manifest names alone.
+    /** @type {Set<string>} */
+    const migrations = new Set(bundle.modules.map((module) => module.migration));
+    try {
+      const entries = await createBundleEntries({ rootDir, bundles: [{ name, version }] });
+      for (const entry of entries) {
+        for (const migration of entry.migrations) migrations.add(migration.name);
+      }
+    } catch {
+      // Uninstall stays possible for a broken bundle: manifest names apply.
+    }
+    dropped.push(...handle.dropTables(tables, { removeMigrations: [...migrations] }));
   }
   const next = writeBundleRegistry(rootDir, {
     installed: registry.installed.filter((entry) => !(entry.name === name && entry.version === version)),
