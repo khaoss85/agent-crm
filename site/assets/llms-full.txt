@@ -299,6 +299,7 @@ The remaining documents, one line each in `llms.txt` if you need to know what th
 - [docs/ADMIN.md]({{brand.repository}}/blob/main/docs/ADMIN.md)
 - [docs/ADMIN_SMOKE.md]({{brand.repository}}/blob/main/docs/ADMIN_SMOKE.md)
 - [docs/API.md]({{brand.repository}}/blob/main/docs/API.md)
+- [docs/BUNDLES.md]({{brand.repository}}/blob/main/docs/BUNDLES.md)
 - [docs/CODER_TOOLING_ROADMAP.md]({{brand.repository}}/blob/main/docs/CODER_TOOLING_ROADMAP.md)
 - [docs/COMMERCIAL_OPERATIONS.md]({{brand.repository}}/blob/main/docs/COMMERCIAL_OPERATIONS.md)
 - [docs/CONTRACT_ACTIVATION.md]({{brand.repository}}/blob/main/docs/CONTRACT_ACTIVATION.md)
