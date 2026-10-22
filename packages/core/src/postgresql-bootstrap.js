@@ -47,7 +47,7 @@ function refuse(code, message, details = {}) {
  * ({code, name}, never its message, which can carry host, user or URL), as
  * postgresql-storage does for mapped errors (#321). Without it a failed
  * migration in a sealed space prints STORAGE_UNAVAILABLE and nothing else
- * (backlog:112ff66d, presti-group 2026-10-22: step=compose causes=none).
+ * (backlog:112ff66d, 2026-10-22: step=compose causes=none).
  * @param {unknown} error
  */
 function startupStorageFailure(error) {
