@@ -365,7 +365,7 @@ export function createCommercialDomain(options = {}) {
           { name: 'documentRef', type: 'string', required: false, hint: 'Opaque document reference, e.g. the file name (AI source).' },
           { name: 'currency', type: 'string', required: true, hint: 'Uppercase three-letter currency code for every draft.' },
           { name: 'priceBookId', type: 'string', required: false, hint: 'Manual price book id; omitted finds or creates the manual book of the currency at confirm time.' },
-          { name: 'spaceId', type: 'string', required: false, hint: 'The Accordo space slug (AI source: the extraction is audited for this space).' },
+          { name: 'spaceId', type: 'string', required: false, hint: 'The Accordo space slug (required for the AI source: the extraction is audited for this space).' },
         ],
         create(runtime) {
           const imports = importFor(runtime, config, llmCapability);

@@ -48,7 +48,9 @@ import {
   createLlmPackage,
 } from '../packages/llm/src/index.js';
 import {
+  MAX_DOCUMENT_CHARS,
   PRODUCT_IMPORT_AI_UNAVAILABLE,
+  PRODUCT_IMPORT_DOCUMENT_TOO_LARGE,
   extractProductDrafts,
   normalizeManualRows,
 } from '../packages/commercial/src/product-import.js';
@@ -365,4 +367,88 @@ test('with the handover but no key the AI import stays off: the dry-run never be
     'the dry-run without a key refuses with the AI-off code',
   );
   assert.equal((await harness.modules.get('product-import').service.listWhere({})).length, 0, 'the dry-run stores nothing');
+});
+
+test('oversize documents refuse instead of silently dropping their tail', async () => {
+  const big = `Listino: ${'YOGA-10 '.repeat(9000)}`;
+  assert.ok(big.length > MAX_DOCUMENT_CHARS, 'the fixture really exceeds the bound');
+  assert.equal(
+    await codeOf(() => extractProductDrafts({ documentText: big, complete: async () => validAnswer([]) })),
+    PRODUCT_IMPORT_DOCUMENT_TOO_LARGE,
+    'the oversize document refuses with its named code',
+  );
+});
+
+test('an oversize AI import stores nothing', async (t) => {
+  const app = await bootApp(t, importProject(t));
+  const big = `Listino: ${'YOGA-10 '.repeat(9000)}`;
+  assert.equal(
+    await codeOf(() => app.startProductImport({
+      source: 'ai', documentText: big, documentRef: 'listino.pdf', currency: 'EUR', spaceId: 'prova',
+    }, ACTOR)),
+    PRODUCT_IMPORT_DOCUMENT_TOO_LARGE,
+    'the oversize import refuses before anything is stored',
+  );
+  assert.equal((await app.modules.get('product-import').service.listWhere({})).length, 0, 'the refused import stores nothing');
+});
+
+test('the AI source requires a space slug at the commercial boundary', async (t) => {
+  const app = await bootApp(t, importProject(t));
+  const base = { source: 'ai', documentText: 'Listino: YOGA-10 ...', documentRef: 'listino.pdf', currency: 'EUR' };
+  for (const spaceId of [undefined, '', 'Prova', 'not a slug!', 'x'.repeat(64)]) {
+    const input = spaceId === undefined ? { ...base } : { ...base, spaceId };
+    let field = null;
+    let code = null;
+    try {
+      await app.startProductImport(input, ACTOR);
+    } catch (error) {
+      code = error && typeof error === 'object' ? error.code : null;
+      const details = error && typeof error === 'object' ? error.details : null;
+      field = details && typeof details === 'object' ? details.field : null;
+    }
+    assert.equal(code, 'VALIDATION_ERROR', `spaceId ${JSON.stringify(spaceId)} refuses`);
+    assert.equal(field, 'spaceId', `spaceId ${JSON.stringify(spaceId)} names the field`);
+  }
+  assert.equal((await app.modules.get('product-import').service.listWhere({})).length, 0, 'the refused AI imports store nothing');
+});
+
+test('concurrent confirms write exactly one product', async (t) => {
+  const app = await bootApp(t, importProject(t));
+  const started = await app.startProductImport({ source: 'manual', rows: MANUAL_ROWS.slice(0, 1), currency: 'EUR' }, ACTOR);
+  const [only] = started.drafts;
+  const args = { importId: started.import.id, rowId: only.id };
+  // The per-row slot serializes the two confirms on one connection: the
+  // first wins, the second replays it. Across connections the conditional
+  // claim below refuses the loser with PRODUCT_IMPORT_ROW_DECIDED instead
+  // of writing a second product.
+  const outcomes = await Promise.all([
+    app.confirmProductImportRow(args, ACTOR),
+    app.confirmProductImportRow(args, ACTOR),
+  ]);
+  const fresh = outcomes.filter((result) => result.replay === false);
+  const replays = outcomes.filter((result) => result.replay === true);
+  assert.equal(fresh.length, 1, 'one confirm writes the product');
+  assert.equal(replays.length, 1, 'the racing confirm replays it');
+  assert.equal(replays[0].product.id, fresh[0].product.id, 'same product, no duplicate');
+  assert.equal((await app.listCatalogProducts({})).products.length, 1, 'exactly one product for one row');
+});
+
+test('a refused confirm writes nothing and leaves the row pending', async (t) => {
+  const app = await bootApp(t, importProject(t));
+  const other = await app.createManualProduct({
+    sku: 'USD-1', name: 'Prodotto in dollari', currency: 'USD',
+    components: [{ key: 'price', label: 'Prezzo', chargeType: 'one_time', pricingModel: 'flat_fee', flatAmountCents: 100 }],
+  }, ACTOR);
+  const started = await app.startProductImport({
+    source: 'manual', rows: MANUAL_ROWS.slice(0, 1), currency: 'EUR', priceBookId: other.priceBook.id,
+  }, ACTOR);
+  const [only] = started.drafts;
+  assert.equal(
+    await codeOf(() => app.confirmProductImportRow({ importId: started.import.id, rowId: only.id }, ACTOR)),
+    'CURRENCY_MISMATCH',
+    'the product write fails inside the confirm transaction',
+  );
+  assert.equal((await app.listCatalogProducts({})).products.length, 1, 'no orphan product: only the dollar one exists');
+  const read = await app.readProductImport({ importId: started.import.id });
+  assert.deepEqual(read.counts, { pending: 1, confirmed: 0, rejected: 0 }, 'the row stays pending for a retry');
 });

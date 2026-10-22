@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import {
   AppError,
   ValidationError,
+  nowIso,
   requireActor,
   requireAmount,
 } from '../../core/index.js';
@@ -35,12 +36,21 @@ import { createManualCatalog } from './manual-catalog.js';
  */
 
 export const PRODUCT_IMPORT_AI_UNAVAILABLE = 'PRODUCT_IMPORT_AI_UNAVAILABLE';
+/** Oversize documents refuse instead of silently dropping their tail. */
+export const PRODUCT_IMPORT_DOCUMENT_TOO_LARGE = 'PRODUCT_IMPORT_DOCUMENT_TOO_LARGE';
 /** The llm-complete purpose the extraction spends under (audited there). */
 export const PRODUCT_IMPORT_PURPOSE = 'suggest';
 /** One import carries at most this many draft rows: the operator checks each one. */
 export const MAX_IMPORT_ROWS = 200;
 /** The document text sent to the model is bounded like the suggest excerpts. */
 export const MAX_DOCUMENT_CHARS = 64_000;
+/**
+ * Space slug rule, mirrored from the `llm-complete@1` edge (`assertSpaceId`
+ * in `packages/llm/src/operations.js`): the commercial boundary validates
+ * the same shape before any model call, so the handover never receives a
+ * slug it would refuse.
+ */
+const SPACE_ID_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
 /** An opaque document reference (file name, upload id): never provider text. */
 export const MAX_DOCUMENT_REF = 200;
 const MAX_TEXT = 500;
@@ -174,12 +184,35 @@ function extractJsonArray(text) {
  *   maxDrafts?: number, maxTokens?: number
  * }} input
  */
+/**
+ * The Accordo space slug the AI extraction is audited for — required for
+ * source `ai` at the commercial boundary (like the appointments phrase
+ * parser), mirroring the `llm-complete@1` edge rule so a missing or
+ * malformed slug refuses here with the field named, before any model call
+ * and before anything is stored.
+ * @param {unknown} value
+ */
+export function requireImportSpaceId(value) {
+  if (typeof value !== 'string' || value.length > 63 || !SPACE_ID_RE.test(value)) {
+    throw new ValidationError('spaceId is required for the AI source: a lowercase space slug (letters, digits, hyphens, at most 63 characters)', { field: 'spaceId' });
+  }
+  return value;
+}
+
 export async function extractProductDrafts({ documentText, complete, maxDrafts = MAX_IMPORT_ROWS, maxTokens = 2048 }) {
   if (typeof documentText !== 'string' || documentText.trim() === '') {
     throw new ValidationError('documentText must be non-empty text extracted from the PDF, spreadsheet or photo', { field: 'documentText' });
   }
-  const text = documentText.length > MAX_DOCUMENT_CHARS ? documentText.slice(0, MAX_DOCUMENT_CHARS) : documentText;
-  const truncatedDocument = text !== documentText;
+  if (documentText.length > MAX_DOCUMENT_CHARS) {
+    throw new AppError(
+      `documentText carries at most ${MAX_DOCUMENT_CHARS} characters: split the document and import it in parts, so no product is silently dropped`,
+      { code: PRODUCT_IMPORT_DOCUMENT_TOO_LARGE, status: 413 },
+    );
+  }
+  const text = documentText;
+  // Oversize documents refuse above, so every stored import is complete:
+  // the flag stays in the response shape and is always false.
+  const truncatedDocument = false;
   if (!Number.isSafeInteger(maxDrafts) || maxDrafts < 1 || maxDrafts > MAX_IMPORT_ROWS) {
     throw new ValidationError(`maxDrafts must be an integer between 1 and ${MAX_IMPORT_ROWS}`, { field: 'maxDrafts' });
   }
@@ -255,6 +288,130 @@ export async function extractProductDrafts({ documentText, complete, maxDrafts =
     refused: Object.freeze(refused),
     truncatedDocument,
   });
+}
+
+/**
+ * Conditionally claim one pending import row for the product just written:
+ * the committing write is gated where it executes (`status` still
+ * `pending`) — the llm spend-claim idiom (`affectedRows` verdict, audit
+ * mirror, managed re-read, one event). Zero rows means a concurrent
+ * confirm won or the row was decided meanwhile: the caller rolls back
+ * (its product with it) and reports PRODUCT_IMPORT_ROW_DECIDED.
+ * @param {any} rows the product-import-row managed service
+ * @param {string} rowId @param {string} productId @param {{actor: unknown}} context
+ */
+async function claimConfirmedRow(rows, rowId, productId, context) {
+  const manifest = rows?.manifest;
+  const fields = Array.isArray(manifest?.fields) ? manifest.fields : null;
+  const columnOf = (name) => fields?.find((field) => field?.name === name)?.column ?? null;
+  const columns = { status: columnOf('status'), productId: columnOf('productId') };
+  const syncApi = rows?.database?.storage?.sync;
+  const syncMutation = syncApi
+    && typeof syncApi.execute === 'function'
+    && typeof syncApi.savepoint === 'function'
+    && typeof rows.mutationSync === 'function';
+  const asyncMutation = typeof rows.mutationAsync === 'function';
+  if (!manifest || typeof manifest.table !== 'string' || typeof manifest.name !== 'string'
+    || Object.values(columns).some((column) => typeof column !== 'string' || column === '')
+    || typeof rows.get !== 'function'
+    || typeof rows.audit?.record !== 'function'
+    || typeof rows.events?.emit !== 'function'
+    || (!syncMutation && !asyncMutation)) {
+    throw new AppError('product-import storage cannot prove an atomic row claim', {
+      code: 'COMMERCIAL_STORAGE_INVALID', status: 500,
+    });
+  }
+  const statement = {
+    kind: 'update',
+    table: manifest.table,
+    values: [
+      { column: columns.status, value: 'confirmed' },
+      { column: columns.productId, value: productId },
+      { column: 'updated_at', value: nowIso() },
+    ],
+    where: [
+      { column: 'id', op: 'eq', value: rowId },
+      { column: columns.status, op: 'eq', value: 'pending' },
+    ],
+  };
+  const auditEvent = {
+    actor: context.actor, entityType: manifest.name, entityId: rowId,
+    data: { status: 'confirmed', productId }, action: `${manifest.name}.updated`,
+  };
+  const decided = () => {
+    throw new AppError(`row "${rowId}" is already decided (only pending rows confirm)`, {
+      code: 'PRODUCT_IMPORT_ROW_DECIDED', status: 409,
+    });
+  };
+  /** Map a physical row read inside the claim back to the managed shape. */
+  const mapClaimedRow = (raw) => {
+    const entity = { id: raw.id };
+    for (const field of manifest.fields ?? []) {
+      const value = raw[field.column ?? field.name];
+      entity[field.name] = field.type === 'boolean' ? (value === null ? null : value === 1) : value;
+    }
+    entity.createdAt = raw.created_at;
+    entity.updatedAt = raw.updated_at;
+    return entity;
+  };
+  let updated;
+  if (syncMutation) {
+    updated = rows.mutationSync(() => {
+      // The committing write is gated where it executes: a confirm that
+      // fired after the fresh read above still lands zero rows.
+      const claimed = syncApi.execute(statement);
+      if (Number(claimed?.affectedRows ?? 0) !== 1) decided();
+      rows.audit.record(auditEvent, syncApi);
+      return rows.get(rowId);
+    });
+  } else {
+    updated = await rows.mutationAsync(async (tx) => {
+      const claimed = await tx.execute(statement);
+      if (Number(claimed?.affectedRows ?? 0) !== 1) decided();
+      await rows.audit.record(auditEvent, tx);
+      const raw = await tx.maybeOne({
+        kind: 'select', table: manifest.table, columns: '*',
+        where: [{ column: 'id', op: 'eq', value: rowId }],
+      });
+      if (!raw) {
+        throw new AppError('product-import row vanished mid-claim: retry the confirmation', {
+          code: 'COMMERCIAL_STORAGE_INVALID', status: 503,
+        });
+      }
+      return mapClaimedRow(raw);
+    });
+  }
+  await rows.events.emit(`${manifest.name}.updated`, updated);
+  return updated;
+}
+
+/**
+ * In-process FIFO slots, one per import row: two decisions racing on one
+ * connection would otherwise collide on the single outer transaction the
+ * store allows (`NESTED_TRANSACTION`), instead of one replaying the other.
+ * Acquisition attaches synchronously — no `await` before the slot is
+ * chained — so two callers racing in the same tick still order; entries
+ * leave when their slot drains, and tails never reject, so a refused
+ * decision never wedges the row. Across connections the storage
+ * transaction below serializes writers on real storage. The same idiom as
+ * the payments write chain and the interactions per-thread chain.
+ */
+const confirmSlots = new Map();
+/** @param {string} rowId @param {() => Promise<any>} critical */
+async function withConfirmSlot(rowId, critical) {
+  const previous = confirmSlots.get(rowId) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise((resolve) => { release = resolve; });
+  const tail = previous.then(() => current, () => current);
+  confirmSlots.set(rowId, tail);
+  // Synchronous until here: two callers racing in the same tick still order.
+  await previous;
+  try {
+    return await critical();
+  } finally {
+    if (confirmSlots.get(rowId) === tail) confirmSlots.delete(rowId);
+    release();
+  }
 }
 
 /**
@@ -347,6 +504,10 @@ export function createProductImport({ database, events, modules, moduleNames = {
       if (source === 'manual') {
         drafts = normalizeManualRows(record.rows);
       } else {
+        // The extraction spends under this space (audited there): a missing
+        // or malformed slug refuses here, before any model call and before
+        // anything is stored — the handover never sees it.
+        requireImportSpaceId(record.spaceId);
         const complete = hooks.complete ?? null;
         const extracted = await extractProductDrafts({
           documentText: record.documentText,
@@ -406,7 +567,18 @@ export function createProductImport({ database, events, modules, moduleNames = {
       });
     },
 
-    /** Confirm one pending row: writes exactly one manual product, then marks the row. */
+    /**
+     * Confirm one pending row: writes exactly one manual product, then marks
+     * the row. Confirming the same row twice replays the first product.
+     *
+     * One transaction does everything: the product rows and the conditional
+     * row claim commit together, so a crash before the commit leaves no
+     * orphan product and a retry creates exactly one. The committing row
+     * write is gated where it executes (`status` still `pending`), so two
+     * concurrent confirms cannot both win: the loser lands zero rows and
+     * receives PRODUCT_IMPORT_ROW_DECIDED, and its uncommitted product
+     * rolls back with its transaction.
+     */
     async confirmRow(input = {}, actor) {
       const record = input && typeof input === 'object' ? input : {};
       const importId = typeof record.importId === 'string' && record.importId !== '' ? record.importId : null;
@@ -415,44 +587,48 @@ export function createProductImport({ database, events, modules, moduleNames = {
       if (!rowId) throw new ValidationError('rowId is required', { field: 'rowId' });
       const who = requireActor(actor);
       const rows = service(names.productImportRow);
-      const row = await rows.get(rowId);
-      if (row.importId !== importId) {
-        throw new AppError(`row "${rowId}" does not belong to import "${importId}"`, {
-          code: 'PRODUCT_IMPORT_ROW_MISMATCH', status: 404,
-        });
-      }
-      if (row.status === 'confirmed') {
+      return withConfirmSlot(rowId, () => runImport('product-import.confirm', who, async (context) => {
+        const row = await rows.get(rowId);
+        if (row.importId !== importId) {
+          throw new AppError(`row "${rowId}" does not belong to import "${importId}"`, {
+            code: 'PRODUCT_IMPORT_ROW_MISMATCH', status: 404,
+          });
+        }
+        if (row.status === 'confirmed') {
+          const current = await service(names.productImport).get(importId);
+          return Object.freeze({ import: importView(current), row: rowView(row), product: { id: row.productId }, replay: true });
+        }
+        if (row.status !== 'pending') {
+          throw new AppError(`row "${rowId}" is already decided (${row.status}): only pending rows confirm`, {
+            code: 'PRODUCT_IMPORT_ROW_DECIDED', status: 409,
+          });
+        }
         const current = await service(names.productImport).get(importId);
-        return Object.freeze({ import: importView(current), row: rowView(row), product: { id: row.productId }, replay: true });
-      }
-      if (row.status !== 'pending') {
-        throw new AppError(`row "${rowId}" is already decided (${row.status}): only pending rows confirm`, {
-          code: 'PRODUCT_IMPORT_ROW_DECIDED', status: 409,
-        });
-      }
-      const current = await service(names.productImport).get(importId);
-      if (current.status !== 'open') {
-        throw new AppError(`import "${importId}" is ${current.status}: only open imports confirm rows`, {
-          code: 'PRODUCT_IMPORT_CLOSED', status: 409,
-        });
-      }
-      const created = await manual.createProduct({
-        sku: row.sku,
-        name: row.name,
-        description: row.description ?? undefined,
-        category: row.category ?? undefined,
-        currency: row.currency,
-        priceBookId: current.priceBookId ?? undefined,
-        components: [{
-          key: 'import-price',
-          label: row.name,
-          chargeType: 'one_time',
-          pricingModel: 'flat_fee',
-          flatAmountCents: row.amountCents,
-        }],
-      }, who);
-      return runImport('product-import.confirm', who, async (context) => {
-        const updated = await rows.applyManaged(rowId, { status: 'confirmed', productId: created.product.id }, context);
+        if (current.status !== 'open') {
+          throw new AppError(`import "${importId}" is ${current.status}: only open imports confirm rows`, {
+            code: 'PRODUCT_IMPORT_CLOSED', status: 409,
+          });
+        }
+        // The caller-envelope variant joins this transaction (and its event
+        // buffer): never `manual.createProduct` here — its own envelope
+        // refuses to nest, and its own transaction would commit the product
+        // before the row is claimed.
+        const created = await manual.createProductManaged({
+          sku: row.sku,
+          name: row.name,
+          description: row.description ?? undefined,
+          category: row.category ?? undefined,
+          currency: row.currency,
+          priceBookId: current.priceBookId ?? undefined,
+          components: [{
+            key: 'import-price',
+            label: row.name,
+            chargeType: 'one_time',
+            pricingModel: 'flat_fee',
+            flatAmountCents: row.amountCents,
+          }],
+        }, context);
+        const updated = await claimConfirmedRow(rows, rowId, created.product.id, context);
         const status = await closeWhenDecided(importId, context);
         const latest = status === 'closed'
           ? await service(names.productImport).get(importId)
@@ -463,7 +639,7 @@ export function createProductImport({ database, events, modules, moduleNames = {
           product: Object.freeze({ ...created.product }),
           replay: false,
         });
-      });
+      }));
     },
 
     /** Reject one pending row: no product is written, the decision is stored. */
@@ -473,7 +649,9 @@ export function createProductImport({ database, events, modules, moduleNames = {
       const rowId = typeof record.rowId === 'string' && record.rowId !== '' ? record.rowId : null;
       if (!importId) throw new ValidationError('importId is required', { field: 'importId' });
       if (!rowId) throw new ValidationError('rowId is required', { field: 'rowId' });
-      return runImport('product-import.reject', actor, async (context) => {
+      // The same slot as confirm: a reject racing a confirm on one row
+      // decides after it, never inside it.
+      return withConfirmSlot(rowId, () => runImport('product-import.reject', actor, async (context) => {
         const rows = service(names.productImportRow);
         const row = await rows.get(rowId);
         if (row.importId !== importId) {
@@ -498,7 +676,7 @@ export function createProductImport({ database, events, modules, moduleNames = {
           import: importView({ ...current, status }),
           row: rowView(updated),
         });
-      });
+      }));
     },
 
     /** Read one import with its rows in order and the decided counts. */
