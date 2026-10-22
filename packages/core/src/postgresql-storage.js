@@ -65,17 +65,25 @@ async function loadPgDriver() {
  * }} TxBind
  */
 
-function publicUnavailable() {
+function publicUnavailable(cause) {
   return new AppError('PostgreSQL storage is unavailable', {
     code: 'STORAGE_UNAVAILABLE',
     status: 503,
+    // The message stays bounded — no driver text, host, user or URL — but
+    // the original error survives as `cause`, so a diagnostic layer can walk
+    // the chain and print safe tokens (code/name per level) from it.
+    // Without this, a mapped failure (backlog:112ff66d) prints
+    // STORAGE_UNAVAILABLE with no SQLSTATE and nothing to diagnose.
+    cause,
   });
 }
 
-function publicTimeout(kind) {
+function publicTimeout(kind, cause) {
   return new AppError(`PostgreSQL ${kind} deadline exceeded`, {
     code: 'STORAGE_TIMEOUT',
     status: 504,
+    // Same rule as above: bounded message, preserved chain.
+    cause,
   });
 }
 
@@ -125,12 +133,12 @@ function sanitizePgError(error) {
       transient: true, reason: 'deadlock', dialect: 'postgresql',
     });
   }
-  if (code === '57014' || code === '55P03') return publicTimeout('statement');
-  if (code === '53300' || code === '53400' || code === '57P03') return publicUnavailable();
+  if (code === '57014' || code === '55P03') return publicTimeout('statement', error);
+  if (code === '53300' || code === '53400' || code === '57P03') return publicUnavailable(error);
   if (code === '28P01' || code === '28000' || code === '3D000' || connectionLost(error)) {
-    return publicUnavailable();
+    return publicUnavailable(error);
   }
-  return new AppError('PostgreSQL storage failed', { code: 'STORAGE_UNAVAILABLE', status: 503 });
+  return new AppError('PostgreSQL storage failed', { code: 'STORAGE_UNAVAILABLE', status: 503, cause: error });
 }
 
 function withDeadline(promise, ms, kind) {
