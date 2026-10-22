@@ -177,7 +177,16 @@ export function createReportingView(deps) {
     let loadError = null;
     try {
       const body = await client.request(`/api/modules/reporting/records?limit=${REPORTING_LIMIT}`);
-      if (body && Array.isArray(body.items)) rows = body.items;
+      if (body && Array.isArray(body.items)) {
+        rows = body.items;
+      } else {
+        // A 200 without an items array is a broken server/proxy, never a
+        // missing bundle: it gets the error state and a log line, never the
+        // "not composed" pointer (which would send the operator to create a
+        // bundle that already exists).
+        loadError = new Error('reporting records response has no items array');
+        log('reporting records request failed', { name: 'Error', status: 200, code: null });
+      }
     } catch (error) {
       // The server fails closed as 404 for a module that is not composed
       // (resolveGeneratedModule → NotFoundError): only that is the honest
@@ -250,6 +259,11 @@ export function createReportingView(deps) {
   }
 
   function renderNuovoModulo() {
+    // Invalidate any in-flight renderReporting (same discipline as the token
+    // check in renderReporting): without this, a slow reporting response
+    // resolving after this navigation repaints the mount with the Reporting
+    // panel over the Nuovo modulo screen.
+    renderToken += 1;
     clear();
     const panel = kicker('Moduli personalizzati', 'Nuovo modulo');
     panel.appendChild(el(doc, 'p', {

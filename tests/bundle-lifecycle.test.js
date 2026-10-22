@@ -87,12 +87,15 @@ test('bundle plan refuses kernel names, kernel tables and loose versions', () =>
 
 test('bundle ownership registry: one module and one table per bundle (every round in one table)', async (t) => {
   // NOT_GENERAL (backlog:8691acfc): the atomic-apply and ledger-forget cures
-  // of the previous round and the table-collision finding of this round share
-  // one root — bundle storage ownership enforced piecemeal. The single source
-  // of truth is scanBundleModules (name + table + owner), read once by
-  // planBundleCreate for both refusals. This table holds every case of the
-  // earlier rounds and this one; a new ownership case extends this table,
-  // never a new ad-hoc check.
+  // of the previous round, the bundle-vs-bundle table finding of this round
+  // and the uninstall-foreign-table finding share one root — bundle storage
+  // ownership enforced piecemeal. The single source of truth is
+  // findBundleTableOwner over scanBundleModules (table + owner), called by
+  // planBundleCreate (plan side) and by uninstallBundle (drop side, plus the
+  // kernel generated-module tables). This table holds every plan-side case
+  // of the earlier rounds and this one; the drop-side cases live in the
+  // 'uninstallBundle drops only exclusively-owned tables' test below. A new
+  // ownership case extends one of these tables, never a new ad-hoc check.
   const root = mkdtempSync(join(tmpdir(), 'accordo-bundle-ownership-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const { applyBundleCreate } = await import('../packages/cli/src/bundle-manager.js');
@@ -137,6 +140,97 @@ test('bundle ownership registry: one module and one table per bundle (every roun
       );
     }
   }
+});
+
+test('uninstallBundle drops only exclusively-owned tables (same ownership table, drop side)', async (t) => {
+  // P2 bundle-manager.js:653: uninstallBundle trusted any table named in a
+  // hand-edited bundle.json after only the protected-set check, so it could
+  // drop kernel-generated or another bundle's live tables. Drop-side refusal
+  // shares the plan-side source of truth (findBundleTableOwner) plus the
+  // kernel generated-module tables — one root cause, cured once. A refusal
+  // fails closed: the whole uninstall throws, nothing drops, the registry
+  // entry stays.
+  const root = mkdtempSync(join(tmpdir(), 'accordo-bundle-uninstall-own-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { applyBundleCreate, planBundleCreate: plan, uninstallBundle } =
+    await import('../packages/cli/src/bundle-manager.js');
+
+  const sonde = { ...probeManifest, name: 'sonde', table: 'sonde_rows' };
+  const sondePlan = plan({ manifest: sonde, name: 'sonde', version: '0.0.1', createdBy: 'ai', rootDir: root });
+  applyBundleCreate(sondePlan);
+  const altraPlan = plan({
+    manifest: { ...probeManifest, name: 'altra', table: 'altra_rows' },
+    name: 'altra',
+    version: '0.0.1',
+    createdBy: 'ai',
+    rootDir: root,
+  });
+  applyBundleCreate(altraPlan);
+  // A kernel generated module on this rootDir, like the appointment module
+  // the e2e generates: its table is kernel-owned even though no protected
+  // set names it.
+  const kernelDir = join(root, 'packages', 'modules', 'prova');
+  mkdirSync(kernelDir, { recursive: true });
+  writeFileSync(
+    join(kernelDir, 'module.manifest.json'),
+    JSON.stringify({ ...probeManifest, name: 'prova', table: 'prova_rows' }, null, 2),
+    'utf8',
+  );
+
+  const manifestPath = join(root, 'bundles', 'sonde', '0.0.1', 'bundle.json');
+  const pristine = readFileSync(manifestPath, 'utf8');
+  const ownMigration = JSON.parse(pristine).modules[0].migration;
+
+  /** @type {Array<[string, string, RegExp]>} */
+  const refusals = [
+    // A table that became kernel-owned since install is refused, never dropped.
+    ['protected kernel table', 'contacts', /kernel-owned/],
+    // Another bundle's live table: a copied-in bundle.json naming it
+    // refuses the whole uninstall.
+    ["another bundle's live table", 'altra_rows', /owned by bundle altra@0\.0\.1/],
+    // Case is not an escape hatch: ownership matching is case-insensitive.
+    ["another bundle's table in another case", 'ALTRA_ROWS', /owned by bundle altra@0\.0\.1/],
+    // A kernel generated-module table: hand-edited or not, kernel data is
+    // never dropped by an uninstall that claims to touch only its own tables.
+    ['kernel generated-module table', 'prova_rows', /kernel-owned/],
+  ];
+  for (const [label, table, expected] of refusals) {
+    const tampered = JSON.parse(pristine);
+    tampered.modules.push({ name: 'grab', table, migration: 'pg_bootstrap_grab' });
+    writeFileSync(manifestPath, `${JSON.stringify(tampered, null, 2)}\n`, 'utf8');
+    /** @type {Array<[string[], any]>} */
+    const drops = [];
+    const fakeDb = { dropTables: (tables, options) => { drops.push([tables, options]); return [...tables]; } };
+    try {
+      await assert.rejects(
+        uninstallBundle({ name: 'sonde', version: '0.0.1', rootDir: root, database: fakeDb }),
+        expected,
+        label,
+      );
+      assert.deepEqual(drops, [], `${label}: no drop runs on refusal`);
+      assert.ok(!existsSync(join(root, 'bundles', 'registry.json')), `${label}: the registry entry stays on refusal`);
+    } finally {
+      writeFileSync(manifestPath, pristine, 'utf8');
+    }
+  }
+
+  // Control: the untampered bundle uninstalls its own table and nothing else.
+  /** @type {Array<[string[], any]>} */
+  const drops = [];
+  const fakeDb = { dropTables: (tables, options) => { drops.push([tables, options]); return [...tables]; } };
+  const uninstalled = await uninstallBundle({ name: 'sonde', version: '0.0.1', rootDir: root, database: fakeDb });
+  assert.deepEqual(uninstalled.dropped, ['sonde_rows'], 'the bundle drops exactly its own table');
+  assert.equal(drops.length, 1, 'one drop call for the whole uninstall');
+  assert.deepEqual(drops[0][0], ['sonde_rows']);
+  assert.ok(
+    Array.isArray(drops[0][1]?.removeMigrations) && drops[0][1].removeMigrations.includes(ownMigration),
+    'the ledger forgets the manifest migration names with the tables',
+  );
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(root, 'bundles', 'registry.json'), 'utf8')),
+    { installed: [] },
+    'a refusal-free uninstall only removes its own registry entry',
+  );
 });
 
 test('verifyBundle boots the target tree kernel, never the CLI checkout', async (t) => {

@@ -165,6 +165,61 @@ test('a 404 stays the honest not-composed state with no error log', async () => 
   assert.deepEqual(logged, [], 'a 404 is expected setup state, not a logged error');
 });
 
+test('a 200 without an items array is a load error, never "not composed"', async () => {
+  // P2 admin-reporting.js:180: a successful 200 with missing or non-array
+  // items rendered as not-composed, sending the operator to create a bundle
+  // that already exists. Only a real array (even empty) renders rows.
+  for (const body of [{}, { items: null }, { items: 'x' }]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const logged = [];
+    const view = createReportingView({
+      doc,
+      mount,
+      client: { request: async () => body },
+      navigate: () => {},
+      log: (message, cause) => logged.push([message, cause]),
+    });
+    await view.renderReporting();
+    const text = [...mount.findAll('p'), ...mount.findAll('div')].map((node) => node.textContent).join(' ');
+    assert.match(text, /non disponibile/, `body ${JSON.stringify(body)}: the screen names the failure, got ${JSON.stringify(text)}`);
+    assert.doesNotMatch(text, /non composto/, `body ${JSON.stringify(body)}: a 200 without rows is never the not-composed state`);
+    assert.equal(logged.length, 1, `body ${JSON.stringify(body)}: the cause is logged once`);
+    assert.equal(logged[0][0], 'reporting records request failed');
+    assert.deepEqual(logged[0][1], { name: 'Error', status: 200, code: null });
+  }
+});
+
+test('renderNuovoModulo invalidates an in-flight renderReporting', async () => {
+  // P2 admin-reporting.js:252: renderNuovoModulo never invalidated an
+  // in-flight renderReporting, so a stale reporting response overwrote the
+  // nuovo-modulo view after navigation.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const view = createReportingView({
+    doc,
+    mount,
+    client: {
+      request: async () => {
+        await gate;
+        return { items: [{ metric: 'tardiva', period: '2026-10', value: 1 }] };
+      },
+    },
+    navigate: () => {},
+    onAskAi: () => {},
+  });
+  const pending = view.renderReporting();
+  view.renderNuovoModulo();
+  release();
+  await pending;
+  const headings = mount.findAll('h3').map((node) => node.textContent);
+  assert.ok(headings.includes('Crea con l’AI'), `the nuovo-modulo screen stays, got ${JSON.stringify(headings)}`);
+  const cells = mount.findAll('td').map((node) => node.textContent);
+  assert.ok(!cells.includes('tardiva'), 'the stale reporting response never paints over the nuovo-modulo screen');
+});
+
 test('a stale reporting response never overwrites the newer view', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

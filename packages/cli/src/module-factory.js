@@ -408,10 +408,14 @@ function readBundleModuleState(rootDir, bundleDir, moduleName) {
  * one fails loudly here instead of producing a registry that breaks app boot)
  * or handwritten (core modules; no manifest copy).
  *
+ * Exported (not duplicated in bundle-manager.js, MEM_ACC_REUSE): the bundle
+ * uninstall path reuses it to refuse kernel generated-module tables that a
+ * hand-edited bundle.json names.
+ *
  * @param {string} rootDir
  * @returns {Array<{dirName: string, kind: 'generated' | 'handwritten', manifest: import('../../core/src/module-manifest.js').NormalizedModuleManifest | null}>}
  */
-function scanExistingModules(rootDir) {
+export function scanExistingModules(rootDir) {
   const modulesDir = resolve(rootDir, 'packages', 'modules');
   /** @type {Array<{dirName: string, kind: 'generated' | 'handwritten', manifest: any}>} */
   const results = [];

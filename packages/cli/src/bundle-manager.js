@@ -25,7 +25,7 @@ import {
   validateModuleManifest,
 } from '../../core/src/module-manifest.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
-import { planModule, applyModulePlan } from './module-factory.js';
+import { planModule, applyModulePlan, scanExistingModules } from './module-factory.js';
 
 export const BUNDLE_FORMAT = 1;
 export const BUNDLE_MANIFEST_FILE = 'bundle.json';
@@ -167,6 +167,52 @@ export function scanBundleModules(rootDir) {
 }
 
 /**
+ * The single source of truth for bundle table ownership (NOT_GENERAL
+ * backlog:8691acfc): every bundle module on disk (table + owner), read from
+ * scanBundleModules. planBundleCreate refuses a table another bundle owns;
+ * uninstallBundle refuses to drop a table this bundle does not exclusively
+ * own. Both paths call this helper — a new ownership case extends the
+ * ownership table test in tests/bundle-lifecycle.test.js, never a new
+ * ad-hoc check.
+ *
+ * A new version of the SAME bundle reuses its tables (versions are
+ * immutable: 0.0.1 stays, 0.0.2 plans beside it), so the bundle's own name
+ * is excluded via `excludeBundleName`. Matching is case-insensitive, like
+ * the module-name check in planBundleCreate.
+ *
+ * @param {string} rootDir @param {string} table @param {string} [excludeBundleName]
+ * @returns {{bundleName: string, version: string, moduleName: string, table: string, dir: string} | null}
+ */
+export function findBundleTableOwner(rootDir, table, excludeBundleName) {
+  const wanted = table.toLowerCase();
+  for (const other of scanBundleModules(rootDir)) {
+    if (excludeBundleName !== undefined && other.bundleName === excludeBundleName) continue;
+    if (other.table.toLowerCase() === wanted) return other;
+  }
+  return null;
+}
+
+/**
+ * Kernel generated-module tables on this rootDir, lowercased: the tables of
+ * every generated module under `packages/modules` (read via the factory's
+ * own scan, never a copy of its directory walk). Handwritten kernel modules
+ * need no entry here: their tables are already in BUNDLE_PROTECTED_TABLES
+ * via CORE_RESERVED_TABLES. A missing `packages/modules` dir means no
+ * kernel tables (bare roots used by some unit tests).
+ *
+ * @param {string} rootDir
+ * @returns {Set<string>}
+ */
+export function kernelGeneratedTables(rootDir) {
+  /** @type {Set<string>} */
+  const tables = new Set();
+  for (const entry of scanExistingModules(rootDir)) {
+    if (entry.kind === 'generated' && entry.manifest) tables.add(entry.manifest.table.toLowerCase());
+  }
+  return tables;
+}
+
+/**
  * Read and validate `bundles/<name>/<version>/bundle.json`. The recorded
  * name/version must match the directory: a moved bundle is a new bundle,
  * never a silent rename.
@@ -249,13 +295,18 @@ export function planBundleCreate(input) {
     );
   }
   // One ownership registry for the "one module, one bundle / one table, one
-  // bundle" invariant: every bundle module on disk (name + table + owner),
-  // read once from scanBundleModules. Name and table conflicts share this
-  // source of truth — a new version of the SAME bundle reuses both (versions
-  // are immutable: 0.0.1 stays, 0.0.2 plans beside it), while a DIFFERENT
-  // bundle claiming either is a conflict. Two services on one physical table
-  // would silently mix rows (the second CREATE TABLE IF NOT EXISTS no-ops),
-  // so the table refusal matters as much as the name one.
+  // bundle" invariant: name conflicts are checked inline below, table
+  // conflicts go through findBundleTableOwner — the same helper the
+  // uninstall path uses for its exclusive-ownership check, so plan-time
+  // refusal and uninstall-time refusal share one source of truth
+  // (NOT_GENERAL backlog:8691acfc: the previous round's bundle-vs-bundle
+  // table finding and this round's uninstall-foreign-table finding are one
+  // root cause, cured once here). A new version of the SAME bundle reuses
+  // both (versions are immutable: 0.0.1 stays, 0.0.2 plans beside it),
+  // while a DIFFERENT bundle claiming either is a conflict. Two services
+  // on one physical table would silently mix rows (the second CREATE TABLE
+  // IF NOT EXISTS no-ops), so the table refusal matters as much as the
+  // name one.
   for (const other of scanBundleModules(rootDir)) {
     if (other.bundleName === input.name) continue;
     if (other.moduleName.toLowerCase() === manifest.name.toLowerCase()) {
@@ -264,12 +315,13 @@ export function planBundleCreate(input) {
         { module: manifest.name, bundle: `${other.bundleName}@${other.version}` },
       );
     }
-    if (other.table.toLowerCase() === manifest.table.toLowerCase()) {
-      throw new ConflictError(
-        `Table "${manifest.table}" is already owned by bundle ${other.bundleName}@${other.version}; one table, one bundle`,
-        { table: manifest.table, bundle: `${other.bundleName}@${other.version}` },
-      );
-    }
+  }
+  const tableOwner = findBundleTableOwner(rootDir, manifest.table, input.name);
+  if (tableOwner !== null) {
+    throw new ConflictError(
+      `Table "${manifest.table}" is already owned by bundle ${tableOwner.bundleName}@${tableOwner.version}; one table, one bundle`,
+      { table: manifest.table, bundle: `${tableOwner.bundleName}@${tableOwner.version}` },
+    );
   }
   // Never claim kernel storage: clienti, pipeline, calendario and every other
   // kernel-owned table stay kernel-owned. The lifecycle test proves this on
@@ -621,12 +673,16 @@ export async function installBundle(input) {
 }
 
 /**
- * Uninstall a bundle: drop ONLY its own tables (every one named in its
- * bundle.json, each re-checked against the protected set — a table that
- * became kernel-owned since install is refused, never dropped) plus its own
- * module_migrations ledger rows (same transaction, so a reinstall
- * re-applies the CREATE), then remove the registry entry. Kernel data is
- * never touched: the lifecycle test proves it on real rows.
+ * Uninstall a bundle: drop ONLY its own tables — every one named in its
+ * bundle.json, each re-checked for EXCLUSIVE ownership before any drop runs:
+ * the protected set (a table that became kernel-owned since install is
+ * refused), another bundle's live tables (a hand-edited or copied-in
+ * bundle.json naming them refuses the whole uninstall), and the kernel
+ * generated-module tables on this rootDir. A refusal fails closed: the
+ * whole uninstall throws, nothing is dropped, the registry is untouched.
+ * Then it drops its own module_migrations ledger rows (same transaction, so
+ * a reinstall re-applies the CREATE) and removes the registry entry. Kernel
+ * data is never touched: the lifecycle test proves it on real rows.
  *
  * @param {{name: string, version: string, rootDir?: string, database?: any}} input
  */
@@ -641,8 +697,8 @@ export async function uninstallBundle(input) {
     // DDL goes through the kernel-owned seam on the database handle
     // (`dropTables` in packages/core/src/database.js, the single owner of the
     // raw driver): this file never touches the driver, so the Spine v2 M2 raw
-    // boundary holds. Every table is vetted against the protected set BEFORE
-    // any drop runs — a kernel-owned name refuses the whole uninstall.
+    // boundary holds. Every table is vetted for exclusive ownership BEFORE
+    // any drop runs — a foreign name refuses the whole uninstall.
     const handle = input.database;
     if (!handle || typeof handle.dropTables !== 'function') {
       throw new ValidationError('uninstallBundle needs a database handle with the dropTables DDL seam to drop bundle tables');
@@ -657,6 +713,27 @@ export async function uninstallBundle(input) {
         );
       }
       tables.push(module.table);
+    }
+    // Exclusive ownership (same source of truth as the plan-time refusal,
+    // findBundleTableOwner): a table owned by ANOTHER bundle or by a kernel
+    // generated module is never dropped, even though bundle.json names it.
+    // The bundle's own name is excluded — versions of the same bundle
+    // legitimately share their tables (only one version installs at a time).
+    const kernelTables = kernelGeneratedTables(rootDir);
+    for (const table of tables) {
+      const owner = findBundleTableOwner(rootDir, table, name);
+      if (owner !== null) {
+        throw new ValidationError(
+          `Refusing to drop "${table}": owned by bundle ${owner.bundleName}@${owner.version}, not by ${name}@${version} (fail-closed: uninstall drops only its own tables)`,
+          { table, bundle: `${name}@${version}`, owner: `${owner.bundleName}@${owner.version}` },
+        );
+      }
+      if (kernelTables.has(table.toLowerCase())) {
+        throw new ValidationError(
+          `Refusing to drop "${table}": kernel-owned (fail-closed even though bundle.json names it)`,
+          { table },
+        );
+      }
     }
     // The bundle's ledger rows die with its tables, in the same transaction:
     // reinstalling the same version re-applies the CREATE instead of
@@ -738,11 +815,12 @@ export async function verifyBundle(input) {
   const rootDir = resolve(input.rootDir ?? process.cwd());
   const { name, version } = parseBundleRef(`${input.name}@${input.version}`);
   const bundle = readBundleManifest(rootDir, name, version);
-  const entries = await createBundleEntries({ rootDir, bundles: [{ name, version }] });
   // The proof boots the TARGET tree's kernel, not the CLI checkout's: bundle
-  // code loads from rootDir, so the app entry must too. A --root without the
-  // app entry is refused loudly instead of verifying against the wrong
-  // composition (a success that proves nothing about the target tree).
+  // code loads from rootDir, so the app entry must too. The target-tree
+  // check runs BEFORE any bundle code loads — a --root without the app
+  // entry is refused loudly instead of misdiagnosed as an uninstallable
+  // bundle (bundle load errors) or verified against the wrong composition
+  // (a success that proves nothing about the target tree).
   const appEntry = resolve(rootDir, join('packages', 'app', 'src', 'index.js'));
   if (!existsSync(appEntry)) {
     throw new ValidationError(
@@ -750,6 +828,7 @@ export async function verifyBundle(input) {
       { bundle: `${name}@${version}`, rootDir },
     );
   }
+  const entries = await createBundleEntries({ rootDir, bundles: [{ name, version }] });
   const { createAccordoApp } = await import(pathToFileURL(appEntry).href);
   const app = createAccordoApp({ dbPath: ':memory:', bundles: entries });
   /** @type {Array<{module: string, table: string, rows: number}>} */

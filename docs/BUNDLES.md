@@ -64,12 +64,16 @@ Rules the commands enforce:
 - `bundle install` re-runs that proof, then records the version in the
   registry. Two versions never merge: installing `name@2.0.0` while
   `name@1.0.0` is installed is a conflict — uninstall first.
-- `bundle uninstall --db <path>` drops ONLY the bundle's own tables (each
-  re-checked against the protected set — a table that became kernel-owned
-  since install is refused, never dropped, even though `bundle.json`
-  names it) plus its own `module_migrations` ledger rows, in the same
+- `bundle uninstall --db <path>` drops ONLY the bundle's own tables: every
+  table `bundle.json` names is re-checked for exclusive ownership before
+  any drop runs — the protected set (a table that became kernel-owned
+  since install is refused), another bundle's live tables and the kernel
+  generated-module tables on this root (same registry the plan-time
+  refusal uses). A hand-edited `bundle.json` naming any of them refuses
+  the whole uninstall: nothing drops, the registry entry stays. Then it
+  drops its own `module_migrations` ledger rows, in the same
   transaction — so reinstalling the same version re-applies the CREATE
-  instead of booting with a missing table. Then it removes the registry
+  instead of booting with a missing table — and removes the registry
   entry. Kernel tables and rows survive: the lifecycle test proves it on
   real rows.
 
