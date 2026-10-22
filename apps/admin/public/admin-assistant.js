@@ -125,6 +125,9 @@ export const SUGGESTION_CATALOG = Object.freeze({
   reporting: Object.freeze([
     { id: 'bo04:reporting:call', title: 'Chi ha gestito più call questo mese?', detail: 'Chiamate registrate per operatore ed esito.' },
   ]),
+  'nuovo-modulo': Object.freeze([
+    { id: 'bo05:nuovo-modulo:crea-ai', title: 'Come creo un modulo con l’AI?', detail: 'Il percorso guidato: descrizione, manifest, comandi veri.' },
+  ]),
   impostazioni: Object.freeze([
     { id: 'bo04:impostazioni:ai-puo', title: 'Cosa può fare l’AI senza chiedermi?', detail: 'Cosa fa da sola, cosa chiede, cosa dicono i registri.' },
   ]),
@@ -726,6 +729,19 @@ async function answerLeadSito(client) {
   return answer;
 }
 
+/** Nuovo modulo con l'AI (BO-F5-01): il percorso guidato, mai una generazione simulata. */
+function answerNuovoAi() {
+  const answer = emptyAnswer('bo05:nuovo-modulo:crea-ai', 'Come creo un modulo con l’AI?');
+  answer.lines.push('1. Descrivi il modulo nella schermata Nuovo modulo (nome, campi, tipi).');
+  answer.lines.push('2. L’agente di coding redige il manifest dalla descrizione (docs/MODULE_MANIFEST.md).');
+  answer.lines.push('3. L’agente esegue bundle create --apply: file veri in bundles/<nome>/<versione>/, mai nel kernel.');
+  answer.lines.push('4. bundle verify avvia l’app vera con il bundle composto e serve un record: se non si avvia e non serve, il bundle non esiste.');
+  answer.lines.push('5. bundle install lo registra; l’host lo compone con createAccordoApp({ bundles }).');
+  answer.actions.push({ id: 'bo05:apri-nuovo-modulo', label: 'Apri: Nuovo modulo', kind: 'navigate', href: '#/nuovo-modulo', customerFacing: false });
+  answer.actions.push({ id: 'bo05:apri-reporting', label: 'Apri: Reporting', kind: 'navigate', href: '#/reporting', customerFacing: false });
+  return answer;
+}
+
 /** Reporting call: chiamate registrate per operatore ed esito. */
 async function answerCallReport(client) {
   const answer = emptyAnswer('bo04:reporting:call', 'Chi ha gestito più call questo mese?');
@@ -800,6 +816,7 @@ export async function runSuggestion(client, suggestionId) {
     case 'bo04:calendario:slot': return answerSlot(client);
     case 'bo04:sequenze:lead-sito': return answerLeadSito(client);
     case 'bo04:reporting:call': return answerCallReport(client);
+    case 'bo05:nuovo-modulo:crea-ai': return answerNuovoAi();
     case 'bo04:impostazioni:ai-puo': return answerAiPuo(client);
     default: throw new Error(`Suggerimento sconosciuto: ${shortText(suggestionId, 60) || '?'}`);
   }

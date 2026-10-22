@@ -61,9 +61,26 @@ function countAdminMetrics(storage) {
 }
 
 /**
- * @param {{dbPath?: string, approvalThresholdCents?: number, busyTimeoutMs?: number}} [options]
+ * @param {{dbPath?: string, approvalThresholdCents?: number, busyTimeoutMs?: number, bundles?: Array<{name?: string, createModule: (deps: any) => any, migrations?: Array<{name: string, sql: string}>, migration?: {name: string, sql: string}}>}} [options]
  */
 export function createAccordoApp(options = {}) {
+  // Optional custom bundles (BO-F5-01, docs/BUNDLES.md): versioned module
+  // sets installed beside the kernel, composed ONLY when the host opts in
+  // with this option. The shared process never loads them implicitly — a
+  // bundle the host does not name here does not exist for this application.
+  // Same entry shape as kernel generated modules.
+  const bundleModules = Array.isArray(options.bundles) ? options.bundles : [];
+  if (options.bundles !== undefined && !Array.isArray(options.bundles)) {
+    throw new ValidationError('createAccordoApp "bundles" must be an array of bundle module entries');
+  }
+  for (const bundle of bundleModules) {
+    if (!bundle || typeof bundle.createModule !== 'function'
+      || (!Array.isArray(bundle.migrations) && (bundle.migration === undefined || bundle.migration === null))) {
+      throw new ValidationError(
+        `Bundle entry ${JSON.stringify(bundle?.name ?? 'unnamed')} needs a createModule function and a migrations array (or a single migration)`,
+      );
+    }
+  }
   // The application clock (generic runtime capability): actions that decide
   // anything from the current instant read it here, so a test can pin "today"
   // and a run is reproducible. Defaults to the wall clock.
@@ -73,7 +90,7 @@ export function createAccordoApp(options = {}) {
   // create migration plus one per revision it has evolved through (ADR-019).
   // `migration` is the pre-evolution single-migration shape, still honoured so
   // a project generated before this contract keeps booting unchanged.
-  const moduleMigrations = generatedModules.flatMap((generated) => (
+  const moduleMigrations = [...generatedModules, ...bundleModules].flatMap((generated) => (
     Array.isArray(generated.migrations) ? generated.migrations
       : generated.migration ? [generated.migration] : []
   ));
@@ -208,6 +225,15 @@ export function createAccordoApp(options = {}) {
     // the app with a precise error instead of serving a half-working module.
     modules.register(
       validateGeneratedModuleDefinition(generated.createModule({ database, audit, events, references })),
+    );
+  }
+  // Opt-in bundles register exactly like generated modules, after the same
+  // validation. They deliberately do NOT join the action-eligible set below:
+  // bundle modules are data modules, and actions on them arrive with the
+  // bundle's own action definitions (follow-up), never implicitly.
+  for (const bundle of bundleModules) {
+    modules.register(
+      validateGeneratedModuleDefinition(bundle.createModule({ database, audit, events, references })),
     );
   }
 
