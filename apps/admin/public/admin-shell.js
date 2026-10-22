@@ -550,7 +550,9 @@ export function createShellView({
 /**
  * Render the Impostazioni screen: the four areas from the prototype. Areas
  * backed by an existing view link there; the rest name the story that
- * delivers them (BO-F0-03 owns the tabs).
+ * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the
+ * same real fix-count badge as the sidebar entry: it renders only from a
+ * count above zero, never at zero and never when the count is unknown.
  * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void, customerDataAvailable?: boolean }} options
  */
 export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false } = {}) {
@@ -585,6 +587,12 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
         navigate(area.route);
       });
       row.appendChild(link);
+      // BO-F0-03: the Stato sync tab carries the badge with the real
+      // "things to fix" count — the same text as the sidebar badge, so it
+      // is absent at zero and when the count is unknown.
+      if (area.id === 'stato-sync' && badgeText !== '') {
+        row.appendChild(el(doc, 'span', 'bo-badge', badgeText));
+      }
     } else {
       row.appendChild(el(doc, 'span', 'bo-setting-coming', `In arrivo con ${area.story}`));
     }

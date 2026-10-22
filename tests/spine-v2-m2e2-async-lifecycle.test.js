@@ -61,7 +61,11 @@ function isAsyncContract(error) {
 }
 
 test('public surfaces do not leak lifecycle symbols', () => {
-  assert.deepEqual(Object.keys(publicApp).sort(), ['createAccordoApp', 'createAccordoAppAsync']);
+  // The factories plus the Admin shell mount exports (#307), on purpose.
+  assert.deepEqual(
+    Object.keys(publicApp).sort(),
+    ['createAccordoApp', 'createAccordoAppAsync', 'createAdminShellMount', 'injectAdminBase'],
+  );
   assert.equal(Object.hasOwn(publicApp, 'preflightSelectedGraph'), false);
   assert.equal(Object.hasOwn(publicApp, 'startSqliteLifecycle'), false);
   assert.equal(Object.hasOwn(publicApp, 'startPortableSqliteApp'), false);
