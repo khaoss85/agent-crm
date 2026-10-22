@@ -111,13 +111,15 @@ export const REPORTING_LIMIT = 100;
 
 /**
  * Exact CLI commands for one bundle lifecycle step, as text. The agent runs
- * them; the screen never pretends to run them.
- * @param {{ manifestPath?: string, name?: string, version?: string }} input
+ * them; the screen never pretends to run them. `createdBy` names who runs
+ * the create: the AI path shows `--created-by ai`, the manual path shows
+ * `--created-by manual`, so the registry never misattributes provenance.
+ * @param {{ manifestPath?: string, name?: string, version?: string, createdBy?: string }} input
  */
-export function bundleCommands({ manifestPath = 'modulo.module.json', name = 'nome-modulo', version = '0.1.0' } = {}) {
+export function bundleCommands({ manifestPath = 'modulo.module.json', name = 'nome-modulo', version = '0.1.0', createdBy = 'ai' } = {}) {
   const base = 'npm run crm --';
   return {
-    create: `${base} bundle create ${manifestPath} --name ${name} --version ${version} --created-by ai --apply`,
+    create: `${base} bundle create ${manifestPath} --name ${name} --version ${version} --created-by ${createdBy} --apply`,
     verify: `${base} bundle verify ${name}@${version}`,
     install: `${base} bundle install ${name}@${version}`,
   };
@@ -135,7 +137,7 @@ export function manualSteps() {
       'campi con tipo tra string, integer, boolean, timestamp, email, enum',
       'description in italiano: cosa misura il modulo',
     ],
-    commands: bundleCommands(),
+    commands: bundleCommands({ createdBy: 'manual' }),
     proof: 'bundle verify avvia l\u2019app vera con il bundle composto e serve un record: se non si avvia e non serve, il bundle non esiste.',
   };
 }
@@ -187,7 +189,7 @@ function el(doc, tag, options = {}) {
  * A view controller for the Reporting and "+ Nuovo modulo" screens.
  * Injecting `doc`, `client` and `nav` keeps it testable without a browser.
  *
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate: (hash: string) => void, onAskAi?: (screenId: string) => void, log?: (message: string, cause: unknown) => void, download?: (input: {doc: Document, filename: string, content: string}) => void}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate: (hash: string) => void, onAskAi?: (screenId: string, description?: string) => void, log?: (message: string, cause: unknown) => void, download?: (input: {doc: Document, filename: string, content: string}) => void}} deps
  */
 export function createReportingView(deps) {
   const { doc, mount, client, navigate } = deps;
@@ -607,7 +609,10 @@ export function createReportingView(deps) {
     ai.appendChild(label);
     const ask = el(doc, 'button', { class: 'primary', text: 'Chiedi all\u2019assistente' });
     ask.setAttribute('data-action', 'chiedi-assistente');
-    ask.addEventListener('click', () => onAskAi('nuovo-modulo'));
+    // The typed description travels with the handoff: the assistant panel
+    // opens on the nuovo-modulo screen with the textarea prefilled, so the
+    // user never retypes it there (P2 admin-reporting.js:289).
+    ask.addEventListener('click', () => onAskAi('nuovo-modulo', area.value));
     ai.appendChild(ask);
     mount.appendChild(ai);
 

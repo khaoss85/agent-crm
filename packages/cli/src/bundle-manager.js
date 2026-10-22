@@ -265,6 +265,64 @@ export function readBundleManifest(rootDir, name, version) {
 }
 
 /**
+ * The plan-time ownership guards as one function (NOT_GENERAL
+ * backlog:8691acfc): "one module, one bundle / one table, one bundle", never
+ * a kernel name, never kernel storage. planBundleCreate calls it for a
+ * drafted manifest, installBundle re-runs it for the bundle.json on disk —
+ * a hand-placed directory that never went through plan cannot bypass the
+ * refusal by installing directly (P2 bundle-manager.js:657: install ran
+ * verify in isolation and recorded a colliding table). The bundle's own
+ * name is excluded, so a new version of the SAME bundle reuses its name
+ * and table (versions are immutable: 0.0.1 stays, 0.0.2 plans beside it)
+ * and a reinstall after uninstall passes. A new ownership case extends
+ * this function, never a new ad-hoc check.
+ *
+ * @param {{rootDir: string, name: string, moduleName: string, table: string}} input
+ */
+function assertBundleOwnership(input) {
+  const { rootDir, name, moduleName, table } = input;
+  // Never shadow the kernel: a handwritten or generated kernel module of this
+  // name exists, or another bundle already installed it.
+  if (kernelModuleNames(rootDir).has(moduleName)) {
+    throw new ConflictError(
+      `Module "${moduleName}" is a kernel module; a bundle may not shadow it`,
+      { module: moduleName },
+    );
+  }
+  for (const other of scanBundleModules(rootDir)) {
+    if (other.bundleName === name) continue;
+    if (other.moduleName.toLowerCase() === moduleName.toLowerCase()) {
+      throw new ConflictError(
+        `Module "${moduleName}" is already installed by bundle ${other.bundleName}@${other.version}; one module, one bundle`,
+        { module: moduleName, bundle: `${other.bundleName}@${other.version}` },
+      );
+    }
+  }
+  const tableOwner = findBundleTableOwner(rootDir, table, name);
+  if (tableOwner !== null) {
+    throw new ConflictError(
+      `Table "${table}" is already owned by bundle ${tableOwner.bundleName}@${tableOwner.version}; one table, one bundle`,
+      { table, bundle: `${tableOwner.bundleName}@${tableOwner.version}` },
+    );
+  }
+  // Never claim kernel storage: clienti, pipeline, calendario and every other
+  // kernel-owned table stay kernel-owned. The lifecycle test proves this on
+  // the real table set; this is the plan-time refusal.
+  if (BUNDLE_PROTECTED_TABLES.has(table)) {
+    throw new ConflictError(
+      `Table "${table}" is kernel-owned (clienti, pipeline, calendario and framework storage); a bundle claims only its own tables`,
+      { table },
+    );
+  }
+  if (kernelGeneratedTables(rootDir).has(table.toLowerCase())) {
+    throw new ConflictError(
+      `Table "${table}" is kernel-owned (generated kernel module); a bundle claims only its own tables`,
+      { table },
+    );
+  }
+}
+
+/**
  * Plan a new bundle from one module manifest (this slice: one module per
  * bundle; a second module is a second bundle version or a follow-up). The
  * factory generates the module sources into the bundle directory with the
@@ -286,52 +344,14 @@ export function planBundleCreate(input) {
       `Bundle "${input.name}" must wrap a module of the same name; the manifest names "${manifest.name}"`,
     );
   }
-  // Never shadow the kernel: a handwritten or generated kernel module of this
-  // name exists, or another bundle already installed it.
-  if (kernelModuleNames(rootDir).has(manifest.name)) {
-    throw new ConflictError(
-      `Module "${manifest.name}" is a kernel module; a bundle may not shadow it`,
-      { module: manifest.name },
-    );
-  }
   // One ownership registry for the "one module, one bundle / one table, one
-  // bundle" invariant: name conflicts are checked inline below, table
-  // conflicts go through findBundleTableOwner — the same helper the
-  // uninstall path uses for its exclusive-ownership check, so plan-time
-  // refusal and uninstall-time refusal share one source of truth
-  // (NOT_GENERAL backlog:8691acfc: the previous round's bundle-vs-bundle
-  // table finding and this round's uninstall-foreign-table finding are one
-  // root cause, cured once here). A new version of the SAME bundle reuses
-  // both (versions are immutable: 0.0.1 stays, 0.0.2 plans beside it),
-  // while a DIFFERENT bundle claiming either is a conflict. Two services
-  // on one physical table would silently mix rows (the second CREATE TABLE
-  // IF NOT EXISTS no-ops), so the table refusal matters as much as the
-  // name one.
-  for (const other of scanBundleModules(rootDir)) {
-    if (other.bundleName === input.name) continue;
-    if (other.moduleName.toLowerCase() === manifest.name.toLowerCase()) {
-      throw new ConflictError(
-        `Module "${manifest.name}" is already installed by bundle ${other.bundleName}@${other.version}; one module, one bundle`,
-        { module: manifest.name, bundle: `${other.bundleName}@${other.version}` },
-      );
-    }
-  }
-  const tableOwner = findBundleTableOwner(rootDir, manifest.table, input.name);
-  if (tableOwner !== null) {
-    throw new ConflictError(
-      `Table "${manifest.table}" is already owned by bundle ${tableOwner.bundleName}@${tableOwner.version}; one table, one bundle`,
-      { table: manifest.table, bundle: `${tableOwner.bundleName}@${tableOwner.version}` },
-    );
-  }
-  // Never claim kernel storage: clienti, pipeline, calendario and every other
-  // kernel-owned table stay kernel-owned. The lifecycle test proves this on
-  // the real table set; this is the plan-time refusal.
-  if (BUNDLE_PROTECTED_TABLES.has(manifest.table)) {
-    throw new ConflictError(
-      `Table "${manifest.table}" is kernel-owned (clienti, pipeline, calendario and framework storage); a bundle claims only its own tables`,
-      { table: manifest.table },
-    );
-  }
+  // bundle" invariant (NOT_GENERAL backlog:8691acfc): the same helper the
+  // install and uninstall paths use, so plan-time refusal, install-time
+  // refusal and uninstall-time refusal share one source of truth. Two
+  // services on one physical table would silently mix rows (the second
+  // CREATE TABLE IF NOT EXISTS no-ops), so the table refusal matters as
+  // much as the name one.
+  assertBundleOwnership({ rootDir, name: input.name, moduleName: manifest.name, table: manifest.table });
 
   const modulePlan = planModule({ manifest, rootDir, layout: { bundleDir: dir } });
   const bundleManifest = {
@@ -648,15 +668,23 @@ export async function createBundleEntries(input) {
 }
 
 /**
- * Install a bundle: prove it loads, validates and boots (the same proof
- * `verify` runs), then record it in the registry. An uninstallable bundle is
- * refused BEFORE the registry is touched.
+ * Install a bundle: refuse colliding ownership FIRST (the same plan-time
+ * guards, re-run on the bundle.json on disk — a hand-placed directory that
+ * never went through plan cannot install a table another bundle or the
+ * kernel owns), then prove it loads, validates and boots (the same proof
+ * `verify` runs), then record it in the registry. A refused bundle never
+ * touches the registry. The guards run before the boot so a collision
+ * fails fast without composing anything.
  *
  * @param {{name: string, version: string, rootDir?: string}} input
  */
 export async function installBundle(input) {
   const rootDir = resolve(input.rootDir ?? process.cwd());
   const { name, version } = parseBundleRef(`${input.name}@${input.version}`);
+  const bundle = readBundleManifest(rootDir, name, version);
+  for (const module of bundle.modules) {
+    assertBundleOwnership({ rootDir, name, moduleName: module.name, table: module.table });
+  }
   const proof = await verifyBundle({ name, version, rootDir });
   const registry = readBundleRegistry(rootDir);
   if (registry.installed.some((entry) => entry.name === name && entry.version === version)) {

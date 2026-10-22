@@ -233,6 +233,84 @@ test('uninstallBundle drops only exclusively-owned tables (same ownership table,
   );
 });
 
+test('installBundle re-runs the plan-time ownership guards (install side)', async (t) => {
+  // P2 bundle-manager.js:657: install verified the bundle in isolation and
+  // recorded it, so a hand-placed directory naming another bundle's table
+  // (or a kernel table) installed and shared storage at runtime. The
+  // guards run BEFORE the boot, so a bare root (no kernel to boot) still
+  // refuses — and the registry stays untouched. Same source of truth as
+  // the plan-side table above, install side.
+  const root = mkdtempSync(join(tmpdir(), 'accordo-bundle-install-own-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { applyBundleCreate, installBundle, planBundleCreate: plan, readBundleRegistry } =
+    await import('../packages/cli/src/bundle-manager.js');
+
+  const sonde = { ...probeManifest, name: 'sonde', table: 'sonde_rows' };
+  applyBundleCreate(plan({ manifest: sonde, name: 'sonde', version: '0.0.1', createdBy: 'ai', rootDir: root }));
+
+  /**
+   * @param {{ bundleName: string, moduleName: string, table: string, kernelTable?: string }} placed
+   */
+  function handPlace({ bundleName, moduleName, table, kernelTable }) {
+    const dir = join(root, 'bundles', bundleName, '0.0.1');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'module.manifest.json'),
+      JSON.stringify({ ...probeManifest, name: moduleName, table }, null, 2),
+      'utf8',
+    );
+    writeFileSync(
+      join(dir, 'bundle.json'),
+      JSON.stringify({
+        format: 1,
+        name: bundleName,
+        version: '0.0.1',
+        createdBy: 'ai',
+        modules: [{ name: moduleName, table, migration: 'pg_bootstrap_probe' }],
+      }, null, 2),
+      'utf8',
+    );
+    if (kernelTable !== undefined) {
+      const kernelDir = join(root, 'packages', 'modules', 'prova');
+      mkdirSync(kernelDir, { recursive: true });
+      writeFileSync(
+        join(kernelDir, 'module.manifest.json'),
+        JSON.stringify({ ...probeManifest, name: 'prova', table: kernelTable }, null, 2),
+        'utf8',
+      );
+    }
+  }
+
+  // Hand-placed, like an agent-crafted directory that never went through
+  // plan: each names storage it does not own.
+  handPlace({ bundleName: 'seconda', moduleName: 'seconda', table: 'sonde_rows' });
+  handPlace({ bundleName: 'terza', moduleName: 'terza', table: 'contacts' });
+  handPlace({ bundleName: 'quarta', moduleName: 'quarta', table: 'prova_rows', kernelTable: 'prova_rows' });
+  handPlace({ bundleName: 'quinta', moduleName: 'sonde', table: 'quinta_rows' });
+
+  /** @type {Array<[string, string, RegExp]>} */
+  const refusals = [
+    // Another bundle's live table: the second CREATE TABLE IF NOT EXISTS
+    // would no-op and two services would mix rows.
+    ['another bundle table', 'seconda', /one table, one bundle/i],
+    // Kernel storage, protected set: clienti, pipeline, calendario…
+    ['kernel protected table', 'terza', /kernel-owned/i],
+    // Kernel storage, generated module: no protected set names it, the
+    // kernel table scan still refuses.
+    ['kernel generated-module table', 'quarta', /kernel-owned/i],
+    // Another bundle's module name, case aside.
+    ['another bundle module name', 'quinta', /one module, one bundle/i],
+  ];
+  for (const [label, bundleName, expected] of refusals) {
+    await assert.rejects(
+      installBundle({ name: bundleName, version: '0.0.1', rootDir: root }),
+      expected,
+      label,
+    );
+  }
+  assert.deepEqual(readBundleRegistry(root).installed, [], 'refusals never touch the registry');
+});
+
 test('verifyBundle boots the target tree kernel, never the CLI checkout', async (t) => {
   // P2 bundle-manager.js:731: verifyBundle loaded the bundle from rootDir but
   // the app kernel always from the CLI checkout, so `bundle verify --root`
