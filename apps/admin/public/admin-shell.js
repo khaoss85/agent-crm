@@ -37,7 +37,8 @@ export const SHELL_ITEMS = Object.freeze([
   { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2' },
   { id: 'calendario', label: 'Calendario', group: 'native', route: null, story: 'BO-F3' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3' },
-  { id: 'reporting', label: 'Reporting', group: 'custom', route: null, story: 'BO-F5' },
+  { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01' },
+  { id: 'nuovo-modulo', label: 'Nuovo modulo', group: 'custom', route: '#/nuovo-modulo', story: 'BO-F5-01' },
   { id: 'impostazioni', label: 'Impostazioni', group: 'settings', route: SETTINGS_ROUTE, story: 'BO-F0-02' },
 ]);
 
@@ -77,6 +78,7 @@ const AI_PLACEHOLDERS = Object.freeze({
   calendario: 'Scrivi: «trova 45 minuti con Marco e Sara»',
   sequenze: 'Scrivi: «crea una sequenza per i lead del sito»',
   reporting: 'Chiedi: «chi ha gestito più call questo mese?»',
+  'nuovo-modulo': 'Descrivi: «un modulo sonde per i KPI del pilota»',
   impostazioni: 'Chiedi: «cosa può fare l\u2019AI senza chiedermi?»',
 });
 

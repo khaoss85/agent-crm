@@ -143,7 +143,10 @@ test('the bounded operation context is frozen, and its key set is CLOSED', () =>
 test('a declared alias attaches generically, and a shadowing alias stops startup', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'accordo-seam-attach-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'package.json']) {
+  // `packages/app` resolves its Admin shell routes from `apps/server` (the mount
+  // reuses the server's buildRouter by design), so the shadow needs both trees —
+  // the same copy set `tests/app-inspect.test.js` uses.
+  for (const entry of ['packages', 'apps', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
   writeFileSync(join(root, 'packages/actions/generated/index.js'), 'export const generatedActions = [];\n');

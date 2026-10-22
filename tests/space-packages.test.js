@@ -154,6 +154,10 @@ test('deactivation marks removed, never deletes; reactivation replays history', 
   const back = await ops.activate({ spaceId: SPACE_A, unit: 'channels', actor: USER });
   assert.equal(back.reactivated, true);
   assert.equal(back.id, first.id);
+  const after = await modules.get('space-package').service.listWhere({ spaceId: SPACE_A });
+  assert.equal(after.length, 1);
+  assert.equal(after[0].status, 'active');
+  assert.equal(after[0].removedAt, null);
 });
 
 test('unknown, malformed and anonymous activations are refused', async () => {

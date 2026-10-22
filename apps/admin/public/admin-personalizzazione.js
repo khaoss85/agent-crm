@@ -368,6 +368,11 @@ export function createPersonalizzazioneView(deps) {
       mount.appendChild(box);
       return;
     }
+    if (state.units === null || state.rows === null) {
+      box.appendChild(el(doc, 'p', { text: 'Lettura della personalizzazione…', cls: 'muted' }));
+      mount.appendChild(box);
+      return;
+    }
     const units = state.units ?? [];
     const rows = state.rows ?? [];
     const known = activeByUnit({ units, rows });
