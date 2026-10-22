@@ -262,9 +262,20 @@ function trusted(modules, name, code) {
   return service;
 }
 
-/** A readable module handle; records a module the app did not compose. */
+/**
+ * A readable module handle, or null when the app did not compose the module.
+ * The real module registry throws NOT_FOUND for a missing module instead of
+ * answering undefined, so only that absence is mapped to null — anything
+ * else still fails loudly.
+ */
 function readable(modules, name) {
-  const service = modules?.get?.(name)?.service;
+  let service;
+  try {
+    service = modules?.get?.(name)?.service;
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'NOT_FOUND') return null;
+    throw error;
+  }
   if (!service || typeof service.listWhere !== 'function') return null;
   return service;
 }

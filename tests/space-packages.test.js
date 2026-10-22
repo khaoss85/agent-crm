@@ -222,6 +222,26 @@ test('lookup resolves every catalog unit and refuses ghosts', () => {
   assert.throws(() => lookupSpacePackageUnit('carrier-pigeon'), (error) => error.code === 'SPACE_PACKAGE_UNKNOWN');
 });
 
+test('preview treats modules the app did not compose as uncomposed, never a throw', async () => {
+  // The real module registry throws NOT_FOUND for a missing module instead
+  // of answering undefined: a unit whose modules this project did not
+  // compose must still preview honestly.
+  const full = spacePackageHarness();
+  const throwing = {
+    get: (name) => {
+      if (name === 'space-package') return full.modules.get(name);
+      const error = new Error(`Module not found: ${name}`);
+      error.code = 'NOT_FOUND';
+      throw error;
+    },
+  };
+  const ops = createSpacePackageOperations({ modules: throwing });
+  const demo = await ops.preview({ spaceId: SPACE_A, unit: 'channels' });
+  assert.equal(demo.writes, 0);
+  assert.ok(demo.uncomposed.length > 0);
+  assert.ok(demo.uncomposed.includes('channel-connection'));
+});
+
 test('catalog covers every module-owning package with real space-scoped modules', () => {
   const packageDirs = readdirSync(join(repoRoot, 'packages')).filter((name) => {
     const dir = join(repoRoot, 'packages', name, 'modules');
