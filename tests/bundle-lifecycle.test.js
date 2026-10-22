@@ -85,6 +85,93 @@ test('bundle plan refuses kernel names, kernel tables and loose versions', () =>
   );
 });
 
+test('bundle ownership registry: one module and one table per bundle (every round in one table)', async (t) => {
+  // NOT_GENERAL (backlog:8691acfc): the atomic-apply and ledger-forget cures
+  // of the previous round and the table-collision finding of this round share
+  // one root — bundle storage ownership enforced piecemeal. The single source
+  // of truth is scanBundleModules (name + table + owner), read once by
+  // planBundleCreate for both refusals. This table holds every case of the
+  // earlier rounds and this one; a new ownership case extends this table,
+  // never a new ad-hoc check.
+  const root = mkdtempSync(join(tmpdir(), 'accordo-bundle-ownership-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { applyBundleCreate } = await import('../packages/cli/src/bundle-manager.js');
+
+  const owner = { ...probeManifest, name: 'sonde', table: 'sonde_rows' };
+  applyBundleCreate(planBundleCreate({ manifest: owner, name: 'sonde', version: '0.0.1', createdBy: 'ai', rootDir: root }));
+  // A foreign bundle dir (hand-placed, like an orphan from an interrupted
+  // apply): bundle "estera" owns a module named "intrusa".
+  const foreignDir = join(root, 'bundles', 'estera', '0.0.1');
+  mkdirSync(foreignDir, { recursive: true });
+  writeFileSync(
+    join(foreignDir, 'module.manifest.json'),
+    JSON.stringify({ ...probeManifest, name: 'intrusa', table: 'intrusa_rows' }, null, 2),
+    'utf8',
+  );
+
+  /** @type {Array<[string, any, string, string, RegExp | null]>} */
+  const cases = [
+    // Earlier round: a version never regenerates in place.
+    ['same bundle same version regenerates nothing', owner, 'sonde', '0.0.1', /new bundle version/i],
+    // Earlier round: a different bundle may not take the module name…
+    ['cross-bundle module name (foreign dir)', { ...probeManifest, name: 'intrusa', table: 'intrusa_rows' }, 'intrusa', '0.0.1', /one module, one bundle/i],
+    // …nor the table (this round): two services on one physical table mix
+    // rows while the second CREATE TABLE IF NOT EXISTS silently no-ops.
+    ['cross-bundle table', { ...probeManifest, name: 'nuova', table: 'sonde_rows' }, 'nuova', '0.0.1', /one table, one bundle/i],
+    // The registry covers foreign dirs too: same source of truth, no second path.
+    ['cross-bundle table from a foreign dir', { ...probeManifest, name: 'nuova', table: 'intrusa_rows' }, 'nuova', '0.0.1', /one table, one bundle/i],
+    // A new version of the SAME bundle reuses its name AND its table
+    // (versions are immutable: 0.0.1 stays, 0.0.2 plans beside it).
+    ['same bundle new version reuses name and table', owner, 'sonde', '0.0.2', null],
+    // Control: a fresh bundle with its own name and table plans cleanly.
+    ['fresh bundle plans cleanly', { ...probeManifest, name: 'nuova', table: 'nuova_rows' }, 'nuova', '0.0.1', null],
+  ];
+  for (const [label, manifest, bundleName, bundleVersion, expected] of cases) {
+    if (expected === null) {
+      planBundleCreate({ manifest, name: bundleName, version: bundleVersion, createdBy: 'ai', rootDir: root });
+    } else {
+      assert.throws(
+        () => planBundleCreate({ manifest, name: bundleName, version: bundleVersion, createdBy: 'ai', rootDir: root }),
+        expected,
+        label,
+      );
+    }
+  }
+});
+
+test('verifyBundle boots the target tree kernel, never the CLI checkout', async (t) => {
+  // P2 bundle-manager.js:731: verifyBundle loaded the bundle from rootDir but
+  // the app kernel always from the CLI checkout, so `bundle verify --root`
+  // proved a composition that is not the target tree.
+  const { applyBundleCreate, verifyBundle } = await import('../packages/cli/src/bundle-manager.js');
+
+  // A --root without the app kernel is refused loudly instead of verifying
+  // against the wrong composition.
+  const bare = mkdtempSync(join(tmpdir(), 'accordo-bundle-nokernel-'));
+  t.after(() => rmSync(bare, { recursive: true, force: true }));
+  cpSync(join(repoRoot, 'packages', 'core'), join(bare, 'packages', 'core'), { recursive: true });
+  const barePlan = planBundleCreate({ manifest: probeManifest, name: 'lifecycle-probe', version: '0.0.1', createdBy: 'ai', rootDir: bare });
+  applyBundleCreate(barePlan);
+  await assert.rejects(
+    verifyBundle({ name: 'lifecycle-probe', version: '0.0.1', rootDir: bare }),
+    /no app kernel.*--root must point at the project checkout/,
+    'a --root without packages/app is refused, never verified against the CLI checkout',
+  );
+
+  // A --root WITH a kernel boots that kernel: poison the target tree's app
+  // entry and prove the poison — not the CLI checkout's healthy kernel —
+  // is what verify loads.
+  const other = createProjectCopy(t);
+  const otherPlan = planBundleCreate({ manifest: probeManifest, name: 'lifecycle-probe', version: '0.0.1', createdBy: 'ai', rootDir: other });
+  applyBundleCreate(otherPlan);
+  writeFileSync(join(other, 'packages', 'app', 'src', 'index.js'), 'throw new Error(\'target-kernel-marker\');\n', 'utf8');
+  await assert.rejects(
+    verifyBundle({ name: 'lifecycle-probe', version: '0.0.1', rootDir: other }),
+    /target-kernel-marker/,
+    'verify loads the app kernel from --root, not from the CLI checkout',
+  );
+});
+
 test('bundle create writes only under bundles/ and versions are immutable', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'accordo-bundle-plan-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

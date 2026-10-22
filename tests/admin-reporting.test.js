@@ -56,6 +56,20 @@ test('reportingSummary groups by metric, newest period wins, hostile rows are sk
   assert.deepEqual(reportingSummary('nope'), []);
 });
 
+test('reportingSummary keeps the newest row on equal periods, never the oldest', () => {
+  // The service returns newest-first: on equal periods the FIRST row seen
+  // wins. `>=` overwrote it with the older one (P2 admin-reporting.js:77).
+  const summary = reportingSummary([
+    { metric: 'chiusure', period: '2026-10', value: 5 },
+    { metric: 'chiusure', period: '2026-10', value: 3 },
+    { metric: 'chiusure', period: '2026-09', value: 1 },
+  ]);
+  assert.equal(summary.length, 1);
+  assert.equal(summary[0].lastPeriod, '2026-10');
+  assert.equal(summary[0].lastValue, '5', 'the newest row on the tied period wins');
+  assert.equal(summary[0].periods, 3);
+});
+
 test('reporting screen serves the bundle rows live, with the "+ Nuovo modulo" entry', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -100,6 +114,55 @@ test('reporting screen without the bundle says so honestly, never blank', async 
   assert.ok(nuovo, 'the entry point stays even without the bundle');
   nuovo.dispatch('click', {});
   assert.deepEqual(seen, [NUOVO_MODULO_ROUTE]);
+});
+
+test('a 500 (or auth, or network) failure is an error state with a log line, never "not composed"', async () => {
+  // P2 admin-reporting.js:177: every fetch error rendered as "not composed"
+  // with no logging, so a 500/auth outage misdiagnosed as missing setup.
+  // Only 404 (the server's fail-closed for an uncomposed module) is honest
+  // "not composed"; anything else gets its own state and a cause log.
+  for (const failure of [
+    { label: 'server 500', fail: () => { throw Object.assign(new Error('boom'), { status: 500, code: 'INTERNAL' }); } },
+    { label: 'auth 401', fail: () => { throw Object.assign(new Error('denied'), { status: 401, code: 'UNAUTHENTICATED' }); } },
+    { label: 'network down', fail: () => { throw new TypeError('fetch failed'); } },
+  ]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const logged = [];
+    const view = createReportingView({
+      doc,
+      mount,
+      client: { request: async () => failure.fail() },
+      navigate: () => {},
+      log: (message, cause) => logged.push([message, cause]),
+    });
+    await view.renderReporting();
+    const text = [...mount.findAll('p'), ...mount.findAll('div')].map((node) => node.textContent).join(' ');
+    assert.match(text, /non disponibile/, `${failure.label}: the screen names the failure, got ${JSON.stringify(text)}`);
+    assert.doesNotMatch(text, /non composto/, `${failure.label}: a real failure is never the not-composed state`);
+    assert.equal(logged.length, 1, `${failure.label}: the cause is logged once`);
+    assert.equal(logged[0][0], 'reporting records request failed');
+    const cause = logged[0][1];
+    assert.ok(cause && typeof cause === 'object', `${failure.label}: the cause is a redacted object`);
+    assert.ok(!('details' in cause) && !('message' in cause), `${failure.label}: no tokens or payloads in the log`);
+  }
+});
+
+test('a 404 stays the honest not-composed state with no error log', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const logged = [];
+  const view = createReportingView({
+    doc,
+    mount,
+    client: { request: async () => { throw Object.assign(new Error('not found'), { status: 404, code: 'MODULE_NOT_FOUND' }); } },
+    navigate: () => {},
+    log: (message, cause) => logged.push([message, cause]),
+  });
+  await view.renderReporting();
+  const text = [...mount.findAll('p'), ...mount.findAll('div')].map((node) => node.textContent).join(' ');
+  assert.match(text, /non composto/, 'the 404 names the missing bundle instead of faking rows');
+  assert.deepEqual(logged, [], 'a 404 is expected setup state, not a logged error');
 });
 
 test('a stale reporting response never overwrites the newer view', async () => {

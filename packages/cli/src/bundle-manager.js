@@ -248,15 +248,26 @@ export function planBundleCreate(input) {
       { module: manifest.name },
     );
   }
+  // One ownership registry for the "one module, one bundle / one table, one
+  // bundle" invariant: every bundle module on disk (name + table + owner),
+  // read once from scanBundleModules. Name and table conflicts share this
+  // source of truth — a new version of the SAME bundle reuses both (versions
+  // are immutable: 0.0.1 stays, 0.0.2 plans beside it), while a DIFFERENT
+  // bundle claiming either is a conflict. Two services on one physical table
+  // would silently mix rows (the second CREATE TABLE IF NOT EXISTS no-ops),
+  // so the table refusal matters as much as the name one.
   for (const other of scanBundleModules(rootDir)) {
-    // A new version of the SAME bundle reuses its module name (versions are
-    // immutable: 0.0.1 stays, 0.0.2 plans beside it). Only a DIFFERENT
-    // bundle claiming the name is a conflict.
-    if (other.bundleName !== input.name
-      && other.moduleName.toLowerCase() === manifest.name.toLowerCase()) {
+    if (other.bundleName === input.name) continue;
+    if (other.moduleName.toLowerCase() === manifest.name.toLowerCase()) {
       throw new ConflictError(
         `Module "${manifest.name}" is already installed by bundle ${other.bundleName}@${other.version}; one module, one bundle`,
         { module: manifest.name, bundle: `${other.bundleName}@${other.version}` },
+      );
+    }
+    if (other.table.toLowerCase() === manifest.table.toLowerCase()) {
+      throw new ConflictError(
+        `Table "${manifest.table}" is already owned by bundle ${other.bundleName}@${other.version}; one table, one bundle`,
+        { table: manifest.table, bundle: `${other.bundleName}@${other.version}` },
       );
     }
   }
@@ -728,7 +739,18 @@ export async function verifyBundle(input) {
   const { name, version } = parseBundleRef(`${input.name}@${input.version}`);
   const bundle = readBundleManifest(rootDir, name, version);
   const entries = await createBundleEntries({ rootDir, bundles: [{ name, version }] });
-  const { createAccordoApp } = await import('../../app/src/index.js');
+  // The proof boots the TARGET tree's kernel, not the CLI checkout's: bundle
+  // code loads from rootDir, so the app entry must too. A --root without the
+  // app entry is refused loudly instead of verifying against the wrong
+  // composition (a success that proves nothing about the target tree).
+  const appEntry = resolve(rootDir, join('packages', 'app', 'src', 'index.js'));
+  if (!existsSync(appEntry)) {
+    throw new ValidationError(
+      `Cannot verify ${name}@${version}: no app kernel at ${appEntry}; --root must point at the project checkout`,
+      { bundle: `${name}@${version}`, rootDir },
+    );
+  }
+  const { createAccordoApp } = await import(pathToFileURL(appEntry).href);
   const app = createAccordoApp({ dbPath: ':memory:', bundles: entries });
   /** @type {Array<{module: string, table: string, rows: number}>} */
   const modules = [];

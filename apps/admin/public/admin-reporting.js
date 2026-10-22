@@ -74,7 +74,9 @@ export function reportingSummary(rows) {
     const unit = typeof row.unit === 'string' ? row.unit : '';
     const entry = byMetric.get(metric) ?? { metric, periods: 0, lastValue: '', lastPeriod: '', lastUnit: '' };
     entry.periods += 1;
-    if (period >= entry.lastPeriod) {
+    // Strict: the service returns newest-first, so on equal periods the FIRST
+    // row seen (the newest) wins. `>=` kept the oldest value on ties.
+    if (period > entry.lastPeriod) {
       entry.lastValue = value;
       entry.lastPeriod = period;
       entry.lastUnit = unit;
@@ -101,11 +103,12 @@ function el(doc, tag, options = {}) {
  * A view controller for the Reporting and "+ Nuovo modulo" screens.
  * Injecting `doc`, `client` and `nav` keeps it testable without a browser.
  *
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate: (hash: string) => void, onAskAi?: (screenId: string) => void}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate: (hash: string) => void, onAskAi?: (screenId: string) => void, log?: (message: string, cause: unknown) => void}} deps
  */
 export function createReportingView(deps) {
   const { doc, mount, client, navigate } = deps;
   const onAskAi = deps.onAskAi ?? (() => {});
+  const log = deps.log ?? ((message, cause) => console.error(message, cause));
 
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -171,11 +174,26 @@ export function createReportingView(deps) {
     clear();
     mount.appendChild(el(doc, 'p', { class: 'empty', text: 'Loading…' }));
     let rows = null;
+    let loadError = null;
     try {
       const body = await client.request(`/api/modules/reporting/records?limit=${REPORTING_LIMIT}`);
       if (body && Array.isArray(body.items)) rows = body.items;
-    } catch {
-      rows = null; // not composed here: the screen says so, never a blank page
+    } catch (error) {
+      // The server fails closed as 404 for a module that is not composed
+      // (resolveGeneratedModule → NotFoundError): only that is the honest
+      // "not composed" empty state. Any other failure — 500, auth, network —
+      // is a real error: it gets its own state and a log line, never the
+      // bundle-setup pointer (which would misdiagnose the cause).
+      const status = error && typeof error === 'object' ? error.status ?? null : null;
+      if (status === 404) {
+        rows = null; // not composed here: the screen says so, never a blank page
+      } else {
+        loadError = error;
+        const cause = error && typeof error === 'object'
+          ? { name: error.name ?? 'Error', status, code: error.code ?? null }
+          : { name: 'Error', status: null, code: null };
+        log('reporting records request failed', cause);
+      }
     }
     if (token !== renderToken) return;
     clear();
@@ -184,6 +202,14 @@ export function createReportingView(deps) {
       class: 'lede',
       text: 'Righe KPI del bundle reporting, lette dal vivo. Grafici e previsioni (BO-F5-02) leggeranno queste righe, mai le tabelle kernel.',
     }));
+    if (loadError !== null) {
+      panel.appendChild(el(doc, 'div', {
+        class: 'empty',
+        text: 'Reporting non disponibile: la lettura delle righe è fallita. Riprova più tardi: non è un problema del bundle.',
+      }));
+      mount.appendChild(panel);
+      return;
+    }
     if (rows === null) {
       panel.appendChild(el(doc, 'div', {
         class: 'empty',
