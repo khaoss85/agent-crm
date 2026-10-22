@@ -9,9 +9,17 @@ correctness tests.
 - `src/semantic-model.js` — the pipeline semantic model: business field names
   mapped to physical `opportunities` columns. The only place analytics may
   learn physical schema.
-- `src/metric-definitions.js` — the declared metric registry. This increment
-  ships one metric: `pipeline_value_by_stage` (sums in integer 1/100 currency
-  units, partitioned by currency, grouped by stage).
+- `src/metric-definitions.js` — the declared metric registry. It ships two
+  metrics: `pipeline_value_by_stage` (sums in integer 1/100 currency units,
+  partitioned by currency, grouped by stage) and `pipeline_close_schedule`
+  (same sums grouped by owner, stage and exact expected-close date, for the
+  BO-F5-02 dashboard's period/persona recalculation).
+- `src/dashboard.js` — the BO-F5-02 dashboard model: strict query parsing,
+  `dashboardCompilations` (the only dashboard entry to the registry) and the
+  pure `buildDashboardModel` over executed `runReport` results (KPIs, funnel,
+  monthly chart, team table, heuristic forecast, insights with a
+  never-reassigning proposal, CSV). Behavior proof:
+  `tests/reporting-dashboard.test.js`.
 - `src/compiler.js` — `compileReport` turns `{ metric, dimensions, filters,
   limit }` over declared names into a closed storage descriptor with a row
   bound; `runReport` executes it and applies the declared aggregation in code.
