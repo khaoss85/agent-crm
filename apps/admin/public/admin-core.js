@@ -378,6 +378,13 @@ export function parseModuleRoute(hash) {
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'nuovo-modulo' };
   }
+  // Personalizzazione route: #/personalizzazione (BO-F4-01). One screen with
+  // its own tabs, like the connectors route above — tab state lives in the
+  // view, never in the hash — so any deeper path is invalid, not a lookup.
+  if (rawParts.length && rawParts[0] === 'personalizzazione') {
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'personalizzazione' };
+  }
   if (rawParts.length === 0 || rawParts[0] !== 'modules') return { view: 'dashboard' };
   // An internal empty segment (e.g. "modules//new") is malformed, not a lookup.
   if (rawParts.some((part) => part === '')) return { view: 'invalid' };

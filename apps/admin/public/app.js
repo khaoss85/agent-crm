@@ -371,6 +371,7 @@ import { createCustomerCardView } from './admin-customer-card.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
 import { createReportingView } from './admin-reporting.js';
+import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSpineView } from './admin-spine.js';
 import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
 
@@ -530,6 +531,19 @@ const reportingView = createReportingView({
     else toast('Apri la barra AI (⌘K) e descrivi il modulo che vuoi creare.');
   },
 });
+
+// Personalizzazione (BO-F4-01): Skill, Connettori and Pacchetti per space.
+// Renders only while the server publishes the space-permissions composition
+// catalog; otherwise the view itself says so.
+const personalizzazioneView = createPersonalizzazioneView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  navigate: (hash) => { window.location.hash = hash; },
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  storage: shellStorage,
+  toast,
+});
 const shellSpaces = readSpaces(shellStorage);
 let shellActiveSpace = null;
 try {
@@ -628,6 +642,7 @@ function shellScreenFor(target) {
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
     case 'reporting': return { id: 'reporting', label: 'Reporting' };
     case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
+    case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
     case 'invalid': return { id: null, label: 'Percorso non valido' };
     default: return { id: null, label: 'Vista' };
   }
@@ -841,6 +856,7 @@ async function route() {
     else if (target.view === 'connectors') await connectorsView.render();
     else if (target.view === 'reporting') await reportingView.renderReporting();
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
+    else if (target.view === 'personalizzazione') await personalizzazioneView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'customer-card') await customerCardView.renderCard(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();
