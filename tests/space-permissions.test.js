@@ -620,6 +620,7 @@ test('package definition composes: identity, resources, actions, capability', ()
   assert.deepEqual([...pkg.resources], ['space-permission-override', 'space-ai-proposal', 'space-package']);
   assert.equal(pkg.actions.length, 4);
   assert.equal(pkg.capabilities.length, 1);
+  assert.equal(pkg.capabilities[0].name, 'space-permission-gate');
   assert.equal(pkg.operations.length, 3);
   assert.deepEqual(pkg.operations.map((entry) => entry.appMethod).sort(), [
     'activateSpacePackage', 'deactivateSpacePackage', 'previewSpacePackage',
