@@ -270,7 +270,8 @@ export async function recordExternalIdentityRow({
 /**
  * Record every pair of an ambiguous evidence set as an unresolved
  * duplicate candidate for a human. Never resolves, never merges — shared
- * with the import apply path.
+ * with the import apply path. Pairs naming an opted-out contact are never
+ * written (owner decision Q-G1): the count returned is the pairs stored.
  *
  * @param {{modules: any, names: any, policy: {name: string, version: number, fingerprint: string},
  *   pairs: Array<{left: any, right: any}>, rule: string, evidence: string, runId: string, actor: any}} input
@@ -279,10 +280,21 @@ export async function recordCandidatePairs({
   modules, names, policy, pairs, rule, evidence, runId, actor,
 }) {
   const candidates = trusted(modules, names.candidate);
+  // Owner decision Q-G1 (BO-F1-04): a contact with an opt-out never enters a
+  // union proposal. The single choke point for every proposal path (sender,
+  // import, enrichment, connect) skips pairs naming an opted-out contact —
+  // the pair is never written, so there is nothing for a human to decide on.
+  const optOuts = trusted(modules, names?.optOut ?? 'enrichment-opt-out');
+  async function optedOut(subject) {
+    if (!subject || subject.resource !== 'contact' || !subject.id) return false;
+    const rows = await deciding(optOuts, { subjectResource: 'contact', subjectId: subject.id });
+    return rows.length > 0;
+  }
   let written = 0;
   for (const { left, right } of pairs) {
     const sourceKey = `duplicate:${subjectKey(left)}|${subjectKey(right)}`;
     if ((await deciding(candidates, { sourceKey }))[0]) continue;
+    if (await optedOut(left) || await optedOut(right)) continue;
     await candidates.createManaged({
       sourceKey,
       ...subjectFields(left, 'left'),
