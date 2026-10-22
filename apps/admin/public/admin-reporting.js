@@ -70,6 +70,16 @@ export function dashboardPath({ period, owner = null, currency = REPORTING_CURRE
 }
 
 /**
+ * Money for display: integer minor units to an Italian currency string.
+ * Non-integers are never formatted as money — 'n.d.', not a guess.
+ * @param {number} minor @param {string} [currency]
+ */
+export function formatMoney(minor, currency = REPORTING_CURRENCY) {
+  if (!Number.isInteger(minor)) return 'n.d.';
+  return new Intl.NumberFormat('it-IT', { style: 'currency', currency }).format(minor / 100);
+}
+
+/**
  * Bar fill width for a value against the chart maximum. Zero/negative
  * maxima render empty, never NaN.
  * @param {number} value @param {number} max
@@ -345,7 +355,7 @@ export function createReportingView(deps) {
     panel.appendChild(band);
     panel.appendChild(el(doc, 'p', {
       class: 'forecast-total',
-      text: `Chiuse ${model.currency === 'EUR' ? '€' : model.currency} ${forecast.closedMinor} · probabili +${forecast.probableMinor} · se chiudi tutto +${forecast.bestMinor}`,
+      text: `Chiuse ${formatMoney(forecast.closedMinor, model.currency)} · probabili +${formatMoney(forecast.probableMinor, model.currency)} · se chiudi tutto +${formatMoney(forecast.bestMinor, model.currency)}`,
     }));
     // The heuristic badge is the acceptance contract: the number below is
     // arithmetic over history, never a promise.
@@ -376,8 +386,8 @@ export function createReportingView(deps) {
       const row = el(doc, 'tr');
       row.appendChild(el(doc, 'td', { text: entry.owner }));
       row.appendChild(el(doc, 'td', { text: String(entry.openCount) }));
-      row.appendChild(el(doc, 'td', { text: String(entry.openMinor) }));
-      row.appendChild(el(doc, 'td', { text: `${entry.wonCount} (${entry.wonMinor})` }));
+      row.appendChild(el(doc, 'td', { text: formatMoney(entry.openMinor, model.currency) }));
+      row.appendChild(el(doc, 'td', { text: `${entry.wonCount} (${formatMoney(entry.wonMinor, model.currency)})` }));
       row.appendChild(el(doc, 'td', { text: entry.winRateDisplay }));
       tbody.appendChild(row);
     }
@@ -398,6 +408,9 @@ export function createReportingView(deps) {
     const propose = el(doc, 'button', { class: 'secondary', text: 'Proponi ridistribuzione dei lead' });
     propose.setAttribute('data-action', 'proponi-ridistribuzione');
     propose.addEventListener('click', () => {
+      // No double reveal: a second click changes nothing.
+      if (propose.getAttribute('data-done') === 'true') return;
+      propose.setAttribute('data-done', 'true');
       if (model.proposal === null || model.proposal === undefined) {
         panel.appendChild(el(doc, 'p', { class: 'lede', text: 'Nessuna ridistribuzione da proporre in questo periodo.' }));
         return;

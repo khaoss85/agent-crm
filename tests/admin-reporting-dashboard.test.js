@@ -17,6 +17,7 @@ import {
   createReportingView,
   currentPeriod,
   dashboardPath,
+  formatMoney,
   periodOptions,
 } from '../apps/admin/public/admin-reporting.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -126,6 +127,10 @@ test('period options, dashboard path and bar widths are pure and pinned', () => 
   assert.equal(barWidth(0, 0), '0%');
   assert.equal(barWidth(5, 0), '0%');
   assert.equal(barWidth(-3, 100), '0%');
+  assert.equal(formatMoney(26000, 'EUR'), '260,00 €');
+  assert.equal(formatMoney(0, 'USD'), '0,00 USD');
+  assert.equal(formatMoney(1.5, 'EUR'), 'n.d.');
+  assert.equal(formatMoney(NaN), 'n.d.');
 });
 
 test('dashboard renders 5 KPIs, 4 charts, forecast badge, team and insights', async () => {
@@ -182,6 +187,14 @@ test('the proposal reveals with zero requests: it proposes, never reassigns', as
   const text = [...mount.findAll('li'), ...mount.findAll('p')].map((node) => node.textContent).join(' | ');
   assert.match(text, /1 lead da alice a bob/);
   assert.match(text, /non sposta nulla da sola/);
+  propose.dispatch('click', {});
+  await tick();
+  assert.equal(requests.length, before, 'a second click still performs no request');
+  assert.equal(
+    mount.findAll('li').filter((node) => /lead da alice a bob/.test(node.textContent)).length,
+    1,
+    'a second click reveals nothing twice',
+  );
 });
 
 test('without a proposal the button says so honestly, still with zero requests', async () => {
