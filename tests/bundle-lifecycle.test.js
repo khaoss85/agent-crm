@@ -58,11 +58,14 @@ test('bundle plan refuses kernel names, kernel tables and loose versions', () =>
     /kernel module|shadow/i,
   );
   // A bundle may not claim kernel storage (contacts, opportunities, audit…).
+  // Probe names stay valid bundle names (underscores become hyphens) so the
+  // refusal under test is the table guard, not the name guard.
   for (const table of ['contacts', 'companies', 'opportunities', 'approvals', 'audit_events']) {
+    const probe = `probe-${table.replaceAll('_', '-')}`;
     assert.throws(
       () => planBundleCreate({
-        manifest: { ...probeManifest, name: `probe-${table}`, table },
-        name: `probe-${table}`,
+        manifest: { ...probeManifest, name: probe, table },
+        name: probe,
         version: '0.0.1',
         createdBy: 'ai',
         rootDir: repoRoot,
@@ -127,14 +130,18 @@ function createProjectCopy(t) {
 
 test('dalla descrizione al bundle installato ("Crea con l\'AI"): genera, verifica, installa, serve, rimuovi', async (t) => {
   const root = createProjectCopy(t);
-  const copy = await import(pathToFileURL(join(root, 'packages/cli/src/bundle-manager.js')).href);
-  const { createAccordoApp: createCopyApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
 
   // Kernel calendario in the copy: the appointment module, generated like any
-  // kernel module (the same command the milestones use).
+  // kernel module (the same command the milestones use). Generated BEFORE the
+  // copy's app is first imported: the app reads the generated registry with a
+  // static import, so a module generated after that import would not exist
+  // for this boot — the same ordering a real checkout has.
   const { planModule, applyModulePlan } = await import(pathToFileURL(join(root, 'packages/cli/src/module-factory.js')).href);
   const appointmentManifest = JSON.parse(readFileSync(join(root, 'packages/appointments/modules/appointment.module.json'), 'utf8'));
   applyModulePlan(planModule({ manifest: appointmentManifest, rootDir: root }));
+
+  const copy = await import(pathToFileURL(join(root, 'packages/cli/src/bundle-manager.js')).href);
+  const { createAccordoApp: createCopyApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
 
   // The agent step: description -> manifest (above) -> real bundle on disk.
   const plan = copy.planBundleCreate({ manifest: probeManifest, name: 'lifecycle-probe', version: '0.0.1', createdBy: 'ai', rootDir: root });
@@ -160,7 +167,10 @@ test('dalla descrizione al bundle installato ("Crea con l\'AI"): genera, verific
   const dbPath = join(root, 'data', 'lifecycle.sqlite');
   const entries = await copy.createBundleEntries({ rootDir: root, bundles: [{ name: 'lifecycle-probe', version: '0.0.1' }] });
   const app = createCopyApp({ dbPath, bundles: entries });
-  t.after(() => app.close());
+  // Closed explicitly before the reopen below; the hook is a once-guard so
+  // the teardown never closes twice.
+  let appOpen = true;
+  t.after(() => { if (appOpen) { appOpen = false; app.close(); } });
   const company = await app.services.companies.create({ name: 'Palestra Presti' }, { actor: ACTOR });
   const contact = await app.services.contacts.create(
     { companyId: company.id, firstName: 'Guido', lastName: 'Presti', email: 'guido@presti.example' },
@@ -198,6 +208,7 @@ test('dalla descrizione al bundle installato ("Crea con l\'AI"): genera, verific
   // Uninstall with the live database: only the bundle's own tables drop.
   const uninstalled = await copy.uninstallBundle({ name: 'lifecycle-probe', version: '0.0.1', rootDir: root, database: app.database });
   assert.deepEqual(uninstalled.dropped, [proof.modules[0].table]);
+  appOpen = false;
   app.close();
 
   // The app boots clean without the bundle; every kernel table and every

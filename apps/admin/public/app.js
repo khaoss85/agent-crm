@@ -370,6 +370,7 @@ import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
+import { createReportingView } from './admin-reporting.js';
 import { createSpineView } from './admin-spine.js';
 import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
 
@@ -513,6 +514,22 @@ const connectorsView = createConnectorsView({
   storage: shellStorage,
   toast,
 });
+
+// Reporting and "+ Nuovo modulo" (BO-F5-01, docs/BUNDLES.md): the reference
+// bundle's live rows plus the double option and the 'Sviluppa per Accordo'
+// card. The AI option forwards to the assistant panel on the nuovo-modulo
+// screen (same seam as the Clienti onAskAi above); nothing is generated in
+// the browser.
+const reportingView = createReportingView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  navigate: (hash) => { window.location.hash = hash; },
+  onAskAi: (screenId) => {
+    if (assistantPanel) void assistantPanel.open(screenId);
+    else toast('Apri la barra AI (⌘K) e descrivi il modulo che vuoi creare.');
+  },
+});
 const shellSpaces = readSpaces(shellStorage);
 let shellActiveSpace = null;
 try {
@@ -609,6 +626,8 @@ function shellScreenFor(target) {
     case 'catalog': return { id: null, label: 'Catalogo prodotti' };
     case 'quote-detail': return { id: null, label: 'Preventivo' };
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
+    case 'reporting': return { id: 'reporting', label: 'Reporting' };
+    case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
     case 'invalid': return { id: null, label: 'Percorso non valido' };
     default: return { id: null, label: 'Vista' };
   }
@@ -820,6 +839,8 @@ async function route() {
     else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') await customerDataView.render();
     else if (target.view === 'connectors') await connectorsView.render();
+    else if (target.view === 'reporting') await reportingView.renderReporting();
+    else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'customer-card') await customerCardView.renderCard(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();

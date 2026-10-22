@@ -32,12 +32,14 @@ test('sidebar voices are the prototype voices, in Italian', () => {
     'Calendario',
     'Sequenze',
     'Reporting',
+    'Nuovo modulo',
     'Impostazioni',
   ]);
   const groups = Object.fromEntries(SHELL_ITEMS.map((item) => [item.id, item.group]));
   assert.equal(groups.oggi, 'home');
   for (const id of ['clienti', 'pipeline', 'calendario', 'sequenze']) assert.equal(groups[id], 'native');
   assert.equal(groups.reporting, 'custom');
+  assert.equal(groups['nuovo-modulo'], 'custom');
   assert.equal(groups.impostazioni, 'settings');
   const headers = Object.fromEntries(SHELL_GROUPS.map((group) => [group.id, group.header]));
   assert.equal(headers.native, 'Moduli nativi');
@@ -139,14 +141,20 @@ test('buildShellNav resolves Pipeline from the schema and leaves future screens 
   assert.equal(calendar.available, false);
   assert.match(calendar.disabledReason, /BO-F3/);
 
-  // Sequenze and Reporting have no admin screen either (framework reads for
-  // Calendario/Sequenze exist, but no screen): they stay disabled with the
-  // story named instead of linking anywhere.
-  for (const [id, story] of [['sequenze', /BO-F3/], ['reporting', /BO-F5/]]) {
-    const voice = bare.find((item) => item.id === id);
+  // Sequenze has no admin screen (the framework read exists, but no screen):
+  // it stays disabled with the story named instead of linking anywhere.
+  // Reporting and Nuovo modulo are delivered by BO-F5-01, so both link.
+  {
+    const voice = bare.find((item) => item.id === 'sequenze');
     assert.equal(voice.available, false);
     assert.equal(voice.route, null);
-    assert.match(voice.disabledReason, story);
+    assert.match(voice.disabledReason, /BO-F3/);
+  }
+  for (const [id, route] of [['reporting', '#/reporting'], ['nuovo-modulo', '#/nuovo-modulo']]) {
+    const voice = bare.find((item) => item.id === id);
+    assert.equal(voice.available, true);
+    assert.equal(voice.route, route);
+    assert.equal(voice.story, 'BO-F5-01');
   }
 
   const withCustom = buildShellNav({ customModules: [{ name: 'partner' }, { name: 'BAD NAME' }, {}] });
@@ -189,12 +197,16 @@ test('a composed schema envelope links every delivered screen (backlog:42fd49b8)
   for (const id of ['clienti', 'pipeline', 'impostazioni', 'oggi']) {
     assert.equal(byId[id].available, true, `${id} links its delivered screen`);
   }
-  for (const id of ['calendario', 'sequenze', 'reporting']) {
+  for (const id of ['calendario', 'sequenze']) {
     assert.equal(byId[id].available, false, `${id} has no admin screen yet`);
     assert.equal(byId[id].route, null);
   }
+  // BO-F5-01: Reporting and Nuovo modulo are delivered screens now.
+  for (const id of ['reporting', 'nuovo-modulo']) {
+    assert.equal(byId[id].available, true, `${id} links its delivered screen`);
+  }
   const oggiRoutes = buildOggiLinks(nav).map((link) => link.route);
-  for (const href of ['#/customer-data', '#/pipelines/vendite', '#/impostazioni']) {
+  for (const href of ['#/customer-data', '#/pipelines/vendite', '#/reporting', '#/nuovo-modulo', '#/impostazioni']) {
     assert.ok(oggiRoutes.includes(href), `Oggi lists the ready screen ${href}`);
   }
 });

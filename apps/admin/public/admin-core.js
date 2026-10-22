@@ -367,6 +367,17 @@ export function parseModuleRoute(hash) {
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'connectors' };
   }
+  // Reporting and "+ Nuovo modulo" routes (BO-F5-01, docs/BUNDLES.md). One
+  // screen each, same canonical discipline as every other route here: the
+  // wizard state (AI vs manuale) lives in the view, never in the hash.
+  if (rawParts.length && rawParts[0] === 'reporting') {
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'reporting' };
+  }
+  if (rawParts.length && rawParts[0] === 'nuovo-modulo') {
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'nuovo-modulo' };
+  }
   if (rawParts.length === 0 || rawParts[0] !== 'modules') return { view: 'dashboard' };
   // An internal empty segment (e.g. "modules//new") is malformed, not a lookup.
   if (rawParts.some((part) => part === '')) return { view: 'invalid' };

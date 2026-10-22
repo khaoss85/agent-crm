@@ -249,8 +249,11 @@ export function planBundleCreate(input) {
     );
   }
   for (const other of scanBundleModules(rootDir)) {
-    if (other.moduleName.toLowerCase() === manifest.name.toLowerCase()
-      && (other.bundleName !== input.name || other.version !== input.version)) {
+    // A new version of the SAME bundle reuses its module name (versions are
+    // immutable: 0.0.1 stays, 0.0.2 plans beside it). Only a DIFFERENT
+    // bundle claiming the name is a conflict.
+    if (other.bundleName !== input.name
+      && other.moduleName.toLowerCase() === manifest.name.toLowerCase()) {
       throw new ConflictError(
         `Module "${manifest.name}" is already installed by bundle ${other.bundleName}@${other.version}; one module, one bundle`,
         { module: manifest.name, bundle: `${other.bundleName}@${other.version}` },

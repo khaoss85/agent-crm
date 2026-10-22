@@ -97,6 +97,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
 .panel h2 { margin: 0; font-size: 22px; letter-spacing: -.024em; }
 .panel code { max-width: 340px; overflow: hidden; text-overflow: ellipsis; background: var(--surface-soft); border-radius: 6px; padding: 8px 10px; color: var(--dim); font-family: var(--mono); font-size: 11px; }
+/* BO-F5-01: exact CLI commands on the "+ Nuovo modulo" screen. Full-width
+   and scrollable, never clipped: a truncated command copied half is worse
+   than no command. */
+.panel pre { margin: 10px 0 0; background: var(--surface-soft); border-radius: 6px; padding: 10px 12px; overflow-x: auto; }
+.panel pre code { display: block; max-width: none; overflow: visible; text-overflow: clip; background: none; border-radius: 0; padding: 0; white-space: pre; }
 
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
