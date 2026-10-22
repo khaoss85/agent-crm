@@ -54,6 +54,13 @@ export const SUGGESTION_READ_LIMIT = 50;
 export const SUGGESTION_MAX_SOURCES = 4;
 export const SUGGESTION_MAX_LISTED = 3;
 
+/**
+ * How many past answers the panel keeps in-session (BO-F4-04): the trace of
+ * every run stays inspectable until the page reloads. In-memory only, never
+ * persisted — sources carry customer labels that must not rest on disk.
+ */
+export const ASSISTANT_HISTORY_LIMIT = 20;
+
 /** Record ids travel in sources; the shape mirrors packages/llm. */
 const RECORD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/;
 const MODULE_RE = /^[a-z][a-z0-9-]*$/;
@@ -145,7 +152,20 @@ export function suggestionsFor(screenId) {
 /**
  * @typedef {{ kind: 'record', module: string, id: string, label: string, href: string }} Source
  * @typedef {{ id: string, label: string, kind: 'navigate' | 'api', href?: string, request?: { path: string, method: string, body?: unknown }, customerFacing: boolean, confirmLabel?: string }} AssistantAction
- * @typedef {{ suggestionId: string, title: string, lines: string[], sources: Source[], actions: AssistantAction[], unavailable: string[] }} Answer
+ * @typedef {{ suggestionId: string, title: string, lines: string[], sources: Source[], actions: AssistantAction[], unavailable: string[], trace: AnswerTrace }} Answer
+ * A single read behind an answer: which surface was hit, with which bound,
+ * and how many rows it returned. `status` is 'missing' when the module is
+ * not composed or the read fails — the answer names it in `unavailable`
+ * instead of failing — and 'invalid' when the payload has no usable rows.
+ * @typedef {{ target: string, limit: number | null, status: 'ok' | 'missing' | 'invalid', rows: number }} TraceRead
+ * A single action step through the confirmation gate: requested, gated, or
+ * run. Recorded by runAssistantAction when the caller passes `trace`.
+ * @typedef {{ actionId: string, at: string, outcome: 'needs-confirmation' | 'executed' | 'failed', detail: string }} TraceExecution
+ * The execution trace of one answer (BO-F4-04): every read the builders
+ * performed plus every action step the operator took on it. It lives on the
+ * answer and in the panel session history — never in localStorage, so
+ * customer labels in sources never persist on disk beyond the session.
+ * @typedef {{ suggestionId: string, title: string, at: string, reads: TraceRead[], executions: TraceExecution[] }} AnswerTrace
  */
 
 /**
@@ -193,17 +213,25 @@ function conversationLabel(row) {
 /**
  * Read one module list best-effort: rows when the module is composed and the
  * read succeeds, null when it is not — an unavailable section names itself
- * instead of failing the whole answer.
+ * instead of failing the whole answer. Every attempt lands in `traceReads`
+ * (BO-F4-04) so the answer can show which records it really read.
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {string} module
  * @param {number} limit
+ * @param {Array<TraceRead>} [traceReads]
  */
-async function readRecords(client, module, limit = SUGGESTION_READ_LIMIT) {
+async function readRecords(client, module, limit = SUGGESTION_READ_LIMIT, traceReads) {
   try {
     const body = await client.request(`/api/modules/${module}/records?limit=${limit}`);
-    if (!body || !Array.isArray(body.items)) return null;
-    return body.items.filter((row) => row !== null && typeof row === 'object');
+    if (!body || !Array.isArray(body.items)) {
+      traceRead(traceReads, module, limit, 'invalid', 0);
+      return null;
+    }
+    const rows = body.items.filter((row) => row !== null && typeof row === 'object');
+    traceRead(traceReads, module, limit, 'ok', rows.length);
+    return rows;
   } catch {
+    traceRead(traceReads, module, limit, 'missing', 0);
     return null;
   }
 }
@@ -242,12 +270,32 @@ function newestFirst(rows) {
 }
 
 /**
+ * Record one read in the answer trace, when the caller keeps a trace.
+ * @param {Array<TraceRead> | undefined} traceReads
+ * @param {string} target
+ * @param {number | null} limit
+ * @param {'ok' | 'missing' | 'invalid'} status
+ * @param {number} rows
+ */
+function traceRead(traceReads, target, limit, status, rows) {
+  if (!Array.isArray(traceReads)) return;
+  traceReads.push({ target, limit, status, rows });
+}
+
+/**
  * @param {string} suggestionId
  * @param {string} title
  */
 function emptyAnswer(suggestionId, title) {
+  const trace = {
+    suggestionId,
+    title,
+    at: new Date().toISOString(),
+    reads: [],
+    executions: [],
+  };
   return {
-    suggestionId, title, lines: [], sources: [], actions: [], unavailable: [],
+    suggestionId, title, lines: [], sources: [], actions: [], unavailable: [], trace,
   };
 }
 
@@ -255,8 +303,8 @@ function emptyAnswer(suggestionId, title) {
 async function answerUrgenti(client) {
   const answer = emptyAnswer('bo04:oggi:urgenti', 'Cosa è più urgente oggi?');
   const [conversations, issues] = await Promise.all([
-    readRecords(client, 'conversation'),
-    readRecords(client, 'data-quality-issue'),
+    readRecords(client, 'conversation', SUGGESTION_READ_LIMIT, answer.trace.reads),
+    readRecords(client, 'data-quality-issue', SUGGESTION_READ_LIMIT, answer.trace.reads),
   ]);
   if (conversations === null) {
     answer.unavailable.push('Thread: modulo conversation non leggibile in questo spazio.');
@@ -286,7 +334,7 @@ async function answerUrgenti(client) {
 /** Telefono: esiti delle chiamate registrate in interaction-call. */
 async function answerChiamate(client) {
   const answer = emptyAnswer('bo04:oggi:chiamate', 'Com’è andato il telefono?');
-  const calls = await readRecords(client, 'interaction-call', CALL_READ_LIMIT);
+  const calls = await readRecords(client, 'interaction-call', CALL_READ_LIMIT, answer.trace.reads);
   if (calls === null) {
     answer.unavailable.push('Chiamate: modulo interaction-call non leggibile in questo spazio.');
     return answer;
@@ -316,7 +364,7 @@ async function answerChiamate(client) {
 /** Da ricontattare: thread aperti, messaggio più recente in cima. */
 async function answerRicontattare(client) {
   const answer = emptyAnswer('bo04:clienti:ricontattare', 'Chi devo ricontattare?');
-  const conversations = await readRecords(client, 'conversation');
+  const conversations = await readRecords(client, 'conversation', SUGGESTION_READ_LIMIT, answer.trace.reads);
   if (conversations === null) {
     answer.unavailable.push('Thread: modulo conversation non leggibile in questo spazio.');
     return answer;
@@ -378,7 +426,7 @@ async function answerRicontattare(client) {
 /** Segnali caldi: behavioral-signal di packages/intelligence, per lead. */
 async function answerSegnali(client) {
   const answer = emptyAnswer('bo04:clienti:segnali', 'Quali lead mostrano segnali caldi?');
-  const signals = await readRecords(client, 'behavioral-signal', SIGNAL_READ_LIMIT);
+  const signals = await readRecords(client, 'behavioral-signal', SIGNAL_READ_LIMIT, answer.trace.reads);
   if (signals === null) {
     answer.unavailable.push('Segnali: modulo behavioral-signal non leggibile in questo spazio.');
     return answer;
@@ -425,11 +473,13 @@ async function answerSegnali(client) {
  * no usable stage definition: then answers fall back to the legacy stage,
  * never to an invented grouping.
  * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {Array<TraceRead>} [traceReads]
  * @returns {Promise<{ name: string, stages: Array<{ key: string, label?: string, type?: string }> } | null>}
  */
-async function opportunityBoard(client) {
+async function opportunityBoard(client, traceReads) {
   try {
     const schema = await client.request('/api/schema');
+    traceRead(traceReads, 'schema', null, 'ok', Array.isArray(schema?.pipelines) ? schema.pipelines.length : 0);
     const pipeline = Array.isArray(schema?.pipelines)
       ? schema.pipelines.find((entry) => entry !== null && typeof entry === 'object'
         && entry.module === 'opportunity'
@@ -438,6 +488,7 @@ async function opportunityBoard(client) {
     if (!pipeline || !Array.isArray(pipeline.stages)) return null;
     return pipeline;
   } catch {
+    traceRead(traceReads, 'schema', null, 'missing', 0);
     return null;
   }
 }
@@ -515,16 +566,18 @@ async function answerChiusura(client) {
     ? body.items.filter((row) => row !== null && typeof row === 'object')
     : null;
   if (items === null) {
+    traceRead(answer.trace.reads, 'opportunities', null, body === null ? 'missing' : 'invalid', 0);
     answer.unavailable.push('Opportunità: elenco non leggibile in questo spazio.');
     return answer;
   }
+  traceRead(answer.trace.reads, 'opportunities', null, 'ok', items.length);
   const labelOf = (row) => shortText(row?.name ?? row?.companyName ?? row?.title, 60) || shortText(row?.id, 24);
   // Honest bounds: /api/opportunities without a limit serves the server
   // default page (OPPORTUNITY_SERVER_DEFAULT_LIMIT) — at the cap the headline
   // says which page it counts, never a total.
   const capped = items.length >= OPPORTUNITY_SERVER_DEFAULT_LIMIT;
   const pageNote = capped ? ` (prime ${OPPORTUNITY_SERVER_DEFAULT_LIMIT} lette)` : '';
-  const board = await opportunityBoard(client);
+  const board = await opportunityBoard(client, answer.trace.reads);
   if (board === null) {
     // No board covers opportunities in this space: legacy stage grouping,
     // records named as text, never a link to a board that does not exist.
@@ -612,7 +665,7 @@ async function answerChiusura(client) {
 /** Slot: appuntamenti fissati; la proposta resta un passo dell’operatore. */
 async function answerSlot(client) {
   const answer = emptyAnswer('bo04:calendario:slot', 'Trova 45 minuti con Marco e Sara');
-  const appointments = await readRecords(client, 'appointment');
+  const appointments = await readRecords(client, 'appointment', SUGGESTION_READ_LIMIT, answer.trace.reads);
   if (appointments === null) {
     answer.unavailable.push('Appuntamenti: modulo appointment non leggibile in questo spazio.');
     answer.lines.push('Il pannello non sposta la calendarizzazione da solo: apri il thread e proponi gli slot al cliente.');
@@ -635,7 +688,7 @@ async function answerSlot(client) {
 /** Lead del sito: ultimi messaggi inbound dal form, pronti da lavorare. */
 async function answerLeadSito(client) {
   const answer = emptyAnswer('bo04:sequenze:lead-sito', 'Crea una sequenza per i lead del sito');
-  const messages = await readRecords(client, 'interaction-message', 100);
+  const messages = await readRecords(client, 'interaction-message', 100, answer.trace.reads);
   if (messages === null) {
     answer.unavailable.push('Messaggi: modulo interaction-message non leggibile in questo spazio.');
     return answer;
@@ -676,7 +729,7 @@ async function answerLeadSito(client) {
 /** Reporting call: chiamate registrate per operatore ed esito. */
 async function answerCallReport(client) {
   const answer = emptyAnswer('bo04:reporting:call', 'Chi ha gestito più call questo mese?');
-  const calls = await readRecords(client, 'interaction-call', CALL_READ_LIMIT);
+  const calls = await readRecords(client, 'interaction-call', CALL_READ_LIMIT, answer.trace.reads);
   if (calls === null) {
     answer.unavailable.push('Chiamate: modulo interaction-call non leggibile in questo spazio.');
     return answer;
@@ -715,7 +768,7 @@ async function answerAiPuo(client) {
   answer.lines.push('Da sola: leggere record, filtrare elenchi, segnare thread come letti.');
   answer.lines.push('Chiede conferma prima di: chiudere un thread, aprire un thread per contattare un cliente, e di ogni invio verso un cliente.');
   answer.lines.push('Le domande libere arrivano con la chiave (vedi sotto).');
-  const audit = await readRecords(client, 'llm-call-audit', 20);
+  const audit = await readRecords(client, 'llm-call-audit', 20, answer.trace.reads);
   if (audit === null) {
     answer.unavailable.push('Registri AI: modulo llm-call-audit non leggibile in questo spazio.');
     return answer;
@@ -818,6 +871,15 @@ export async function askFreeQuestion(client, status, question) {
       if (source !== null) sources.push(source);
     }
   }
+  // The backend did the reading: the trace records its endpoint and what it
+  // returned, so a free answer is inspectable exactly like a suggestion.
+  const trace = {
+    suggestionId: 'bo04:domanda-libera',
+    title: text,
+    at: new Date().toISOString(),
+    reads: [{ target: 'assistant-ask', limit: null, status: 'ok', rows: lines.length }],
+    executions: [],
+  };
   return {
     ok: true,
     disabled: false,
@@ -828,6 +890,7 @@ export async function askFreeQuestion(client, status, question) {
       sources,
       actions: [],
       unavailable: [],
+      trace,
     },
   };
 }
@@ -865,17 +928,39 @@ function actionNeedsConfirmation(action) {
  * shows on the second step.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
  * @param {AssistantAction} action
- * @param {{ navigate?: (href: string) => void, confirmedActionId?: string | null, idempotencyKey?: string }} options
+ * @param {{ navigate?: (href: string) => void, confirmedActionId?: string | null, idempotencyKey?: string, trace?: Array<TraceExecution> }} options
  */
 export async function runAssistantAction(client, action, options = {}) {
-  const { navigate = () => {}, confirmedActionId = null, idempotencyKey = null } = options;
+  const {
+    navigate = () => {}, confirmedActionId = null, idempotencyKey = null, trace = null,
+  } = options;
+  const actionId = action !== null && typeof action === 'object' && typeof action.id === 'string' && action.id !== ''
+    ? action.id
+    : shortText(action?.label, 60) || '?';
+  // Every gate step lands in the answer trace (BO-F4-04) when the caller
+  // passes it: gated refusals and failures record before they return/throw,
+  // so the trace shows the attempt, not only the successes.
+  const recordExecution = (outcome, detail) => {
+    if (Array.isArray(trace)) {
+      trace.push({ actionId, at: new Date().toISOString(), outcome, detail: shortText(detail, 120) });
+    }
+  };
+  /**
+   * @param {string} message
+   * @returns {never}
+   */
+  const fail = (message) => {
+    recordExecution('failed', message);
+    throw new Error(message);
+  };
   if (action === null || typeof action !== 'object' || typeof action.id !== 'string' || action.id === '') {
-    throw new Error('Azione dell’assistente non valida.');
+    fail('Azione dell’assistente non valida.');
   }
   if (action.kind !== 'navigate' && action.kind !== 'api') {
-    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: tipo sconosciuto.`);
+    fail(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: tipo sconosciuto.`);
   }
   if (actionNeedsConfirmation(action) && confirmedActionId !== action.id) {
+    recordExecution('needs-confirmation', typeof action.confirmLabel === 'string' && action.confirmLabel !== '' ? action.confirmLabel : 'conferma richiesta');
     return {
       ok: false,
       needsConfirmation: true,
@@ -886,9 +971,10 @@ export async function runAssistantAction(client, action, options = {}) {
   }
   if (action.kind === 'navigate') {
     if (typeof action.href !== 'string' || !action.href.startsWith('#/')) {
-      throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: destinazione non valida.`);
+      fail(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: destinazione non valida.`);
     }
     navigate(action.href);
+    recordExecution('executed', action.href);
     return { ok: true, needsConfirmation: false };
   }
   // Exact allowlist: the panel only builds the two input-free conversation
@@ -901,35 +987,44 @@ export async function runAssistantAction(client, action, options = {}) {
     ? /^\/api\/modules\/conversation\/records\/([^/]+)\/actions\/(mark-read|close)$/.exec(request.path)
     : null;
   if (actionMatch === null) {
-    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
+    fail(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
   }
   let actionConversationId;
   try {
     actionConversationId = decodeURIComponent(actionMatch[1]);
   } catch {
-    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
+    fail(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
   }
   if (!isSafeRecordId(actionConversationId)) {
-    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
+    fail(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
   }
   if ((request.method ?? 'POST') !== 'POST') {
-    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
+    fail(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
   }
   if (request.body !== undefined
     && (request.body === null || typeof request.body !== 'object'
       || Array.isArray(request.body) || Object.keys(request.body).length !== 0)) {
-    throw new Error(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
+    fail(`Azione “${shortText(action.label, 60) || action.id}” non eseguibile: richiesta non consentita.`);
   }
   // Mutations run on the real Admin client only with a submission-owned key
   // (admin-submission.js KEY_RE): an explicit caller key is honored, the
   // default is issued here so the panel never hand-rolls 'assistant:*' keys
   // the real gate rejects.
   const key = typeof idempotencyKey === 'string' && idempotencyKey !== '' ? idempotencyKey : issueAdminKey();
-  const result = await client.request(request.path, {
-    method: request.method ?? 'POST',
-    body: request.body ?? {},
-    idempotencyKey: key,
-  });
+  // A rejected request keeps its original error identity (status, code) for
+  // the panel: the trace only notes the attempt before it propagates.
+  let result;
+  try {
+    result = await client.request(request.path, {
+      method: request.method ?? 'POST',
+      body: request.body ?? {},
+      idempotencyKey: key,
+    });
+  } catch (error) {
+    recordExecution('failed', error instanceof Error ? error.message : 'Azione fallita.');
+    throw error;
+  }
+  recordExecution('executed', request.path);
   return { ok: true, needsConfirmation: false, result };
 }
 
@@ -948,8 +1043,9 @@ function el(doc, tag, className, text) {
 
 /**
  * The ⌘K side panel: suggestions for the current screen, answers with
- * clickable sources, linked actions with the confirmation gate, and the
- * free-question box (disabled with the key message in dry-run).
+ * clickable sources, linked actions with the confirmation gate, the
+ * execution trace of every answer (BO-F4-04, kept in the session history),
+ * and the free-question box (disabled with the key message in dry-run).
  * @param {{ doc: any, mount: any, client: any, navigate?: (href: string) => void, notify?: (message: string) => void }} options
  */
 export function createAssistantPanel({ doc, mount, client, navigate = () => {}, notify = () => {} } = {}) {
@@ -959,10 +1055,19 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     screenId: 'oggi',
     status: null,
     answer: null,
+    history: [],
     busy: false,
     pendingConfirmId: null,
     error: '',
   };
+
+  // Keep every finished answer for the session (BO-F4-04): conserved, newest
+  // last, capped so a long shift never grows the panel without bounds.
+  function pushHistory(answer) {
+    if (!answer || typeof answer.suggestionId !== 'string') return;
+    state.history.push(answer);
+    while (state.history.length > ASSISTANT_HISTORY_LIMIT) state.history.shift();
+  }
 
   function clearMount() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -1021,6 +1126,51 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     return wrap;
   }
 
+  /**
+   * The execution trace of one answer (BO-F4-04): every read the builders
+   * performed (surface, bound, rows) plus every action step the operator
+   * took on it. Text only, through the same textContent-only renderer as
+   * the rest of the panel — hostile strings stay inert here too.
+   * @param {Answer} answer
+   */
+  function renderTrace(answer) {
+    const trace = answer?.trace;
+    if (!trace || !Array.isArray(trace.reads) || trace.reads.length === 0) return null;
+    const wrap = el(doc, 'div', 'bo-assistant-trace');
+    wrap.appendChild(el(doc, 'p', 'bo-assistant-heading', 'Traccia di esecuzione'));
+    const list = el(doc, 'ul', 'bo-assistant-trace-list');
+    for (const read of trace.reads) {
+      if (!read || typeof read.target !== 'string') continue;
+      const bound = typeof read.limit === 'number' ? ` (limite ${read.limit})` : '';
+      const text = read.status === 'ok'
+        ? `${read.target}: ${read.rows} righe lette${bound}`
+        : read.status === 'invalid'
+          ? `${read.target}: risposta non valida, ignorata`
+          : `${read.target}: non leggibile in questo spazio`;
+      const item = el(doc, 'li', 'bo-assistant-trace-read', text);
+      list.appendChild(item);
+    }
+    if (list.childNodes.length === 0) return null;
+    wrap.appendChild(list);
+    const executions = Array.isArray(trace.executions) ? trace.executions : [];
+    if (executions.length === 0) {
+      wrap.appendChild(el(doc, 'p', 'bo-assistant-trace-empty', 'Azioni eseguite: nessuna finora.'));
+    }
+    for (const execution of executions) {
+      if (!execution || typeof execution.actionId !== 'string') continue;
+      const at = typeof execution.at === 'string' && execution.at.length >= 19
+        ? ` alle ${execution.at.slice(11, 19)} UTC`
+        : '';
+      const outcome = execution.outcome === 'executed'
+        ? 'eseguita'
+        : execution.outcome === 'needs-confirmation'
+          ? 'in attesa di conferma'
+          : `fallita: ${shortText(execution.detail, 80)}`;
+      wrap.appendChild(el(doc, 'p', 'bo-assistant-trace-execution', `${execution.actionId}: ${outcome}${at}`));
+    }
+    return wrap;
+  }
+
   function renderAnswer() {
     const answer = state.answer;
     if (!answer) return null;
@@ -1033,10 +1183,40 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     if (sources) box.appendChild(sources);
     const actions = renderActions(answer);
     if (actions) box.appendChild(actions);
+    const trace = renderTrace(answer);
+    if (trace) box.appendChild(trace);
     for (const note of answer.unavailable ?? []) {
       box.appendChild(el(doc, 'p', 'bo-assistant-unavailable', String(note)));
     }
     return box;
+  }
+
+  // Past answers of this session, newest last (BO-F4-04): reopening one
+  // shows its conserved trace, it never reruns the reads.
+  function renderHistory() {
+    if (state.history.length < 2) return null;
+    const wrap = el(doc, 'div', 'bo-assistant-history');
+    wrap.appendChild(el(doc, 'p', 'bo-assistant-heading', 'Cronologia'));
+    const list = el(doc, 'ul', 'bo-assistant-history-list');
+    for (const entry of state.history) {
+      if (!entry || typeof entry.title !== 'string') continue;
+      const at = typeof entry.trace?.at === 'string' && entry.trace.at.length >= 19
+        ? entry.trace.at.slice(11, 19)
+        : '';
+      const item = el(doc, 'li', 'bo-assistant-history-item');
+      const button = el(doc, 'button', 'bo-assistant-history-open', at !== '' ? `${entry.title} — ${at} UTC` : entry.title);
+      button.addEventListener('click', () => {
+        state.answer = entry;
+        state.pendingConfirmId = null;
+        state.error = '';
+        render();
+      });
+      item.appendChild(button);
+      list.appendChild(item);
+    }
+    if (list.childNodes.length === 0) return null;
+    wrap.appendChild(list);
+    return wrap;
   }
 
   async function executeAction(action) {
@@ -1054,6 +1234,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         navigate,
         confirmedActionId: state.pendingConfirmId,
         idempotencyKey: issueAdminKey(),
+        trace: Array.isArray(state.answer?.trace?.executions) ? state.answer.trace.executions : null,
       });
       state.pendingConfirmId = null;
       if (outcome.needsConfirmation === true) {
@@ -1077,6 +1258,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     render();
     try {
       state.answer = await runSuggestion(client, suggestionId);
+      pushHistory(state.answer);
     } catch (error) {
       state.error = error instanceof Error ? error.message : 'Suggerimento fallito.';
     } finally {
@@ -1096,6 +1278,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         state.error = outcome.notice;
       } else if (outcome.answer) {
         state.answer = outcome.answer;
+        pushHistory(state.answer);
       }
     } catch (error) {
       state.error = error instanceof Error ? error.message : 'Domanda fallita.';
@@ -1137,6 +1320,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     }
     const answer = renderAnswer();
     if (answer) panel.appendChild(answer);
+    const history = renderHistory();
+    if (history) panel.appendChild(history);
     if (state.error !== '') {
       panel.appendChild(el(doc, 'p', 'bo-assistant-error', state.error));
     }
@@ -1191,6 +1376,9 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         suggestionCount: suggestionsFor(state.screenId).length,
         answerTitle: state.answer?.title ?? null,
         sourceCount: Array.isArray(state.answer?.sources) ? state.answer.sources.length : 0,
+        historyCount: state.history.length,
+        traceReads: Array.isArray(state.answer?.trace?.reads) ? state.answer.trace.reads.length : 0,
+        traceExecutions: Array.isArray(state.answer?.trace?.executions) ? state.answer.trace.executions.length : 0,
         pendingConfirmId: state.pendingConfirmId,
         error: state.error,
       };
