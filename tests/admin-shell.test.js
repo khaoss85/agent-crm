@@ -343,6 +343,25 @@ test('Stato sync links only when the customer-data package is composed', () => {
   assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/connettori', '#/catalogo']);
 });
 
+test('Stato sync row carries the real fix-count badge, absent at zero', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderSettingsPanel({ doc, mount, fixCount: 2, customerDataAvailable: true });
+  const badges = mount.findAll('span').filter((node) => node.className.includes('bo-badge'));
+  assert.equal(badges.length, 1);
+  assert.equal(badges[0].textContent, '2');
+  assert.ok(badges[0].parentNode.textContent.includes('Stato sync'));
+
+  const zero = createMount();
+  renderSettingsPanel({ doc, mount: zero, fixCount: 0, customerDataAvailable: true });
+  assert.equal(zero.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
+  assert.ok(zero.textContent.includes('Niente da sistemare.'));
+
+  const unknown = createMount();
+  renderSettingsPanel({ doc, mount: unknown, fixCount: null, customerDataAvailable: true });
+  assert.equal(unknown.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
+});
+
 test('shell stylesheet stays fluid under 700px', () => {
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.ok(css.includes('@media (max-width: 700px)'), 'narrow-viewport rules exist');
