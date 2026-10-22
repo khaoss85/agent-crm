@@ -296,7 +296,7 @@ test('confirm writes one product per row through the manual catalog, row by row'
   assert.equal(table.products[0].offers[0].components[0].flatAmountCents, 9900, 'the price travels from the draft');
   const again = await app.confirmProductImportRow({ importId: started.import.id, rowId: first.id }, ACTOR);
   assert.equal(again.replay, true, 'confirming twice replays the first product');
-  assert.equal(again.product.id, confirmed.product.id);
+  assert.deepEqual(again.product, confirmed.product, 'the replay carries the full product, never an id stub');
   assert.equal((await app.listCatalogProducts({})).products.length, 1, 'no duplicate product');
   const rejected = await app.rejectProductImportRow({ importId: started.import.id, rowId: second.id }, ACTOR);
   assert.equal(rejected.row.status, 'rejected');
@@ -431,6 +431,70 @@ test('concurrent confirms write exactly one product', async (t) => {
   assert.equal(replays.length, 1, 'the racing confirm replays it');
   assert.equal(replays[0].product.id, fresh[0].product.id, 'same product, no duplicate');
   assert.equal((await app.listCatalogProducts({})).products.length, 1, 'exactly one product for one row');
+});
+
+test('a confirm racing a reject decides the row exactly once', async (t) => {
+  for (const first of ['confirm', 'reject']) {
+    const app = await bootApp(t, importProject(t));
+    const started = await app.startProductImport({ source: 'manual', rows: MANUAL_ROWS.slice(0, 1), currency: 'EUR' }, ACTOR);
+    const [only] = started.drafts;
+    const args = { importId: started.import.id, rowId: only.id };
+    const run = (kind) => (kind === 'confirm'
+      ? app.confirmProductImportRow(args, ACTOR)
+      : app.rejectProductImportRow(args, ACTOR));
+    const second = first === 'confirm' ? 'reject' : 'confirm';
+    const settled = await Promise.allSettled([run(first), run(second)]);
+    assert.equal(settled[0].status, 'fulfilled', `the first decision (${first}) wins`);
+    assert.equal(settled[1].status, 'rejected', `the racing ${second} loses`);
+    assert.equal(
+      settled[1].reason?.code, 'PRODUCT_IMPORT_ROW_DECIDED',
+      `the racing ${second} refuses with the decided code, never overwriting the winner`,
+    );
+    const expectedProducts = first === 'confirm' ? 1 : 0;
+    assert.equal(
+      (await app.listCatalogProducts({})).products.length, expectedProducts,
+      `the loser writes nothing: ${expectedProducts} product(s) when ${first} wins`,
+    );
+    const read = await app.readProductImport({ importId: started.import.id });
+    assert.deepEqual(
+      read.counts,
+      first === 'confirm' ? { pending: 0, confirmed: 1, rejected: 0 } : { pending: 0, confirmed: 0, rejected: 1 },
+      `the row lands decided exactly once when ${first} wins`,
+    );
+  }
+});
+
+test('once decided, every second decision refuses: the full decision table', async (t) => {
+  const cases = [
+    { first: 'confirm', second: 'confirm', outcome: 'replay' },
+    { first: 'confirm', second: 'reject', outcome: 'PRODUCT_IMPORT_ROW_DECIDED' },
+    { first: 'reject', second: 'confirm', outcome: 'PRODUCT_IMPORT_ROW_DECIDED' },
+    { first: 'reject', second: 'reject', outcome: 'PRODUCT_IMPORT_ROW_DECIDED' },
+  ];
+  for (const { first, second, outcome } of cases) {
+    const app = await bootApp(t, importProject(t));
+    const started = await app.startProductImport({ source: 'manual', rows: MANUAL_ROWS.slice(0, 1), currency: 'EUR' }, ACTOR);
+    const [only] = started.drafts;
+    const args = { importId: started.import.id, rowId: only.id };
+    const deciding = first === 'confirm'
+      ? await app.confirmProductImportRow(args, ACTOR)
+      : await app.rejectProductImportRow(args, ACTOR);
+    assert.equal(deciding.row.status, first === 'confirm' ? 'confirmed' : 'rejected');
+    if (outcome === 'replay') {
+      const again = await app.confirmProductImportRow(args, ACTOR);
+      assert.equal(again.replay, true, 'confirm after confirm replays');
+      assert.deepEqual(again.product, deciding.product, 'the replay matches the first product in full');
+    } else {
+      const code = second === 'confirm'
+        ? await codeOf(() => app.confirmProductImportRow(args, ACTOR))
+        : await codeOf(() => app.rejectProductImportRow(args, ACTOR));
+      assert.equal(code, outcome, `${first} then ${second} refuses`);
+    }
+    assert.equal(
+      (await app.listCatalogProducts({})).products.length, first === 'confirm' ? 1 : 0,
+      `${first} then ${second}: exactly the winner's products exist`,
+    );
+  }
 });
 
 test('a refused confirm writes nothing and leaves the row pending', async (t) => {

@@ -291,16 +291,20 @@ export async function extractProductDrafts({ documentText, complete, maxDrafts =
 }
 
 /**
- * Conditionally claim one pending import row for the product just written:
- * the committing write is gated where it executes (`status` still
- * `pending`) — the llm spend-claim idiom (`affectedRows` verdict, audit
- * mirror, managed re-read, one event). Zero rows means a concurrent
- * confirm won or the row was decided meanwhile: the caller rolls back
- * (its product with it) and reports PRODUCT_IMPORT_ROW_DECIDED.
+ * One source of truth for every row decision (confirm and reject): the
+ * committing write is a single conditional UPDATE gated on
+ * `status = 'pending'` where it executes — the llm spend-claim idiom
+ * (`affectedRows` verdict, audit mirror, managed re-read, one event).
+ * Zero rows means a concurrent decider won or the row was decided
+ * meanwhile: the caller rolls back (its product with it) and reports
+ * PRODUCT_IMPORT_ROW_DECIDED. Never decide a row with an unconditional
+ * write.
+ *
  * @param {any} rows the product-import-row managed service
- * @param {string} rowId @param {string} productId @param {{actor: unknown}} context
+ * @param {string} rowId @param {{status: string, productId: string|null}} decision
+ * @param {{actor: unknown}} context
  */
-async function claimConfirmedRow(rows, rowId, productId, context) {
+async function claimDecidedRow(rows, rowId, decision, context) {
   const manifest = rows?.manifest;
   const fields = Array.isArray(manifest?.fields) ? manifest.fields : null;
   const columnOf = (name) => fields?.find((field) => field?.name === name)?.column ?? null;
@@ -325,8 +329,8 @@ async function claimConfirmedRow(rows, rowId, productId, context) {
     kind: 'update',
     table: manifest.table,
     values: [
-      { column: columns.status, value: 'confirmed' },
-      { column: columns.productId, value: productId },
+      { column: columns.status, value: decision.status },
+      { column: columns.productId, value: decision.productId },
       { column: 'updated_at', value: nowIso() },
     ],
     where: [
@@ -336,10 +340,10 @@ async function claimConfirmedRow(rows, rowId, productId, context) {
   };
   const auditEvent = {
     actor: context.actor, entityType: manifest.name, entityId: rowId,
-    data: { status: 'confirmed', productId }, action: `${manifest.name}.updated`,
+    data: { status: decision.status, productId: decision.productId }, action: `${manifest.name}.updated`,
   };
   const decided = () => {
-    throw new AppError(`row "${rowId}" is already decided (only pending rows confirm)`, {
+    throw new AppError(`row "${rowId}" is already decided (only pending rows decide)`, {
       code: 'PRODUCT_IMPORT_ROW_DECIDED', status: 409,
     });
   };
@@ -357,7 +361,7 @@ async function claimConfirmedRow(rows, rowId, productId, context) {
   let updated;
   if (syncMutation) {
     updated = rows.mutationSync(() => {
-      // The committing write is gated where it executes: a confirm that
+      // The committing write is gated where it executes: a decision that
       // fired after the fresh read above still lands zero rows.
       const claimed = syncApi.execute(statement);
       if (Number(claimed?.affectedRows ?? 0) !== 1) decided();
@@ -421,6 +425,8 @@ export function createProductImport({ database, events, modules, moduleNames = {
   const names = {
     productImport: moduleNames.productImport ?? 'product-import',
     productImportRow: moduleNames.productImportRow ?? 'product-import-row',
+    product: moduleNames.product ?? 'product',
+    productVersion: moduleNames.productVersion ?? 'product-version',
   };
   const manual = createManualCatalog({ database, events, modules, moduleNames });
   const service = (name) => {
@@ -465,6 +471,27 @@ export function createProductImport({ database, events, modules, moduleNames = {
     documentRef: record.documentRef === '' ? null : (record.documentRef ?? null),
     errorCode: record.errorCode === '' ? null : (record.errorCode ?? null),
   });
+
+  /**
+   * Re-read the product a confirmed row points at, in the same frozen shape
+   * the first confirm returns — a replayed confirm hands back the same
+   * product object, never an id-only stub.
+   */
+  async function readConfirmedProduct(productId) {
+    const product = await service(names.product).get(productId);
+    if (!product || product.currentVersionId === null || product.currentVersionId === undefined) {
+      throw new AppError(`Product "${productId}" has no current version`, { code: 'COMMERCIAL_STATE_CORRUPT', status: 409 });
+    }
+    const version = await service(names.productVersion).get(product.currentVersionId);
+    return Object.freeze({
+      id: product.id,
+      sourceKey: product.sourceKey,
+      sku: version.sku,
+      name: version.name,
+      active: product.active,
+      version: version.version,
+    });
+  }
 
   async function closeWhenDecided(importId, context) {
     const rows = service(names.productImportRow);
@@ -596,7 +623,10 @@ export function createProductImport({ database, events, modules, moduleNames = {
         }
         if (row.status === 'confirmed') {
           const current = await service(names.productImport).get(importId);
-          return Object.freeze({ import: importView(current), row: rowView(row), product: { id: row.productId }, replay: true });
+          return Object.freeze({
+            import: importView(current), row: rowView(row),
+            product: await readConfirmedProduct(row.productId), replay: true,
+          });
         }
         if (row.status !== 'pending') {
           throw new AppError(`row "${rowId}" is already decided (${row.status}): only pending rows confirm`, {
@@ -628,7 +658,7 @@ export function createProductImport({ database, events, modules, moduleNames = {
             flatAmountCents: row.amountCents,
           }],
         }, context);
-        const updated = await claimConfirmedRow(rows, rowId, created.product.id, context);
+        const updated = await claimDecidedRow(rows, rowId, { status: 'confirmed', productId: created.product.id }, context);
         const status = await closeWhenDecided(importId, context);
         const latest = status === 'closed'
           ? await service(names.productImport).get(importId)
@@ -670,7 +700,10 @@ export function createProductImport({ database, events, modules, moduleNames = {
             code: 'PRODUCT_IMPORT_CLOSED', status: 409,
           });
         }
-        const updated = await rows.applyManaged(rowId, { status: 'rejected' }, context);
+        // The same conditional claim as confirm: a reject racing a confirm
+        // across connections never overwrites the winner — the loser lands
+        // zero rows and receives PRODUCT_IMPORT_ROW_DECIDED.
+        const updated = await claimDecidedRow(rows, rowId, { status: 'rejected', productId: null }, context);
         const status = await closeWhenDecided(importId, context);
         return Object.freeze({
           import: importView({ ...current, status }),
