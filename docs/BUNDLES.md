@@ -67,8 +67,11 @@ Rules the commands enforce:
 - `bundle uninstall --db <path>` drops ONLY the bundle's own tables (each
   re-checked against the protected set — a table that became kernel-owned
   since install is refused, never dropped, even though `bundle.json`
-  names it), then removes the registry entry. Kernel tables and rows
-  survive: the lifecycle test proves it on real rows.
+  names it) plus its own `module_migrations` ledger rows, in the same
+  transaction — so reinstalling the same version re-applies the CREATE
+  instead of booting with a missing table. Then it removes the registry
+  entry. Kernel tables and rows survive: the lifecycle test proves it on
+  real rows.
 
 ## For coding agents ("Crea con l'AI")
 
