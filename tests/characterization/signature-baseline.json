@@ -2791,7 +2791,7 @@
     "apps/server/src/http-server.js": "3f82d2ed0699cbe94cb2acffa777a368eac48aefcdf10dd9db2ab84ae5291e81",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
     "examples/starters/b2b-lead-qualification/signature.js": "e2f34c4e71f9a03f8ced77ba23b9a09c3da8ab6b9731db91cee12cf778ba4765",
-    "packages/app/src/create-app.js": "39d5984c0e302de3838646ddc2b0b76d6ba7f27478b0f21255f999a186d350bf",
+    "packages/app/src/create-app.js": "5fca21663eaf99adbf344d405588d01aacfbcbaaba9a553a36ec9e405bb7a6d4",
     "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",
     "packages/commercial/modules/offer.module.json": "3eb3c85338d22f8a8962ed0c0c0fe79da0007e8c4e66a44aad14d9b8bbca22c4",
     "packages/commercial/modules/package-credit.module.json": "9b3d088225aa4fdbe10ee704ea7971ec851de0eea30c631d880f779bf51667e2",
