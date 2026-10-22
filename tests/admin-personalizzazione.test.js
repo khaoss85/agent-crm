@@ -202,6 +202,34 @@ test('an empty space and an uncomposed server render honest notes', async () => 
   assert.ok(missingMount.textContent.includes('non composta'));
 });
 
+test('the pacchetti tab shows a loading note while the catalog is still flying', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let releaseCatalog = null;
+  const client = {
+    async request(path) {
+      if (path === '/api/space-packages/catalog') {
+        await new Promise((resolve) => { releaseCatalog = resolve; });
+        return { units: UNITS };
+      }
+      if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  const pending = view.render();
+  await flush(1);
+  assert.ok(
+    mount.textContent.includes('Lettura della personalizzazione…'),
+    'loading copy renders instead of the empty-results copy',
+  );
+  assert.ok(!mount.textContent.includes('Nessun risultato'), 'no empty-results flash while loading');
+  releaseCatalog();
+  await pending;
+  await flush();
+  assert.ok(mount.textContent.includes('Canali'), 'the catalog renders once it arrives');
+});
+
 test('the Connettori tab reuses the live summary and opens the guided flow', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
