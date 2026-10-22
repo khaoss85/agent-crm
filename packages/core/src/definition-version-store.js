@@ -198,10 +198,18 @@ function assertFingerprintMatch(entry, persisted) {
  * multi-workspace host needs exactly one check to refuse one workspace and
  * keep serving the rest. The message stays addressed to the person reading
  * the boot log; the host matches on this, never on prose.
+ *
+ * The code alone never matches: both branches require the store's
+ * `definitionVersionDrift` marker in `details`, so a package-thrown `AppError`
+ * reusing the `DEFINITION_VERSION_DRIFT` code cannot quarantine a workspace.
  * @param {unknown} error
  */
 export function isDefinitionVersionDrift(error) {
-  if (error instanceof AppError && error.code === 'DEFINITION_VERSION_DRIFT') return true;
+  if (error instanceof AppError && error.code === 'DEFINITION_VERSION_DRIFT') {
+    const details = error.details;
+    return typeof details === 'object' && details !== null
+      && /** @type {Record<string, unknown>} */ (details).definitionVersionDrift === true;
+  }
   if (!(error instanceof ValidationError) || error.code !== 'VALIDATION_ERROR') return false;
   const details = error.details;
   return typeof details === 'object' && details !== null

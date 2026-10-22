@@ -235,13 +235,30 @@ export function postgresqlTestStorage(app) {
  * `DEFINITION_VERSION_DRIFT` code with the store's own identity fields in
  * `details`, followed by the store's refusal text unchanged — so a person
  * reading the log and a host matching the code read the same failure.
+ *
+ * Contract migration (backlog 4170bcf43e5b): without a workspace to name the
+ * store refusal stays `VALIDATION_ERROR`/400; with one, the composition
+ * refusal is `DEFINITION_VERSION_DRIFT`/503. The store error is preserved as
+ * `cause`, the message carries the workspace id and the code (the 5xx
+ * logging rule's diagnosable minimum), and hosts match with
+ * `isDefinitionVersionDrift` — never with the 400 branch or the prose. No
+ * in-repo caller matches `VALIDATION_ERROR` on the composition path, so no
+ * caller migration was needed inside this repo.
  * @param {string} workspaceId
  * @param {unknown} error
  */
 function workspaceDriftRefusal(workspaceId, error) {
   const raw = (error && typeof error === 'object'
     && /** @type {{details?: unknown}} */ (error).details) ?? null;
-  const identity = raw !== null && typeof raw === 'object' ? raw : {};
+  const identity = raw !== null && typeof raw === 'object'
+    ? /** @type {Record<string, unknown>} */ (raw)
+    : {};
+  // The workspace is the caller's fact: a store- or package-supplied
+  // workspaceId never overwrites it. Otherwise a forged `workspaceId` in a
+  // package-thrown error would quarantine the wrong workspace while the
+  // truly drifted one keeps serving poisoned definitions.
+  const rest = { ...identity };
+  delete rest.workspaceId;
   return new AppError(
     `workspace unavailable ${workspaceId} DEFINITION_VERSION_DRIFT: ${
       error instanceof Error ? error.message : String(error)
@@ -249,7 +266,8 @@ function workspaceDriftRefusal(workspaceId, error) {
     {
       code: 'DEFINITION_VERSION_DRIFT',
       status: 503,
-      details: { workspaceId, .../** @type {Record<string, unknown>} */ (identity) },
+      details: { ...rest, workspaceId, definitionVersionDrift: true },
+      cause: error,
     },
   );
 }
