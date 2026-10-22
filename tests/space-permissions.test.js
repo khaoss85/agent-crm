@@ -617,10 +617,14 @@ test('capability propose refuses anonymous callers and switched-on permissions',
 test('package definition composes: identity, resources, actions, capability', () => {
   const pkg = createSpacePermissionsDomain();
   assert.equal(pkg.name, 'space-permissions');
-  assert.deepEqual([...pkg.resources], ['space-permission-override', 'space-ai-proposal']);
+  assert.deepEqual([...pkg.resources], ['space-permission-override', 'space-ai-proposal', 'space-package']);
   assert.equal(pkg.actions.length, 4);
   assert.equal(pkg.capabilities.length, 1);
   assert.equal(pkg.capabilities[0].name, 'space-permission-gate');
+  assert.equal(pkg.operations.length, 3);
+  assert.deepEqual(pkg.operations.map((entry) => entry.appMethod).sort(), [
+    'activateSpacePackage', 'deactivateSpacePackage', 'previewSpacePackage',
+  ]);
   const meta = pkg.metadata();
   assert.ok(Array.isArray(meta.notModeled) && meta.notModeled.length > 0);
 });
