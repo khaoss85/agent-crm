@@ -373,6 +373,76 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
     return [...latest.values()];
   }
 
+  /**
+   * The product write without an envelope: the same validated writes
+   * `createProduct` performs, joining the caller's transaction and event
+   * buffer instead of opening its own. Product import confirmation runs
+   * inside one import transaction, so it calls this — never `createProduct`
+   * (its own `events.buffered` scope refuses to nest, and its own
+   * transaction would commit the product before the row is claimed).
+   * @param {unknown} input @param {{actor: unknown}} context
+   */
+  async function writeProduct(input, context) {
+    const sku = requireText(input.sku, 'sku', 100);
+    const name = requireText(input.name, 'name', 200);
+    const description = optionalText(input.description, 'description');
+    const category = optionalText(input.category, 'category', 100);
+    const currency = requireCurrency(input.currency, 'currency');
+    if (input.offers !== undefined && input.components !== undefined) {
+      throw new ValidationError('offers and components are alternatives: declare one offer list, or shorthand components for a single offer');
+    }
+    const offers = normalizeManualOffers(input.offers ?? [{ name, components: input.components }], 'offers');
+    const products = service(names.product);
+    const versions = service(names.productVersion);
+    let book;
+    if (input.priceBookId !== undefined && input.priceBookId !== null) {
+      book = await service(names.priceBook).get(String(input.priceBookId));
+      requireManualRow(book, `Price book "${book.id}"`);
+      if (book.currency !== currency) {
+        throw new AppError(`Price book "${book.id}" is in ${book.currency}, the product declares ${currency}`, { code: 'CURRENCY_MISMATCH', status: 409 });
+      }
+      if (book.active !== true) {
+        throw new AppError(`Price book "${book.id}" is not active`, { code: 'PRICE_BOOK_INACTIVE', status: 409 });
+      }
+    } else {
+      book = await manualBookFor(currency, context);
+    }
+    const commercialData = { sku, name, description, category };
+    const product = await products.createManaged(
+      { sourceKey: `manual:product:${randomUUID()}`, sourceKind: 'internal', provider: MANUAL_PROVIDER, externalId: null, active: input.active === undefined ? true : requireBoolean(input.active, 'active') },
+      context,
+    );
+    const version = await versions.createManaged(
+      {
+        productId: product.id, version: 1, sourceKey: `pv:${product.sourceKey}:1`,
+        ...commercialData,
+        provider: MANUAL_PROVIDER, providerVersion: 1, providerFingerprint: 'manual',
+        sourceFingerprint: computeDefinitionFingerprint(commercialData), effectiveAt: nowIso(),
+      },
+      context,
+    );
+    const updated = await products.applyManaged(product.id, { currentVersionId: version.id }, context);
+    const createdOffers = [];
+    for (const offer of offers) {
+      createdOffers.push(await persistOfferRevision(
+        {
+          logicalKey: `manual:offer:${randomUUID()}`,
+          revision: 1,
+          name: offer.name,
+          active: offer.active,
+          components: offer.components.map((component, componentIndex) => ({ ...component, position: componentIndex + 1 })),
+        },
+        { priceBookId: book.id, productId: product.id, productVersionId: version.id, currency },
+        context,
+      ));
+    }
+    return {
+      product: { id: updated.id, sourceKey: updated.sourceKey, sku, name, active: updated.active, version: 1 },
+      priceBook: { id: book.id, name: book.name, currency: book.currency },
+      offers: createdOffers.map((row) => ({ id: row.id, logicalKey: row.logicalKey, revision: row.revision, name: row.name, active: row.active })),
+    };
+  }
+
   return {
     /**
      * Create a manual product with its prices, without any provider. One
@@ -380,66 +450,18 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
      * revision 1 per declared offer.
      */
     async createProduct(input = {}, actor) {
-      return runManual('create-manual-product', actor, async (context) => {
-        const sku = requireText(input.sku, 'sku', 100);
-        const name = requireText(input.name, 'name', 200);
-        const description = optionalText(input.description, 'description');
-        const category = optionalText(input.category, 'category', 100);
-        const currency = requireCurrency(input.currency, 'currency');
-        if (input.offers !== undefined && input.components !== undefined) {
-          throw new ValidationError('offers and components are alternatives: declare one offer list, or shorthand components for a single offer');
-        }
-        const offers = normalizeManualOffers(input.offers ?? [{ name, components: input.components }], 'offers');
-        const products = service(names.product);
-        const versions = service(names.productVersion);
-        let book;
-        if (input.priceBookId !== undefined && input.priceBookId !== null) {
-          book = await service(names.priceBook).get(String(input.priceBookId));
-          requireManualRow(book, `Price book "${book.id}"`);
-          if (book.currency !== currency) {
-            throw new AppError(`Price book "${book.id}" is in ${book.currency}, the product declares ${currency}`, { code: 'CURRENCY_MISMATCH', status: 409 });
-          }
-          if (book.active !== true) {
-            throw new AppError(`Price book "${book.id}" is not active`, { code: 'PRICE_BOOK_INACTIVE', status: 409 });
-          }
-        } else {
-          book = await manualBookFor(currency, context);
-        }
-        const commercialData = { sku, name, description, category };
-        const product = await products.createManaged(
-          { sourceKey: `manual:product:${randomUUID()}`, sourceKind: 'internal', provider: MANUAL_PROVIDER, externalId: null, active: input.active === undefined ? true : requireBoolean(input.active, 'active') },
-          context,
-        );
-        const version = await versions.createManaged(
-          {
-            productId: product.id, version: 1, sourceKey: `pv:${product.sourceKey}:1`,
-            ...commercialData,
-            provider: MANUAL_PROVIDER, providerVersion: 1, providerFingerprint: 'manual',
-            sourceFingerprint: computeDefinitionFingerprint(commercialData), effectiveAt: nowIso(),
-          },
-          context,
-        );
-        const updated = await products.applyManaged(product.id, { currentVersionId: version.id }, context);
-        const createdOffers = [];
-        for (const offer of offers) {
-          createdOffers.push(await persistOfferRevision(
-            {
-              logicalKey: `manual:offer:${randomUUID()}`,
-              revision: 1,
-              name: offer.name,
-              active: offer.active,
-              components: offer.components.map((component, componentIndex) => ({ ...component, position: componentIndex + 1 })),
-            },
-            { priceBookId: book.id, productId: product.id, productVersionId: version.id, currency },
-            context,
-          ));
-        }
-        return {
-          product: { id: updated.id, sourceKey: updated.sourceKey, sku, name, active: updated.active, version: 1 },
-          priceBook: { id: book.id, name: book.name, currency: book.currency },
-          offers: createdOffers.map((row) => ({ id: row.id, logicalKey: row.logicalKey, revision: row.revision, name: row.name, active: row.active })),
-        };
-      });
+      return runManual('create-manual-product', actor, async (context) => writeProduct(input, context));
+    },
+
+    /**
+     * Caller-envelope variant of `createProduct` for atomic multi-record
+     * flows (product import confirmation): the same validated writes,
+     * joining the caller's transaction and event buffer. The caller opens
+     * both — this refuses without an actor, like every manual mutation.
+     */
+    async createProductManaged(input = {}, context = {}) {
+      requireActor(context?.actor);
+      return writeProduct(input, context);
     },
 
     /** Edit a manual product's description: opens version n+1, never rewrites. */

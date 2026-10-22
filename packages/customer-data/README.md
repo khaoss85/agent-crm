@@ -172,8 +172,10 @@ enrich  →  stored beside the contact with source and date — the record itsel
   invented.
 - **Opt-out is final.** `opt-out-contact-enrichment` records the refusal
   and purges the subject's active enriched fields (status `purged`, value
-  cleared). Afterwards no new field is stored for the subject. Channel
-  identities stay: they route messages, they are not enrichment.
+  cleared). Afterwards no new field is stored for the subject, and no pair
+  naming the subject is ever proposed as a union: `recordCandidatePairs`
+  skips opted-out contacts on every path (owner decision Q-G1, BO-F1-04).
+  Channel identities stay: they route messages, they are not enrichment.
 
 ## Canonical identity: a human decision, and a logical link
 

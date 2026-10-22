@@ -47,6 +47,13 @@ Sidebar on every screen plus topbar, with the prototype's Italian voices
   local shell state (localStorage) until space records exist (BO-F0-06).
 - Impostazioni badge from the real count of open data-quality issues plus
   unresolved duplicate candidates; zero or unknown renders no badge.
+- Under a space mount the shell serves no framework-technical footer: the
+  `data-bo-technical` footer (version, "same services" line) is stripped
+  when the mount injects the base prefix, and is served unchanged
+  standalone. Sidebar voices whose admin screen is composed link to it
+  (Clienti, Pipeline via `shellNavInput` in `admin-core.js`); voices with
+  no admin screen yet (Calendario, Sequenze, Reporting) stay disabled and
+  name their story, and Oggi lists only the screens that are really there.
 - Topbar with the "<spazio> / <schermata>" path and the AI bar (⌘K), which
   opens the BO-F0-04 assistant panel (see below).
 - Fluid under 700px: single column, horizontal nav strip, stacked topbar.

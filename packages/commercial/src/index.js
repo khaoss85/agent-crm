@@ -5,6 +5,7 @@ import { CommercialRegistries } from './registry.js';
 import { buildCommercialActions } from './actions.js';
 import { createCatalogSync } from './catalog-sync.js';
 import { createManualCatalog } from './manual-catalog.js';
+import { createProductImport, openProductImportLlm } from './product-import.js';
 import {
   createCommercialQuotesVerifiedAsyncCapability,
   createCommercialQuotesVerifiedCapability, createCommercialQuoteBindingCapability,
@@ -42,6 +43,47 @@ import { createPackageCreditsCapability } from './package-credits.js';
 export const COMMERCIAL_DOMAIN = 'commercial';
 
 /**
+ * Build the product-import helper for an operation runtime, honoring the
+ * record-module renames the package accepts at its composition boundary.
+ * The AI extraction runs through the handed-over llm-complete@1 handle;
+ * without the handover the AI source refuses and the manual source works.
+ */
+function importFor(runtime, config, llmCapability) {
+  const helper = createProductImport({
+    database: runtime.database,
+    events: runtime.events,
+    modules: runtime.modules,
+    moduleNames: config ? {
+      product: config.productModule,
+      productVersion: config.productVersionModule,
+      priceBook: config.priceBookModule,
+      offer: config.offerModule,
+      component: config.componentModule,
+      tier: config.tierModule,
+      productImport: config.productImportModule,
+      productImportRow: config.productImportRowModule,
+    } : {},
+  });
+  return {
+    // The llm handover opens lazily and only for the AI source: a
+    // composition without llm still boots and runs manual imports.
+    startImport: (input, actor) => {
+      const record = input && typeof input === 'object' ? input : {};
+      if (record.source !== 'ai') return helper.startImport(input, actor);
+      const opened = openProductImportLlm(llmCapability ?? null, runtime);
+      return helper.startImport(input, actor, opened ? {
+        complete: ({ messages, maxTokens }) => opened.complete({
+          actor, spaceId: record.spaceId, purpose: 'suggest', messages, maxTokens,
+        }),
+      } : {});
+    },
+    confirmRow: (input, actor) => helper.confirmRow(input, actor),
+    rejectRow: (input, actor) => helper.rejectRow(input, actor),
+    readImport: (input) => helper.readImport(input),
+  };
+}
+
+/**
  * Build the manual-catalog helper for an operation runtime, honoring the
  * record-module renames the package accepts at its composition boundary.
  */
@@ -74,7 +116,8 @@ function manualFor(runtime, config) {
  */
 export const COMMERCIAL_RESOURCES = Object.freeze([
   'product', 'product-version', 'price-book', 'offer', 'price-component', 'price-tier',
-  'catalog-sync-run', 'quote', 'quote-line', 'quote-version', 'quote-version-line',
+  'catalog-sync-run', 'product-import', 'product-import-row',
+  'quote', 'quote-line', 'quote-version', 'quote-version-line',
   'quote-version-component', 'quote-version-total', 'quote-approval',
   // Signed commercial terms (M16b prerequisite): the per-quote draft term and
   // the write-once per-version snapshot the signature document embeds.
@@ -99,9 +142,12 @@ export const COMMERCIAL_RESOURCES = Object.freeze([
  *
  * @param {{
  *   catalogProviders?: any[], discountPolicies?: any[],
- *   config?: Record<string, string>,
+ *   config?: Record<string, string>, llm?: { capabilities?: Array<any> },
  * }} [options] `config` carries the record-module renames the action builders
- *   and catalog sync already understood before the move.
+ *   and catalog sync already understood before the move. `llm` is the
+ *   composed llm package definition (handover, optional): the AI product
+ *   import opens its `llm-complete@1` capability from it, and a composition
+ *   without it still boots and runs manual imports.
  */
 export function createCommercialDomain(options = {}) {
   const registries = new CommercialRegistries({
@@ -109,6 +155,19 @@ export function createCommercialDomain(options = {}) {
     discountPolicies: options.discountPolicies ?? [],
   });
   const config = options.config;
+  // The handed-over llm package definition, like the appointments handover:
+  // the created capability object is held by reference and opened per
+  // runtime, so a remapped composition cannot silently swap the extractor.
+  const llmCapability = Array.isArray(options.llm?.capabilities)
+    ? options.llm.capabilities.find((entry) => entry?.name === 'llm-complete' && entry?.version === 1) ?? null
+    : null;
+  if (options.llm !== undefined && options.llm !== null && llmCapability === null) {
+    throw new AppError(
+      'The commercial package needs the llm package capability llm-complete@1: '
+      + 'hand over the composed llm package definition, e.g. createCommercialDomain({ llm }) beside createLlmPackage()',
+      { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 409 },
+    );
+  }
 
   const pkg = definePackage({
     packageContract: 1,
@@ -132,7 +191,12 @@ export function createCommercialDomain(options = {}) {
     // 6: manual catalog operations (BO-F2-05) — create/update/reprice/
     // activate manual products plus the product-table read. Additive:
     // provider sync, quotes and capabilities are untouched.
-    version: 6,
+    // 7: product import drafts (BO-F2-07) — an import from a document or
+    // typed by hand persists pending draft rows confirmed one by one; the
+    // AI extraction drafts through the handed-over llm-complete@1 handle
+    // and stays off without it. Additive: manual writes and reads are
+    // untouched.
+    version: 7,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',
@@ -287,6 +351,74 @@ export function createCommercialDomain(options = {}) {
           return (input) => manual.listProducts(input);
         },
       },
+      {
+        operationContract: 1,
+        name: 'start-product-import',
+        label: 'Start product import',
+        appMethod: 'startProductImport',
+        description:
+          'Start a product import (BO-F2-07): manual rows or an AI extraction from the document text become pending draft rows the operator confirms one by one. Writes no product.',
+        input: [
+          { name: 'source', type: 'string', required: true, hint: "'manual' for operator-typed rows, 'ai' for extraction from the document text." },
+          { name: 'rows', type: 'json', required: false, hint: 'Manual rows: [{ sku, name, description?, category?, amountCents }].' },
+          { name: 'documentText', type: 'string', required: false, hint: 'Text extracted from the PDF, spreadsheet or photo (AI source).' },
+          { name: 'documentRef', type: 'string', required: false, hint: 'Opaque document reference, e.g. the file name (AI source).' },
+          { name: 'currency', type: 'string', required: true, hint: 'Uppercase three-letter currency code for every draft.' },
+          { name: 'priceBookId', type: 'string', required: false, hint: 'Manual price book id; omitted finds or creates the manual book of the currency at confirm time.' },
+          { name: 'spaceId', type: 'string', required: false, hint: 'The Accordo space slug (required for the AI source: the extraction is audited for this space).' },
+        ],
+        create(runtime) {
+          const imports = importFor(runtime, config, llmCapability);
+          return (input, actor) => imports.startImport(input, actor);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'confirm-product-import-row',
+        label: 'Confirm product import row',
+        appMethod: 'confirmProductImportRow',
+        description:
+          'Confirm one pending import row: writes exactly one manual product through the manual catalog, then marks the row. Confirming the same row twice replays the first product.',
+        input: [
+          { name: 'importId', type: 'string', required: true, hint: 'Product import id.' },
+          { name: 'rowId', type: 'string', required: true, hint: 'Pending draft row id.' },
+        ],
+        create(runtime) {
+          const imports = importFor(runtime, config, llmCapability);
+          return (input, actor) => imports.confirmRow(input, actor);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'reject-product-import-row',
+        label: 'Reject product import row',
+        appMethod: 'rejectProductImportRow',
+        description:
+          'Reject one pending import row: no product is written, the decision is stored.',
+        input: [
+          { name: 'importId', type: 'string', required: true, hint: 'Product import id.' },
+          { name: 'rowId', type: 'string', required: true, hint: 'Pending draft row id.' },
+        ],
+        create(runtime) {
+          const imports = importFor(runtime, config, llmCapability);
+          return (input, actor) => imports.rejectRow(input, actor);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'read-product-import',
+        label: 'Read product import',
+        appMethod: 'readProductImport',
+        description:
+          'Read one product import with its draft rows in order and the pending/confirmed/rejected counts.',
+        input: [
+          { name: 'importId', type: 'string', required: true, hint: 'Product import id.' },
+        ],
+        create(runtime) {
+          const imports = importFor(runtime, config, llmCapability);
+          return (input) => imports.readImport(input);
+        },
+      },
     ],
     /** Function-free, additive schema metadata — the same block as before the move. */
     metadata() {
@@ -328,6 +460,18 @@ export { createStripeCatalogProvider, createFixtureStripeCatalogClient } from '.
 export { buildCommercialActions } from './actions.js';
 export { createCatalogSync } from './catalog-sync.js';
 export { createManualCatalog, MANUAL_PROVIDER, PRICE_SOURCE_READONLY } from './manual-catalog.js';
+export {
+  MAX_DOCUMENT_CHARS,
+  MAX_IMPORT_ROWS,
+  PRODUCT_IMPORT_AI_UNAVAILABLE,
+  PRODUCT_IMPORT_PURPOSE,
+  buildImportMessages,
+  createProductImport,
+  extractProductDrafts,
+  normalizeDraftRow,
+  normalizeManualRows,
+  openProductImportLlm,
+} from './product-import.js';
 export {
   createCommercialQuotesAsyncCapability,
   createCommercialQuotesCapability, createCommercialQuotesVerifiedAsyncCapability,

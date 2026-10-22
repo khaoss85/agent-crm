@@ -143,6 +143,56 @@ test('price rules: a refused submit keeps the draft, with the reason on the froz
   assert.equal(approved.result.decision, 'approved', 'the owner approval releases the quote');
 });
 
+test('price rules: an unchanged retry after a refusal conflicts, the draft stays editable', async (t) => {
+  const root = project(t, { withDomain: false, priceRules: PRICE_RULES });
+  const context = await boot(root, join(root, 'data', 'price-rules-retry.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+
+  await app.syncCatalog({ provider: 'fixture-saas-catalog', actor: ACTOR });
+  const book = app.modules.get('price-book').service.listWhere({ sourceKey: 'fixture:pb:standard-eur' })[0];
+  const offerOf = (key) => app.modules.get('offer').service.listWhere({ logicalKey: key, active: true })[0];
+  const company = await app.services.companies.create({ name: 'Retry SpA' }, { actor: ACTOR });
+  const opportunity = await app.services.opportunities.create(
+    { companyId: company.id, name: 'Retry deal', type: 'new_business', valueCents: 100_000, currency: 'EUR', stage: 'discovery', owner: 'price-rules' },
+    { actor: ACTOR },
+  );
+  const quote = (await app.runAction({
+    module: 'opportunity', action: 'create-quote', recordId: opportunity.id, input: { priceBookId: book.id }, actor: ACTOR,
+  })).result.quote;
+  await app.runAction({
+    module: 'quote', action: 'add-line', recordId: quote.id,
+    input: { offerId: offerOf('fixture:offer:enterprise').id, quantity: 2, discountBps: 6000 }, actor: ACTOR,
+  });
+  const submitInput = { policy: CATALOG_PRICE_RULES, version: CATALOG_PRICE_RULES_VERSION };
+  const refused = await app.runAction({
+    module: 'quote', action: 'submit', recordId: quote.id, input: submitInput, actor: ACTOR,
+  });
+  assert.equal(refused.result.version.decision, 'reject', 'first submit refuses the 60% line');
+
+  await assert.rejects(
+    () => app.runAction({ module: 'quote', action: 'submit', recordId: quote.id, input: submitInput, actor: ACTOR }),
+    (error) => error.status === 409 && error.code === 'QUOTE_RESUBMIT_UNCHANGED',
+    'an unchanged retry conflicts instead of freezing a duplicate refusal version',
+  );
+  const versions = app.modules.get('quote-version').service.listWhere({ quoteId: quote.id });
+  assert.equal(versions.length, 1, 'no second version froze on the retry');
+  const reread = app.modules.get('quote').service.get(quote.id);
+  assert.equal(reread.status, 'draft', 'the quote is still an editable draft after the conflict');
+
+  // Editing the draft clears the guard: the next submit freezes a new version.
+  const lines = app.modules.get('quote-line').service.listWhere({ quoteId: quote.id });
+  await app.runAction({
+    module: 'quote', action: 'update-line', recordId: quote.id,
+    input: { lineId: lines[0].id, quantity: 2, discountBps: 2500 }, actor: ACTOR,
+  });
+  const pending = await app.runAction({
+    module: 'quote', action: 'submit', recordId: quote.id, input: submitInput, actor: ACTOR,
+  });
+  assert.equal(pending.result.version.decision, 'approval_required', 'the edited draft resubmits');
+  assert.equal(pending.result.version.versionNumber, 2, 'the resubmit freezes version 2');
+});
+
 test('price rules: quantity pricing stays automatic and needs no approval', async (t) => {
   const root = project(t, { withDomain: false, priceRules: PRICE_RULES });
   const context = await boot(root, join(root, 'data', 'price-rules-qty.sqlite'));

@@ -1,0 +1,51 @@
+{
+  "manifestVersion": 1,
+  "name": "product-import",
+  "description": "Evidence of one backoffice product import (BO-F2-07): source kind (manual or AI), currency, optional price book, opaque document reference and lifecycle status. Draft rows live in product-import-row; no product record is written by the import itself.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "sourceKind",
+      "type": "enum",
+      "values": [
+        "manual",
+        "ai"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "open",
+        "closed"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "priceBookId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "documentRef",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "errorCode",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

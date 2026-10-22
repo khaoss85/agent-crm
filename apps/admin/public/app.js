@@ -371,7 +371,7 @@ import { createCustomerCardView } from './admin-customer-card.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
 import { createSpineView } from './admin-spine.js';
-import { selectGeneratedModules, humanizeLabel, parseModuleRoute } from './admin-core.js';
+import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -635,16 +635,14 @@ async function refreshShellBadge() {
 async function populateNav() {
   try {
     const schema = await moduleClient.request('/api/schema');
-    const { supported, modules } = selectGeneratedModules(schema);
     // Backoffice shell (BO-F0-02): generated modules are the
     // "personalizzati" group; the first composed pipeline backs Pipeline.
-    shellCustomerData = schema?.domains?.['customer-data']?.metadata?.customerDataContract === 1
-      || schema?.domains?.['customer-data']?.customerDataContract === 1;
-    shellItems = buildShellNav({
-      pipelines: schema?.pipelineContract === 1 && Array.isArray(schema.pipelines) ? schema.pipelines : [],
-      customModules: modules,
-      customerDataAvailable: shellCustomerData,
-    });
+    // The envelope-to-input reading lives in shellNavInput (admin-core.js),
+    // unit-tested there — this stays the same call with the same result.
+    const input = shellNavInput(schema);
+    const { customModules: modules, modulesSupported: supported } = input;
+    shellCustomerData = input.customerDataAvailable;
+    shellItems = buildShellNav(input);
     // The route owns screen state: re-sync to the current hash after the
     // shell items update, so a cold deep link keeps its screen.
     syncShell(targetForHash(window.location.hash || '#/'));

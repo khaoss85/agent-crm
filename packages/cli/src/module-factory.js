@@ -670,6 +670,15 @@ export class ${names.pascal}Service {
     this.audit = audit;
     this.events = events;
     this.references = references;
+    // Physical identity for trusted in-process conditional claims: the table
+    // and field columns this service was generated from. Mirrors the
+    // framework record service's manifest seam, so package code resolves
+    // columns at runtime instead of hardcoding a backend's naming.
+    this.manifest = Object.freeze({
+      name: ${JSON.stringify(manifest.name)},
+      table: ${JSON.stringify(manifest.table)},
+      fields: Object.freeze(${JSON.stringify(manifest.fields.map((field) => ({ name: field.name, column: field.column, type: field.type })))}),
+    });
   }
 ${hasReferences ? `
   /**
@@ -706,6 +715,18 @@ ${hasReferences ? `
       }
       throw error;
     }
+  }
+
+  /**
+   * Runs fn inside the module's atomic unit (SAVEPOINT ...): the same unit
+   * applyManaged uses, so a conditional claim, its audit row and the re-read
+   * land together. Sync storage only, like every other write this service
+   * performs. Mirrors the framework record service's mutationSync seam.
+   * @template T
+   * @param {() => T} fn
+   */
+  mutationSync(fn) {
+    return this.#mutation(fn);
   }
 
 ${isReadOnly ? `  // Read-only module (every field is managed): there is NO public create.

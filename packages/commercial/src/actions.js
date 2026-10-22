@@ -503,8 +503,42 @@ export function buildSubmitQuoteAction(config, registries) {
       }
       const result = normalizePolicyResult(`Discount policy "${policy.name}@${policy.version}"`, rawResult);
 
-      const versionNumber = (quote.currentVersionNumber ?? 0) + 1;
       const versions = trusted(modules, cfg.versionModule);
+      if (result.decision === 'reject') {
+        // BO-F2-04: a refused submit stays an editable draft, so an
+        // unchanged retry must conflict instead of freezing a duplicate
+        // refusal version. The refusal evidence is bound to the draft
+        // revision that produced it: same draft revision, same policy
+        // name/version/fingerprint, already refused — edit the draft
+        // (add-line/update-line bumps draftRevision) and submit again.
+        // Concurrent first submits still serialize on the unique
+        // `qv:<quote>:<n>` key (DECISIONS.md: exactly one version).
+        const priorRefusal = await versions.listWhere({
+          quoteId: quote.id,
+          draftRevisionUsed: quote.draftRevision,
+          policy: policy.name,
+          policyVersion: policy.version,
+          policyFingerprint: fingerprint,
+          policyDecision: 'reject',
+        });
+        if (priorRefusal.length > 0) {
+          throw new AppError(
+            `Quote ${quote.id} revision ${quote.draftRevision} was already refused by discount policy "${policy.name}@${policy.version}" (version ${priorRefusal[0].versionNumber}): edit the draft and submit again`,
+            {
+              code: 'QUOTE_RESUBMIT_UNCHANGED',
+              status: 409,
+              details: {
+                quoteId: quote.id,
+                draftRevision: quote.draftRevision,
+                refusedVersionId: priorRefusal[0].id,
+                refusedVersionNumber: priorRefusal[0].versionNumber,
+              },
+            },
+          );
+        }
+      }
+
+      const versionNumber = (quote.currentVersionNumber ?? 0) + 1;
       const version = await versions.createManaged(
         {
           quoteId: quote.id,

@@ -167,6 +167,12 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   // managed products, prices and active flags are written and read, so they
   // are behaviour-bearing by definition.
   'packages/commercial/src/manual-catalog.js',
+  // Product import drafts (BO-F2-07): they decide which draft rows an
+  // import persists and how one confirmation writes exactly one manual
+  // product, so they are behaviour-bearing by definition.
+  'packages/commercial/src/product-import.js',
+  'packages/commercial/modules/product-import.module.json',
+  'packages/commercial/modules/product-import-row.module.json',
   'packages/commercial/modules/quote-term.module.json',
   'packages/commercial/modules/quote-version-term.module.json',
   'packages/core/src/money.js',

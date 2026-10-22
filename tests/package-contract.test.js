@@ -325,7 +325,7 @@ test('a customer-authored package conforms through the identical contract', () =
   assert.deepEqual(Object.keys(registry.metadata()), ['commercial', 'contracts', 'delivery', 'partner-scorecard', 'signature'],
     'metadata is published in name order, whatever the registration order was');
   assert.equal(registry.actions().length, 34, 'M14b2 added seven change and acceptance actions on top of M14b1\'s five; the extracted commercial (8) and signature (1) actions now arrive by composition');
-  assert.equal(registry.resources().length, 53, 'M16b added contract-succession to the contracts package; signed commercial terms added quote-term, quote-version-term and order-term before it; package credits added package-credit');
+  assert.equal(registry.resources().length, 55, 'M16b added contract-succession to the contracts package; signed commercial terms added quote-term, quote-version-term and order-term before it; package credits added package-credit; BO-F2-07 adds product-import and product-import-row (import drafts confirmed row by row, never a parallel catalog)');
 });
 
 test('the kernel never depends on a package, in either direction', () => {
