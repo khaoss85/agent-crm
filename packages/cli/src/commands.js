@@ -318,6 +318,20 @@ export async function runCli(argv) {
   }
 
   if (command === 'module:create') {
+    const rootDir = typeof flags.root === 'string' ? flags.root : process.cwd();
+    // A .json argument selects the manifest-driven module factory; a bare name
+    // keeps the legacy template scaffold from Milestone 0.
+    if (typeof positional[0] === 'string' && positional[0].endsWith('.json')) {
+      const { manifest } = readManifestFile(positional[0]);
+      const plan = planModule({ manifest, rootDir });
+      // An explicit --dry-run always wins over --apply, matching module:migration.
+      if (flags.apply === true && flags['dry-run'] !== true) {
+        print({ ok: true, mode: 'applied', ...applyModulePlan(plan), nextSteps: factoryNextSteps() });
+      } else {
+        print({ ok: true, mode: 'dry-run', ...withoutFileContents(plan), nextSteps: factoryNextSteps() });
+      }
+      return;
+    }
     const result = scaffoldModule({
       name: positional[0],
       rootDir,

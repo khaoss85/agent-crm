@@ -570,10 +570,17 @@ export async function uninstallBundle(input) {
   /** @type {string[]} */
   const dropped = [];
   if (input.database !== undefined && input.database !== null) {
-    const raw = input.database.raw ?? input.database;
-    if (!raw || typeof raw.prepare !== 'function') {
-      throw new ValidationError('uninstallBundle needs a database with a raw sqlite handle to drop bundle tables');
+    // DDL goes through the kernel-owned seam on the database handle
+    // (`dropTables` in packages/core/src/database.js, the single owner of the
+    // raw driver): this file never touches the driver, so the Spine v2 M2 raw
+    // boundary holds. Every table is vetted against the protected set BEFORE
+    // any drop runs — a kernel-owned name refuses the whole uninstall.
+    const handle = input.database;
+    if (!handle || typeof handle.dropTables !== 'function') {
+      throw new ValidationError('uninstallBundle needs a database handle with the dropTables DDL seam to drop bundle tables');
     }
+    /** @type {string[]} */
+    const tables = [];
     for (const module of bundle.modules) {
       if (BUNDLE_PROTECTED_TABLES.has(module.table)) {
         throw new ValidationError(
@@ -581,9 +588,9 @@ export async function uninstallBundle(input) {
           { table: module.table },
         );
       }
-      raw.prepare(`DROP TABLE IF EXISTS "${module.table}"`).run();
-      dropped.push(module.table);
+      tables.push(module.table);
     }
+    dropped.push(...handle.dropTables(tables));
   }
   const next = writeBundleRegistry(rootDir, {
     installed: registry.installed.filter((entry) => !(entry.name === name && entry.version === version)),

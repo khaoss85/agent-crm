@@ -203,7 +203,7 @@ export function createReportingView(deps) {
     mount.appendChild(panel);
   }
 
-  function svilluppaCard() {
+  function sviluppaCard() {
     const card = el(doc, 'section', { class: 'panel' });
     card.appendChild(el(doc, 'p', { class: 'kicker', text: 'Sviluppa per Accordo' }));
     card.appendChild(el(doc, 'h2', { text: 'I bundle restano fuori dal processo condiviso' }));
@@ -269,7 +269,7 @@ export function createReportingView(deps) {
     }
     manual.appendChild(el(doc, 'p', { class: 'lede', text: manualSteps().proof }));
     mount.appendChild(manual);
-    mount.appendChild(svilluppaCard());
+    mount.appendChild(sviluppaCard());
   }
 
   return { renderReporting, renderNuovoModulo };
