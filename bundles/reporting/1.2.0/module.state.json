@@ -1,0 +1,66 @@
+{
+  "stateVersion": 2,
+  "module": "reporting",
+  "revision": 1,
+  "fingerprint": "0cd6d04ebb8148a05f195966e79cc35710c718ff0e9eb2c09c4089e2cadd0d5d",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "reporting",
+    "description": "KPI snapshots owned by the reporting bundle (BO-F5-01). One row per metric per period: the material a reporting dashboard reads without touching kernel tables. Dashboards, charts and forecasts (BO-F5-02) read these rows; they never query clienti, pipeline or calendario tables directly.",
+    "table": "reportings",
+    "fields": [
+      {
+        "name": "metric",
+        "type": "string",
+        "required": true,
+        "unique": false,
+        "column": "metric",
+        "writable": "public"
+      },
+      {
+        "name": "period",
+        "type": "string",
+        "required": true,
+        "unique": false,
+        "column": "period",
+        "writable": "public"
+      },
+      {
+        "name": "value",
+        "type": "integer",
+        "required": true,
+        "unique": false,
+        "column": "value",
+        "writable": "public"
+      },
+      {
+        "name": "unit",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "unit",
+        "writable": "public"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_reportings",
+      "checksum": "3444dfbfa01b6a8d1344a8426547baa9103565c950ce06a23379f406529bb6db",
+      "sql": "CREATE TABLE IF NOT EXISTS reportings (\n  id TEXT PRIMARY KEY,\n  metric TEXT NOT NULL,\n  period TEXT NOT NULL,\n  value INTEGER NOT NULL,\n  unit TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_reportings",
+      "checksum": "c972380166935569d0ba0cd2dd182dacf025b00e9bd9b8cda383f7458661e3c6",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"reportings\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"metric\" TEXT NOT NULL,\n  \"period\" TEXT NOT NULL,\n  \"value\" BIGINT NOT NULL,\n  \"unit\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "0cd6d04ebb8148a05f195966e79cc35710c718ff0e9eb2c09c4089e2cadd0d5d"
+      }
+    },
+    "evolutions": []
+  }
+}

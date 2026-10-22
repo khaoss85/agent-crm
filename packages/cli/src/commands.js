@@ -11,6 +11,15 @@ import { assertBindAddress } from '../../core/src/tenant-binding.js';
 import { scaffoldModule } from './scaffold-module.js';
 import { validateManifestCommand, generateMigrationCommand, readManifestFile } from './manifest-commands.js';
 import { planModule, applyModulePlan } from './module-factory.js';
+import {
+  applyBundleCreate,
+  installBundle,
+  listBundles,
+  parseBundleRef,
+  planBundleCreate,
+  uninstallBundle,
+  verifyBundle,
+} from './bundle-manager.js';
 import { validatePackageCommand, inspectPackageCommand } from './package-commands.js';
 import { packageTestCommand } from './package-test-command.js';
 import { packageScaffoldCommand } from './package-scaffold.js';
@@ -49,6 +58,14 @@ export async function runCli(argv) {
   // Accept "module validate <path>" as an alias of "module:validate <path>".
   if (command === 'module' && ['validate', 'migration', 'create', 'plan'].includes(positional[0])) {
     command = `module:${positional[0]}`;
+    positional = positional.slice(1);
+  }
+  // "bundle create|plan|install|uninstall|list|verify" is the custom-bundle
+  // lifecycle (BO-F5-01, docs/BUNDLES.md): versioned modules beside the
+  // kernel. All six are file- and memory-scoped — none opens the project's
+  // database — so they sit before the APP_COMMANDS gate like module:create.
+  if (command === 'bundle' && ['create', 'plan', 'install', 'uninstall', 'list', 'verify'].includes(positional[0])) {
+    command = `bundle:${positional[0]}`;
     positional = positional.slice(1);
   }
   // "package validate|inspect <dir>" reads the domain-package contract with the
@@ -246,21 +263,61 @@ export async function runCli(argv) {
     return;
   }
 
-  if (command === 'module:create') {
+  if (command === 'bundle:plan' || command === 'bundle:create') {
     const rootDir = typeof flags.root === 'string' ? flags.root : process.cwd();
-    // A .json argument selects the manifest-driven module factory; a bare name
-    // keeps the legacy template scaffold from Milestone 0.
-    if (typeof positional[0] === 'string' && positional[0].endsWith('.json')) {
-      const { manifest } = readManifestFile(positional[0]);
-      const plan = planModule({ manifest, rootDir });
-      // An explicit --dry-run always wins over --apply, matching module:migration.
-      if (flags.apply === true && flags['dry-run'] !== true) {
-        print({ ok: true, mode: 'applied', ...applyModulePlan(plan), nextSteps: factoryNextSteps() });
-      } else {
-        print({ ok: true, mode: 'dry-run', ...withoutFileContents(plan), nextSteps: factoryNextSteps() });
-      }
-      return;
+    const { manifest } = readManifestFile(positional[0]);
+    const plan = planBundleCreate({
+      manifest,
+      name: flags.name,
+      version: flags.version,
+      createdBy: flags['created-by'] ?? flags.createdBy ?? 'ai',
+      rootDir,
+    });
+    // An explicit --dry-run always wins over --apply, matching module:create.
+    if (command === 'bundle:create' && flags.apply === true && flags['dry-run'] !== true) {
+      print({ ok: true, mode: 'applied', ...applyBundleCreate(plan), nextSteps: bundleNextSteps() });
+    } else {
+      print({ ok: true, mode: 'plan', ...withoutBundleContents(plan), nextSteps: bundleNextSteps() });
     }
+    return;
+  }
+
+  if (command === 'bundle:list') {
+    const rootDir = typeof flags.root === 'string' ? flags.root : process.cwd();
+    print({ ok: true, ...listBundles({ rootDir }) });
+    return;
+  }
+
+  if (command === 'bundle:verify' || command === 'bundle:install') {
+    const rootDir = typeof flags.root === 'string' ? flags.root : process.cwd();
+    const { name, version } = bundleRefFrom(positional[0], flags);
+    if (command === 'bundle:verify') {
+      print({ ok: true, mode: 'verified', ...(await verifyBundle({ name, version, rootDir })) });
+    } else {
+      print({ ok: true, mode: 'installed', ...(await installBundle({ name, version, rootDir })) });
+    }
+    return;
+  }
+
+  if (command === 'bundle:uninstall') {
+    const rootDir = typeof flags.root === 'string' ? flags.root : process.cwd();
+    const { name, version } = bundleRefFrom(positional[0], flags);
+    let database = null;
+    try {
+      if (typeof flags.db === 'string' && flags.db !== '') {
+        const { createDatabase } = await import('../../core/src/database.js');
+        database = createDatabase({ path: flags.db });
+      }
+      print({ ok: true, mode: 'uninstalled', ...(await uninstallBundle({ name, version, rootDir, database })) });
+    } finally {
+      if (database) {
+        try { database.close(); } catch { /* already closed; the result stands */ }
+      }
+    }
+    return;
+  }
+
+  if (command === 'module:create') {
     const result = scaffoldModule({
       name: positional[0],
       rootDir,
@@ -509,6 +566,38 @@ function withoutFileContents(plan) {
   return { ...plan, files: plan.files.map(({ content: _content, ...file }) => file) };
 }
 
+/** @param {ReturnType<import('./bundle-manager.js').planBundleCreate>} plan */
+function withoutBundleContents(plan) {
+  return {
+    ...plan,
+    modulePlan: withoutFileContents(plan.modulePlan),
+    files: plan.files.map(({ content: _content, ...file }) => file),
+  };
+}
+
+function bundleNextSteps() {
+  return [
+    'Run bundle verify to prove the bundle really installs (it boots the app and serves a record).',
+    'Run bundle install to record it in bundles/registry.json; compose it with createAccordoApp({ bundles }).',
+    'Edit the generated service to add domain rules; keep audit and events on every mutation.',
+  ];
+}
+
+/**
+ * A bundle ref comes as `name@version` positionally, or as --name/--version
+ * flags. Both spell the same bundle; a bare name without a version is
+ * refused (versions are exact, never floating).
+ */
+function bundleRefFrom(positional, flags) {
+  if (typeof positional === 'string' && positional !== '') {
+    return parseBundleRef(positional);
+  }
+  if (typeof flags.name === 'string' && typeof flags.version === 'string') {
+    return parseBundleRef(`${flags.name}@${flags.version}`);
+  }
+  throw new Error('A bundle command needs a "name@version" argument or --name <name> --version <x.y.z>');
+}
+
 function factoryNextSteps() {
   return [
     'Run npm run verify to execute the generated module test.',
@@ -572,6 +661,12 @@ Usage:
   accordo module:create <name> [--apply] [--root path]
   accordo module:validate <manifest.json>
   accordo module:migration <manifest.json> [--dry-run] [--out file.sql] [--force]
+  accordo bundle:create <manifest.json> --name <name> --version <x.y.z> [--created-by ai|manual|accordo] [--apply] [--root dir]
+  accordo bundle:plan <manifest.json> --name <name> --version <x.y.z> [--root dir]
+  accordo bundle:verify <name@version> [--root dir]
+  accordo bundle:install <name@version> [--root dir]
+  accordo bundle:uninstall <name@version> [--db path] [--root dir]
+  accordo bundle:list [--root dir]
   accordo package:scaffold <package-name> [--into dir] [--apply|--dry-run] [--json] [--root dir]
   accordo package:validate <package-directory>
   accordo package:inspect <package-directory>
@@ -585,6 +680,14 @@ Usage:
   accordo cloud propose <model> [<recordId>] --values '<json>' [--json]
 
 "module plan", "module create", "module validate" and "module migration" are accepted aliases.
+"bundle create", "bundle plan", "bundle install", "bundle uninstall", "bundle list"
+and "bundle verify" are accepted aliases. bundle:create generates the module
+sources into bundles/<name>/<version>/ (never under packages/) and is a dry-run
+unless --apply is explicit. bundle:verify boots the real application with the
+bundle composed and serves a record — an uninstallable bundle is refused, never
+simulated. bundle:install records the bundle in bundles/registry.json;
+bundle:uninstall removes it (and, with --db, drops only its own tables).
+Manifest schema: docs/MODULE_MANIFEST.md — bundle lifecycle: docs/BUNDLES.md
 module:plan is always read-only. module:create with a manifest generates a complete
 runnable module (service, migration, registration, tests) and is a dry-run unless
 --apply is explicit; with a bare name it keeps the legacy template scaffold.
