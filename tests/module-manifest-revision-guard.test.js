@@ -64,6 +64,8 @@ const RECORDED = Object.freeze({
   "price-tier": { revision: 1, sqlite: "71974683f1f965313014ec0e408ec533b76dfd60a7ec11a03a19241618d2a43f", pg: "8cd1b3197d75ea6b6b41824d9aab3a85a046b1c61a90072a44e4683cb6da9167" },
   "product-version": { revision: 1, sqlite: "4140e2f815f8b0c23fdae4e9980351644276a2691daaac5b42978f001358b21c", pg: "56cfccf285c9ccc7f7a4262f933d82fe8e69220c16a31c50b61d294e343b723d" },
   "product": { revision: 1, sqlite: "858d4574ce96b4f775845105342bc456da1b22cb8935ef4cb8cb0ddc1f775b90", pg: "6ef4f2514efa89aaf2fac031f70dfa325606cc56270b30963714c6a80faa5023" },
+  "product-import": { revision: 1, sqlite: "2f0606e38668fd7871b26aef6bad02f2645e512c4910c7e2b218b2c74a55a60d", pg: "8041436d56da09d32097d5ea2f757ff364812a2322ffb25f4db406d5ad1c3dc2" },
+  "product-import-row": { revision: 1, sqlite: "ec415063d066d3fa71f12977dfd18ee7ce00750d4974febd57bb6808d40db1c9", pg: "0208a6291853fc0cbe3b316d809d022f0c8bcaf654a1a605752168c35fe4c1a5" },
   "quote-approval": { revision: 1, sqlite: "06f9cfa0058c61d71a27aa109b9a30e157b8a9c4ed1eef71497fc45743a30d29", pg: "bd6f310cec4195b717117efb8bb470e8f1c1658ff3ec8e1d5ad857673c41d8ff" },
   "quote-line": { revision: 1, sqlite: "fab522bf83d6fc1799c508d56b75627e540e4bf1dfb680ad2f02bc19c3c07231", pg: "e3cd324b3b64c4dd3c33aa08d7e658406ecf622a6ecdcc7d2fe20dc317d1a034" },
   "quote-term": { revision: 1, sqlite: "5793a73fb52dba142039a720c190cff949c152a9b35e47af2e08b8dfbc6bc89f", pg: "f8f2f3137bf52bd70520f3c9b966f2b9a807419889b8b5f1b6bbb0aae0db08a8" },
