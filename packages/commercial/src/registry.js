@@ -29,6 +29,14 @@ import { requireCurrency, MAX_DISCOUNT_BPS } from './money.js';
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
 export const MAX_LABEL = 80;
 const MAX_VERSION = 1_000_000;
+/**
+ * Bounds on catalog-provider migration metadata. Ten historical forms and
+ * 200KB each sit orders of magnitude above any real migration (the price
+ * list migrates two ~2KB forms); anything larger is a runaway generator and
+ * is refused fail-closed, like every other unbounded definition input.
+ */
+const MAX_LEGACY_SOURCES = 10;
+const MAX_LEGACY_SOURCE_CHARS = 200_000;
 export const DISCOUNT_DECISIONS = Object.freeze(['auto_approve', 'approval_required', 'reject']);
 
 /** @param {string} label @param {any} definition */
@@ -54,7 +62,119 @@ export function validateCatalogProvider(definition) {
   if (typeof definition.fetchCatalog !== 'function') {
     throw new ValidationError(`catalog provider "${definition.name}": fetchCatalog must be a function`);
   }
+  // A constructor-built provider declares its behaviour in full: `codeVersion`
+  // is the constructor's own version (bumped on behaviour change) and takes
+  // the closure source's place in the fingerprint, so framework refactors
+  // stop moving it. `legacyFetchSources` carries the historical closure
+  // sources a transparent upgrade may still meet in registered databases.
+  if (definition.codeVersion !== undefined
+    && (!Number.isSafeInteger(definition.codeVersion) || definition.codeVersion < 1 || definition.codeVersion > MAX_VERSION)) {
+    throw new ValidationError(
+      `catalog provider "${definition.name}": codeVersion must be a positive integer (1–${MAX_VERSION}) when present`,
+    );
+  }
+  if (definition.legacyFetchSources !== undefined) {
+    if (!Array.isArray(definition.legacyFetchSources)
+      || definition.legacyFetchSources.length === 0
+      || definition.legacyFetchSources.length > MAX_LEGACY_SOURCES) {
+      throw new ValidationError(
+        `catalog provider "${definition.name}": legacyFetchSources must be a non-empty array of at most ${MAX_LEGACY_SOURCES} historical fetchCatalog sources when present`,
+      );
+    }
+    definition.legacyFetchSources.forEach((source, index) => {
+      if (typeof source !== 'string' || source === '' || source.length > MAX_LEGACY_SOURCE_CHARS) {
+        throw new ValidationError(
+          `catalog provider "${definition.name}": legacyFetchSources[${index}] must be a non-empty string of at most ${MAX_LEGACY_SOURCE_CHARS} characters`,
+        );
+      }
+    });
+  }
   return definition;
+}
+
+/**
+ * The fingerprint input for one catalog provider. Constructor-built
+ * providers (codeVersion present) hash `{type, name, version, codeVersion,
+ * config}`: the closure reads only the declared config, so its source text
+ * is not behaviour and hashing it churned every registered fingerprint on
+ * each refactor. Every other provider keeps the established source-plus-
+ * config form, unchanged.
+ * @param {any} definition
+ */
+function catalogProviderFingerprint(definition) {
+  if (definition.codeVersion !== undefined) {
+    return computeDefinitionFingerprint({
+      type: 'catalog-provider',
+      name: definition.name,
+      version: definition.version,
+      codeVersion: definition.codeVersion,
+      config: definition.config ?? null,
+    });
+  }
+  return computeDefinitionFingerprint({
+    type: 'catalog-provider',
+    name: definition.name,
+    version: definition.version,
+    config: definition.config ?? null,
+    fetchCatalog: definition.fetchCatalog,
+  });
+}
+
+/**
+ * A historical fetchCatalog form, revived for fingerprint comparison only.
+ * The own `toString` shadows `Function.prototype.toString`, so the
+ * canonicalizer hashes the pinned historical source; the function itself is
+ * never executed (it throws when called).
+ * @param {string} source
+ */
+function comparisonOnlyFetch(source) {
+  const neverExecute = async () => {
+    throw new ValidationError('Historical catalog fetchCatalog: fingerprint comparison only, never executed');
+  };
+  return Object.assign(neverExecute, { toString: () => source });
+}
+
+/**
+ * The fingerprints this entry would have carried had it registered under
+ * each of its historical closure sources with the current data: empty when
+ * the definition declares no history.
+ * @param {{definition: any, fingerprint: string}} entry
+ */
+function legacyCatalogFingerprints(entry) {
+  const sources = entry.definition.legacyFetchSources ?? [];
+  return sources.map((source) => computeDefinitionFingerprint({
+    type: 'catalog-provider',
+    name: entry.definition.name,
+    version: entry.definition.version,
+    config: entry.definition.config ?? null,
+    fetchCatalog: comparisonOnlyFetch(source),
+  }));
+}
+
+/**
+ * Migrate catalog-provider rows registered under a historical closure
+ * source to the current fingerprint, one transparent step: returns how many
+ * rows moved (or a promise of it on async storage). Rows that match neither
+ * the current fingerprint nor any historical form are genuine drift and are
+ * left for the persist retry to refuse with the established message.
+ * @param {{migrateFingerprints: (jobs: any[]) => any}} store
+ * @param {Map<string, any>} catalogProviders
+ */
+function migrateLegacyCatalogFingerprints(store, catalogProviders) {
+  const jobs = [];
+  for (const entry of catalogProviders.values()) {
+    const expectedFingerprints = legacyCatalogFingerprints(entry);
+    if (expectedFingerprints.length === 0) continue;
+    jobs.push({
+      type: 'catalog-provider',
+      name: entry.definition.name,
+      version: entry.definition.version,
+      expectedFingerprints,
+      fingerprint: entry.fingerprint,
+    });
+  }
+  if (jobs.length === 0) return 0;
+  return store.migrateFingerprints(jobs);
 }
 
 /** @param {any} definition */
@@ -130,13 +250,7 @@ export class CommercialRegistries {
       }
       this.catalogProviders.set(definition.name, {
         definition,
-        fingerprint: computeDefinitionFingerprint({
-          type: 'catalog-provider',
-          name: definition.name,
-          version: definition.version,
-          config: definition.config ?? null,
-          fetchCatalog: definition.fetchCatalog,
-        }),
+        fingerprint: catalogProviderFingerprint(definition),
       });
     }
     for (const definition of definitions.discountPolicies ?? []) {
@@ -180,10 +294,32 @@ export class CommercialRegistries {
    * @param {any} database
    */
   persistFingerprints(database) {
-    createDefinitionVersionStore(database).persist([
+    const store = createDefinitionVersionStore(database);
+    const entries = [
       ...[...this.catalogProviders.values()].map((entry) => identity('catalog-provider', entry)),
       ...[...this.discountPolicies.values()].map((entry) => identity('discount-policy', entry)),
-    ]);
+    ];
+    // A row registered under a historical closure source migrates to the
+    // current fingerprint once, transparently; anything else that mismatches
+    // is genuine drift and the retry refuses it with the established message.
+    // The retry only runs when at least one row moved, so the original
+    // refusal always survives untouched when nothing was migratable.
+    const recover = (error) => {
+      const migrated = migrateLegacyCatalogFingerprints(store, this.catalogProviders);
+      const retry = (count) => {
+        if (count === 0) throw error;
+        return store.persist(entries);
+      };
+      if (migrated && typeof migrated.then === 'function') return migrated.then(retry);
+      return retry(migrated);
+    };
+    try {
+      const pending = store.persist(entries);
+      if (pending && typeof pending.then === 'function') return pending.catch(recover);
+      return pending;
+    } catch (error) {
+      return recover(error);
+    }
   }
 
   /** Serializable, function-free metadata for /api/schema. */

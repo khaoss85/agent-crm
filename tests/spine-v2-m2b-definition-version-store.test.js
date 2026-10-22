@@ -871,3 +871,62 @@ test('sweep: the generated id obeys the same identity rule as the fields beside 
   assert.deepEqual(opened, [], 'a bad id never reached BEGIN IMMEDIATE');
   assert.equal(rows(database).length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Fingerprint-scheme migration (migrateFingerprints)
+// ---------------------------------------------------------------------------
+
+test('sweep: migrateFingerprints moves only exact historical matches, never drift', (t) => {
+  const database = memory(t);
+  const store = createDefinitionVersionStore(database);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  const unrelated = 'c'.repeat(64);
+  store.persist([
+    entry({ name: 'legacy', fingerprint: oldFp }),
+    entry({ name: 'current', fingerprint: newFp }),
+    entry({ name: 'drifted', fingerprint: unrelated }),
+  ]);
+  const job = (over = {}) => ({
+    type: 'fixture-kind', name: 'legacy', version: 1,
+    expectedFingerprints: [oldFp], fingerprint: newFp, ...over,
+  });
+  assert.equal(store.migrateFingerprints([
+    job(),
+    job({ name: 'current' }),
+    job({ name: 'drifted' }),
+    job({ name: 'never-registered' }),
+  ]), 1, 'only the exact historical match moved');
+  const byName = new Map(rows(database).map((row) => [row.name, row.fingerprint]));
+  assert.equal(byName.get('legacy'), newFp, 'the historical row now carries the current fingerprint');
+  assert.equal(byName.get('current'), newFp, 'an already-current row is not rewritten');
+  assert.equal(byName.get('drifted'), unrelated, 'drift is untouched: persist still refuses it');
+  assert.ok(!byName.has('never-registered'), 'absent rows are left for persist to insert');
+  refusesCleanly(
+    () => store.persist([entry({ name: 'drifted', fingerprint: newFp })]),
+    /source changed after registration/,
+    'the unexplained row',
+  );
+  assert.doesNotThrow(
+    () => store.persist([entry({ name: 'legacy', fingerprint: newFp })]),
+    'the migrated row verifies',
+  );
+});
+
+test('sweep: migrateFingerprints validates the closed job shape before any write', (t) => {
+  const database = memory(t);
+  const store = createDefinitionVersionStore(database);
+  const job = () => ({
+    type: 'fixture-kind', name: 'alpha', version: 1,
+    expectedFingerprints: ['a'.repeat(64)], fingerprint: 'b'.repeat(64),
+  });
+  refusesCleanly(() => store.migrateFingerprints([{ ...job(), bogus: 1 }]), /unsupported field/, 'an extra field');
+  refusesCleanly(() => store.migrateFingerprints([{ ...job(), expectedFingerprints: [] }]), /non-empty array/, 'empty history');
+  refusesCleanly(() => store.migrateFingerprints([{ ...job(), version: -1 }]), /non-negative integer/, 'a negative version');
+  refusesCleanly(
+    () => store.migrateFingerprints([{ ...job(), fingerprint: 'not-identity\ntext' }]),
+    /control character/,
+    'a hostile fingerprint',
+  );
+  assert.equal(rows(database).length, 0, 'a refused migration wrote nothing');
+});

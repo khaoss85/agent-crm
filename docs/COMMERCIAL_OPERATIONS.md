@@ -125,6 +125,10 @@ no new manifest, no parallel catalog (`tests/commercial-price-list.test.js`
 guards both). Source keys are namespaced per provider, the listino travels
 in the provider's declared `config` so its fingerprint covers every amount
 (a price change under a frozen version is drift and stops the next boot),
+and the fingerprint covers `{type, name, version, codeVersion, config}` —
+never the `fetchCatalog` closure text, which reads only that config, so a
+pure refactor of the constructor leaves registered fingerprints unchanged
+while a behaviour change bumps `PRICE_LIST_CATALOG_CODE_VERSION`,
 and optional `externalId` / `externalOfferId` / `externalPriceId` fields
 carry the future payment mapping without claiming it.
 

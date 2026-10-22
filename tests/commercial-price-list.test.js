@@ -6,12 +6,14 @@ import { fileURLToPath } from 'node:url';
 import {
   createPriceListCatalogProvider,
   validatePriceListConfig,
+  PRICE_LIST_CATALOG_CODE_VERSION,
   COMMERCIAL_RESOURCES,
   CommercialRegistries,
 } from '../packages/commercial/src/index.js';
 import { validateCatalogProvider } from '../packages/commercial/src/registry.js';
 import { normalizeCatalog } from '../packages/commercial/src/catalog-sync.js';
 import { createDatabase } from '../packages/core/src/database.js';
+import { createDefinitionVersionStore } from '../packages/core/index.js';
 
 /**
  * Workspace price lists (accordo D1): a gym listino as plain JSON
@@ -184,6 +186,131 @@ test('the normalized listino is frozen in depth: nested amounts cannot drift', a
   const built = provider();
   const catalog = normalizeCatalog(await built.fetchCatalog({}));
   assert.equal(catalog.offers[1].components[0].flatAmountCents, 4900, 'amounts survive unchanged');
+});
+
+test('a pure refactor of the constructor leaves the provider fingerprint unchanged', async () => {
+  const built = provider();
+  const fingerprintOf = (definition) => new CommercialRegistries({ catalogProviders: [definition] })
+    .getCatalogProvider('palestra-listino').fingerprint;
+  const baseline = fingerprintOf(built);
+  // Same behaviour, different closure text: the #271 class of change (a
+  // renamed closed-over variable) plus a comment and a re-indented line.
+  const refactoredSource = `${built.fetchCatalog.toString().replaceAll('providerName', 'renamedProvider')}\n    // refactored: behaviour identical, text different`;
+  assert.notEqual(
+    refactoredSource,
+    built.fetchCatalog.toString(),
+    'the variant really differs in source text, or this test is vacuous',
+  );
+  const refactoredFetch = Object.assign(
+    async (input) => built.fetchCatalog(input),
+    { toString: () => refactoredSource },
+  );
+  assert.deepEqual(
+    await refactoredFetch({}),
+    await built.fetchCatalog({}),
+    'the variant renders the same catalog',
+  );
+  assert.equal(
+    fingerprintOf({ ...built, fetchCatalog: refactoredFetch }),
+    baseline,
+    'closure text is not behaviour for a constructor-built provider',
+  );
+});
+
+test('listino data, provider version and constructor version all move the fingerprint', () => {
+  const fingerprintOf = (definition) => new CommercialRegistries({ catalogProviders: [definition] })
+    .getCatalogProvider('palestra-listino').fingerprint;
+  const baseline = fingerprintOf(provider());
+  assert.equal(
+    provider().codeVersion,
+    PRICE_LIST_CATALOG_CODE_VERSION,
+    'the constructor stamps its own version on the definition',
+  );
+  const changed = structuredClone(GYM_PRICE_LIST);
+  changed.offers[0].components[0].amountCents = 19900;
+  assert.notEqual(fingerprintOf(provider(changed)), baseline, 'listino data moves the fingerprint');
+  assert.notEqual(
+    fingerprintOf(provider(GYM_PRICE_LIST, { version: 2 })),
+    baseline,
+    'provider version moves the fingerprint',
+  );
+  assert.notEqual(
+    fingerprintOf({ ...provider(), codeVersion: PRICE_LIST_CATALOG_CODE_VERSION + 1 }),
+    baseline,
+    'constructor version moves the fingerprint',
+  );
+});
+
+/**
+ * Frozen upgrade fixture: NEVER change this value — the two historical
+ * fingerprints below were computed from exactly it, and the upgrade test
+ * replays databases that registered it under the old closure-text scheme.
+ */
+const UPGRADE_FIXTURE = {
+  priceBook: { name: 'Listino', currency: 'EUR' },
+  products: [{ key: 'prod', name: 'Prodotto' }],
+  offers: [{
+    key: 'off', product: 'prod', name: 'Offerta',
+    components: [{ key: 'prezzo', label: 'Prezzo', charge: 'one_time', model: 'flat_fee', amountCents: 1000 }],
+  }],
+};
+// Fingerprints the pre-fix registry computed for UPGRADE_FIXTURE as
+// `listino-upgrade@1`: before agent-crm #271 (closure over `name`) and after
+// it (closure over `providerName`). Recorded from the framework at 3ddffcbf.
+const UPGRADE_FINGERPRINT_PRE_271 = '4e7baa05df2ea12d80a9839d46eb7103bad297189b990c03e4326918c58aabf8';
+const UPGRADE_FINGERPRINT_271 = 'b150bbb0d2b5a2e7ebfa268590484fd96935866361033c775fa0a6652a8d73f1';
+
+test('a database registered under the old closure-text scheme keeps composing', (t) => {
+  const databases = [];
+  t.after(() => { for (const database of databases) database.close(); });
+  for (const historical of [UPGRADE_FINGERPRINT_PRE_271, UPGRADE_FINGERPRINT_271]) {
+    const database = createDatabase({ path: ':memory:' });
+    databases.push(database);
+    // The space registered version 1 with the old framework, which hashed
+    // the closure source: replay that row directly.
+    createDefinitionVersionStore(database).persist([{
+      type: 'catalog-provider',
+      name: 'listino-upgrade',
+      version: 1,
+      fingerprint: historical,
+    }]);
+    // The fixed framework boots the unchanged listino: the row migrates to
+    // the current fingerprint instead of stopping the boot.
+    const registries = new CommercialRegistries({
+      catalogProviders: [createPriceListCatalogProvider({
+        name: 'listino-upgrade',
+        version: 1,
+        priceList: UPGRADE_FIXTURE,
+      })],
+    });
+    assert.doesNotThrow(
+      () => registries.persistFingerprints(database),
+      `historical form ${historical.slice(0, 12)}… migrates transparently`,
+    );
+    assert.notEqual(
+      registries.getCatalogProvider('listino-upgrade').fingerprint,
+      historical,
+      'the live fingerprint no longer depends on closure text',
+    );
+    assert.doesNotThrow(
+      () => registries.persistFingerprints(database),
+      'the next boot is a no-op verify',
+    );
+    // Drift protection survived the migration: a silent price change under
+    // the frozen version still stops the boot.
+    const drifted = structuredClone(UPGRADE_FIXTURE);
+    drifted.offers[0].components[0].amountCents = 2000;
+    assert.throws(
+      () => new CommercialRegistries({
+        catalogProviders: [createPriceListCatalogProvider({
+          name: 'listino-upgrade',
+          version: 1,
+          priceList: drifted,
+        })],
+      }).persistFingerprints(database),
+      /source changed after registration/,
+    );
+  }
 });
 
 test('no parallel catalog: the listino reuses product, price-book and offer', () => {
