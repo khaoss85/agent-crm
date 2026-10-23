@@ -26,7 +26,10 @@ import { fixtureEnvelopeEvent } from './fixture.js';
  * - inbound: Stripe event notifications (`object: 'event'` with the event
  *   id, the event type and a unix `created` instant) normalized to one
  *   channel event per notification, plus the kit's minimal envelope on the
- *   kit path. The subject is the event type (`stripe:<type>`); the event
+ *   kit path. The subject is the event type (`stripe:<type>`); events are
+ *   unordered (sequence null, like voice/site-form/calendar) because
+ *   unrelated payments of the same type share that subject and must never
+ *   suppress each other — `created` only sets `occurredAt`. The event
  *   payload is never stored — only the fingerprint.
  * - outbound: refused, always, with CHANNEL_SEND_UNSUPPORTED.
  */
@@ -82,7 +85,7 @@ function normalizeStripeInbound(event) {
   return {
     providerEventId: id,
     subject: `stripe:${type}`,
-    sequence: Number.isSafeInteger(parsed.created) ? parsed.created : null,
+    sequence: null,
     occurredAt,
   };
 }

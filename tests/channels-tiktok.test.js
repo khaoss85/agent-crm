@@ -9,6 +9,7 @@ import {
   TIKTOK_ADAPTER_NAME,
   TIKTOK_ADAPTER_VERSION,
 } from '../packages/channels/src/index.js';
+import { createTemplateSendCapability } from '../packages/channels/src/template-send.js';
 import { createChannelsHarness } from './helpers/channels-harness.js';
 
 /**
@@ -131,6 +132,33 @@ test('tiktok refuses every send by contract, direct and through the queue', asyn
   assert.equal(api.state.sendCalls, 0);
   assert.equal(api.state.sentByKey.size, 0);
   assert.equal((await harness.jobs()).length, 0, 'refused messages never reach the outbox');
+});
+
+test('the template seam surfaces the inbound-only refusal intact (rev-agent-crm-316 P2)', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  // Compose channel-template-send@1 against the registry holding
+  // tiktok-inbox@1, exactly like the booking path: checkSendable on the
+  // inbound-only connection must answer CHANNEL_SEND_UNSUPPORTED, never the
+  // flattened CHANNEL_MESSAGE_MALFORMED.
+  const templateSend = createTemplateSendCapability({ registries: harness.internals.registries }).create({
+    modules: harness.internals.modules,
+  });
+  // `to` is E.164 so the request reaches the adapter (the seam validates
+  // the recipient shape before the connection is read).
+  await assert.rejects(
+    () => templateSend.checkSendable({
+      actor: ACTOR, spaceId: SPACE_A, connectionKey: key, to: '+393331112223', template: { name: 'reminder' },
+    }),
+    (error) => error.code === 'CHANNEL_SEND_UNSUPPORTED',
+  );
+  await assert.rejects(
+    () => templateSend.sendTemplate({
+      actor: ACTOR, spaceId: SPACE_A, connectionKey: key, to: '+393331112223', template: { name: 'reminder' }, messageKey: 'kit:template-refused',
+    }),
+    (error) => error.code === 'CHANNEL_SEND_UNSUPPORTED',
+  );
 });
 
 test('a malformed tiktok delivery refuses without writing', async (t) => {

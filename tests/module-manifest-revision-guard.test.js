@@ -51,7 +51,7 @@ const RECORDED = Object.freeze({
   "appointment": { revision: 2, sqlite: "64010d7ce093f774d18ed20c1ecb8afb407d7847f306ac4df3620ba90e0755ab", pg: "f0810edf2dcd053df71885516e95943df2749a06633224251f5a84daaab80f3e" },
   "calendar-link": { revision: 1, sqlite: "0833adb4ddf2a25a5232c66f768ea091da8f682072dbccd2045803ab4d6fcc99", pg: "537b281541bbe59a4423bf40c3c4af28cb12170c5e4d848ef2f235cf171c7592" },
   "calendar-sync-state": { revision: 2, sqlite: "9a07b39afe234be4acb2f910752cd359082628b3794ad9a89bb279f580f37d09", pg: "eca193443a3dcfe428760b31761f66ab1d5cd35125c53ee549ff23b80642111b" },
-  "channel-connection": { revision: 2, sqlite: "964fd71686c0a43bca92e6e153b44d724b7ef318117f6fa0c77fc08ec0316150", pg: "07ef72b484a666908f60d9a468a2883b08953c9252449de01ed8f75932f9a2e6" },
+  "channel-connection": { revision: 3, sqlite: "64af6c70e065b58ca41f600139ecb27470d1190a261c0459a0dd66b3274c0bba", pg: "4c33f634ecd5168d0cba55ca50327520a1507ab55621d0073d8b4b325cd10403" },
   "channel-dead-letter": { revision: 1, sqlite: "60072cdc325757761651dced3c916f8d0222536e07a7312013a0a2b2b36f593c", pg: "a9181f22c8cda1fb7a9437fb3e613fa97e6a950e77247ae1e8b801dc819bd158" },
   "channel-import-outcome": { revision: 1, sqlite: "0394a9f9e93e3536bba9bfbeb0ced05e2afbe9d9536411dd5340d54c5dae3099", pg: "46f1ca44727782f41658d31183d8444d73b24fe34e8a2c64d1eb93890f54e886" },
   "channel-import-state": { revision: 1, sqlite: "97b88126f30e52267871c663b5bac8f2f89903b538c06fedd18b0f846ccac4f6", pg: "da084012fe0c2d863b0033a007c36d083a1871a6c03895b032bbdf2b25065f6c" },

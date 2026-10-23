@@ -126,6 +126,24 @@ test('stripe refuses every send by contract, direct and through the queue', asyn
   assert.equal((await harness.jobs()).length, 0, 'refused messages never reach the outbox');
 });
 
+test('two distinct payments of one type both apply, newest first (rev-agent-crm-316 P1)', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  // Stripe events are unordered (sequence null): unrelated payments share
+  // the `stripe:<type>` subject and must never suppress each other.
+  const newer = stripeEventBody({ id: 'evt_new_1', type: 'payment_intent.succeeded', createdSec: T0_SEC + 100 });
+  const first = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: newer, headers: signedHeaders(newer) });
+  assert.equal(first.effect, 'applied');
+  const older = stripeEventBody({ id: 'evt_old_1', type: 'payment_intent.succeeded', createdSec: T0_SEC });
+  const second = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: older, headers: signedHeaders(older) });
+  assert.equal(second.effect, 'applied');
+  const rows = harness.inbox(SPACE_A).filter((row) => row.subject === 'stripe:payment_intent.succeeded');
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((row) => row.sequence === null));
+  assert.equal(rows.find((row) => row.providerEventId === 'evt_old_1')?.occurredAt, new Date(T0_SEC * 1000).toISOString());
+});
+
 test('a redelivered stripe event replays instead of duplicating', async (t) => {
   const { harness } = setup();
   t.after(() => harness.close());
