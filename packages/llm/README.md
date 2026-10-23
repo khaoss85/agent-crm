@@ -23,7 +23,7 @@ same kit.
   no key material in results or errors.
 - `src/openai.js` — `createOpenAiLlmAdapter` with an injectable transport.
   The model name lives in exactly one place (`OPENAI_DEFAULT_MODEL`,
-  today `gpt-5.6-luna`).
+  today `gpt-6-luna`).
 - `src/operations.js` — `createLlmOperations`: the guarded `complete`
   plus `readUsage`/`readAudit`, and `openLlmComplete` for the
   `llm-complete@1` capability consumers declare.
