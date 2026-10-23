@@ -1,0 +1,20 @@
+{
+  "manifestVersion": 1,
+  "revision": 2,
+  "name": "sequence-step",
+  "table": "sequence_steps",
+  "description": "One ordered step of a sequence (BO-F3-03): the days after the previous fire, the channel it sends on, and the approved template with personalization variables. Steps are append-only while the sequence is a draft; once the sequence is active a step is never edited, only skipped per enrollment, so a running person never sees a step change under them. (backlog:22bb154a72ea)",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "sequenceSourceKey", "type": "string", "index": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "stepOrder", "type": "integer", "index": true, "writable": "managed" },
+    { "name": "dayOffset", "type": "integer", "writable": "managed" },
+    { "name": "channel", "type": "string", "writable": "managed" },
+    { "name": "templateName", "type": "string", "writable": "managed" },
+    { "name": "templateLanguage", "type": "string", "writable": "managed" },
+    { "name": "templateVars", "type": "string", "writable": "managed" },
+    { "name": "actorType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "actorId", "type": "string", "writable": "managed" }
+  ]
+}
