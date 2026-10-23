@@ -68,6 +68,30 @@ export function stageLabel(stage) {
  * month because a bare GET must still answer something honest.
  * @param {unknown} input
  */
+/**
+ * ISO 4217 codes the runtime can actually format. Cached once: anything else
+ * would throw RangeError inside Intl formatting and turn hostile input into
+ * a 500, so the query refuses it as a 400 instead. Null when the runtime
+ * cannot enumerate (then only the shape check applies and formatMinor fails
+ * closed as ValidationError).
+ */
+const SUPPORTED_CURRENCIES = (() => {
+  try {
+    if (typeof Intl.supportedValuesOf === 'function') {
+      return new Set(Intl.supportedValuesOf('currency'));
+    }
+  } catch {
+    // Fall through: no enumeration, formatting still fails closed below.
+  }
+  return null;
+})();
+
+/** @param {string} currency */
+export function isSupportedCurrency(currency) {
+  if (SUPPORTED_CURRENCIES === null) return CURRENCY_RE.test(currency);
+  return SUPPORTED_CURRENCIES.has(currency);
+}
+
 export function parseDashboardQuery(input = {}) {
   const source = (input !== null && typeof input === 'object' && !Array.isArray(input))
     ? /** @type {Record<string, unknown>} */ (input)
@@ -93,8 +117,8 @@ export function parseDashboardQuery(input = {}) {
   if (currency === undefined || currency === null || currency === '') {
     currency = DASHBOARD_DEFAULT_CURRENCY;
   }
-  if (typeof currency !== 'string' || !CURRENCY_RE.test(currency)) {
-    throw new ValidationError('dashboard query: currency must be an uppercase 3-letter code', { field: 'currency' });
+  if (typeof currency !== 'string' || !CURRENCY_RE.test(currency) || !isSupportedCurrency(currency)) {
+    throw new ValidationError('dashboard query: currency must be a supported ISO 4217 code', { field: 'currency' });
   }
   return Object.freeze({ period, owner, currency });
 }
@@ -137,7 +161,18 @@ export function dashboardCompilations(query) {
 
 /** @param {number} minor @param {string} currency */
 export function formatMinor(minor, currency) {
-  return new Intl.NumberFormat('it-IT', { style: 'currency', currency }).format(minor / 100);
+  // Explicit support check: Intl.NumberFormat formats unknown 3-letter codes
+  // without throwing on lenient runtimes, so an unsupported code must be
+  // refused here as a 400 instead of leaking into the model.
+  if (typeof currency !== 'string' || !isSupportedCurrency(currency)) {
+    throw new ValidationError('dashboard: unsupported currency', { field: 'currency' });
+  }
+  try {
+    return new Intl.NumberFormat('it-IT', { style: 'currency', currency }).format(minor / 100);
+  } catch {
+    // A runtime that cannot format an enumerated code still refuses as a 400.
+    throw new ValidationError('dashboard: unsupported currency', { field: 'currency' });
+  }
 }
 
 /** @param {string} period YYYY-MM */
@@ -293,6 +328,13 @@ export function buildDashboardModel(results, bundleRows, query, nowIso) {
       }),
   );
 
+  // The table is titled with the queried month (`Team e vendite · <mese>`),
+  // so open/won/lost accumulate only rows expected IN that month: the
+  // periodo pill recalculates the table instead of showing lifetime totals
+  // under a period title. Stale stays lifetime (past or undated open rows):
+  // it is the redistribution backlog, visible from every period, and entries
+  // exist for every owner in the filtered rows so that backlog never hides
+  // its holder.
   const byOwner = new Map();
   for (const row of dated) {
     const owner = typeof row['opportunity.owner'] === 'string' ? row['opportunity.owner'] : '';
@@ -302,20 +344,27 @@ export function buildDashboardModel(results, bundleRows, query, nowIso) {
       entry = { owner, openCount: 0, openMinor: 0, wonCount: 0, wonMinor: 0, lostCount: 0, staleCount: 0 };
       byOwner.set(owner, entry);
     }
+    const expected = monthOf(row['opportunity.expectedCloseDate']);
+    const expectedInPeriod = expected === query.period;
     if (isOpen(row)) {
-      entry.openCount += row.count;
-      entry.openMinor += row.totalMinor;
+      if (expectedInPeriod) {
+        entry.openCount += row.count;
+        entry.openMinor += row.totalMinor;
+      }
       // Stale for redistribution: no expected date, or one already past.
       // Rows expected in a FUTURE period are somebody's plan, not neglect.
-      const expected = monthOf(row['opportunity.expectedCloseDate']);
       if (expected === null || expected < query.period) {
         entry.staleCount += row.count;
       }
     } else if (row['opportunity.stage'] === WON_STAGE) {
-      entry.wonCount += row.count;
-      entry.wonMinor += row.totalMinor;
+      if (expectedInPeriod) {
+        entry.wonCount += row.count;
+        entry.wonMinor += row.totalMinor;
+      }
     } else if (row['opportunity.stage'] === LOST_STAGE) {
-      entry.lostCount += row.count;
+      if (expectedInPeriod) {
+        entry.lostCount += row.count;
+      }
     }
   }
   const team = Object.freeze([...byOwner.values()]
@@ -441,7 +490,12 @@ export function buildDashboardCsv(model) {
   const sep = DASHBOARD_CSV_SEPARATOR;
   const cell = (/** @type {unknown} */ value) => {
     const text = String(value ?? '');
-    return /["\n;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    // Quote on structure breakers (quotes, LF, CR, the `;` separator) and on
+    // spreadsheet formula leaders (`=`, `+`, `-`, `@`, tab, CR): a hostile
+    // owner key such as `=2+2` must never survive unquoted into the downloaded
+    // bytes where Excel/LibreOffice would evaluate it.
+    const needsQuotes = /["\n\r;]/.test(text) || /^[=+\-@\t\r]/.test(text);
+    return needsQuotes ? `"${text.replace(/"/g, '""')}"` : text;
   };
   const lines = [
     `reporting${sep}${model.query.period}${sep}${model.query.owner ?? 'tutti'}${sep}${model.query.currency}`,

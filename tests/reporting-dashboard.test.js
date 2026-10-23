@@ -156,6 +156,9 @@ test('undeclared schedule dimensions and hostile filters fail closed', () => {
     () => parseDashboardQuery({ period: '2026-13' }),
     () => parseDashboardQuery({ period: '2026-10', currency: 'eur' }),
     () => parseDashboardQuery({ period: '2026-10', currency: 'EURO' }),
+    // Well-shaped but not ISO: Intl formatting would throw RangeError and
+    // turn hostile input into a 500, so the query refuses it as a 400.
+    () => parseDashboardQuery({ period: '2026-10', currency: 'ZZZ' }),
     () => parseDashboardQuery({ period: '2026-10', owner: 7 }),
     () => parseDashboardQuery({ period: '2026-10', owner: 'x'.repeat(201) }),
     () => parseDashboardQuery({ period: '2026-10', owner: { eq: 'alice' } }),
@@ -214,12 +217,34 @@ test('funnel, monthly chart and team table match hand-computed rows', (t) => {
   assert.equal(model.monthly.length, 6);
   assert.deepEqual(model.owners, ['alice', 'bob']);
   const alice = model.team.find((entry) => entry.owner === 'alice');
-  assert.deepEqual([alice.openCount, alice.openMinor], [4, 22000]);
+  assert.deepEqual([alice.openCount, alice.openMinor], [2, 14000]);
   assert.deepEqual([alice.wonCount, alice.wonMinor], [1, 9000]);
   assert.equal(alice.winRateDisplay, '50%');
   const bob = model.team.find((entry) => entry.owner === 'bob');
-  assert.deepEqual([bob.openCount, bob.openMinor], [2, 4000]);
+  assert.deepEqual([bob.openCount, bob.openMinor], [0, 0]);
+  assert.deepEqual([bob.wonCount, bob.wonMinor], [1, 5000]);
   assert.equal(bob.winRateDisplay, '100%');
+});
+
+test('team table recalculates with periodo: September differs from October', (t) => {
+  const database = fixtureDatabase(t);
+  const october = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
+  const september = buildDashboardModel(
+    dashboardResults(database, { period: '2026-09', owner: null, currency: 'EUR' }),
+    [],
+    { period: '2026-09', owner: null, currency: 'EUR' },
+    TS,
+  );
+  const octoberAlice = october.team.find((entry) => entry.owner === 'alice');
+  const septemberAlice = september.team.find((entry) => entry.owner === 'alice');
+  assert.deepEqual([octoberAlice.openCount, octoberAlice.openMinor], [2, 14000]);
+  // In September alice holds no expected row: zeros, but her stale backlog
+  // (one past-dated open row) still names her as its holder.
+  assert.deepEqual([septemberAlice.openCount, septemberAlice.openMinor], [0, 0]);
+  assert.equal(septemberAlice.staleCount, 1);
+  const septemberBob = september.team.find((entry) => entry.owner === 'bob');
+  assert.deepEqual([septemberBob.openCount, septemberBob.openMinor], [1, 2500]);
+  assert.deepEqual(september.team.map((entry) => entry.owner), ['bob', 'alice']);
 });
 
 test('forecast is labelled heuristic with history-weighted probabili', (t) => {
@@ -300,8 +325,8 @@ test('CSV bytes are pinned exactly', (t) => {
   const lines = model.csv.content.split('\n');
   assert.equal(lines[0], 'reporting;2026-10;tutti;EUR');
   assert.ok(lines.includes('persona;preventivi_aperti;valore_aperto_minor;vinte;vinte_minor;perse;tasso'));
-  assert.ok(lines.includes('alice;4;22000;1;9000;1;50%'));
-  assert.ok(lines.includes('bob;2;4000;1;5000;0;100%'));
+  assert.ok(lines.includes('alice;2;14000;1;9000;1;50%'));
+  assert.ok(lines.includes('bob;0;0;1;5000;0;100%'));
   assert.ok(lines.includes('qualification;3;14500'));
   assert.ok(lines.includes('probabili_euristica;9333'));
   assert.ok(lines.includes('obiettivo;non_impostato'));
@@ -327,6 +352,23 @@ test('CSV escapes hostile owner keys and persona names the file', (t) => {
   assert.ok(csv.content.includes('"a"";b";1;1;0;0;0;n.d.'), `hostile owner is quoted, got: ${csv.content}`);
 });
 
+test('CSV quotes formula leaders and CR so hostile owners never break out', () => {
+  const base = {
+    kpis: [], forecast: { closedMinor: 0, probableMinor: 0, bestMinor: 0, targetMinor: null },
+    funnel: [{ stage: 'won', count: 1, minor: 5 }],
+    query: { period: '2026-10', owner: null, currency: 'EUR' },
+  };
+  const row = (owner) => ({
+    owner, openCount: 1, openMinor: 1, wonCount: 0, wonMinor: 0, lostCount: 0, winRate: null,
+  });
+  for (const hostile of ['=2+2', '+cmd', '-1+1', '@sum', '\tindented', '\rreturn']) {
+    const csv = buildDashboardCsv({ ...base, team: [row(hostile)] });
+    const line = csv.content.split('\n').find((entry) => entry.includes('1;1;0;0;0'));
+    assert.ok(line !== undefined && line.startsWith('"'), `hostile owner is quoted, got: ${csv.content}`);
+    assert.equal(csv.content.split('\n').filter((entry) => entry.includes('1;1;0;0;0')).length, 1);
+  }
+});
+
 test('query, month and target helpers behave', () => {
   assert.deepEqual({ ...parseDashboardQuery({ period: '2026-10' }) }, { period: '2026-10', owner: null, currency: 'EUR' });
   assert.equal(parseDashboardQuery({ period: '2026-10', owner: '' }).owner, null);
@@ -344,6 +386,7 @@ test('query, month and target helpers behave', () => {
   assert.equal(shiftMonth('2026-10', -1), '2026-09');
   assert.equal(shiftMonth('2026-01', -1), '2025-12');
   assert.equal(formatMonth('2026-10'), 'ottobre 2026');
+  assert.throws(() => formatMinor(100, 'ZZZ'), ValidationError);
 });
 
 /** @param {import('node:test').TestContext} t */
@@ -408,7 +451,7 @@ test('dashboard filters recalculate: persona and currency narrow the model', asy
 
 test('dashboard query refuses hostile input with a 400 and has no write surface', async (t) => {
   const { baseUrl } = await dashboardServer(t);
-  for (const bad of ['period=ottobre', 'period=2026-13', 'currency=eur', 'owner=' + 'x'.repeat(201)]) {
+  for (const bad of ['period=ottobre', 'period=2026-13', 'currency=eur', 'currency=ZZZ', 'owner=' + 'x'.repeat(201)]) {
     const response = await fetch(`${baseUrl}/api/reporting/dashboard?${bad}`);
     assert.equal(response.status, 400, `query ${bad} must be a 400`);
   }
