@@ -360,12 +360,18 @@ export function parseModuleRoute(hash) {
     if (proposalId === null || proposalId === '' || proposalId.includes('/')) return { view: 'invalid' };
     return { view: 'marketing-proposal', proposalId };
   }
-  // Connectors route: #/connettori (BO-F1-02). One screen, nothing to drill
-  // into — the wizard state lives in the view, never in the hash — so any
-  // deeper path is invalid, not a lookup.
+  // Connectors route: #/connettori (BO-F1-02). One screen — the wizard state
+  // lives in the view, never in the hash — plus the connector detail
+  // #/connettori/<canale> (BO-F5-03). The slug is grammar-checked here;
+  // catalog membership is checked by the detail view, which renders an
+  // honest "unknown connector" note without ever fetching for it — a hostile
+  // hash still never becomes a request path.
   if (rawParts.length && rawParts[0] === 'connettori') {
-    if (rawParts.length !== 1) return { view: 'invalid' };
-    return { view: 'connectors' };
+    if (rawParts.length === 1) return { view: 'connectors' };
+    if (rawParts.length !== 2) return { view: 'invalid' };
+    const channel = safeDecode(rawParts[1]);
+    if (channel === null || !/^[a-z][a-z0-9-]*$/.test(channel)) return { view: 'invalid' };
+    return { view: 'connector-detail', channel };
   }
   // Reporting and "+ Nuovo modulo" routes (BO-F5-01, docs/BUNDLES.md). One
   // screen each, same canonical discipline as every other route here: the
