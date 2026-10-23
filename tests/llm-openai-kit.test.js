@@ -78,9 +78,9 @@ test('the openai adapter passes the same kit on a stubbed transport', async () =
 });
 
 test('the openai adapter names the cheapest model exactly once by default', () => {
-  assert.equal(OPENAI_DEFAULT_MODEL, 'gpt-5.6-luna');
+  assert.equal(OPENAI_DEFAULT_MODEL, 'gpt-6-luna');
   const { definition } = createOpenAiLlmAdapter({ fetchImpl: async () => ({ status: 200, json: async () => ({}) }) });
-  assert.equal(definition.config.model, 'gpt-5.6-luna');
+  assert.equal(definition.config.model, 'gpt-6-luna');
 });
 
 test('a mistyped model refuses instead of silently running the default', async () => {
@@ -100,7 +100,7 @@ test('a mistyped model refuses instead of silently running the default', async (
     (error) => error?.name === 'ValidationError' || /bounded non-blank/.test(String(error?.message)),
   );
   const out = await definition.generate({ ...base, model: undefined });
-  assert.equal(out.model, 'gpt-5.6-luna', 'only an absent model falls back to the default');
+  assert.equal(out.model, 'gpt-6-luna', 'only an absent model falls back to the default');
 });
 
 test('the kit leak probe observes secrets in messages and nested details', async () => {
