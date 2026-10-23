@@ -92,11 +92,25 @@ export const PRICE_LIST_CATALOG_TEMPLATE = Object.freeze({
 });
 
 /**
+ * The executed source of a provider function, read past any caller-supplied
+ * `toString` override (review khaoss85/agent-crm#333, round 7: an own
+ * `toString` property let a swapped `fetchCatalog` claim the pinned template
+ * source while executing different code). `Function.prototype.toString.call`
+ * ignores the override, so the pin below binds the code that runs.
+ * @param {Function} fn
+ */
+function liveFunctionSource(fn) {
+  return Function.prototype.toString.call(fn);
+}
+
+/**
  * Refuse a `fetchCatalog` source that drifted from the pinned template.
  * Fail-closed at composition, in the framework's own words: an unbumped
  * edit to the constructor stops the boot the way a fingerprint mismatch
  * used to, instead of syncing different keys under an unchanged fingerprint.
- * @param {unknown} sourceText — the live `fetchCatalog.toString()`
+ * @param {unknown} sourceText — the live `fetchCatalog` source, read with
+ * `Function.prototype.toString.call` (never `String(fn)` / `fn.toString()`:
+ * an own `toString` override could forge it; see liveFunctionSource)
  */
 export function validatePriceListConstructorTemplate(sourceText) {
   // Line endings are not behaviour: a CRLF checkout renders the identical
@@ -138,7 +152,9 @@ function isConstructorBuiltCatalogProvider(definition) {
   if (definition.codeVersion !== PRICE_LIST_CATALOG_CODE_VERSION) return false;
   if (typeof definition.fetchCatalog !== 'function') return false;
   try {
-    validatePriceListConstructorTemplate(String(definition.fetchCatalog));
+    // The unspoofable source, never String(fetchCatalog): an own `toString`
+    // override must not claim the pinned template (round 7 P1).
+    validatePriceListConstructorTemplate(liveFunctionSource(definition.fetchCatalog));
   } catch {
     return false;
   }
@@ -167,6 +183,20 @@ export function validateCatalogProvider(definition) {
   assertIdentity('catalog provider', definition);
   if (typeof definition.fetchCatalog !== 'function') {
     throw new ValidationError(`catalog provider "${definition.name}": fetchCatalog must be a function`);
+  }
+  // No caller-supplied `toString` on the executed function (review
+  // khaoss85/agent-crm#333, round 7 P1): the non-constructor fingerprint
+  // branch hashes the source through the shared canonicalizer, which reads
+  // `value.toString()` — an own override would let a custom or swapped
+  // `fetchCatalog` hash another function's source while executing its own
+  // code. Refusing the override up front means the hashed source is always
+  // the executed one, on both branches; the comparison-only historical forms
+  // below never pass through this validator, so they are unaffected.
+  if (Object.prototype.hasOwnProperty.call(definition.fetchCatalog, 'toString')) {
+    throw new ValidationError(
+      `catalog provider "${definition.name}": fetchCatalog must not carry its own toString — `
+      + 'the registry fingerprints the executed source, which an override could forge',
+    );
   }
   // A constructor-built provider declares its behaviour in full: `codeVersion`
   // is the constructor's own version (bumped on behaviour change) and takes

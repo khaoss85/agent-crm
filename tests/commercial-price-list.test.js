@@ -200,6 +200,9 @@ test('a post-construction fetchCatalog swap refuses at composition', async () =>
   // implementation under a stale pin. Recognition now re-validates the live
   // source on this path, so the swap refuses here — behaviour-identical or
   // not, because the registry cannot verify behaviour, only the pin.
+  // Round 7, P1 registry.js:141: a swapped fetch carrying its own `toString`
+  // refuses even earlier — the override itself is refused, before any pin
+  // comparison, so the forged-source text below never reaches the template.
   const built = provider();
   // Same behaviour, different closure text: the #271 class of change (a
   // renamed closed-over variable) plus a comment.
@@ -220,8 +223,8 @@ test('a post-construction fetchCatalog swap refuses at composition', async () =>
   );
   assert.throws(
     () => new CommercialRegistries({ catalogProviders: [{ ...built, fetchCatalog: refactoredFetch }] }),
-    /does not match the pinned constructor template/,
-    'even a behaviour-identical swap refuses: the pin binds the executed code',
+    /must not carry its own toString/,
+    'even a behaviour-identical swap refuses: the override itself is refused before the pin is read',
   );
   assert.throws(
     () => new CommercialRegistries({
@@ -256,7 +259,10 @@ test('a post-construction fetchCatalog swap refuses at composition', async () =>
  * (swap verifies under a stale pin) → rows 'rewritten fetch' and
  * 'behaviour-differing swap'; round 3 P2 :61 (forgeable seal) → row
  * 'forged history' plus the no-exported-seal test below (the seal is gone,
- * so there is nothing left to forge).
+ * so there is nothing left to forge). Round 7 P1 registry.js:141 (an own
+ * `toString` override forges the pinned source) → the 'rewritten fetch' row
+ * below now refuses on the override itself, and the dedicated
+ * spoofed-toString test pins the reviewer's exact evil-swap scenario.
  */
 test('constructor-built recognition is one predicate: every #333 case refuses or verifies', () => {
   const built = provider();
@@ -298,7 +304,7 @@ test('constructor-built recognition is one predicate: every #333 case refuses or
     {
       name: 'round 3 P1 :269 and round 1 :104 class: behaviour-identical rewritten fetch refuses on the registry path',
       definition: { ...built, fetchCatalog: rewrittenFetch },
-      expect: { throws: /does not match the pinned constructor template/ },
+      expect: { throws: /must not carry its own toString/ },
     },
     {
       name: 'round 3 P1 :269 scenario: behaviour-differing swapped fetch refuses under the stale pin',
@@ -369,6 +375,74 @@ test('constructor-built recognition is one predicate: every #333 case refuses or
     }),
     sourceFreeFingerprint,
     'the old closure-text scheme differs: the upgrade really changed schemes',
+  );
+});
+
+test('a spoofed toString cannot claim the pinned template (round 7 P1)', async () => {
+  // Review khaoss85/agent-crm#333, round 7 P1 registry.js:141: an overridden
+  // `toString` let a custom/swapped `fetchCatalog` satisfy the recognition
+  // predicate, so the evil implementation verified under the source-free
+  // scheme and synced under a frozen version with no drift refusal. The
+  // registry now reads the executed source with
+  // `Function.prototype.toString.call` (which ignores the override) and
+  // refuses any `fetchCatalog` carrying its own `toString` — on both the
+  // constructor-built and the custom branch, so the shared canonicalizer
+  // never hashes a forged source on this path.
+  const built = provider();
+  const evilFetch = Object.assign(
+    async () => ({ sourceRef: 'evil', priceBooks: [], products: [], offers: [] }),
+    // Forges the PINNED source byte-for-byte while executing evil code: the
+    // exact scenario from the review.
+    { toString: () => Function.prototype.toString.call(built.fetchCatalog) },
+  );
+  assert.equal(
+    String(evilFetch),
+    Function.prototype.toString.call(built.fetchCatalog),
+    'the spoof really claims the pinned source through the overridable read',
+  );
+  assert.deepEqual(
+    await evilFetch({}),
+    { sourceRef: 'evil', priceBooks: [], products: [], offers: [] },
+    'the spoof executes different code than the source it claims',
+  );
+  assert.throws(
+    () => validateCatalogProvider({ ...built, fetchCatalog: evilFetch }),
+    /must not carry its own toString/,
+    'the evil swap refuses at validation, before any pin comparison',
+  );
+  assert.throws(
+    () => new CommercialRegistries({ catalogProviders: [{ ...built, fetchCatalog: evilFetch }] }),
+    /must not carry its own toString/,
+    'the evil swap refuses at composition and never reaches the source-free scheme',
+  );
+  // The custom branch is hardened the same way: a plain provider whose
+  // `fetchCatalog` carries an own `toString` refuses instead of hashing the
+  // forged source through the shared canonicalizer.
+  const customFetch = Object.assign(async () => ({ sourceRef: 'custom' }), {
+    toString: () => 'async () => ({ sourceRef: "somebody-else" })',
+  });
+  assert.throws(
+    () => new CommercialRegistries({
+      catalogProviders: [{
+        name: 'custom', version: 1, label: 'Custom', config: { source: 'custom' }, fetchCatalog: customFetch,
+      }],
+    }),
+    /must not carry its own toString/,
+    'a custom fetchCatalog with an own toString refuses on the source-plus-config branch too',
+  );
+  // Honest providers — constructor-built and custom — still compose: the
+  // refusal fires only on the override, never on a plain function.
+  assert.doesNotThrow(
+    () => new CommercialRegistries({ catalogProviders: [built] }),
+    'the honest constructor output still composes',
+  );
+  assert.doesNotThrow(
+    () => new CommercialRegistries({
+      catalogProviders: [{
+        name: 'custom', version: 1, label: 'Custom', config: { source: 'custom' }, fetchCatalog: async () => ({ sourceRef: 'custom' }),
+      }],
+    }),
+    'an honest custom provider still composes',
   );
 });
 

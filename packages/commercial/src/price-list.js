@@ -460,8 +460,10 @@ export function createPriceListCatalogProvider({ name, version, label, priceList
   });
   // The executed code is bound to the pinned template: an unbumped edit to
   // this closure — behaviour or otherwise — refuses here, at composition,
-  // instead of syncing under an unchanged fingerprint.
-  validatePriceListConstructorTemplate(fetchCatalog.toString());
+  // instead of syncing under an unchanged fingerprint. Read past any
+  // caller-supplied `toString` override (registry liveFunctionSource rule):
+  // the pin binds the code that runs.
+  validatePriceListConstructorTemplate(Function.prototype.toString.call(fetchCatalog));
   const provider = {
     name: providerName,
     version,
