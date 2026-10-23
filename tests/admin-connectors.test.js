@@ -56,7 +56,11 @@ test('Personalizzazione opens the BO-F4-01 screen (connectors stay at #/connetto
   const area = SETTINGS_AREAS.find((row) => row.id === 'personalizzazione');
   assert.equal(area.route, '#/personalizzazione');
   assert.equal(parseModuleRoute('#/connettori').view, 'connectors');
-  assert.equal(parseModuleRoute('#/connettori/altro').view, 'invalid');
+  // BO-F5-03: the detail lives one level down; an unknown slug still reaches
+  // the detail view, which renders an honest note without fetching for it.
+  assert.deepEqual(parseModuleRoute('#/connettori/whatsapp'), { view: 'connector-detail', channel: 'whatsapp' });
+  assert.deepEqual(parseModuleRoute('#/connettori/altro'), { view: 'connector-detail', channel: 'altro' });
+  assert.equal(parseModuleRoute('#/connettori/a/b').view, 'invalid');
 });
 
 test('status mapping stays honest with no adapter or no connection', () => {
