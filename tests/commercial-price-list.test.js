@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import {
   createPriceListCatalogProvider,
   validatePriceListConfig,
@@ -11,9 +13,13 @@ import {
   CommercialRegistries,
 } from '../packages/commercial/src/index.js';
 import { validateCatalogProvider } from '../packages/commercial/src/registry.js';
+import {
+  PRICE_LIST_CATALOG_TEMPLATE,
+  validatePriceListConstructorTemplate,
+} from '../packages/commercial/src/price-list.js';
 import { normalizeCatalog } from '../packages/commercial/src/catalog-sync.js';
 import { createDatabase } from '../packages/core/src/database.js';
-import { createDefinitionVersionStore } from '../packages/core/index.js';
+import { computeDefinitionFingerprint, createDefinitionVersionStore } from '../packages/core/index.js';
 
 /**
  * Workspace price lists (accordo D1): a gym listino as plain JSON
@@ -241,6 +247,199 @@ test('listino data, provider version and constructor version all move the finger
   );
 });
 
+test('the constructor template is pinned: unpinned source refuses at composition', () => {
+  const built = provider();
+  assert.equal(
+    PRICE_LIST_CATALOG_TEMPLATE.codeVersion,
+    PRICE_LIST_CATALOG_CODE_VERSION,
+    'the pin names the constructor version it was captured at, so the two move together',
+  );
+  const liveSource = built.fetchCatalog.toString();
+  assert.equal(
+    createHash('sha256').update(liveSource, 'utf8').digest('hex'),
+    PRICE_LIST_CATALOG_TEMPLATE.sourceHash,
+    'any edit to the constructor closure — rename or behaviour — must update the pin with it',
+  );
+  assert.doesNotThrow(
+    () => validatePriceListConstructorTemplate(liveSource),
+    'the shipped constructor carries its own pin',
+  );
+  assert.throws(
+    () => validatePriceListConstructorTemplate(`${liveSource}\n// behaviour-identical comment`),
+    /constructor source changed/,
+    'even a comment-only drift refuses until the pin moves with it, instead of passing silently',
+  );
+});
+
+/**
+ * Render characterization of the gym fixture at constructor version 1: the
+ * oracle is the catalog bytes the closure renders, so a behaviour change to
+ * the rendered catalog can only land together with a constructor version
+ * bump — and a bump can only land with a behaviour change. Either half alone
+ * fails, which is what makes an unbumped behaviour edit visible instead of
+ * silent (the fingerprint covers codeVersion, never closure text).
+ */
+const RENDER_CHARACTERIZATION = {
+  codeVersion: 1,
+  catalog: {
+    sourceRef: 'price-list:palestra-listino',
+    priceBooks: [
+      {
+        sourceKey: 'pricelist.palestra-listino.book',
+        name: 'Listino Palestra EUR',
+        currency: 'EUR',
+        active: true,
+      },
+    ],
+    products: [
+      {
+        sourceKey: 'pricelist.palestra-listino.product.pacchetto-10-lezioni',
+        externalId: null,
+        sku: 'pacchetto-10-lezioni',
+        name: 'Pacchetto 10 lezioni',
+        description: 'Dieci ingressi con istruttore.',
+        category: 'pacchetti',
+        active: true,
+      },
+      {
+        sourceKey: 'pricelist.palestra-listino.product.abbonamento-mensile',
+        externalId: null,
+        sku: 'abbonamento-mensile',
+        name: 'Abbonamento mensile',
+        description: null,
+        category: 'abbonamenti',
+        active: true,
+      },
+      {
+        sourceKey: 'pricelist.palestra-listino.product.lezione-prova',
+        externalId: null,
+        sku: 'lezione-prova',
+        name: 'Lezione di prova',
+        description: null,
+        category: 'prove',
+        active: true,
+      },
+      {
+        sourceKey: 'pricelist.palestra-listino.product.lezione-singola',
+        externalId: null,
+        sku: 'lezione-singola',
+        name: 'Lezione singola',
+        description: null,
+        category: 'pacchetti',
+        active: true,
+      },
+    ],
+    offers: [
+      {
+        sourceKey: 'pricelist.palestra-listino.offer.pack-10',
+        priceBookSourceKey: 'pricelist.palestra-listino.book',
+        productSourceKey: 'pricelist.palestra-listino.product.pacchetto-10-lezioni',
+        name: 'Pacchetto 10 lezioni',
+        externalOfferId: null,
+        active: true,
+        components: [
+          {
+            sourceKey: 'pack-10.prezzo-pacchetto',
+            label: 'Prezzo del pacchetto',
+            chargeType: 'one_time',
+            pricingModel: 'flat_fee',
+            interval: null,
+            intervalCount: null,
+            unitAmountCents: null,
+            flatAmountCents: 9900,
+            tiers: [],
+            externalPriceId: null,
+            sourcePricingModel: 'pricelist:flat_fee',
+          },
+        ],
+      },
+      {
+        sourceKey: 'pricelist.palestra-listino.offer.mensile',
+        priceBookSourceKey: 'pricelist.palestra-listino.book',
+        productSourceKey: 'pricelist.palestra-listino.product.abbonamento-mensile',
+        name: 'Abbonamento mensile',
+        externalOfferId: null,
+        active: true,
+        components: [
+          {
+            sourceKey: 'mensile.canone',
+            label: 'Canone mensile',
+            chargeType: 'recurring',
+            pricingModel: 'flat_fee',
+            interval: 'month',
+            intervalCount: 1,
+            unitAmountCents: null,
+            flatAmountCents: 4900,
+            tiers: [],
+            externalPriceId: null,
+            sourcePricingModel: 'pricelist:flat_fee',
+          },
+        ],
+      },
+      {
+        sourceKey: 'pricelist.palestra-listino.offer.prova',
+        priceBookSourceKey: 'pricelist.palestra-listino.book',
+        productSourceKey: 'pricelist.palestra-listino.product.lezione-prova',
+        name: 'Lezione di prova',
+        externalOfferId: null,
+        active: true,
+        components: [
+          {
+            sourceKey: 'prova.prezzo-prova',
+            label: 'Prezzo della prova',
+            chargeType: 'one_time',
+            pricingModel: 'flat_fee',
+            interval: null,
+            intervalCount: null,
+            unitAmountCents: null,
+            flatAmountCents: 1000,
+            tiers: [],
+            externalPriceId: null,
+            sourcePricingModel: 'pricelist:flat_fee',
+          },
+        ],
+      },
+      {
+        sourceKey: 'pricelist.palestra-listino.offer.singola',
+        priceBookSourceKey: 'pricelist.palestra-listino.book',
+        productSourceKey: 'pricelist.palestra-listino.product.lezione-singola',
+        name: 'Lezione singola',
+        externalOfferId: null,
+        active: true,
+        components: [
+          {
+            sourceKey: 'singola.prezzo-lezione',
+            label: 'Prezzo per lezione',
+            chargeType: 'one_time',
+            pricingModel: 'per_unit',
+            interval: null,
+            intervalCount: null,
+            unitAmountCents: 1200,
+            flatAmountCents: null,
+            tiers: [],
+            externalPriceId: null,
+            sourcePricingModel: 'pricelist:per_unit',
+          },
+        ],
+      },
+    ],
+  },
+};
+
+test('a render change and a constructor bump move together, neither alone', async () => {
+  // JSON round-trip: the render carries undefined-valued fields on some
+  // shapes, which carry no information and would make the comparison about
+  // key presence instead of behaviour.
+  const rendered = JSON.parse(JSON.stringify(await provider().fetchCatalog({})));
+  const renderedSame = isDeepStrictEqual(rendered, RENDER_CHARACTERIZATION.catalog);
+  assert.equal(
+    renderedSame,
+    PRICE_LIST_CATALOG_CODE_VERSION === RENDER_CHARACTERIZATION.codeVersion,
+    'a behaviour change to the rendered catalog ships with a constructor version bump, '
+    + 'and a bump ships with a behaviour change — an unbumped behaviour edit fails here, not silently in production',
+  );
+});
+
 /**
  * Frozen upgrade fixture: NEVER change this value — the two historical
  * fingerprints below were computed from exactly it, and the upgrade test
@@ -378,6 +577,48 @@ test('a batch that refuses on drift leaves the legacy row unmoved', (t) => {
     .prepare("SELECT fingerprint FROM definition_versions WHERE type = 'catalog-provider'")
     .get();
   assert.equal(row.fingerprint, UPGRADE_FINGERPRINT_271, 'the legacy move rolled back with the refused batch');
+});
+
+test('a custom provider cannot approve its own drift as history', (t) => {
+  // The transparent upgrade is a privilege of the constructor-built price
+  // list, not of any provider that declares history: a custom provider that
+  // rewrites its closure and carries the old source in legacyFetchSources
+  // must refuse as drift, never migrate itself.
+  const database = createDatabase({ path: ':memory:' });
+  t.after(() => database.close());
+  const oldSource = 'async () => ({ sourceRef: "custom-a" })';
+  const comparisonOnlyOld = Object.assign(
+    async () => { throw new Error('fingerprint comparison only'); },
+    { toString: () => oldSource },
+  );
+  const config = { source: 'custom' };
+  createDefinitionVersionStore(database).persist([{
+    type: 'catalog-provider',
+    name: 'custom',
+    version: 1,
+    fingerprint: computeDefinitionFingerprint({
+      type: 'catalog-provider',
+      name: 'custom',
+      version: 1,
+      config,
+      fetchCatalog: comparisonOnlyOld,
+    }),
+  }]);
+  const laundered = new CommercialRegistries({
+    catalogProviders: [{
+      name: 'custom',
+      version: 1,
+      config,
+      codeVersion: 1,
+      legacyFetchSources: [oldSource],
+      fetchCatalog: async () => ({ sourceRef: 'custom-b' }),
+    }],
+  });
+  assert.throws(
+    () => laundered.persistFingerprints(database),
+    /source changed after registration/,
+    'self-supplied history never approves drift',
+  );
 });
 
 test('no parallel catalog: the listino reuses product, price-book and offer', () => {

@@ -582,7 +582,13 @@ history — and the price-list catalog provider is its first and only consumer:
 its fingerprint dropped closure text in favour of `{type, name, version,
 codeVersion, config}`, and it declares the two historical closure-text forms
 (pre-#271 over `name`, #271 over `providerName`) so registered databases keep
-composing. No other definition family has a superseded scheme, so there is
+composing. Declared history is sealed to that constructor (a module-private
+seal the registry checks): any other provider's history is ignored and
+refuses as drift, so no custom catalog can approve its own past. The
+constructor template is pinned beside the history: composition refuses on
+any closure drift from the pin, and the render characterization test pairs
+pin moves with constructor version bumps. No other definition family has a
+superseded scheme, so there is
 nothing for those rows to declare; declaring them aligned here would be the
 silent backfill this matrix prevents.
 

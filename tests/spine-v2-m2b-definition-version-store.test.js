@@ -932,6 +932,94 @@ test('sweep: a batch that refuses elsewhere rolls the superseded move back with 
   assert.equal(byName.get('other'), unrelated, 'the drifted row is unchanged');
 });
 
+/** The fingerprint of one row, by name. */
+const rowFingerprint = (database, name) => rows(database).find((row) => row.name === name)?.fingerprint;
+
+/**
+ * A database handle whose guarded migration UPDATE reports a lost race: the
+ * write either landed (a concurrent boot already moved the row to current) or
+ * it did not (the row still carries history). The report is always zero
+ * affected rows, so the store must re-read instead of trusting its SELECT
+ * image.
+ */
+function lostRaceDatabase(database, { applied }) {
+  const sync = database.storage.sync;
+  const sabotagedSync = {
+    ...sync,
+    execute(statement) {
+      if (statement?.kind === 'update') {
+        if (applied) sync.execute(statement);
+        return { affectedRows: 0 };
+      }
+      return sync.execute(statement);
+    },
+  };
+  return { storage: { ...database.storage, sync: sabotagedSync } };
+}
+
+test('sweep: a lost migration race against an already-moved row verifies, never passes silently', (t) => {
+  const database = memory(t);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  createDefinitionVersionStore(database).persist([entry({ name: 'legacy', fingerprint: oldFp })]);
+  assert.doesNotThrow(
+    () => createDefinitionVersionStore(lostRaceDatabase(database, { applied: true })).persist([
+      entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    ]),
+    'the re-read row is already current: a concurrent boot moved it, so this boot verifies',
+  );
+  assert.equal(rowFingerprint(database, 'legacy'), newFp, 'the winner’s move stands, unwritten twice');
+});
+
+test('sweep: a lost migration race against an unmoved row refuses as drift', (t) => {
+  const database = memory(t);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  createDefinitionVersionStore(database).persist([entry({ name: 'legacy', fingerprint: oldFp })]);
+  refusesCleanly(
+    () => createDefinitionVersionStore(lostRaceDatabase(database, { applied: false })).persist([
+      entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    ]),
+    /source changed after registration/,
+    'the re-read row still carries history after the guarded write matched nothing: fail closed, do not pass on the stale image',
+  );
+  assert.equal(rowFingerprint(database, 'legacy'), oldFp, 'the refused row is unchanged');
+});
+
+test('sweep: a lost migration race on the async path re-reads too', async (t) => {
+  const database = memory(t);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  createDefinitionVersionStore(database).persist([entry({ name: 'legacy', fingerprint: oldFp })]);
+  // The async persist path: a storage without `sync`, delegating to the real
+  // synchronous handle, reporting the guarded move as lost after applying it.
+  const sync = database.storage.sync;
+  const txHandle = {
+    async execute(statement) {
+      if (statement?.kind === 'update') {
+        await sync.execute(statement);
+        return { affectedRows: 0 };
+      }
+      return sync.execute(statement);
+    },
+    async maybeOne(statement) { return sync.maybeOne(statement); },
+    async many(statement) { return sync.many(statement); },
+  };
+  const asyncOnly = {
+    storage: {
+      contract: database.storage.contract,
+      async execute(statement) { return txHandle.execute(statement); },
+      async maybeOne(statement) { return txHandle.maybeOne(statement); },
+      async many(statement) { return txHandle.many(statement); },
+      transaction: (fn) => database.transactionAsync(() => fn(txHandle)),
+    },
+  };
+  await createDefinitionVersionStore(asyncOnly).persist([
+    entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+  ]);
+  assert.equal(rowFingerprint(database, 'legacy'), newFp, 'the winner’s move stands on the async path too');
+});
+
 test('sweep: persist validates the optional superseded history before any write', (t) => {
   const database = memory(t);
   const store = createDefinitionVersionStore(database);

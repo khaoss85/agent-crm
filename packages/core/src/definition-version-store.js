@@ -243,6 +243,75 @@ function fingerprintNeedsMove(entry, persisted) {
 }
 
 /**
+ * A guarded migration write applied exactly one row. Both SQLite and
+ * PostgreSQL adapters report `{ affectedRows }`; a handle that reports
+ * nothing (a double, an older adapter) reads as zero, which is the
+ * fail-closed direction — the re-read below then decides.
+ * @param {unknown} outcome — the value the handle's `execute` returned
+ */
+function moveApplied(outcome) {
+  return Number(/** @type {{ affectedRows?: unknown } | null | undefined} */ (outcome)?.affectedRows ?? 0) === 1;
+}
+
+/** The identity predicate every migration move and re-read selects on. */
+function identityPredicate(entry) {
+  return [
+    { column: 'type', op: 'eq', value: entry.type },
+    { column: 'name', op: 'eq', value: entry.name },
+    { column: 'version', op: 'eq', value: entry.version },
+  ];
+}
+
+/**
+ * Re-read after a guarded migration write matched nothing (lost race), on an
+ * async handle. The row a concurrent boot already moved to current verifies;
+ * a row that still carries an approved historical form is retried once,
+ * guarded on the fresh value; anything else — a vanished row, or a
+ * fingerprint no scheme explains — refuses as drift. Never proceeds on the
+ * stale SELECT image (review khaoss85/agent-crm#333).
+ */
+async function recoverLostMove(handle, entry, expectedFingerprint) {
+  const fresh = await handle.maybeOne({
+    kind: 'select',
+    table: TABLE,
+    columns: ['fingerprint'],
+    where: identityPredicate(entry),
+  });
+  if (!fresh) throw driftError(entry, expectedFingerprint);
+  if (!fingerprintNeedsMove(entry, fresh)) return;
+  const retried = await handle.execute({
+    kind: 'update',
+    table: TABLE,
+    values: [{ column: 'fingerprint', value: entry.fingerprint }],
+    where: [...identityPredicate(entry), { column: 'fingerprint', op: 'eq', value: String(fresh.fingerprint) }],
+  });
+  if (!moveApplied(retried)) throw driftError(entry, fresh.fingerprint);
+}
+
+/**
+ * Re-read after a guarded migration write matched nothing (lost race), on a
+ * synchronous handle. Same rule as `recoverLostMove`, without awaiting: the
+ * sync persist path runs inside a synchronous transaction callback.
+ */
+function recoverLostMoveSync(handle, entry, expectedFingerprint) {
+  const fresh = handle.maybeOne({
+    kind: 'select',
+    table: TABLE,
+    columns: ['fingerprint'],
+    where: identityPredicate(entry),
+  });
+  if (!fresh) throw driftError(entry, expectedFingerprint);
+  if (!fingerprintNeedsMove(entry, fresh)) return;
+  const retried = handle.execute({
+    kind: 'update',
+    table: TABLE,
+    values: [{ column: 'fingerprint', value: entry.fingerprint }],
+    where: [...identityPredicate(entry), { column: 'fingerprint', op: 'eq', value: String(fresh.fingerprint) }],
+  });
+  if (!moveApplied(retried)) throw driftError(entry, fresh.fingerprint);
+}
+
+/**
  * Whether this error is a definition-version drift refusal: a registered
  * definition version whose source moved underneath it. True for the store's
  * own refusal (thrown where no workspace is named) and for the workspace
@@ -400,8 +469,10 @@ export function createDefinitionVersionStore(database, options = {}) {
           if (fingerprintNeedsMove(entry, persisted)) {
             // A row under an approved superseded fingerprint: move it to
             // current, guarded on the value just read so a concurrent writer's
-            // update is never silently overwritten.
-            await handle.execute({
+            // update is never silently overwritten. The guard is checked: on
+            // zero affected rows the row is re-read in-transaction instead of
+            // proceeding on the stale SELECT image.
+            const moved = await handle.execute({
               kind: 'update',
               table: TABLE,
               values: [{ column: 'fingerprint', value: entry.fingerprint }],
@@ -412,6 +483,9 @@ export function createDefinitionVersionStore(database, options = {}) {
                 { column: 'fingerprint', op: 'eq', value: String(persisted.fingerprint) },
               ],
             });
+            if (!moveApplied(moved)) {
+              await recoverLostMove(handle, entry, String(persisted.fingerprint));
+            }
           }
         }
       };
@@ -516,7 +590,9 @@ export function createDefinitionVersionStore(database, options = {}) {
             if (fingerprintNeedsMove(entry, persisted)) {
               // Same move as the async path above, in this transaction: a
               // batch that refuses elsewhere rolls this move back with it.
-              storage.execute({
+              // The guard is checked here too: on zero affected rows the row
+              // is re-read in-transaction instead of passing silently.
+              const moved = storage.execute({
                 kind: 'update',
                 table: TABLE,
                 values: [{ column: 'fingerprint', value: entry.fingerprint }],
@@ -527,6 +603,9 @@ export function createDefinitionVersionStore(database, options = {}) {
                   { column: 'fingerprint', op: 'eq', value: String(persisted.fingerprint) },
                 ],
               });
+              if (!moveApplied(moved)) {
+                recoverLostMoveSync(storage, entry, String(persisted.fingerprint));
+              }
             }
           }
         });

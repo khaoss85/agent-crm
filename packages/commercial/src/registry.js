@@ -39,6 +39,33 @@ const MAX_LEGACY_SOURCES = 10;
 const MAX_LEGACY_SOURCE_CHARS = 200_000;
 export const DISCOUNT_DECISIONS = Object.freeze(['auto_approve', 'approval_required', 'reject']);
 
+/**
+ * Kernel-internal seal: which catalog providers the constructor built.
+ * Module-private on purpose — application code holds no reference to this
+ * symbol, so no custom provider can forge the seal; only
+ * `createPriceListCatalogProvider` (price-list.js) applies it, and the
+ * registry's identity below honours declared history solely on sealed
+ * definitions. A provider that merely declares `legacyFetchSources` without
+ * the seal is unapproved history: a mismatched row refuses as genuine drift
+ * instead of migrating itself (review khaoss85/agent-crm#333).
+ */
+const CONSTRUCTOR_BUILT = Symbol('accordo.constructorBuiltCatalogProvider');
+
+/**
+ * Seal a constructor-built catalog provider. Kernel-internal: only
+ * `createPriceListCatalogProvider` may call this, before freezing the
+ * definition. The seal survives the object spreads compositions use,
+ * because spread copies enumerable symbol-keyed properties.
+ * @param {any} provider
+ */
+export function sealConstructorBuiltCatalogProvider(provider) {
+  if (!provider || typeof provider !== 'object') {
+    throw new ValidationError('constructor-built catalog provider must be an object');
+  }
+  provider[CONSTRUCTOR_BUILT] = true;
+  return provider;
+}
+
 /** @param {string} label @param {any} definition */
 function assertIdentity(label, definition) {
   if (!definition || typeof definition !== 'object') {
@@ -66,7 +93,9 @@ export function validateCatalogProvider(definition) {
   // is the constructor's own version (bumped on behaviour change) and takes
   // the closure source's place in the fingerprint, so framework refactors
   // stop moving it. `legacyFetchSources` carries the historical closure
-  // sources a transparent upgrade may still meet in registered databases.
+  // sources a transparent upgrade may still meet in registered databases —
+  // honoured only on a sealed constructor-built definition (see identity),
+  // so a custom provider can never approve its own drift as history.
   if (definition.codeVersion !== undefined
     && (!Number.isSafeInteger(definition.codeVersion) || definition.codeVersion < 1 || definition.codeVersion > MAX_VERSION)) {
     throw new ValidationError(
@@ -162,12 +191,15 @@ export function validateDiscountPolicy(definition) {
 
 /**
  * The closed identity the definition-version store persists: the four fields,
- * and never the definition or its config — plus, for a catalog provider that
- * declares historical closure sources, the fingerprints the old scheme would
- * have computed over the current data. The store accepts and moves one of
- * those inside its single persist-or-verify transaction (and accepts it
- * without writing on a read-only composition); anything else that mismatches
- * is genuine drift.
+ * and never the definition or its config — plus, for a constructor-built
+ * catalog provider that declares historical closure sources, the fingerprints
+ * the old scheme would have computed over the current data. Declared history
+ * on any other definition is unapproved and ignored here: the store then
+ * verifies by exact match, so a mismatched row refuses as genuine drift
+ * instead of letting a provider approve its own past. The store accepts and
+ * moves an approved form inside its single persist-or-verify transaction
+ * (and accepts it without writing on a read-only composition); anything else
+ * that mismatches is genuine drift.
  * @param {string} type
  * @param {{definition: {name: string, version: number}, fingerprint: string}} entry
  */
@@ -179,6 +211,7 @@ function identity(type, entry) {
     fingerprint: entry.fingerprint,
   };
   if (type !== 'catalog-provider') return base;
+  if (entry.definition[CONSTRUCTOR_BUILT] !== true) return base;
   const supersededFingerprints = legacyCatalogFingerprints(entry);
   if (supersededFingerprints.length === 0) return base;
   return { ...base, supersededFingerprints };

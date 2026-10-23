@@ -128,7 +128,14 @@ in the provider's declared `config` so its fingerprint covers every amount
 and the fingerprint covers `{type, name, version, codeVersion, config}` —
 never the `fetchCatalog` closure text, which reads only that config, so a
 pure refactor of the constructor leaves registered fingerprints unchanged
-while a behaviour change bumps `PRICE_LIST_CATALOG_CODE_VERSION`,
+while a behaviour change bumps `PRICE_LIST_CATALOG_CODE_VERSION`.
+The executed code stays bound anyway: the constructor pins its closure
+template (`PRICE_LIST_CATALOG_TEMPLATE`) and refuses composition on any
+drift from it, and the render characterization test only lets the pin move
+alone when the rendered catalog bytes are unchanged — so an unbumped
+behaviour edit fails instead of syncing silently. The transparent upgrade
+is sealed to this constructor: declared history on any other provider is
+ignored and refuses as drift,
 and optional `externalId` / `externalOfferId` / `externalPriceId` fields
 carry the future payment mapping without claiming it.
 
