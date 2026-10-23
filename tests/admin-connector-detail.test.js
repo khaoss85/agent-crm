@@ -197,18 +197,27 @@ test('the space comes from the selected space, never from a row field', () => {
 test('without a composed adapter the detail promises no connection', async () => {
   const doc = createFakeDocument();
   const mount = createMount(doc);
+  // A stale channel-connection row exists, but the list hides it as
+  // non-disponibile: the detail must mirror that, not the raw row.
   const view = createConnectorDetailView({
     doc,
     mount,
-    client: stubClient({ adapters: [] }),
+    client: stubClient({ adapters: [], connectors: [CONNECTION] }),
     storage: { getItem: () => 'presti', setItem: () => {} },
     navigate: () => {},
   });
   await view.render('whatsapp');
   await flush();
-  assert.ok(mount.textContent.includes('Non disponibile qui'));
-  assert.ok(mount.textContent.includes('Nessun adattatore composto'));
-  assert.ok(!mount.textContent.includes('Collega in 3 passi'));
+  const text = mount.textContent;
+  assert.ok(text.includes('Non disponibile qui'));
+  assert.ok(text.includes('Nessun adattatore composto'));
+  assert.ok(!text.includes('Collega in 3 passi'));
+  assert.ok(!text.includes('+390200000001'), 'stale account stays hidden');
+  assert.ok(!text.includes('presti:whatsapp'), 'stale connection key stays hidden');
+  assert.ok(!text.includes('outbox del canale con ricevuta'), 'no outbox promise without an adapter');
+  assert.ok(!text.includes('Altri collegamenti'), 'no roster without an adapter');
+  // Declared consumers need no row and stay visible.
+  assert.ok(text.includes('Skill e pacchetti che lo usano'));
 });
 
 test('several accounts on one channel all stay visible', async () => {
@@ -261,6 +270,65 @@ test('an unknown channel renders honestly without fetching for it', async () => 
   await flush();
   assert.ok(mount.textContent.includes('Connettore sconosciuto'));
   assert.ok(!calls.some((path) => path.includes('altro')), 'no request carries the unknown slug');
+});
+
+test('the mount shows loading while requests are in flight', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const inner = stubClient();
+  const view = createConnectorDetailView({
+    doc,
+    mount,
+    client: { request: (path, options) => gate.then(() => inner.request(path, options)) },
+    storage: { getItem: () => 'presti', setItem: () => {} },
+    navigate: () => {},
+  });
+  const pending = view.render('whatsapp');
+  await flush(1);
+  assert.ok(mount.textContent.includes('Caricamento del connettore'), 'loading paints before load resolves');
+  release();
+  await pending;
+  await flush();
+  assert.ok(!mount.textContent.includes('Caricamento del connettore'), 'loading clears on arrival');
+  assert.ok(mount.textContent.includes('Connettore · WhatsApp'));
+});
+
+test('detail blocks reuse the shipped connector row tokens', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const view = createConnectorDetailView({
+    doc,
+    mount,
+    client: stubClient(),
+    storage: { getItem: () => 'presti', setItem: () => {} },
+    navigate: () => {},
+  });
+  await view.render('whatsapp');
+  await flush();
+  assert.ok(mount.querySelector('.bo-connector-row') !== null, 'sections use the styled row class');
+  assert.ok(mount.querySelector('.bo-connector-section') === null, 'no unstyled container remains');
+});
+
+test('in-only channels never promise outbound in cosa entra', () => {
+  for (const channel of CONNECTOR_DETAIL_CHANNELS) {
+    if (directionOf(channel) !== 'in-only') continue;
+    const entry = CONNECTOR_CATALOG.find((row) => row.channel === channel);
+    const live = detailSections({
+      entry,
+      connection: {
+        ...CONNECTION, channel, connectionKey: `k:${channel}`, importable: false, sync: null,
+      },
+    });
+    assert.ok(
+      live.cosaEntra.lines.every((line) => !line.includes('uscita')),
+      `${channel}: cosa entra claims no outbound (${JSON.stringify(live.cosaEntra.lines)})`,
+    );
+  }
+  // The catalog itself matches the matrix, so the wizard cannot promise it either.
+  const tiktok = CONNECTOR_CATALOG.find((row) => row.channel === 'tiktok');
+  assert.ok(tiktok.syncLines.every((line) => !line.includes('uscita')));
 });
 
 test('hostile server text stays text, never markup', async () => {
