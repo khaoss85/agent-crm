@@ -1,0 +1,68 @@
+{
+  "manifestVersion": 1,
+  "name": "product-import-row",
+  "description": "One draft product row of a product import (BO-F2-07): the validated scalar fields an operator confirms or rejects one by one. Confirming writes the product through the manual catalog; the import never writes products itself.",
+  "fields": [
+    {
+      "name": "importId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "rowIndex",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "pending",
+        "confirmed",
+        "rejected"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "sku",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "name",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "description",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "category",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "amountCents",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "productId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "errorCode",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

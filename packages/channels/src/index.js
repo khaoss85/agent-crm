@@ -2,7 +2,7 @@
 
 import { AppError, ValidationError, definePackage, selectPackageGraph } from '../../core/index.js';
 import { CHANNELS, ChannelRegistries } from './adapter.js';
-import { CONNECTION_STATUSES, assertConnectionTransition, assertSecretReference } from './connection.js';
+import { CONNECTION_STATUSES, assertConnectionTransition, assertGrantExpiresAt, assertSecretReference } from './connection.js';
 import { createChannelOperations } from './operations.js';
 import { createTemplateSendCapability } from './template-send.js';
 
@@ -196,6 +196,35 @@ export function buildChannelConnectionActions(config = {}) {
         const secretRef = assertSecretReference(typeof input?.secretRef === 'string' ? input.secretRef.trim() : '');
         const updated = await managed(record.id, { secretRef, secretRotatedAt: now() });
         return { connection: { id: updated.id, secretRef: updated.secretRef, secretRotatedAt: updated.secretRotatedAt } };
+      },
+    },
+    {
+      module: 'channel-connection',
+      name: 'renew-connection-grant',
+      label: 'Renew connection grant',
+      description: 'Record the provider-stated expiry of the renewed grant after the human re-authorized at the provider (BO-F1-04). The grant value itself is never stored — only its expiry, and optionally the rotated secret reference when re-authorizing also rotated the vault slot.',
+      actionContract: 1,
+      stateField: 'status',
+      fromStates: ['pending', 'active', 'suspended'],
+      input: [
+        { name: 'grantExpiresAt', type: 'string', required: true, hint: 'Canonical ISO instant the renewed grant expires at.' },
+        { name: 'secretRef', type: 'string', required: false, hint: 'New secret reference locator when re-authorizing also rotated the vault slot — never a secret value.' },
+      ],
+      /** @param {any} ctx */
+      async execute({ record, input, actor, managed, now }) {
+        requireUserActor(actor, 'Renew connection grant');
+        const grantExpiresAt = assertGrantExpiresAt(input?.grantExpiresAt);
+        if (grantExpiresAt === null) {
+          throw new ValidationError('grantExpiresAt is required: renewal records when the renewed grant expires', { field: 'grantExpiresAt' });
+        }
+        /** @type {{grantExpiresAt: string, secretRef?: string, secretRotatedAt?: string}} */
+        const patch = { grantExpiresAt };
+        if (input?.secretRef !== undefined && input?.secretRef !== null) {
+          patch.secretRef = assertSecretReference(typeof input.secretRef === 'string' ? input.secretRef.trim() : '');
+          patch.secretRotatedAt = now();
+        }
+        const updated = await managed(record.id, patch);
+        return { connection: { id: updated.id, grantExpiresAt: updated.grantExpiresAt, secretRef: updated.secretRef } };
       },
     },
   ];

@@ -12,9 +12,12 @@ on:
   # per merge ahead of the fast PR gates. At most one scheduled run measures
   # per window (see the `verify` job's head-changed guard), and
   # `workflow_dispatch` measures on demand. Keep `MEASURE_WINDOW_HOURS` in
-  # `scripts/ci-measurement-age.js` equal to the interval below.
+  # `scripts/ci-measurement-age.js` equal to the longest gap below.
+  # Night windows only (22:23 and 02:23 UTC): the machine is shared and Arvo
+  # has precedence by day; a daytime run held the heavy lock for over 30
+  # minutes on 2026-10-22 and queued Arvo's release behind it.
   schedule:
-    - cron: '23 */6 * * *'
+    - cron: '23 22,2 * * *'
   workflow_dispatch:
 
 # One self-hosted runner serves this repository: a push to a PR branch used to
@@ -387,4 +390,4 @@ jobs:
       # not from the measured commit's date. Always exits 0, so this job
       # stays green between a merge and the next scheduled measurement.
       - name: Report the measurement age
-        run: node scripts/ci-measurement-age.js --window-hours 6 --state-file "$HOME/.accordo-ci/main-last-measurement.json"
+        run: node scripts/ci-measurement-age.js --window-hours 24 --state-file "$HOME/.accordo-ci/main-last-measurement.json"

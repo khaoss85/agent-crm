@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "reporting",
+  "version": "1.2.0",
+  "createdBy": "ai",
+  "modules": [
+    {
+      "name": "reporting",
+      "table": "reportings",
+      "migration": "create_reportings"
+    }
+  ]
+}

@@ -716,6 +716,7 @@ export function createChannelOperations(deps) {
         statusReason: 'registered, awaiting activation',
         secretRef: normalized.secretRef,
         secretRotatedAt: now,
+        grantExpiresAt: normalized.grantExpiresAt,
         createdBy: actorId(actor),
       }, { actor });
       return { duplicate: false, connection };

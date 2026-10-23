@@ -44,15 +44,34 @@ const REGISTRY_RELATIVE_PATH = join('packages', 'modules', 'generated', 'index.j
 const CORE_TABLES = CORE_RESERVED_TABLES;
 
 /**
- * @param {{manifest: unknown, rootDir?: string}} input
+ * Output layout for a planned module. The default (no layout) is the kernel
+ * layout: `packages/modules/<name>/` with `../../../core/src` imports, the
+ * kernel test under `tests/` and the checked-in kernel registry rewrite.
+ * A bundle layout (`{ bundleDir }`, BO-F5-01) generates the same module one
+ * level deeper — `bundles/<bundle>/<version>/` IS the module directory, so
+ * framework imports climb one extra level — and skips the kernel test and
+ * the kernel registry: a bundle never touches kernel files. The bundle
+ * manager (`packages/cli/src/bundle-manager.js`) writes the bundle-local
+ * test and registry entry instead.
+ *
+ * @typedef {{bundleDir: string}} BundleLayout
+ * @param {{manifest: unknown, rootDir?: string, layout?: BundleLayout}} input
  */
 export function planModule(input) {
   const manifest = validateModuleManifest(input.manifest);
   const rootDir = resolve(input.rootDir ?? process.cwd());
+  const layout = input.layout ?? null;
+  if (layout !== null && (typeof layout.bundleDir !== 'string' || layout.bundleDir === '')) {
+    throw new ValidationError('Bundle layout needs a bundleDir relative path');
+  }
 
   const names = buildNames(manifest.name);
   const migration = generateModuleMigration(manifest);
-  const moduleDir = join('packages', 'modules', manifest.name);
+  const moduleDir = layout !== null ? layout.bundleDir : join('packages', 'modules', manifest.name);
+  // One extra level for bundles: the module directory is
+  // `bundles/<bundle>/<version>/`, so `src/*.js` climbs four levels to the
+  // project root instead of three to `packages/`.
+  const coreSrc = layout !== null ? '../../../../packages/core/src' : '../../../core/src';
 
   if (manifest.name === 'generated') {
     throw new ValidationError('"generated" is reserved for the module registry; choose another module name');
@@ -126,7 +145,11 @@ export function planModule(input) {
   // `module.state.json`, not the raw manifest and not the live database: a state
   // file travels with the source, is reviewable in a diff, works before any
   // database exists, and is identical for a fresh project and an upgrade.
-  const previousState = readModuleState(rootDir, manifest.name);
+  // Bundle versions are immutable (BO-F5-01): regenerating into an existing
+  // bundle directory is refused — a change ships as a new bundle version.
+  const previousState = layout !== null
+    ? readBundleModuleState(rootDir, layout.bundleDir, manifest.name)
+    : readModuleState(rootDir, manifest.name);
   // The create migration is whatever was generated the first time. It is never
   // regenerated from a newer manifest: its checksum is recorded in every
   // database that ran it, and an edited applied migration is a hard failure.
@@ -202,23 +225,27 @@ export function planModule(input) {
     {
       path: join(moduleDir, 'src', `${manifest.name}-service.js`),
       action: evolving ? 'update' : 'create',
-      content: serviceTemplate(manifest, names, referenceTargets),
+      content: serviceTemplate(manifest, names, referenceTargets, coreSrc),
     },
     {
       path: join(moduleDir, 'src', 'index.js'),
       action: evolving ? 'update' : 'create',
       content: indexTemplate(manifest, names, referenceTargets),
     },
-    {
-      path: join('tests', `${manifest.name}-module.test.js`),
-      action: evolving ? 'update' : 'create',
-      content: testTemplate(manifest, names),
-    },
-    {
-      path: REGISTRY_RELATIVE_PATH,
-      action: 'modify',
-      content: registryTemplate(collectGeneratedModuleNames(rootDir, manifest.name)),
-    },
+    // A bundle carries its own test and registry entry (written by the bundle
+    // manager): the kernel test and the kernel registry are never touched.
+    ...(layout !== null ? [] : [
+      {
+        path: join('tests', `${manifest.name}-module.test.js`),
+        action: evolving ? 'update' : 'create',
+        content: testTemplate(manifest, names),
+      },
+      {
+        path: REGISTRY_RELATIVE_PATH,
+        action: 'modify',
+        content: registryTemplate(collectGeneratedModuleNames(rootDir, manifest.name)),
+      },
+    ]),
   ];
 
   for (const file of files) {
@@ -360,15 +387,35 @@ function firstMissingAncestor(directory, rootDir) {
 }
 
 /**
+ * Bundle versions are immutable: a bundle directory that already holds a
+ * generated module is never regenerated in place — a change ships as a new
+ * bundle version. Returns null for a fresh bundle directory.
+ *
+ * @param {string} rootDir @param {string} bundleDir @param {string} moduleName
+ */
+function readBundleModuleState(rootDir, bundleDir, moduleName) {
+  const path = join(rootDir, bundleDir, 'module.state.json');
+  if (!existsSync(path)) return null;
+  throw new ConflictError(
+    `Bundle module "${moduleName}" already exists at ${bundleDir}; create a new bundle version instead of regenerating`,
+    { bundleDir },
+  );
+}
+
+/**
  * Every module directory under packages/modules, classified as generated
  * (carries a module.manifest.json, which is read and validated — a malformed
  * one fails loudly here instead of producing a registry that breaks app boot)
  * or handwritten (core modules; no manifest copy).
  *
+ * Exported (not duplicated in bundle-manager.js, MEM_ACC_REUSE): the bundle
+ * uninstall path reuses it to refuse kernel generated-module tables that a
+ * hand-edited bundle.json names.
+ *
  * @param {string} rootDir
  * @returns {Array<{dirName: string, kind: 'generated' | 'handwritten', manifest: import('../../core/src/module-manifest.js').NormalizedModuleManifest | null}>}
  */
-function scanExistingModules(rootDir) {
+export function scanExistingModules(rootDir) {
   const modulesDir = resolve(rootDir, 'packages', 'modules');
   /** @type {Array<{dirName: string, kind: 'generated' | 'handwritten', manifest: any}>} */
   const results = [];
@@ -568,8 +615,10 @@ function toDbExpression(field, valueExpression) {
 /**
  * @param {import('../../core/src/module-manifest.js').NormalizedModuleManifest} manifest
  * @param {ReturnType<typeof buildNames>} names
+ * @param {Record<string, {targetModule: string, targetTable: string, targetDisplayField: string, required: boolean}>} [referenceTargets]
+ * @param {string} [coreSrc] framework source prefix (bundle layout climbs one extra level)
  */
-function serviceTemplate(manifest, names, referenceTargets = {}) {
+function serviceTemplate(manifest, names, referenceTargets = {}, coreSrc = '../../../core/src') {
   const entity = names.camel;
   const hasReferences = manifest.fields.some((field) => field.type === 'reference');
   const managedFields = manifest.fields.filter((field) => field.writable === 'managed');
@@ -660,8 +709,8 @@ function serviceTemplate(manifest, names, referenceTargets = {}) {
 ${header()}
 
 import { randomUUID } from 'node:crypto';
-import { ${needsValidationError ? 'ConflictError, NotFoundError, ValidationError' : 'ConflictError, NotFoundError'} } from '../../../core/src/errors.js';
-${usedValidators(manifest).length ? `import {\n  ${usedValidators(manifest).join(',\n  ')},\n} from '../../../core/src/validation.js';\n` : ''}import { nowIso } from '../../../core/src/time.js';
+import { ${needsValidationError ? 'ConflictError, NotFoundError, ValidationError' : 'ConflictError, NotFoundError'} } from '${coreSrc}/errors.js';
+${usedValidators(manifest).length ? `import {\n  ${usedValidators(manifest).join(',\n  ')},\n} from '${coreSrc}/validation.js';\n` : ''}import { nowIso } from '${coreSrc}/time.js';
 
 export class ${names.pascal}Service {
   /** @param {{database: any, audit: any, events: any, references?: any}} dependencies */
@@ -670,6 +719,15 @@ export class ${names.pascal}Service {
     this.audit = audit;
     this.events = events;
     this.references = references;
+    // Physical identity for trusted in-process conditional claims: the table
+    // and field columns this service was generated from. Mirrors the
+    // framework record service's manifest seam, so package code resolves
+    // columns at runtime instead of hardcoding a backend's naming.
+    this.manifest = Object.freeze({
+      name: ${JSON.stringify(manifest.name)},
+      table: ${JSON.stringify(manifest.table)},
+      fields: Object.freeze(${JSON.stringify(manifest.fields.map((field) => ({ name: field.name, column: field.column, type: field.type })))}),
+    });
   }
 ${hasReferences ? `
   /**
@@ -706,6 +764,18 @@ ${hasReferences ? `
       }
       throw error;
     }
+  }
+
+  /**
+   * Runs fn inside the module's atomic unit (SAVEPOINT ...): the same unit
+   * applyManaged uses, so a conditional claim, its audit row and the re-read
+   * land together. Sync storage only, like every other write this service
+   * performs. Mirrors the framework record service's mutationSync seam.
+   * @template T
+   * @param {() => T} fn
+   */
+  mutationSync(fn) {
+    return this.#mutation(fn);
   }
 
 ${isReadOnly ? `  // Read-only module (every field is managed): there is NO public create.
