@@ -575,6 +575,14 @@ export function createConnectorsView(deps) {
         : mapped.status === 'non-disponibile' ? 'Non disponibile qui' : 'Da collegare';
     head.appendChild(el(doc, 'span', 'bo-connector-badge', ` · ${badge}`));
     row.appendChild(head);
+    const detail = doc.createElement('a');
+    detail.textContent = `Dettaglio ${catalog.label}`;
+    detail.setAttribute('href', `#/connettori/${catalog.channel}`);
+    detail.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      navigate(`#/connettori/${catalog.channel}`);
+    });
+    row.appendChild(detail);
     for (const connection of mapped.connections) {
       const line = el(doc, 'p', 'bo-muted', `${String(connection.connectionKey)} · ${String(connection.status)}`);
       row.appendChild(line);
