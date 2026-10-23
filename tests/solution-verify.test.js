@@ -1209,7 +1209,7 @@ test('the checked-in verifier fixture reaches exit 0 through the real command', 
   });
   const elapsed = Date.now() - started;
 
-  assert.equal(exitCode, 0, `the fixture must be fully machine-verified: ${JSON.stringify(report?.problems ?? stdout.slice(0, 400))}`);
+  assert.equal(exitCode, 0, `the fixture must be fully machine-verified: ${JSON.stringify(report?.problems ?? stdout.slice(0, 400))}. When the composition moved on purpose, run \`npm run repin:verifier-fixture\` (scripts/repin-verifier-fixture.js) and commit the two fixture files instead of hand-editing the pins.`);
   assert.equal(report.status, 'verified');
   assert.deepEqual(report.problems, []);
   assert.deepEqual(report.unproven, []);
