@@ -182,12 +182,13 @@ export function withDaySpend(key, critical, slotMs) {
 
 /**
  * Estimated provider price, US cents per 1000 tokens, by model. Estimates
- * only: the owner picked the cheapest OpenAI model (GPT-5.6 Luna) and the
+ * only: the owner picked the cheapest OpenAI model (GPT-6 Luna, $0.1/1M
+ * input and $0.5/1M output per the published model page) and the
  * key — hence the first invoice — arrives later. The deployment replaces
  * this table through `pricing` when billing is known.
  */
 export const LLM_ESTIMATED_PRICING_CENTS_PER_1K = Object.freeze({
-  [OPENAI_DEFAULT_MODEL]: Object.freeze({ input: 0.02, output: 0.08 }),
+  [OPENAI_DEFAULT_MODEL]: Object.freeze({ input: 0.01, output: 0.05 }),
 });
 
 function assertSpaceId(spaceId) {
