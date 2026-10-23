@@ -3,6 +3,7 @@
 import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { buildSpacePermissionActions } from './actions.js';
 import { createSpacePermissionGateCapability } from './capability.js';
+import { SPACE_PACKAGE_CATALOG, createSpacePackageOperations } from './composition.js';
 
 /**
  * The Space Permissions domain package (BO-F0-06 — backoffice
@@ -35,7 +36,7 @@ export const SPACE_PERMISSIONS_DOMAIN = 'space-permissions';
 
 /** The record modules this package owns. `resources` declares ownership, so a second package claiming one is a startup collision. */
 export const SPACE_PERMISSIONS_RESOURCES = Object.freeze([
-  'space-permission-override', 'space-ai-proposal',
+  'space-permission-override', 'space-ai-proposal', 'space-package',
 ]);
 
 /**
@@ -61,6 +62,58 @@ export function createSpacePermissionsDomain(options = {}) {
     ],
     actions: buildSpacePermissionActions(config),
     policies: [],
+    // BO-F4-01 Personalizzazione: per-space activation of framework packages
+    // and agent skills, recorded in `space-package`, plus the read-only
+    // "Prova" preview. The routes in `apps/server` delegate to these app
+    // methods when the package is composed and answer an honest 404 without
+    // it — same pattern as the channels operations.
+    operations: [
+      {
+        operationContract: 1,
+        name: 'preview-space-package',
+        label: 'Preview space package activation',
+        appMethod: 'previewSpacePackage',
+        description: 'Demonstrate a package or skill on one space\u2019s real rows without writing anything: activation state, per-module counts, one real row as the example.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'Opaque space id issued by the control plane.' },
+          { name: 'unit', type: 'string', required: true, hint: 'A catalog unit: a package slug or skill:<slug>.' },
+        ],
+        create(runtime) {
+          const ops = createSpacePackageOperations({ modules: runtime.modules });
+          return (params) => ops.preview(params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'activate-space-package',
+        label: 'Activate space package',
+        appMethod: 'activateSpacePackage',
+        description: 'Record that a space switched a package or skill on. Repeating it replays; a removed unit reactivates. Every write names its actor.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'Opaque space id issued by the control plane.' },
+          { name: 'unit', type: 'string', required: true, hint: 'A catalog unit: a package slug or skill:<slug>.' },
+        ],
+        create(runtime) {
+          const ops = createSpacePackageOperations({ modules: runtime.modules });
+          return (params) => ops.activate(params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'deactivate-space-package',
+        label: 'Deactivate space package',
+        appMethod: 'deactivateSpacePackage',
+        description: 'Record that a space switched a package or skill off. History is kept: the row flips to removed, never deleted.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'Opaque space id issued by the control plane.' },
+          { name: 'unit', type: 'string', required: true, hint: 'A catalog unit: a package slug or skill:<slug>.' },
+        ],
+        create(runtime) {
+          const ops = createSpacePackageOperations({ modules: runtime.modules });
+          return (params) => ops.deactivate(params);
+        },
+      },
+    ],
     /** Function-free, additive schema metadata. */
     metadata() {
       return {
@@ -106,3 +159,9 @@ export {
   scopeKeyFor,
 } from './actions.js';
 export { createSpacePermissionGateCapability } from './capability.js';
+export {
+  SPACE_PACKAGE_CATALOG,
+  compositionKeyFor,
+  createSpacePackageOperations,
+  lookupSpacePackageUnit,
+} from './composition.js';

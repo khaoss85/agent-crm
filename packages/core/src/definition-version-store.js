@@ -1,7 +1,7 @@
 // @ts-check
 
 import { randomUUID } from 'node:crypto';
-import { ValidationError } from './errors.js';
+import { AppError, ValidationError } from './errors.js';
 import { resolveClock } from './time.js';
 
 /**
@@ -177,11 +177,43 @@ function driftError(entry, persisted) {
   return new ValidationError(
     `${entry.type} "${entry.name}@${entry.version}" source changed after registration (persisted fingerprint ${String(persisted).slice(0, FINGERPRINT_PREVIEW)}…, current ${entry.fingerprint.slice(0, FINGERPRINT_PREVIEW)}…). `
       + 'Registered definition versions are immutable: publish a new version instead of editing this one.',
+    // Machine-readable identity beside the human-readable message. The
+    // message, code and status above are the store's stable refusal contract
+    // (asserted byte-identical by the M2B suite); the details let a
+    // multi-workspace host tell "this workspace's registered definitions
+    // moved" apart from every other startup failure without parsing prose.
+    { definitionVersionDrift: true, type: entry.type, name: entry.name, version: entry.version },
   );
 }
 
 function assertFingerprintMatch(entry, persisted) {
   if (String(persisted.fingerprint) !== entry.fingerprint) throw driftError(entry, persisted.fingerprint);
+}
+
+/**
+ * Whether this error is a definition-version drift refusal: a registered
+ * definition version whose source moved underneath it. True for the store's
+ * own refusal (thrown where no workspace is named) and for the workspace
+ * composition's `DEFINITION_VERSION_DRIFT` refusal (thrown where one is), so a
+ * multi-workspace host needs exactly one check to refuse one workspace and
+ * keep serving the rest. The message stays addressed to the person reading
+ * the boot log; the host matches on this, never on prose.
+ *
+ * The code alone never matches: both branches require the store's
+ * `definitionVersionDrift` marker in `details`, so a package-thrown `AppError`
+ * reusing the `DEFINITION_VERSION_DRIFT` code cannot quarantine a workspace.
+ * @param {unknown} error
+ */
+export function isDefinitionVersionDrift(error) {
+  if (error instanceof AppError && error.code === 'DEFINITION_VERSION_DRIFT') {
+    const details = error.details;
+    return typeof details === 'object' && details !== null
+      && /** @type {Record<string, unknown>} */ (details).definitionVersionDrift === true;
+  }
+  if (!(error instanceof ValidationError) || error.code !== 'VALIDATION_ERROR') return false;
+  const details = error.details;
+  return typeof details === 'object' && details !== null
+    && /** @type {Record<string, unknown>} */ (details).definitionVersionDrift === true;
 }
 
 /**

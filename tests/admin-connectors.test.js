@@ -52,9 +52,9 @@ test('catalog covers every channel with a what-happens preview', () => {
   assert.deepEqual([...CONNECT_STEPS], ['autorizza', 'sincronizza', 'fatto']);
 });
 
-test('Personalizzazione opens the connectors screen', () => {
+test('Personalizzazione opens the BO-F4-01 screen (connectors stay at #/connettori)', () => {
   const area = SETTINGS_AREAS.find((row) => row.id === 'personalizzazione');
-  assert.equal(area.route, '#/connettori');
+  assert.equal(area.route, '#/personalizzazione');
   assert.equal(parseModuleRoute('#/connettori').view, 'connectors');
   assert.equal(parseModuleRoute('#/connettori/altro').view, 'invalid');
 });
