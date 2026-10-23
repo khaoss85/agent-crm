@@ -49,6 +49,27 @@ test('price rules: identity, defaults and config validation', () => {
   }
 });
 
+test('price rules: evaluate refuses a whitespace-only approval key like the factory', () => {
+  const policy = createCatalogPriceRules(PRICE_RULES);
+  for (const key of ['   ', '\t \n']) {
+    assert.throws(
+      () => policy.evaluate({ maxLineDiscountBps: 1500, config: { ...policy.config, approvalKey: key } }),
+      /approvalKey/,
+      `whitespace-only key ${JSON.stringify(key)} is refused, never used as the required key`,
+    );
+  }
+  assert.equal(
+    policy.evaluate({ maxLineDiscountBps: 1500, config: { ...policy.config, approvalKey: '' } }).requiredApprovalKey,
+    'owner',
+    'an empty key still falls back to the owner default',
+  );
+  assert.equal(
+    policy.evaluate({ maxLineDiscountBps: 1500, config: { ...policy.config, approvalKey: undefined } }).requiredApprovalKey,
+    'owner',
+    'a missing key still falls back to the owner default',
+  );
+});
+
 test('price rules: the three bands decide with their reason', () => {
   const policy = createCatalogPriceRules(PRICE_RULES);
   assert.deepEqual(
