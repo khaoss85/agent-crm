@@ -419,13 +419,20 @@ test('the constructor template is pinned: unpinned source refuses at composition
   );
   const liveSource = built.fetchCatalog.toString();
   assert.equal(
-    createHash('sha256').update(liveSource, 'utf8').digest('hex'),
+    createHash('sha256').update(liveSource.replaceAll('\r\n', '\n'), 'utf8').digest('hex'),
     PRICE_LIST_CATALOG_TEMPLATE.sourceHash,
     'any edit to the constructor closure — rename or behaviour — must update the pin with it',
   );
   assert.doesNotThrow(
     () => validatePriceListConstructorTemplate(liveSource),
     'the shipped constructor carries its own pin',
+  );
+  // Normalized to LF first so the CRLF rendering is exact on any checkout.
+  const crlfSource = liveSource.replaceAll('\r\n', '\n').replaceAll('\n', '\r\n');
+  assert.doesNotThrow(
+    () => validatePriceListConstructorTemplate(crlfSource),
+    'a CRLF checkout renders the identical catalog, so it carries the same pin '
+    + '(same CRLF normalization as the definition fingerprint canonicalizer)',
   );
   assert.throws(
     () => validatePriceListConstructorTemplate(`${liveSource}\n// behaviour-identical comment`),

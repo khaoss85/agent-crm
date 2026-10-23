@@ -85,7 +85,10 @@ export const PRICE_LIST_CATALOG_TEMPLATE = Object.freeze({
  * @param {unknown} sourceText — the live `fetchCatalog.toString()`
  */
 export function validatePriceListConstructorTemplate(sourceText) {
-  const live = createHash('sha256').update(String(sourceText), 'utf8').digest('hex');
+  // Line endings are not behaviour: a CRLF checkout renders the identical
+  // catalog, so the pin hashes the LF form — the same normalization the
+  // definition fingerprint canonicalizer applies (definition-fingerprint.js).
+  const live = createHash('sha256').update(String(sourceText).replaceAll('\r\n', '\n'), 'utf8').digest('hex');
   if (live !== PRICE_LIST_CATALOG_TEMPLATE.sourceHash) {
     throw new ValidationError(
       'price-list catalog constructor source changed without a constructor update: '
