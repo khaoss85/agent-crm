@@ -4584,7 +4584,7 @@
     "packages/commercial/src/product-import.js": "dcaa502d91f84699481e2d07b450e4c62127f9989a79f2b89ca3b10593524b42",
     "packages/commercial/src/quote-pdf.js": "5ab773cbba36f83413bba80c508f57131f2a561316f38590013799ef31785721",
     "packages/commercial/src/quote-suggest.js": "a655e9383744c70ed00a78aaed4d871d03eb64e433dfe23a3dfb16b11eb839fd",
-    "packages/commercial/src/registry.js": "778920859ffb0382cf9f64139b1e7f3ce53b6812237947837c53e95ac8619d18",
+    "packages/commercial/src/registry.js": "ed7ebf7b570cf52814d42600d9600e1745ec63e387d633efef055e7311899f40",
     "packages/commercial/src/stripe-catalog.js": "84c05e010bd68d67dd12421d893fc44e4aa4675fa9e09702d6d28aaa8e5c22c6",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",
     "packages/commercial/src/verify-terms.js": "62e382bbbe8281f641ace6d674ef2d9d0e925fd2cb2024866c3ef198f44cb808",
