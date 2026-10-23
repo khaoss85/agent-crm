@@ -435,12 +435,21 @@ test('the constructor template is pinned: unpinned source refuses at composition
 });
 
 /**
- * Render characterization of the gym fixture at constructor version 1: the
- * oracle is the catalog bytes the closure renders, so a behaviour change to
- * the rendered catalog can only land together with a constructor version
- * bump — and a bump can only land with a behaviour change. Either half alone
- * fails, which is what makes an unbumped behaviour edit visible instead of
- * silent (the fingerprint covers codeVersion, never closure text).
+ * Render characterization at constructor version 1: the oracle is the catalog
+ * bytes the closure renders, so a behaviour change to the rendered catalog
+ * can only land together with a constructor version bump — and a bump can
+ * only land with a behaviour change. Either half alone fails, which is what
+ * makes an unbumped behaviour edit visible instead of silent (the fingerprint
+ * covers codeVersion, never closure text).
+ *
+ * Two fixtures, because the gym fixture alone cannot fail for tier or
+ * externalId behaviour changes (review khaoss85/agent-crm#333): it covers
+ * only flat_fee/per_unit with empty tiers and null externals. The tiered
+ * fixture below covers the dimensions the gym one does not — volume and
+ * graduated components with non-empty tiers (including a tier-level
+ * flatAmountCents), non-null externalId/externalOfferId/externalPriceId,
+ * inactive rows, and deactivateMissing — so the same test fails on its oracle
+ * for exactly the edits the gym oracle cannot see.
  */
 const RENDER_CHARACTERIZATION = {
   codeVersion: 1,
@@ -589,18 +598,171 @@ const RENDER_CHARACTERIZATION = {
   },
 };
 
+/**
+ * Second render fixture: the behaviour dimensions the gym fixture does not
+ * exercise (see the characterization comment above). Frozen like the gym
+ * oracle — never edit this value except together with a constructor bump,
+ * and the test below enforces that the two move together on this fixture too.
+ */
+const TIERED_PRICE_LIST = {
+  priceBook: { name: 'Listino Soglie EUR', currency: 'EUR', active: false },
+  products: [
+    {
+      key: 'corso-nuoto', name: 'Corso nuoto', sku: 'nuoto-sku-01',
+      description: 'Corso di nuoto in piscina coperta.', category: 'corsi',
+      externalId: 'stripe-prod-nuoto', active: false,
+    },
+    { key: 'ingressi', name: 'Ingressi', externalId: 'stripe-prod-ingressi' },
+  ],
+  offers: [
+    {
+      key: 'nuoto', product: 'corso-nuoto', name: 'Corso nuoto mensile',
+      externalOfferId: 'stripe-offer-nuoto', active: false,
+      components: [{
+        key: 'soglie', label: 'Soglie volume', charge: 'recurring', model: 'volume',
+        interval: 'month', intervalCount: 1,
+        tiers: [
+          { upTo: 10, unitAmountCents: 1000, flatAmountCents: 50 },
+          { upTo: null, unitAmountCents: 800 },
+        ],
+        externalPriceId: 'stripe-price-volume-1',
+      }],
+    },
+    {
+      key: 'ingressi-off', product: 'ingressi', name: 'Carnet ingressi',
+      externalOfferId: 'stripe-offer-ingressi',
+      components: [{
+        key: 'scaglioni', label: 'Scaglioni', charge: 'one_time', model: 'graduated',
+        tiers: [
+          { upTo: 5, unitAmountCents: 1200 },
+          { upTo: null, unitAmountCents: 900, flatAmountCents: 100 },
+        ],
+        externalPriceId: 'stripe-price-grad-1',
+      }],
+    },
+  ],
+};
+
+const tieredProvider = (overrides = {}) => createPriceListCatalogProvider({
+  name: 'palestra-soglie',
+  version: 1,
+  priceList: TIERED_PRICE_LIST,
+  deactivateMissing: true,
+  ...overrides,
+});
+
+const TIERED_RENDER_CHARACTERIZATION = {
+  codeVersion: 1,
+  catalog: {
+    sourceRef: 'price-list:palestra-soglie',
+    priceBooks: [
+      {
+        sourceKey: 'pricelist.palestra-soglie.book',
+        name: 'Listino Soglie EUR',
+        currency: 'EUR',
+        active: false,
+      },
+    ],
+    products: [
+      {
+        sourceKey: 'pricelist.palestra-soglie.product.corso-nuoto',
+        externalId: 'stripe-prod-nuoto',
+        sku: 'nuoto-sku-01',
+        name: 'Corso nuoto',
+        description: 'Corso di nuoto in piscina coperta.',
+        category: 'corsi',
+        active: false,
+      },
+      {
+        sourceKey: 'pricelist.palestra-soglie.product.ingressi',
+        externalId: 'stripe-prod-ingressi',
+        sku: 'ingressi',
+        name: 'Ingressi',
+        description: null,
+        category: null,
+        active: true,
+      },
+    ],
+    offers: [
+      {
+        sourceKey: 'pricelist.palestra-soglie.offer.nuoto',
+        priceBookSourceKey: 'pricelist.palestra-soglie.book',
+        productSourceKey: 'pricelist.palestra-soglie.product.corso-nuoto',
+        name: 'Corso nuoto mensile',
+        externalOfferId: 'stripe-offer-nuoto',
+        active: false,
+        components: [
+          {
+            sourceKey: 'nuoto.soglie',
+            label: 'Soglie volume',
+            chargeType: 'recurring',
+            pricingModel: 'volume',
+            interval: 'month',
+            intervalCount: 1,
+            unitAmountCents: null,
+            flatAmountCents: null,
+            tiers: [
+              { upTo: 10, unitAmountCents: 1000, flatAmountCents: 50 },
+              { upTo: null, unitAmountCents: 800, flatAmountCents: 0 },
+            ],
+            externalPriceId: 'stripe-price-volume-1',
+            sourcePricingModel: 'pricelist:volume',
+          },
+        ],
+      },
+      {
+        sourceKey: 'pricelist.palestra-soglie.offer.ingressi-off',
+        priceBookSourceKey: 'pricelist.palestra-soglie.book',
+        productSourceKey: 'pricelist.palestra-soglie.product.ingressi',
+        name: 'Carnet ingressi',
+        externalOfferId: 'stripe-offer-ingressi',
+        active: true,
+        components: [
+          {
+            sourceKey: 'ingressi-off.scaglioni',
+            label: 'Scaglioni',
+            chargeType: 'one_time',
+            pricingModel: 'graduated',
+            interval: null,
+            intervalCount: null,
+            unitAmountCents: null,
+            flatAmountCents: null,
+            tiers: [
+              { upTo: 5, unitAmountCents: 1200, flatAmountCents: 0 },
+              { upTo: null, unitAmountCents: 900, flatAmountCents: 100 },
+            ],
+            externalPriceId: 'stripe-price-grad-1',
+            sourcePricingModel: 'pricelist:graduated',
+          },
+        ],
+      },
+    ],
+  },
+};
+
 test('a render change and a constructor bump move together, neither alone', async () => {
   // JSON round-trip: the render carries undefined-valued fields on some
   // shapes, which carry no information and would make the comparison about
   // key presence instead of behaviour.
-  const rendered = JSON.parse(JSON.stringify(await provider().fetchCatalog({})));
-  const renderedSame = isDeepStrictEqual(rendered, RENDER_CHARACTERIZATION.catalog);
+  const fixtures = [
+    { name: 'gym', build: () => provider(), expected: RENDER_CHARACTERIZATION },
+    { name: 'tiered', build: () => tieredProvider(), expected: TIERED_RENDER_CHARACTERIZATION },
+  ];
   assert.equal(
-    renderedSame,
-    PRICE_LIST_CATALOG_CODE_VERSION === RENDER_CHARACTERIZATION.codeVersion,
-    'a behaviour change to the rendered catalog ships with a constructor version bump, '
-    + 'and a bump ships with a behaviour change — an unbumped behaviour edit fails here, not silently in production',
+    tieredProvider().config.deactivateMissing,
+    true,
+    'the tiered fixture exercises the deactivateMissing config dimension',
   );
+  for (const fixture of fixtures) {
+    const rendered = JSON.parse(JSON.stringify(await fixture.build().fetchCatalog({})));
+    const renderedSame = isDeepStrictEqual(rendered, fixture.expected.catalog);
+    assert.equal(
+      renderedSame,
+      PRICE_LIST_CATALOG_CODE_VERSION === fixture.expected.codeVersion,
+      `${fixture.name}: a behaviour change to the rendered catalog ships with a constructor version bump, `
+      + 'and a bump ships with a behaviour change — an unbumped behaviour edit fails here, not silently in production',
+    );
+  }
 });
 
 /**
