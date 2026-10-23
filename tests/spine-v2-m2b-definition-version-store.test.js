@@ -1020,6 +1020,74 @@ test('sweep: a lost migration race on the async path re-reads too', async (t) =>
   assert.equal(rowFingerprint(database, 'legacy'), newFp, 'the winner’s move stands on the async path too');
 });
 
+/**
+ * A database handle whose guarded migration UPDATE loses twice: the initial
+ * move reports zero rows, and so does the guarded retry — because between
+ * the re-read and the retry a concurrent boot moved the row to current and
+ * committed. The second re-read must verify instead of refusing.
+ */
+function twiceLostRaceDatabase(database) {
+  const sync = database.storage.sync;
+  let updates = 0;
+  const sabotagedSync = {
+    ...sync,
+    execute(statement) {
+      if (statement?.kind === 'update') {
+        updates += 1;
+        if (updates === 1) return { affectedRows: 0 };
+        // The concurrent winner lands between our re-read and our retry: the
+        // same move, unguarded, then our guarded retry misses it.
+        sync.execute({ ...statement, where: statement.where.filter((term) => term.column !== 'fingerprint') });
+        return { affectedRows: 0 };
+      }
+      return sync.execute(statement);
+    },
+  };
+  return { storage: { ...database.storage, sync: sabotagedSync } };
+}
+
+test('sweep: a twice-lost migration race against a just-moved row verifies', (t) => {
+  const database = memory(t);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  createDefinitionVersionStore(database).persist([entry({ name: 'legacy', fingerprint: oldFp })]);
+  assert.doesNotThrow(
+    () => createDefinitionVersionStore(twiceLostRaceDatabase(database)).persist([
+      entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    ]),
+    'the retry lost because a concurrent boot already moved the row to current: this boot verifies',
+  );
+  assert.equal(rowFingerprint(database, 'legacy'), newFp, 'the winner’s move stands, written once');
+});
+
+test('sweep: a twice-lost migration race on the async path verifies too', async (t) => {
+  const database = memory(t);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  createDefinitionVersionStore(database).persist([entry({ name: 'legacy', fingerprint: oldFp })]);
+  // The async persist path with the same twice-lost interleaving: the retry
+  // misses because the winner landed first, and the second re-read verifies.
+  const sync = twiceLostRaceDatabase(database).storage.sync;
+  const txHandle = {
+    async execute(statement) { return sync.execute(statement); },
+    async maybeOne(statement) { return sync.maybeOne(statement); },
+    async many(statement) { return sync.many(statement); },
+  };
+  const asyncOnly = {
+    storage: {
+      contract: database.storage.contract,
+      async execute(statement) { return txHandle.execute(statement); },
+      async maybeOne(statement) { return txHandle.maybeOne(statement); },
+      async many(statement) { return txHandle.many(statement); },
+      transaction: (fn) => database.transactionAsync(() => fn(txHandle)),
+    },
+  };
+  await createDefinitionVersionStore(asyncOnly).persist([
+    entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+  ]);
+  assert.equal(rowFingerprint(database, 'legacy'), newFp, 'the winner’s move stands on the async path too');
+});
+
 test('sweep: persist validates the optional superseded history before any write', (t) => {
   const database = memory(t);
   const store = createDefinitionVersionStore(database);

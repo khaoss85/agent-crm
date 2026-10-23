@@ -269,6 +269,10 @@ function identityPredicate(entry) {
  * guarded on the fresh value; anything else — a vanished row, or a
  * fingerprint no scheme explains — refuses as drift. Never proceeds on the
  * stale SELECT image (review khaoss85/agent-crm#333).
+ *
+ * A failed retry re-reads once more instead of refusing: the row may have
+ * moved to current between the re-read and the retry, in which case this
+ * boot verifies. Only a still-unexplained fingerprint is drift.
  */
 async function recoverLostMove(handle, entry, expectedFingerprint) {
   const fresh = await handle.maybeOne({
@@ -285,7 +289,20 @@ async function recoverLostMove(handle, entry, expectedFingerprint) {
     values: [{ column: 'fingerprint', value: entry.fingerprint }],
     where: [...identityPredicate(entry), { column: 'fingerprint', op: 'eq', value: String(fresh.fingerprint) }],
   });
-  if (!moveApplied(retried)) throw driftError(entry, fresh.fingerprint);
+  if (moveApplied(retried)) return;
+  const reread = await handle.maybeOne({
+    kind: 'select',
+    table: TABLE,
+    columns: ['fingerprint'],
+    where: identityPredicate(entry),
+  });
+  if (!reread) throw driftError(entry, fresh.fingerprint);
+  if (fingerprintNeedsMove(entry, reread)) {
+    // Still an approved historical form after two lost races. No writer ever
+    // stores a historical fingerprint, so the row is being rewritten under
+    // us — refuse rather than chase it.
+    throw driftError(entry, reread.fingerprint);
+  }
 }
 
 /**
@@ -308,7 +325,20 @@ function recoverLostMoveSync(handle, entry, expectedFingerprint) {
     values: [{ column: 'fingerprint', value: entry.fingerprint }],
     where: [...identityPredicate(entry), { column: 'fingerprint', op: 'eq', value: String(fresh.fingerprint) }],
   });
-  if (!moveApplied(retried)) throw driftError(entry, fresh.fingerprint);
+  if (moveApplied(retried)) return;
+  const reread = handle.maybeOne({
+    kind: 'select',
+    table: TABLE,
+    columns: ['fingerprint'],
+    where: identityPredicate(entry),
+  });
+  if (!reread) throw driftError(entry, fresh.fingerprint);
+  if (fingerprintNeedsMove(entry, reread)) {
+    // Still an approved historical form after two lost races. No writer ever
+    // stores a historical fingerprint, so the row is being rewritten under
+    // us — refuse rather than chase it.
+    throw driftError(entry, reread.fingerprint);
+  }
 }
 
 /**
