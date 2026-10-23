@@ -156,6 +156,9 @@ test('undeclared schedule dimensions and hostile filters fail closed', () => {
     () => parseDashboardQuery({ period: '2026-13' }),
     () => parseDashboardQuery({ period: '2026-10', currency: 'eur' }),
     () => parseDashboardQuery({ period: '2026-10', currency: 'EURO' }),
+    // Well-shaped but not ISO: Intl formatting would throw RangeError and
+    // turn hostile input into a 500, so the query refuses it as a 400.
+    () => parseDashboardQuery({ period: '2026-10', currency: 'ZZZ' }),
     () => parseDashboardQuery({ period: '2026-10', owner: 7 }),
     () => parseDashboardQuery({ period: '2026-10', owner: 'x'.repeat(201) }),
     () => parseDashboardQuery({ period: '2026-10', owner: { eq: 'alice' } }),
@@ -214,12 +217,34 @@ test('funnel, monthly chart and team table match hand-computed rows', (t) => {
   assert.equal(model.monthly.length, 6);
   assert.deepEqual(model.owners, ['alice', 'bob']);
   const alice = model.team.find((entry) => entry.owner === 'alice');
-  assert.deepEqual([alice.openCount, alice.openMinor], [4, 22000]);
+  assert.deepEqual([alice.openCount, alice.openMinor], [2, 14000]);
   assert.deepEqual([alice.wonCount, alice.wonMinor], [1, 9000]);
   assert.equal(alice.winRateDisplay, '50%');
   const bob = model.team.find((entry) => entry.owner === 'bob');
-  assert.deepEqual([bob.openCount, bob.openMinor], [2, 4000]);
+  assert.deepEqual([bob.openCount, bob.openMinor], [0, 0]);
+  assert.deepEqual([bob.wonCount, bob.wonMinor], [1, 5000]);
   assert.equal(bob.winRateDisplay, '100%');
+});
+
+test('team table recalculates with periodo: September differs from October', (t) => {
+  const database = fixtureDatabase(t);
+  const october = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
+  const september = buildDashboardModel(
+    dashboardResults(database, { period: '2026-09', owner: null, currency: 'EUR' }),
+    [],
+    { period: '2026-09', owner: null, currency: 'EUR' },
+    TS,
+  );
+  const octoberAlice = october.team.find((entry) => entry.owner === 'alice');
+  const septemberAlice = september.team.find((entry) => entry.owner === 'alice');
+  assert.deepEqual([octoberAlice.openCount, octoberAlice.openMinor], [2, 14000]);
+  // In September alice holds no expected row: zeros, but her stale backlog
+  // (one past-dated open row) still names her as its holder.
+  assert.deepEqual([septemberAlice.openCount, septemberAlice.openMinor], [0, 0]);
+  assert.equal(septemberAlice.staleCount, 1);
+  const septemberBob = september.team.find((entry) => entry.owner === 'bob');
+  assert.deepEqual([septemberBob.openCount, septemberBob.openMinor], [1, 2500]);
+  assert.deepEqual(september.team.map((entry) => entry.owner), ['bob', 'alice']);
 });
 
 test('forecast is labelled heuristic with history-weighted probabili', (t) => {
@@ -300,8 +325,8 @@ test('CSV bytes are pinned exactly', (t) => {
   const lines = model.csv.content.split('\n');
   assert.equal(lines[0], 'reporting;2026-10;tutti;EUR');
   assert.ok(lines.includes('persona;preventivi_aperti;valore_aperto_minor;vinte;vinte_minor;perse;tasso'));
-  assert.ok(lines.includes('alice;4;22000;1;9000;1;50%'));
-  assert.ok(lines.includes('bob;2;4000;1;5000;0;100%'));
+  assert.ok(lines.includes('alice;2;14000;1;9000;1;50%'));
+  assert.ok(lines.includes('bob;0;0;1;5000;0;100%'));
   assert.ok(lines.includes('qualification;3;14500'));
   assert.ok(lines.includes('probabili_euristica;9333'));
   assert.ok(lines.includes('obiettivo;non_impostato'));
@@ -327,6 +352,121 @@ test('CSV escapes hostile owner keys and persona names the file', (t) => {
   assert.ok(csv.content.includes('"a"";b";1;1;0;0;0;n.d.'), `hostile owner is quoted, got: ${csv.content}`);
 });
 
+test('CSV neutralizes formula leaders with a text marker, not just quotes', () => {
+  // Quoting alone still exports an executable formula: the spreadsheet
+  // strips quotes before interpreting the cell. A hostile owner must decode
+  // to text that starts with the `'` marker, never to a bare formula.
+  const base = {
+    kpis: [], forecast: { closedMinor: 0, probableMinor: 0, bestMinor: 0, targetMinor: null },
+    funnel: [{ stage: 'won', count: 1, minor: 5 }],
+    query: { period: '2026-10', owner: null, currency: 'EUR' },
+  };
+  const row = (owner) => ({
+    owner, openCount: 1, openMinor: 1, wonCount: 0, wonMinor: 0, lostCount: 0, winRate: null,
+  });
+  // Decode the first CSV field like a spreadsheet import does: the quotes
+  // come off first, so the assertion sees what Excel would interpret.
+  const firstField = (line) => {
+    if (!line.startsWith('"')) return line.split(';')[0];
+    let out = '';
+    let index = 1;
+    while (index < line.length) {
+      if (line[index] === '"') {
+        if (line[index + 1] === '"') { out += '"'; index += 2; } else break;
+      } else { out += line[index]; index += 1; }
+    }
+    return out;
+  };
+  for (const hostile of ['=2+2', '+cmd', '-1+1', '@sum', '\tindented', '\rreturn']) {
+    const csv = buildDashboardCsv({ ...base, team: [row(hostile)] });
+    const matches = csv.content.split('\n').filter((entry) => entry.includes('1;1;0;0;0'));
+    assert.equal(matches.length, 1, `one row survives, got: ${csv.content}`);
+    assert.equal(firstField(matches[0]), `'${hostile}`, `hostile owner decodes to text, got: ${csv.content}`);
+  }
+});
+
+test('CSV header neutralizes the hostile persona echo like any other cell', () => {
+  // Regression (rev-agent-crm-343-ed481e78ea29 P1): team/funnel cells went
+  // through cell(), but the header interpolated model.query.owner raw, so a
+  // hostile owner still exported an executable spreadsheet formula.
+  const base = {
+    kpis: [], forecast: { closedMinor: 0, probableMinor: 0, bestMinor: 0, targetMinor: null },
+    funnel: [], team: [],
+  };
+  const headerFields = (line) => {
+    const fields = [];
+    let current = '';
+    let index = 0;
+    while (index < line.length) {
+      if (line[index] === '"') {
+        index += 1;
+        while (index < line.length) {
+          if (line[index] === '"') {
+            if (line[index + 1] === '"') { current += '"'; index += 2; } else { index += 1; break; }
+          } else { current += line[index]; index += 1; }
+        }
+      } else if (line[index] === ';') {
+        fields.push(current); current = ''; index += 1;
+      } else { current += line[index]; index += 1; }
+    }
+    fields.push(current);
+    return fields;
+  };
+  const hostile = buildDashboardCsv({ ...base, query: { period: '2026-10', owner: '=2+2', currency: 'EUR' } });
+  assert.deepEqual(
+    headerFields(hostile.content.split('\n')[0]),
+    ['reporting', '2026-10', "'=2+2", 'EUR'],
+    `hostile persona decodes to text in the header, got: ${hostile.content}`,
+  );
+  const tricky = buildDashboardCsv({ ...base, query: { period: '2026-10', owner: 'a";b', currency: 'EUR' } });
+  assert.deepEqual(
+    headerFields(tricky.content.split('\n')[0]),
+    ['reporting', '2026-10', 'a";b', 'EUR'],
+    `persona with separator and quote stays one column, got: ${tricky.content}`,
+  );
+});
+
+test('proposal baseline is period-scoped: equal in-period rates propose nothing', () => {
+  // Regression: the team rates are accumulated for the queried month, but
+  // the baseline was lifetime. With both owners at 90% lifetime and 50% in
+  // October, the old mix recommended alice → bob with the nonsense
+  // explanation `tasso 50% contro 50%`. The month's own close rate (2/4)
+  // matches both owners, so no one is flagged.
+  const stage = (stageName, totalMinor, count) => ({
+    'opportunity.stage': stageName, 'opportunity.currency': 'EUR', totalMinor, count,
+  });
+  const dated = (owner, stageName, expectedCloseDate, totalMinor, count) => ({
+    'opportunity.owner': owner, 'opportunity.stage': stageName,
+    'opportunity.expectedCloseDate': expectedCloseDate, 'opportunity.currency': 'EUR', totalMinor, count,
+  });
+  const results = {
+    byStage: {
+      metric: 'pipeline_value_by_stage', metricVersion: 1, truncated: false,
+      rows: [stage('won', 180000, 18), stage('lost', 4000, 2)],
+    },
+    schedule: {
+      metric: 'pipeline_close_schedule', metricVersion: 1, truncated: false,
+      rows: [
+        dated('alice', 'qualification', '2026-10-15', 10000, 2),
+        dated('alice', 'won', '2026-10-10', 9000, 1),
+        dated('alice', 'lost', '2026-10-12', 3000, 1),
+        dated('alice', 'won', '2026-08-05', 80000, 8),
+        dated('alice', 'discovery', null, 500, 1),
+        dated('bob', 'won', '2026-10-05', 5000, 1),
+        dated('bob', 'lost', '2026-10-06', 1000, 1),
+        dated('bob', 'won', '2026-08-05', 80000, 8),
+      ],
+    },
+  };
+  const model = buildDashboardModel(results, [], { period: '2026-10', owner: null, currency: 'EUR' }, TS);
+  const alice = model.team.find((entry) => entry.owner === 'alice');
+  const bob = model.team.find((entry) => entry.owner === 'bob');
+  assert.deepEqual([alice.openCount, alice.winRateDisplay, alice.staleCount], [2, '50%', 1]);
+  assert.deepEqual([bob.openCount, bob.winRateDisplay], [0, '50%']);
+  assert.equal(model.proposal, null, 'matching the period baseline proposes nothing');
+  assert.ok(model.insights.every((entry) => entry.id !== 'redistribute'));
+});
+
 test('query, month and target helpers behave', () => {
   assert.deepEqual({ ...parseDashboardQuery({ period: '2026-10' }) }, { period: '2026-10', owner: null, currency: 'EUR' });
   assert.equal(parseDashboardQuery({ period: '2026-10', owner: '' }).owner, null);
@@ -344,6 +484,7 @@ test('query, month and target helpers behave', () => {
   assert.equal(shiftMonth('2026-10', -1), '2026-09');
   assert.equal(shiftMonth('2026-01', -1), '2025-12');
   assert.equal(formatMonth('2026-10'), 'ottobre 2026');
+  assert.throws(() => formatMinor(100, 'ZZZ'), ValidationError);
 });
 
 /** @param {import('node:test').TestContext} t */
@@ -408,7 +549,7 @@ test('dashboard filters recalculate: persona and currency narrow the model', asy
 
 test('dashboard query refuses hostile input with a 400 and has no write surface', async (t) => {
   const { baseUrl } = await dashboardServer(t);
-  for (const bad of ['period=ottobre', 'period=2026-13', 'currency=eur', 'owner=' + 'x'.repeat(201)]) {
+  for (const bad of ['period=ottobre', 'period=2026-13', 'currency=eur', 'currency=ZZZ', 'owner=' + 'x'.repeat(201)]) {
     const response = await fetch(`${baseUrl}/api/reporting/dashboard?${bad}`);
     assert.equal(response.status, 400, `query ${bad} must be a 400`);
   }

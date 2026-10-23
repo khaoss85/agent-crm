@@ -103,6 +103,26 @@ export function downloadCsv({ doc, filename, content }) {
   if (typeof anchor.click === 'function') anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+/**
+ * A 200 that carries only some dashboard lists would crash the renderer
+ * (`model.funnel.map` on undefined) into a blank screen. Every list the
+ * renderer maps plus the forecast/csv objects must be present, or the
+ * payload is unreadable — same error state, same log line, never a throw.
+ * @param {unknown} model
+ */
+export function isDashboardPayload(model) {
+  if (model === null || typeof model !== 'object') return false;
+  const payload = /** @type {Record<string, unknown>} */ (model);
+  for (const key of ['kpis', 'funnel', 'valueByStage', 'monthly', 'team', 'owners', 'insights']) {
+    if (!Array.isArray(payload[key])) return false;
+  }
+  for (const key of ['forecast', 'csv', 'currencies']) {
+    if (payload[key] === null || typeof payload[key] !== 'object') return false;
+  }
+  const csv = /** @type {Record<string, unknown>} */ (payload.csv);
+  return typeof csv.filename === 'string' && typeof csv.content === 'string';
+}
+
 /** Hash route of the "+ Nuovo modulo" screen. */
 export const NUOVO_MODULO_ROUTE = '#/nuovo-modulo';
 
@@ -458,7 +478,7 @@ export function createReportingView(deps) {
       }));
       return;
     }
-    if (model === null || typeof model !== 'object' || !Array.isArray(model.kpis)) {
+    if (!isDashboardPayload(model)) {
       log('reporting dashboard request failed', { name: 'Error', status: 200, code: null });
       host.appendChild(el(doc, 'div', {
         class: 'empty',

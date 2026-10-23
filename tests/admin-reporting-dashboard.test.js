@@ -18,6 +18,7 @@ import {
   currentPeriod,
   dashboardPath,
   formatMoney,
+  isDashboardPayload,
   periodOptions,
 } from '../apps/admin/public/admin-reporting.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -52,8 +53,8 @@ const MODEL = {
     { month: '2026-10', label: 'ottobre 2026', openCount: 2, expectedMinor: 14000, wonCount: 2, wonMinor: 14000 },
   ],
   team: [
-    { owner: 'alice', openCount: 4, openMinor: 22000, wonCount: 1, wonMinor: 9000, lostCount: 1, winRate: 0.5, winRateDisplay: '50%' },
-    { owner: 'bob', openCount: 2, openMinor: 4000, wonCount: 1, wonMinor: 5000, lostCount: 0, winRate: 1, winRateDisplay: '100%' },
+    { owner: 'alice', openCount: 2, openMinor: 14000, wonCount: 1, wonMinor: 9000, lostCount: 1, winRate: 0.5, winRateDisplay: '50%' },
+    { owner: 'bob', openCount: 0, openMinor: 0, wonCount: 1, wonMinor: 5000, lostCount: 0, winRate: 1, winRateDisplay: '100%' },
   ],
   owners: ['alice', 'bob'],
   forecast: {
@@ -70,7 +71,7 @@ const MODEL = {
     moves: [{ from: 'alice', to: 'bob', count: 1, reason: '1 preventivi senza data, tasso 50% contro 100%' }],
     note: 'La proposta non sposta nulla da sola: la riassegnazione resta dell\u2019operatore.',
   },
-  csv: { filename: 'reporting-2026-10.csv', content: 'reporting;2026-10;tutti;EUR\nalice;4;22000;1;9000;1;50%\n' },
+  csv: { filename: 'reporting-2026-10.csv', content: 'reporting;2026-10;tutti;EUR\nalice;2;14000;1;9000;1;50%\n' },
 };
 
 const BUNDLE_ROWS = [{ id: 'r1', metric: 'chiamate', period: '2026-10', value: 20, unit: 'call' }];
@@ -219,7 +220,7 @@ test('Esporta CSV downloads the exact model bytes', async () => {
   await tick();
   assert.equal(downloads.length, 1);
   assert.equal(downloads[0].filename, 'reporting-2026-10.csv');
-  assert.ok(downloads[0].content.includes('alice;4;22000;1;9000;1;50%'));
+  assert.ok(downloads[0].content.includes('alice;2;14000;1;9000;1;50%'));
 });
 
 test('hostile owner keys render as text, never markup', async () => {
@@ -254,4 +255,26 @@ test('an unreadable dashboard payload is an error state, never a blank screen', 
   const text = [...mount.findAll('div'), ...mount.findAll('p')].map((node) => node.textContent).join(' | ');
   assert.match(text, /risposta illeggibile/);
   assert.ok(logLines.some(([message]) => message === 'reporting dashboard request failed'));
+});
+
+test('a partial dashboard 200 is unreadable too: kpis alone never render', async () => {
+  // Regression: the guard used to check only kpis, so a 200 with kpis but
+  // no funnel crashed the renderer into a blank screen.
+  const partial = { kpis: MODEL.kpis, truncated: false };
+  const { mount, view, logLines } = harness({ dashboard: partial });
+  await view.renderReporting();
+  const text = [...mount.findAll('div'), ...mount.findAll('p')].map((node) => node.textContent).join(' | ');
+  assert.match(text, /risposta illeggibile/);
+  assert.ok(logLines.some(([message]) => message === 'reporting dashboard request failed'));
+});
+
+test('isDashboardPayload requires every rendered list and the csv bytes', () => {
+  assert.equal(isDashboardPayload(null), false);
+  assert.equal(isDashboardPayload({ hello: 'world' }), false);
+  assert.equal(isDashboardPayload({ ...MODEL }), true);
+  for (const key of ['kpis', 'funnel', 'valueByStage', 'monthly', 'team', 'owners', 'insights']) {
+    const { [key]: _dropped, ...rest } = MODEL;
+    assert.equal(isDashboardPayload(rest), false, `${key} is required`);
+  }
+  assert.equal(isDashboardPayload({ ...MODEL, csv: { filename: 'x.csv' } }), false);
 });
