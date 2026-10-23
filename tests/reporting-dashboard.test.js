@@ -352,7 +352,10 @@ test('CSV escapes hostile owner keys and persona names the file', (t) => {
   assert.ok(csv.content.includes('"a"";b";1;1;0;0;0;n.d.'), `hostile owner is quoted, got: ${csv.content}`);
 });
 
-test('CSV quotes formula leaders and CR so hostile owners never break out', () => {
+test('CSV neutralizes formula leaders with a text marker, not just quotes', () => {
+  // Quoting alone still exports an executable formula: the spreadsheet
+  // strips quotes before interpreting the cell. A hostile owner must decode
+  // to text that starts with the `'` marker, never to a bare formula.
   const base = {
     kpis: [], forecast: { closedMinor: 0, probableMinor: 0, bestMinor: 0, targetMinor: null },
     funnel: [{ stage: 'won', count: 1, minor: 5 }],
@@ -361,12 +364,66 @@ test('CSV quotes formula leaders and CR so hostile owners never break out', () =
   const row = (owner) => ({
     owner, openCount: 1, openMinor: 1, wonCount: 0, wonMinor: 0, lostCount: 0, winRate: null,
   });
+  // Decode the first CSV field like a spreadsheet import does: the quotes
+  // come off first, so the assertion sees what Excel would interpret.
+  const firstField = (line) => {
+    if (!line.startsWith('"')) return line.split(';')[0];
+    let out = '';
+    let index = 1;
+    while (index < line.length) {
+      if (line[index] === '"') {
+        if (line[index + 1] === '"') { out += '"'; index += 2; } else break;
+      } else { out += line[index]; index += 1; }
+    }
+    return out;
+  };
   for (const hostile of ['=2+2', '+cmd', '-1+1', '@sum', '\tindented', '\rreturn']) {
     const csv = buildDashboardCsv({ ...base, team: [row(hostile)] });
-    const line = csv.content.split('\n').find((entry) => entry.includes('1;1;0;0;0'));
-    assert.ok(line !== undefined && line.startsWith('"'), `hostile owner is quoted, got: ${csv.content}`);
-    assert.equal(csv.content.split('\n').filter((entry) => entry.includes('1;1;0;0;0')).length, 1);
+    const matches = csv.content.split('\n').filter((entry) => entry.includes('1;1;0;0;0'));
+    assert.equal(matches.length, 1, `one row survives, got: ${csv.content}`);
+    assert.equal(firstField(matches[0]), `'${hostile}`, `hostile owner decodes to text, got: ${csv.content}`);
   }
+});
+
+test('proposal baseline is period-scoped: equal in-period rates propose nothing', () => {
+  // Regression: the team rates are accumulated for the queried month, but
+  // the baseline was lifetime. With both owners at 90% lifetime and 50% in
+  // October, the old mix recommended alice → bob with the nonsense
+  // explanation `tasso 50% contro 50%`. The month's own close rate (2/4)
+  // matches both owners, so no one is flagged.
+  const stage = (stageName, totalMinor, count) => ({
+    'opportunity.stage': stageName, 'opportunity.currency': 'EUR', totalMinor, count,
+  });
+  const dated = (owner, stageName, expectedCloseDate, totalMinor, count) => ({
+    'opportunity.owner': owner, 'opportunity.stage': stageName,
+    'opportunity.expectedCloseDate': expectedCloseDate, 'opportunity.currency': 'EUR', totalMinor, count,
+  });
+  const results = {
+    byStage: {
+      metric: 'pipeline_value_by_stage', metricVersion: 1, truncated: false,
+      rows: [stage('won', 180000, 18), stage('lost', 4000, 2)],
+    },
+    schedule: {
+      metric: 'pipeline_close_schedule', metricVersion: 1, truncated: false,
+      rows: [
+        dated('alice', 'qualification', '2026-10-15', 10000, 2),
+        dated('alice', 'won', '2026-10-10', 9000, 1),
+        dated('alice', 'lost', '2026-10-12', 3000, 1),
+        dated('alice', 'won', '2026-08-05', 80000, 8),
+        dated('alice', 'discovery', null, 500, 1),
+        dated('bob', 'won', '2026-10-05', 5000, 1),
+        dated('bob', 'lost', '2026-10-06', 1000, 1),
+        dated('bob', 'won', '2026-08-05', 80000, 8),
+      ],
+    },
+  };
+  const model = buildDashboardModel(results, [], { period: '2026-10', owner: null, currency: 'EUR' }, TS);
+  const alice = model.team.find((entry) => entry.owner === 'alice');
+  const bob = model.team.find((entry) => entry.owner === 'bob');
+  assert.deepEqual([alice.openCount, alice.winRateDisplay, alice.staleCount], [2, '50%', 1]);
+  assert.deepEqual([bob.openCount, bob.winRateDisplay], [0, '50%']);
+  assert.equal(model.proposal, null, 'matching the period baseline proposes nothing');
+  assert.ok(model.insights.every((entry) => entry.id !== 'redistribute'));
 });
 
 test('query, month and target helpers behave', () => {

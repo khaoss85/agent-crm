@@ -404,9 +404,15 @@ export function buildDashboardModel(results, bundleRows, query, nowIso) {
   if (stageRows.length === 0) {
     insights.push({ id: 'no-data', text: 'Ancora nessun preventivo in questa vista: i grafici si riempiono da soli.' });
   } else {
-    const overall = closed === 0 ? null : won.count / closed;
+    // The redistribution compares win rates inside ONE window: the team's
+    // rates are accumulated for the queried month, so the baseline they are
+    // measured against is the month's own close rate — never a lifetime rate
+    // that would flag an owner who merely matches the period.
+    const lostInPeriod = sumRows(dated, (row) => row['opportunity.stage'] === LOST_STAGE && inPeriod(row));
+    const periodDecided = wonInPeriod.count + lostInPeriod.count;
+    const periodOverall = periodDecided === 0 ? null : wonInPeriod.count / periodDecided;
     const candidate = [...team]
-      .filter((entry) => entry.openCount >= 2 && entry.winRate !== null && overall !== null && entry.winRate < overall && entry.staleCount > 0)
+      .filter((entry) => entry.openCount >= 2 && entry.winRate !== null && periodOverall !== null && entry.winRate < periodOverall && entry.staleCount > 0)
       .sort((a, b) => /** @type {number} */ (a.winRate) - /** @type {number} */ (b.winRate))[0];
     const recipient = [...team]
       .filter((entry) => entry.wonCount > 0 && (!candidate || entry.owner !== candidate.owner))
@@ -489,12 +495,18 @@ function byStageMetricVersion(result) {
 export function buildDashboardCsv(model) {
   const sep = DASHBOARD_CSV_SEPARATOR;
   const cell = (/** @type {unknown} */ value) => {
-    const text = String(value ?? '');
-    // Quote on structure breakers (quotes, LF, CR, the `;` separator) and on
-    // spreadsheet formula leaders (`=`, `+`, `-`, `@`, tab, CR): a hostile
-    // owner key such as `=2+2` must never survive unquoted into the downloaded
-    // bytes where Excel/LibreOffice would evaluate it.
-    const needsQuotes = /["\n\r;]/.test(text) || /^[=+\-@\t\r]/.test(text);
+    // Spreadsheet import strips CSV quotes BEFORE interpreting the cell, so
+    // quoting alone still exports an executable formula: `=2+2` quoted is
+    // the formula `=2+2` again once opened. Formula-leading text is first
+    // neutralized with the spreadsheet text marker (`'`), which renders as
+    // literal text in Excel/LibreOffice, and only then CSV-escaped.
+    let text = String(value ?? '');
+    let neutralized = false;
+    if (/^[=+\-@\t\r]/.test(text)) {
+      text = `'${text}`;
+      neutralized = true;
+    }
+    const needsQuotes = neutralized || /["\n\r;]/.test(text);
     return needsQuotes ? `"${text.replace(/"/g, '""')}"` : text;
   };
   const lines = [
