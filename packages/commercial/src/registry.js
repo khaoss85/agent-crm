@@ -151,32 +151,6 @@ function legacyCatalogFingerprints(entry) {
   }));
 }
 
-/**
- * Migrate catalog-provider rows registered under a historical closure
- * source to the current fingerprint, one transparent step: returns how many
- * rows moved (or a promise of it on async storage). Rows that match neither
- * the current fingerprint nor any historical form are genuine drift and are
- * left for the persist retry to refuse with the established message.
- * @param {{migrateFingerprints: (jobs: any[]) => any}} store
- * @param {Map<string, any>} catalogProviders
- */
-function migrateLegacyCatalogFingerprints(store, catalogProviders) {
-  const jobs = [];
-  for (const entry of catalogProviders.values()) {
-    const expectedFingerprints = legacyCatalogFingerprints(entry);
-    if (expectedFingerprints.length === 0) continue;
-    jobs.push({
-      type: 'catalog-provider',
-      name: entry.definition.name,
-      version: entry.definition.version,
-      expectedFingerprints,
-      fingerprint: entry.fingerprint,
-    });
-  }
-  if (jobs.length === 0) return 0;
-  return store.migrateFingerprints(jobs);
-}
-
 /** @param {any} definition */
 export function validateDiscountPolicy(definition) {
   assertIdentity('discount policy', definition);
@@ -187,18 +161,27 @@ export function validateDiscountPolicy(definition) {
 }
 
 /**
- * The closed identity the definition-version store persists: four fields, and
- * never the definition or its config.
+ * The closed identity the definition-version store persists: the four fields,
+ * and never the definition or its config — plus, for a catalog provider that
+ * declares historical closure sources, the fingerprints the old scheme would
+ * have computed over the current data. The store accepts and moves one of
+ * those inside its single persist-or-verify transaction (and accepts it
+ * without writing on a read-only composition); anything else that mismatches
+ * is genuine drift.
  * @param {string} type
  * @param {{definition: {name: string, version: number}, fingerprint: string}} entry
  */
 function identity(type, entry) {
-  return {
+  const base = {
     type,
     name: entry.definition.name,
     version: entry.definition.version,
     fingerprint: entry.fingerprint,
   };
+  if (type !== 'catalog-provider') return base;
+  const supersededFingerprints = legacyCatalogFingerprints(entry);
+  if (supersededFingerprints.length === 0) return base;
+  return { ...base, supersededFingerprints };
 }
 
 /**
@@ -294,32 +277,17 @@ export class CommercialRegistries {
    * @param {any} database
    */
   persistFingerprints(database) {
+    // A row registered under a historical closure source moves to the current
+    // fingerprint inside the store's single persist-or-verify transaction
+    // (accepted without writing on a read-only composition); anything else
+    // that mismatches is genuine drift and refuses with the established
+    // message, rolling the whole batch back — including the move.
     const store = createDefinitionVersionStore(database);
     const entries = [
       ...[...this.catalogProviders.values()].map((entry) => identity('catalog-provider', entry)),
       ...[...this.discountPolicies.values()].map((entry) => identity('discount-policy', entry)),
     ];
-    // A row registered under a historical closure source migrates to the
-    // current fingerprint once, transparently; anything else that mismatches
-    // is genuine drift and the retry refuses it with the established message.
-    // The retry only runs when at least one row moved, so the original
-    // refusal always survives untouched when nothing was migratable.
-    const recover = (error) => {
-      const migrated = migrateLegacyCatalogFingerprints(store, this.catalogProviders);
-      const retry = (count) => {
-        if (count === 0) throw error;
-        return store.persist(entries);
-      };
-      if (migrated && typeof migrated.then === 'function') return migrated.then(retry);
-      return retry(migrated);
-    };
-    try {
-      const pending = store.persist(entries);
-      if (pending && typeof pending.then === 'function') return pending.catch(recover);
-      return pending;
-    } catch (error) {
-      return recover(error);
-    }
+    return store.persist(entries);
   }
 
   /** Serializable, function-free metadata for /api/schema. */

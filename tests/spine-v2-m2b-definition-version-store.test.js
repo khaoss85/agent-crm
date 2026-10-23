@@ -873,10 +873,10 @@ test('sweep: the generated id obeys the same identity rule as the fields beside 
 });
 
 // ---------------------------------------------------------------------------
-// Fingerprint-scheme migration (migrateFingerprints)
+// Fingerprint-scheme change (supersededFingerprints on the entry)
 // ---------------------------------------------------------------------------
 
-test('sweep: migrateFingerprints moves only exact historical matches, never drift', (t) => {
+test('sweep: persist moves a superseded row to current and still refuses unexplained drift', (t) => {
   const database = memory(t);
   const store = createDefinitionVersionStore(database);
   const oldFp = 'a'.repeat(64);
@@ -887,46 +887,117 @@ test('sweep: migrateFingerprints moves only exact historical matches, never drif
     entry({ name: 'current', fingerprint: newFp }),
     entry({ name: 'drifted', fingerprint: unrelated }),
   ]);
-  const job = (over = {}) => ({
-    type: 'fixture-kind', name: 'legacy', version: 1,
-    expectedFingerprints: [oldFp], fingerprint: newFp, ...over,
-  });
-  assert.equal(store.migrateFingerprints([
-    job(),
-    job({ name: 'current' }),
-    job({ name: 'drifted' }),
-    job({ name: 'never-registered' }),
-  ]), 1, 'only the exact historical match moved');
-  const byName = new Map(rows(database).map((row) => [row.name, row.fingerprint]));
-  assert.equal(byName.get('legacy'), newFp, 'the historical row now carries the current fingerprint');
-  assert.equal(byName.get('current'), newFp, 'an already-current row is not rewritten');
-  assert.equal(byName.get('drifted'), unrelated, 'drift is untouched: persist still refuses it');
-  assert.ok(!byName.has('never-registered'), 'absent rows are left for persist to insert');
+  assert.doesNotThrow(() => store.persist([
+    entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    entry({ name: 'current', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    entry({ name: 'never-registered', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+  ]), 'current, superseded and absent rows verify in one batch');
+  const byName = () => new Map(rows(database).map((row) => [row.name, row.fingerprint]));
+  assert.equal(byName().get('legacy'), newFp, 'the historical row moved to current in the same transaction');
+  assert.equal(byName().get('current'), newFp, 'an already-current row is not rewritten');
+  assert.equal(byName().get('never-registered'), newFp, 'absent rows are inserted');
+  assert.equal(byName().get('drifted'), unrelated, 'unrelated rows are untouched');
   refusesCleanly(
-    () => store.persist([entry({ name: 'drifted', fingerprint: newFp })]),
+    () => store.persist([entry({ name: 'drifted', fingerprint: newFp, supersededFingerprints: [oldFp] })]),
     /source changed after registration/,
-    'the unexplained row',
+    'a fingerprint no scheme explains still refuses',
   );
+  assert.equal(byName().get('drifted'), unrelated, 'the refused row is unchanged');
   assert.doesNotThrow(
-    () => store.persist([entry({ name: 'legacy', fingerprint: newFp })]),
-    'the migrated row verifies',
+    () => store.persist([entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] })]),
+    'the moved row verifies on the next boot',
   );
 });
 
-test('sweep: migrateFingerprints validates the closed job shape before any write', (t) => {
+test('sweep: a batch that refuses elsewhere rolls the superseded move back with it', (t) => {
   const database = memory(t);
   const store = createDefinitionVersionStore(database);
-  const job = () => ({
-    type: 'fixture-kind', name: 'alpha', version: 1,
-    expectedFingerprints: ['a'.repeat(64)], fingerprint: 'b'.repeat(64),
-  });
-  refusesCleanly(() => store.migrateFingerprints([{ ...job(), bogus: 1 }]), /unsupported field/, 'an extra field');
-  refusesCleanly(() => store.migrateFingerprints([{ ...job(), expectedFingerprints: [] }]), /non-empty array/, 'empty history');
-  refusesCleanly(() => store.migrateFingerprints([{ ...job(), version: -1 }]), /non-negative integer/, 'a negative version');
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  const unrelated = 'c'.repeat(64);
+  store.persist([
+    entry({ name: 'legacy', fingerprint: oldFp }),
+    entry({ name: 'other', fingerprint: unrelated }),
+  ]);
   refusesCleanly(
-    () => store.migrateFingerprints([{ ...job(), fingerprint: 'not-identity\ntext' }]),
-    /control character/,
-    'a hostile fingerprint',
+    () => store.persist([
+      entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+      entry({ name: 'other', fingerprint: newFp, supersededFingerprints: ['d'.repeat(64)] }),
+    ]),
+    /source changed after registration/,
+    'the batch refuses on the genuinely drifted identity',
   );
-  assert.equal(rows(database).length, 0, 'a refused migration wrote nothing');
+  const byName = new Map(rows(database).map((row) => [row.name, row.fingerprint]));
+  assert.equal(byName.get('legacy'), oldFp, 'the superseded move rolled back with the refused batch');
+  assert.equal(byName.get('other'), unrelated, 'the drifted row is unchanged');
+});
+
+test('sweep: persist validates the optional superseded history before any write', (t) => {
+  const database = memory(t);
+  const store = createDefinitionVersionStore(database);
+  const historical = ['a'.repeat(64)];
+  const current = 'b'.repeat(64);
+  refusesCleanly(
+    () => store.persist([entry({ supersededFingerprints: 'not-an-array' })]),
+    /supersededFingerprints must be a non-empty array/,
+    'a non-array history',
+  );
+  refusesCleanly(
+    () => store.persist([entry({ supersededFingerprints: [] })]),
+    /supersededFingerprints must be a non-empty array/,
+    'an empty history',
+  );
+  refusesCleanly(
+    () => store.persist([entry({ supersededFingerprints: ['not-identity\ntext'] })]),
+    /control character/,
+    'a hostile historical fingerprint',
+  );
+  refusesCleanly(
+    () => store.persist([entry({ fingerprint: current, supersededFingerprints: historical, bogus: 1 })]),
+    /unsupported field/,
+    'an extra field beside the history',
+  );
+  assert.equal(rows(database).length, 0, 'a refused entry wrote nothing');
+});
+
+/** A read-only composition double: answers selects, has no write path at all. */
+function readOnlyDatabase(stored) {
+  return {
+    storage: {
+      readOnly: true,
+      async many(query) {
+        const where = Object.fromEntries((query.where ?? []).map((clause) => [clause.column, clause.value]));
+        return stored
+          .filter((row) => row.type === where.type && row.name === where.name)
+          .map((row) => ({ version: row.version, fingerprint: row.fingerprint }));
+      },
+    },
+  };
+}
+
+test('sweep: a read-only composition accepts a superseded row without writing, and still refuses drift', async () => {
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  const unrelated = 'c'.repeat(64);
+  const stored = [
+    { type: 'fixture-kind', name: 'legacy', version: 1, fingerprint: oldFp },
+    { type: 'fixture-kind', name: 'drifted', version: 1, fingerprint: unrelated },
+  ];
+  const store = createDefinitionVersionStore(readOnlyDatabase(stored));
+  // No `execute` on the double: any write attempt throws a TypeError, so
+  // reaching the end proves the read-only path wrote nothing.
+  await store.persist([
+    entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    entry({ name: 'never-registered', fingerprint: newFp }),
+  ]);
+  await assert.rejects(
+    store.persist([entry({ name: 'drifted', fingerprint: newFp, supersededFingerprints: [oldFp] })]),
+    /source changed after registration/,
+    'a fingerprint no scheme explains still refuses read-only',
+  );
+  await assert.rejects(
+    store.persist([entry({ name: 'legacy', fingerprint: newFp })]),
+    /source changed after registration/,
+    'without the approved history even the old row refuses read-only',
+  );
 });

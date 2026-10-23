@@ -1,7 +1,7 @@
 // @ts-check
 
 import { randomUUID } from 'node:crypto';
-import { ValidationError } from './errors.js';
+import { AppError, ValidationError } from './errors.js';
 import { resolveClock } from './time.js';
 
 /**
@@ -23,7 +23,9 @@ import { resolveClock } from './time.js';
  * ### What it deliberately is not
  *
  * Not a repository, not an ORM, not a query surface. It accepts a bounded
- * collection of definition identities and persists exactly those four fields;
+ * collection of definition identities and persists exactly the four identity
+ * fields (the optional approved history never lands in a row — it only names
+ * which stored fingerprints the current one may replace);
  * there is no predicate builder, no table parameter and no raw escape hatch.
  * It never stores an executable definition or its config — only the identity
  * and the fingerprint computed from them.
@@ -51,8 +53,15 @@ const TABLE = 'definition_versions';
 /** How much of a fingerprint the drift refusal quotes. */
 const FINGERPRINT_PREVIEW = 12;
 
-/** The closed identity shape a caller may hand over. `id` and `registeredAt` are the store's. */
-const ENTRY_FIELDS = Object.freeze(['type', 'name', 'version', 'fingerprint']);
+/**
+ * The closed identity shape a caller may hand over. `id` and `registeredAt`
+ * are the store's. `supersededFingerprints` is optional: the exact historical
+ * fingerprints this identity may still carry after a fingerprint-scheme
+ * change, so one persist-or-verify transaction can both accept and move them
+ * instead of a separate migration step that could commit half a batch.
+ */
+const ENTRY_FIELDS = Object.freeze(['type', 'name', 'version', 'fingerprint', 'supersededFingerprints']);
+const REQUIRED_ENTRY_FIELDS = Object.freeze(['type', 'name', 'version', 'fingerprint']);
 
 /**
  * Bounds on what may be stored and quoted back. Every identity string lands in
@@ -126,7 +135,7 @@ function assertIdentityText(value, subject, details) {
  */
 function validateEntry(entry, index) {
   // The same "plain object" test the storage contract's own `closed()` applies.
-  // A class instance or a null-prototype bag can carry the four fields and
+  // A class instance or a null-prototype bag can carry the required fields and
   // still not be the shape this contract names, and `typeof` alone says yes to
   // both of them.
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)
@@ -147,7 +156,7 @@ function validateEntry(entry, index) {
   // `Object.prototype` otherwise supplies a missing field through the chain —
   // no unsupported own key to find, a prototype that genuinely is
   // `Object.prototype`, and a read that quietly returns the inherited value.
-  const missing = ENTRY_FIELDS.find((field) => !Object.hasOwn(entry, field));
+  const missing = REQUIRED_ENTRY_FIELDS.find((field) => !Object.hasOwn(entry, field));
   if (missing !== undefined) {
     throw new ValidationError(`Definition version entry requires own field "${missing}"`, { index, field: missing });
   }
@@ -163,63 +172,36 @@ function validateEntry(entry, index) {
     name: assertIdentityText(record.name, 'Definition version name', { index, field: 'name' }),
     version: /** @type {number} */ (version),
     fingerprint: assertIdentityText(record.fingerprint, 'Definition version fingerprint', { index, field: 'fingerprint' }),
+    ...validateSupersededFingerprints(record.supersededFingerprints, index),
   });
 }
 
 /**
- * The closed migration-job shape `migrateFingerprints` accepts. Same closure
- * discipline as the entry shape above: no unnamed keys, every named key
- * present on the object itself, so a caller asking to rewrite a fingerprint
- * says exactly which identity, from which historical values, to which
- * current one.
+ * Historical fingerprints one identity may still carry after a
+ * fingerprint-scheme change. One identity carries a handful of historical
+ * forms at most; a longer list is a runaway generator refused fail-closed.
+ * Absent means no history: the entry verifies by exact match only.
+ * @param {unknown} value
+ * @param {number} index
  */
-const MIGRATION_FIELDS = Object.freeze(['type', 'name', 'version', 'expectedFingerprints', 'fingerprint']);
+const MAX_SUPERSEDED_FINGERPRINTS = 100;
 
-/**
- * Historical fingerprints one identity may still carry, per migration job.
- * One job migrates one identity; a handful of historical forms is every real
- * migration, so a longer list is a runaway generator refused fail-closed.
- */
-const MAX_HISTORICAL_FINGERPRINTS = 100;
-
-/** @param {unknown} job @param {number} index */
-function validateMigration(job, index) {
-  if (!job || typeof job !== 'object' || Array.isArray(job)
-    || Object.getPrototypeOf(job) !== Object.prototype) {
-    throw new ValidationError('Definition version migration must be a plain object', { index });
-  }
-  const unknown = Reflect.ownKeys(job).find((key) => !MIGRATION_FIELDS.includes(key));
-  if (unknown !== undefined) {
-    const named = typeof unknown === 'symbol' ? unknown.toString() : unknown;
-    throw new ValidationError(`Definition version migration has an unsupported field "${named}"`, { index, field: named });
-  }
-  const missing = MIGRATION_FIELDS.find((field) => !Object.hasOwn(job, field));
-  if (missing !== undefined) {
-    throw new ValidationError(`Definition version migration requires own field "${missing}"`, { index, field: missing });
-  }
-  const record = /** @type {Record<string, unknown>} */ (job);
-  const version = record.version;
-  if (!Number.isSafeInteger(version) || /** @type {number} */ (version) < 0) {
-    throw new ValidationError('Definition version migration version must be a non-negative integer', { index, field: 'version' });
-  }
-  const expected = record.expectedFingerprints;
-  if (!Array.isArray(expected) || expected.length === 0 || expected.length > MAX_HISTORICAL_FINGERPRINTS) {
+/** @param {unknown} value @param {number} index */
+function validateSupersededFingerprints(value, index) {
+  if (value === undefined) return {};
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_SUPERSEDED_FINGERPRINTS) {
     throw new ValidationError(
-      `Definition version migration expectedFingerprints must be a non-empty array of at most ${MAX_HISTORICAL_FINGERPRINTS} fingerprints`,
-      { index, field: 'expectedFingerprints' },
+      `Definition version entry supersededFingerprints must be a non-empty array of at most ${MAX_SUPERSEDED_FINGERPRINTS} fingerprints when present`,
+      { index, field: 'supersededFingerprints' },
     );
   }
-  return Object.freeze({
-    type: assertIdentityText(record.type, 'Definition version migration type', { index, field: 'type' }),
-    name: assertIdentityText(record.name, 'Definition version migration name', { index, field: 'name' }),
-    version: /** @type {number} */ (version),
-    expectedFingerprints: Object.freeze(expected.map((candidate, candidateIndex) => assertIdentityText(
+  return {
+    supersededFingerprints: Object.freeze(value.map((candidate, candidateIndex) => assertIdentityText(
       candidate,
-      'Definition version migration historical fingerprint',
-      { index, field: 'expectedFingerprints', candidateIndex },
+      'Definition version superseded fingerprint',
+      { index, field: 'supersededFingerprints', candidateIndex },
     ))),
-    fingerprint: assertIdentityText(record.fingerprint, 'Definition version migration fingerprint', { index, field: 'fingerprint' }),
-  });
+  };
 }
 
 /**
@@ -233,11 +215,57 @@ function driftError(entry, persisted) {
   return new ValidationError(
     `${entry.type} "${entry.name}@${entry.version}" source changed after registration (persisted fingerprint ${String(persisted).slice(0, FINGERPRINT_PREVIEW)}…, current ${entry.fingerprint.slice(0, FINGERPRINT_PREVIEW)}…). `
       + 'Registered definition versions are immutable: publish a new version instead of editing this one.',
+    // Machine-readable identity beside the human-readable message. The
+    // message, code and status above are the store's stable refusal contract
+    // (asserted byte-identical by the M2B suite); the details let a
+    // multi-workspace host tell "this workspace's registered definitions
+    // moved" apart from every other startup failure without parsing prose.
+    { definitionVersionDrift: true, type: entry.type, name: entry.name, version: entry.version },
   );
 }
 
-function assertFingerprintMatch(entry, persisted) {
-  if (String(persisted.fingerprint) !== entry.fingerprint) throw driftError(entry, persisted.fingerprint);
+/**
+ * Classify a persisted row against the entry that claims it. A current row
+ * verifies; a row carrying one of the entry's approved superseded
+ * fingerprints verifies too and — on a writable composition — moves to the
+ * current fingerprint inside the same transaction, so classification,
+ * migration and verification can never land in different transactions and a
+ * batch that refuses elsewhere persists nothing. Anything else is genuine
+ * drift and refuses with the established message.
+ * @param {{type: string, name: string, version: number, fingerprint: string, supersededFingerprints?: readonly string[]}} entry
+ * @param {unknown} persisted
+ * @returns {boolean} true when the write path must move the row to current
+ */
+function fingerprintNeedsMove(entry, persisted) {
+  if (String(persisted.fingerprint) === entry.fingerprint) return false;
+  if ((entry.supersededFingerprints ?? []).includes(String(persisted.fingerprint))) return true;
+  throw driftError(entry, persisted.fingerprint);
+}
+
+/**
+ * Whether this error is a definition-version drift refusal: a registered
+ * definition version whose source moved underneath it. True for the store's
+ * own refusal (thrown where no workspace is named) and for the workspace
+ * composition's `DEFINITION_VERSION_DRIFT` refusal (thrown where one is), so a
+ * multi-workspace host needs exactly one check to refuse one workspace and
+ * keep serving the rest. The message stays addressed to the person reading
+ * the boot log; the host matches on this, never on prose.
+ *
+ * The code alone never matches: both branches require the store's
+ * `definitionVersionDrift` marker in `details`, so a package-thrown `AppError`
+ * reusing the `DEFINITION_VERSION_DRIFT` code cannot quarantine a workspace.
+ * @param {unknown} error
+ */
+export function isDefinitionVersionDrift(error) {
+  if (error instanceof AppError && error.code === 'DEFINITION_VERSION_DRIFT') {
+    const details = error.details;
+    return typeof details === 'object' && details !== null
+      && /** @type {Record<string, unknown>} */ (details).definitionVersionDrift === true;
+  }
+  if (!(error instanceof ValidationError) || error.code !== 'VALIDATION_ERROR') return false;
+  const details = error.details;
+  return typeof details === 'object' && details !== null
+    && /** @type {Record<string, unknown>} */ (details).definitionVersionDrift === true;
 }
 
 /**
@@ -303,8 +331,13 @@ export function createDefinitionVersionStore(database, options = {}) {
 
   return Object.freeze({
     /**
-     * Persist-or-verify every identity in one transaction.
-     * @param {Iterable<{type: string, name: string, version: number, fingerprint: string}>} entries
+     * Persist-or-verify every identity in one transaction. An entry whose
+     * persisted row carries one of its approved `supersededFingerprints`
+     * moves to the current fingerprint inside that same transaction (a
+     * read-only composition accepts it without writing); classification,
+     * migration and verification never land in different transactions, so a
+     * batch that refuses elsewhere persists nothing.
+     * @param {Iterable<{type: string, name: string, version: number, fingerprint: string, supersededFingerprints?: string[]}>} entries
      */
     persist(entries) {
       const bounded = boundedBatch(entries).map(validateEntry);
@@ -364,7 +397,22 @@ export function createDefinitionVersionStore(database, options = {}) {
             });
             continue;
           }
-          assertFingerprintMatch(entry, persisted);
+          if (fingerprintNeedsMove(entry, persisted)) {
+            // A row under an approved superseded fingerprint: move it to
+            // current, guarded on the value just read so a concurrent writer's
+            // update is never silently overwritten.
+            await handle.execute({
+              kind: 'update',
+              table: TABLE,
+              values: [{ column: 'fingerprint', value: entry.fingerprint }],
+              where: [
+                { column: 'type', op: 'eq', value: entry.type },
+                { column: 'name', op: 'eq', value: entry.name },
+                { column: 'version', op: 'eq', value: entry.version },
+                { column: 'fingerprint', op: 'eq', value: String(persisted.fingerprint) },
+              ],
+            });
+          }
         }
       };
       // A read-only composition verifies what is registered and registers
@@ -377,7 +425,9 @@ export function createDefinitionVersionStore(database, options = {}) {
       // Absence is tolerated on purpose. A definition the database has never
       // seen carries nothing that could be misread: there are no rows under it.
       // A definition that *is* registered under a different fingerprint is the
-      // dangerous case, and that still refuses.
+      // dangerous case, and that still refuses — unless the difference is one
+      // of the entry's approved superseded fingerprints, which verifies
+      // without writing.
       if (storage.readOnly === true) {
         return (async () => {
           for (const entry of bounded) {
@@ -417,7 +467,9 @@ export function createDefinitionVersionStore(database, options = {}) {
                   + ' under a version it does not carry',
               );
             }
-            assertFingerprintMatch(entry, persisted);
+            // A read-only composition registers and moves nothing: a current or
+            // approved-superseded row verifies, anything else refuses.
+            fingerprintNeedsMove(entry, persisted);
           }
         })();
       }
@@ -461,7 +513,21 @@ export function createDefinitionVersionStore(database, options = {}) {
               });
               continue;
             }
-            assertFingerprintMatch(entry, persisted);
+            if (fingerprintNeedsMove(entry, persisted)) {
+              // Same move as the async path above, in this transaction: a
+              // batch that refuses elsewhere rolls this move back with it.
+              storage.execute({
+                kind: 'update',
+                table: TABLE,
+                values: [{ column: 'fingerprint', value: entry.fingerprint }],
+                where: [
+                  { column: 'type', op: 'eq', value: entry.type },
+                  { column: 'name', op: 'eq', value: entry.name },
+                  { column: 'version', op: 'eq', value: entry.version },
+                  { column: 'fingerprint', op: 'eq', value: String(persisted.fingerprint) },
+                ],
+              });
+            }
           }
         });
         return;
@@ -469,86 +535,5 @@ export function createDefinitionVersionStore(database, options = {}) {
       return storage.transaction((tx) => persistWith(tx));
     },
 
-    /**
-     * Move rows registered under a superseded fingerprint scheme to the
-     * current fingerprint: the one sanctioned path for a fingerprint-scheme
-     * migration, and it can never mask drift. Each job names its identity
-     * and the exact historical fingerprints it may still carry; a row that
-     * matches the current fingerprint is already migrated, a row that
-     * matches one historical fingerprint moves to the current one, and any
-     * other state — never registered, or carrying a fingerprint no scheme
-     * explains — moves nothing (the caller's persist retry then refuses it
-     * with the established drift message). Returns how many rows moved.
-     * @param {Iterable<{type: string, name: string, version: number, expectedFingerprints: string[], fingerprint: string}>} jobs
-     */
-    migrateFingerprints(jobs) {
-      const prepared = boundedBatch(jobs).map(validateMigration);
-      // A read-only composition registers nothing and migrates nothing: the
-      // rows stay as they are and the caller's verify refuses the mismatch.
-      if (storage.readOnly === true) return 0;
-      const migrateWith = async (handle) => {
-        let migrated = 0;
-        for (const job of prepared) {
-          const persisted = await handle.maybeOne({
-            kind: 'select',
-            table: TABLE,
-            columns: ['fingerprint'],
-            where: [
-              { column: 'type', op: 'eq', value: job.type },
-              { column: 'name', op: 'eq', value: job.name },
-              { column: 'version', op: 'eq', value: job.version },
-            ],
-          });
-          if (!persisted || String(persisted.fingerprint) === job.fingerprint) continue;
-          if (!job.expectedFingerprints.includes(String(persisted.fingerprint))) continue;
-          await handle.execute({
-            kind: 'update',
-            table: TABLE,
-            values: [{ column: 'fingerprint', value: job.fingerprint }],
-            where: [
-              { column: 'type', op: 'eq', value: job.type },
-              { column: 'name', op: 'eq', value: job.name },
-              { column: 'version', op: 'eq', value: job.version },
-              { column: 'fingerprint', op: 'eq', value: String(persisted.fingerprint) },
-            ],
-          });
-          migrated += 1;
-        }
-        return migrated;
-      };
-      if (sync) {
-        let migrated = 0;
-        storage.transaction(() => {
-          for (const job of prepared) {
-            const persisted = storage.maybeOne({
-              kind: 'select',
-              table: TABLE,
-              columns: ['fingerprint'],
-              where: [
-                { column: 'type', op: 'eq', value: job.type },
-                { column: 'name', op: 'eq', value: job.name },
-                { column: 'version', op: 'eq', value: job.version },
-              ],
-            });
-            if (!persisted || String(persisted.fingerprint) === job.fingerprint) continue;
-            if (!job.expectedFingerprints.includes(String(persisted.fingerprint))) continue;
-            storage.execute({
-              kind: 'update',
-              table: TABLE,
-              values: [{ column: 'fingerprint', value: job.fingerprint }],
-              where: [
-                { column: 'type', op: 'eq', value: job.type },
-                { column: 'name', op: 'eq', value: job.name },
-                { column: 'version', op: 'eq', value: job.version },
-                { column: 'fingerprint', op: 'eq', value: String(persisted.fingerprint) },
-              ],
-            });
-            migrated += 1;
-          }
-        });
-        return migrated;
-      }
-      return storage.transaction((tx) => migrateWith(tx));
-    },
   });
 }

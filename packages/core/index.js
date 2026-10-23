@@ -176,7 +176,7 @@ export { computeDefinitionFingerprint, validateDeclaredConfig } from './src/defi
 // `computeDefinitionFingerprint` is: a package that re-implements it
 // re-implements the rule that decides whether the application starts, and the
 // one sentence a person reads at boot becomes several that disagree.
-export { createDefinitionVersionStore } from './src/definition-version-store.js';
+export { createDefinitionVersionStore, isDefinitionVersionDrift } from './src/definition-version-store.js';
 
 // ---- caller-owned transaction proof (Spine v2 M2D) ----
 // A package whose writes are only correct as a SET must be able to prove it is

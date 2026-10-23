@@ -313,6 +313,73 @@ test('a database registered under the old closure-text scheme keeps composing', 
   }
 });
 
+test('a read-only composition accepts a legacy-registered provider without writing', async () => {
+  // A reader rolling out after a writer must keep composing against a
+  // database that still carries the old closure-text fingerprint: the
+  // read-only verify recognizes the approved historical form and writes
+  // nothing. The double has no write path at all, so any write attempt
+  // throws and fails the test.
+  const stored = [{
+    type: 'catalog-provider', name: 'listino-upgrade', version: 1, fingerprint: UPGRADE_FINGERPRINT_271,
+  }];
+  const database = {
+    storage: {
+      readOnly: true,
+      async many(query) {
+        const where = Object.fromEntries((query.where ?? []).map((clause) => [clause.column, clause.value]));
+        return stored
+          .filter((row) => row.type === where.type && row.name === where.name)
+          .map((row) => ({ version: row.version, fingerprint: row.fingerprint }));
+      },
+    },
+  };
+  const registries = new CommercialRegistries({
+    catalogProviders: [createPriceListCatalogProvider({
+      name: 'listino-upgrade', version: 1, priceList: UPGRADE_FIXTURE,
+    })],
+  });
+  await registries.persistFingerprints(database);
+  assert.equal(stored[0].fingerprint, UPGRADE_FINGERPRINT_271, 'the legacy row is accepted as-is, never rewritten');
+  await assert.rejects(
+    new CommercialRegistries({
+      catalogProviders: [createPriceListCatalogProvider({
+        name: 'listino-upgrade', version: 1, priceList: { ...UPGRADE_FIXTURE, priceBook: { name: 'Altro', currency: 'EUR' } },
+      })],
+    }).persistFingerprints(database),
+    /source changed after registration/,
+    'a silent price change under the frozen version still refuses read-only',
+  );
+});
+
+test('a batch that refuses on drift leaves the legacy row unmoved', (t) => {
+  // Classification, migration and verification share one transaction: when
+  // another identity in the same batch is genuinely drifted, the refused
+  // batch persists nothing — including the legacy move.
+  const database = createDatabase({ path: ':memory:' });
+  t.after(() => database.close());
+  createDefinitionVersionStore(database).persist([
+    { type: 'catalog-provider', name: 'listino-upgrade', version: 1, fingerprint: UPGRADE_FINGERPRINT_271 },
+    { type: 'discount-policy', name: 'sconto', version: 1, fingerprint: 'e'.repeat(64) },
+  ]);
+  const registries = new CommercialRegistries({
+    catalogProviders: [createPriceListCatalogProvider({
+      name: 'listino-upgrade', version: 1, priceList: UPGRADE_FIXTURE,
+    })],
+    discountPolicies: [{
+      name: 'sconto', version: 1, label: 'Sconto', config: { autoApproveMaxBps: 1 }, evaluate: () => ({ decision: 'auto_approve' }),
+    }],
+  });
+  assert.throws(
+    () => registries.persistFingerprints(database),
+    /source changed after registration/,
+    'the drifted discount policy refuses the batch',
+  );
+  const row = database.raw
+    .prepare("SELECT fingerprint FROM definition_versions WHERE type = 'catalog-provider'")
+    .get();
+  assert.equal(row.fingerprint, UPGRADE_FINGERPRINT_271, 'the legacy move rolled back with the refused batch');
+});
+
 test('no parallel catalog: the listino reuses product, price-book and offer', () => {
   assert.deepEqual([...COMMERCIAL_RESOURCES].sort(), [
     'catalog-sync-run', 'offer', 'package-credit', 'price-book', 'price-component', 'price-tier',
