@@ -28,7 +28,7 @@
 // — never innerHTML with data, so a hostile account or adapter label is
 // inert text, never markup.
 
-import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -266,14 +266,22 @@ function accountOf(connection) {
  * the acceptance — "ogni voce del dettaglio legge lo stesso record" — is a
  * checkable fact, not copy.
  *
- * @param {{ entry: any, connection: any }} input
+ * `spaceId` is the selected space, passed separately: live `readSyncState`
+ * rows carry no spaceId (it lives on the response envelope), so reading it
+ * off the row would print a false blank. A row that still carries one wins
+ * for backward compatibility with older fixtures.
+ *
+ * @param {{ entry: any, connection: any, spaceId?: unknown }} input
  */
-export function detailSections({ entry, connection }) {
+export function detailSections({ entry, connection, spaceId = null }) {
   const label = typeof entry?.label === 'string' && entry.label !== '' ? entry.label : 'Connettore';
   const channel = typeof entry?.channel === 'string' ? entry.channel : '';
   const connectionKey = connection !== null && typeof connection === 'object'
     && typeof connection.connectionKey === 'string' ? connection.connectionKey : null;
   const account = accountOf(connection);
+  const rowSpace = connection !== null && typeof connection === 'object'
+    && typeof connection.spaceId === 'string' && connection.spaceId !== '' ? connection.spaceId : null;
+  const space = typeof spaceId === 'string' && spaceId !== '' ? spaceId : rowSpace;
   const stato = connection !== null && typeof connection === 'object' ? statusLabel(connection.status) : 'Da collegare';
   const direction = directionOf(channel);
   const syncLines = Array.isArray(entry?.syncLines) ? entry.syncLines.filter((line) => typeof line === 'string') : [];
@@ -303,7 +311,7 @@ export function detailSections({ entry, connection }) {
         `Account collegato: ${account ?? '—'}.`,
         `Adattatore: ${typeof connection.adapter === 'string' ? connection.adapter : '—'} v${Number.isSafeInteger(connection.adapterVersion) ? connection.adapterVersion : '—'}.`,
         `Chiave di collegamento: ${connectionKey ?? '—'}.`,
-        `Spazio: ${typeof connection.spaceId === 'string' && connection.spaceId !== '' ? connection.spaceId : '—'}.`,
+        `Spazio: ${space ?? '—'}.`,
       ];
 
   const interruttoriLines = connection === null
@@ -321,7 +329,7 @@ export function detailSections({ entry, connection }) {
   const chiRispondeLines = connection === null
     ? ['Nessun mittente finché il connettore non è collegato.']
     : [
-        `I messaggi escono dallo spazio «${typeof connection.spaceId === 'string' && connection.spaceId !== '' ? connection.spaceId : '—'}» con l\u2019account «${account ?? '—'}»: mai dal numero sbagliato.`,
+        `I messaggi escono dallo spazio «${space ?? '—'}» con l\u2019account «${account ?? '—'}»: mai dal numero sbagliato.`,
         'Ruoli e canali di risposta si assegnano in Spazi e accessi, non qui.',
       ];
 
@@ -403,6 +411,7 @@ export function createConnectorDetailView(deps) {
     adapters: /** @type {Array<any>} */ ([]),
     entries: /** @type {Array<any>} */ ([]),
     units: /** @type {Array<any> | null} */ (null),
+    catalogError: /** @type {string | null} */ (null),
     channelsReady: false,
     loaded: false,
     loadError: null,
@@ -427,11 +436,20 @@ export function createConnectorDetailView(deps) {
     const meta = schema?.domains?.channels?.metadata ?? schema?.domains?.channels;
     state.channelsReady = Boolean(meta && meta.channelsContract === 1);
     state.adapters = Array.isArray(meta?.adapters) ? meta.adapters : [];
+    state.units = null;
+    state.catalogError = null;
     try {
       const catalog = await client.request('/api/space-packages/catalog');
       state.units = Array.isArray(catalog?.units) ? catalog.units : null;
-    } catch {
+    } catch (error) {
+      // No silent fallback: the dependency list still renders with the
+      // declared unit names, but the failure stays visible with its code.
       state.units = null;
+      state.catalogError = error !== null && typeof error === 'object'
+        && typeof /** @type {{ code?: unknown }} */ (error).code === 'string'
+        && /** @type {{ code?: unknown }} */ (error).code !== ''
+        ? /** @type {{ code: string }} */ (error).code
+        : errorOf(error);
     }
     if (!state.channelsReady || state.spaceId.trim() === '') return;
     try {
@@ -466,6 +484,10 @@ export function createConnectorDetailView(deps) {
     const rows = consumersForChannel(channel);
     const panel = el(doc, 'section', 'bo-connector-section');
     panel.appendChild(el(doc, 'h3', undefined, 'Skill e pacchetti che lo usano'));
+    if (state.catalogError !== null) {
+      panel.appendChild(el(doc, 'p', 'bo-muted',
+        `Etichette non caricate (${state.catalogError}): uso i nomi dichiarati delle unità.`));
+    }
     if (rows.length === 0) {
       panel.appendChild(el(doc, 'p', 'bo-muted', 'Nessun uso dichiarato per questo canale.'));
     } else {
@@ -514,21 +536,59 @@ export function createConnectorDetailView(deps) {
     const connections = matchConnections(channel, state.entries);
     const connection = connections.find((row) => row.status === 'active')
       ?? connections[0] ?? null;
-    const badge = connection !== null ? statusLabel(connection.status) : 'Da collegare';
+    // Adapter-aware like the list: without a composed adapter the detail must
+    // not promise a connection the wizard cannot make.
+    const available = matchAdapters(channel, state.adapters).length > 0;
+    const badge = !available
+      ? 'Non disponibile qui'
+      : connection !== null ? statusLabel(connection.status) : 'Da collegare';
     mount.appendChild(el(doc, 'p', 'bo-muted',
       connection !== null && accountOf(connection) !== null
         ? `${entry.label} · ${accountOf(connection)} · ${badge}`
         : `${entry.label} · ${badge}`));
-    const sections = detailSections({ entry, connection });
+    if (!available) {
+      mount.appendChild(el(doc, 'p', 'empty',
+        'Nessun adattatore composto per questo canale: non si può collegare qui.'));
+    }
+    const sections = detailSections({ entry, connection, spaceId: state.spaceId.trim() });
     renderSection(mount, sections.cosaEntra);
     renderSection(mount, sections.anteprimaScheda);
     renderSection(mount, sections.impostazioniAccount);
     renderSection(mount, sections.interruttori);
     renderSection(mount, sections.chiRisponde);
     renderSection(mount, sections.dettagliTecnici);
+    if (connections.length > 1) {
+      // One space can bind several accounts to the same channel (the
+      // connection key is space+channel+account): the detail shows the active
+      // row above, and every bound account stays visible here instead of an
+      // arbitrary first row hiding the others.
+      const roster = el(doc, 'section', 'bo-connector-section');
+      roster.appendChild(el(doc, 'h3', undefined, 'Altri collegamenti di questo canale'));
+      const list = el(doc, 'ul', undefined);
+      for (const row of connections) {
+        const key = row !== null && typeof row === 'object' && typeof row.connectionKey === 'string'
+          ? row.connectionKey
+          : '—';
+        const who = row !== null && typeof row === 'object' && typeof row.account === 'string' && row.account !== ''
+          ? row.account
+          : 'senza account';
+        const how = row !== null && typeof row === 'object' ? statusLabel(row.status) : statusLabel(null);
+        list.appendChild(el(doc, 'li', undefined, `${who} · ${how} · ${key}`));
+      }
+      roster.appendChild(list);
+      mount.appendChild(roster);
+    }
     renderConsumers(mount, channel);
     const row = el(doc, 'p', undefined);
-    if (connection === null) {
+    if (!available) {
+      const back = el(doc, 'a', undefined, 'Torna ai connettori');
+      back.setAttribute('href', '#/connettori');
+      back.addEventListener('click', (event) => {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        navigate('#/connettori');
+      });
+      row.appendChild(back);
+    } else if (connection === null) {
       const go = el(doc, 'a', undefined, 'Collega in 3 passi');
       go.setAttribute('href', '#/connettori');
       go.addEventListener('click', (event) => {

@@ -135,7 +135,7 @@ test('"skill che lo usano" shows only declared dependencies', () => {
   assert.ok(sections.skillCheLoUsano.lines.some((line) => line.includes('appointments')));
 });
 
-function stubClient({ connectors = [CONNECTION], adapters = [{ name: 'whatsapp-cloud', version: 1 }], units = [], calls = [] } = {}) {
+function stubClient({ connectors = [CONNECTION], adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }], units = [], calls = [], catalogError = null } = {}) {
   return {
     async request(path, options = {}) {
       calls.push(path);
@@ -143,7 +143,10 @@ function stubClient({ connectors = [CONNECTION], adapters = [{ name: 'whatsapp-c
       if (path === '/api/schema') {
         return { domains: { channels: { metadata: { channelsContract: 1, adapters } } } };
       }
-      if (path === '/api/space-packages/catalog') return { units };
+      if (path === '/api/space-packages/catalog') {
+        if (catalogError !== null) throw catalogError;
+        return { units };
+      }
       if (path.startsWith('/api/connectors?')) return { connectors };
       throw new Error(`unexpected request ${path}`);
     },
@@ -175,6 +178,72 @@ test('the view renders all seven sections from the live row', async () => {
   assert.ok(text.includes('+390200000001'));
   assert.ok(!calls.some((path) => path.includes('whatsapp') && path !== '/api/schema' && !path.startsWith('/api/connectors?')),
     'the channel slug never becomes a request path');
+});
+
+test('the space comes from the selected space, never from a row field', () => {
+  const row = { ...CONNECTION };
+  delete row.spaceId;
+  const sections = detailSections({ entry: ENTRY, connection: row, spaceId: 'presti' });
+  assert.ok(sections.impostazioniAccount.lines.some((line) => line.includes('Spazio: presti')));
+  assert.ok(sections.chiRisponde.lines.some((line) => line.includes('spazio «presti»')));
+  for (const section of Object.values(sections)) {
+    assert.equal(section.connectionKey, CONNECTION.connectionKey);
+  }
+  // A row that still carries its own space keeps working.
+  const legacy = detailSections({ entry: ENTRY, connection: CONNECTION });
+  assert.ok(legacy.chiRisponde.lines.some((line) => line.includes('spazio «presti»')));
+});
+
+test('without a composed adapter the detail promises no connection', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const view = createConnectorDetailView({
+    doc,
+    mount,
+    client: stubClient({ adapters: [] }),
+    storage: { getItem: () => 'presti', setItem: () => {} },
+    navigate: () => {},
+  });
+  await view.render('whatsapp');
+  await flush();
+  assert.ok(mount.textContent.includes('Non disponibile qui'));
+  assert.ok(mount.textContent.includes('Nessun adattatore composto'));
+  assert.ok(!mount.textContent.includes('Collega in 3 passi'));
+});
+
+test('several accounts on one channel all stay visible', async () => {
+  const second = { ...CONNECTION, connectionKey: 'presti:whatsapp:+390200000002', account: '+390200000002', status: 'pending' };
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const view = createConnectorDetailView({
+    doc,
+    mount,
+    client: stubClient({ connectors: [CONNECTION, second] }),
+    storage: { getItem: () => 'presti', setItem: () => {} },
+    navigate: () => {},
+  });
+  await view.render('whatsapp');
+  await flush();
+  assert.ok(mount.textContent.includes('+390200000001'));
+  assert.ok(mount.textContent.includes('+390200000002'));
+  assert.ok(mount.textContent.includes('Altri collegamenti di questo canale'));
+});
+
+test('a catalog failure stays visible instead of failing silent', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const failure = Object.assign(new Error('no packages here'), { code: 'SPACE_PACKAGES_MISSING' });
+  const view = createConnectorDetailView({
+    doc,
+    mount,
+    client: stubClient({ catalogError: failure }),
+    storage: { getItem: () => 'presti', setItem: () => {} },
+    navigate: () => {},
+  });
+  await view.render('whatsapp');
+  await flush();
+  assert.ok(mount.textContent.includes('Etichette non caricate (SPACE_PACKAGES_MISSING)'));
+  assert.ok(mount.textContent.includes('Skill e pacchetti che lo usano'));
 });
 
 test('an unknown channel renders honestly without fetching for it', async () => {
