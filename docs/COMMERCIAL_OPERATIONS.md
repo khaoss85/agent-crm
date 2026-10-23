@@ -24,7 +24,8 @@ define/sync catalog     provider call OUTSIDE the transaction → immutable prod
 → submit                immutable Quote Version + version lines + per-component evidence + grouped totals
 → evaluate policy       versioned discount policy → auto_approve | approval_required | reject
 → approve/reject        human user actor only; one decision per version
-→ revise                rejected → draft → submit version 2
+→ revise                human-rejected → draft → submit next version
+                        (a policy-refused submit never leaves the draft: BO-F2-04)
 → inspect               versions / approval / audit / trace
                         (an approved version continues into Milestone 11:
                          signature → verified events → immutable Order)
@@ -288,7 +289,13 @@ explainable after a v2 ships.
 
 `auto_approve` approves with **no approval record**; `approval_required`
 creates exactly one approval per version and parks the quote in
-`pending_approval`; `reject` marks it rejected with the policy reason.
+`pending_approval`; `reject` freezes the version with the policy reason and
+keeps the quote in `draft` (BO-F2-04: a refused submit stays editable, with
+the motive on the frozen version — including quotes built from AI-suggested
+lines, which meet the same gate). The shipped `catalog-price-rules`
+definition (`packages/commercial/src/price-rules.js`) implements the
+backoffice rule set: automatic quantity pricing via tiers, owner approval
+above the maximum, statutory default VAT.
 
 **The human boundary:** only `actor.type === 'user'` may approve or reject — an
 agent actor is refused `403 HUMAN_APPROVAL_REQUIRED`. `requiredApprovalKey`
@@ -300,7 +307,8 @@ Sales-Manager/Finance role enforcement requires the Production Spine
 
 ```text
 draft ──add/update/remove line──▶ draft ──submit──▶ pending_approval ──approve──▶ approved (terminal in M10)
-                                                  └─reject──▶ rejected ──revise──▶ draft ──submit──▶ version 2
+                                                  └─reject (policy)──▶ draft (reason on the frozen version) ──submit──▶ version 2
+                                                  └─reject (human)──▶ rejected ──revise──▶ draft
 ```
 
 Every rule is server-enforced (`fromStates`), not UI-enforced. Draft edits are

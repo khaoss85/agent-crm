@@ -159,6 +159,10 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   // proposed from the conversations and which refuse, so the module is
   // behaviour-bearing by definition.
   'packages/commercial/src/quote-suggest.js',
+  // Catalog price rules (BO-F2-04): they decide which submits auto-approve,
+  // which wait for the owner and which stay a draft, so the module is
+  // behaviour-bearing by definition.
+  'packages/commercial/src/price-rules.js',
   // The manual catalog operations (BO-F2-05): they decide how manually
   // managed products, prices and active flags are written and read, so they
   // are behaviour-bearing by definition.
