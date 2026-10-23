@@ -62,6 +62,8 @@ export const CHANNELS = Object.freeze([
   'email',
   'voice',
   'site-form',
+  'calendar',
+  'stripe',
 ]);
 
 const ADAPTER_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -301,6 +303,28 @@ export function validateChannelAdapter(definition) {
     ...(value.historyImport === undefined ? {} : { historyImport: Object.freeze({ ...value.historyImport }) }),
     fingerprint,
   });
+}
+
+/**
+ * The shared outbound half of an inbound-only adapter (backlog:ffce3d1cd636).
+ *
+ * TikTok, the PBX, site forms, calendar pushes and Stripe webhooks deliver
+ * events INTO the space; this package never sends through them (replies ride
+ * the customer's reachable channel instead). One definition, used by every
+ * inbound-only adapter, so the refusal code is the contract's, not each
+ * adapter's own wording: `normalizeOutbound` and `sendOutbound` throw
+ * `CHANNEL_SEND_UNSUPPORTED`, which `operations.js` hands back intact (like
+ * `CHANNEL_TEMPLATE_REQUIRED`) and the kit's send check asserts.
+ *
+ * @param {string} label the adapter label, for the refusal message only
+ */
+export function inboundOnlyOutbound(label) {
+  const refuse = () => {
+    throw new AppError(`${label} is inbound-only: the space never sends through this channel`, {
+      code: 'CHANNEL_SEND_UNSUPPORTED', status: 422,
+    });
+  };
+  return { normalizeOutbound: refuse, sendOutbound: refuse };
 }
 
 /** Map-backed, unique-per-identity adapter registry with fingerprints. */
