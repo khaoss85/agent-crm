@@ -260,11 +260,17 @@ test('a post-construction fetchCatalog swap refuses at composition', async () =>
  */
 test('constructor-built recognition is one predicate: every #333 case refuses or verifies', () => {
   const built = provider();
+  // The source-free scheme, mirrored exactly: version, codeVersion, the
+  // production render pins and config — never closure text (round 6 P1: the
+  // pins ride in the input so a behaviour change moves the fingerprint even
+  // when fixtures and pins moved without a bump).
   const sourceFreeFingerprint = computeDefinitionFingerprint({
     type: 'catalog-provider',
     name: built.name,
     version: built.version,
     codeVersion: PRICE_LIST_CATALOG_CODE_VERSION,
+    renderHash: PRICE_LIST_CATALOG_TEMPLATE.renderHash,
+    tieredRenderHash: PRICE_LIST_CATALOG_TEMPLATE.tieredRenderHash,
     config: built.config,
   });
   // Same behaviour, different closure text: the #271 class of change.
@@ -346,6 +352,8 @@ test('constructor-built recognition is one predicate: every #333 case refuses or
       name: built.name,
       version: built.version,
       codeVersion: PRICE_LIST_CATALOG_CODE_VERSION + 1,
+      renderHash: PRICE_LIST_CATALOG_TEMPLATE.renderHash,
+      tieredRenderHash: PRICE_LIST_CATALOG_TEMPLATE.tieredRenderHash,
       config: built.config,
     }),
     sourceFreeFingerprint,
@@ -397,12 +405,16 @@ test('listino data, provider version and constructor version all move the finger
   // structurally, not by composing a forged bump (a bumped codeVersion
   // without the matching pin move refuses; see the recognition table):
   // recomputing the input with codeVersion + 1 differs from the live print.
+  // The recomputation carries the production render pins like the registry
+  // does, so the scheme it mirrors stays exact.
   assert.notEqual(
     computeDefinitionFingerprint({
       type: 'catalog-provider',
       name: 'palestra-listino',
       version: 1,
       codeVersion: PRICE_LIST_CATALOG_CODE_VERSION + 1,
+      renderHash: PRICE_LIST_CATALOG_TEMPLATE.renderHash,
+      tieredRenderHash: PRICE_LIST_CATALOG_TEMPLATE.tieredRenderHash,
       config: provider().config,
     }),
     baseline,
@@ -443,11 +455,14 @@ test('the constructor template is pinned: unpinned source refuses at composition
 
 /**
  * Render characterization at constructor version 1: the oracle is the catalog
- * bytes the closure renders, so a behaviour change to the rendered catalog
- * can only land together with a constructor version bump — and a bump can
- * only land with a behaviour change. Either half alone fails, which is what
- * makes an unbumped behaviour edit visible instead of silent (the fingerprint
- * covers codeVersion, never closure text).
+ * bytes the closure renders, frozen a second time as definition fingerprints
+ * in PRICE_LIST_CATALOG_TEMPLATE (production code). A behaviour change to the
+ * rendered catalog can only land together with a constructor version bump —
+ * and a bump can only land with a behaviour change. Either half alone fails,
+ * which is what makes an unbumped behaviour edit visible instead of silent;
+ * and because the fingerprint covers the render pins, even a behaviour change
+ * that updated fixtures and pins but skipped the bump still moves the
+ * fingerprint (the fingerprint covers codeVersion, never closure text).
  *
  * Two fixtures, because the gym fixture alone cannot fail for tier or
  * externalId behaviour changes (review khaoss85/agent-crm#333): it covers
@@ -750,10 +765,21 @@ const TIERED_RENDER_CHARACTERIZATION = {
 test('a render change and a constructor bump move together, neither alone', async () => {
   // JSON round-trip: the render carries undefined-valued fields on some
   // shapes, which carry no information and would make the comparison about
-  // key presence instead of behaviour.
+  // key presence instead of behaviour. The round-tripped bytes are also what
+  // the production render pins hash (PRICE_LIST_CATALOG_TEMPLATE), so the
+  // equality below is against the oracle frozen in production code — not only
+  // against the editable fixture beside it (review khaoss85/agent-crm#333,
+  // round 6: comparing two same-PR editables let a behaviour change ship
+  // under an unchanged fingerprint).
   const fixtures = [
-    { name: 'gym', build: () => provider(), expected: RENDER_CHARACTERIZATION },
-    { name: 'tiered', build: () => tieredProvider(), expected: TIERED_RENDER_CHARACTERIZATION },
+    {
+      name: 'gym', build: () => provider(), expected: RENDER_CHARACTERIZATION,
+      pin: PRICE_LIST_CATALOG_TEMPLATE.renderHash,
+    },
+    {
+      name: 'tiered', build: () => tieredProvider(), expected: TIERED_RENDER_CHARACTERIZATION,
+      pin: PRICE_LIST_CATALOG_TEMPLATE.tieredRenderHash,
+    },
   ];
   assert.equal(
     tieredProvider().config.deactivateMissing,
@@ -762,6 +788,13 @@ test('a render change and a constructor bump move together, neither alone', asyn
   );
   for (const fixture of fixtures) {
     const rendered = JSON.parse(JSON.stringify(await fixture.build().fetchCatalog({})));
+    assert.equal(
+      computeDefinitionFingerprint(rendered),
+      fixture.pin,
+      `${fixture.name}: the live render matches the production render pin — a behaviour change `
+      + 'must update the pin in packages/commercial/src/registry.js, which moves the fingerprint '
+      + 'on its own even without a version bump',
+    );
     const renderedSame = isDeepStrictEqual(rendered, fixture.expected.catalog);
     assert.equal(
       renderedSame,
@@ -770,6 +803,29 @@ test('a render change and a constructor bump move together, neither alone', asyn
       + 'and a bump ships with a behaviour change — an unbumped behaviour edit fails here, not silently in production',
     );
   }
+});
+
+test('the constructor-built fingerprint covers the pinned render bytes, not only the version', () => {
+  // Structural cover for the round-6 P1 fix: the registry must keep hashing
+  // the production render pins. If a later refactor drops them from the
+  // input, this recomputation diverges from the registry fingerprint and the
+  // render pins become dead weight — back to hashing `codeVersion` alone.
+  const built = provider();
+  const live = new CommercialRegistries({ catalogProviders: [built] })
+    .getCatalogProvider('palestra-listino').fingerprint;
+  assert.equal(
+    live,
+    computeDefinitionFingerprint({
+      type: 'catalog-provider',
+      name: built.name,
+      version: built.version,
+      codeVersion: built.codeVersion,
+      renderHash: PRICE_LIST_CATALOG_TEMPLATE.renderHash,
+      tieredRenderHash: PRICE_LIST_CATALOG_TEMPLATE.tieredRenderHash,
+      config: built.config ?? null,
+    }),
+    'the registry fingerprint hashes the production render pins with the version and config',
+  );
 });
 
 /**

@@ -48,13 +48,17 @@ export const DISCOUNT_DECISIONS = Object.freeze(['auto_approve', 'approval_requi
  * Constructor version of the workspace price-list catalog provider.
  *
  * The registry fingerprint of a price-list provider covers `{type, name,
- * version, codeVersion, config}` and deliberately NOT the `fetchCatalog`
- * closure source: the closure reads only the declared `config` (same
- * reference, frozen), so a pure refactor of the constructor file — renames,
- * comments, formatting — leaves every registered fingerprint unchanged. A
- * behaviour change to the catalog the closure renders bumps this version
- * instead, which moves the fingerprint and asks spaces to publish a new
- * provider version, exactly like a listino data change does.
+ * version, codeVersion, renderHash, tieredRenderHash, config}` and
+ * deliberately NOT the `fetchCatalog` closure source: the closure reads only
+ * the declared `config` (same reference, frozen), so a pure refactor of the
+ * constructor file — renames, comments, formatting — leaves every registered
+ * fingerprint unchanged. A behaviour change to the catalog the closure
+ * renders moves the fingerprint twice over: the render pins below must move
+ * with it (or the render characterization fails), and the pins are
+ * fingerprint inputs, so even a pin update without a version bump still moves
+ * every registered fingerprint instead of syncing different keys silently.
+ * Bumping this version on top stays mandatory: it names the behaviour change
+ * the pins only hash.
  */
 export const PRICE_LIST_CATALOG_CODE_VERSION = 1;
 
@@ -63,18 +67,28 @@ export const PRICE_LIST_CATALOG_CODE_VERSION = 1;
  * khaoss85/agent-crm#333): the registry fingerprint deliberately excludes
  * closure text, so the executed code is bound here instead — every provider
  * the constructor builds carries a `fetchCatalog` whose SHA-256 must match
- * `sourceHash`, or composition refuses. A behaviour change to the closure
- * therefore cannot pass silently without a `codeVersion` bump: the pin moves
- * with every source edit (rename or behaviour), and the render
- * characterization in `tests/commercial-price-list.test.js` only lets the
- * pin move alone when the rendered catalog bytes are unchanged.
+ * `sourceHash`, or composition refuses. The `renderHash` pins are the second
+ * half of that binding: the definition fingerprints of the catalogs the
+ * constructor renders for the two characterization fixtures (gym and tiered,
+ * see `tests/commercial-price-list.test.js`), so a behaviour change to the
+ * closure cannot land by updating fixtures and pins while leaving the version
+ * alone — the updated pins move the fingerprint on their own, and spaces
+ * registered under the old bytes refuse as drift instead of composing.
  *
- * Never edit `sourceHash` except together with the closure it pins, and bump
- * `codeVersion` (above and here) exactly when the rendered catalog changes.
+ * Never edit `sourceHash` except together with the closure it pins; never
+ * edit a render pin except together with the rendered bytes it pins (a pure
+ * refactor leaves both render pins unchanged); and bump `codeVersion` (above
+ * and here) exactly when the rendered catalog changes. The render pins are
+ * definition fingerprints of the JSON round-tripped catalog bytes — the same
+ * canonical form the render characterization asserts — so every checkout
+ * agrees on them, with no line-ending dependence (rendered catalogs carry no
+ * source text).
  */
 export const PRICE_LIST_CATALOG_TEMPLATE = Object.freeze({
   codeVersion: PRICE_LIST_CATALOG_CODE_VERSION,
   sourceHash: '2f93d1464a2bff40f9fb5fb2a2ec4197551ebd90862a6077f951e79a07e1234a',
+  renderHash: '7c3f922253fda68fc7fc5da60d16204d78ba198fa0b7f0c6295f4e20159d830d',
+  tieredRenderHash: '5ef8b5e8e813ab05157b0c215c2a2cac38bb31e68d5eade0c6f0775978542c72',
 });
 
 /**
@@ -92,8 +106,9 @@ export function validatePriceListConstructorTemplate(sourceText) {
   if (live !== PRICE_LIST_CATALOG_TEMPLATE.sourceHash) {
     throw new ValidationError(
       'price-list catalog constructor source changed without a constructor update: '
-      + 'a behaviour change must bump PRICE_LIST_CATALOG_CODE_VERSION (which moves the fingerprint), '
-      + 'a pure refactor must update PRICE_LIST_CATALOG_TEMPLATE.sourceHash '
+      + 'a behaviour change must bump PRICE_LIST_CATALOG_CODE_VERSION and update the render pins '
+      + '(the pins move the fingerprint on their own), '
+      + 'a pure refactor must update PRICE_LIST_CATALOG_TEMPLATE.sourceHash only '
       + '(see the render characterization in tests/commercial-price-list.test.js)',
     );
   }
@@ -207,9 +222,13 @@ export function validateCatalogProvider(definition) {
 /**
  * The fingerprint input for one catalog provider. Recognized
  * constructor-built providers (see isConstructorBuiltCatalogProvider) hash
- * `{type, name, version, codeVersion, config}`: the closure reads only the
- * declared config, so its source text is not behaviour and hashing it
- * churned every registered fingerprint on each refactor. Every other
+ * `{type, name, version, codeVersion, renderHash, tieredRenderHash, config}`:
+ * the closure reads only the declared config, so its source text is not
+ * behaviour and hashing it churned every registered fingerprint on each
+ * refactor — but the rendered bytes ARE behaviour, so the pinned render
+ * digests stand in for them (review khaoss85/agent-crm#333, round 6: hashing
+ * only `codeVersion` let a behaviour change ship under an unchanged
+ * fingerprint when fixtures and pins moved without a bump). Every other
  * provider — including one that merely declares a `codeVersion` — keeps the
  * established source-plus-config form, so a rewritten closure still moves
  * the fingerprint instead of silently opting out of drift detection.
@@ -222,6 +241,8 @@ function catalogProviderFingerprint(definition) {
       name: definition.name,
       version: definition.version,
       codeVersion: definition.codeVersion,
+      renderHash: PRICE_LIST_CATALOG_TEMPLATE.renderHash,
+      tieredRenderHash: PRICE_LIST_CATALOG_TEMPLATE.tieredRenderHash,
       config: definition.config ?? null,
     });
   }

@@ -580,7 +580,9 @@ batch that refuses elsewhere rolls the move back with it. It is horizontal
 kernel machinery — any registry publishing versioned definitions can declare
 history — and the price-list catalog provider is its first and only consumer:
 its fingerprint dropped closure text in favour of `{type, name, version,
-codeVersion, config}`, and it declares the two historical closure-text forms
+codeVersion, renderHash, tieredRenderHash, config}` (the render pins stand in
+for the rendered bytes, so a behaviour change moves the fingerprint even
+without a version bump), and it declares the two historical closure-text forms
 (pre-#271 over `name`, #271 over `providerName`) so registered databases keep
 composing. Declared history is recognized, never trusted: the registry
 honours `codeVersion`/`legacyFetchSources` only when one predicate holds —
