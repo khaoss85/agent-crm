@@ -385,6 +385,47 @@ test('CSV neutralizes formula leaders with a text marker, not just quotes', () =
   }
 });
 
+test('CSV header neutralizes the hostile persona echo like any other cell', () => {
+  // Regression (rev-agent-crm-343-ed481e78ea29 P1): team/funnel cells went
+  // through cell(), but the header interpolated model.query.owner raw, so a
+  // hostile owner still exported an executable spreadsheet formula.
+  const base = {
+    kpis: [], forecast: { closedMinor: 0, probableMinor: 0, bestMinor: 0, targetMinor: null },
+    funnel: [], team: [],
+  };
+  const headerFields = (line) => {
+    const fields = [];
+    let current = '';
+    let index = 0;
+    while (index < line.length) {
+      if (line[index] === '"') {
+        index += 1;
+        while (index < line.length) {
+          if (line[index] === '"') {
+            if (line[index + 1] === '"') { current += '"'; index += 2; } else { index += 1; break; }
+          } else { current += line[index]; index += 1; }
+        }
+      } else if (line[index] === ';') {
+        fields.push(current); current = ''; index += 1;
+      } else { current += line[index]; index += 1; }
+    }
+    fields.push(current);
+    return fields;
+  };
+  const hostile = buildDashboardCsv({ ...base, query: { period: '2026-10', owner: '=2+2', currency: 'EUR' } });
+  assert.deepEqual(
+    headerFields(hostile.content.split('\n')[0]),
+    ['reporting', '2026-10', "'=2+2", 'EUR'],
+    `hostile persona decodes to text in the header, got: ${hostile.content}`,
+  );
+  const tricky = buildDashboardCsv({ ...base, query: { period: '2026-10', owner: 'a";b', currency: 'EUR' } });
+  assert.deepEqual(
+    headerFields(tricky.content.split('\n')[0]),
+    ['reporting', '2026-10', 'a";b', 'EUR'],
+    `persona with separator and quote stays one column, got: ${tricky.content}`,
+  );
+});
+
 test('proposal baseline is period-scoped: equal in-period rates propose nothing', () => {
   // Regression: the team rates are accumulated for the queried month, but
   // the baseline was lifetime. With both owners at 90% lifetime and 50% in

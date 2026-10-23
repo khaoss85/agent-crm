@@ -510,7 +510,7 @@ export function buildDashboardCsv(model) {
     return needsQuotes ? `"${text.replace(/"/g, '""')}"` : text;
   };
   const lines = [
-    `reporting${sep}${model.query.period}${sep}${model.query.owner ?? 'tutti'}${sep}${model.query.currency}`,
+    ['reporting', model.query.period, model.query.owner ?? 'tutti', model.query.currency].map(cell).join(sep),
     '',
     ['persona', 'preventivi_aperti', 'valore_aperto_minor', 'vinte', 'vinte_minor', 'perse', 'tasso'].map(cell).join(sep),
   ];
