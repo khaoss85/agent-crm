@@ -45,6 +45,8 @@ const MODULE_HISTORY_FILES = Object.freeze({
   'calendar-sync-state': join(HERE, '../../calendar-sync/modules/calendar-sync-state.history.json'),
   'appointment': join(HERE, '../../appointments/modules/appointment.history.json'),
   'channel-connection': join(HERE, '../../channels/modules/channel-connection.history.json'),
+  'sequence-step': join(HERE, '../../sequences/modules/sequence-step.history.json'),
+  'sequence-send': join(HERE, '../../sequences/modules/sequence-send.history.json'),
 });
 
 /**

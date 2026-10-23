@@ -796,3 +796,131 @@ test('chiusura: come la board (solo pipelineKey, gruppi per pipelineStage)', asy
   assert.ok(!answer.lines.some((line) => line.includes('5,000.00')), JSON.stringify(answer.lines));
   assert.ok(!answer.lines.some((line) => line.includes('500.00')), JSON.stringify(answer.lines));
 });
+
+// BO-F4-04 — execution trace: every read behind an answer is recorded.
+
+test('traccia: ogni lettura registrata con superficie, limite e righe', async () => {
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': CONVS,
+    '/api/modules/data-quality-issue/records?limit=50': ISSUES,
+  });
+  const answer = await runSuggestion(client, 'bo04:oggi:urgenti');
+  assert.equal(answer.trace.suggestionId, 'bo04:oggi:urgenti');
+  assert.ok(typeof answer.trace.at === 'string' && answer.trace.at !== '');
+  const byTarget = Object.fromEntries(answer.trace.reads.map((read) => [read.target, read]));
+  assert.deepEqual(byTarget.conversation, { target: 'conversation', limit: 50, status: 'ok', rows: 3 });
+  assert.deepEqual(byTarget['data-quality-issue'], { target: 'data-quality-issue', limit: 50, status: 'ok', rows: 2 });
+  // Every cited source comes from a read of this same run, never invented.
+  const readIds = [...CONVS.items, ...ISSUES.items].map((row) => row.id);
+  for (const source of answer.sources) {
+    assert.ok(readIds.includes(source.id), `invented source ${source.id}`);
+  }
+});
+
+test('traccia: modulo illeggibile registrato come mancante, la risposta resta', async () => {
+  const client = stubClient({ '/api/modules/conversation/records?limit=50': CONVS });
+  const answer = await runSuggestion(client, 'bo04:oggi:urgenti');
+  const byTarget = Object.fromEntries(answer.trace.reads.map((read) => [read.target, read]));
+  assert.deepEqual(byTarget['data-quality-issue'], { target: 'data-quality-issue', limit: 50, status: 'missing', rows: 0 });
+  assert.ok(answer.sources.length > 0);
+  assert.ok(answer.unavailable.some((note) => note.includes('data-quality-issue')));
+});
+
+test('traccia: chiusura registra opportunità e schema', async () => {
+  const client = stubClient({
+    '/api/opportunities': { items: [{ id: 'opp-1', name: 'Prova', pipelineKey: 'b2b-sales', pipelineStage: 'proposal', stage: 'proposal' }] },
+    '/api/schema': { pipelines: [] },
+  });
+  const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
+  const byTarget = Object.fromEntries(answer.trace.reads.map((read) => [read.target, read]));
+  assert.deepEqual(byTarget.opportunities, { target: 'opportunities', limit: null, status: 'ok', rows: 1 });
+  assert.deepEqual(byTarget.schema.status, 'ok');
+});
+
+test('traccia: opportunità illeggibili registrate come mancanti', async () => {
+  const client = stubClient({ '/api/schema': { pipelines: [] } });
+  const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
+  const byTarget = Object.fromEntries(answer.trace.reads.map((read) => [read.target, read]));
+  assert.deepEqual(byTarget.opportunities, { target: 'opportunities', limit: null, status: 'missing', rows: 0 });
+  assert.ok(answer.unavailable.some((note) => note.includes('Opportunità')));
+});
+
+test('traccia: risposta non valida registrata come invalida', async () => {
+  const client = stubClient({ '/api/modules/conversation/records?limit=50': { items: 'no' } });
+  const answer = await runSuggestion(client, 'bo04:oggi:urgenti');
+  const byTarget = Object.fromEntries(answer.trace.reads.map((read) => [read.target, read]));
+  assert.deepEqual(byTarget.conversation, { target: 'conversation', limit: 50, status: 'invalid', rows: 0 });
+});
+
+test('traccia: esecuzione registrata — attesa, esecuzione, rifiuto', async () => {
+  const client = stubClient({
+    '/api/modules/conversation/records/conv-2/actions/close': { ok: true, id: 'conv-2', status: 'closed' },
+  });
+  const trace = [];
+  const close = {
+    id: 'bo04:chiudi:conv-2', label: 'Chiudi il thread', kind: 'api',
+    request: { path: '/api/modules/conversation/records/conv-2/actions/close', method: 'POST', body: {} },
+    customerFacing: true,
+  };
+  const gated = await runAssistantAction(client, close, { trace });
+  assert.equal(gated.needsConfirmation, true);
+  assert.deepEqual(trace.map((entry) => entry.outcome), ['needs-confirmation']);
+  const done = await runAssistantAction(client, close, { confirmedActionId: close.id, trace });
+  assert.equal(done.ok, true);
+  assert.deepEqual(trace.map((entry) => entry.outcome), ['needs-confirmation', 'executed']);
+  assert.ok(trace.every((entry) => entry.actionId === close.id && typeof entry.at === 'string'));
+  const forged = { ...close, id: 'bo04:chiudi:forged', request: { path: '/api/modules/x', method: 'POST', body: {} } };
+  await assert.rejects(runAssistantAction(client, forged, { confirmedActionId: forged.id, trace }), /non consentita/);
+  assert.equal(trace[trace.length - 1].outcome, 'failed');
+  assert.equal(trace[trace.length - 1].actionId, forged.id);
+});
+
+test('traccia: domanda libera live registra endpoint e righe', async () => {
+  const client = stubClient({
+    '/api/assistant/ask': {
+      lines: ['Ecco i thread aperti.'],
+      sources: [{ module: 'conversation', id: 'conv-1', label: 'Marco Rossi' }],
+    },
+  });
+  const outcome = await askFreeQuestion(client, { mode: 'live', endpoint: '/api/assistant/ask' }, 'chi devo ricontattare?');
+  assert.equal(outcome.ok, true);
+  assert.deepEqual(outcome.answer.trace.reads, [{ target: 'assistant-ask', limit: null, status: 'ok', rows: 1 }]);
+  assert.equal(outcome.answer.trace.suggestionId, 'bo04:domanda-libera');
+});
+
+test('pannello: traccia ispezionabile e cronologia conservata', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': CONVS,
+    '/api/modules/data-quality-issue/records?limit=50': ISSUES,
+  });
+  const panel = createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {} });
+  await panel.open('clienti');
+  mount.findByText('button', 'Chi devo ricontattare?').dispatch('click', {});
+  await tick();
+  await tick();
+  assert.ok(mount.textContent.includes('Traccia di esecuzione'));
+  assert.ok(mount.textContent.includes('conversation: 3 righe lette (limite 50)'));
+  assert.equal(panel.getState().traceReads, 1);
+  assert.equal(panel.getState().historyCount, 1);
+  mount.findByText('button', 'Quali lead mostrano segnali caldi?').dispatch('click', {});
+  await tick();
+  await tick();
+  // behavioral-signal is not composed here: the trace names the missing
+  // read instead of failing, and the answer is kept anyway.
+  assert.ok(mount.textContent.includes('behavioral-signal: non leggibile in questo spazio'));
+  assert.ok(mount.textContent.includes('Cronologia'));
+  assert.equal(panel.getState().historyCount, 2);
+  const historyButtons = mount.findAll('button').filter(
+    (node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-assistant-history-open'),
+  );
+  assert.equal(historyButtons.length, 2);
+  historyButtons[0].dispatch('click', {});
+  // Reopening a past answer shows its conserved trace without new reads.
+  const readsBefore = client.calls.length;
+  assert.equal(panel.getState().answerTitle, 'Chi devo ricontattare?');
+  assert.ok(mount.textContent.includes('conversation: 3 righe lette (limite 50)'));
+  assert.equal(client.calls.length, readsBefore);
+  assert.equal(panel.getState().historyCount, 2);
+});

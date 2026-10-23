@@ -60,7 +60,7 @@ test('an undatable ledger warns instead of failing the push', () => {
 });
 
 test('the window constant matches the workflow schedule it mirrors', () => {
-  assert.equal(MEASURE_WINDOW_HOURS, 6);
+  assert.equal(MEASURE_WINDOW_HOURS, 24);
 });
 
 test('the run timestamp dates the tree, with no git and no clock', () => {

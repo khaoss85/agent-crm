@@ -82,6 +82,14 @@ The ⌘K bar opens the assistant side panel
   surface as the handwritten views. An action flagged customer-facing never
   runs without an explicit per-action confirmation first — unconfirmed, it
   neither requests nor navigates.
+- Every answer carries its execution trace (BO-F4-04): which surfaces were
+  read, with which bound and how many rows each returned (`missing` when a
+  module is not composed, `invalid` for an unusable payload), plus every
+  action step the operator took on it (gated, executed, failed). The panel
+  renders the trace under "Traccia di esecuzione" and keeps the last
+  `ASSISTANT_HISTORY_LIMIT` answers in the session history ("Cronologia"),
+  reopenable without rerunning the reads. In-memory only, never persisted:
+  sources carry customer labels that must not rest on disk.
 - Without a configured LLM key the backend probe
   (`GET /api/assistant/status`, published by a future backend) misses and
   the panel runs in dry-run: suggestions stay usable on real data, and the

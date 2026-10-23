@@ -37,7 +37,8 @@ export const SHELL_ITEMS = Object.freeze([
   { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2' },
   { id: 'calendario', label: 'Calendario', group: 'native', route: null, story: 'BO-F3' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3' },
-  { id: 'reporting', label: 'Reporting', group: 'custom', route: null, story: 'BO-F5' },
+  { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01' },
+  { id: 'nuovo-modulo', label: 'Nuovo modulo', group: 'custom', route: '#/nuovo-modulo', story: 'BO-F5-01' },
   { id: 'impostazioni', label: 'Impostazioni', group: 'settings', route: SETTINGS_ROUTE, story: 'BO-F0-02' },
 ]);
 
@@ -52,12 +53,12 @@ export const SHELL_GROUPS = Object.freeze([
 /**
  * The four settings areas from the prototype. Stato sync is backed by the
  * data-quality queue that already exists in the customer-data section,
- * Personalizzazione opens the connectors screen (BO-F1-02) and Catalogo
- * prodotti opens the product table delivered by BO-F2-05; the last area
- * names the story that delivers it.
+ * Personalizzazione opens the Skill/Connettori/Pacchetti screen (BO-F4-01)
+ * and Catalogo prodotti opens the product table delivered by BO-F2-05; the
+ * last area names the story that delivers it.
  */
 export const SETTINGS_AREAS = Object.freeze([
-  { id: 'personalizzazione', label: 'Personalizzazione', route: '#/connettori', story: 'BO-F1-02' },
+  { id: 'personalizzazione', label: 'Personalizzazione', route: '#/personalizzazione', story: 'BO-F4-01' },
   { id: 'catalogo', label: 'Catalogo prodotti', route: '#/catalogo', story: 'BO-F2 (catalogo)' },
   { id: 'stato-sync', label: 'Stato sync', route: '#/customer-data', story: 'BO-F1' },
   { id: 'spazi-accessi', label: 'Spazi e accessi', route: null, story: 'BO-F0-06' },
@@ -77,6 +78,7 @@ const AI_PLACEHOLDERS = Object.freeze({
   calendario: 'Scrivi: «trova 45 minuti con Marco e Sara»',
   sequenze: 'Scrivi: «crea una sequenza per i lead del sito»',
   reporting: 'Chiedi: «chi ha gestito più call questo mese?»',
+  'nuovo-modulo': 'Descrivi: «un modulo sonde per i KPI del pilota»',
   impostazioni: 'Chiedi: «cosa può fare l\u2019AI senza chiedermi?»',
 });
 

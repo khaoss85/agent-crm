@@ -1,0 +1,41 @@
+{
+  "manifestVersion": 1,
+  "revision": 1,
+  "name": "reporting",
+  "description": "KPI snapshots owned by the reporting bundle (BO-F5-01). One row per metric per period: the material a reporting dashboard reads without touching kernel tables. Dashboards, charts and forecasts (BO-F5-02) read these rows; they never query clienti, pipeline or calendario tables directly.",
+  "table": "reportings",
+  "fields": [
+    {
+      "name": "metric",
+      "type": "string",
+      "required": true,
+      "unique": false,
+      "column": "metric",
+      "writable": "public"
+    },
+    {
+      "name": "period",
+      "type": "string",
+      "required": true,
+      "unique": false,
+      "column": "period",
+      "writable": "public"
+    },
+    {
+      "name": "value",
+      "type": "integer",
+      "required": true,
+      "unique": false,
+      "column": "value",
+      "writable": "public"
+    },
+    {
+      "name": "unit",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "unit",
+      "writable": "public"
+    }
+  ]
+}

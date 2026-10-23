@@ -17,6 +17,7 @@ import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
 import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
 import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
 import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
+import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
 
 const DEFAULT_PUBLIC_DIR = resolve(
   fileURLToPath(new URL('../../admin/public', import.meta.url)),
@@ -769,6 +770,55 @@ export function buildRouter(app) {
       done: advance?.done === true,
       import: advance?.state ?? started.state ?? null,
     };
+  });
+
+  // Personalizzazione (BO-F4-01): per-space activation of framework packages
+  // and agent skills, recorded in `space-package`, plus the read-only
+  // "Prova" preview over the space's real rows. The same enumerated shape as
+  // the connectors routes above: the kernel gates the role boundary and
+  // delegates to the composed application operations; without the
+  // space-permissions package composed each answers an honest 404. The
+  // catalog is the checked-in composition catalog — static, function-free,
+  // additive. Preview performs zero writes by construction; activation names
+  // its actor and replays identically.
+  router.add('GET', '/api/space-packages/catalog', async ({ identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.previewSpacePackage !== 'function') {
+      throw new NotFoundError('Operation', 'space packages');
+    }
+    return { units: SPACE_PACKAGE_CATALOG };
+  });
+
+  router.add('GET', '/api/space-packages/preview', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.previewSpacePackage !== 'function') {
+      throw new NotFoundError('Operation', 'space packages');
+    }
+    const spaceId = typeof query.spaceId === 'string' ? query.spaceId : '';
+    const unit = typeof query.unit === 'string' ? query.unit : '';
+    return await app.previewSpacePackage({ spaceId, unit });
+  });
+
+  router.add('POST', '/api/space-packages/activate', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.activateSpacePackage !== 'function') {
+      throw new NotFoundError('Operation', 'space packages');
+    }
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    const unit = typeof input.unit === 'string' ? input.unit : '';
+    return await app.activateSpacePackage({ spaceId, unit, actor });
+  });
+
+  router.add('POST', '/api/space-packages/deactivate', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.deactivateSpacePackage !== 'function') {
+      throw new NotFoundError('Operation', 'space packages');
+    }
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    const unit = typeof input.unit === 'string' ? input.unit : '';
+    return await app.deactivateSpacePackage({ spaceId, unit, actor });
   });
 
   // Customer Data Operations v2: bulk decisions and scale-safe export. The
