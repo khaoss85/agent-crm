@@ -34,6 +34,19 @@
  * offer sends with no approval; above it nothing sends and no link is
  * minted without a registered `approved` approval decided by the owner
  * role of that space.
+ *
+ * Supported round-trip: `createOfferSendPolicy(...).config` is pure data
+ * the caller may persist beside the space overrides and pass back as the
+ * `policy` of `authorizeOfferSend` (or into `createOfferSendPolicy`
+ * again): `requiredRole: 'owner'` is accepted by equality, anything else
+ * refuses. Above the threshold the gate binds the approval row to a
+ * person: `approval.decidedBy` must be a non-empty user id and must equal
+ * the caller-provided `approverUserId`, whose current space role the
+ * caller resolves (`approverRole`) from control-plane membership. A role
+ * string alone never releases. When the caller wires the gate to an
+ * opportunity it also passes `opportunityId`, and the approval row loaded
+ * for that opportunity must carry the same id (replays of approvals
+ * decided for another offer refuse).
  */
 
 import { ValidationError } from '../core/src/errors.js';
@@ -92,8 +105,10 @@ export function createOfferSendPolicy(config = {}) {
   }
   // The releasing role is not configurable: only the space owner (the
   // titolare) releases an above-threshold offer, so a caller passing a
-  // weaker role refuses instead of silently widening the gate.
-  if (config.requiredRole !== undefined) {
+  // weaker role refuses instead of silently widening the gate. The exact
+  // owner value round-trips: persisted policy output carries it, and the
+  // gate accepts it back by equality.
+  if (config.requiredRole !== undefined && config.requiredRole !== OWNER_ROLE) {
     throw new ValidationError('requiredRole is fixed to the space owner and is not configurable', { field: 'requiredRole' });
   }
   const thresholdCents = config.thresholdCents === undefined
@@ -162,9 +177,11 @@ export function computeDepositCents(amountCents, depositBps = DEFAULT_DEPOSIT_BP
  * Both the send and the link share the single verdict: above the
  * threshold with no usable approval, `sendAllowed` and `linkAllowed` are
  * both false and the caller must mint nothing. The approval is a
- * `packages/modules/approval` row; `approverRole` is the decider's space
- * role resolved by the caller from control-plane membership (the
- * framework stores no members). `spaceHasOwner: false` means the space
+ * `packages/modules/approval` row; `approverUserId` is the decider's user
+ * id and must equal the row's `decidedBy`, while `approverRole` is that
+ * same user's current space role resolved by the caller from
+ * control-plane membership (the framework stores no members). A role
+ * string alone never releases. `spaceHasOwner: false` means the space
  * has no titolare assigned: the offer blocks with its reason, because no
  * one in that space can release it.
  *
@@ -176,9 +193,11 @@ export function computeDepositCents(amountCents, depositBps = DEFAULT_DEPOSIT_BP
  *
  * @param {{
  *   amountCents: unknown,
- *   policy?: {thresholdCents?: unknown, depositBps?: unknown},
- *   approval?: {status?: unknown, decidedBy?: unknown} | null,
+ *   policy?: {thresholdCents?: unknown, depositBps?: unknown, requiredRole?: unknown},
+ *   approval?: {status?: unknown, decidedBy?: unknown, opportunityId?: unknown} | null,
  *   approverRole?: unknown,
+ *   approverUserId?: unknown,
+ *   opportunityId?: unknown,
  *   spaceHasOwner?: unknown,
  * }} args
  */
@@ -197,8 +216,10 @@ export function authorizeOfferSend(args = {}) {
   const depositBps = rawPolicy.depositBps === undefined
     ? DEFAULT_DEPOSIT_BPS
     : requireDepositBps(rawPolicy.depositBps, 'policy.depositBps');
-  // Fixed, never from the caller: see createOfferSendPolicy.
-  if (rawPolicy.requiredRole !== undefined) {
+  // Fixed, never widened from the caller: see createOfferSendPolicy. The
+  // exact owner value round-trips (persisted policy output passes back by
+  // equality); anything else refuses.
+  if (rawPolicy.requiredRole !== undefined && rawPolicy.requiredRole !== OWNER_ROLE) {
     throw new ValidationError('requiredRole is fixed to the space owner and is not configurable', { field: 'policy.requiredRole' });
   }
   const requiredRole = OWNER_ROLE;
@@ -240,6 +261,40 @@ export function authorizeOfferSend(args = {}) {
       sendAllowed: false,
       reason: `offer ${amountCents}c above the ${thresholdCents}c threshold: no registered ${requiredRole} approval (approval status: ${status})`,
       matchedRule: 'approval-required',
+    });
+  }
+
+  // The approval row is bound to the person who decided it: a registered
+  // approval without a decider, or one replayed for another offer, never
+  // releases — the caller passes the decider's user id beside the role it
+  // resolves from control-plane membership.
+  const decidedBy = approval.decidedBy;
+  if (typeof decidedBy !== 'string' || decidedBy.length === 0) {
+    return frozen({
+      sendAllowed: false,
+      reason: `offer ${amountCents}c above the ${thresholdCents}c threshold: approval has no registered decider, only a ${requiredRole} decision releases it`,
+      matchedRule: 'approval-invalid',
+    });
+  }
+  if (args.opportunityId !== undefined) {
+    const expectedOpportunityId = typeof args.opportunityId === 'string' && args.opportunityId.length > 0
+      ? args.opportunityId
+      : '';
+    const approvalOpportunityId = typeof approval.opportunityId === 'string' ? approval.opportunityId : '';
+    if (expectedOpportunityId === '' || approvalOpportunityId !== expectedOpportunityId) {
+      return frozen({
+        sendAllowed: false,
+        reason: `offer ${amountCents}c above the ${thresholdCents}c threshold: approval is not registered for this opportunity, only a ${requiredRole} decision on it releases it`,
+        matchedRule: 'approval-opportunity-mismatch',
+      });
+    }
+  }
+  const approverUserId = typeof args.approverUserId === 'string' ? args.approverUserId : '';
+  if (approverUserId === '' || approverUserId !== decidedBy) {
+    return frozen({
+      sendAllowed: false,
+      reason: `offer ${amountCents}c above the ${thresholdCents}c threshold: approval decided by another person, only the deciding ${requiredRole} releases it`,
+      matchedRule: 'approver-mismatch',
     });
   }
 

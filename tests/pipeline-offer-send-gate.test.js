@@ -52,8 +52,9 @@ test('offer send gate: identity, defaults and per-space config validation', () =
   assert.equal(custom.config.requiredRole, 'owner', 'the releasing role stays the owner');
   assert.equal(typeof custom.evaluate, 'function', 'the definition carries its evaluation');
   // The owner requirement is not configurable: any override refuses,
-  // so a weaker role can never release an above-threshold offer.
-  for (const role of ['operator', 'observer', 'owner', '', 42]) {
+  // so a weaker role can never release an above-threshold offer. The
+  // exact owner value round-trips: persisted policy output carries it.
+  for (const role of ['operator', 'observer', '', 42]) {
     assert.throws(
       () => createOfferSendPolicy({ requiredRole: role }),
       /requiredRole/,
@@ -65,6 +66,20 @@ test('offer send gate: identity, defaults and per-space config validation', () =
       `policy requiredRole ${JSON.stringify(role)} refuses at authorization too`,
     );
   }
+  assert.equal(
+    createOfferSendPolicy({ thresholdCents: 500_000, requiredRole: 'owner' }).config.thresholdCents,
+    500_000,
+    'the owner value itself round-trips back into the policy builder',
+  );
+  const roundTripped = authorizeOfferSend({
+    amountCents: 600_000,
+    policy: createOfferSendPolicy({ thresholdCents: 500_000 }).config,
+    approval: { status: 'approved', decidedBy: 'titolare-1' },
+    approverRole: 'owner',
+    approverUserId: 'titolare-1',
+  });
+  assert.equal(roundTripped.sendAllowed, true, 'persisted policy output authorizes the honest owner round-trip');
+  assert.equal(roundTripped.matchedRule, 'approved-by-owner', 'the round-trip release is named');
 
   for (const bad of [
     { thresholdCents: 0 },
@@ -117,7 +132,7 @@ test('offer send gate: threshold and deposit are per-space config', () => {
   const policy = { thresholdCents: 500_000, depositBps: 2000 };
   const below = authorizeOfferSend({ amountCents: 500_000, policy });
   assert.equal(below.sendAllowed, true, 'custom threshold holds at its boundary');
-  const above = authorizeOfferSend({ amountCents: 500_001, policy, approval: OWNER_APPROVAL, approverRole: 'owner' });
+  const above = authorizeOfferSend({ amountCents: 500_001, policy, approval: OWNER_APPROVAL, approverRole: 'owner', approverUserId: 'titolare-1' });
   assert.equal(above.sendAllowed, true, 'owner approval releases under custom config');
   assert.equal(above.depositCents, 100_000, '20% of 500.001 € rounds to 100.000c');
   assert.equal(above.depositBps, 2000, 'the verdict carries the space share');
@@ -145,7 +160,7 @@ test('offer send gate: a space without titolare blocks with its reason', () => {
 test('offer send gate: only the titolare releases, other roles refuse', () => {
   for (const role of ['operator', 'observer', '', null, undefined]) {
     const verdict = authorizeOfferSend({
-      amountCents: 2_500_000, approval: OWNER_APPROVAL, approverRole: role,
+      amountCents: 2_500_000, approval: OWNER_APPROVAL, approverRole: role, approverUserId: 'titolare-1',
     });
     assert.equal(verdict.sendAllowed, false, `role ${JSON.stringify(role)} never releases`);
     assert.equal(verdict.linkAllowed, false, 'the link stays closed too');
@@ -153,12 +168,55 @@ test('offer send gate: only the titolare releases, other roles refuse', () => {
   }
 });
 
+// The approval is bound to the person who decided it: a role string alone
+// never releases, and an approval decided for someone — or something —
+// else never replays.
+test('offer send gate: the approval binds decider identity and opportunity', () => {
+  const base = { amountCents: 2_500_000, approval: OWNER_APPROVAL, approverRole: 'owner' };
+  for (const approverUserId of [undefined, null, '', 42, 'operator-7']) {
+    const verdict = authorizeOfferSend({ ...base, approverUserId });
+    assert.equal(verdict.sendAllowed, false, `approverUserId ${JSON.stringify(approverUserId)} never releases another decider's approval`);
+    assert.equal(verdict.linkAllowed, false, 'the link stays closed too');
+    assert.equal(verdict.matchedRule, 'approver-mismatch', 'the refusal names its cause');
+  }
+  for (const approval of [
+    { status: 'approved' },
+    { status: 'approved', decidedBy: '' },
+    { status: 'approved', decidedBy: null },
+    { status: 'approved', decidedBy: 42 },
+  ]) {
+    const verdict = authorizeOfferSend({
+      amountCents: 2_500_000, approval, approverRole: 'owner', approverUserId: 'titolare-1',
+    });
+    assert.equal(verdict.sendAllowed, false, 'an approval without a decider never releases');
+    assert.equal(verdict.matchedRule, 'approval-invalid', 'the refusal names its cause');
+  }
+  const replayed = authorizeOfferSend({
+    amountCents: 2_500_000,
+    approval: { status: 'approved', decidedBy: 'titolare-1', opportunityId: 'opp-other' },
+    approverRole: 'owner',
+    approverUserId: 'titolare-1',
+    opportunityId: 'opp-this',
+  });
+  assert.equal(replayed.sendAllowed, false, 'an approval decided for another offer never replays');
+  assert.equal(replayed.matchedRule, 'approval-opportunity-mismatch', 'the refusal names its cause');
+  const wired = authorizeOfferSend({
+    amountCents: 2_500_000,
+    approval: { status: 'approved', decidedBy: 'titolare-1', opportunityId: 'opp-this' },
+    approverRole: 'owner',
+    approverUserId: 'titolare-1',
+    opportunityId: 'opp-this',
+  });
+  assert.equal(wired.sendAllowed, true, 'the wired approval for this opportunity releases');
+  assert.equal(wired.matchedRule, 'approved-by-owner', 'the release is named');
+});
+
 // Owner approval releases: deposit computed, fixture link minted after the ok.
 test('offer send gate: owner ok releases the send and the deposit link (fixture adapter)', async () => {
   const secret = 'gate-secret-2';
   const fixture = createFixtureStripeAdapter({ secret });
   const verdict = authorizeOfferSend({
-    amountCents: 2_500_000, approval: OWNER_APPROVAL, approverRole: 'owner',
+    amountCents: 2_500_000, approval: OWNER_APPROVAL, approverRole: 'owner', approverUserId: 'titolare-1',
   });
   assert.equal(verdict.sendAllowed, true, 'registered owner approval releases the send');
   assert.equal(verdict.linkAllowed, true, 'and the deposit link with it');
