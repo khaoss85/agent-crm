@@ -97,12 +97,13 @@ export const WORK_MODULES = ['work-task', 'work-activity'];
 
 /**
  * @param {import('node:test').TestContext} t
- * @param {{withDomain?: boolean}} [options] `withDomain: false` builds the same
+ * @param {{withDomain?: boolean, priceRules?: object|null}} [options] `withDomain: false` builds the same
  *   project **without** the contracts package, which is how domain isolation is
- *   proven rather than asserted.
+ *   proven rather than asserted. `priceRules` registers the BO-F2-04 catalog
+ *   price rules (`createCatalogPriceRules`) alongside the starter policies.
  */
 export function project(t, {
-  withDomain = true, withDelivery = false, withCustomPackage = false, withService = false,
+  withDomain = true, withDelivery = false, withCustomPackage = false, withService = false, priceRules = null,
   // M16a. `withLifecycleTables` applies the record modules WITHOUT composing the
   // package, which is how the absence/detach case is built: the rows must
   // survive a composition that no longer names the package.
@@ -157,6 +158,7 @@ export function project(t, {
       [
         "import { createCommercialDomain } from '../../commercial/src/index.js';",
         "import { fixtureSaasCatalogProvider, standardSalesDiscountV1, standardSalesDiscountV2 } from '../../../examples/starters/b2b-lead-qualification/commercial.js';",
+        ...(priceRules ? ["import { createCatalogPriceRules } from '../../commercial/src/index.js';"] : []),
         "import { createSignatureDomain } from '../../signature/src/index.js';",
         "import { fixtureSignatureProvider } from '../../../examples/starters/b2b-lead-qualification/signature.js';",
         ...(withDomain ? [
@@ -180,7 +182,7 @@ export function project(t, {
         'export const generatedDomains = [',
         '  createCommercialDomain({',
         '    catalogProviders: [fixtureSaasCatalogProvider],',
-        '    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2],',
+        `    discountPolicies: [standardSalesDiscountV1, standardSalesDiscountV2${priceRules ? `, createCatalogPriceRules(${JSON.stringify(priceRules)})` : ''}],`,
         '  }),',
         '  createSignatureDomain({ signatureProviders: [fixtureSignatureProvider] }),',
         ...(withDomain ? ['  createContractsDomain({ policies: [b2bSaasOrderActivationV1, b2bSaasOrderActivationV2] }),'] : []),

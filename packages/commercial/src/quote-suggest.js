@@ -96,7 +96,11 @@ function normalizeOffers(offers) {
 
 /**
  * Build the bounded messages for the model: the eligible offers, then the
- * excerpts by id. The model answers with a JSON array only.
+ * excerpts by id. The model answers with a JSON array only. A suggestion may
+ * carry an optional `discountBps` (integer basis points, 0–10000): the
+ * discount the model proposes for that line. It travels through untouched
+ * and the price rules judge it at `quote.submit` exactly like an
+ * operator-entered discount (BO-F2-04: the rules block the AI too).
  */
 export function buildSuggestMessages({ excerpts, offers }) {
   const offerLines = offers.map((offer) => `- ${offer.offerId}${offer.name ? ` — ${offer.name}` : ''}`).join('\n');
@@ -105,7 +109,7 @@ export function buildSuggestMessages({ excerpts, offers }) {
     {
       role: 'system',
       content: 'Sei il suggeritore di voci di preventivo del backoffice. Rispondi SOLO con un array JSON, senza testo fuori dall\u2019array. '
-        + 'Ogni elemento: {"offerId": string, "quantity": integer >= 1, "motive": string, "sourceExcerptId": string}. '
+        + 'Ogni elemento: {"offerId": string, "quantity": integer >= 1, "motive": string, "sourceExcerptId": string, "discountBps": integer 0-10000 opzionale}. '
         + 'offerId deve essere uno di quelli elencati, quantity un intero positivo, motive una frase in italiano che spiega il perch\u00e9 citando la conversazione, '
         + 'sourceExcerptId l\u2019id dell\u2019estratto da cui nasce il suggerimento. Non inventare mai offerte, quantit\u00e0 o motivi: se la conversazione non chiede nulla, rispondi [].',
     },
@@ -223,6 +227,14 @@ export async function suggestQuoteLines({ excerpts, offers, complete, maxSuggest
       refuse('SUGGESTION_QUANTITY_INVALID', 'quantity must be an integer of at least 1');
       continue;
     }
+    let discountBps = 0;
+    if (item.discountBps !== undefined) {
+      if (!Number.isSafeInteger(item.discountBps) || item.discountBps < 0 || item.discountBps > 10_000) {
+        refuse('SUGGESTION_DISCOUNT_INVALID', 'discountBps must be an integer 0-10000 when present');
+        continue;
+      }
+      discountBps = item.discountBps;
+    }
     if (typeof item.motive !== 'string' || item.motive.trim() === '') {
       refuse('SUGGESTION_MOTIVE_MISSING', 'every suggestion carries its motive in words');
       continue;
@@ -244,6 +256,7 @@ export async function suggestQuoteLines({ excerpts, offers, complete, maxSuggest
       offerId: offer.offerId,
       offerName: offer.name,
       quantity,
+      discountBps,
       motive: collapseWhitespace(item.motive),
       sourceExcerptId,
       sourceQuote: collapseWhitespace(textById.get(sourceExcerptId) ?? '').slice(0, SOURCE_QUOTE_CHARS),

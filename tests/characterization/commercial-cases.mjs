@@ -605,8 +605,8 @@ export async function runCommercialCases(t, record) {
     observed: stableAll(svc(app, 'quote-approval').listWhere({ quoteId: quoteB })),
   }));
 
-  // Reject → revise → version 2 under policy v2, distinct fingerprints.
-  const oppC = await seedOpportunity(app, 'Rejected then revised');
+  // Reject keeps the draft (BO-F2-04) → version 2 under policy v2, distinct fingerprints.
+  const oppC = await seedOpportunity(app, 'Refused then resubmitted');
   const quoteC = (await client.request(`/api/modules/opportunity/records/${oppC.id}/actions/create-quote`, { method: 'POST', body: { priceBookId: book.id } })).result.quote.id;
   await quotes.action(quoteC, 'add-line', { offerId: enterprise.id, quantity: 10, discountBps: 6000 });
   const rejected = await quotes.action(quoteC, 'submit', { policy: 'standard-sales-discount', version: 1 });
@@ -617,14 +617,8 @@ export async function runCommercialCases(t, record) {
     surface: 'sdk',
     observed: normalizeIds({ version: rejected.result.version, quoteStatus: rejected.result.quote.status, approvalId: rejected.result.approvalId }),
   }));
-  const revised = await quotes.action(quoteC, 'revise', {});
-  record(observation({
-    id: 'quote.revise-reopens-draft',
-    category: 'quote',
-    classification: 'contractual',
-    surface: 'sdk',
-    observed: normalizeIds(revised.result.quote),
-  }));
+  // No revise: a policy-refused quote never leaves the draft (BO-F2-04);
+  // revise stays reserved for human rejections, covered by the price-rules suite.
   const cLines = svc(app, 'quote-line').listWhere({ quoteId: quoteC, removed: false });
   const updatedLine = await quotes.action(quoteC, 'update-line', { lineId: cLines[0].id, discountBps: 300 });
   record(observation({

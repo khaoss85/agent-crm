@@ -85,8 +85,8 @@ test('quote VAT: submit freezes subtotale, IVA 22% and totale per period', async
     module: 'opportunity', action: 'create-quote', recordId: opportunity.id, input: { priceBookId: book.id }, actor: ACTOR,
   })).result.quote;
 
-  // v1 submits with a rejecting discount so the draft can move on (revise only
-  // reopens a rejected quote); v2 then carries the story's presets: 0%, 5%, 10%.
+  // v1 submits with a rejecting discount; the refusal keeps the draft (BO-F2-04),
+  // so v2 carries the story's presets — 0%, 5%, 10% — with no revise step.
   const added = await app.runAction({
     module: 'quote', action: 'add-line', recordId: quote.id,
     input: { offerId: offerOf('fixture:offer:enterprise').id, quantity: 2, discountBps: 6000 }, actor: ACTOR,
@@ -120,7 +120,6 @@ test('quote VAT: submit freezes subtotale, IVA 22% and totale per period', async
 
   // The draft moves on: v1 keeps its frozen VAT while v2 freezes its own with
   // the story's discount presets (0%, 5%, 10%).
-  await app.runAction({ module: 'quote', action: 'revise', recordId: quote.id, input: {}, actor: ACTOR });
   await app.runAction({
     module: 'quote', action: 'update-line', recordId: quote.id,
     input: { lineId: added.result.line.id, quantity: 2, discountBps: 0 }, actor: ACTOR,

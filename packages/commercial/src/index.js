@@ -452,6 +452,10 @@ export function createCommercialDomainV2(options = {}) {
 
 export { CommercialRegistries } from './registry.js';
 export { createPriceListCatalogProvider, validatePriceListConfig, PRICE_LIST_CATALOG_CODE_VERSION } from './price-list.js';
+export {
+  CATALOG_PRICE_RULES, CATALOG_PRICE_RULES_VERSION, DEFAULT_OWNER_APPROVAL_KEY,
+  createCatalogPriceRules,
+} from './price-rules.js';
 export { createStripeCatalogProvider, createFixtureStripeCatalogClient } from './stripe-catalog.js';
 export { buildCommercialActions } from './actions.js';
 export { createCatalogSync } from './catalog-sync.js';

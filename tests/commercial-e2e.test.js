@@ -352,13 +352,14 @@ test('commercial e2e: approval boundary, revise/version-2, concurrency, fault in
   assert.equal(app.modules.get('quote-approval').service.get(submitted.result.approvalId).status, decidedQuote.status);
   await assert.rejects(() => quotes.action(quoteA, 'approve', {}), (error) => error.status === 409);
 
-  // Hard-reject → revise → version 2 under policy v2, with distinct fingerprints.
+  // Hard-reject → the draft stays editable (BO-F2-04) → version 2 under
+  // policy v2, with distinct fingerprints.
   const quoteB = await newQuote('Revisable');
   await quotes.action(quoteB, 'add-line', { offerId: enterprise.id, quantity: 10, discountBps: 6000 });
   const rejected = await quotes.action(quoteB, 'submit', { policy: 'standard-sales-discount', version: 1 });
   assert.equal(rejected.result.version.decision, 'reject');
-  assert.equal(rejected.result.quote.status, 'rejected');
-  await quotes.action(quoteB, 'revise', {});
+  assert.equal(rejected.result.quote.status, 'draft', 'a refused submit keeps the draft');
+  assert.equal(rejected.result.quote.currentVersionId, null, 'no signable version points at the refusal');
   const lines = app.modules.get('quote-line').service.listWhere({ quoteId: quoteB, removed: false });
   await quotes.action(quoteB, 'update-line', { lineId: lines[0].id, discountBps: 300 });
   const second = await quotes.action(quoteB, 'submit', { policy: 'standard-sales-discount', version: 2 });
