@@ -359,7 +359,7 @@ import {
   readSpaces,
   renderSettingsPanel,
 } from './admin-shell.js';
-import { buildOggiLinks, isSpaceMount, renderOggi } from './admin-oggi.js';
+import { buildOggiLinks, createOggiView, isSpaceMount } from './admin-oggi.js';
 import { renderDemoChrome } from './admin-demo.js';
 import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
@@ -566,6 +566,12 @@ if (boAssistant) {
   });
 }
 
+/**
+ * Local-development identity (the Admin is local-only until a deployment
+ * supplies a verifier): the same name greets in the shell and in Oggi.
+ */
+const SHELL_USER = Object.freeze({ name: 'Operatore locale', email: 'sviluppo locale' });
+
 let shellView = null;
 const boSidebar = document.querySelector('#boSidebar');
 const boTopbar = document.querySelector('#boTopbar');
@@ -575,7 +581,7 @@ if (boSidebar && boTopbar) {
     sidebar: boSidebar,
     topbar: boTopbar,
     spaces: shellSpaces,
-    user: { name: 'Operatore locale', email: 'sviluppo locale' },
+    user: { ...SHELL_USER },
     navigate: (hash) => { window.location.hash = hash; },
     notify: (message) => toast(message),
     onLogout: () => {
@@ -607,6 +613,9 @@ if (boSidebar && boTopbar) {
 }
 
 let shellItems = buildShellNav();
+
+/** The Oggi home view, created once per session under a space mount. */
+let oggiView = null;
 let shellFixCount = null;
 let shellCustomerData = false;
 
@@ -800,16 +809,24 @@ async function route() {
   syncShell(target);
   const onDashboard = target.view === 'dashboard';
   if (onDashboard && MOUNTED) {
-    // Space home (backlog:7eee63a5): the Oggi frame, never the demo. The
+    // Space home (BO-F3-04): the Oggi screen, never the demo. The
     // demo dashboard stays hidden for the whole session under a mount.
+    // The view paints its greeting frame first and fills the sections in
+    // once the records arrive.
     dashboardView.classList.add('hidden');
     moduleView.classList.remove('hidden');
-    renderOggi({
-      doc: document,
-      mount: moduleView,
+    if (!oggiView) {
+      oggiView = createOggiView({
+        doc: document,
+        mount: moduleView,
+        client: moduleClient,
+        navigate: (next) => { window.location.hash = next; },
+      });
+    }
+    await oggiView.render({
       spaceName: currentSpaceName(),
+      userName: SHELL_USER.name,
       links: buildOggiLinks(shellItems),
-      navigate: (next) => { window.location.hash = next; },
       now: new Date(),
     });
     return;

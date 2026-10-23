@@ -439,6 +439,42 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 */
 
 /*
+ * Oggi home (BO-F3-04): greeting with one-sentence recap, advisor rows with
+ * motive and triage, progress, agenda, pre-call brief and channel invite.
+ * Same tokens, radii and row idiom as the settings rows above — no new
+ * visual identity. One column already, so under 700px only the row buttons
+ * stretch full width.
+ */
+.bo-oggi-recap { font-size: 14px; margin: 6px 0 0; }
+.bo-oggi-section { display: grid; gap: 10px; margin-top: 18px; }
+.bo-oggi-section h3 { margin: 0; font-size: 15px; }
+.bo-oggi-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.bo-oggi-head h3 { margin: 0; }
+.bo-oggi-progress { margin: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bo-oggi-bar { height: 8px; border-radius: 99px; background: var(--surface); border: 1px solid var(--line); overflow: hidden; }
+.bo-oggi-fill { height: 100%; background: var(--accent); border-radius: 99px; }
+.bo-oggi-actions { display: grid; gap: 10px; }
+.bo-oggi-row { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px; display: grid; gap: 4px; }
+.bo-oggi-mono { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.bo-oggi-title { margin: 0; font-size: 14px; font-weight: 700; }
+.bo-oggi-why { margin: 0; font-size: 13px; color: var(--muted); }
+.bo-oggi-btns { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.bo-oggi-state { font-size: 12px; font-weight: 700; }
+.bo-oggi-empty { margin: 0; font-size: 14px; }
+.bo-oggi-agenda { display: grid; gap: 8px; }
+.bo-oggi-agenda-row { display: flex; align-items: baseline; gap: 10px; }
+.bo-oggi-agenda-row > a { min-width: 0; overflow-wrap: anywhere; }
+.bo-oggi-time { font-family: var(--mono); font-size: 12px; color: var(--dim); flex: none; }
+.bo-oggi-brief { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; }
+.bo-oggi-brief-who { margin: 0; font-size: 14px; font-weight: 700; }
+.bo-oggi-sources { margin: 0; font-size: 13px; color: var(--muted); }
+.bo-oggi-invite { font-size: 14px; font-weight: 700; color: var(--accent); }
+
+@media (max-width: 700px) {
+  .bo-oggi-btns button { flex: 1; }
+}
+
+/*
  * Assistant (BO-F0-04): the ⌘K side panel. Fixed on the right so the shell
  * grid never moves; full width under 700px. Same bordered-surface idiom as
  * the shell, no new visual identity.
