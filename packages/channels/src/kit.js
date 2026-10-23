@@ -138,6 +138,32 @@ export async function runChannelAdapterKit(options) {
 
   await check('send', async () => {
     faults.reset();
+    // An inbound-only adapter (TikTok, voice, site-form, calendar, stripe)
+    // refuses every outbound at the contract: the kit proves the refusal
+    // instead of a send, through the real queue path, and proves nothing
+    // reached the provider. Detected by probing the adapter's own
+    // normalizeOutbound — no marker field, no second contract.
+    let inboundOnly = false;
+    try {
+      adapter.normalizeOutbound({ to: accountA, text: 'kit probe' });
+    } catch (error) {
+      // Only the contract's inbound-only refusal diverts the check: any
+      // other probe outcome (a window refusal without context, a malformed
+      // probe for this adapter's shape) means the adapter sends, and the
+      // normal path below proves it.
+      if (error && typeof error === 'object' && error.code === 'CHANNEL_SEND_UNSUPPORTED') {
+        inboundOnly = true;
+      }
+    }
+    if (inboundOnly) {
+      const before = faults.sentCount();
+      const code = await asCode(() => harness.queue(spaceA, {
+        connectionKey: keyA, message: { to: accountA, text: 'kit hello' }, messageKey: 'kit-send-1',
+      }));
+      if (code !== 'CHANNEL_SEND_UNSUPPORTED') fail(`expected CHANNEL_SEND_UNSUPPORTED, got ${code}`);
+      if (faults.sentCount() !== before) fail('a refused send reached the provider');
+      return 'outbound refused by contract, nothing queued or sent';
+    }
     // Adapters behind a service window (Meta's 24 hours) refuse free text
     // with no observed inbound: the kit seeds one windowed inbound through
     // the real ingest path first, so the send proves the seeded window

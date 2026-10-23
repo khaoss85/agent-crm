@@ -204,3 +204,26 @@ export function fixtureWebhookHeaders(rawBody, secret, timestampSeconds) {
 export function fixtureEventBody({ id, subject = 'chat-1', seq = null, at = null }) {
   return JSON.stringify({ id, subject, ...(seq === null ? {} : { seq }), ...(at === null ? {} : { at }) });
 }
+
+/**
+ * The kit's minimal envelope as a channel event (backlog:ffce3d1cd636).
+ *
+ * Every fake adapter speaks its provider's shape first and falls back to
+ * this envelope, so the shared kit drives receive/replay/out-of-order
+ * through the same normalizeInbound the provider path uses. Throws
+ * CHANNEL_EVENT_MALFORMED when the envelope carries no bounded id.
+ *
+ * @param {any} parsed the already-parsed webhook body
+ */
+export function fixtureEnvelopeEvent(parsed) {
+  const providerEventId = typeof parsed?.id === 'string' ? parsed.id : '';
+  if (providerEventId === '' || providerEventId.length > 256) {
+    throw new AppError('Channel event needs a bounded "id"', { code: 'CHANNEL_EVENT_MALFORMED', status: 422 });
+  }
+  return {
+    providerEventId,
+    subject: typeof parsed.subject === 'string' ? parsed.subject : '',
+    sequence: Number.isSafeInteger(parsed.seq) ? parsed.seq : null,
+    occurredAt: typeof parsed.at === 'string' ? parsed.at : null,
+  };
+}

@@ -186,6 +186,29 @@ export function createSpacePermissionGateCapability(config) {
               return row ? Object.freeze({ ...row }) : Object.freeze(null);
             });
         },
+
+        /**
+         * The decided (or still open) proposal for one action of this space,
+         * or null. A consumer that recorded a proposal and then lost its own
+         * row-local pointer (a crash between `propose` and the consumer's
+         * write) recovers the winner here instead of re-proposing blindly:
+         * `propose` answers such a retry with `SPACE_PROPOSAL_DECIDED` and no
+         * id, so without this lookup the decision would be unreachable and
+         * the action would wedge. Additive: existing consumers keep working.
+         * @param {unknown} spaceId @param {unknown} permission @param {unknown} actionKey
+         */
+        proposalForAction(spaceId, permission, actionKey) {
+          const id = checkSpaceId(spaceId);
+          const key = checkPermissionKey(permission);
+          if (typeof actionKey !== 'string' || actionKey === '') return Object.freeze(null);
+          return mapValue(service(modules, names.proposal).listWhere({ spaceId: id }),
+            (rows) => {
+              const row = Array.isArray(rows)
+                ? rows.find((item) => item && item.permission === key && item.actionKey === actionKey)
+                : null;
+              return row ? Object.freeze({ ...row }) : Object.freeze(null);
+            });
+        },
       };
     },
   };
