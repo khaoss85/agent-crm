@@ -66,7 +66,11 @@
  * - a selection bigger than `--max-selected` (default 50: that run executed
  *   ~65 of 100 selected files in the full 270 s, so 50 leaves margin for
  *   the slowest files) never starts the run it cannot finish: the gate
- *   warns and runs the default fast suite instead.
+ *   warns and runs the default fast suite instead. The cap counts the
+ *   joined total, not the mapped selection alone: the always-run guards
+ *   join after the cap, and a mapped set that fits can still outgrow the
+ *   step once they join (seen: ~47 mapped + 14 guards needing ~900 s
+ *   against a 270 s bound) — past the cap the same warned fallback runs.
  *
  * The default fast suite is the PR's own changed test files — always
  * relevant, self-maintaining, and small by construction. It is not the
@@ -961,13 +965,13 @@ async function main() {
   // source file no test reaches (see the header). The guards see the
   // unfiltered diff: a PR deleting a listed guard without updating the list
   // still fails red.
-  const plan = base;
-  const preGuardTests = plan.kind === 'skip' || plan.kind === 'refuse' ? [] : plan.tests;
-  if (plan.kind !== 'refuse') {
+  let plan = base;
+  let preGuardTests = plan.kind === 'skip' || plan.kind === 'refuse' ? [] : plan.tests;
+  const applyAlwaysRunGuards = (tests) => {
     try {
-      plan.tests = withCharacterizationTests(
+      return withCharacterizationTests(
         withKernelBoundaryTests(
-          withRepoWideGuards(preGuardTests, contents, allChanged),
+          withRepoWideGuards(tests, contents, allChanged),
           contents,
           allChanged,
         ),
@@ -980,6 +984,25 @@ async function main() {
     } catch (error) {
       process.stderr.write(`ci-touched-tests: ${error instanceof Error ? error.message : error}\n`);
       process.exit(1);
+    }
+  };
+  if (plan.kind !== 'refuse') {
+    plan.tests = applyAlwaysRunGuards(preGuardTests);
+  }
+  // Total-budget guard: the always-run guards join AFTER the cap, so a
+  // mapped selection that fits can still outgrow the step once they join
+  // (seen: ~47 mapped + 14 guards needed ~900 s against a 270 s bound).
+  // Past the cap the gate falls back the same warned way an oversized
+  // mapped selection does — guards still run, the dropped set is named,
+  // and the full suite on `main` stays the net.
+  if (plan.kind === 'run' && plan.tests.length > options.maxSelected) {
+    process.stdout.write(
+      `ci-touched-tests: warning: ${preGuardTests.length} selected test(s) plus ${plan.tests.length - preGuardTests.length} always-run guard(s) outgrow this step's ${options.maxSelected}-file budget — running the fallback suite instead.\n`,
+    );
+    plan = fallbackPlan(changed, 'oversized-selection', allChanged, mapped);
+    preGuardTests = plan.kind === 'refuse' ? [] : plan.tests;
+    if (plan.kind !== 'refuse') {
+      plan.tests = applyAlwaysRunGuards(preGuardTests);
     }
   }
   const addedGuards = plan.kind === 'refuse'
