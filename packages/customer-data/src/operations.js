@@ -15,8 +15,9 @@ import {
   createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow,
 } from './sender.js';
 import {
-  optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
+  deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
 } from './store.js';
+import { ENRICHABLE_FIELDS } from './enrichment.js';
 
 /**
  * **The application operations (ADR-032): import preview, import apply, bulk
@@ -238,6 +239,65 @@ export function createCustomerDataOperations({ database, modules, events, config
         throw new ValidationError('a profile read needs a subject resource and id', { field: 'id' });
       }
       return profileFor({ modules, core, names, subject: { resource, id } });
+    },
+
+    /**
+     * The enrichment read for the scheda cliente (BO-F4-03): every active
+     * enriched field of the customer's whole cluster — linked identities
+     * included — each with the free source that filled it and its
+     * observation date, plus the opt-out state of the subject. Creates
+     * nothing: enrichment rows land only through the enrichment action,
+     * which refuses opted-out subjects before writing. A manually entered
+     * value always wins by construction (enrichment never writes the
+     * record), so these rows are the fallback the scheda shows — each
+     * citing its source, never a sourceless value.
+     * @param {{resource?: string, id?: string}} request
+     */
+    async readCustomerEnrichment(request) {
+      const resource = request?.resource;
+      const id = request?.id;
+      if (typeof resource !== 'string' || typeof id !== 'string' || resource === '' || id === '') {
+        throw new ValidationError('an enrichment read needs a subject resource and id', { field: 'id' });
+      }
+      // The whole cluster, not just the named record: enriched fields hang
+      // off member contacts while the scheda may name the company.
+      const cluster = await canonicalClusterFor({ modules, names, subject: { resource, id } });
+      const memberIndex = new Map(cluster.members.map((member, index) => [subjectKey(member), index]));
+      const fieldOrder = new Map(ENRICHABLE_FIELDS.map((field, index) => [field, index]));
+      const enrichedSvc = trusted(modules, names.enriched);
+      const collected = [];
+      for (const member of cluster.members) {
+        const rows = await deciding(enrichedSvc, {
+          subjectResource: member.resource, subjectId: member.id, status: 'active',
+        });
+        for (const row of rows) {
+          collected.push(Object.freeze({
+            subject: Object.freeze({ resource: member.resource, id: member.id }),
+            field: row.field,
+            value: row.value,
+            source: row.source,
+            sourceDetail: row.sourceDetail ?? null,
+            observedAt: row.observedAt,
+          }));
+        }
+      }
+      collected.sort((a, b) => (
+        (memberIndex.get(subjectKey(a.subject)) ?? 0) - (memberIndex.get(subjectKey(b.subject)) ?? 0)
+        || (fieldOrder.get(a.field) ?? ENRICHABLE_FIELDS.length) - (fieldOrder.get(b.field) ?? ENRICHABLE_FIELDS.length)
+        || String(a.source).localeCompare(String(b.source))
+      ));
+      const optOut = (await deciding(trusted(modules, names.optOut), {
+        subjectResource: resource, subjectId: id,
+      }))[0] ?? null;
+      return Object.freeze({
+        customerEnrichmentContract: 1,
+        subject: Object.freeze({ resource, id }),
+        linked: cluster.linked,
+        optedOut: optOut
+          ? Object.freeze({ reason: optOut.reason ?? null, optedOutAt: optOut.optedOutAt ?? null })
+          : null,
+        items: Object.freeze(collected),
+      });
     },
 
     /**

@@ -10,7 +10,8 @@
  *
  * Layout, like the backoffice prototype ("05 Scheda cliente"):
  * - left: quick actions, linked identities with their human motivation,
- *   details, "Arricchito dall'AI" with its source;
+ *   details, "Arricchito dall'AI" with the free source and date of every
+ *   datum (BO-F4-03, read from the customer-data enrichment operations);
  * - center: the channel timeline, every passage with channel, direction and
  *   sync state, filterable per channel;
  * - right: AI summary, next steps, offer, next appointment.
@@ -85,10 +86,20 @@ export function createCustomerCardView(deps) {
   async function load(resource, id) {
     const encoded = `${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
     const spaceId = activeSpaceId();
-    const [card, timeline, profile, calls] = await Promise.all([
+    const [card, timeline, profile, enrichment, calls] = await Promise.all([
       client.request(`/api/customer-hub/card/${encoded}`),
       client.request(`/api/customer-hub/timeline/${encoded}`),
       client.request(`/api/customer-data/profile/${encoded}`),
+      // The enrichment read lives in the same package as the profile, so it
+      // shares its fate — but an older server that does not serve the route
+      // yet answers 404, and the scheda must stay honest about the section
+      // instead of failing the whole card. Every other failure still
+      // rejects, so the card shows its error.
+      client.request(`/api/customer-data/enriched/${encoded}`)
+        .catch((error) => {
+          if (error && error.status === 404) return null;
+          throw error;
+        }),
       // Without intelligence composed (honest 404) or without a space the
       // calls read stays unavailable — never a failed card. Every other
       // failure (expired session, network, HTTP 5xx) still rejects, so the
@@ -101,7 +112,7 @@ export function createCustomerCardView(deps) {
             throw error;
           }),
     ]);
-    return { card, timeline, profile, calls };
+    return { card, timeline, profile, enrichment, calls };
   }
 
   function header(panel, card, resource, id) {
@@ -192,15 +203,40 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function enriched(box) {
-    // Q-G1 is still an open owner question (docs/backoffice/OPEN-QUESTIONS.md):
-    // enriched fields need a recorded source, a date and an opt-out before
-    // they may feed the scheda on real data. No per-customer enrichment source
-    // exists in the framework yet (BO-F4-03 owns it), so the section states
-    // its rule instead of inventing a value.
+  const ENRICHED_FIELD_LABELS = Object.freeze({
+    firstName: 'Nome', lastName: 'Cognome', role: 'Ruolo', companyName: 'Azienda', phone: 'Telefono',
+  });
+  const ENRICHMENT_SOURCE_LABELS = Object.freeze({
+    'google-contacts': 'Contatti Google', 'email-signature': 'firma email',
+  });
+
+  function enriched(box, enrichment) {
+    // BO-F4-03, ref "05 Scheda cliente": every enriched datum cites the free
+    // source that filled it and its observation date; an opted-out customer
+    // reads as opted out, never as empty; no row without a recorded source
+    // is ever shown. Values are text, never markup.
     box.appendChild(el('h4', undefined, "Arricchito dall'AI"));
-    box.appendChild(el('p', 'bo-muted',
-      'non disponibile: nessun dato arricchito registrato per questo cliente (fonte, data e opt-out sono obbligatori)'));
+    const items = Array.isArray(enrichment?.items) ? enrichment.items : null;
+    if (items === null) {
+      box.appendChild(el('p', 'bo-muted', 'non disponibile: dati arricchiti non leggibili per questo cliente'));
+      return;
+    }
+    if (enrichment?.optedOut) {
+      const when = String(enrichment.optedOut.optedOutAt ?? '').slice(0, 10);
+      box.appendChild(el('p', 'bo-muted',
+        `arricchimento disattivato${when ? ` il ${when}` : ''} (opt-out): nessun nuovo dato verrà salvato`));
+    }
+    if (items.length === 0) {
+      box.appendChild(el('p', 'bo-muted', 'nessun dato arricchito registrato per questo cliente'));
+      return;
+    }
+    for (const item of items) {
+      const label = ENRICHED_FIELD_LABELS[String(item?.field ?? '')] ?? String(item?.field ?? 'dato');
+      const source = ENRICHMENT_SOURCE_LABELS[String(item?.source ?? '')] ?? String(item?.source ?? 'fonte non registrata');
+      const when = String(item?.observedAt ?? '').slice(0, 10);
+      box.appendChild(el('p', 'bo-scheda-enriched',
+        `${label}: ${String(item?.value ?? '—')} (fonte: ${source}${when ? ` · ${when}` : ''})`));
+    }
   }
 
   function timelineBox(box, timeline) {
@@ -414,7 +450,7 @@ export function createCustomerCardView(deps) {
       mount.appendChild(panel);
       return;
     }
-    const { card, timeline, profile, calls } = loaded;
+    const { card, timeline, profile, enrichment, calls } = loaded;
     const panel = el('div', 'bo-scheda');
     header(panel, card, resource, id);
     const grid = el('div', 'bo-scheda-grid');
@@ -424,7 +460,7 @@ export function createCustomerCardView(deps) {
     quickActions(left, card);
     linkedIdentities(left, profile);
     details(left, card);
-    enriched(left);
+    enriched(left, enrichment);
     timelineBox(center, timeline);
     aiSummary(right, calls);
     callsBox(right, calls);

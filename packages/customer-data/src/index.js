@@ -247,6 +247,28 @@ export function createCustomerDataPackage(options = {}) {
       },
       {
         operationContract: 1,
+        name: 'read-customer-enrichment',
+        appMethod: 'readCustomerEnrichment',
+        label: 'Read the enriched fields of one customer',
+        description:
+          'Read the active free-source enriched fields of one customer across its linked identities, '
+          + 'each with the source that filled it and its observation date, plus the opt-out state. '
+          + 'Creates nothing. The contact record itself is never enriched in place, so these rows are '
+          + 'the fallback the scheda cliente shows beside the record — every datum citing its source.',
+        input: [
+          { name: 'resource', type: 'string', hint: 'The record kind, e.g. "company" or "contact".' },
+          { name: 'id', type: 'string', hint: 'The record id.' },
+        ],
+        create(runtime) {
+          const operations = createCustomerDataOperations({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+          });
+          return (request) => operations.readCustomerEnrichment(request);
+        },
+      },
+      {
+        operationContract: 1,
         name: 'list-customer-records',
         appMethod: 'listCustomers',
         label: 'List customers with filters, sorting and server pagination',

@@ -506,6 +506,23 @@ export function buildRouter(app) {
     return await app.readCustomerProfile({ resource: params.resource, id: params.id });
   });
 
+  // Customer enrichment (BO-F4-03): the "Arricchito dall'AI" section of the
+  // scheda cliente reads the active enriched fields of the customer's whole
+  // cluster — linked identities included — each with the free source that
+  // filled it and its observation date, plus the opt-out state. The same
+  // enumerated-adapter shape as the profile route above: the kernel owns the
+  // path, gates the role boundary, and delegates to the composed application
+  // operation; without the package composed each answers an honest 404.
+  // Creates nothing: no save happens without the enrichment action, which
+  // refuses opted-out subjects before writing.
+  router.add('GET', '/api/customer-data/enriched/:resource/:id', async ({ params, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readCustomerEnrichment !== 'function') {
+      throw new NotFoundError('Operation', 'customer enrichment');
+    }
+    return await app.readCustomerEnrichment({ resource: params.resource, id: params.id });
+  });
+
   // Customer list (BO-F1-05): one server page over the host records with
   // views-as-saved-queries, channel and status filters, sorting and the
   // AI budget column. Same enumerated-adapter shape as the profile route:

@@ -127,6 +127,14 @@ const PROFILE = {
   limitations: [],
 };
 
+const ENRICHED = {
+  customerEnrichmentContract: 1,
+  subject: { resource: 'contact', id: 'c1' },
+  linked: false,
+  optedOut: null,
+  items: [],
+};
+
 const CALLS = {
   calls: [
     {
@@ -143,7 +151,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, failHub = false, calls = null, failCalls = false, callsError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, calls = null, failCalls = false, callsError = null, enrichedError = null } = {}) {
   const requested = [];
   return {
     calls: requested,
@@ -157,6 +165,11 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, failH
       if (path.startsWith('/api/customer-data/profile/')) {
         if (!profile) throw Object.assign(new Error('no profile'), { status: 404 });
         return profile;
+      }
+      if (path.startsWith('/api/customer-data/enriched/')) {
+        if (enrichedError) throw enrichedError;
+        if (!enriched) throw Object.assign(new Error('Not Found'), { status: 404 });
+        return enriched;
       }
       if (path.startsWith('/api/call-intelligence/calls/')) {
         if (failCalls) throw Object.assign(new Error('Not Found'), { status: 404 });
@@ -190,7 +203,7 @@ test('the scheda renders three columns: actions, identities with motivation, tim
   assert.ok(text.includes('stesso numero su WhatsApp e Instagram'), 'the link motivation is shown');
   assert.ok(text.includes('elena'), 'the decider is shown');
   assert.ok(text.includes("Arricchito dall'AI"), 'the enriched section exists');
-  assert.ok(text.includes('fonte'), 'the enriched section names its source rule');
+  assert.ok(text.includes('nessun dato arricchito registrato'), 'the empty enriched section stays honest');
 
   // The grid holds exactly three columns.
   const grid = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-grid');
@@ -373,4 +386,77 @@ test('BO-F1-08: a failing calls read is an error, never a quiet "no calls"', asy
   assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the card shows its error UI');
   assert.ok(!mount.textContent.includes('nessuna chiamata registrata'),
     'a 500 never reads as no calls');
+});
+
+test('BO-F4-03: every enriched datum cites its free source and date', async () => {
+  const client = stubClient({
+    enriched: {
+      customerEnrichmentContract: 1,
+      subject: { resource: 'contact', id: 'c1' },
+      linked: false,
+      optedOut: null,
+      items: [
+        { subject: { resource: 'contact', id: 'c1' }, field: 'role', value: 'Istruttore', source: 'email-signature', sourceDetail: 'msg-1', observedAt: '2026-10-20T09:05:00.000Z' },
+        { subject: { resource: 'contact', id: 'c1' }, field: 'firstName', value: 'Guido', source: 'google-contacts', sourceDetail: 'people/c1', observedAt: '2026-10-21T10:00:00.000Z' },
+      ],
+    },
+  });
+  const mount = await renderCard(client, 'call-a');
+  const text = mount.textContent;
+
+  const enrichedPath = client.calls.find((path) => path.startsWith('/api/customer-data/enriched/'));
+  assert.ok(enrichedPath, 'the card reads the enrichment for this customer');
+  assert.ok(enrichedPath.includes('/contact/c1'), 'the read names the scheda subject');
+
+  assert.ok(text.includes("Arricchito dall'AI"), 'the enriched section exists');
+  assert.ok(text.includes('Ruolo: Istruttore (fonte: firma email · 2026-10-20)'), 'each datum cites its own source and date');
+  assert.ok(text.includes('Nome: Guido (fonte: Contatti Google · 2026-10-21)'), 'the second source is cited beside its datum');
+});
+
+test('BO-F4-03: an opted-out customer reads as opted out, never as empty', async () => {
+  const mount = await renderCard(stubClient({
+    enriched: {
+      customerEnrichmentContract: 1,
+      subject: { resource: 'contact', id: 'c1' },
+      linked: false,
+      optedOut: { reason: 'asked at the desk', optedOutAt: '2026-10-21T10:00:00.000Z' },
+      items: [],
+    },
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('arricchimento disattivato il 2026-10-21 (opt-out)'), 'the opt-out is shown with its date');
+  assert.ok(text.includes('nessun nuovo dato verrà salvato'), 'no further save is promised');
+});
+
+test('BO-F4-03: an unreadable enrichment read stays unavailable, never blank', async () => {
+  const mount = await renderCard(stubClient({ enriched: null }));
+  assert.ok(mount.textContent.includes('non disponibile: dati arricchiti non leggibili'),
+    'an older server without the route leaves an honest section, not a failed card');
+  assert.ok(mount.textContent.includes('Richiamare per la prova'), 'the rest of the scheda still renders');
+});
+
+test('BO-F4-03: a hostile enriched value renders as text, never as markup', async () => {
+  const nasty = '<img src=x onerror=alert(1)>';
+  const mount = await renderCard(stubClient({
+    enriched: {
+      customerEnrichmentContract: 1,
+      subject: { resource: 'contact', id: 'c1' },
+      linked: false,
+      optedOut: null,
+      items: [
+        { subject: { resource: 'contact', id: 'c1' }, field: 'role', value: nasty, source: 'email-signature', sourceDetail: 'msg-1', observedAt: '2026-10-20T09:05:00.000Z' },
+      ],
+    },
+  }));
+  assert.ok(mount.textContent.includes(nasty), 'the value is shown as text');
+  assert.deepEqual(mount.findAll('img'), [], 'and no element was created from it');
+});
+
+test('BO-F4-03: a failing enrichment read is an error, never a quiet "no data"', async () => {
+  const mount = await renderCard(
+    stubClient({ enrichedError: Object.assign(new Error('boom'), { status: 500 }) }),
+  );
+  assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the card shows its error UI');
+  assert.ok(!mount.textContent.includes('nessun dato arricchito registrato'),
+    'a 500 never reads as no enriched data');
 });
