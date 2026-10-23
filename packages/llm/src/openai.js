@@ -20,7 +20,7 @@ import { assertCompletion, assertGenerateInput } from './adapter.js';
  */
 
 /** The cheapest OpenAI model, named once: every other file imports this. */
-export const OPENAI_DEFAULT_MODEL = 'gpt-5.6-luna';
+export const OPENAI_DEFAULT_MODEL = 'gpt-6-luna';
 
 export const OPENAI_ADAPTER_NAME = 'openai';
 export const OPENAI_ADAPTER_VERSION = 1;

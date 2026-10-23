@@ -595,11 +595,12 @@ export {
   CHANNEL_HISTORY_PAGE_MAX,
   CHANNEL_HISTORY_TOKEN_MAX,
   CHANNEL_HISTORY_WINDOW_MAX_MS,
+  inboundOnlyOutbound,
   validateChannelAdapter,
 } from './adapter.js';
 export { createChannelOperations } from './operations.js';
 export { runChannelAdapterKit, CHANNEL_KIT_CHECKS } from './kit.js';
-export { createFixtureChannelAdapter, fixtureWebhookHeaders, fixtureEventBody } from './fixture.js';
+export { createFixtureChannelAdapter, fixtureEnvelopeEvent, fixtureWebhookHeaders, fixtureEventBody } from './fixture.js';
 export {
   createInstagramChannelAdapter,
   instagramEventBody,
@@ -650,3 +651,34 @@ export {
   gmailThreadSubject,
 } from './gmail.js';
 export { verifyHmacWebhook, fingerprintPayload, hmacWebhookHeaders } from './crypto.js';
+export {
+  CALENDAR_ADAPTER_NAME,
+  CALENDAR_ADAPTER_VERSION,
+  calendarEventBody,
+  createCalendarChannelAdapter,
+} from './calendar.js';
+export {
+  SITE_FORM_ADAPTER_NAME,
+  SITE_FORM_ADAPTER_VERSION,
+  createSiteFormChannelAdapter,
+  siteFormEventBody,
+} from './site-form.js';
+export {
+  STRIPE_ADAPTER_NAME,
+  STRIPE_ADAPTER_VERSION,
+  createStripeChannelAdapter,
+  stripeEventBody,
+} from './stripe.js';
+export {
+  TIKTOK_ADAPTER_NAME,
+  TIKTOK_ADAPTER_VERSION,
+  createTikTokChannelAdapter,
+  tiktokEventBody,
+} from './tiktok.js';
+export {
+  VOICE_ADAPTER_NAME,
+  VOICE_ADAPTER_VERSION,
+  canonicalVoiceNumber,
+  createVoiceChannelAdapter,
+  voiceEventBody,
+} from './voice.js';

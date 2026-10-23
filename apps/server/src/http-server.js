@@ -18,6 +18,12 @@ import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js'
 import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
 import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
+import { runReport } from '../../../packages/analytics/src/compiler.js';
+import {
+  buildDashboardModel,
+  dashboardCompilations,
+  parseDashboardQuery,
+} from '../../../packages/analytics/src/dashboard.js';
 
 const DEFAULT_PUBLIC_DIR = resolve(
   fileURLToPath(new URL('../../admin/public', import.meta.url)),
@@ -936,6 +942,37 @@ export function buildRouter(app) {
       { opportunityId: params.id, targetStage: body?.targetStage },
       writeContext(app, { actor, identity, organizationId, headers }),
     );
+  });
+
+  // Reporting dashboard (BO-F5-02): the pipeline half of the "09 Reporting"
+  // screen, read-only. Every number comes from the declared analytics
+  // registry — compileReport/runReport over pipeline_value_by_stage and
+  // pipeline_close_schedule — plus the operator's own obiettivo row from the
+  // reporting bundle when composed. No storage query of its own, no write
+  // surface: there is deliberately no POST under /api/reporting/*, so the
+  // "Cosa noto" proposal the model carries can never reassign by itself.
+  router.add('GET', '/api/reporting/dashboard', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    const dashboardQuery = parseDashboardQuery({
+      period: query.period,
+      owner: query.owner,
+      currency: query.currency,
+    });
+    const compiled = dashboardCompilations(dashboardQuery);
+    const byStage = await runReport(app.database, compiled.byStage);
+    const schedule = await runReport(app.database, compiled.schedule);
+    let bundleRows = [];
+    try {
+      const reporting = requireCapability(resolveGeneratedModule(app, 'reporting'), 'list');
+      const listed = await reporting.service.list({ limit: 500 });
+      bundleRows = Array.isArray(listed) ? listed : listed?.items ?? [];
+    } catch (error) {
+      // The bundle is optional: without it the forecast simply has no
+      // target. Anything that is NOT "not composed here" still throws —
+      // a broken bundle read must not masquerade as "no obiettivo".
+      if (!(error instanceof NotFoundError)) throw error;
+    }
+    return buildDashboardModel({ byStage, schedule }, bundleRows, dashboardQuery);
   });
 
   router.add('GET', '/api/approvals', async ({ query, identity, organizationId }) => {

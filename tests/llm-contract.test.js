@@ -107,7 +107,7 @@ test('the model name is written in exactly one place', () => {
   const hits = [];
   for (const file of readdirSync(join(packageDir, 'src'))) {
     const source = readFileSync(join(packageDir, 'src', file), 'utf8');
-    const count = (source.match(/gpt-5\.6-luna/g) ?? []).length;
+    const count = (source.match(/gpt-6-luna/g) ?? []).length;
     if (count > 0) hits.push(`${file}:${count}`);
   }
   assert.deepEqual(hits, ['openai.js:1'], `model name repeats: ${hits.join(', ')}`);

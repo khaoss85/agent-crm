@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# The PR gate's six phases under ONE machine lock.
+# The PR gate's seven phases under ONE machine lock.
 #
 # The accordo-ci runner shares a 16 GB Mac with other factories under a
-# single heavy-job machine lock. Six separately locked steps, each capped
+# single heavy-job machine lock. Seven separately locked steps, each capped
 # at five minutes, can hold that lock ~30 minutes in total per PR push and
 # queue Arvo's pushes and releases behind them. So the whole gate runs
 # here, sequentially, behind a single acquisition with HEAVY_JOB_MAX_SEC=540
 # (nine minutes, set at the calling step in .github/workflows/ci.yml): a PR
 # holds the shared lock less than ten minutes in total, enforced by the
-# wrapper killing the run past the budget — not six per-step budgets
+# wrapper killing the run past the budget — not seven per-step budgets
 # summing past it. Measured on CI run 39124350674: ~290 s of lock for all
-# six phases, about half the budget. A phase that cannot fit the shared
+# seven phases, about half the budget. A phase that cannot fit the shared
 # budget does not get a longer budget — it gets split, or moved to `main`.
 #
 # One lock also means one wait: the gate queues behind another factory's
@@ -61,5 +61,14 @@ run_phase 'smoke demo' npm run smoke
 run_phase 'published quote approval recipe' bash -c 'node --no-warnings examples/recipes/quote-approval/run.mjs "$RUNNER_TEMP/quote-approval-crm" && npm --prefix "$RUNNER_TEMP/quote-approval-crm" run verify'
 run_phase 'public claims and packaging agree' npm run gtm:check
 run_phase 'truth document agrees with its authorities' npm run repo:truth -- --check --drift-advisory --base "origin/$BASE_REF"
+# The composition drift detector. The checked-in verifier fixture pins the
+# composition its scenario composes; any change to the composed application
+# moves it, and the fixture's exit-0 test is the only test that notices —
+# but it runs only when selected. This phase runs that one test on every PR
+# (~10 s: the real AX1 inspection plus one real scenario run), so a PR that
+# changes the composition and leaves the fixture behind fails here, on the
+# PR, instead of on main the next night. The fix is repeatable:
+# `npm run repin:verifier-fixture`.
+run_phase 'verifier fixture still reaches exit 0' node --no-warnings --test --test-name-pattern="the checked-in verifier fixture reaches exit 0" tests/solution-verify.test.js
 
-echo "ci-fast: all 6 phases passed in $((SECONDS - started))s of the ${budget}s total lock budget"
+echo "ci-fast: all 7 phases passed in $((SECONDS - started))s of the ${budget}s total lock budget"

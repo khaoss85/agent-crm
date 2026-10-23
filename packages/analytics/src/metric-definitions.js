@@ -21,6 +21,20 @@ export const METRIC_DEFINITIONS = Object.freeze({
     filterable: Object.freeze(['opportunity.stage', 'opportunity.type', 'opportunity.owner', 'opportunity.currency']),
     rowCap: 1000,
   }),
+  // BO-F5-02 Reporting: the dashboard's period/persona recalculation reads
+  // this metric and pipeline_value_by_stage through compileReport/runReport —
+  // never ad-hoc storage queries. Groups are exact (owner, stage, ISO date):
+  // month bucketing is the dashboard builder's declared post-processing in
+  // packages/analytics/src/dashboard.js, never the registry's.
+  pipeline_close_schedule: Object.freeze({
+    version: 1,
+    description: 'Pipeline value by owner, stage and expected close date, summed in integer minor units and partitioned by currency.',
+    measure: Object.freeze({ kind: 'sum', field: 'opportunity.amountMinor' }),
+    groupBy: Object.freeze(['opportunity.owner', 'opportunity.stage', 'opportunity.expectedCloseDate']),
+    partitionBy: Object.freeze(['opportunity.currency']),
+    filterable: Object.freeze(['opportunity.owner', 'opportunity.stage', 'opportunity.type', 'opportunity.currency']),
+    rowCap: 1000,
+  }),
 });
 
 /**

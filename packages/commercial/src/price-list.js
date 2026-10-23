@@ -6,7 +6,21 @@ import {
   PRICING_MODELS,
 } from '../../core/index.js';
 import { requireCurrency, validatePriceComponent } from './money.js';
-import { validateCatalogProvider, MAX_LABEL as MAX_PROVIDER_LABEL } from './registry.js';
+import {
+  validateCatalogProvider,
+  MAX_LABEL as MAX_PROVIDER_LABEL,
+  PRICE_LIST_CATALOG_CODE_VERSION,
+  PRICE_LIST_CATALOG_TEMPLATE,
+  validatePriceListConstructorTemplate,
+} from './registry.js';
+
+// Re-exported so existing import sites keep working: the pin lives in
+// registry.js, the single module that enforces it.
+export {
+  PRICE_LIST_CATALOG_CODE_VERSION,
+  PRICE_LIST_CATALOG_TEMPLATE,
+  validatePriceListConstructorTemplate,
+};
 
 /**
  * Workspace price lists (accordo D1): a gym's listino — lesson packs,
@@ -40,6 +54,111 @@ const MAX_COMPONENTS = 25;
 const DERIVED_LABEL_PREFIX = 'Workspace price list (';
 const DERIVED_LABEL_SUFFIX = ')';
 const MAX_PROVIDER_NAME = MAX_PROVIDER_LABEL - DERIVED_LABEL_PREFIX.length - DERIVED_LABEL_SUFFIX.length;
+
+/**
+ * Historical `fetchCatalog` closure sources, pinned byte-for-byte for the one
+ * transparent upgrade that drops closure text from the fingerprint (oldest
+ * first, never edited, only appended): a database that registered while the
+ * registry still hashed closure source keeps composing when the persisted
+ * fingerprint matches one of these forms recomputed over the unchanged
+ * listino data. A silent price change under a frozen version still stops the
+ * boot, because the data rides along in the recomputed form.
+ *
+ * - pre-#271: the closure closed over the option field `name` directly;
+ * - #271 (name → providerName): the same closure over `providerName`.
+ */
+const PRICE_LIST_CATALOG_LEGACY_FETCH_SOURCES = Object.freeze([
+  [
+    'async () => ({',
+    '    sourceRef: `price-list:${name}`,',
+    '    priceBooks: [{',
+    '      sourceKey: `pricelist.${name}.book`,',
+    '      name: priceListRef.priceBook.name,',
+    '      currency: priceListRef.priceBook.currency,',
+    '      active: priceListRef.priceBook.active,',
+    '    }],',
+    '    products: priceListRef.products.map((product) => ({',
+    '      sourceKey: `pricelist.${name}.product.${product.key}`,',
+    '      externalId: product.externalId,',
+    '      sku: product.sku,',
+    '      name: product.name,',
+    '      description: product.description,',
+    '      category: product.category,',
+    '      active: product.active,',
+    '    })),',
+    '    offers: priceListRef.offers.map((offer) => ({',
+    '      sourceKey: `pricelist.${name}.offer.${offer.key}`,',
+    '      priceBookSourceKey: `pricelist.${name}.book`,',
+    '      productSourceKey: `pricelist.${name}.product.${offer.product}`,',
+    '      name: offer.name,',
+    '      externalOfferId: offer.externalOfferId,',
+    '      active: offer.active,',
+    '      components: offer.components.map((component, index) => ({',
+    '        sourceKey: `${offer.key}.${component.key}`,',
+    '        label: component.label,',
+    '        chargeType: component.chargeType,',
+    '        pricingModel: component.pricingModel,',
+    '        interval: component.interval,',
+    '        intervalCount: component.intervalCount,',
+    '        unitAmountCents: component.unitAmountCents,',
+    '        flatAmountCents: component.flatAmountCents,',
+    '        tiers: component.tiers.map((tier) => ({',
+    '          upTo: tier.upTo,',
+    '          unitAmountCents: tier.unitAmountCents,',
+    '          flatAmountCents: tier.flatAmountCents,',
+    '        })),',
+    '        externalPriceId: component.externalPriceId,',
+    '        sourcePricingModel: `pricelist:${component.pricingModel}`,',
+    '      })),',
+    '    })),',
+    '  })',
+  ].join('\n'),
+  [
+    'async () => ({',
+    '    sourceRef: `price-list:${providerName}`,',
+    '    priceBooks: [{',
+    '      sourceKey: `pricelist.${providerName}.book`,',
+    '      name: priceListRef.priceBook.name,',
+    '      currency: priceListRef.priceBook.currency,',
+    '      active: priceListRef.priceBook.active,',
+    '    }],',
+    '    products: priceListRef.products.map((product) => ({',
+    '      sourceKey: `pricelist.${providerName}.product.${product.key}`,',
+    '      externalId: product.externalId,',
+    '      sku: product.sku,',
+    '      name: product.name,',
+    '      description: product.description,',
+    '      category: product.category,',
+    '      active: product.active,',
+    '    })),',
+    '    offers: priceListRef.offers.map((offer) => ({',
+    '      sourceKey: `pricelist.${providerName}.offer.${offer.key}`,',
+    '      priceBookSourceKey: `pricelist.${providerName}.book`,',
+    '      productSourceKey: `pricelist.${providerName}.product.${offer.product}`,',
+    '      name: offer.name,',
+    '      externalOfferId: offer.externalOfferId,',
+    '      active: offer.active,',
+    '      components: offer.components.map((component, index) => ({',
+    '        sourceKey: `${offer.key}.${component.key}`,',
+    '        label: component.label,',
+    '        chargeType: component.chargeType,',
+    '        pricingModel: component.pricingModel,',
+    '        interval: component.interval,',
+    '        intervalCount: component.intervalCount,',
+    '        unitAmountCents: component.unitAmountCents,',
+    '        flatAmountCents: component.flatAmountCents,',
+    '        tiers: component.tiers.map((tier) => ({',
+    '          upTo: tier.upTo,',
+    '          unitAmountCents: tier.unitAmountCents,',
+    '          flatAmountCents: tier.flatAmountCents,',
+    '        })),',
+    '        externalPriceId: component.externalPriceId,',
+    '        sourcePricingModel: `pricelist:${component.pricingModel}`,',
+    '      })),',
+    '    })),',
+    '  })',
+  ].join('\n'),
+]);
 
 /**
  * Freeze a normalized value in depth: the fingerprinted config must stay
@@ -339,9 +458,21 @@ export function createPriceListCatalogProvider({ name, version, label, priceList
       })),
     })),
   });
+  // The executed code is bound to the pinned template: an unbumped edit to
+  // this closure — behaviour or otherwise — refuses here, at composition,
+  // instead of syncing under an unchanged fingerprint. Read past any
+  // caller-supplied `toString` override (registry liveFunctionSource rule):
+  // the pin binds the code that runs.
+  validatePriceListConstructorTemplate(Function.prototype.toString.call(fetchCatalog));
   const provider = {
     name: providerName,
     version,
+    // The constructor version moves the registry fingerprint on behaviour
+    // change; the historical closure sources let databases registered before
+    // the fingerprint dropped closure text keep composing (one transparent
+    // migration, see CommercialRegistries.persistFingerprints).
+    codeVersion: PRICE_LIST_CATALOG_CODE_VERSION,
+    legacyFetchSources: PRICE_LIST_CATALOG_LEGACY_FETCH_SOURCES,
     label: label ?? `${DERIVED_LABEL_PREFIX}${providerName}${DERIVED_LABEL_SUFFIX}`,
     config: Object.freeze({
       source: 'price-list',
@@ -353,7 +484,10 @@ export function createPriceListCatalogProvider({ name, version, label, priceList
   // Declared-definition discipline: malformed here stops startup, like every
   // other provider — and the fingerprint the registry computes over this
   // definition covers the listino data in config, so a silent price change
-  // under a frozen version is drift, not an update.
+  // under a frozen version is drift, not an update. The registry recognizes
+  // this provider as constructor-built by its pinned version plus its live
+  // fetchCatalog source (see registry.js): there is no seal to carry or
+  // forge, so the frozen shape above is the whole privilege.
   validateCatalogProvider(provider);
   return Object.freeze(provider);
 }

@@ -87,7 +87,9 @@ export const CONNECTOR_CATALOG = Object.freeze([
     label: 'TikTok',
     accountLabel: 'Account aziendale collegato',
     accountPlaceholder: 'palestra.esempio',
-    syncLines: Object.freeze(['Nuovi messaggi in arrivo e in uscita', 'Cronologia passata, piano piano (facoltativa)']),
+    // In-only by the channels matrix (CHANNEL_SEND_UNSUPPORTED): the entry
+    // must never promise outbound, in the wizard or in the detail.
+    syncLines: Object.freeze(['Nuovi messaggi in arrivo (solo entrata: gli invii rifiutano)', 'Cronologia passata, piano piano (facoltativa)']),
     whatHappens: Object.freeze([
       'Colleghi l\u2019account: i nuovi messaggi entrano da soli nelle conversazioni.',
       'Se scegli la cronologia, il passato arriva a pagine: da Fatto continui finché è completa.',
@@ -575,6 +577,14 @@ export function createConnectorsView(deps) {
         : mapped.status === 'non-disponibile' ? 'Non disponibile qui' : 'Da collegare';
     head.appendChild(el(doc, 'span', 'bo-connector-badge', ` · ${badge}`));
     row.appendChild(head);
+    const detail = doc.createElement('a');
+    detail.textContent = `Dettaglio ${catalog.label}`;
+    detail.setAttribute('href', `#/connettori/${catalog.channel}`);
+    detail.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      navigate(`#/connettori/${catalog.channel}`);
+    });
+    row.appendChild(detail);
     for (const connection of mapped.connections) {
       const line = el(doc, 'p', 'bo-muted', `${String(connection.connectionKey)} · ${String(connection.status)}`);
       row.appendChild(line);
