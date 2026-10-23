@@ -28,7 +28,7 @@
 // — never innerHTML with data, so a hostile account or adapter label is
 // inert text, never markup.
 
-import { CONNECTOR_CATALOG, matchAdapters, matchConnections } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -323,7 +323,9 @@ export function detailSections({ entry, connection, spaceId = null }) {
           : 'Cronologia: non disponibile su questo connettore.',
         direction === 'in-only'
           ? 'Invii: rifiutati per contratto, solo entrata (CHANNEL_SEND_UNSUPPORTED).'
-          : 'Invii: passano dall\u2019outbox del canale con ricevuta; senza permesso di invio aspettano l\u2019ok.',
+          : direction === null
+            ? 'Invii: direzione non dichiarata nel matrix dei canali (nessun adattatore dedicato nel pacchetto).'
+            : 'Invii: passano dall\u2019outbox del canale con ricevuta; senza permesso di invio aspettano l\u2019ok.',
       ];
 
   const chiRispondeLines = connection === null
@@ -470,7 +472,10 @@ export function createConnectorDetailView(deps) {
   }
 
   function renderSection(box, section) {
-    const panel = el(doc, 'section', 'bo-connector-section');
+    // The shipped `#/connettori` family draws blocks with bo-connector-row
+    // (border, surface, radius from styles.css): the detail uses the same
+    // tokens instead of an unstyled container of its own.
+    const panel = el(doc, 'section', 'bo-connector-row');
     panel.appendChild(el(doc, 'h3', undefined, section.title));
     const list = el(doc, 'ul', undefined);
     for (const line of section.lines) {
@@ -482,7 +487,7 @@ export function createConnectorDetailView(deps) {
 
   function renderConsumers(box, channel) {
     const rows = consumersForChannel(channel);
-    const panel = el(doc, 'section', 'bo-connector-section');
+    const panel = el(doc, 'section', 'bo-connector-row');
     panel.appendChild(el(doc, 'h3', undefined, 'Skill e pacchetti che lo usano'));
     if (state.catalogError !== null) {
       panel.appendChild(el(doc, 'p', 'bo-muted',
@@ -533,12 +538,19 @@ export function createConnectorDetailView(deps) {
       mount.appendChild(el(doc, 'p', 'empty', 'Scegli lo spazio per vedere il suo collegamento.'));
       return;
     }
-    const connections = matchConnections(channel, state.entries);
-    const connection = connections.find((row) => row.status === 'active')
-      ?? connections[0] ?? null;
-    // Adapter-aware like the list: without a composed adapter the detail must
-    // not promise a connection the wizard cannot make.
-    const available = matchAdapters(channel, state.adapters).length > 0;
+    // The list's own contract: without a composed adapter the connector is
+    // 'non-disponibile' with no connections, whatever stale rows exist. The
+    // detail mirrors it exactly instead of re-deriving its own answer.
+    const mapped = connectorStatus({
+      entry,
+      adapters: matchAdapters(channel, state.adapters),
+      connections: matchConnections(channel, state.entries),
+    });
+    const available = mapped.status !== 'non-disponibile';
+    const connections = available ? mapped.connections : [];
+    const connection = available
+      ? (connections.find((row) => row.status === 'active') ?? connections[0] ?? null)
+      : null;
     const badge = !available
       ? 'Non disponibile qui'
       : connection !== null ? statusLabel(connection.status) : 'Da collegare';
@@ -549,6 +561,21 @@ export function createConnectorDetailView(deps) {
     if (!available) {
       mount.appendChild(el(doc, 'p', 'empty',
         'Nessun adattatore composto per questo canale: non si può collegare qui.'));
+      // No row, no roster, no row-dependent sections: a stale connection row
+      // must never surface an account, a key, or an outbox promise the list
+      // honestly hides and the wizard cannot create. Declared consumers stay:
+      // they need no row.
+      renderConsumers(mount, channel);
+      const back = el(doc, 'a', undefined, 'Torna ai connettori');
+      back.setAttribute('href', '#/connettori');
+      back.addEventListener('click', (event) => {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        navigate('#/connettori');
+      });
+      const row = el(doc, 'p', undefined);
+      row.appendChild(back);
+      mount.appendChild(row);
+      return;
     }
     const sections = detailSections({ entry, connection, spaceId: state.spaceId.trim() });
     renderSection(mount, sections.cosaEntra);
@@ -562,7 +589,7 @@ export function createConnectorDetailView(deps) {
       // connection key is space+channel+account): the detail shows the active
       // row above, and every bound account stays visible here instead of an
       // arbitrary first row hiding the others.
-      const roster = el(doc, 'section', 'bo-connector-section');
+      const roster = el(doc, 'section', 'bo-connector-row');
       roster.appendChild(el(doc, 'h3', undefined, 'Altri collegamenti di questo canale'));
       const list = el(doc, 'ul', undefined);
       for (const row of connections) {
@@ -580,15 +607,7 @@ export function createConnectorDetailView(deps) {
     }
     renderConsumers(mount, channel);
     const row = el(doc, 'p', undefined);
-    if (!available) {
-      const back = el(doc, 'a', undefined, 'Torna ai connettori');
-      back.setAttribute('href', '#/connettori');
-      back.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
-      });
-      row.appendChild(back);
-    } else if (connection === null) {
+    if (connection === null) {
       const go = el(doc, 'a', undefined, 'Collega in 3 passi');
       go.setAttribute('href', '#/connettori');
       go.addEventListener('click', (event) => {
@@ -609,6 +628,13 @@ export function createConnectorDetailView(deps) {
   }
 
   return {
-    render: async (channel) => { await load(); render(channel); },
+    render: async (channel) => {
+      // Loading state: the mount never sits on stale content while the three
+      // requests are in flight. render() clears it again on arrival.
+      while (mount.firstChild) mount.removeChild(mount.firstChild);
+      mount.appendChild(el(doc, 'p', 'bo-muted', 'Caricamento del connettore…'));
+      await load();
+      render(channel);
+    },
   };
 }

@@ -87,7 +87,9 @@ export const CONNECTOR_CATALOG = Object.freeze([
     label: 'TikTok',
     accountLabel: 'Account aziendale collegato',
     accountPlaceholder: 'palestra.esempio',
-    syncLines: Object.freeze(['Nuovi messaggi in arrivo e in uscita', 'Cronologia passata, piano piano (facoltativa)']),
+    // In-only by the channels matrix (CHANNEL_SEND_UNSUPPORTED): the entry
+    // must never promise outbound, in the wizard or in the detail.
+    syncLines: Object.freeze(['Nuovi messaggi in arrivo (solo entrata: gli invii rifiutano)', 'Cronologia passata, piano piano (facoltativa)']),
     whatHappens: Object.freeze([
       'Colleghi l\u2019account: i nuovi messaggi entrano da soli nelle conversazioni.',
       'Se scegli la cronologia, il passato arriva a pagine: da Fatto continui finché è completa.',
