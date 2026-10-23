@@ -1,12 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ADVISOR_ACTION_LIMIT,
   DEMO_STRINGS,
+  applyTriageDecision,
+  advisorProgress,
+  buildAdvisorActions,
   buildOggiLinks,
+  buildPreCallBrief,
+  buildTodayAgenda,
+  buildTodayRecap,
+  createOggiView,
+  executeAdvisorAction,
   greetingForHour,
   isSpaceMount,
+  isTodayInRome,
+  loadOggiData,
+  missingLeadChannels,
+  nextAppointment,
   oggiDateLine,
   renderOggi,
+  romeDayKey,
+  romeTime,
+  staleFields,
+  triageState,
+  undoTriage,
 } from '../apps/admin/public/admin-oggi.js';
 import { renderDemoChrome } from '../apps/admin/public/admin-demo.js';
 import {
@@ -180,4 +198,397 @@ test('sidebar under a space mount shows the Italian voices and links the deliver
   }
   byHref('#/customer-data').dispatch('click', { preventDefault: () => {} });
   assert.deepEqual(seen, ['#/customer-data']);
+});
+
+/**
+ * BO-F3-04 (backlog:8e07adfee555): the real Oggi screen. Fixtures are Rome
+ * instants as ISO strings — what the records API returns — so the Rome-day
+ * assertions hold whatever zone the machine runs in.
+ */
+
+const OGGI_NOW = new Date('2026-10-19T07:00:00.000Z'); // 09:00 in Rome, Monday
+const TASK_OPEN = {
+  id: 'task-1',
+  status: 'open',
+  title: 'Richiama per il preventivo',
+  subjectResource: 'lead',
+  subjectId: 'lead-1',
+  subjectOwner: 'host',
+  subjectLabel: 'Giulia Romano',
+  dueAt: '2026-10-19T00:00:00.000Z',
+  openedAt: '2026-10-18T08:00:00.000Z',
+};
+const TASK_DONE = { ...TASK_OPEN, id: 'task-2', status: 'completed' };
+const APPT_TODAY = {
+  id: 'appt-1',
+  status: 'booked',
+  subjectResource: 'lead',
+  subjectId: 'lead-1',
+  subjectOwner: 'host',
+  subjectLabel: 'Giulia Romano',
+  startsAt: '2026-10-19T08:00:00.000Z', // 10:00 in Rome
+  notes: 'Vuole la scheda con i prezzi del pacchetto.',
+};
+const APPT_TOMORROW = { ...APPT_TODAY, id: 'appt-2', startsAt: '2026-10-20T08:00:00.000Z' };
+const MESSAGE_IN = {
+  id: 'msg-1',
+  channel: 'whatsapp',
+  body: 'Ciao, posso passare giovedì per una prova?',
+  occurredAt: '2026-10-18T15:00:00.000Z',
+  subjectResource: 'lead',
+  subjectId: 'lead-1',
+};
+const CALL_MADE = {
+  id: 'call-1',
+  outcome: 'Interessata, richiama dopo il preventivo',
+  occurredAt: '2026-10-17T10:00:00.000Z',
+  subjectResource: 'lead',
+  subjectId: 'lead-1',
+};
+
+test('rome clock renders Rome time whatever zone the machine runs in', () => {
+  assert.equal(romeTime('2026-10-19T08:00:00.000Z'), '10:00');
+  assert.equal(romeDayKey('2026-10-19T08:00:00.000Z'), '2026-10-19');
+  assert.equal(isTodayInRome('2026-10-19T20:00:00.000Z', OGGI_NOW), true);
+  assert.equal(isTodayInRome('2026-10-20T00:30:00.000Z', OGGI_NOW), false);
+  assert.equal(romeTime('nope'), null);
+  assert.equal(romeDayKey(null), null);
+});
+
+test('every advisor action cites the record that motivates it', () => {
+  const { actions, capped } = buildAdvisorActions({
+    tasks: [TASK_OPEN, TASK_DONE],
+    appointments: [APPT_TODAY, APPT_TOMORROW],
+    now: OGGI_NOW,
+  });
+  assert.equal(capped, false);
+  assert.deepEqual(actions.map((action) => action.id), ['bo04:followup:task-1', 'bo04:appointment:appt-1']);
+  for (const action of actions) {
+    assert.ok(action.record && typeof action.record.module === 'string', 'record cited');
+    assert.ok(typeof action.record.id === 'string' && action.record.id !== '', 'record id cited');
+    assert.ok(typeof action.record.href === 'string' && action.record.href !== '', 'record clickable');
+    assert.ok(typeof action.record.label === 'string' && action.record.label !== '', 'record labeled');
+    assert.ok(action.why.includes('Giulia Romano'), 'motive names the cited subject');
+  }
+  const followup = actions[0];
+  assert.equal(followup.record.module, 'work-task');
+  assert.equal(followup.record.href, '#/work/task-1');
+  assert.equal(followup.run, 'complete-task');
+  assert.ok(followup.why.includes('Giulia Romano'), 'motive names the subject label');
+  const prep = actions[1];
+  assert.equal(prep.record.module, 'appointment');
+  assert.equal(prep.record.href, '#/customer-card/lead/lead-1');
+});
+
+test('advisor list is capped and says so', () => {
+  const tasks = Array.from({ length: ADVISOR_ACTION_LIMIT + 1 }, (_, index) => ({
+    ...TASK_OPEN, id: `task-${index}`,
+  }));
+  const { actions, capped } = buildAdvisorActions({ tasks, appointments: [], now: OGGI_NOW });
+  assert.equal(actions.length, ADVISOR_ACTION_LIMIT);
+  assert.equal(capped, true);
+});
+
+test('triage done and postpone are both reversible with undo', () => {
+  let triage = {};
+  triage = applyTriageDecision(triage, 'bo04:followup:task-1', 'done');
+  assert.equal(triageState(triage, 'bo04:followup:task-1'), 'done');
+  triage = undoTriage(triage, 'bo04:followup:task-1');
+  assert.equal(triageState(triage, 'bo04:followup:task-1'), 'open');
+  triage = applyTriageDecision(triage, 'bo04:followup:task-1', 'postpone');
+  assert.equal(triageState(triage, 'bo04:followup:task-1'), 'postponed');
+  triage = undoTriage(triage, 'bo04:followup:task-1');
+  assert.equal(triageState(triage, 'bo04:followup:task-1'), 'open');
+  assert.deepEqual(applyTriageDecision(triage, '', 'done'), {}, 'empty keys stay out');
+  assert.deepEqual(applyTriageDecision(triage, null, 'done'), {}, 'missing keys stay out');
+  assert.deepEqual(applyTriageDecision({}, 'bo04:x', 'snooze'), {}, 'unknown decisions ignored');
+  assert.deepEqual(advisorProgress([{ id: 'a' }, { id: 'b' }], { a: 'done' }), { handled: 1, total: 2 });
+});
+
+test('execute re-reads the record and refuses a changed datum', async () => {
+  const action = buildAdvisorActions({ tasks: [TASK_OPEN], appointments: [], now: OGGI_NOW }).actions[0];
+  const calls = [];
+  const matching = async (path) => {
+    assert.ok(path.endsWith('/records/task-1'), `re-reads by id: ${path}`);
+    return { ...TASK_OPEN };
+  };
+  const fresh = await executeAdvisorAction({ request: matching }, action, async (checked, row) => {
+    calls.push([checked, row]);
+    return 'ran';
+  });
+  assert.equal(fresh, 'ran');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].status, 'open');
+
+  const changed = async () => ({ ...TASK_OPEN, title: 'Titolo cambiato nel frattempo' });
+  let ran = false;
+  await assert.rejects(
+    executeAdvisorAction({ request: changed }, action, async () => { ran = true; }),
+    (error) => error.code === 'OGGI_STALE_RECORD' && error.details.fields.includes('title'),
+  );
+  assert.equal(ran, false, 'the domain action never fires on stale data');
+
+  const closed = async () => ({ ...TASK_OPEN, status: 'completed' });
+  await assert.rejects(
+    executeAdvisorAction({ request: closed }, action, async () => {}),
+    (error) => error.code === 'OGGI_STALE_RECORD',
+  );
+
+  let requested = false;
+  await assert.rejects(
+    executeAdvisorAction({ request: async () => { requested = true; } }, { record: {} }, async () => {}),
+    (error) => error.code === 'OGGI_INVALID_RECORD',
+  );
+  assert.equal(requested, false, 'no read without a cited record');
+});
+
+test('stale detection compares only the cited snapshot', () => {
+  assert.deepEqual(staleFields({ status: 'open' }, { status: 'open', extra: 'new field' }), []);
+  assert.deepEqual(staleFields({ dueAt: null }, { dueAt: undefined }), []);
+});
+
+test('recap counts real records in one sentence', () => {
+  const recap = buildTodayRecap({
+    appointments: [APPT_TODAY, APPT_TOMORROW],
+    openTasks: [TASK_OPEN, TASK_DONE],
+    now: OGGI_NOW,
+  });
+  assert.equal(recap, 'Oggi hai 1 appuntamento e 1 follow-up aperto. Il primo è alle 10:00 con Giulia Romano.');
+  assert.equal(
+    buildTodayRecap({ appointments: [], openTasks: [], now: OGGI_NOW }),
+    'Oggi non hai appuntamenti né follow-up aperti.',
+  );
+  assert.ok(!recap.includes('AI') && !recap.includes('artificiale'), 'deterministic, never generated insight');
+});
+
+test('agenda rows link the scheda when it resolves, the record otherwise', () => {
+  const agenda = buildTodayAgenda([APPT_TODAY, APPT_TOMORROW, { ...APPT_TODAY, id: 'appt-3', status: 'cancelled' }], OGGI_NOW);
+  assert.equal(agenda.length, 1, 'only today booked/confirmed');
+  assert.equal(agenda[0].time, '10:00');
+  assert.equal(agenda[0].href, '#/customer-card/lead/lead-1');
+  const packaged = buildTodayAgenda([{
+    ...APPT_TODAY, subjectOwner: 'package', subjectOwnerPackage: 'lifecycle', subjectLabel: 'Seq-9',
+  }], OGGI_NOW);
+  assert.equal(packaged[0].href, '#/modules/appointment/appt-1', 'package subjects fall back to the record');
+});
+
+test('next appointment is the upcoming one, null when the day holds nothing else', () => {
+  assert.equal(nextAppointment([APPT_TODAY, APPT_TOMORROW], OGGI_NOW)?.id, 'appt-1');
+  assert.equal(nextAppointment([APPT_TOMORROW], OGGI_NOW), null);
+  assert.equal(nextAppointment([], OGGI_NOW), null);
+});
+
+test('brief quotes records and every source opens its record', () => {
+  const brief = buildPreCallBrief({ appointment: APPT_TODAY, messages: [MESSAGE_IN], calls: [CALL_MADE] });
+  assert.ok(brief.bullets.some((line) => line.includes('Ciao, posso passare giovedì')), 'message quoted');
+  assert.ok(brief.bullets.some((line) => line.includes('Interessata')), 'call quoted');
+  const hrefs = brief.sources.map((source) => source.href);
+  assert.ok(hrefs.includes('#/modules/appointment/appt-1'), 'appointment source');
+  assert.ok(hrefs.includes('#/modules/interaction-message/msg-1'), 'message source');
+  assert.ok(hrefs.includes('#/modules/interaction-call/call-1'), 'call source');
+  assert.ok(hrefs.includes('#/customer-card/lead/lead-1'), 'card source');
+  assert.ok(brief.sources.every((source) => typeof source.label === 'string' && source.label !== ''));
+
+  const bare = buildPreCallBrief({ appointment: APPT_TODAY, messages: [], calls: [] });
+  assert.ok(bare.bullets.some((line) => line.includes('Nessun messaggio o chiamata registrati')));
+  assert.ok(bare.sources.some((source) => source.href === '#/modules/appointment/appt-1'));
+  assert.equal(buildPreCallBrief({ appointment: null }), null);
+});
+
+test('channel invite lists only the disconnected lead channels', () => {
+  const missing = missingLeadChannels([
+    { channel: 'whatsapp', status: 'active' },
+    { channel: 'instagram', status: 'suspended' },
+  ]);
+  const channels = missing.map((entry) => entry.channel);
+  assert.ok(!channels.includes('whatsapp'), 'connected stays out');
+  assert.ok(channels.includes('instagram'), 'suspended counts as missing');
+  assert.ok(channels.includes('facebook') && channels.includes('site-form'));
+  assert.ok(!channels.includes('calendar') && !channels.includes('stripe'), 'non-lead channels stay out');
+  assert.ok(missing.every((entry) => typeof entry.label === 'string' && entry.label !== ''), 'Italian labels');
+});
+
+test('full home renders every section with clickable sources', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const { actions } = buildAdvisorActions({ tasks: [TASK_OPEN], appointments: [APPT_TODAY], now: OGGI_NOW });
+  let triage = {};
+  const paint = () => renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    userName: 'Elena',
+    links: [],
+    navigate: (hash) => seen.push(hash),
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: buildTodayRecap({ appointments: [APPT_TODAY], openTasks: [TASK_OPEN], now: OGGI_NOW }),
+      actions,
+      triage,
+      capped: false,
+      agenda: buildTodayAgenda([APPT_TODAY], OGGI_NOW),
+      brief: buildPreCallBrief({ appointment: APPT_TODAY, messages: [MESSAGE_IN], calls: [] }),
+      missing: missingLeadChannels([]),
+      availability: { work: true, appointments: true, channels: true },
+      events: {
+        onPostpone: (id) => { triage = applyTriageDecision(triage, id, 'postpone'); paint(); },
+        onUndo: (id) => { triage = undoTriage(triage, id); paint(); },
+        onExecute: (action) => { seen.push(`exec:${action.id}`); triage = applyTriageDecision(triage, action.id, 'done'); paint(); },
+      },
+    },
+  });
+  paint();
+
+  const text = mount.textContent;
+  assert.ok(text.includes('Buongiorno, Elena'), 'greets the person');
+  assert.ok(text.includes('Oggi hai 1 appuntamento e 1 follow-up aperto'), 'one-sentence recap');
+  assert.ok(text.includes('✦ Il tuo advisor'), 'advisor header');
+  assert.ok(text.includes('0 di 2'), 'progress starts at zero');
+  assert.ok(text.includes('Agenda di oggi') && text.includes('10:00'), 'agenda with Rome time');
+  assert.ok(text.includes('✦ Prima della prossima call'), 'brief header');
+  assert.ok(text.includes('Fonti:'), 'brief sources labeled');
+  assert.ok(text.includes('Collega WhatsApp'), 'channel invite names the missing channel');
+  for (const banned of DEMO_STRINGS) {
+    assert.ok(!text.includes(banned), `no demo text: ${banned}`);
+  }
+
+  const byHref = (href) => mount.findAll('a').find((node) => node.getAttribute('href') === href);
+  for (const href of ['#/modules/appointment/appt-1', '#/modules/interaction-message/msg-1',
+    '#/customer-card/lead/lead-1', '#/connettori']) {
+    assert.ok(byHref(href), `source opens its record: ${href}`);
+  }
+
+  const buttons = mount.findAll('button');
+  assert.ok(buttons.some((button) => button.textContent === 'Domani'), 'postpone offered');
+  assert.ok(buttons.some((button) => button.textContent === 'Completa'), 'CTA offered');
+  assert.ok(!buttons.some((button) => button.textContent === 'Annulla'), 'no undo while open');
+
+  mount.querySelector('button[data-triage="postpone"]').dispatch('click', {});
+  assert.ok(mount.textContent.includes('1 di 2'), 'progress counts the postponed suggestion');
+  assert.ok(mount.querySelector('button[data-triage="undo"]'), 'undo appears after postponing');
+  mount.querySelector('button[data-triage="undo"]').dispatch('click', {});
+  assert.ok(mount.textContent.includes('0 di 2'), 'undo restores the suggestion');
+
+  mount.querySelector('button[data-triage="execute"]').dispatch('click', {});
+  assert.deepEqual(seen, ['exec:bo04:followup:task-1']);
+  assert.ok(mount.textContent.includes('Fatto'), 'executed action reads done');
+});
+
+test('hostile record strings stay text in every Oggi section', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const evil = { ...TASK_OPEN, title: '<script>alert(1)</script>', subjectLabel: '<img src=x onerror=1>' };
+  const { actions } = buildAdvisorActions({ tasks: [evil], appointments: [], now: OGGI_NOW });
+  renderOggi({
+    doc,
+    mount,
+    spaceName: '<script>alert(2)</script>',
+    links: [],
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions, triage: {}, agenda: [], brief: null, missing: [],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.equal(mount.findAll('script').length, 0);
+  assert.equal(mount.findAll('img').length, 0);
+  assert.ok(mount.textContent.includes('<script>alert(1)</script>'));
+});
+
+test('home with nothing open says the day is done', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    links: [{ id: 'clienti', label: 'Clienti', route: '#/customer-data' }],
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: buildTodayRecap({ appointments: [], openTasks: [], now: OGGI_NOW }),
+      actions: [], triage: {}, agenda: [],
+      brief: null, missing: [],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.ok(mount.textContent.includes('Hai finito per oggi'));
+  assert.ok(mount.textContent.includes('Clienti'), 'delivered-screen links still follow below');
+});
+
+test('loadOggiData degrades honestly without packages', async () => {
+  const data = await loadOggiData({ request: async () => ({}) }, OGGI_NOW);
+  assert.deepEqual(
+    [data.workAvailable, data.appointmentsAvailable, data.channelsAvailable],
+    [false, false, false],
+  );
+  assert.deepEqual(data.tasks, []);
+  assert.equal(data.next, null);
+});
+
+/** Flush the view's async work: clicks resolve promises across ticks. */
+async function settle(predicate, tries = 100) {
+  for (let i = 0; i < tries; i += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => { setImmediate(resolve); });
+  }
+  assert.ok(predicate(), 'view settled');
+}
+
+function oggiFakeClient(state) {
+  return {
+    posts: [],
+    async request(path, options = {}) {
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (method !== 'GET') {
+        this.posts.push({ path, body: options.body });
+        return { task: { ...TASK_OPEN, status: 'completed' } };
+      }
+      if (path === '/api/schema') return { domains: { work: {}, appointments: {}, channels: {}, interactions: {} } };
+      if (path.startsWith('/api/modules/work-task/records/')) {
+        return state.task ?? { ...TASK_OPEN };
+      }
+      // Like the server: a completed task leaves the open list, so the row
+      // is gone on the next load instead of lingering as done.
+      if (path.startsWith('/api/modules/work-task/records')) {
+        return { items: this.posts.length > 0 ? [] : state.tasks };
+      }
+      if (path.startsWith('/api/modules/appointment/records')) return { items: state.appointments };
+      if (path.startsWith('/api/modules/channel-connection/records')) return { items: [] };
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: [MESSAGE_IN] };
+      if (path.startsWith('/api/modules/interaction-call/records')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+}
+
+test('Oggi view completes a task with a fresh read, then drops its row', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = oggiFakeClient({ tasks: [TASK_OPEN], appointments: [APPT_TODAY] });
+  const view = createOggiView({ doc, mount, client, navigate: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  assert.ok(mount.textContent.includes('Richiama per il preventivo'));
+
+  mount.querySelector('button[data-triage="execute"]').dispatch('click', {});
+  await settle(() => client.posts.length > 0);
+  assert.ok(client.posts[0].path.endsWith('/records/task-1/actions/complete'), 'same server action as Work');
+  await settle(() => !mount.textContent.includes('Richiama per il preventivo'));
+  assert.ok(mount.textContent.includes('Prepara la call'), 'the prep row survives on its own record');
+});
+
+test('Oggi view keeps the row open and shows the refusal on stale data', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = oggiFakeClient({
+    tasks: [TASK_OPEN],
+    appointments: [APPT_TODAY],
+    task: { ...TASK_OPEN, status: 'completed' },
+  });
+  const view = createOggiView({ doc, mount, client, navigate: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+
+  mount.querySelector('button[data-triage="execute"]').dispatch('click', {});
+  await settle(() => mount.textContent.includes('Il dato è cambiato'));
+  assert.equal(client.posts.length, 0, 'no mutation on stale data');
+  assert.ok(mount.querySelector('button[data-triage="postpone"]'), 'the row stays open');
 });

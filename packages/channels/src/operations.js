@@ -1747,8 +1747,12 @@ export function createChannelOperations(deps) {
     } catch (error) {
       // A window refusal is the adapter's contract with its callers (send a
       // template instead): it travels intact, never flattened into the
-      // generic malformed code.
-      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'CHANNEL_TEMPLATE_REQUIRED') {
+      // generic malformed code. An inbound-only channel's refusal travels
+      // the same way, so queueing on TikTok, voice, site-form, calendar or
+      // stripe answers CHANNEL_SEND_UNSUPPORTED instead of a misleading
+      // "malformed message".
+      const code = error && typeof error === 'object' ? /** @type {any} */ (error).code : null;
+      if (code === 'CHANNEL_TEMPLATE_REQUIRED' || code === 'CHANNEL_SEND_UNSUPPORTED') {
         throw error;
       }
       throw new AppError('Channel message is not well-formed', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
