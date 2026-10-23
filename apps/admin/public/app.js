@@ -540,8 +540,8 @@ const reportingView = createReportingView({
   mount: moduleView,
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
-  onAskAi: (screenId) => {
-    if (assistantPanel) void assistantPanel.open(screenId);
+  onAskAi: (screenId, description) => {
+    if (assistantPanel) void assistantPanel.open(screenId, description);
     else toast('Apri la barra AI (⌘K) e descrivi il modulo che vuoi creare.');
   },
 });

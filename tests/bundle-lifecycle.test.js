@@ -233,6 +233,166 @@ test('uninstallBundle drops only exclusively-owned tables (same ownership table,
   );
 });
 
+test('installBundle re-runs the plan-time ownership guards (install side)', async (t) => {
+  // P2 bundle-manager.js:657: install verified the bundle in isolation and
+  // recorded it, so a hand-placed directory naming another bundle's table
+  // (or a kernel table) installed and shared storage at runtime. The
+  // guards run BEFORE the boot, so a bare root (no kernel to boot) still
+  // refuses — and the registry stays untouched. Same source of truth as
+  // the plan-side table above, install side.
+  const root = mkdtempSync(join(tmpdir(), 'accordo-bundle-install-own-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { applyBundleCreate, installBundle, planBundleCreate: plan, readBundleRegistry } =
+    await import('../packages/cli/src/bundle-manager.js');
+
+  const sonde = { ...probeManifest, name: 'sonde', table: 'sonde_rows' };
+  applyBundleCreate(plan({ manifest: sonde, name: 'sonde', version: '0.0.1', createdBy: 'ai', rootDir: root }));
+
+  /**
+   * @param {{ bundleName: string, moduleName: string, table: string, manifestModule?: string, manifestTable?: string, kernelTable?: string }} placed
+   */
+  function handPlace({ bundleName, moduleName, table, manifestModule, manifestTable, kernelTable }) {
+    const dir = join(root, 'bundles', bundleName, '0.0.1');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'module.manifest.json'),
+      JSON.stringify({ ...probeManifest, name: manifestModule ?? moduleName, table: manifestTable ?? table }, null, 2),
+      'utf8',
+    );
+    writeFileSync(
+      join(dir, 'bundle.json'),
+      JSON.stringify({
+        format: 1,
+        name: bundleName,
+        version: '0.0.1',
+        createdBy: 'ai',
+        modules: [{ name: moduleName, table, migration: 'pg_bootstrap_probe' }],
+      }, null, 2),
+      'utf8',
+    );
+    if (kernelTable !== undefined) {
+      const kernelDir = join(root, 'packages', 'modules', 'prova');
+      mkdirSync(kernelDir, { recursive: true });
+      writeFileSync(
+        join(kernelDir, 'module.manifest.json'),
+        JSON.stringify({ ...probeManifest, name: 'prova', table: kernelTable }, null, 2),
+        'utf8',
+      );
+    }
+  }
+
+  // Hand-placed, like an agent-crafted directory that never went through
+  // plan: each names storage it does not own, or disagrees with itself.
+  handPlace({ bundleName: 'seconda', moduleName: 'seconda', table: 'sonde_rows' });
+  handPlace({ bundleName: 'terza', moduleName: 'terza', table: 'contacts' });
+  handPlace({ bundleName: 'quarta', moduleName: 'quarta', table: 'prova_rows', kernelTable: 'prova_rows' });
+  handPlace({ bundleName: 'quinta', moduleName: 'sonde', table: 'quinta_rows' });
+  // P1 bundle-manager.js:685: a case variant skipped the kernel-owned
+  // refusal because the guard read bundle.json strings verbatim. The
+  // on-disk manifest stays valid here, so the shared-root scan is
+  // unaffected; the bundle.json shape fires first.
+  handPlace({ bundleName: 'sesta', moduleName: 'sesta', table: 'Contacts', manifestTable: 'sesta_rows' });
+  // P1 bundle-manager.js:685: bundle.json names an innocent table while
+  // module.manifest.json names another bundle's live table.
+  handPlace({ bundleName: 'settima', moduleName: 'settima', table: 'settima_rows', manifestTable: 'sonde_rows' });
+  // Same divergence on the module name.
+  handPlace({ bundleName: 'ottava', moduleName: 'ottava', table: 'ottava_rows', manifestModule: 'nona' });
+
+  /** @type {Array<[string, string, RegExp]>} */
+  const refusals = [
+    // Another bundle's live table: the second CREATE TABLE IF NOT EXISTS
+    // would no-op and two services would mix rows.
+    ['another bundle table', 'seconda', /one table, one bundle/i],
+    // Kernel storage, protected set: clienti, pipeline, calendario…
+    ['kernel protected table', 'terza', /kernel-owned/i],
+    // Kernel storage, generated module: no protected set names it, the
+    // kernel table scan still refuses.
+    ['kernel generated-module table', 'quarta', /kernel-owned/i],
+    // Another bundle's module name, case aside.
+    ['another bundle module name', 'quinta', /one module, one bundle/i],
+    // Case is not an escape hatch: an uppercase table is not a valid shape,
+    // refused before any ownership lookup.
+    ['uppercase table shape', 'sesta', /must match/i],
+    // The two manifests must agree, exactly: bundle.json against the
+    // on-disk module.manifest.json the scanner and the verifier read.
+    ['manifest table divergence', 'settima', /disagrees with itself/i],
+    ['manifest module divergence', 'ottava', /disagrees with itself/i],
+  ];
+  for (const [label, bundleName, expected] of refusals) {
+    await assert.rejects(
+      installBundle({ name: bundleName, version: '0.0.1', rootDir: root }),
+      expected,
+      label,
+    );
+  }
+  assert.deepEqual(readBundleRegistry(root).installed, [], 'refusals never touch the registry');
+});
+
+test('installBundle refuses an unreadable module manifest before the boot', async (t) => {
+  // P1 bundle-manager.js:685, agreement side: a hand-placed bundle.json can
+  // be shape-valid while the on-disk module.manifest.json the scanner reads
+  // is malformed. The install refuses with the fix (regenerate), on its own
+  // root — an invalid manifest left on a shared root would fail the scanner
+  // for every other bundle, so this case lives apart.
+  const root = mkdtempSync(join(tmpdir(), 'accordo-bundle-install-manifest-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { installBundle, readBundleRegistry } = await import('../packages/cli/src/bundle-manager.js');
+  const dir = join(root, 'bundles', 'nona', '0.0.1');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, 'module.manifest.json'),
+    JSON.stringify({ ...probeManifest, name: 'nona', table: 'Contacts' }, null, 2),
+    'utf8',
+  );
+  writeFileSync(
+    join(dir, 'bundle.json'),
+    JSON.stringify({
+      format: 1,
+      name: 'nona',
+      version: '0.0.1',
+      createdBy: 'ai',
+      modules: [{ name: 'nona', table: 'nona_rows', migration: 'pg_bootstrap_probe' }],
+    }, null, 2),
+    'utf8',
+  );
+  await assert.rejects(
+    installBundle({ name: 'nona', version: '0.0.1', rootDir: root }),
+    /invalid module\.manifest\.json/i,
+  );
+  assert.deepEqual(readBundleRegistry(root).installed, [], 'the refusal never touches the registry');
+});
+
+test('installBundle refuses code that boots other storage than bundle.json claims', async (t) => {
+  // P1 bundle-manager.js:685, the full divergence: bundle.json and
+  // module.manifest.json agree on an innocent table, but the generated
+  // sources were edited to serve a kernel table (the CREATE TABLE IF NOT
+  // EXISTS would no-op onto kernel storage and mix rows). The loaded
+  // definition is compared to bundle.json BEFORE the proof boot serves any
+  // record, and the registry stays empty.
+  const root = createProjectCopy(t);
+  const { planModule, applyModulePlan } = await import(pathToFileURL(join(root, 'packages/cli/src/module-factory.js')).href);
+  const appointmentManifest = JSON.parse(readFileSync(join(root, 'packages/appointments/modules/appointment.module.json'), 'utf8'));
+  applyModulePlan(planModule({ manifest: appointmentManifest, rootDir: root }));
+  const copy = await import(pathToFileURL(join(root, 'packages/cli/src/bundle-manager.js')).href);
+  const plan = copy.planBundleCreate({ manifest: probeManifest, name: 'lifecycle-probe', version: '0.0.1', createdBy: 'ai', rootDir: root });
+  copy.applyBundleCreate(plan);
+  const table = plan.table;
+  const indexPath = join(root, 'bundles', 'lifecycle-probe', '0.0.1', 'src', 'index.js');
+  const migrationPath = join(root, 'bundles', 'lifecycle-probe', '0.0.1', 'src', 'migration.js');
+  const indexSrc = readFileSync(indexPath, 'utf8');
+  assert.ok(indexSrc.includes(`table: ${JSON.stringify(table)}`), 'the generated definition names the manifest table');
+  writeFileSync(indexPath, indexSrc.replace(`table: ${JSON.stringify(table)}`, 'table: "contacts"'), 'utf8');
+  const migrationSrc = readFileSync(migrationPath, 'utf8');
+  assert.ok(migrationSrc.includes(`CREATE TABLE IF NOT EXISTS ${table} (`), 'the generated migration creates the manifest table');
+  writeFileSync(migrationPath, migrationSrc.replace(`CREATE TABLE IF NOT EXISTS ${table} (`, 'CREATE TABLE IF NOT EXISTS contacts ('), 'utf8');
+
+  await assert.rejects(
+    copy.installBundle({ name: 'lifecycle-probe', version: '0.0.1', rootDir: root }),
+    /boots code naming "contacts" but bundle\.json claims/,
+  );
+  assert.deepEqual(copy.readBundleRegistry(root).installed, [], 'the refusal never touches the registry');
+});
+
 test('verifyBundle boots the target tree kernel, never the CLI checkout', async (t) => {
   // P2 bundle-manager.js:731: verifyBundle loaded the bundle from rootDir but
   // the app kernel always from the CLI checkout, so `bundle verify --root`

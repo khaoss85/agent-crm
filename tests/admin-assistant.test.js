@@ -661,6 +661,34 @@ test('pannello: suggerimenti per schermata, fonti cliccabili, box disabilitato i
   assert.ok(navigated.length === 1 && navigated[0].startsWith('#/'));
 });
 
+test('pannello: open with a draft prefills the free-question input as text', async () => {
+  // BO-F5-01 (backlog:8691acfc, P2 admin-reporting.js:289): the description
+  // typed on the "+ Nuovo modulo" screen lands in the panel input, so the
+  // user never retypes it there. Text only — never markup, never a submit.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const panel = createAssistantPanel({
+    doc,
+    mount,
+    client: stubClient({
+      '/api/modules/conversation/records?limit=50': CONVS,
+      '/api/modules/interaction-call/records?limit=100': CALLS,
+    }),
+    navigate: () => {},
+    notify: () => {},
+  });
+  await panel.open('nuovo-modulo', 'un modulo sonde per i KPI del pilota');
+  const inputs = mount.findAll('input');
+  assert.equal(inputs.length, 1, 'the panel has its free-question input');
+  assert.equal(inputs[0].value, 'un modulo sonde per i KPI del pilota', 'the draft is prefilled');
+  // A hostile draft lands as input text, never markup.
+  await panel.open('nuovo-modulo', '<img src=x onerror=alert(1)>');
+  assert.equal(mount.findAll('input')[0].value, '<img src=x onerror=alert(1)>', 'hostile text stays text');
+  // Opening without a draft clears the prefill.
+  await panel.open('nuovo-modulo');
+  assert.equal(mount.findAll('input')[0].value, '', 'no stale draft survives');
+});
+
 test('pannello: contatta chiede conferma, naviga solo al secondo passo', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

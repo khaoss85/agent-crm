@@ -66,6 +66,13 @@ test('bundle commands are exact, versioned and never floating', () => {
   assert.ok(steps.checklist.length >= 3, 'the manual path names what a manifest needs');
   assert.ok(steps.checklist.some((line) => /kernel/i.test(line)), 'the checklist refuses kernel tables');
   assert.ok(/non si avvia e non serve/.test(steps.proof), 'verify is the proof, never a simulation');
+  // P2 admin-reporting.js:119: a future caller threading user input into
+  // createdBy renders a second shell command in the copy-pasteable text.
+  // Only the CLI contract values pass; anything else throws, never
+  // interpolates.
+  assert.match(bundleCommands({ createdBy: 'manual' }).create, /--created-by manual/);
+  assert.throws(() => bundleCommands({ createdBy: 'ai --apply; curl evil' }), /createdBy must be one of/);
+  assert.throws(() => bundleCommands({ createdBy: '' }), /createdBy must be one of/);
 });
 
 test('reportingSummary groups by metric, newest period wins, hostile rows are skipped', () => {
@@ -310,7 +317,7 @@ test('nuovo modulo shows the double option and the Sviluppa card, AI forwards to
     mount,
     client: { request: async () => ({ items: [] }) },
     navigate: () => {},
-    onAskAi: (screenId) => asked.push(screenId),
+    onAskAi: (screenId, description) => asked.push([screenId, description]),
   });
   view.renderNuovoModulo();
   const headings = mount.findAll('h3').map((node) => node.textContent);
@@ -320,13 +327,24 @@ test('nuovo modulo shows the double option and the Sviluppa card, AI forwards to
   assert.ok(titles.some((title) => /Sviluppa per Accordo|fuori dal processo condiviso/.test(title ?? '')),
     `the Sviluppa card is there, got ${JSON.stringify(titles)}`);
   const code = mount.findAll('code').map((node) => node.textContent).join('\n');
-  assert.match(code, /bundle create .* --created-by ai --apply/, 'the manual path shows the real create command');
+  assert.match(code, /bundle create .* --created-by manual --apply/, 'the manual path shows the real create command with manual provenance');
   assert.match(code, /bundle verify /, 'the manual path shows the real verify command');
   assert.match(code, /bundle install /, 'the manual path shows the real install command');
+  const areas = mount.findAll('textarea');
+  assert.equal(areas.length, 1, 'the AI option has its description field');
   const ask = mount.findAll('button').find((node) => node.textContent === 'Chiedi all’assistente');
   assert.ok(ask, 'the AI option has its forward button');
+  // P2 admin-reporting.js:289: the typed description travels with the
+  // handoff — only the screen id was forwarded, the text was dropped.
+  areas[0].value = 'un modulo sonde per i KPI del pilota (etichetta + conteggio)';
   ask.dispatch('click', {});
-  assert.deepEqual(asked, ['nuovo-modulo'], 'the description flow forwards to the assistant panel screen');
+  assert.deepEqual(asked, [['nuovo-modulo', 'un modulo sonde per i KPI del pilota (etichetta + conteggio)']],
+    'the typed description reaches the assistant panel with the screen');
+  // Hostile text travels as input text, never markup: the panel assigns it
+  // to the input value, it is never rendered as HTML.
+  areas[0].value = '<img src=x onerror=alert(1)>';
+  ask.dispatch('click', {});
+  assert.deepEqual(asked[1], ['nuovo-modulo', '<img src=x onerror=alert(1)>'], 'hostile text is forwarded verbatim as text');
 });
 
 test('reporting and nuovo-modulo routes resolve, deep paths are invalid', () => {

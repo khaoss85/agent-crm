@@ -1076,6 +1076,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     busy: false,
     pendingConfirmId: null,
     error: '',
+    draft: null,
   };
 
   // Keep every finished answer for the session (BO-F4-04): conserved, newest
@@ -1288,6 +1289,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     if (state.busy) return;
     state.busy = true;
     state.error = '';
+    state.draft = null;
     render();
     try {
       const outcome = await askFreeQuestion(client, state.status ?? { mode: 'dry-run' }, question);
@@ -1355,6 +1357,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     } else {
       input.setAttribute('placeholder', 'Scrivi una domanda…');
     }
+    // A caller-drafted handoff (BO-F5-01 "+ Nuovo modulo"): the description
+    // typed on the screen lands in the panel input, so the user never
+    // retypes it. Text only — never markup, never a submit.
+    if (typeof state.draft === 'string' && state.draft !== '') input.value = state.draft;
     free.appendChild(input);
     const send = el(doc, 'button', 'bo-assistant-send', 'Chiedi');
     if (state.status?.mode !== 'live') send.setAttribute('disabled', 'true');
@@ -1374,10 +1380,13 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   return {
     /**
      * @param {unknown} screenId
+     * @param {unknown} [draft] a caller-typed description to prefill the
+     * free-question input with (BO-F5-01); anything else clears the draft.
      */
-    async open(screenId) {
+    async open(screenId, draft) {
       state.open = true;
       if (typeof screenId === 'string' && screenId !== '') state.screenId = screenId;
+      state.draft = typeof draft === 'string' && draft !== '' ? draft : null;
       state.status = await probeAssistantBackend(client);
       render();
     },

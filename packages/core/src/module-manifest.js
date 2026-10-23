@@ -85,9 +85,9 @@ const SQLITE_KEYWORDS = new Set(
   ).split(' '),
 );
 
-const MODULE_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+export const MODULE_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 const FIELD_NAME_PATTERN = /^[a-z][a-zA-Z0-9]*$/;
-const TABLE_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
+export const TABLE_NAME_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 /**
  * @typedef {{
