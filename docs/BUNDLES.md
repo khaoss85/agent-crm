@@ -61,9 +61,14 @@ Rules the commands enforce:
   application with the bundle composed and serves one record per module
   (create + read + list) with audit. A bundle that does not boot and serve
   is refused — never simulated.
-- `bundle install` re-runs that proof, then records the version in the
-  registry. Two versions never merge: installing `name@2.0.0` while
-  `name@1.0.0` is installed is a conflict — uninstall first.
+- `bundle install` first re-runs the plan-time guards on the directory as
+  found on disk (lowercase-only entry shapes, exact agreement between
+  `bundle.json` and `module.manifest.json`, ownership of every table — a
+  hand-placed directory fails here, before any boot), then checks the
+  loaded code names the storage `bundle.json` claims, then re-runs that
+  proof, then records the version in the registry. Two versions never
+  merge: installing `name@2.0.0` while `name@1.0.0` is installed is a
+  conflict — uninstall first.
 - `bundle uninstall --db <path>` drops ONLY the bundle's own tables: every
   table `bundle.json` names is re-checked for exclusive ownership before
   any drop runs — the protected set (a table that became kernel-owned

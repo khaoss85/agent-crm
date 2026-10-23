@@ -22,6 +22,8 @@ import { pathToFileURL } from 'node:url';
 import { ConflictError, ValidationError } from '../../core/src/errors.js';
 import {
   CORE_RESERVED_TABLES,
+  MODULE_NAME_PATTERN,
+  TABLE_NAME_PATTERN,
   validateModuleManifest,
 } from '../../core/src/module-manifest.js';
 import { validateGeneratedModuleDefinition } from '../../core/src/generated-module-contract.js';
@@ -265,6 +267,134 @@ export function readBundleManifest(rootDir, name, version) {
 }
 
 /**
+ * The plan-time ownership guards as one function (NOT_GENERAL
+ * backlog:8691acfc): "one module, one bundle / one table, one bundle", never
+ * a kernel name, never kernel storage. planBundleCreate calls it for a
+ * drafted manifest, installBundle re-runs it for the bundle.json on disk —
+ * a hand-placed directory that never went through plan cannot bypass the
+ * refusal by installing directly (P2 bundle-manager.js:657: install ran
+ * verify in isolation and recorded a colliding table). The bundle's own
+ * name is excluded, so a new version of the SAME bundle reuses its name
+ * and table (versions are immutable: 0.0.1 stays, 0.0.2 plans beside it)
+ * and a reinstall after uninstall passes. A new ownership case extends
+ * this function, never a new ad-hoc check.
+ *
+ * @param {{rootDir: string, name: string, moduleName: string, table: string}} input
+ */
+function assertBundleOwnership(input) {
+  const { rootDir, name, moduleName, table } = input;
+  // Never shadow the kernel: a handwritten or generated kernel module of this
+  // name exists, or another bundle already installed it.
+  if (kernelModuleNames(rootDir).has(moduleName)) {
+    throw new ConflictError(
+      `Module "${moduleName}" is a kernel module; a bundle may not shadow it`,
+      { module: moduleName },
+    );
+  }
+  for (const other of scanBundleModules(rootDir)) {
+    if (other.bundleName === name) continue;
+    if (other.moduleName.toLowerCase() === moduleName.toLowerCase()) {
+      throw new ConflictError(
+        `Module "${moduleName}" is already installed by bundle ${other.bundleName}@${other.version}; one module, one bundle`,
+        { module: moduleName, bundle: `${other.bundleName}@${other.version}` },
+      );
+    }
+  }
+  const tableOwner = findBundleTableOwner(rootDir, table, name);
+  if (tableOwner !== null) {
+    throw new ConflictError(
+      `Table "${table}" is already owned by bundle ${tableOwner.bundleName}@${tableOwner.version}; one table, one bundle`,
+      { table, bundle: `${tableOwner.bundleName}@${tableOwner.version}` },
+    );
+  }
+  // Never claim kernel storage: clienti, pipeline, calendario and every other
+  // kernel-owned table stay kernel-owned. The lifecycle test proves this on
+  // the real table set; this is the plan-time refusal. Case is not an escape
+  // hatch: the set is lowercase-only, so the lookup lowercases too (a
+  // shape-validated table is already lowercase; this covers direct callers).
+  if (BUNDLE_PROTECTED_TABLES.has(table.toLowerCase())) {
+    throw new ConflictError(
+      `Table "${table}" is kernel-owned (clienti, pipeline, calendario and framework storage); a bundle claims only its own tables`,
+      { table },
+    );
+  }
+  if (kernelGeneratedTables(rootDir).has(table.toLowerCase())) {
+    throw new ConflictError(
+      `Table "${table}" is kernel-owned (generated kernel module); a bundle claims only its own tables`,
+      { table },
+    );
+  }
+}
+
+/**
+ * Install-side shape of one bundle.json module entry (P1
+ * bundle-manager.js:685: the old install guard read bundle.json strings
+ * verbatim, so `table: "Contacts"` skipped the kernel-owned refusal and a
+ * hand-placed directory never had its names validated at all). Lowercase
+ * only, like the factory manifests: anything else is refused before any
+ * ownership lookup runs.
+ *
+ * @param {unknown} module @param {string} bundle
+ */
+function assertInstallEntryShape(module, bundle) {
+  const entry = /** @type {Record<string, any>} */ (module);
+  if (!entry || typeof entry !== 'object') {
+    throw new ValidationError(`Bundle ${bundle} has a malformed module entry`);
+  }
+  if (typeof entry.name !== 'string' || !MODULE_NAME_PATTERN.test(entry.name)) {
+    throw new ValidationError(
+      `Bundle ${bundle} names module ${JSON.stringify(entry.name)}; a module name must match ${MODULE_NAME_PATTERN} (lowercase, digits, hyphens)`,
+    );
+  }
+  if (typeof entry.table !== 'string' || !TABLE_NAME_PATTERN.test(entry.table)) {
+    throw new ValidationError(
+      `Bundle ${bundle} claims table ${JSON.stringify(entry.table)}; a table must match ${TABLE_NAME_PATTERN} (lowercase, digits, underscores)`,
+    );
+  }
+  if (typeof entry.migration !== 'string' || entry.migration === '') {
+    throw new ValidationError(`Bundle ${bundle} module "${entry.name}" names no migration`);
+  }
+}
+
+/**
+ * Install-side agreement between bundle.json and the on-disk
+ * module.manifest.json (P1 bundle-manager.js:685: bundle.json could name an
+ * innocent table while module.manifest.json — the file scanBundleModules and
+ * verifyBundle read — named another bundle's live table, and the guard only
+ * saw bundle.json). The two files must name the same module and table,
+ * exactly; a hand-placed directory that disagrees is refused before the
+ * boot, with the fix (regenerate from the manifest) in the message.
+ *
+ * @param {string} rootDir @param {string} name @param {string} version
+ * @param {{name: string, table: string}} module
+ */
+function assertInstallManifestAgreement(rootDir, name, version, module) {
+  const dir = bundleDirFor(name, version);
+  const manifestPath = resolve(rootDir, dir, 'module.manifest.json');
+  if (!existsSync(manifestPath)) {
+    throw new ValidationError(
+      `Bundle ${name}@${version} has no module.manifest.json; regenerate it from its manifest — a bundle installs only as one bundle.json plus its agreeing module manifest`,
+      { bundle: `${name}@${version}` },
+    );
+  }
+  let manifest;
+  try {
+    manifest = validateModuleManifest(JSON.parse(readFileSync(manifestPath, 'utf8')));
+  } catch (error) {
+    throw new ValidationError(
+      `Bundle ${name}@${version} has an invalid module.manifest.json: ${error instanceof Error ? error.message : String(error)}`,
+      { bundle: `${name}@${version}` },
+    );
+  }
+  if (manifest.name !== module.name || manifest.table !== module.table) {
+    throw new ValidationError(
+      `Bundle ${name}@${version} disagrees with itself: bundle.json names ${module.name}/${module.table} but module.manifest.json names ${manifest.name}/${manifest.table}; regenerate both from one manifest`,
+      { bundle: `${name}@${version}` },
+    );
+  }
+}
+
+/**
  * Plan a new bundle from one module manifest (this slice: one module per
  * bundle; a second module is a second bundle version or a follow-up). The
  * factory generates the module sources into the bundle directory with the
@@ -286,52 +416,14 @@ export function planBundleCreate(input) {
       `Bundle "${input.name}" must wrap a module of the same name; the manifest names "${manifest.name}"`,
     );
   }
-  // Never shadow the kernel: a handwritten or generated kernel module of this
-  // name exists, or another bundle already installed it.
-  if (kernelModuleNames(rootDir).has(manifest.name)) {
-    throw new ConflictError(
-      `Module "${manifest.name}" is a kernel module; a bundle may not shadow it`,
-      { module: manifest.name },
-    );
-  }
   // One ownership registry for the "one module, one bundle / one table, one
-  // bundle" invariant: name conflicts are checked inline below, table
-  // conflicts go through findBundleTableOwner — the same helper the
-  // uninstall path uses for its exclusive-ownership check, so plan-time
-  // refusal and uninstall-time refusal share one source of truth
-  // (NOT_GENERAL backlog:8691acfc: the previous round's bundle-vs-bundle
-  // table finding and this round's uninstall-foreign-table finding are one
-  // root cause, cured once here). A new version of the SAME bundle reuses
-  // both (versions are immutable: 0.0.1 stays, 0.0.2 plans beside it),
-  // while a DIFFERENT bundle claiming either is a conflict. Two services
-  // on one physical table would silently mix rows (the second CREATE TABLE
-  // IF NOT EXISTS no-ops), so the table refusal matters as much as the
-  // name one.
-  for (const other of scanBundleModules(rootDir)) {
-    if (other.bundleName === input.name) continue;
-    if (other.moduleName.toLowerCase() === manifest.name.toLowerCase()) {
-      throw new ConflictError(
-        `Module "${manifest.name}" is already installed by bundle ${other.bundleName}@${other.version}; one module, one bundle`,
-        { module: manifest.name, bundle: `${other.bundleName}@${other.version}` },
-      );
-    }
-  }
-  const tableOwner = findBundleTableOwner(rootDir, manifest.table, input.name);
-  if (tableOwner !== null) {
-    throw new ConflictError(
-      `Table "${manifest.table}" is already owned by bundle ${tableOwner.bundleName}@${tableOwner.version}; one table, one bundle`,
-      { table: manifest.table, bundle: `${tableOwner.bundleName}@${tableOwner.version}` },
-    );
-  }
-  // Never claim kernel storage: clienti, pipeline, calendario and every other
-  // kernel-owned table stay kernel-owned. The lifecycle test proves this on
-  // the real table set; this is the plan-time refusal.
-  if (BUNDLE_PROTECTED_TABLES.has(manifest.table)) {
-    throw new ConflictError(
-      `Table "${manifest.table}" is kernel-owned (clienti, pipeline, calendario and framework storage); a bundle claims only its own tables`,
-      { table: manifest.table },
-    );
-  }
+  // bundle" invariant (NOT_GENERAL backlog:8691acfc): the same helper the
+  // install and uninstall paths use, so plan-time refusal, install-time
+  // refusal and uninstall-time refusal share one source of truth. Two
+  // services on one physical table would silently mix rows (the second
+  // CREATE TABLE IF NOT EXISTS no-ops), so the table refusal matters as
+  // much as the name one.
+  assertBundleOwnership({ rootDir, name: input.name, moduleName: manifest.name, table: manifest.table });
 
   const modulePlan = planModule({ manifest, rootDir, layout: { bundleDir: dir } });
   const bundleManifest = {
@@ -606,7 +698,7 @@ export async function createBundleEntries(input) {
   if (!Array.isArray(input.bundles) || input.bundles.length === 0) {
     throw new ValidationError('createBundleEntries needs a non-empty bundles list');
   }
-  /** @type {Array<{name: string, createModule: (deps: any) => any, migrations: Array<{name: string, sql: string}>}>} */
+  /** @type {Array<{name: string, createModule: (deps: any) => any, migrations: Array<{name: string, sql: string}>, definitionName: unknown, definitionTable: unknown}>} */
   const entries = [];
   for (const ref of input.bundles) {
     const { name, version } = parseBundleRef(`${ref.name}@${ref.version}`);
@@ -641,22 +733,60 @@ export async function createBundleEntries(input) {
     }
     // Validate the definition exactly as the application would at startup,
     // with inert dependencies (construction performs no I/O by contract).
-    validateGeneratedModuleDefinition(createModule({ database: null, audit: null, events: null, references: null }));
-    entries.push({ name: module.name, createModule, migrations });
+    // The booted definition's own name and table stay on the entry:
+    // installBundle refuses a bundle whose code names other storage than
+    // its bundle.json claims (P1 bundle-manager.js:685).
+    const created = createModule({ database: null, audit: null, events: null, references: null });
+    validateGeneratedModuleDefinition(created);
+    entries.push({
+      name: module.name,
+      createModule,
+      migrations,
+      definitionName: created.name,
+      definitionTable: typeof created.table === 'string' ? created.table : null,
+    });
   }
   return entries;
 }
 
 /**
- * Install a bundle: prove it loads, validates and boots (the same proof
- * `verify` runs), then record it in the registry. An uninstallable bundle is
- * refused BEFORE the registry is touched.
+ * Install a bundle: refuse colliding ownership FIRST (the same plan-time
+ * guards, re-run on the bundle.json on disk — a hand-placed directory that
+ * never went through plan cannot install a table another bundle or the
+ * kernel owns), then prove it loads, validates and boots (the same proof
+ * `verify` runs), then record it in the registry. A refused bundle never
+ * touches the registry. The guards run before the boot so a collision
+ * fails fast without composing anything.
  *
  * @param {{name: string, version: string, rootDir?: string}} input
  */
 export async function installBundle(input) {
   const rootDir = resolve(input.rootDir ?? process.cwd());
   const { name, version } = parseBundleRef(`${input.name}@${input.version}`);
+  const bundle = readBundleManifest(rootDir, name, version);
+  for (const module of bundle.modules) {
+    // Shape first (lowercase-only names), then the bundle.json against
+    // module.manifest.json agreement, then the ownership guards — a
+    // hand-placed directory fails fast here, before any boot, without
+    // touching the registry.
+    assertInstallEntryShape(module, `${name}@${version}`);
+    assertInstallManifestAgreement(rootDir, name, version, module);
+    assertBundleOwnership({ rootDir, name, moduleName: module.name, table: module.table });
+  }
+  // The loaded code must name the storage bundle.json claims: a directory
+  // whose sources load another table than the guarded strings is refused
+  // BEFORE the proof boot (loading is inert by contract; serving records
+  // into foreign storage never starts) and BEFORE the registry records it.
+  const entries = await createBundleEntries({ rootDir, bundles: [{ name, version }] });
+  for (const module of bundle.modules) {
+    const entry = entries.find((candidate) => candidate.name === module.name);
+    if (!entry || entry.definitionName !== module.name || entry.definitionTable !== module.table) {
+      throw new ValidationError(
+        `Bundle ${name}@${version} module "${module.name}" boots code naming ${JSON.stringify(entry?.definitionTable ?? null)} but bundle.json claims ${JSON.stringify(module.table)}; regenerate the bundle from one manifest`,
+        { bundle: `${name}@${version}` },
+      );
+    }
+  }
   const proof = await verifyBundle({ name, version, rootDir });
   const registry = readBundleRegistry(rootDir);
   if (registry.installed.some((entry) => entry.name === name && entry.version === version)) {
@@ -706,7 +836,7 @@ export async function uninstallBundle(input) {
     /** @type {string[]} */
     const tables = [];
     for (const module of bundle.modules) {
-      if (BUNDLE_PROTECTED_TABLES.has(module.table)) {
+      if (BUNDLE_PROTECTED_TABLES.has(module.table.toLowerCase())) {
         throw new ValidationError(
           `Refusing to drop "${module.table}": kernel-owned (fail-closed even though bundle.json names it)`,
           { table: module.table },
@@ -831,7 +961,7 @@ export async function verifyBundle(input) {
   const entries = await createBundleEntries({ rootDir, bundles: [{ name, version }] });
   const { createAccordoApp } = await import(pathToFileURL(appEntry).href);
   const app = createAccordoApp({ dbPath: ':memory:', bundles: entries });
-  /** @type {Array<{module: string, table: string, rows: number}>} */
+  /** @type {Array<{module: string, table: string, rows: number, definitionName: unknown, definitionTable: unknown}>} */
   const modules = [];
   try {
     const actor = { type: 'human', id: 'bundle-verify' };
@@ -851,7 +981,13 @@ export async function verifyBundle(input) {
       if (!read || read.id !== created.id) {
         throw new ValidationError(`Bundle ${name}@${version} module "${entry.name}" read-after-create failed`);
       }
-      modules.push({ module: entry.name, table: manifest.table, rows: service.list().length });
+      modules.push({
+        module: entry.name,
+        table: manifest.table,
+        rows: service.list().length,
+        definitionName: entry.definitionName,
+        definitionTable: entry.definitionTable,
+      });
     }
   } finally {
     app.close();
