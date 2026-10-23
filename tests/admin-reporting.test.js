@@ -66,6 +66,13 @@ test('bundle commands are exact, versioned and never floating', () => {
   assert.ok(steps.checklist.length >= 3, 'the manual path names what a manifest needs');
   assert.ok(steps.checklist.some((line) => /kernel/i.test(line)), 'the checklist refuses kernel tables');
   assert.ok(/non si avvia e non serve/.test(steps.proof), 'verify is the proof, never a simulation');
+  // P2 admin-reporting.js:119: a future caller threading user input into
+  // createdBy renders a second shell command in the copy-pasteable text.
+  // Only the CLI contract values pass; anything else throws, never
+  // interpolates.
+  assert.match(bundleCommands({ createdBy: 'manual' }).create, /--created-by manual/);
+  assert.throws(() => bundleCommands({ createdBy: 'ai --apply; curl evil' }), /createdBy must be one of/);
+  assert.throws(() => bundleCommands({ createdBy: '' }), /createdBy must be one of/);
 });
 
 test('reportingSummary groups by metric, newest period wins, hostile rows are skipped', () => {

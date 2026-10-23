@@ -116,7 +116,13 @@ export const REPORTING_LIMIT = 100;
  * `--created-by manual`, so the registry never misattributes provenance.
  * @param {{ manifestPath?: string, name?: string, version?: string, createdBy?: string }} input
  */
+/** Who may run a bundle create: the same contract as the CLI `--created-by` (P2 admin-reporting.js:119). */
+export const BUNDLE_CREATED_BY = Object.freeze(['ai', 'manual', 'accordo']);
+
 export function bundleCommands({ manifestPath = 'modulo.module.json', name = 'nome-modulo', version = '0.1.0', createdBy = 'ai' } = {}) {
+  if (!BUNDLE_CREATED_BY.includes(createdBy)) {
+    throw new Error(`createdBy must be one of ${BUNDLE_CREATED_BY.join(', ')} (who runs the create)`);
+  }
   const base = 'npm run crm --';
   return {
     create: `${base} bundle create ${manifestPath} --name ${name} --version ${version} --created-by ${createdBy} --apply`,
