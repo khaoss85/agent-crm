@@ -48,8 +48,9 @@ jobs:
   # The PR gate. `push` is limited to `main` above, so this is every change
   # that is not yet merged: `npm run check`, the tests of the touched files
   # (`scripts/ci-touched-tests.js`), the smoke demo, the published recipe
-  # replay and the agreement gates (`gtm:check`, `repo:truth -- --check`
-  # without `--require-current`). All six phases run under ONE machine lock
+  # replay, the agreement gates (`gtm:check`, `repo:truth -- --check`
+  # without `--require-current`) and the verifier-fixture drift check. All
+  # seven phases run under ONE machine lock
   # via `scripts/ci-fast.sh`, capped below ten minutes in total by the
   # wrapper (HEAVY_JOB_MAX_SEC=540 kills the run past nine minutes): a PR
   # holds the shared lock less than ten minutes in total, enforced, not an
@@ -100,9 +101,9 @@ jobs:
           docker run -d --name accordo-pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 -U postgres && break; sleep 2; done
       - run: npm ci
-      # The whole gate behind one lock: `scripts/ci-fast.sh` runs the six
+      # The whole gate behind one lock: `scripts/ci-fast.sh` runs the seven
       # phases sequentially (check, touched tests, smoke, recipe replay,
-      # gtm:check, truth agreement) under a single heavy-job acquisition,
+      # gtm:check, truth agreement, verifier-fixture drift) under a single heavy-job acquisition,
       # and HEAVY_JOB_MAX_SEC=540 fails the step red past nine minutes of
       # lock instead of queueing Arvo behind it. (`main`'s measure step
       # keeps the wrapper default: the full suite needs it.) Each phase

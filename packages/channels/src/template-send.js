@@ -167,8 +167,11 @@ export function createTemplateSendCapability(options = {}) {
     try {
       normalized = adapter.normalizeOutbound({ to, template }, undefined);
     } catch (error) {
-      if (error && typeof error === 'object'
-        && /** @type {any} */ (error).code === 'CHANNEL_TEMPLATE_REQUIRED') throw error;
+      // Both refusal codes travel intact, exactly like
+      // `normalizeOutboundMessage` in operations.js: the template code and
+      // the inbound-only refusal. Anything else is a malformed message.
+      const code = error && typeof error === 'object' ? /** @type {any} */ (error).code : null;
+      if (code === 'CHANNEL_TEMPLATE_REQUIRED' || code === 'CHANNEL_SEND_UNSUPPORTED') throw error;
       throw new AppError('Channel message is not well-formed', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
     }
     if (!normalized || normalized.kind !== 'template') {
