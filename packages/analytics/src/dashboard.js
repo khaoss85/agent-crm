@@ -63,12 +63,6 @@ export function stageLabel(stage) {
 }
 
 /**
- * Strict dashboard query parsing. Everything refused is a 400, never a
- * silent default — except the period, which defaults to the current UTC
- * month because a bare GET must still answer something honest.
- * @param {unknown} input
- */
-/**
  * ISO 4217 codes the runtime can actually format. Cached once: anything else
  * would throw RangeError inside Intl formatting and turn hostile input into
  * a 500, so the query refuses it as a 400 instead. Null when the runtime
@@ -92,6 +86,12 @@ export function isSupportedCurrency(currency) {
   return SUPPORTED_CURRENCIES.has(currency);
 }
 
+/**
+ * Strict dashboard query parsing. Everything refused is a 400, never a
+ * silent default — except the period, which defaults to the current UTC
+ * month because a bare GET must still answer something honest.
+ * @param {unknown} input
+ */
 export function parseDashboardQuery(input = {}) {
   const source = (input !== null && typeof input === 'object' && !Array.isArray(input))
     ? /** @type {Record<string, unknown>} */ (input)
