@@ -46,10 +46,25 @@ test('offer send gate: identity, defaults and per-space config validation', () =
   assert.equal(DEFAULT_DEPOSIT_BPS, 3000, 'the default deposit is 30%');
   assert.equal(OWNER_ROLE, 'owner', 'the titolare is the owner space role');
 
-  const custom = createOfferSendPolicy({ thresholdCents: 5_000_00, depositBps: 2000 });
+  const custom = createOfferSendPolicy({ thresholdCents: 500_000, depositBps: 2000 });
   assert.equal(custom.config.thresholdCents, 500_000, 'the threshold is per-space config');
   assert.equal(custom.config.depositBps, 2000, 'the deposit share is per-space config');
+  assert.equal(custom.config.requiredRole, 'owner', 'the releasing role stays the owner');
   assert.equal(typeof custom.evaluate, 'function', 'the definition carries its evaluation');
+  // The owner requirement is not configurable: any override refuses,
+  // so a weaker role can never release an above-threshold offer.
+  for (const role of ['operator', 'observer', 'owner', '', 42]) {
+    assert.throws(
+      () => createOfferSendPolicy({ requiredRole: role }),
+      /requiredRole/,
+      `requiredRole ${JSON.stringify(role)} refuses: the role is fixed`,
+    );
+    assert.throws(
+      () => authorizeOfferSend({ amountCents: 2_500_000, policy: { requiredRole: role } }),
+      /requiredRole/,
+      `policy requiredRole ${JSON.stringify(role)} refuses at authorization too`,
+    );
+  }
 
   for (const bad of [
     { thresholdCents: 0 },
@@ -99,7 +114,7 @@ test('offer send gate: above threshold no send and no link without approval', as
 
 // Per-space config moves the boundary and the deposit share.
 test('offer send gate: threshold and deposit are per-space config', () => {
-  const policy = { thresholdCents: 500_000, depositBps: 2000, requiredRole: 'owner' };
+  const policy = { thresholdCents: 500_000, depositBps: 2000 };
   const below = authorizeOfferSend({ amountCents: 500_000, policy });
   assert.equal(below.sendAllowed, true, 'custom threshold holds at its boundary');
   const above = authorizeOfferSend({ amountCents: 500_001, policy, approval: OWNER_APPROVAL, approverRole: 'owner' });
@@ -166,6 +181,11 @@ test('offer send gate: deposit math is deterministic and bad input refuses', () 
   assert.equal(computeDepositCents(2_000_000), 600_000, '30% of the threshold');
   assert.equal(computeDepositCents(1, 3000), 0, 'sub-cent rounds down, never up');
   assert.equal(computeDepositCents(100_000, 10_000), 100_000, '100% is the whole amount');
+  assert.equal(
+    computeDepositCents(9_953_891_638_645, 9000),
+    8_958_502_474_781,
+    'exact to the cent past 2^53: BigInt, never float math',
+  );
   for (const bad of [-1, 10.5, Number.NaN, '2500000', null, undefined]) {
     assert.throws(() => authorizeOfferSend({ amountCents: bad }), /amountCents/, `refused amount ${String(bad)}`);
     assert.throws(() => computeDepositCents(bad), /amountCents/, `refused deposit amount ${String(bad)}`);

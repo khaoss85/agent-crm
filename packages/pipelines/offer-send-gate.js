@@ -16,8 +16,10 @@
  * enforce `authorizeOfferSend` before they send bytes through the existing
  * channels reply flow (preferred channel, BO-F1-07) and before they mint
  * the deposit checkout through the existing payments package (the fixture
- * Stripe adapter in tests, the real one when credentials exist). No
- * doubles (MEM_ACC_REUSE):
+ * Stripe adapter in tests, the real one when credentials exist). The
+ * releasing role is fixed to the space `owner` (the titolare): threshold
+ * and deposit share are per-space config, the owner requirement is not —
+ * a caller override could never widen it. No doubles (MEM_ACC_REUSE):
  *
  * - approvals are `packages/modules/approval` rows (`status: approved`);
  *   the role check takes the approver's space role as an explicit input
@@ -51,8 +53,6 @@ export const DEFAULT_DEPOSIT_BPS = 3000;
 export const OWNER_ROLE = 'owner';
 
 const MAX_THRESHOLD_CENTS = 1_000_000_000_000;
-const MAX_ROLE_CHARS = 64;
-const HOSTILE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 
 /** @param {unknown} value @param {string} field */
 function requireThresholdCents(value, field = 'thresholdCents') {
@@ -70,15 +70,6 @@ function requireDepositBps(value, field = 'depositBps') {
   return value;
 }
 
-/** @param {unknown} value @param {string} field */
-function requireRole(value, field = 'requiredRole') {
-  if (typeof value !== 'string' || value.trim() === '' || value.length > MAX_ROLE_CHARS
-    || HOSTILE_KEYS.includes(value) || /[\u0000-\u001f\u007f]/.test(value)) {
-    throw new ValidationError(`${field} must be bounded single-line role text of at most ${MAX_ROLE_CHARS} characters`, { field });
-  }
-  return value;
-}
-
 /** @param {unknown} value */
 function requireAmountCents(value) {
   if (!Number.isSafeInteger(value) || value < 0 || value > MAX_THRESHOLD_CENTS * 10) {
@@ -90,13 +81,20 @@ function requireAmountCents(value) {
 /**
  * Build the per-space BO-F2-06 policy, ready to keep beside the space
  * overrides (like `customizePipelineStages` output): pure data, persisted
- * by the caller, never a table write here.
+ * by the caller, never a table write here. Only the threshold and the
+ * deposit share are configurable; the releasing owner role is fixed.
  *
- * @param {{thresholdCents?: unknown, depositBps?: unknown, requiredRole?: unknown}} [config]
+ * @param {{thresholdCents?: unknown, depositBps?: unknown}} [config]
  */
 export function createOfferSendPolicy(config = {}) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new ValidationError('offer send policy config must be a plain object', { field: 'config' });
+  }
+  // The releasing role is not configurable: only the space owner (the
+  // titolare) releases an above-threshold offer, so a caller passing a
+  // weaker role refuses instead of silently widening the gate.
+  if (config.requiredRole !== undefined) {
+    throw new ValidationError('requiredRole is fixed to the space owner and is not configurable', { field: 'requiredRole' });
   }
   const thresholdCents = config.thresholdCents === undefined
     ? DEFAULT_OFFER_SEND_THRESHOLD_CENTS
@@ -104,15 +102,13 @@ export function createOfferSendPolicy(config = {}) {
   const depositBps = config.depositBps === undefined
     ? DEFAULT_DEPOSIT_BPS
     : requireDepositBps(config.depositBps);
-  const requiredRole = config.requiredRole === undefined
-    ? OWNER_ROLE
-    : requireRole(config.requiredRole);
+  const requiredRole = OWNER_ROLE;
   return Object.freeze({
     name: OFFER_SEND_GATE,
     version: OFFER_SEND_GATE_VERSION,
     label: 'Offerta sopra soglia: ok titolare, poi invio + acconto (BO-F2-06)',
     config: Object.freeze({ thresholdCents, depositBps, requiredRole }),
-    evaluate: (ctx) => evaluateOfferAmount({ ...ctx, policy: { thresholdCents, depositBps, requiredRole } }),
+    evaluate: (ctx) => evaluateOfferAmount({ ...ctx, policy: { thresholdCents } }),
   });
 }
 
@@ -154,7 +150,10 @@ export function evaluateOfferAmount(ctx = {}) {
 export function computeDepositCents(amountCents, depositBps = DEFAULT_DEPOSIT_BPS) {
   const amount = requireAmountCents(amountCents);
   const bps = requireDepositBps(depositBps);
-  return Math.floor((amount * bps + 5000) / 10_000);
+  // Exact integer math: amount * bps can exceed 2^53 for accepted inputs
+  // (e.g. large offers with a high share), so the multiply-and-round runs
+  // in BigInt and only the exact rounded cent comes back as a Number.
+  return Number((BigInt(amount) * BigInt(bps) + 5000n) / 10000n);
 }
 
 /**
@@ -177,7 +176,7 @@ export function computeDepositCents(amountCents, depositBps = DEFAULT_DEPOSIT_BP
  *
  * @param {{
  *   amountCents: unknown,
- *   policy?: {thresholdCents?: unknown, depositBps?: unknown, requiredRole?: unknown},
+ *   policy?: {thresholdCents?: unknown, depositBps?: unknown},
  *   approval?: {status?: unknown, decidedBy?: unknown} | null,
  *   approverRole?: unknown,
  *   spaceHasOwner?: unknown,
@@ -198,9 +197,11 @@ export function authorizeOfferSend(args = {}) {
   const depositBps = rawPolicy.depositBps === undefined
     ? DEFAULT_DEPOSIT_BPS
     : requireDepositBps(rawPolicy.depositBps, 'policy.depositBps');
-  const requiredRole = rawPolicy.requiredRole === undefined
-    ? OWNER_ROLE
-    : requireRole(rawPolicy.requiredRole, 'policy.requiredRole');
+  // Fixed, never from the caller: see createOfferSendPolicy.
+  if (rawPolicy.requiredRole !== undefined) {
+    throw new ValidationError('requiredRole is fixed to the space owner and is not configurable', { field: 'policy.requiredRole' });
+  }
+  const requiredRole = OWNER_ROLE;
 
   const frozen = (verdict) => Object.freeze({
     sendAllowed: verdict.sendAllowed,
