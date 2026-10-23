@@ -4523,7 +4523,7 @@
     "packages/commercial/src/money.js": "84c569c6e3d9270e25a9fb440675c01063d61f6a4d12a71734309b1f20bb5496",
     "packages/commercial/src/package-credits.js": "bc85f69d3e81fb651fa45b63e125d9ee29115d1a778947c215b3d8c50138cc0c",
     "packages/commercial/src/price-list.js": "9d6b286059661e13ec81393d55986d178cc2e354767690c6f04c7693f6d75353",
-    "packages/commercial/src/price-rules.js": "19083bf50eb30451120c1f6226b3c819ab45891028336c60ca640f56cd15463f",
+    "packages/commercial/src/price-rules.js": "56521828c1cbb7f2f386fa6ebf4c546776446d29ba208e945385112024358296",
     "packages/commercial/src/product-import.js": "dcaa502d91f84699481e2d07b450e4c62127f9989a79f2b89ca3b10593524b42",
     "packages/commercial/src/quote-pdf.js": "5ab773cbba36f83413bba80c508f57131f2a561316f38590013799ef31785721",
     "packages/commercial/src/quote-suggest.js": "276d5eed108a878d591cf0fe4e58cd86fb070dcba3881e1d6140fb0b8b0e3e95",

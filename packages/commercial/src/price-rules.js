@@ -77,7 +77,11 @@ export function createCatalogPriceRules(config = {}) {
       const limits = ctx?.config ?? {};
       const autoLimit = requireBandLimit(limits.autoApproveMaxBps, 'policy.config.autoApproveMaxBps');
       const ownerLimit = requireBandLimit(limits.ownerApprovalMaxBps, 'policy.config.ownerApprovalMaxBps');
-      const key = typeof limits.approvalKey === 'string' && limits.approvalKey !== '' ? limits.approvalKey : DEFAULT_OWNER_APPROVAL_KEY;
+      const rawKey = limits.approvalKey;
+      if (typeof rawKey === 'string' && rawKey !== '' && rawKey.trim() === '') {
+        throw new ValidationError(`approvalKey must be non-empty text of at most ${MAX_APPROVAL_KEY_CHARS} characters`, { field: 'policy.config.approvalKey' });
+      }
+      const key = typeof rawKey === 'string' && rawKey !== '' ? rawKey : DEFAULT_OWNER_APPROVAL_KEY;
       const maxLine = requireBps(ctx?.maxLineDiscountBps, 'maxLineDiscountBps');
       if (maxLine <= autoLimit) {
         return {
