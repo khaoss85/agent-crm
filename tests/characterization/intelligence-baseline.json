@@ -2550,7 +2550,7 @@
     "packages/app/src/create-app.js": "5fca21663eaf99adbf344d405588d01aacfbcbaaba9a553a36ec9e405bb7a6d4",
     "packages/core/src/action-runtime.js": "b8870679dfe76d2293912866085c83713aa1bdbe8509acaabaa81fe6a100c851",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
-    "packages/core/src/definition-version-store.js": "18fb5f16efadaa6559f728fc454eb91076b06855e232373020ae2d893d3f3e1a",
+    "packages/core/src/definition-version-store.js": "5b52e6a48145a91dc90f202e5541dfa168d9ae5ffaa8ff8bdfeda98ab2347467",
     "packages/core/src/execution-run-store.js": "73c5f36371b21b02b7e476d93cc06a29cbae6c5ea9ef8539579a62c94e1545ac",
     "packages/core/src/timeout.js": "9af8f74ac0f6fa7b229576c43540364d9014ce2225198c0e84e18070d952ff88",
     "packages/intelligence/modules/assignment.module.json": "ba3724cc4d9cbcab445cb71ff1cf5116c4f8fc6f4df4faf4a772eee214e18121",
