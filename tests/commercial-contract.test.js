@@ -59,6 +59,8 @@ test('commercial definitions validate and fail closed with precise reasons', () 
     [() => validateCatalogProvider(provider({ version: 0 })), /positive integer/],
     [() => validateCatalogProvider(provider({ fetchCatalog: undefined })), /fetchCatalog must be a function/],
     [() => validateCatalogProvider(provider({ config: { when: new Date(0) } })), /config must be plain JSON-safe data/],
+    [() => validateCatalogProvider(provider({ codeVersion: 1 })), /reserved for providers built by createPriceListCatalogProvider/],
+    [() => validateCatalogProvider(provider({ legacyFetchSources: ['async () => ({})'] })), /reserved for providers built by createPriceListCatalogProvider/],
     [() => validateDiscountPolicy(policy({ evaluate: 'nope' })), /evaluate must be a function/],
     [() => validateDiscountPolicy(policy({ config: [1] })), /config must be a plain object/],
   ];

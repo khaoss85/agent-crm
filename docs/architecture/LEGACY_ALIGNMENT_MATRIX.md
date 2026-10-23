@@ -568,6 +568,51 @@ neither touched the other's lines. It is corrected here rather than in a later
 reconciliation, because a sentence naming a consumer that no longer exists is
 the kind of stale claim this matrix exists to catch.
 
+### Fingerprint-scheme migration assessment (superseded fingerprints on the persist entry)
+
+The definition-version store accepts an optional `supersededFingerprints` list
+on a persist entry: a closed, bounded set of historical fingerprints the
+identity may still carry after a fingerprint-scheme change. A row carrying one
+of them moves to the current fingerprint inside the single persist-or-verify
+transaction (and verifies without writing on a read-only composition); any
+other mismatch is genuine drift and refuses with the established message, and a
+batch that refuses elsewhere rolls the move back with it. It is horizontal
+kernel machinery — any registry publishing versioned definitions can declare
+history — and the price-list catalog provider is its first and only consumer:
+its fingerprint dropped closure text in favour of `{type, name, version,
+codeVersion, renderHash, tieredRenderHash, config}` (the render pins stand in
+for the rendered bytes, so a behaviour change moves the fingerprint even
+without a version bump), and it declares the two historical closure-text forms
+(pre-#271 over `name`, #271 over `providerName`) so registered databases keep
+composing. Declared history is recognized, never trusted: the registry
+honours `codeVersion`/`legacyFetchSources` only when one predicate holds —
+the pinned constructor version plus a live `fetchCatalog` source matching
+the pinned template — and that same predicate gates the versioned scheme,
+the approved history and the refusal of forged constructor fields. Any other
+provider's history refuses at composition, so no custom catalog can approve
+its own past and there is no seal left to forge. The constructor template
+is pinned beside the history: construction and every registry composition
+refuse on any closure drift from the pin, and the render characterization
+test pairs pin moves with constructor version bumps. No other definition family has a
+superseded scheme, so there is
+nothing for those rows to declare; declaring them aligned here would be the
+silent backfill this matrix prevents.
+
+| Domain | Status | Reason |
+|---|---|---|
+| Core CRM (Sales) | `not_applicable` | no versioned definition with a superseded fingerprint scheme |
+| Pipeline | `not_applicable` | no versioned definition with a superseded fingerprint scheme |
+| Lead Intelligence | `not_applicable` | enrichment providers, scoring models and routing policies have a single fingerprint scheme each; nothing is superseded |
+| Commercial Operations | `partial` | only the price-list catalog provider declares history and consumes the move; catalog providers without history and discount policies verify by exact match, unchanged |
+| Signature & Order | `not_applicable` | signature providers have a single fingerprint scheme; nothing is superseded |
+| Contract Activation | `not_applicable` | no superseded fingerprint scheme; its policy identities verify by exact match |
+| Delivery | `not_applicable` | no superseded fingerprint scheme; its policy identities verify by exact match |
+| Service | `not_applicable` | no versioned definition with a superseded fingerprint scheme |
+| Lifecycle | `not_applicable` | no versioned definition with a superseded fingerprint scheme |
+| Customer Data | `not_applicable` | no versioned definition with a superseded fingerprint scheme |
+| Custom-package fixture | `not_applicable` | fixture definitions have a single fingerprint scheme; nothing is superseded |
+| Marketing & Growth | `not_applicable` | documentation-only; it has no versioned definitions |
+
 ### PostgreSQL Storage Contract v1 adapter (Production Spine v2 M3B)
 
 M3B is a horizontal kernel seam: Storage Contract v1 gains `renderPostgresqlStatement`

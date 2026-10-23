@@ -871,3 +871,289 @@ test('sweep: the generated id obeys the same identity rule as the fields beside 
   assert.deepEqual(opened, [], 'a bad id never reached BEGIN IMMEDIATE');
   assert.equal(rows(database).length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Fingerprint-scheme change (supersededFingerprints on the entry)
+// ---------------------------------------------------------------------------
+
+test('sweep: persist moves a superseded row to current and still refuses unexplained drift', (t) => {
+  const database = memory(t);
+  const store = createDefinitionVersionStore(database);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  const unrelated = 'c'.repeat(64);
+  store.persist([
+    entry({ name: 'legacy', fingerprint: oldFp }),
+    entry({ name: 'current', fingerprint: newFp }),
+    entry({ name: 'drifted', fingerprint: unrelated }),
+  ]);
+  assert.doesNotThrow(() => store.persist([
+    entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    entry({ name: 'current', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    entry({ name: 'never-registered', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+  ]), 'current, superseded and absent rows verify in one batch');
+  const byName = () => new Map(rows(database).map((row) => [row.name, row.fingerprint]));
+  assert.equal(byName().get('legacy'), newFp, 'the historical row moved to current in the same transaction');
+  assert.equal(byName().get('current'), newFp, 'an already-current row is not rewritten');
+  assert.equal(byName().get('never-registered'), newFp, 'absent rows are inserted');
+  assert.equal(byName().get('drifted'), unrelated, 'unrelated rows are untouched');
+  refusesCleanly(
+    () => store.persist([entry({ name: 'drifted', fingerprint: newFp, supersededFingerprints: [oldFp] })]),
+    /source changed after registration/,
+    'a fingerprint no scheme explains still refuses',
+  );
+  assert.equal(byName().get('drifted'), unrelated, 'the refused row is unchanged');
+  assert.doesNotThrow(
+    () => store.persist([entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] })]),
+    'the moved row verifies on the next boot',
+  );
+});
+
+test('sweep: a batch that refuses elsewhere rolls the superseded move back with it', (t) => {
+  const database = memory(t);
+  const store = createDefinitionVersionStore(database);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  const unrelated = 'c'.repeat(64);
+  store.persist([
+    entry({ name: 'legacy', fingerprint: oldFp }),
+    entry({ name: 'other', fingerprint: unrelated }),
+  ]);
+  refusesCleanly(
+    () => store.persist([
+      entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+      entry({ name: 'other', fingerprint: newFp, supersededFingerprints: ['d'.repeat(64)] }),
+    ]),
+    /source changed after registration/,
+    'the batch refuses on the genuinely drifted identity',
+  );
+  const byName = new Map(rows(database).map((row) => [row.name, row.fingerprint]));
+  assert.equal(byName.get('legacy'), oldFp, 'the superseded move rolled back with the refused batch');
+  assert.equal(byName.get('other'), unrelated, 'the drifted row is unchanged');
+});
+
+/** The fingerprint of one row, by name. */
+const rowFingerprint = (database, name) => rows(database).find((row) => row.name === name)?.fingerprint;
+
+/**
+ * A database handle whose guarded migration UPDATE reports a lost race: the
+ * write either landed (a concurrent boot already moved the row to current) or
+ * it did not (the row still carries history). The report is always zero
+ * affected rows, so the store must re-read instead of trusting its SELECT
+ * image.
+ */
+function lostRaceDatabase(database, { applied }) {
+  const sync = database.storage.sync;
+  const sabotagedSync = {
+    ...sync,
+    execute(statement) {
+      if (statement?.kind === 'update') {
+        if (applied) sync.execute(statement);
+        return { affectedRows: 0 };
+      }
+      return sync.execute(statement);
+    },
+  };
+  return { storage: { ...database.storage, sync: sabotagedSync } };
+}
+
+test('sweep: a lost migration race against an already-moved row verifies, never passes silently', (t) => {
+  const database = memory(t);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  createDefinitionVersionStore(database).persist([entry({ name: 'legacy', fingerprint: oldFp })]);
+  assert.doesNotThrow(
+    () => createDefinitionVersionStore(lostRaceDatabase(database, { applied: true })).persist([
+      entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    ]),
+    'the re-read row is already current: a concurrent boot moved it, so this boot verifies',
+  );
+  assert.equal(rowFingerprint(database, 'legacy'), newFp, 'the winner’s move stands, unwritten twice');
+});
+
+test('sweep: a lost migration race against an unmoved row refuses as drift', (t) => {
+  const database = memory(t);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  createDefinitionVersionStore(database).persist([entry({ name: 'legacy', fingerprint: oldFp })]);
+  refusesCleanly(
+    () => createDefinitionVersionStore(lostRaceDatabase(database, { applied: false })).persist([
+      entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    ]),
+    /source changed after registration/,
+    'the re-read row still carries history after the guarded write matched nothing: fail closed, do not pass on the stale image',
+  );
+  assert.equal(rowFingerprint(database, 'legacy'), oldFp, 'the refused row is unchanged');
+});
+
+test('sweep: a lost migration race on the async path re-reads too', async (t) => {
+  const database = memory(t);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  createDefinitionVersionStore(database).persist([entry({ name: 'legacy', fingerprint: oldFp })]);
+  // The async persist path: a storage without `sync`, delegating to the real
+  // synchronous handle, reporting the guarded move as lost after applying it.
+  const sync = database.storage.sync;
+  const txHandle = {
+    async execute(statement) {
+      if (statement?.kind === 'update') {
+        await sync.execute(statement);
+        return { affectedRows: 0 };
+      }
+      return sync.execute(statement);
+    },
+    async maybeOne(statement) { return sync.maybeOne(statement); },
+    async many(statement) { return sync.many(statement); },
+  };
+  const asyncOnly = {
+    storage: {
+      contract: database.storage.contract,
+      async execute(statement) { return txHandle.execute(statement); },
+      async maybeOne(statement) { return txHandle.maybeOne(statement); },
+      async many(statement) { return txHandle.many(statement); },
+      transaction: (fn) => database.transactionAsync(() => fn(txHandle)),
+    },
+  };
+  await createDefinitionVersionStore(asyncOnly).persist([
+    entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+  ]);
+  assert.equal(rowFingerprint(database, 'legacy'), newFp, 'the winner’s move stands on the async path too');
+});
+
+/**
+ * A database handle whose guarded migration UPDATE loses twice: the initial
+ * move reports zero rows, and so does the guarded retry — because between
+ * the re-read and the retry a concurrent boot moved the row to current and
+ * committed. The second re-read must verify instead of refusing.
+ */
+function twiceLostRaceDatabase(database) {
+  const sync = database.storage.sync;
+  let updates = 0;
+  const sabotagedSync = {
+    ...sync,
+    execute(statement) {
+      if (statement?.kind === 'update') {
+        updates += 1;
+        if (updates === 1) return { affectedRows: 0 };
+        // The concurrent winner lands between our re-read and our retry: the
+        // same move, unguarded, then our guarded retry misses it.
+        sync.execute({ ...statement, where: statement.where.filter((term) => term.column !== 'fingerprint') });
+        return { affectedRows: 0 };
+      }
+      return sync.execute(statement);
+    },
+  };
+  return { storage: { ...database.storage, sync: sabotagedSync } };
+}
+
+test('sweep: a twice-lost migration race against a just-moved row verifies', (t) => {
+  const database = memory(t);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  createDefinitionVersionStore(database).persist([entry({ name: 'legacy', fingerprint: oldFp })]);
+  assert.doesNotThrow(
+    () => createDefinitionVersionStore(twiceLostRaceDatabase(database)).persist([
+      entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    ]),
+    'the retry lost because a concurrent boot already moved the row to current: this boot verifies',
+  );
+  assert.equal(rowFingerprint(database, 'legacy'), newFp, 'the winner’s move stands, written once');
+});
+
+test('sweep: a twice-lost migration race on the async path verifies too', async (t) => {
+  const database = memory(t);
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  createDefinitionVersionStore(database).persist([entry({ name: 'legacy', fingerprint: oldFp })]);
+  // The async persist path with the same twice-lost interleaving: the retry
+  // misses because the winner landed first, and the second re-read verifies.
+  const sync = twiceLostRaceDatabase(database).storage.sync;
+  const txHandle = {
+    async execute(statement) { return sync.execute(statement); },
+    async maybeOne(statement) { return sync.maybeOne(statement); },
+    async many(statement) { return sync.many(statement); },
+  };
+  const asyncOnly = {
+    storage: {
+      contract: database.storage.contract,
+      async execute(statement) { return txHandle.execute(statement); },
+      async maybeOne(statement) { return txHandle.maybeOne(statement); },
+      async many(statement) { return txHandle.many(statement); },
+      transaction: (fn) => database.transactionAsync(() => fn(txHandle)),
+    },
+  };
+  await createDefinitionVersionStore(asyncOnly).persist([
+    entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+  ]);
+  assert.equal(rowFingerprint(database, 'legacy'), newFp, 'the winner’s move stands on the async path too');
+});
+
+test('sweep: persist validates the optional superseded history before any write', (t) => {
+  const database = memory(t);
+  const store = createDefinitionVersionStore(database);
+  const historical = ['a'.repeat(64)];
+  const current = 'b'.repeat(64);
+  refusesCleanly(
+    () => store.persist([entry({ supersededFingerprints: 'not-an-array' })]),
+    /supersededFingerprints must be a non-empty array/,
+    'a non-array history',
+  );
+  refusesCleanly(
+    () => store.persist([entry({ supersededFingerprints: [] })]),
+    /supersededFingerprints must be a non-empty array/,
+    'an empty history',
+  );
+  refusesCleanly(
+    () => store.persist([entry({ supersededFingerprints: ['not-identity\ntext'] })]),
+    /control character/,
+    'a hostile historical fingerprint',
+  );
+  refusesCleanly(
+    () => store.persist([entry({ fingerprint: current, supersededFingerprints: historical, bogus: 1 })]),
+    /unsupported field/,
+    'an extra field beside the history',
+  );
+  assert.equal(rows(database).length, 0, 'a refused entry wrote nothing');
+});
+
+/** A read-only composition double: answers selects, has no write path at all. */
+function readOnlyDatabase(stored) {
+  return {
+    storage: {
+      readOnly: true,
+      async many(query) {
+        const where = Object.fromEntries((query.where ?? []).map((clause) => [clause.column, clause.value]));
+        return stored
+          .filter((row) => row.type === where.type && row.name === where.name)
+          .map((row) => ({ version: row.version, fingerprint: row.fingerprint }));
+      },
+    },
+  };
+}
+
+test('sweep: a read-only composition accepts a superseded row without writing, and still refuses drift', async () => {
+  const oldFp = 'a'.repeat(64);
+  const newFp = 'b'.repeat(64);
+  const unrelated = 'c'.repeat(64);
+  const stored = [
+    { type: 'fixture-kind', name: 'legacy', version: 1, fingerprint: oldFp },
+    { type: 'fixture-kind', name: 'drifted', version: 1, fingerprint: unrelated },
+  ];
+  const store = createDefinitionVersionStore(readOnlyDatabase(stored));
+  // No `execute` on the double: any write attempt throws a TypeError, so
+  // reaching the end proves the read-only path wrote nothing.
+  await store.persist([
+    entry({ name: 'legacy', fingerprint: newFp, supersededFingerprints: [oldFp] }),
+    entry({ name: 'never-registered', fingerprint: newFp }),
+  ]);
+  await assert.rejects(
+    store.persist([entry({ name: 'drifted', fingerprint: newFp, supersededFingerprints: [oldFp] })]),
+    /source changed after registration/,
+    'a fingerprint no scheme explains still refuses read-only',
+  );
+  await assert.rejects(
+    store.persist([entry({ name: 'legacy', fingerprint: newFp })]),
+    /source changed after registration/,
+    'without the approved history even the old row refuses read-only',
+  );
+});
