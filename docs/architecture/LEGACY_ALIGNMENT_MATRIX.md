@@ -582,12 +582,16 @@ history — and the price-list catalog provider is its first and only consumer:
 its fingerprint dropped closure text in favour of `{type, name, version,
 codeVersion, config}`, and it declares the two historical closure-text forms
 (pre-#271 over `name`, #271 over `providerName`) so registered databases keep
-composing. Declared history is sealed to that constructor (a module-private
-seal the registry checks): any other provider's history is ignored and
-refuses as drift, so no custom catalog can approve its own past. The
-constructor template is pinned beside the history: composition refuses on
-any closure drift from the pin, and the render characterization test pairs
-pin moves with constructor version bumps. No other definition family has a
+composing. Declared history is recognized, never trusted: the registry
+honours `codeVersion`/`legacyFetchSources` only when one predicate holds —
+the pinned constructor version plus a live `fetchCatalog` source matching
+the pinned template — and that same predicate gates the versioned scheme,
+the approved history and the refusal of forged constructor fields. Any other
+provider's history refuses at composition, so no custom catalog can approve
+its own past and there is no seal left to forge. The constructor template
+is pinned beside the history: construction and every registry composition
+refuse on any closure drift from the pin, and the render characterization
+test pairs pin moves with constructor version bumps. No other definition family has a
 superseded scheme, so there is
 nothing for those rows to declare; declaring them aligned here would be the
 silent backfill this matrix prevents.

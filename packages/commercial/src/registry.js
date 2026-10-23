@@ -1,5 +1,6 @@
 // @ts-check
 
+import { createHash } from 'node:crypto';
 import {
   ValidationError,
   NotFoundError,
@@ -19,7 +20,11 @@ import { requireCurrency, MAX_DISCOUNT_BPS } from './money.js';
  * Map-backed per-app registries, fail-closed startup, strict canonical
  * fingerprints over source + declared JSON-safe config, persisted in
  * `definition_versions` inside one transaction (same-version drift stops the
- * next boot; rollback = publish a new version). Metadata is function-free.
+ * next boot; rollback = publish a new version). The one exception is the
+ * price-list provider the constructor builds: its fingerprint covers the
+ * pinned constructor version instead of closure text, and the single
+ * recognition predicate below binds that privilege to the live source.
+ * Metadata is function-free.
  *
  * Future provider packages may target Stripe Products/Prices, Zuora, ERP or
  * custom catalog APIs — none ships here; the fixture provider proves the
@@ -40,30 +45,86 @@ const MAX_LEGACY_SOURCE_CHARS = 200_000;
 export const DISCOUNT_DECISIONS = Object.freeze(['auto_approve', 'approval_required', 'reject']);
 
 /**
- * Kernel-internal seal: which catalog providers the constructor built.
- * Module-private on purpose — application code holds no reference to this
- * symbol, so no custom provider can forge the seal; only
- * `createPriceListCatalogProvider` (price-list.js) applies it, and the
- * registry's identity below honours declared history solely on sealed
- * definitions. A provider that merely declares `legacyFetchSources` without
- * the seal is unapproved history: a mismatched row refuses as genuine drift
- * instead of migrating itself (review khaoss85/agent-crm#333).
+ * Constructor version of the workspace price-list catalog provider.
+ *
+ * The registry fingerprint of a price-list provider covers `{type, name,
+ * version, codeVersion, config}` and deliberately NOT the `fetchCatalog`
+ * closure source: the closure reads only the declared `config` (same
+ * reference, frozen), so a pure refactor of the constructor file — renames,
+ * comments, formatting — leaves every registered fingerprint unchanged. A
+ * behaviour change to the catalog the closure renders bumps this version
+ * instead, which moves the fingerprint and asks spaces to publish a new
+ * provider version, exactly like a listino data change does.
  */
-const CONSTRUCTOR_BUILT = Symbol('accordo.constructorBuiltCatalogProvider');
+export const PRICE_LIST_CATALOG_CODE_VERSION = 1;
 
 /**
- * Seal a constructor-built catalog provider. Kernel-internal: only
- * `createPriceListCatalogProvider` may call this, before freezing the
- * definition. The seal survives the object spreads compositions use,
- * because spread copies enumerable symbol-keyed properties.
- * @param {any} provider
+ * Pinned template of the constructor-built `fetchCatalog` (review
+ * khaoss85/agent-crm#333): the registry fingerprint deliberately excludes
+ * closure text, so the executed code is bound here instead — every provider
+ * the constructor builds carries a `fetchCatalog` whose SHA-256 must match
+ * `sourceHash`, or composition refuses. A behaviour change to the closure
+ * therefore cannot pass silently without a `codeVersion` bump: the pin moves
+ * with every source edit (rename or behaviour), and the render
+ * characterization in `tests/commercial-price-list.test.js` only lets the
+ * pin move alone when the rendered catalog bytes are unchanged.
+ *
+ * Never edit `sourceHash` except together with the closure it pins, and bump
+ * `codeVersion` (above and here) exactly when the rendered catalog changes.
  */
-export function sealConstructorBuiltCatalogProvider(provider) {
-  if (!provider || typeof provider !== 'object') {
-    throw new ValidationError('constructor-built catalog provider must be an object');
+export const PRICE_LIST_CATALOG_TEMPLATE = Object.freeze({
+  codeVersion: PRICE_LIST_CATALOG_CODE_VERSION,
+  sourceHash: '2f93d1464a2bff40f9fb5fb2a2ec4197551ebd90862a6077f951e79a07e1234a',
+});
+
+/**
+ * Refuse a `fetchCatalog` source that drifted from the pinned template.
+ * Fail-closed at composition, in the framework's own words: an unbumped
+ * edit to the constructor stops the boot the way a fingerprint mismatch
+ * used to, instead of syncing different keys under an unchanged fingerprint.
+ * @param {unknown} sourceText — the live `fetchCatalog.toString()`
+ */
+export function validatePriceListConstructorTemplate(sourceText) {
+  const live = createHash('sha256').update(String(sourceText), 'utf8').digest('hex');
+  if (live !== PRICE_LIST_CATALOG_TEMPLATE.sourceHash) {
+    throw new ValidationError(
+      'price-list catalog constructor source changed without a constructor update: '
+      + 'a behaviour change must bump PRICE_LIST_CATALOG_CODE_VERSION (which moves the fingerprint), '
+      + 'a pure refactor must update PRICE_LIST_CATALOG_TEMPLATE.sourceHash '
+      + '(see the render characterization in tests/commercial-price-list.test.js)',
+    );
   }
-  provider[CONSTRUCTOR_BUILT] = true;
-  return provider;
+}
+
+/**
+ * The single source of truth for the constructor-built privilege (review
+ * khaoss85/agent-crm#333, rounds 1–3): every decision below — the
+ * source-free fingerprint scheme, the approved historical forms, and the
+ * refusal of forged constructor fields — reads this predicate, so a new
+ * decision point cannot silently bypass the others again. The earlier cure
+ * scattered the privilege (fingerprint branched on `codeVersion` alone,
+ * identity on a forgeable exported seal, template checked only at
+ * construction); each round patched one point while another leaked.
+ *
+ * A catalog provider is constructor-built only when it carries the pinned
+ * constructor version AND its live `fetchCatalog` source hashes to the
+ * pinned template. The version alone proves nothing — any object can declare
+ * it — and there is no seal left to forge: a post-construction swap
+ * (`{...p, fetchCatalog: evil}`) simply stops being constructor-built
+ * instead of verifying under a stale pin, and a custom provider declaring
+ * `codeVersion`/`legacyFetchSources` is a stranger to the template.
+ * @param {any} definition
+ */
+function isConstructorBuiltCatalogProvider(definition) {
+  if (!definition || typeof definition !== 'object') return false;
+  if (definition.codeVersion !== PRICE_LIST_CATALOG_CODE_VERSION) return false;
+  if (typeof definition.fetchCatalog !== 'function') return false;
+  try {
+    validatePriceListConstructorTemplate(String(definition.fetchCatalog));
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 /** @param {string} label @param {any} definition */
@@ -94,8 +155,9 @@ export function validateCatalogProvider(definition) {
   // the closure source's place in the fingerprint, so framework refactors
   // stop moving it. `legacyFetchSources` carries the historical closure
   // sources a transparent upgrade may still meet in registered databases —
-  // honoured only on a sealed constructor-built definition (see identity),
-  // so a custom provider can never approve its own drift as history.
+  // honoured only on a recognized constructor-built definition (see
+  // isConstructorBuiltCatalogProvider and identity), so a custom provider
+  // can never approve its own drift as history.
   if (definition.codeVersion !== undefined
     && (!Number.isSafeInteger(definition.codeVersion) || definition.codeVersion < 1 || definition.codeVersion > MAX_VERSION)) {
     throw new ValidationError(
@@ -118,20 +180,40 @@ export function validateCatalogProvider(definition) {
       }
     });
   }
+  // Constructor-reserved fields (review khaoss85/agent-crm#333): the
+  // versioned scheme and the declared history belong to providers the
+  // price-list constructor built — recognized by the single predicate,
+  // which re-validates the live fetchCatalog source on this path, so a
+  // post-construction swap refuses here instead of verifying under a stale
+  // pin, and a custom provider cannot opt out of source drift detection by
+  // merely declaring a version. There is no seal to forge: recognition is
+  // the live source plus the pinned version, nothing an importer can stamp.
+  if (definition.codeVersion !== undefined || definition.legacyFetchSources !== undefined) {
+    if (!isConstructorBuiltCatalogProvider(definition)) {
+      throw new ValidationError(
+        `catalog provider "${definition.name}": codeVersion and legacyFetchSources are reserved `
+        + 'for providers built by createPriceListCatalogProvider — the live fetchCatalog source '
+        + 'does not match the pinned constructor template (a behaviour change must bump '
+        + 'PRICE_LIST_CATALOG_CODE_VERSION with the pin; a custom provider must not declare these fields)',
+      );
+    }
+  }
   return definition;
 }
 
 /**
- * The fingerprint input for one catalog provider. Constructor-built
- * providers (codeVersion present) hash `{type, name, version, codeVersion,
- * config}`: the closure reads only the declared config, so its source text
- * is not behaviour and hashing it churned every registered fingerprint on
- * each refactor. Every other provider keeps the established source-plus-
- * config form, unchanged.
+ * The fingerprint input for one catalog provider. Recognized
+ * constructor-built providers (see isConstructorBuiltCatalogProvider) hash
+ * `{type, name, version, codeVersion, config}`: the closure reads only the
+ * declared config, so its source text is not behaviour and hashing it
+ * churned every registered fingerprint on each refactor. Every other
+ * provider — including one that merely declares a `codeVersion` — keeps the
+ * established source-plus-config form, so a rewritten closure still moves
+ * the fingerprint instead of silently opting out of drift detection.
  * @param {any} definition
  */
 function catalogProviderFingerprint(definition) {
-  if (definition.codeVersion !== undefined) {
+  if (isConstructorBuiltCatalogProvider(definition)) {
     return computeDefinitionFingerprint({
       type: 'catalog-provider',
       name: definition.name,
@@ -191,15 +273,15 @@ export function validateDiscountPolicy(definition) {
 
 /**
  * The closed identity the definition-version store persists: the four fields,
- * and never the definition or its config — plus, for a constructor-built
- * catalog provider that declares historical closure sources, the fingerprints
- * the old scheme would have computed over the current data. Declared history
- * on any other definition is unapproved and ignored here: the store then
- * verifies by exact match, so a mismatched row refuses as genuine drift
- * instead of letting a provider approve its own past. The store accepts and
- * moves an approved form inside its single persist-or-verify transaction
- * (and accepts it without writing on a read-only composition); anything else
- * that mismatches is genuine drift.
+ * and never the definition or its config — plus, for a recognized
+ * constructor-built catalog provider that declares historical closure
+ * sources, the fingerprints the old scheme would have computed over the
+ * current data. Declared history on any other definition is unapproved and
+ * ignored here: the store then verifies by exact match, so a mismatched row
+ * refuses as genuine drift instead of letting a provider approve its own
+ * past. The store accepts and moves an approved form inside its single
+ * persist-or-verify transaction (and accepts it without writing on a
+ * read-only composition); anything else that mismatches is genuine drift.
  * @param {string} type
  * @param {{definition: {name: string, version: number}, fingerprint: string}} entry
  */
@@ -211,7 +293,7 @@ function identity(type, entry) {
     fingerprint: entry.fingerprint,
   };
   if (type !== 'catalog-provider') return base;
-  if (entry.definition[CONSTRUCTOR_BUILT] !== true) return base;
+  if (!isConstructorBuiltCatalogProvider(entry.definition)) return base;
   const supersededFingerprints = legacyCatalogFingerprints(entry);
   if (supersededFingerprints.length === 0) return base;
   return { ...base, supersededFingerprints };
@@ -260,6 +342,10 @@ export class CommercialRegistries {
     this.discountPolicies = new Map();
 
     for (const definition of definitions.catalogProviders ?? []) {
+      // Validation re-runs the constructor-template check on this path via
+      // the recognition predicate, so a post-construction fetchCatalog swap
+      // refuses here — the pin is enforced at every composition, not only
+      // where the provider was built.
       validateCatalogProvider(definition);
       if (this.catalogProviders.has(definition.name)) {
         throw new ValidationError(`Duplicate catalog provider name: ${definition.name}`);

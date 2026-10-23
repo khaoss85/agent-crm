@@ -194,13 +194,15 @@ test('the normalized listino is frozen in depth: nested amounts cannot drift', a
   assert.equal(catalog.offers[1].components[0].flatAmountCents, 4900, 'amounts survive unchanged');
 });
 
-test('a pure refactor of the constructor leaves the provider fingerprint unchanged', async () => {
+test('a post-construction fetchCatalog swap refuses at composition', async () => {
+  // Round 3, P1 registry.js:269: the registry used to accept a replaced
+  // fetch under the constructor's versioned scheme, verifying a swapped
+  // implementation under a stale pin. Recognition now re-validates the live
+  // source on this path, so the swap refuses here — behaviour-identical or
+  // not, because the registry cannot verify behaviour, only the pin.
   const built = provider();
-  const fingerprintOf = (definition) => new CommercialRegistries({ catalogProviders: [definition] })
-    .getCatalogProvider('palestra-listino').fingerprint;
-  const baseline = fingerprintOf(built);
   // Same behaviour, different closure text: the #271 class of change (a
-  // renamed closed-over variable) plus a comment and a re-indented line.
+  // renamed closed-over variable) plus a comment.
   const refactoredSource = `${built.fetchCatalog.toString().replaceAll('providerName', 'renamedProvider')}\n    // refactored: behaviour identical, text different`;
   assert.notEqual(
     refactoredSource,
@@ -216,10 +218,161 @@ test('a pure refactor of the constructor leaves the provider fingerprint unchang
     await built.fetchCatalog({}),
     'the variant renders the same catalog',
   );
+  assert.throws(
+    () => new CommercialRegistries({ catalogProviders: [{ ...built, fetchCatalog: refactoredFetch }] }),
+    /does not match the pinned constructor template/,
+    'even a behaviour-identical swap refuses: the pin binds the executed code',
+  );
+  assert.throws(
+    () => new CommercialRegistries({
+      catalogProviders: [{ ...built, fetchCatalog: async () => ({ sourceRef: 'evil' }) }],
+    }),
+    /does not match the pinned constructor template/,
+    'a behaviour-differing swap refuses instead of syncing under a stale pin',
+  );
+  assert.doesNotThrow(
+    () => new CommercialRegistries({ catalogProviders: [{ ...built, label: 'Etichetta locale' }] }),
+    'a metadata-only spread still composes: recognition survives what compositions do',
+  );
+});
+
+/**
+ * One predicate, every case (review khaoss85/agent-crm#333, rounds 1–3).
+ * The earlier cure scattered the constructor-built privilege — fingerprint
+ * branched on `codeVersion` alone, identity on a forgeable exported seal,
+ * template checked only at construction — and each round patched one point
+ * while another leaked. This table holds every case of the earlier rounds
+ * and this one against the single recognition predicate
+ * (isConstructorBuiltCatalogProvider): pinned constructor version plus a
+ * live fetchCatalog source matching the pinned template.
+ *
+ * Round map: round 1 P1 registry.js:104 (closure edit without a bump goes
+ * silent) → rows 'rewritten fetch' and 'bump without a pin move'; round 1
+ * P1 store.js:241 (self-supplied history approves drift) → row 'forged
+ * history'; round 1 P2 store.js:400 (lost migration race passes silently)
+ * → covered at the store unit by 'sweep: a lost migration race …' (both
+ * directions) plus the same-transaction rollback row below; round 3 P1
+ * :134 (codeVersion alone opts out) → row 'version alone'; round 3 P1 :269
+ * (swap verifies under a stale pin) → rows 'rewritten fetch' and
+ * 'behaviour-differing swap'; round 3 P2 :61 (forgeable seal) → row
+ * 'forged history' plus the no-exported-seal test below (the seal is gone,
+ * so there is nothing left to forge).
+ */
+test('constructor-built recognition is one predicate: every #333 case refuses or verifies', () => {
+  const built = provider();
+  const sourceFreeFingerprint = computeDefinitionFingerprint({
+    type: 'catalog-provider',
+    name: built.name,
+    version: built.version,
+    codeVersion: PRICE_LIST_CATALOG_CODE_VERSION,
+    config: built.config,
+  });
+  // Same behaviour, different closure text: the #271 class of change.
+  const rewrittenFetch = Object.assign(
+    async (input) => built.fetchCatalog(input),
+    {
+      toString: () => `${built.fetchCatalog.toString().replaceAll('providerName', 'renamedProvider')}\n    // refactored: behaviour identical, text different`,
+    },
+  );
+  const customFetch = async () => ({ sourceRef: 'custom' });
+  const customBase = {
+    name: 'custom', version: 1, label: 'Custom', config: { source: 'custom' }, fetchCatalog: customFetch,
+  };
+  const cases = [
+    {
+      name: 'constructor output verifies under the source-free scheme',
+      definition: built,
+      expect: { fingerprint: sourceFreeFingerprint },
+    },
+    {
+      name: 'metadata-only spread stays recognized with the same fingerprint',
+      definition: { ...built, label: 'Etichetta locale' },
+      expect: { fingerprint: sourceFreeFingerprint },
+    },
+    {
+      name: 'round 3 P1 :269 and round 1 :104 class: behaviour-identical rewritten fetch refuses on the registry path',
+      definition: { ...built, fetchCatalog: rewrittenFetch },
+      expect: { throws: /does not match the pinned constructor template/ },
+    },
+    {
+      name: 'round 3 P1 :269 scenario: behaviour-differing swapped fetch refuses under the stale pin',
+      definition: { ...built, fetchCatalog: async () => ({ sourceRef: 'evil' }) },
+      expect: { throws: /does not match the pinned constructor template/ },
+    },
+    {
+      name: 'round 3 P1 :134: a declared codeVersion alone does not opt out of source drift detection',
+      definition: { ...customBase, codeVersion: 1 },
+      expect: { throws: /reserved for providers built by createPriceListCatalogProvider/ },
+    },
+    {
+      name: 'round 1 store:241 class and round 3 P2 :61: forged constructor fields refuse at composition, never migrate',
+      definition: {
+        ...customBase,
+        codeVersion: 1,
+        legacyFetchSources: [customFetch.toString()],
+        fetchCatalog: async () => ({ sourceRef: 'custom-b' }),
+      },
+      expect: { throws: /reserved for providers built by createPriceListCatalogProvider/ },
+    },
+    {
+      name: 'a constructor bump without the matching pin move cannot land',
+      definition: { ...built, codeVersion: PRICE_LIST_CATALOG_CODE_VERSION + 1 },
+      expect: { throws: /reserved for providers built by createPriceListCatalogProvider/ },
+    },
+  ];
+  for (const row of cases) {
+    if (row.expect.fingerprint) {
+      const registries = new CommercialRegistries({ catalogProviders: [row.definition] });
+      assert.equal(
+        registries.getCatalogProvider(row.definition.name).fingerprint,
+        row.expect.fingerprint,
+        `${row.name}: the scheme excludes closure text, so a pure refactor cannot move the fingerprint`,
+      );
+    } else {
+      assert.throws(
+        () => new CommercialRegistries({ catalogProviders: [row.definition] }),
+        row.expect.throws,
+        row.name,
+      );
+    }
+  }
+  // The scheme itself, pinned structurally: the constructor version rides in
+  // the fingerprint input (a bump moves it), closure text does not (a
+  // refactor cannot). Acceptance 'constructor version changes the
+  // fingerprint' holds through the pin, which carries the version with it.
+  assert.notEqual(
+    computeDefinitionFingerprint({
+      type: 'catalog-provider',
+      name: built.name,
+      version: built.version,
+      codeVersion: PRICE_LIST_CATALOG_CODE_VERSION + 1,
+      config: built.config,
+    }),
+    sourceFreeFingerprint,
+    'the constructor version rides in the fingerprint input',
+  );
+  assert.notEqual(
+    computeDefinitionFingerprint({
+      type: 'catalog-provider',
+      name: built.name,
+      version: built.version,
+      config: built.config,
+      fetchCatalog: built.fetchCatalog,
+    }),
+    sourceFreeFingerprint,
+    'the old closure-text scheme differs: the upgrade really changed schemes',
+  );
+});
+
+test('no forgeable seal remains: recognition is the live source, nothing exported to stamp', async () => {
+  // Round 3, P2 registry.js:61: the seal was claimed module-private but the
+  // function applying it was a public export, so any importer could approve
+  // its own drift. The seal is gone — history is recognized, not stamped.
+  const registry = await import('../packages/commercial/src/registry.js');
   assert.equal(
-    fingerprintOf({ ...built, fetchCatalog: refactoredFetch }),
-    baseline,
-    'closure text is not behaviour for a constructor-built provider',
+    registry.sealConstructorBuiltCatalogProvider,
+    undefined,
+    'the forgeable export is gone; check the recognition table above for what grants history now',
   );
 });
 
@@ -240,8 +393,18 @@ test('listino data, provider version and constructor version all move the finger
     baseline,
     'provider version moves the fingerprint',
   );
+  // The constructor version moves it through the scheme input — pinned
+  // structurally, not by composing a forged bump (a bumped codeVersion
+  // without the matching pin move refuses; see the recognition table):
+  // recomputing the input with codeVersion + 1 differs from the live print.
   assert.notEqual(
-    fingerprintOf({ ...provider(), codeVersion: PRICE_LIST_CATALOG_CODE_VERSION + 1 }),
+    computeDefinitionFingerprint({
+      type: 'catalog-provider',
+      name: 'palestra-listino',
+      version: 1,
+      codeVersion: PRICE_LIST_CATALOG_CODE_VERSION + 1,
+      config: provider().config,
+    }),
     baseline,
     'constructor version moves the fingerprint',
   );
@@ -579,45 +742,28 @@ test('a batch that refuses on drift leaves the legacy row unmoved', (t) => {
   assert.equal(row.fingerprint, UPGRADE_FINGERPRINT_271, 'the legacy move rolled back with the refused batch');
 });
 
-test('a custom provider cannot approve its own drift as history', (t) => {
+test('a custom provider cannot approve its own drift as history', () => {
   // The transparent upgrade is a privilege of the constructor-built price
   // list, not of any provider that declares history: a custom provider that
   // rewrites its closure and carries the old source in legacyFetchSources
-  // must refuse as drift, never migrate itself.
-  const database = createDatabase({ path: ':memory:' });
-  t.after(() => database.close());
+  // refuses at composition — since round 3 there is no seal to forge, so the
+  // forged constructor fields never reach the persist path, let alone
+  // migrate a row.
   const oldSource = 'async () => ({ sourceRef: "custom-a" })';
-  const comparisonOnlyOld = Object.assign(
-    async () => { throw new Error('fingerprint comparison only'); },
-    { toString: () => oldSource },
-  );
   const config = { source: 'custom' };
-  createDefinitionVersionStore(database).persist([{
-    type: 'catalog-provider',
-    name: 'custom',
-    version: 1,
-    fingerprint: computeDefinitionFingerprint({
-      type: 'catalog-provider',
-      name: 'custom',
-      version: 1,
-      config,
-      fetchCatalog: comparisonOnlyOld,
-    }),
-  }]);
-  const laundered = new CommercialRegistries({
-    catalogProviders: [{
-      name: 'custom',
-      version: 1,
-      config,
-      codeVersion: 1,
-      legacyFetchSources: [oldSource],
-      fetchCatalog: async () => ({ sourceRef: 'custom-b' }),
-    }],
-  });
   assert.throws(
-    () => laundered.persistFingerprints(database),
-    /source changed after registration/,
-    'self-supplied history never approves drift',
+    () => new CommercialRegistries({
+      catalogProviders: [{
+        name: 'custom',
+        version: 1,
+        config,
+        codeVersion: 1,
+        legacyFetchSources: [oldSource],
+        fetchCatalog: async () => ({ sourceRef: 'custom-b' }),
+      }],
+    }),
+    /reserved for providers built by createPriceListCatalogProvider/,
+    'self-supplied history refuses at composition, never migrates itself',
   );
 });
 

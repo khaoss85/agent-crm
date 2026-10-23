@@ -1,6 +1,5 @@
 // @ts-check
 
-import { createHash } from 'node:crypto';
 import { ValidationError } from '../../core/index.js';
 import {
   CHARGE_TYPES,
@@ -9,9 +8,19 @@ import {
 import { requireCurrency, validatePriceComponent } from './money.js';
 import {
   validateCatalogProvider,
-  sealConstructorBuiltCatalogProvider,
   MAX_LABEL as MAX_PROVIDER_LABEL,
+  PRICE_LIST_CATALOG_CODE_VERSION,
+  PRICE_LIST_CATALOG_TEMPLATE,
+  validatePriceListConstructorTemplate,
 } from './registry.js';
+
+// Re-exported so existing import sites keep working: the pin lives in
+// registry.js, the single module that enforces it.
+export {
+  PRICE_LIST_CATALOG_CODE_VERSION,
+  PRICE_LIST_CATALOG_TEMPLATE,
+  validatePriceListConstructorTemplate,
+};
 
 /**
  * Workspace price lists (accordo D1): a gym's listino — lesson packs,
@@ -45,59 +54,6 @@ const MAX_COMPONENTS = 25;
 const DERIVED_LABEL_PREFIX = 'Workspace price list (';
 const DERIVED_LABEL_SUFFIX = ')';
 const MAX_PROVIDER_NAME = MAX_PROVIDER_LABEL - DERIVED_LABEL_PREFIX.length - DERIVED_LABEL_SUFFIX.length;
-
-/**
- * Constructor version of the workspace price-list catalog provider.
- *
- * The registry fingerprint of a price-list provider covers `{type, name,
- * version, codeVersion, config}` and deliberately NOT the `fetchCatalog`
- * closure source: the closure reads only the declared `config` (same
- * reference, frozen), so a pure refactor of this file — renames, comments,
- * formatting — leaves every registered fingerprint unchanged. A behaviour
- * change to the catalog the closure renders bumps this version instead, which
- * moves the fingerprint and asks spaces to publish a new provider version,
- * exactly like a listino data change does.
- */
-export const PRICE_LIST_CATALOG_CODE_VERSION = 1;
-
-/**
- * Pinned template of the constructor-built `fetchCatalog` (review
- * khaoss85/agent-crm#333): the registry fingerprint deliberately excludes
- * closure text, so the executed code is bound here instead — every provider
- * this constructor builds carries a `fetchCatalog` whose SHA-256 must match
- * `sourceHash`, or composition refuses. A behaviour change to the closure
- * therefore cannot pass silently without a `codeVersion` bump: the pin moves
- * with every source edit (rename or behaviour), and the render
- * characterization in `tests/commercial-price-list.test.js` only lets the
- * pin move alone when the rendered catalog bytes are unchanged.
- *
- * Never edit `sourceHash` except together with the closure it pins, and bump
- * `codeVersion` (above and here) exactly when the rendered catalog changes.
- */
-export const PRICE_LIST_CATALOG_TEMPLATE = Object.freeze({
-  codeVersion: PRICE_LIST_CATALOG_CODE_VERSION,
-  sourceHash: '2f93d1464a2bff40f9fb5fb2a2ec4197551ebd90862a6077f951e79a07e1234a',
-});
-
-/**
- * Refuse a `fetchCatalog` source that drifted from the pinned template.
- * Fail-closed at composition, in the framework's own words: an unbumped
- * behaviour edit to the constructor stops the boot the way a fingerprint
- * mismatch used to, instead of syncing different keys under an unchanged
- * fingerprint.
- * @param {unknown} sourceText — the live `fetchCatalog.toString()`
- */
-export function validatePriceListConstructorTemplate(sourceText) {
-  const live = createHash('sha256').update(String(sourceText), 'utf8').digest('hex');
-  if (live !== PRICE_LIST_CATALOG_TEMPLATE.sourceHash) {
-    throw new ValidationError(
-      'price-list catalog constructor source changed without a constructor update: '
-      + 'a behaviour change must bump PRICE_LIST_CATALOG_CODE_VERSION (which moves the fingerprint), '
-      + 'a pure refactor must update PRICE_LIST_CATALOG_TEMPLATE.sourceHash '
-      + '(see the render characterization in tests/commercial-price-list.test.js)',
-    );
-  }
-}
 
 /**
  * Historical `fetchCatalog` closure sources, pinned byte-for-byte for the one
@@ -526,12 +482,10 @@ export function createPriceListCatalogProvider({ name, version, label, priceList
   // Declared-definition discipline: malformed here stops startup, like every
   // other provider — and the fingerprint the registry computes over this
   // definition covers the listino data in config, so a silent price change
-  // under a frozen version is drift, not an update.
+  // under a frozen version is drift, not an update. The registry recognizes
+  // this provider as constructor-built by its pinned version plus its live
+  // fetchCatalog source (see registry.js): there is no seal to carry or
+  // forge, so the frozen shape above is the whole privilege.
   validateCatalogProvider(provider);
-  // Seal the transparent-upgrade privilege: only a provider this constructor
-  // built may carry historical closure sources into the registry's identity.
-  // The seal is a module-private symbol (see registry.js), so application
-  // code cannot forge it — and it survives the spreads tests use, because
-  // spread copies enumerable symbol keys.
-  return Object.freeze(sealConstructorBuiltCatalogProvider(provider));
+  return Object.freeze(provider);
 }
