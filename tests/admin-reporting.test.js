@@ -22,7 +22,38 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
  * panel — nothing is generated in the browser. These tests drive the real
  * view code with the dependency-free fake DOM, like every other admin view
  * test — no browser.
+ *
+ * BO-F5-02 added the pipeline dashboard above the bundle table (fetched
+ * from /api/reporting/dashboard). These bundle-focused stubs answer that
+ * path with an empty-but-valid model so each test below keeps proving only
+ * its bundle contract; the dashboard itself is covered in
+ * tests/admin-reporting-dashboard.test.js.
  */
+function emptyDashboard() {
+  return {
+    period: '2026-10',
+    periodLabel: 'ottobre 2026',
+    owner: null,
+    currency: 'EUR',
+    currencies: { shown: 'EUR', others: [] },
+    generatedAt: '2026-10-22T20:00:00.000Z',
+    metrics: { modelVersion: 1 },
+    truncated: false,
+    kpis: [],
+    funnel: [],
+    valueByStage: [],
+    monthly: [],
+    team: [],
+    owners: [],
+    forecast: {
+      currency: 'EUR', closedMinor: 0, probableMinor: 0, bestMinor: 0, targetMinor: null,
+      heuristic: true, label: 'Stima euristica', method: 'metodo', note: 'nota',
+    },
+    insights: [],
+    proposal: null,
+    csv: { filename: 'reporting.csv', content: 'x\n' },
+  };
+}
 
 test('bundle commands are exact, versioned and never floating', () => {
   assert.equal(REPORTING_ROUTE, '#/reporting');
@@ -79,6 +110,7 @@ test('reporting screen serves the bundle rows live, with the "+ Nuovo modulo" en
     mount,
     client: {
       request: async (path) => {
+        if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         assert.match(path, /\/api\/modules\/reporting\/records/);
         return { items: [{ id: 'r1', metric: 'chiamate', period: '2026-10', value: 20, unit: 'call' }] };
       },
@@ -104,7 +136,12 @@ test('reporting screen without the bundle says so honestly, never blank', async 
   const view = createReportingView({
     doc,
     mount,
-    client: { request: async () => { throw Object.assign(new Error('not found'), { status: 404 }); } },
+    client: {
+      request: async (path) => {
+        if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
+        throw Object.assign(new Error('not found'), { status: 404 });
+      },
+    },
     navigate: (hash) => seen.push(hash),
   });
   await view.renderReporting();
@@ -132,7 +169,12 @@ test('a 500 (or auth, or network) failure is an error state with a log line, nev
     const view = createReportingView({
       doc,
       mount,
-      client: { request: async () => failure.fail() },
+      client: {
+        request: async (path) => {
+          if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
+          return failure.fail();
+        },
+      },
       navigate: () => {},
       log: (message, cause) => logged.push([message, cause]),
     });
@@ -155,7 +197,12 @@ test('a 404 stays the honest not-composed state with no error log', async () => 
   const view = createReportingView({
     doc,
     mount,
-    client: { request: async () => { throw Object.assign(new Error('not found'), { status: 404, code: 'MODULE_NOT_FOUND' }); } },
+    client: {
+      request: async (path) => {
+        if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
+        throw Object.assign(new Error('not found'), { status: 404, code: 'MODULE_NOT_FOUND' });
+      },
+    },
     navigate: () => {},
     log: (message, cause) => logged.push([message, cause]),
   });
@@ -176,7 +223,12 @@ test('a 200 without an items array is a load error, never "not composed"', async
     const view = createReportingView({
       doc,
       mount,
-      client: { request: async () => body },
+      client: {
+        request: async (path) => {
+          if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
+          return body;
+        },
+      },
       navigate: () => {},
       log: (message, cause) => logged.push([message, cause]),
     });
@@ -202,7 +254,8 @@ test('renderNuovoModulo invalidates an in-flight renderReporting', async () => {
     doc,
     mount,
     client: {
-      request: async () => {
+      request: async (path) => {
+        if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         await gate;
         return { items: [{ metric: 'tardiva', period: '2026-10', value: 1 }] };
       },
@@ -230,7 +283,8 @@ test('a stale reporting response never overwrites the newer view', async () => {
     doc,
     mount,
     client: {
-      request: async () => {
+      request: async (path) => {
+        if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         calls += 1;
         if (calls === 1) await gate;
         return { items: [{ metric: 'tardiva', period: '2026-10', value: 1 }] };
