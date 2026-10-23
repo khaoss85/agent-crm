@@ -613,11 +613,23 @@ async function commitOrUnknown(client) {
     }
     throw new AppError('PostgreSQL commit outcome is unknown', {
       code: 'COMMIT_OUTCOME_UNKNOWN', status: 503,
+      // Same chain shape as the storage commit path: the mapped failure
+      // stays attached, so a COMMIT lost at startup still names its SQLSTATE
+      // (backlog:bfab36ae). exec already redacts raw driver errors, and an
+      // AppError passes through untouched, never re-wrapped.
+      cause: error instanceof AppError ? error : toSafeCause(error),
     });
   }
 }
 
-async function bootstrapPlane(pool, {
+/**
+ * Bootstrap one plane (control or data) on an already-open pool: advisory
+ * lock, schema, ledger, migration units and startup audit commit together.
+ * Exported so wiring tests can drive the plane catches with a scripted pool
+ * instead of a live server (backlog:bfab36ae); production callers pass the
+ * pools `bootstrapPostgresqlApplication` opens.
+ */
+export async function bootstrapPlane(pool, {
   plane, lock, migrations, moduleMigrations, attestation, tenantId, clock, faultInject,
   afterSchema, acquisitionDeadlineMs,
 }) {
@@ -707,7 +719,13 @@ function describeWriterHealth(writerLease, now, closed = false) {
  *   acquisitionDeadlineMs?: number,
  *   rebind?: unknown,
  *   promoteClone?: unknown,
+ *   createPool?: (endpoint: object) => Promise<any>,
  * }} options
+ *
+ * `createPool` defaults to the real `createPostgresqlPool` and exists only so
+ * wiring tests can run the whole application path — including the inner
+ * data/control transaction catch — against scripted pools instead of a live
+ * server (backlog:bfab36ae). Production callers never pass it.
  */
 export async function bootstrapPostgresqlApplication(options) {
   if (options?.rebind === true || options?.promoteClone === true) {
@@ -734,8 +752,9 @@ export async function bootstrapPostgresqlApplication(options) {
   const leaseTtlMs = Number.isInteger(options.leaseTtlMs) && options.leaseTtlMs > 0
     ? options.leaseTtlMs
     : WRITER_LEASE_TTL_MS;
-  const controlPool = await createPostgresqlPool({ ...options.control, acquisitionDeadlineMs });
-  const dataPool = await createPostgresqlPool({ ...options.data, acquisitionDeadlineMs });
+  const openPool = options.createPool ?? createPostgresqlPool;
+  const controlPool = await openPool({ ...options.control, acquisitionDeadlineMs });
+  const dataPool = await openPool({ ...options.data, acquisitionDeadlineMs });
   let controlStorage;
   let dataStorage;
   /** @type {any} */
@@ -1026,7 +1045,10 @@ export async function bootstrapPostgresqlApplication(options) {
   } catch (error) {
     try { await dataStorage?.close(); } catch { try { await dataPool.end(); } catch { /* ignore */ } }
     try { await controlStorage?.close(); } catch { try { await controlPool.end(); } catch { /* ignore */ } }
-    throw error;
+    // Same wrap as the four inner points: a raw driver error from attestation
+    // or pool setup (message can carry host, user or URL) never leaves startup
+    // unwrapped (backlog:bfab36ae).
+    throw error instanceof AppError ? error : startupStorageFailure(error);
   }
 }
 

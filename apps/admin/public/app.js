@@ -370,6 +370,7 @@ import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
+import { createConnectorDetailView } from './admin-connector-detail.js';
 import { createReportingView } from './admin-reporting.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSpineView } from './admin-spine.js';
@@ -516,6 +517,19 @@ const connectorsView = createConnectorsView({
   toast,
 });
 
+// Connector detail (BO-F5-03): the seven sections of one connector, all read
+// from the same channel-connection row, plus the declared consumers. Same
+// shape as the connectors view above; owns no storage and no write.
+const connectorDetailView = createConnectorDetailView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  submissions,
+  navigate: (hash) => { window.location.hash = hash; },
+  storage: shellStorage,
+  toast,
+});
+
 // Reporting and "+ Nuovo modulo" (BO-F5-01, docs/BUNDLES.md): the reference
 // bundle's live rows plus the double option and the 'Sviluppa per Accordo'
 // card. The AI option forwards to the assistant panel on the nuovo-modulo
@@ -649,6 +663,7 @@ function shellScreenFor(target) {
     case 'catalog': return { id: null, label: 'Catalogo prodotti' };
     case 'quote-detail': return { id: null, label: 'Preventivo' };
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
+    case 'connector-detail': return { id: 'impostazioni', label: 'Dettaglio connettore' };
     case 'reporting': return { id: 'reporting', label: 'Reporting' };
     case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
     case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
@@ -871,6 +886,7 @@ async function route() {
     else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') await customerDataView.render();
     else if (target.view === 'connectors') await connectorsView.render();
+    else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel);
     else if (target.view === 'reporting') await reportingView.renderReporting();
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
     else if (target.view === 'personalizzazione') await personalizzazioneView.render();

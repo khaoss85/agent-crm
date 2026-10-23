@@ -19,6 +19,90 @@
 
 /** Hash route of the Reporting screen. */
 export const REPORTING_ROUTE = '#/reporting';
+
+/**
+ * BO-F5-02 — pipeline dashboard ("09 Reporting", backlog:c3e66b36ddb7).
+ *
+ * Every number below is served by GET /api/reporting/dashboard, which reads
+ * the declared analytics registry (compileReport/runReport) plus the
+ * operator's own obiettivo row from the reporting bundle. The screen itself
+ * never queries: filters only refetch with periodo/persona parameters, and
+ * the "Cosa noto" proposal is revealed client-side with zero requests — it
+ * can never reassign by itself because no write surface exists.
+ */
+
+/** Display currency of the dashboard (the registry partitions, never mixes). */
+export const REPORTING_CURRENCY = 'EUR';
+
+/** Current UTC month as YYYY-MM (the default dashboard period). */
+export function currentPeriod(nowIso) {
+  const at = typeof nowIso === 'string' && nowIso.length >= 7 ? nowIso.slice(0, 7) : new Date().toISOString().slice(0, 7);
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(at) ? at : new Date().toISOString().slice(0, 7);
+}
+
+/**
+ * The three period options ending at the current month, oldest first.
+ * Labels are short Italian month names, like the prototype's filter pills.
+ * @param {string} [nowIso] injectable clock for tests
+ */
+export function periodOptions(nowIso) {
+  const current = currentPeriod(nowIso);
+  const year = Number(current.slice(0, 4));
+  const month = Number(current.slice(5, 7));
+  return [2, 1, 0].map((back) => {
+    const date = new Date(Date.UTC(year, month - 1 - back, 1));
+    const value = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+    const label = new Intl.DateTimeFormat('it-IT', { month: 'short' }).format(date).replace('.', '');
+    return { value, label: `${label} ${date.getUTCFullYear()}` };
+  });
+}
+
+/**
+ * Dashboard request path for a filter state. Pure, so the test pins the
+ * recalculation contract (periodo/persona change the request, never a
+ * client-side slice of stale data).
+ * @param {{period: string, owner?: string | null, currency?: string}} filters
+ */
+export function dashboardPath({ period, owner = null, currency = REPORTING_CURRENCY }) {
+  const params = new URLSearchParams({ period, currency });
+  if (owner !== null && owner !== undefined && owner !== '') params.set('owner', owner);
+  return `/api/reporting/dashboard?${params.toString()}`;
+}
+
+/**
+ * Money for display: integer minor units to an Italian currency string.
+ * Non-integers are never formatted as money — 'n.d.', not a guess.
+ * @param {number} minor @param {string} [currency]
+ */
+export function formatMoney(minor, currency = REPORTING_CURRENCY) {
+  if (!Number.isInteger(minor)) return 'n.d.';
+  return new Intl.NumberFormat('it-IT', { style: 'currency', currency }).format(minor / 100);
+}
+
+/**
+ * Bar fill width for a value against the chart maximum. Zero/negative
+ * maxima render empty, never NaN.
+ * @param {number} value @param {number} max
+ */
+export function barWidth(value, max) {
+  if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0 || value <= 0) return '0%';
+  return `${Math.min(100, Math.round((value / max) * 100))}%`;
+}
+
+/**
+ * Default CSV download (browsers). Injected as a dependency so tests pass a
+ * spy: the fake DOM has no Blob navigation.
+ * @param {{doc: Document, filename: string, content: string}} input
+ */
+export function downloadCsv({ doc, filename, content }) {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = doc.createElement('a');
+  anchor.setAttribute('href', url);
+  anchor.setAttribute('download', filename);
+  if (typeof anchor.click === 'function') anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 /** Hash route of the "+ Nuovo modulo" screen. */
 export const NUOVO_MODULO_ROUTE = '#/nuovo-modulo';
 
@@ -103,12 +187,16 @@ function el(doc, tag, options = {}) {
  * A view controller for the Reporting and "+ Nuovo modulo" screens.
  * Injecting `doc`, `client` and `nav` keeps it testable without a browser.
  *
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate: (hash: string) => void, onAskAi?: (screenId: string) => void, log?: (message: string, cause: unknown) => void}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate: (hash: string) => void, onAskAi?: (screenId: string) => void, log?: (message: string, cause: unknown) => void, download?: (input: {doc: Document, filename: string, content: string}) => void}} deps
  */
 export function createReportingView(deps) {
   const { doc, mount, client, navigate } = deps;
   const onAskAi = deps.onAskAi ?? (() => {});
   const log = deps.log ?? ((message, cause) => console.error(message, cause));
+  const download = deps.download ?? downloadCsv;
+
+  /** Dashboard filter state: every change refetches (ricalcolo), never slices cached rows. */
+  const dashboard = { period: currentPeriod(), owner: '' };
 
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -169,6 +257,235 @@ export function createReportingView(deps) {
     }
   }
 
+  function pill(label, active, onPick) {
+    const button = el(doc, 'button', { class: active ? 'small primary' : 'small secondary', text: label });
+    button.setAttribute('data-active', active ? 'true' : 'false');
+    button.addEventListener('click', onPick);
+    return button;
+  }
+
+  function dashboardFilters(section, model) {
+    const filters = el(doc, 'div', { class: 'actions' });
+    for (const option of periodOptions()) {
+      filters.appendChild(pill(option.label, dashboard.period === option.value, () => {
+        dashboard.period = option.value;
+        renderReporting();
+      }));
+    }
+    filters.appendChild(pill('Tutti', dashboard.owner === '', () => {
+      dashboard.owner = '';
+      renderReporting();
+    }));
+    for (const owner of model.owners ?? []) {
+      filters.appendChild(pill(owner, dashboard.owner === owner, () => {
+        dashboard.owner = owner;
+        renderReporting();
+      }));
+    }
+    section.appendChild(filters);
+  }
+
+  function kpiCards(section, model) {
+    const grid = el(doc, 'div', { class: 'metrics' });
+    for (const kpi of model.kpis ?? []) {
+      const card = el(doc, 'div', { class: 'metric' });
+      card.appendChild(el(doc, 'span', { text: kpi.label }));
+      card.appendChild(el(doc, 'strong', { text: kpi.display }));
+      card.appendChild(el(doc, 'span', { text: kpi.sub }));
+      grid.appendChild(card);
+    }
+    section.appendChild(grid);
+  }
+
+  /**
+   * One CSS-bar chart. Values are text beside the bar, so the chart stays
+   * readable where styles fail; widths come from barWidth (0% when empty).
+   */
+  function barChart(section, title, subtitle, rows) {
+    const panel = el(doc, 'section', { class: 'panel' });
+    panel.appendChild(el(doc, 'h3', { text: title }));
+    panel.appendChild(el(doc, 'p', { class: 'lede', text: subtitle }));
+    const max = Math.max(0, ...rows.map((row) => row.minor));
+    for (const row of rows) {
+      const line = el(doc, 'div');
+      line.setAttribute('style', 'display:flex;align-items:center;gap:10px;padding:5px 0;');
+      const name = el(doc, 'span', { text: row.label });
+      name.setAttribute('style', 'min-width:110px;font-size:13px;font-weight:600;');
+      const track = el(doc, 'div');
+      track.setAttribute('style', 'flex:1;height:14px;border-radius:99px;background:#f2eee2;overflow:hidden;');
+      const fill = el(doc, 'div');
+      fill.setAttribute('style', `height:100%;width:${barWidth(row.minor, max)};background:#4c2fc5;border-radius:99px;`);
+      track.appendChild(fill);
+      const value = el(doc, 'span', { text: row.text });
+      value.setAttribute('style', "font-family:monospace;font-size:12px;min-width:120px;text-align:right;");
+      line.appendChild(name);
+      line.appendChild(track);
+      line.appendChild(value);
+      panel.appendChild(line);
+    }
+    section.appendChild(panel);
+  }
+
+  function forecastPanel(section, model) {
+    const forecast = model.forecast;
+    const panel = el(doc, 'div', { class: 'pipeline-forecast' });
+    panel.appendChild(el(doc, 'h3', { text: `Previsione di ${model.periodLabel}` }));
+    const scale = Math.max(
+      forecast.targetMinor ?? 0,
+      forecast.bestMinor,
+      forecast.closedMinor + forecast.probableMinor,
+      1,
+    );
+    const band = el(doc, 'div');
+    band.setAttribute('style', 'position:relative;height:26px;border-radius:8px;background:#f2eee2;display:flex;overflow:hidden;');
+    const closed = el(doc, 'div');
+    closed.setAttribute('style', `height:100%;width:${barWidth(forecast.closedMinor, scale)};background:#27b64a;`);
+    const probable = el(doc, 'div');
+    probable.setAttribute('style', `height:100%;width:${barWidth(forecast.probableMinor, scale)};background:#27b64a;opacity:0.45;`);
+    const best = el(doc, 'div');
+    best.setAttribute('style', `height:100%;width:${barWidth(Math.max(0, forecast.bestMinor - forecast.closedMinor - forecast.probableMinor), scale)};background:repeating-linear-gradient(45deg,#cfe9d3 0 6px,transparent 6px 12px);`);
+    band.appendChild(closed);
+    band.appendChild(probable);
+    band.appendChild(best);
+    if (forecast.targetMinor !== null && forecast.targetMinor !== undefined) {
+      const marker = el(doc, 'span');
+      marker.setAttribute('style', `position:absolute;top:-4px;bottom:-4px;left:${barWidth(forecast.targetMinor, scale)};width:2px;background:#171912;`);
+      band.appendChild(marker);
+    }
+    panel.appendChild(band);
+    panel.appendChild(el(doc, 'p', {
+      class: 'forecast-total',
+      text: `Chiuse ${formatMoney(forecast.closedMinor, model.currency)} · probabili +${formatMoney(forecast.probableMinor, model.currency)} · se chiudi tutto +${formatMoney(forecast.bestMinor, model.currency)}`,
+    }));
+    // The heuristic badge is the acceptance contract: the number below is
+    // arithmetic over history, never a promise.
+    panel.appendChild(el(doc, 'p', { class: 'lede', text: `✦ ${forecast.label}: ${forecast.method}` }));
+    panel.appendChild(el(doc, 'p', { class: 'lede', text: forecast.note }));
+    section.appendChild(panel);
+  }
+
+  function teamTable(section, model) {
+    const panel = el(doc, 'section', { class: 'panel' });
+    panel.appendChild(el(doc, 'h3', { text: `Team e vendite · ${model.periodLabel}` }));
+    if ((model.team ?? []).length === 0) {
+      panel.appendChild(el(doc, 'div', { class: 'empty', text: 'Nessun preventivo in questa vista.' }));
+      section.appendChild(panel);
+      return;
+    }
+    const wrap = el(doc, 'div', { class: 'table-wrap' });
+    const table = el(doc, 'table');
+    const thead = el(doc, 'thead');
+    const headRow = el(doc, 'tr');
+    for (const head of ['Persona', 'Preventivi', 'Valore aperto', 'Vinte', 'Tasso']) {
+      headRow.appendChild(el(doc, 'th', { text: head }));
+    }
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    const tbody = el(doc, 'tbody');
+    for (const entry of model.team) {
+      const row = el(doc, 'tr');
+      row.appendChild(el(doc, 'td', { text: entry.owner }));
+      row.appendChild(el(doc, 'td', { text: String(entry.openCount) }));
+      row.appendChild(el(doc, 'td', { text: formatMoney(entry.openMinor, model.currency) }));
+      row.appendChild(el(doc, 'td', { text: `${entry.wonCount} (${formatMoney(entry.wonMinor, model.currency)})` }));
+      row.appendChild(el(doc, 'td', { text: entry.winRateDisplay }));
+      tbody.appendChild(row);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    panel.appendChild(wrap);
+    section.appendChild(panel);
+  }
+
+  function insightsPanel(section, model) {
+    const panel = el(doc, 'section', { class: 'panel' });
+    panel.appendChild(el(doc, 'p', { class: 'kicker', text: '✦ Cosa noto' }));
+    for (const insight of model.insights ?? []) {
+      panel.appendChild(el(doc, 'p', { class: 'lede', text: insight.text }));
+    }
+    // The proposal is revealed client-side with zero requests: there is no
+    // write surface behind it, so it can propose but never reassign by itself.
+    const propose = el(doc, 'button', { class: 'secondary', text: 'Proponi ridistribuzione dei lead' });
+    propose.setAttribute('data-action', 'proponi-ridistribuzione');
+    propose.addEventListener('click', () => {
+      // No double reveal: a second click changes nothing.
+      if (propose.getAttribute('data-done') === 'true') return;
+      propose.setAttribute('data-done', 'true');
+      if (model.proposal === null || model.proposal === undefined) {
+        panel.appendChild(el(doc, 'p', { class: 'lede', text: 'Nessuna ridistribuzione da proporre in questo periodo.' }));
+        return;
+      }
+      panel.appendChild(el(doc, 'h3', { text: model.proposal.title }));
+      const list = el(doc, 'ul');
+      for (const move of model.proposal.moves) {
+        list.appendChild(el(doc, 'li', {
+          text: `${move.count} lead da ${move.from} a ${move.to}: ${move.reason}`,
+        }));
+      }
+      panel.appendChild(list);
+      panel.appendChild(el(doc, 'p', { class: 'lede', text: model.proposal.note }));
+    });
+    panel.appendChild(propose);
+    const csv = el(doc, 'button', { class: 'secondary', text: 'Esporta CSV' });
+    csv.setAttribute('data-action', 'esporta-csv');
+    csv.addEventListener('click', () => {
+      download({ doc, filename: model.csv.filename, content: model.csv.content });
+    });
+    panel.appendChild(csv);
+    section.appendChild(panel);
+  }
+
+  async function renderDashboard(host) {
+    let model = null;
+    try {
+      model = await client.request(dashboardPath({ period: dashboard.period, owner: dashboard.owner || null }));
+    } catch (error) {
+      const cause = error && typeof error === 'object'
+        ? { name: error.name ?? 'Error', status: error.status ?? null, code: error.code ?? null }
+        : { name: 'Error', status: null, code: null };
+      log('reporting dashboard request failed', cause);
+      host.appendChild(el(doc, 'div', {
+        class: 'empty',
+        text: 'Andamento non disponibile: la lettura del registro metriche è fallita. Riprova più tardi.',
+      }));
+      return;
+    }
+    if (model === null || typeof model !== 'object' || !Array.isArray(model.kpis)) {
+      log('reporting dashboard request failed', { name: 'Error', status: 200, code: null });
+      host.appendChild(el(doc, 'div', {
+        class: 'empty',
+        text: 'Andamento non disponibile: risposta illeggibile dal registro metriche.',
+      }));
+      return;
+    }
+    dashboardFilters(host, model);
+    if (model.truncated) {
+      host.appendChild(el(doc, 'p', { class: 'lede', text: 'Dati parziali: oltre 1000 righe lette, i totali sono troncati.' }));
+    }
+    if ((model.currencies?.others ?? []).length > 0) {
+      host.appendChild(el(doc, 'p', {
+        class: 'lede',
+        text: `Solo ${model.currency} mostrati; presenti anche: ${model.currencies.others.join(', ')}.`,
+      }));
+    }
+    kpiCards(host, model);
+    barChart(host, 'Preventivi', 'dall\u2019invio al pagamento, per fase', model.funnel.map((entry) => ({
+      label: entry.label, minor: entry.count, text: `${entry.count} · ${entry.minor}`,
+    })));
+    barChart(host, 'Valore per fase', 'somme in minor units della valuta mostrata', model.valueByStage.map((entry) => ({
+      label: entry.label, minor: entry.minor, text: String(entry.minor),
+    })));
+    barChart(host, 'Chiusure attese per mese', 'preventivi aperti per mese di chiusura attesa', model.monthly.map((entry) => ({
+      label: entry.label, minor: entry.expectedMinor, text: `${entry.openCount} · ${entry.expectedMinor}`,
+    })));
+    barChart(host, 'Vendite per persona', 'valore aperto per proprietario', model.team.map((entry) => ({
+      label: entry.owner, minor: entry.openMinor, text: `${entry.openCount} · ${entry.openMinor}`,
+    })));
+    forecastPanel(host, model);
+    teamTable(host, model);
+    insightsPanel(host, model);
+  }
+
   async function renderReporting() {
     const token = ++renderToken;
     clear();
@@ -206,10 +523,14 @@ export function createReportingView(deps) {
     }
     if (token !== renderToken) return;
     clear();
+    const dashHost = el(doc, 'div');
+    await renderDashboard(dashHost);
+    if (token !== renderToken) return;
+    mount.appendChild(dashHost);
     const panel = kicker('Moduli personalizzati', 'Reporting');
     panel.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: 'Righe KPI del bundle reporting, lette dal vivo. Grafici e previsioni (BO-F5-02) leggeranno queste righe, mai le tabelle kernel.',
+      text: 'Sopra: andamento pipeline dal registro metriche dichiarato (ricalcolato a ogni filtro). Sotto: le righe del bundle reporting, dati dell\u2019operatore come l\u2019obiettivo di periodo.',
     }));
     if (loadError !== null) {
       panel.appendChild(el(doc, 'div', {

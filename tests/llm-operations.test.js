@@ -762,7 +762,7 @@ test('an unknown request model refuses before the adapter runs', async () => {
 
 test('an allowlisted and priced model runs, the rest refuse fail-closed', async () => {
   const priced = {
-    'gpt-5.6-luna': { input: 0.02, output: 0.08 },
+    'gpt-6-luna': { input: 0.01, output: 0.05 },
     'pro-model': { input: 1, output: 2 },
   };
   const space = (overrides) => ({
@@ -778,7 +778,7 @@ test('an allowlisted and priced model runs, the rest refuse fail-closed', async 
   const second = createFixtureLlmAdapter({ secret: SECRET });
   const unpriced = setup({
     adapters: [second.definition],
-    pricing: { 'gpt-5.6-luna': { input: 0.02, output: 0.08 } },
+    pricing: { 'gpt-6-luna': { input: 0.01, output: 0.05 } },
     spaces: { presti: space({}) },
   });
   assert.equal(await codeOf(() => call(unpriced.ops, unpriced.modules, { tag: 'unpriced' })), 'LLM_PRICING_UNAVAILABLE');

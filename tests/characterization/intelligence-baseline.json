@@ -2542,7 +2542,7 @@
     }
   ],
   "source": {
-    "apps/server/src/http-server.js": "62e6e17c9dfa4d53c42b48b78916885b528b04f5c441a6ba6ce7f9c767825305",
+    "apps/server/src/http-server.js": "1a3edae6e28375b41bc36b5924ee388e6f006760a0cfa4ebaee9ef5668c3b856",
     "examples/starters/b2b-lead-qualification/actions/disqualify.js": "8e722cf7073ff4d52c0f332391217fd6b4568f24f64bb1c7a058e989d9b07a69",
     "examples/starters/b2b-lead-qualification/actions/qualify.js": "3d5ddd5f51be258f7e65554b74ac9f449ac39f69845aef1d0d858b7660c06b78",
     "examples/starters/b2b-lead-qualification/intelligence.js": "388522415c8a324b3cd2d62028af9a8af2f6e5863c0ceab2ecd3d57ae43f52f5",
@@ -2550,7 +2550,7 @@
     "packages/app/src/create-app.js": "5fca21663eaf99adbf344d405588d01aacfbcbaaba9a553a36ec9e405bb7a6d4",
     "packages/core/src/action-runtime.js": "b8870679dfe76d2293912866085c83713aa1bdbe8509acaabaa81fe6a100c851",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
-    "packages/core/src/definition-version-store.js": "f14da11c84b29fbaeddaaddfdd847ab69577735bfb0f483bb1c8f93db612053d",
+    "packages/core/src/definition-version-store.js": "5b52e6a48145a91dc90f202e5541dfa168d9ae5ffaa8ff8bdfeda98ab2347467",
     "packages/core/src/execution-run-store.js": "73c5f36371b21b02b7e476d93cc06a29cbae6c5ea9ef8539579a62c94e1545ac",
     "packages/core/src/timeout.js": "9af8f74ac0f6fa7b229576c43540364d9014ce2225198c0e84e18070d952ff88",
     "packages/intelligence/modules/assignment.module.json": "ba3724cc4d9cbcab445cb71ff1cf5116c4f8fc6f4df4faf4a772eee214e18121",
