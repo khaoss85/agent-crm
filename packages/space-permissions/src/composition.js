@@ -104,6 +104,12 @@ const PACKAGE_UNITS = Object.freeze([
     demo: 'payment-request',
   },
   {
+    name: 'sequences', kind: 'package', label: 'Sequenze',
+    blurb: 'Sequenze di follow-up multicanale con stop alla risposta.',
+    modules: Object.freeze(['sequence', 'sequence-enrollment', 'sequence-step', 'sequence-send']),
+    demo: 'sequence',
+  },
+  {
     name: 'service', kind: 'package', label: 'Assistenza',
     blurb: 'Coperture, casi di supporto e SLA.',
     modules: Object.freeze([]), demo: null,

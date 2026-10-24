@@ -166,6 +166,11 @@ function frameworkFixture(t) {
   cpSync(join(repoRoot, 'package.json'), join(root, 'package.json'));
   mkdirSync(join(root, 'scripts'), { recursive: true });
   cpSync(join(repoRoot, 'scripts/repo-truth.js'), join(root, 'scripts/repo-truth.js'));
+  // The spine authorities import the embedded Admin mount, which reaches
+  // apps/server (bundle-manager -> packages/app -> admin-mount -> apps/server
+  // since #325); without it every authority is unavailable and the fixture
+  // builds zero facts. apps/server only imports packages/* and node builtins.
+  cpSync(join(repoRoot, 'apps/server'), join(root, 'apps/server'), { recursive: true });
   for (const path of [BENCHMARK_PANEL.aggregate, BENCHMARK_PANEL.protocol]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     cpSync(join(repoRoot, path), join(root, path));
