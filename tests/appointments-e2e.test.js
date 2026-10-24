@@ -5,6 +5,7 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -55,6 +56,7 @@ function project(t) {
   const applied = cli(root, ['module', 'create', join(root, 'packages/appointments/modules/appointment.module.json'), '--apply']);
   assert.equal(applied.status, 0, `apply appointment: ${applied.stderr}`);
   for (const manifest of ['work-task.module.json', 'work-activity.module.json']) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const work = cli(root, ['module', 'create', join(root, 'packages/work/modules', manifest), '--apply']);
     assert.equal(work.status, 0, `apply ${manifest}: ${work.stderr}`);
   }

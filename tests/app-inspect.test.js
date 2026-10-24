@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspectApplication } from '../packages/cli/src/app-inspect.js';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 /**
  * AX1 — deterministic application inspection.
@@ -633,6 +634,7 @@ test('the canonical Lead→Won objective is answered with what exists and what i
     '../../../packages/work/modules/work-activity.module.json',
   ].includes(manifest)
       ? starter : join(root, 'packages/intelligence/modules');
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = spawnSync(process.execPath, ['--no-warnings', join(root, CLI), 'module', 'create', join(from, manifest), '--apply', '--root', root], { encoding: 'utf8', cwd: root });
     assert.equal(applied.status, 0, `${manifest}: ${applied.stderr}`);
   }

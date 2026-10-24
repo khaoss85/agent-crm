@@ -8,6 +8,7 @@ import { shapeCustomerCard } from '../packages/customer-hub/src/card.js';
 import { renderCustomerCardHtml } from '../packages/customer-hub/src/render.js';
 import { deriveCustomerStatus } from '../packages/customer-data/src/customer-status.js';
 import { boot, project } from './helpers/customer-data-project.js';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 /**
  * The verdict the real `profileFor` would carry for these evidence sections.
@@ -64,6 +65,7 @@ function projectWithHub(t) {
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }
   for (const manifest of ['work-task.module.json', 'work-activity.module.json']) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = spawnSync(process.execPath,
       ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create',
         join(root, 'packages/work/modules', manifest), '--apply', '--root', root],

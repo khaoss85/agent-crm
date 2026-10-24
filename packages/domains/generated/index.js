@@ -21,7 +21,6 @@
 import { createCustomerDataPackage } from '../../customer-data/src/index.js';
 import { createSpacePermissionsDomain } from '../../space-permissions/src/index.js';
 import { createChannelsPackage } from '../../channels/src/index.js';
-import { createCalendarSyncPackage } from '../../calendar-sync/src/index.js';
 import { createSequencesPackage } from '../../sequences/src/index.js';
 import { createWorkPackage } from '../../work/src/index.js';
 

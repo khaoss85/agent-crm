@@ -283,6 +283,7 @@ const CHANNEL_MANIFESTS = [
 
 test('GET /api/connectors/activity and POST /api/connectors/sync-now expose the screen reads', async (t) => {
   const { boot, project } = await import('./helpers/customer-data-project.js');
+  const { moduleAlreadyPresent } = await import('./helpers/apply-module.js');
   const { spawnSync } = await import('node:child_process');
   const { writeFileSync } = await import('node:fs');
   const { pathToFileURL } = await import('node:url');
@@ -293,6 +294,7 @@ test('GET /api/connectors/activity and POST /api/connectors/sync-now expose the 
   // exactly as in production with its single copy of the framework.
   const { createHttpServer } = await import(pathToFileURL(join(root, 'apps/server/src/index.js')).href);
   for (const manifest of CHANNEL_MANIFESTS) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = spawnSync(process.execPath,
       ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'),
         'module', 'create', join(root, 'packages/channels/modules', manifest), '--apply',
