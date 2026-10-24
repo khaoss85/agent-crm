@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canonicalJson, collectSource } from '../packages/create-accordo/src/project-bootstrap.js';
+import { emptyDomainsIndex } from '../packages/create-accordo/src/project-files.js';
 import {
   PACKAGE_ASSEMBLY_CONTRACT, applyPackageAssembly, collectAssemblyFiles,
   parseArguments, planPackageAssembly, publicationManifest,
@@ -245,6 +246,16 @@ test('two assemblies pack byte-identically, install offline and create a working
   assert.equal(sourceReceipt.frameworkFingerprint, firstReport.package.frameworkFingerprint);
   assert.deepEqual(sourceReceipt.files, collectSource(repoRoot).files.map(({ path, hash }) => ({ path, hash })));
   for (const file of sourceReceipt.files) {
+    // The bootstrap resets the one file that names packages: a new project
+    // starts kernel-only even though the framework repository ships its
+    // reference CRM composed.
+    if (file.path === 'packages/domains/generated/index.js') {
+      assert.equal(
+        readFileSync(join(project, file.path), 'utf8'), emptyDomainsIndex(),
+        'the generated project carries the empty composition reset, byte for byte',
+      );
+      continue;
+    }
     assert.equal(sha256(join(project, file.path)), file.hash, `generated source matches the release inventory: ${file.path}`);
   }
   assert.equal(createHash('sha256').update(canonicalJson(sourceReceipt.files.map(({ path, hash }) => [path, hash]))).digest('hex'), sourceReceipt.frameworkFingerprint);

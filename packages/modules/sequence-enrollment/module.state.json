@@ -1,0 +1,197 @@
+{
+  "stateVersion": 2,
+  "module": "sequence-enrollment",
+  "revision": 1,
+  "fingerprint": "e7a054393b83e47e75e82e00470a74af056bbd420196ef11ab23147d28a4d45d",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "sequence-enrollment",
+    "description": "One person in one sequence with their own state (BO-F3-03): the enrolled subject, the recipient the steps send to, the next step to fire and when, and the lifecycle active -> paused -> active, active -> stopped-replied at the first recorded reply, active -> completed after the last step. A paused enrollment fires nothing; a stopped or completed one never fires again. (backlog:22bb154a72ea)",
+    "table": "sequence_enrollments",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "sequenceSourceKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "sequence_source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "space_id",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectResource",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "subject_resource",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "subject_id",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectLabel",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "subject_label",
+        "writable": "managed"
+      },
+      {
+        "name": "recipient",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "recipient",
+        "writable": "managed"
+      },
+      {
+        "name": "connectionKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "connection_key",
+        "writable": "managed"
+      },
+      {
+        "name": "vars",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "vars",
+        "writable": "managed"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "status",
+        "writable": "managed",
+        "values": [
+          "active",
+          "paused",
+          "stopped-replied",
+          "completed"
+        ]
+      },
+      {
+        "name": "currentStep",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "current_step",
+        "writable": "managed"
+      },
+      {
+        "name": "nextDueAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "next_due_at",
+        "writable": "managed"
+      },
+      {
+        "name": "enrolledAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "enrolled_at",
+        "writable": "managed"
+      },
+      {
+        "name": "decidedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "decided_at",
+        "writable": "managed"
+      },
+      {
+        "name": "actorType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "actor_type",
+        "writable": "managed",
+        "values": [
+          "user",
+          "agent",
+          "system"
+        ]
+      },
+      {
+        "name": "actorId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "actor_id",
+        "writable": "managed"
+      },
+      {
+        "name": "sourcePackage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "source_package",
+        "writable": "managed"
+      },
+      {
+        "name": "sourceAction",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "source_action",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_sequence_enrollments",
+      "checksum": "4dfd25d0c93ca746d8f0f9ea73bf3b9c2c3aafe9b7401792c96d49da94c9eb52",
+      "sql": "CREATE TABLE IF NOT EXISTS sequence_enrollments (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  sequence_source_key TEXT,\n  space_id TEXT,\n  subject_resource TEXT,\n  subject_id TEXT,\n  subject_label TEXT,\n  recipient TEXT,\n  connection_key TEXT,\n  vars TEXT,\n  status TEXT CHECK(status IN ('active', 'paused', 'stopped-replied', 'completed')),\n  current_step INTEGER,\n  next_due_at TEXT,\n  enrolled_at TEXT,\n  decided_at TEXT,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  source_package TEXT,\n  source_action TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS sequence_enrollments_sequence_source_key ON sequence_enrollments(sequence_source_key);\nCREATE INDEX IF NOT EXISTS sequence_enrollments_space_id ON sequence_enrollments(space_id);\nCREATE INDEX IF NOT EXISTS sequence_enrollments_subject_resource ON sequence_enrollments(subject_resource);\nCREATE INDEX IF NOT EXISTS sequence_enrollments_subject_id ON sequence_enrollments(subject_id);\nCREATE INDEX IF NOT EXISTS sequence_enrollments_connection_key ON sequence_enrollments(connection_key);\nCREATE INDEX IF NOT EXISTS sequence_enrollments_status ON sequence_enrollments(status);\nCREATE INDEX IF NOT EXISTS sequence_enrollments_next_due_at ON sequence_enrollments(next_due_at);\nCREATE INDEX IF NOT EXISTS sequence_enrollments_source_package ON sequence_enrollments(source_package);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_sequence_enrollments",
+      "checksum": "a4ff3fcd81bbb655c6523660c73f0eecac1eb3e5ed674ce5bc7caf8ec22127af",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"sequence_enrollments\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"sequence_source_key\" TEXT,\n  \"space_id\" TEXT,\n  \"subject_resource\" TEXT,\n  \"subject_id\" TEXT,\n  \"subject_label\" TEXT,\n  \"recipient\" TEXT,\n  \"connection_key\" TEXT,\n  \"vars\" TEXT,\n  \"status\" TEXT CHECK(\"status\" IN ('active', 'paused', 'stopped-replied', 'completed')),\n  \"current_step\" BIGINT,\n  \"next_due_at\" TIMESTAMPTZ,\n  \"enrolled_at\" TIMESTAMPTZ,\n  \"decided_at\" TIMESTAMPTZ,\n  \"actor_type\" TEXT CHECK(\"actor_type\" IN ('user', 'agent', 'system')),\n  \"actor_id\" TEXT,\n  \"source_package\" TEXT,\n  \"source_action\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"sequence_enrollments_sequence_source_key\"\n  ON \"accordo\".\"sequence_enrollments\"(\"sequence_source_key\");\n\nCREATE INDEX \"sequence_enrollments_space_id\"\n  ON \"accordo\".\"sequence_enrollments\"(\"space_id\");\n\nCREATE INDEX \"sequence_enrollments_subject_resource\"\n  ON \"accordo\".\"sequence_enrollments\"(\"subject_resource\");\n\nCREATE INDEX \"sequence_enrollments_subject_id\"\n  ON \"accordo\".\"sequence_enrollments\"(\"subject_id\");\n\nCREATE INDEX \"sequence_enrollments_connection_key\"\n  ON \"accordo\".\"sequence_enrollments\"(\"connection_key\");\n\nCREATE INDEX \"sequence_enrollments_status\"\n  ON \"accordo\".\"sequence_enrollments\"(\"status\");\n\nCREATE INDEX \"sequence_enrollments_next_due_at\"\n  ON \"accordo\".\"sequence_enrollments\"(\"next_due_at\");\n\nCREATE INDEX \"sequence_enrollments_source_package\"\n  ON \"accordo\".\"sequence_enrollments\"(\"source_package\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "e7a054393b83e47e75e82e00470a74af056bbd420196ef11ab23147d28a4d45d"
+      }
+    },
+    "evolutions": []
+  }
+}

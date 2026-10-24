@@ -1,0 +1,92 @@
+{
+  "manifestVersion": 1,
+  "revision": 1,
+  "name": "space-package",
+  "description": "Per-space package and skill composition (backlog:7543aabbd901, BO-F4-01 Personalizzazione). One row per (space, unit): activating a package or a skill in a space records the composition here; deactivating marks it removed, never deletes history. Read-only publicly: every field is managed, so rows exist only through the package's activate operation.",
+  "table": "space_packages",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "required": false,
+      "unique": true,
+      "column": "source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "spaceId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "space_id",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "unit",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "unit",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "kind",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "kind",
+      "writable": "managed",
+      "values": [
+        "package",
+        "skill"
+      ],
+      "classification": "non-personal"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "status",
+      "writable": "managed",
+      "default": "active",
+      "values": [
+        "active",
+        "removed"
+      ],
+      "classification": "non-personal"
+    },
+    {
+      "name": "activatedBy",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "activated_by",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "activatedAt",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "activated_at",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "removedAt",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "removed_at",
+      "writable": "managed",
+      "classification": "non-personal"
+    }
+  ]
+}

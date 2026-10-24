@@ -1,0 +1,156 @@
+{
+  "manifestVersion": 1,
+  "revision": 1,
+  "name": "channel-inbox-event",
+  "description": "Append-only inbox of provider-verified channel webhook deliveries, one row per (space, connection, provider event id) (backlog:e5532d1c9146). Generalizes the M11 signature inbox to any channel adapter: verification before any write, DB-unique event identity plus payload fingerprint, quarantine for unknown subjects, an explicit effect per row, and a stable refusal that echoes nothing. Rows stored by the progressive initial history import carry that import's importKey (null for webhook rows), so a replayed page derives stored-by-this-import instead of recounting it.",
+  "table": "channel_inbox_events",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "required": false,
+      "unique": true,
+      "column": "source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "spaceId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "space_id",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "connectionKey",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "connection_key",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "importKey",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "import_key",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "adapter",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "adapter",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "adapterVersion",
+      "type": "integer",
+      "required": false,
+      "unique": false,
+      "column": "adapter_version",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "providerEventId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "provider_event_id",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "subject",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "subject",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "payloadFingerprint",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "payload_fingerprint",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "sequence",
+      "type": "integer",
+      "required": false,
+      "unique": false,
+      "column": "sequence",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "occurredAt",
+      "type": "timestamp",
+      "required": false,
+      "unique": false,
+      "column": "occurred_at",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "receivedAt",
+      "type": "timestamp",
+      "required": false,
+      "unique": false,
+      "column": "received_at",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "processed",
+      "type": "boolean",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "processed",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "effect",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "effect",
+      "writable": "managed",
+      "values": [
+        "pending",
+        "applied",
+        "ignored",
+        "quarantined",
+        "duplicate"
+      ],
+      "classification": "non-personal"
+    },
+    {
+      "name": "effectReason",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "effect_reason",
+      "writable": "managed",
+      "classification": "non-personal"
+    }
+  ]
+}

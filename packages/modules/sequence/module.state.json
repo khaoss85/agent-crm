@@ -1,0 +1,119 @@
+{
+  "stateVersion": 2,
+  "module": "sequence",
+  "revision": 1,
+  "fingerprint": "8d5cce275d9d0cb7c93892d5b6ddf1dfd9cc5ca0306a73589dfbfe92aa2ac5e9",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "sequence",
+    "description": "One follow-up sequence of one space (BO-F3-03): an ordered list of day+channel steps with AI-personalized templates, a trigger that enrolls people, and an automatic stop at the first recorded reply. Every field is managed: a sequence exists only through the sequences package's create operation and moves draft -> active | paused only through its pause/resume operations. (backlog:22bb154a72ea)",
+    "table": "sequences",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "space_id",
+        "writable": "managed"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "name",
+        "writable": "managed"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "status",
+        "writable": "managed",
+        "values": [
+          "draft",
+          "active",
+          "paused"
+        ]
+      },
+      {
+        "name": "decidedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "decided_at",
+        "writable": "managed"
+      },
+      {
+        "name": "actorType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "actor_type",
+        "writable": "managed",
+        "values": [
+          "user",
+          "agent",
+          "system"
+        ]
+      },
+      {
+        "name": "actorId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "actor_id",
+        "writable": "managed"
+      },
+      {
+        "name": "sourcePackage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "source_package",
+        "writable": "managed"
+      },
+      {
+        "name": "sourceAction",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "source_action",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_sequences",
+      "checksum": "68e660d6d37924ff62587c6f74973f6d2d0c64684b061f55d36b13a6cdad23ed",
+      "sql": "CREATE TABLE IF NOT EXISTS sequences (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  name TEXT,\n  status TEXT CHECK(status IN ('draft', 'active', 'paused')),\n  decided_at TEXT,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  source_package TEXT,\n  source_action TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS sequences_space_id ON sequences(space_id);\nCREATE INDEX IF NOT EXISTS sequences_status ON sequences(status);\nCREATE INDEX IF NOT EXISTS sequences_source_package ON sequences(source_package);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_sequences",
+      "checksum": "6fda38f37f6ce975612d24178315eedf3fff4751211a069aaeb707964f7c2fff",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"sequences\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"space_id\" TEXT,\n  \"name\" TEXT,\n  \"status\" TEXT CHECK(\"status\" IN ('draft', 'active', 'paused')),\n  \"decided_at\" TIMESTAMPTZ,\n  \"actor_type\" TEXT CHECK(\"actor_type\" IN ('user', 'agent', 'system')),\n  \"actor_id\" TEXT,\n  \"source_package\" TEXT,\n  \"source_action\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"sequences_space_id\"\n  ON \"accordo\".\"sequences\"(\"space_id\");\n\nCREATE INDEX \"sequences_status\"\n  ON \"accordo\".\"sequences\"(\"status\");\n\nCREATE INDEX \"sequences_source_package\"\n  ON \"accordo\".\"sequences\"(\"source_package\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "8d5cce275d9d0cb7c93892d5b6ddf1dfd9cc5ca0306a73589dfbfe92aa2ac5e9"
+      }
+    },
+    "evolutions": []
+  }
+}

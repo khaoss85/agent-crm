@@ -1,0 +1,128 @@
+{
+  "stateVersion": 2,
+  "module": "space-ai-proposal",
+  "revision": 1,
+  "fingerprint": "a2c6275451fd3c6f6b4eb5c11713f6f0700a717926d7d2b8e271e3e56a123642",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "space-ai-proposal",
+    "description": "What a switched-off AI action wanted to do, waiting for a human: one proposal per space, permission and action key. Proposed until a human approves or refuses it; approval authorizes that one action and executes nothing by itself. Keyed by opaque control-plane space id.",
+    "table": "space_ai_proposals",
+    "fields": [
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "space_id",
+        "writable": "managed"
+      },
+      {
+        "name": "permission",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "permission",
+        "writable": "managed"
+      },
+      {
+        "name": "actionKind",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "action_kind",
+        "writable": "managed"
+      },
+      {
+        "name": "actionKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "action_key",
+        "writable": "managed"
+      },
+      {
+        "name": "summary",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "summary",
+        "writable": "managed"
+      },
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "status",
+        "writable": "managed",
+        "default": "proposed",
+        "values": [
+          "proposed",
+          "approved",
+          "refused"
+        ]
+      },
+      {
+        "name": "proposedAt",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "proposed_at",
+        "writable": "managed"
+      },
+      {
+        "name": "decidedBy",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "decided_by",
+        "writable": "managed"
+      },
+      {
+        "name": "decidedAt",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "decided_at",
+        "writable": "managed"
+      },
+      {
+        "name": "refusalReason",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "refusal_reason",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_space_ai_proposals",
+      "checksum": "d18e8ceb73e207974215fae3fcb5190e48b68dcca130f183e927cde6feef16d3",
+      "sql": "CREATE TABLE IF NOT EXISTS space_ai_proposals (\n  id TEXT PRIMARY KEY,\n  space_id TEXT,\n  permission TEXT,\n  action_kind TEXT,\n  action_key TEXT,\n  summary TEXT,\n  source_key TEXT UNIQUE,\n  status TEXT CHECK(status IN ('proposed', 'approved', 'refused')),\n  proposed_at TEXT,\n  decided_by TEXT,\n  decided_at TEXT,\n  refusal_reason TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_space_ai_proposals",
+      "checksum": "97887405896a53fd187b8e647fbecd09aaaae10bc39f51fed8c23e97baac8e0e",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"space_ai_proposals\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"space_id\" TEXT,\n  \"permission\" TEXT,\n  \"action_kind\" TEXT,\n  \"action_key\" TEXT,\n  \"summary\" TEXT,\n  \"source_key\" TEXT UNIQUE,\n  \"status\" TEXT CHECK(\"status\" IN ('proposed', 'approved', 'refused')),\n  \"proposed_at\" TEXT,\n  \"decided_by\" TEXT,\n  \"decided_at\" TEXT,\n  \"refusal_reason\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "a2c6275451fd3c6f6b4eb5c11713f6f0700a717926d7d2b8e271e3e56a123642"
+      }
+    },
+    "evolutions": []
+  }
+}

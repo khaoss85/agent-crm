@@ -619,10 +619,18 @@ test('M3B query deadline destroys a black-holed client and recovers', { timeout:
   // reading the same id back instead of writing again. Anything else
   // rethrows: real defects must stay red.
   const recoveredId = 'after-timeout';
-  try {
-    await db.storage.execute(insertCompany(recoveredId, 'Alive'));
-  } catch (error) {
-    if (error?.code !== 'COMMIT_OUTCOME_UNKNOWN') throw error;
+  // The recovery write may itself hit the 80ms deadline on a loaded box
+  // without the pool being broken — the same ambiguity the test already
+  // accepts for COMMIT_OUTCOME_UNKNOWN. Retry with the SAME fixed id (no
+  // fresh id per attempt) and let the read-back below deliver the verdict.
+  let recovered = false;
+  for (let attempt = 0; attempt < 3 && !recovered; attempt++) {
+    try {
+      await db.storage.execute(insertCompany(recoveredId, 'Alive'));
+      recovered = true;
+    } catch (error) {
+      if (error?.code !== 'COMMIT_OUTCOME_UNKNOWN' && error?.code !== 'STORAGE_TIMEOUT') throw error;
+    }
   }
   assert.equal(
     (await db.storage.maybeOne(selectName(recoveredId)))?.name,

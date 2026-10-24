@@ -9,10 +9,11 @@ import {
 } from '../packages/core/src/generated-module-contract.js';
 
 /**
- * Contract tests for the generic generated-module surface against a core-only
- * app (empty generated registry): the boundary must hide everything.
+ * Contract tests for the generic generated-module surface: the boundary must
+ * hide everything that is not a well-formed generated module — the core
+ * records stay off the generic surface, and a forged entry fails closed.
  */
-test('generated-module API boundary on a core-only app', async (t) => {
+test('generated-module API boundary hides core records and forged entries', async (t) => {
   const app = createAccordoApp({ dbPath: ':memory:' });
   const server = createHttpServer(app);
   await new Promise((resolve, reject) => {
@@ -27,7 +28,10 @@ test('generated-module API boundary on a core-only app', async (t) => {
   });
 
   const schema = await fetch(`${baseUrl}/api/schema`).then((response) => response.json());
-  assert.deepEqual(schema.generatedModules, []);
+  assert.ok(
+    !schema.generatedModules.some((module) => ['company', 'contact', 'opportunity', 'approval'].includes(module.name)),
+    'core records stay off the generic surface',
+  );
   assert.ok(Array.isArray(schema.modules) && schema.modules.some((module) => module.name === 'company'));
 
   // Core handwritten modules are not exposed through the generic surface.
@@ -123,7 +127,10 @@ test('a forged or malformed registry-style entry fails closed everywhere', async
   });
 
   const schema = await fetch(`${baseUrl}/api/schema`).then((response) => response.json());
-  assert.deepEqual(schema.generatedModules, [], 'forged module poisoned the schema');
+  assert.ok(
+    !schema.generatedModules.some((module) => module.name === 'forged'),
+    'forged module poisoned the schema',
+  );
   assert.equal(schema.generatedResourceContract, 1);
   assert.equal((await fetch(`${baseUrl}/api/modules/forged`)).status, 404);
   assert.equal(

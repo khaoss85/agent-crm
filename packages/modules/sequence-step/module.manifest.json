@@ -1,0 +1,105 @@
+{
+  "manifestVersion": 1,
+  "revision": 2,
+  "name": "sequence-step",
+  "description": "One ordered step of a sequence (BO-F3-03): the days after the previous fire, the channel it sends on, and the approved template with personalization variables. Steps are append-only while the sequence is a draft; once the sequence is active a step is never edited, only skipped per enrollment, so a running person never sees a step change under them. (backlog:22bb154a72ea)",
+  "table": "sequence_steps",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "required": false,
+      "unique": true,
+      "column": "source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "sequenceSourceKey",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "sequence_source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "spaceId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "space_id",
+      "writable": "managed"
+    },
+    {
+      "name": "stepOrder",
+      "type": "integer",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "step_order",
+      "writable": "managed"
+    },
+    {
+      "name": "dayOffset",
+      "type": "integer",
+      "required": false,
+      "unique": false,
+      "column": "day_offset",
+      "writable": "managed"
+    },
+    {
+      "name": "channel",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "channel",
+      "writable": "managed"
+    },
+    {
+      "name": "templateName",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "template_name",
+      "writable": "managed"
+    },
+    {
+      "name": "templateLanguage",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "template_language",
+      "writable": "managed"
+    },
+    {
+      "name": "templateVars",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "template_vars",
+      "writable": "managed"
+    },
+    {
+      "name": "actorType",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "actor_type",
+      "writable": "managed",
+      "values": [
+        "user",
+        "agent",
+        "system"
+      ]
+    },
+    {
+      "name": "actorId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "actor_id",
+      "writable": "managed"
+    }
+  ]
+}

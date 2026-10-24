@@ -1,0 +1,222 @@
+{
+  "manifestVersion": 1,
+  "revision": 1,
+  "name": "duplicate-candidate",
+  "description": "Two records a deterministic rule says may be the same customer, with the rule and its evidence recorded. Nothing here is ever resolved automatically: an ambiguous match stays unresolved until a human decides, and no rule breaks a tie by picking one.",
+  "table": "duplicate_candidates",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "required": false,
+      "unique": true,
+      "column": "source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "leftResource",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "left_resource",
+      "writable": "managed"
+    },
+    {
+      "name": "leftId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "left_id",
+      "writable": "managed"
+    },
+    {
+      "name": "leftOwner",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "left_owner",
+      "writable": "managed",
+      "values": [
+        "host",
+        "package"
+      ]
+    },
+    {
+      "name": "leftOwnerPackage",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "left_owner_package",
+      "writable": "managed"
+    },
+    {
+      "name": "leftLabel",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "left_label",
+      "writable": "managed"
+    },
+    {
+      "name": "rightResource",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "right_resource",
+      "writable": "managed"
+    },
+    {
+      "name": "rightId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "right_id",
+      "writable": "managed"
+    },
+    {
+      "name": "rightOwner",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "right_owner",
+      "writable": "managed",
+      "values": [
+        "host",
+        "package"
+      ]
+    },
+    {
+      "name": "rightOwnerPackage",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "right_owner_package",
+      "writable": "managed"
+    },
+    {
+      "name": "rightLabel",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "right_label",
+      "writable": "managed"
+    },
+    {
+      "name": "policy",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "policy",
+      "writable": "managed"
+    },
+    {
+      "name": "policyVersion",
+      "type": "integer",
+      "required": false,
+      "unique": false,
+      "column": "policy_version",
+      "writable": "managed"
+    },
+    {
+      "name": "policyFingerprint",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "policy_fingerprint",
+      "writable": "managed"
+    },
+    {
+      "name": "rule",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "rule",
+      "writable": "managed"
+    },
+    {
+      "name": "evidence",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "evidence",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "status",
+      "writable": "managed",
+      "values": [
+        "unresolved",
+        "linked",
+        "dismissed"
+      ]
+    },
+    {
+      "name": "detectedByRunId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "detected_by_run_id",
+      "writable": "managed"
+    },
+    {
+      "name": "detectedAt",
+      "type": "timestamp",
+      "required": false,
+      "unique": false,
+      "column": "detected_at",
+      "writable": "managed"
+    },
+    {
+      "name": "decisionId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "decision_id",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedReason",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "decided_reason",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedByType",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "decided_by_type",
+      "writable": "managed",
+      "values": [
+        "user"
+      ]
+    },
+    {
+      "name": "decidedById",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "decided_by_id",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedAt",
+      "type": "timestamp",
+      "required": false,
+      "unique": false,
+      "column": "decided_at",
+      "writable": "managed"
+    }
+  ]
+}

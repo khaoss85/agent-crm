@@ -261,7 +261,11 @@ test('createAccordoApp stays synchronous and does not import bundled v2 graphs',
   try {
     assert.equal(app instanceof Promise, false);
     assert.equal(typeof app.then, 'undefined');
-    assert.deepEqual(app.domains.names(), []);
+    // The reference application composes its five contract-1 CRM packages
+    // through the checked-in index; the factory itself stays synchronous.
+    assert.deepEqual([...app.domains.names()].sort(), [
+      'channels', 'customer-data', 'sequences', 'space-permissions', 'work',
+    ]);
     assert.deepEqual(app.services.companies.list(), []);
   } finally {
     app.close();

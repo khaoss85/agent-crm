@@ -340,9 +340,9 @@ export function createReportingView(deps) {
       const name = el(doc, 'span', { text: row.label });
       name.setAttribute('style', 'min-width:110px;font-size:13px;font-weight:600;');
       const track = el(doc, 'div');
-      track.setAttribute('style', 'flex:1;height:14px;border-radius:99px;background:#f2eee2;overflow:hidden;');
+      track.setAttribute('style', 'flex:1;height:14px;border-radius:99px;background:var(--surface-soft);overflow:hidden;');
       const fill = el(doc, 'div');
-      fill.setAttribute('style', `height:100%;width:${barWidth(row.minor, max)};background:#4c2fc5;border-radius:99px;`);
+      fill.setAttribute('style', `height:100%;width:${barWidth(row.minor, max)};background:var(--agent-ink);border-radius:99px;`);
       track.appendChild(fill);
       const value = el(doc, 'span', { text: row.text });
       value.setAttribute('style', "font-family:monospace;font-size:12px;min-width:120px;text-align:right;");
@@ -365,19 +365,19 @@ export function createReportingView(deps) {
       1,
     );
     const band = el(doc, 'div');
-    band.setAttribute('style', 'position:relative;height:26px;border-radius:8px;background:#f2eee2;display:flex;overflow:hidden;');
+    band.setAttribute('style', 'position:relative;height:26px;border-radius:8px;background:var(--surface-soft);display:flex;overflow:hidden;');
     const closed = el(doc, 'div');
-    closed.setAttribute('style', `height:100%;width:${barWidth(forecast.closedMinor, scale)};background:#27b64a;`);
+    closed.setAttribute('style', `height:100%;width:${barWidth(forecast.closedMinor, scale)};background:var(--accord);`);
     const probable = el(doc, 'div');
-    probable.setAttribute('style', `height:100%;width:${barWidth(forecast.probableMinor, scale)};background:#27b64a;opacity:0.45;`);
+    probable.setAttribute('style', `height:100%;width:${barWidth(forecast.probableMinor, scale)};background:var(--accord);opacity:0.45;`);
     const best = el(doc, 'div');
-    best.setAttribute('style', `height:100%;width:${barWidth(Math.max(0, forecast.bestMinor - forecast.closedMinor - forecast.probableMinor), scale)};background:repeating-linear-gradient(45deg,#cfe9d3 0 6px,transparent 6px 12px);`);
+    best.setAttribute('style', `height:100%;width:${barWidth(Math.max(0, forecast.bestMinor - forecast.closedMinor - forecast.probableMinor), scale)};background:repeating-linear-gradient(45deg,var(--stripe) 0 6px,transparent 6px 12px);`);
     band.appendChild(closed);
     band.appendChild(probable);
     band.appendChild(best);
     if (forecast.targetMinor !== null && forecast.targetMinor !== undefined) {
       const marker = el(doc, 'span');
-      marker.setAttribute('style', `position:absolute;top:-4px;bottom:-4px;left:${barWidth(forecast.targetMinor, scale)};width:2px;background:#171912;`);
+      marker.setAttribute('style', `position:absolute;top:-4px;bottom:-4px;left:${barWidth(forecast.targetMinor, scale)};width:2px;background:var(--ink);`);
       band.appendChild(marker);
     }
     panel.appendChild(band);

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { shapeCustomerTimeline } from '../packages/customer-hub/src/timeline.js';
 import { boot, project } from './helpers/customer-data-project.js';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -62,6 +63,7 @@ function projectWithTimeline(t) {
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }
   for (const manifest of ['work-task.module.json', 'work-activity.module.json']) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = cli(root, ['module', 'create', join(root, 'packages/work/modules', manifest), '--apply']);
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }

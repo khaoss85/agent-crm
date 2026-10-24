@@ -1,0 +1,137 @@
+{
+  "manifestVersion": 1,
+  "revision": 1,
+  "name": "channel-dead-letter",
+  "description": "Failure inventory for channel sends that exhausted their bounded attempts (backlog:e5532d1c9146). Carries the phase, the normalized error code and the payload fingerprint — never the raw payload and never a secret. A human or an explicit requeue retries it; silent infinite retry is forbidden.",
+  "table": "channel_dead_letters",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "required": false,
+      "unique": true,
+      "column": "source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "spaceId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "space_id",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "connectionKey",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "connection_key",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "idempotencyKey",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "idempotency_key",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "jobId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "job_id",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "phase",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "phase",
+      "writable": "managed",
+      "values": [
+        "send"
+      ],
+      "classification": "non-personal"
+    },
+    {
+      "name": "errorCode",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "error_code",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "payloadFingerprint",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "payload_fingerprint",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "attempts",
+      "type": "integer",
+      "required": false,
+      "unique": false,
+      "column": "attempts",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "firstFailedAt",
+      "type": "timestamp",
+      "required": false,
+      "unique": false,
+      "column": "first_failed_at",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "lastFailedAt",
+      "type": "timestamp",
+      "required": false,
+      "unique": false,
+      "column": "last_failed_at",
+      "writable": "managed",
+      "classification": "non-personal"
+    },
+    {
+      "name": "state",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "state",
+      "writable": "managed",
+      "values": [
+        "open",
+        "requeued",
+        "resolved"
+      ],
+      "classification": "non-personal"
+    },
+    {
+      "name": "stateReason",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "state_reason",
+      "writable": "managed",
+      "classification": "non-personal"
+    }
+  ]
+}

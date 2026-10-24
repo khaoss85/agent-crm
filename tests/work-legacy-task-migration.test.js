@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { legacyKey, migrateLegacyTasks } from '../packages/work/src/legacy-tasks.js';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -80,6 +81,7 @@ function legacyProject(t) {
   const applied = cli(root, ['module', 'create', legacyManifest, '--apply']);
   assert.equal(applied.status, 0, applied.stderr);
   for (const manifest of ['work-task.module.json', 'work-activity.module.json']) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     assert.equal(cli(root, ['module', 'create', join(root, 'packages/work/modules', manifest), '--apply']).status, 0, manifest);
   }
   writeFileSync(join(root, 'packages/actions/generated/index.js'),
@@ -216,6 +218,7 @@ test('a database that never had the legacy table reports nothing to do rather th
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
   for (const manifest of ['work-task.module.json', 'work-activity.module.json']) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     assert.equal(cli(root, ['module', 'create', join(root, 'packages/work/modules', manifest), '--apply']).status, 0, manifest);
   }
   writeFileSync(join(root, 'packages/actions/generated/index.js'),

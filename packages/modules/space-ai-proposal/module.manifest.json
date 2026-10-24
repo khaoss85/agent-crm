@@ -1,0 +1,103 @@
+{
+  "manifestVersion": 1,
+  "revision": 1,
+  "name": "space-ai-proposal",
+  "description": "What a switched-off AI action wanted to do, waiting for a human: one proposal per space, permission and action key. Proposed until a human approves or refuses it; approval authorizes that one action and executes nothing by itself. Keyed by opaque control-plane space id.",
+  "table": "space_ai_proposals",
+  "fields": [
+    {
+      "name": "spaceId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "space_id",
+      "writable": "managed"
+    },
+    {
+      "name": "permission",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "permission",
+      "writable": "managed"
+    },
+    {
+      "name": "actionKind",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "action_kind",
+      "writable": "managed"
+    },
+    {
+      "name": "actionKey",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "action_key",
+      "writable": "managed"
+    },
+    {
+      "name": "summary",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "summary",
+      "writable": "managed"
+    },
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "required": false,
+      "unique": true,
+      "column": "source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "status",
+      "writable": "managed",
+      "default": "proposed",
+      "values": [
+        "proposed",
+        "approved",
+        "refused"
+      ]
+    },
+    {
+      "name": "proposedAt",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "proposed_at",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedBy",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "decided_by",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedAt",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "decided_at",
+      "writable": "managed"
+    },
+    {
+      "name": "refusalReason",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "refusal_reason",
+      "writable": "managed"
+    }
+  ]
+}

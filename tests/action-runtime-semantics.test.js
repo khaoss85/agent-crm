@@ -5,6 +5,7 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -34,6 +35,7 @@ test.before(async () => {
     // A plain, publicly writable second module for the generic-path fixture.
     '../../modules/scratch-note.module.json',
   ]) {
+    if (moduleAlreadyPresent(projectRoot, manifest)) continue;
     const result = spawnSync(
       process.execPath,
       ['--no-warnings', join(projectRoot, 'packages/cli/bin/accordo.js'), 'module', 'create', join(starter, manifest), '--apply', '--root', projectRoot],
