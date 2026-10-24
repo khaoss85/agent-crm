@@ -10,9 +10,10 @@ import { bindAdminMutations } from './admin-submission.js';
  * screen the backoffice shell names "Clienti", and the import/quality work
  * below stays where the operators who govern it expect it.
  *
- * It renders only while `/api/schema` publishes `domains['customer-data']`,
- * because the package is optional and an Admin that shows a dead surface is
- * worse than one that shows nothing.
+ * It renders only while `/api/schema` publishes `domains['customer-data']`;
+ * an absent package names itself in the view (like every other uncomposed
+ * section) because a reachable route that renders nothing reads as broken
+ * navigation.
  *
  * Everything the operator can do here is one of three things: preview an
  * import (which writes nothing and says so), apply one, or decide something a
@@ -116,15 +117,17 @@ export function createCustomerDataView(deps) {
     }
     const meta = schema?.domains?.['customer-data']?.metadata ?? schema?.domains?.['customer-data'];
     if (!meta) {
-      // Optional package, not composed: render nothing at all rather than a
-      // surface that cannot work.
+      // Optional package, not composed: name it instead of a blank screen —
+      // a reachable route that renders nothing reads as broken navigation.
+      mount.appendChild(el('p', 'empty customer-data-uncomposed',
+        'Clienti non composto in questo spazio: il server non pubblica il dominio (manca il pacchetto customer-data).'));
       return;
     }
 
     // BO-F1-05: the customer list renders first and owns its refresh; the
     // section below re-renders without resetting the operator's filters.
-    // It mounts only here, past the composed-package gate above, so an
-    // absent package still renders nothing at all.
+    // It mounts only here, past the composed-package gate above; an absent
+    // package names itself above instead of a blank screen.
     mount.appendChild(listBox);
     // The list renders its own request errors (unknown space, offline
     // package) inside listBox; this catch is only for an unexpected throw,
