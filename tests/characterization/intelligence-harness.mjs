@@ -273,7 +273,7 @@ export function characterizationProject(t, { enrichTimeoutMs, name = 'accordo-la
   const starter = join(root, 'examples/starters/b2b-lead-qualification');
   const packaged = join(root, 'packages/intelligence/modules');
   for (const manifest of INTELLIGENCE_MODULES) {
-    if (moduleAlreadyPresent(projectRoot, manifest)) continue;
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const from = [
     'lead.module.json',
     // Work v1 (ADR-030): the starter's bespoke `task` module is gone and its

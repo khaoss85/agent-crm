@@ -147,9 +147,11 @@ test('a verified viewer may read, and may not write', async (t) => {
  * Customer Data Operations v2 (TASKS.md:45). The bulk route mutates, so it
  * gates `records.write` like the import apply; the export route reads
  * managed evidence, so it gates `records.read` like the preview and the
- * profile. The package is not composed in this scene, so an authorized
- * caller meets the honest 404 past the gate — the gate is a boundary, not
- * a wall, and the 404 proves which side of it the caller stands on.
+ * profile. The reference application composes the customer-data package, so
+ * an authorized caller meets the package past the gate — the gate is a
+ * boundary, not a wall, and the served export proves which side of it the
+ * caller stands on. Absence past the gate is proven where a package is
+ * genuinely not composed (see the work-package absence suite).
  */
 test('the customer-data bulk and export routes honour the role boundary', async (t) => {
   const { call, as } = await scene(t);
@@ -167,8 +169,8 @@ test('the customer-data bulk and export routes honour the role boundary', async 
   assert.equal(viewerBulk.status, 403, 'a viewer may not bulk-apply decisions');
   const viewerExport = await call('POST', '/api/customer-data/export',
     { resource: 'data-quality-issue' }, as('vic'));
-  assert.equal(viewerExport.status, 404, 'a viewer passes the export gate and meets the honest absent-package 404');
-  assert.match(viewerExport.body, /NOT_FOUND/);
+  assert.equal(viewerExport.status, 200, 'a viewer passes the export gate and the composed package serves the export');
+  assert.deepEqual(JSON.parse(viewerExport.body).rows, []);
 });
 
 test('the human approval boundary is authorization, not just a shaped actor', async (t) => {
