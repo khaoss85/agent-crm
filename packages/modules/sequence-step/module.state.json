@@ -1,0 +1,130 @@
+{
+  "stateVersion": 2,
+  "module": "sequence-step",
+  "revision": 2,
+  "fingerprint": "323c7104f687ffef1b5da41cc5056725807f8e3e906fbc2e1c634058fb7e9215",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 2,
+    "name": "sequence-step",
+    "description": "One ordered step of a sequence (BO-F3-03): the days after the previous fire, the channel it sends on, and the approved template with personalization variables. Steps are append-only while the sequence is a draft; once the sequence is active a step is never edited, only skipped per enrollment, so a running person never sees a step change under them. (backlog:22bb154a72ea)",
+    "table": "sequence_steps",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "sequenceSourceKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "sequence_source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "space_id",
+        "writable": "managed"
+      },
+      {
+        "name": "stepOrder",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "step_order",
+        "writable": "managed"
+      },
+      {
+        "name": "dayOffset",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "day_offset",
+        "writable": "managed"
+      },
+      {
+        "name": "channel",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "channel",
+        "writable": "managed"
+      },
+      {
+        "name": "templateName",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "template_name",
+        "writable": "managed"
+      },
+      {
+        "name": "templateLanguage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "template_language",
+        "writable": "managed"
+      },
+      {
+        "name": "templateVars",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "template_vars",
+        "writable": "managed"
+      },
+      {
+        "name": "actorType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "actor_type",
+        "writable": "managed",
+        "values": [
+          "user",
+          "agent",
+          "system"
+        ]
+      },
+      {
+        "name": "actorId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "actor_id",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_sequence_steps",
+      "checksum": "52be5a22b82f58b0b855c47610453d72eb0644d1f146faa1d47828ea061dc4a0",
+      "sql": "CREATE TABLE IF NOT EXISTS sequence_steps (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  sequence_source_key TEXT,\n  space_id TEXT,\n  step_order INTEGER,\n  day_offset INTEGER,\n  channel TEXT,\n  template_name TEXT,\n  template_language TEXT,\n  template_vars TEXT,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS sequence_steps_sequence_source_key ON sequence_steps(sequence_source_key);\nCREATE INDEX IF NOT EXISTS sequence_steps_space_id ON sequence_steps(space_id);\nCREATE INDEX IF NOT EXISTS sequence_steps_step_order ON sequence_steps(step_order);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_sequence_steps",
+      "checksum": "12e56eab9922f1f0a4106fd58304d5fb8983b842c8a012bbd1ffca7cd7655dca",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"sequence_steps\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"sequence_source_key\" TEXT,\n  \"space_id\" TEXT,\n  \"step_order\" BIGINT,\n  \"day_offset\" BIGINT,\n  \"channel\" TEXT,\n  \"template_name\" TEXT,\n  \"template_language\" TEXT,\n  \"template_vars\" TEXT,\n  \"actor_type\" TEXT CHECK(\"actor_type\" IN ('user', 'agent', 'system')),\n  \"actor_id\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"sequence_steps_sequence_source_key\"\n  ON \"accordo\".\"sequence_steps\"(\"sequence_source_key\");\n\nCREATE INDEX \"sequence_steps_space_id\"\n  ON \"accordo\".\"sequence_steps\"(\"space_id\");\n\nCREATE INDEX \"sequence_steps_step_order\"\n  ON \"accordo\".\"sequence_steps\"(\"step_order\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "323c7104f687ffef1b5da41cc5056725807f8e3e906fbc2e1c634058fb7e9215"
+      }
+    },
+    "evolutions": []
+  }
+}

@@ -114,10 +114,10 @@ export function createSpacePermissionsDomain(options = {}) {
         },
       },
     ],
-    /** Function-free, additive schema metadata. */
+    /** Function-free, additive schema metadata. The registry publishes
+     * `resources` from the composition, so restating it here is refused. */
     metadata() {
       return {
-        resources: [...SPACE_PERMISSIONS_RESOURCES],
         notModeled: [
           'spaces: the control plane owns spaces; the space id is opaque here',
           'space members: membership lives in the control plane, never in a framework record',

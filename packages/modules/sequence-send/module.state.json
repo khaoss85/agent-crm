@@ -1,0 +1,162 @@
+{
+  "stateVersion": 2,
+  "module": "sequence-send",
+  "revision": 2,
+  "fingerprint": "e48b8c218a6804d96dafab3d9f9defc7d426fa08edaddca99b6d871d81a7c94e",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 2,
+    "name": "sequence-send",
+    "description": "One fired step of one enrollment (BO-F3-03): the evidence a step was queued into the channels outbox under its deterministic key, is waiting for a human approval, was confirmed sent, or died there. Metrics count these rows, never stored counters, so a crash or a retry cannot drift them. (backlog:22bb154a72ea)",
+    "table": "sequence_sends",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "enrollmentSourceKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "enrollment_source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "sequenceSourceKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "sequence_source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "space_id",
+        "writable": "managed"
+      },
+      {
+        "name": "stepOrder",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "step_order",
+        "writable": "managed"
+      },
+      {
+        "name": "messageKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "message_key",
+        "writable": "managed"
+      },
+      {
+        "name": "jobId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "job_id",
+        "writable": "managed"
+      },
+      {
+        "name": "variables",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "variables",
+        "writable": "managed"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "status",
+        "writable": "managed",
+        "values": [
+          "queued",
+          "waiting-approval",
+          "sent",
+          "dead-letter",
+          "skipped"
+        ]
+      },
+      {
+        "name": "queuedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "queued_at",
+        "writable": "managed"
+      },
+      {
+        "name": "decidedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "decided_at",
+        "writable": "managed"
+      },
+      {
+        "name": "detail",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "detail",
+        "writable": "managed"
+      },
+      {
+        "name": "actorType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "actor_type",
+        "writable": "managed",
+        "values": [
+          "user",
+          "agent",
+          "system"
+        ]
+      },
+      {
+        "name": "actorId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "actor_id",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_sequence_sends",
+      "checksum": "7c4b1ea326859205b2e607271895c0d23243f1221de09edf6c34efcf717745f0",
+      "sql": "CREATE TABLE IF NOT EXISTS sequence_sends (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  enrollment_source_key TEXT,\n  sequence_source_key TEXT,\n  space_id TEXT,\n  step_order INTEGER,\n  message_key TEXT,\n  job_id TEXT,\n  variables TEXT,\n  status TEXT CHECK(status IN ('queued', 'waiting-approval', 'sent', 'dead-letter', 'skipped')),\n  queued_at TEXT,\n  decided_at TEXT,\n  detail TEXT,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS sequence_sends_enrollment_source_key ON sequence_sends(enrollment_source_key);\nCREATE INDEX IF NOT EXISTS sequence_sends_sequence_source_key ON sequence_sends(sequence_source_key);\nCREATE INDEX IF NOT EXISTS sequence_sends_space_id ON sequence_sends(space_id);\nCREATE INDEX IF NOT EXISTS sequence_sends_status ON sequence_sends(status);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_sequence_sends",
+      "checksum": "dda2b67accae58bcd442fdc191375d33a66b3dd7a6cc41cd5d4dfd7b9b8ffae0",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"sequence_sends\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"enrollment_source_key\" TEXT,\n  \"sequence_source_key\" TEXT,\n  \"space_id\" TEXT,\n  \"step_order\" BIGINT,\n  \"message_key\" TEXT,\n  \"job_id\" TEXT,\n  \"variables\" TEXT,\n  \"status\" TEXT CHECK(\"status\" IN ('queued', 'waiting-approval', 'sent', 'dead-letter', 'skipped')),\n  \"queued_at\" TIMESTAMPTZ,\n  \"decided_at\" TIMESTAMPTZ,\n  \"detail\" TEXT,\n  \"actor_type\" TEXT CHECK(\"actor_type\" IN ('user', 'agent', 'system')),\n  \"actor_id\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"sequence_sends_enrollment_source_key\"\n  ON \"accordo\".\"sequence_sends\"(\"enrollment_source_key\");\n\nCREATE INDEX \"sequence_sends_sequence_source_key\"\n  ON \"accordo\".\"sequence_sends\"(\"sequence_source_key\");\n\nCREATE INDEX \"sequence_sends_space_id\"\n  ON \"accordo\".\"sequence_sends\"(\"space_id\");\n\nCREATE INDEX \"sequence_sends_status\"\n  ON \"accordo\".\"sequence_sends\"(\"status\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "e48b8c218a6804d96dafab3d9f9defc7d426fa08edaddca99b6d871d81a7c94e"
+      }
+    },
+    "evolutions": []
+  }
+}

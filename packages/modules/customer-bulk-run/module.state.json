@@ -1,0 +1,138 @@
+{
+  "stateVersion": 2,
+  "module": "customer-bulk-run",
+  "revision": 1,
+  "fingerprint": "9f6fc484c2f401682ca73c1bbb99998cd5ec64555b67814883e7770999c88823",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "customer-bulk-run",
+    "description": "One bulk application of a customer-data record action across many records. The idempotency key is business-derived from the action name and the canonical digest of the items - never from a clock or a random value - so retrying the same bulk returns this same run, and an interrupted run stays in_progress with its per-item receipts until it is resumed. A run whose items did not all apply reads partial, never completed.",
+    "table": "customer_bulk_runs",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "idempotencyKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "idempotency_key",
+        "writable": "managed"
+      },
+      {
+        "name": "actionName",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "action_name",
+        "writable": "managed",
+        "values": [
+          "link-canonical-identity",
+          "dismiss-duplicate-candidate",
+          "govern-data-quality-issue"
+        ]
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "status",
+        "writable": "managed",
+        "values": [
+          "in_progress",
+          "completed",
+          "partial"
+        ]
+      },
+      {
+        "name": "itemCount",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "item_count",
+        "writable": "managed"
+      },
+      {
+        "name": "appliedCount",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "applied_count",
+        "writable": "managed"
+      },
+      {
+        "name": "failedCount",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "failed_count",
+        "writable": "managed"
+      },
+      {
+        "name": "actorType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "actor_type",
+        "writable": "managed",
+        "values": [
+          "user",
+          "agent",
+          "system"
+        ]
+      },
+      {
+        "name": "actorId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "actor_id",
+        "writable": "managed"
+      },
+      {
+        "name": "startedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "started_at",
+        "writable": "managed"
+      },
+      {
+        "name": "finishedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "finished_at",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_customer_bulk_runs",
+      "checksum": "99a8e63e719c4a16483f7bd124b7137ddbe325e3ee6619b90e270625f622f650",
+      "sql": "CREATE TABLE IF NOT EXISTS customer_bulk_runs (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  idempotency_key TEXT UNIQUE,\n  action_name TEXT CHECK(action_name IN ('link-canonical-identity', 'dismiss-duplicate-candidate', 'govern-data-quality-issue')),\n  status TEXT CHECK(status IN ('in_progress', 'completed', 'partial')),\n  item_count INTEGER,\n  applied_count INTEGER,\n  failed_count INTEGER,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  started_at TEXT,\n  finished_at TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS customer_bulk_runs_status ON customer_bulk_runs(status);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_customer_bulk_runs",
+      "checksum": "a5ee383090ba95b39eb664f51e4252b5117adb995e6572d04946b9add0219e9e",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"customer_bulk_runs\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"idempotency_key\" TEXT UNIQUE,\n  \"action_name\" TEXT CHECK(\"action_name\" IN ('link-canonical-identity', 'dismiss-duplicate-candidate', 'govern-data-quality-issue')),\n  \"status\" TEXT CHECK(\"status\" IN ('in_progress', 'completed', 'partial')),\n  \"item_count\" BIGINT,\n  \"applied_count\" BIGINT,\n  \"failed_count\" BIGINT,\n  \"actor_type\" TEXT CHECK(\"actor_type\" IN ('user', 'agent', 'system')),\n  \"actor_id\" TEXT,\n  \"started_at\" TIMESTAMPTZ,\n  \"finished_at\" TIMESTAMPTZ,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"customer_bulk_runs_status\"\n  ON \"accordo\".\"customer_bulk_runs\"(\"status\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "9f6fc484c2f401682ca73c1bbb99998cd5ec64555b67814883e7770999c88823"
+      }
+    },
+    "evolutions": []
+  }
+}

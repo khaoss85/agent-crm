@@ -1,0 +1,172 @@
+{
+  "manifestVersion": 1,
+  "revision": 1,
+  "name": "sequence-enrollment",
+  "description": "One person in one sequence with their own state (BO-F3-03): the enrolled subject, the recipient the steps send to, the next step to fire and when, and the lifecycle active -> paused -> active, active -> stopped-replied at the first recorded reply, active -> completed after the last step. A paused enrollment fires nothing; a stopped or completed one never fires again. (backlog:22bb154a72ea)",
+  "table": "sequence_enrollments",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "required": false,
+      "unique": true,
+      "column": "source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "sequenceSourceKey",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "sequence_source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "spaceId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "space_id",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectResource",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "subject_resource",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "subject_id",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectLabel",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "subject_label",
+      "writable": "managed"
+    },
+    {
+      "name": "recipient",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "recipient",
+      "writable": "managed"
+    },
+    {
+      "name": "connectionKey",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "connection_key",
+      "writable": "managed"
+    },
+    {
+      "name": "vars",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "vars",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "status",
+      "writable": "managed",
+      "values": [
+        "active",
+        "paused",
+        "stopped-replied",
+        "completed"
+      ]
+    },
+    {
+      "name": "currentStep",
+      "type": "integer",
+      "required": false,
+      "unique": false,
+      "column": "current_step",
+      "writable": "managed"
+    },
+    {
+      "name": "nextDueAt",
+      "type": "timestamp",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "next_due_at",
+      "writable": "managed"
+    },
+    {
+      "name": "enrolledAt",
+      "type": "timestamp",
+      "required": false,
+      "unique": false,
+      "column": "enrolled_at",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedAt",
+      "type": "timestamp",
+      "required": false,
+      "unique": false,
+      "column": "decided_at",
+      "writable": "managed"
+    },
+    {
+      "name": "actorType",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "actor_type",
+      "writable": "managed",
+      "values": [
+        "user",
+        "agent",
+        "system"
+      ]
+    },
+    {
+      "name": "actorId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "actor_id",
+      "writable": "managed"
+    },
+    {
+      "name": "sourcePackage",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "source_package",
+      "writable": "managed"
+    },
+    {
+      "name": "sourceAction",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "source_action",
+      "writable": "managed"
+    }
+  ]
+}

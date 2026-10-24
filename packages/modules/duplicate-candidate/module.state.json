@@ -1,0 +1,247 @@
+{
+  "stateVersion": 2,
+  "module": "duplicate-candidate",
+  "revision": 1,
+  "fingerprint": "495eb45324952b99962eedd8ada2c28372d73ff7792425dbbf718f3376310d96",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "duplicate-candidate",
+    "description": "Two records a deterministic rule says may be the same customer, with the rule and its evidence recorded. Nothing here is ever resolved automatically: an ambiguous match stays unresolved until a human decides, and no rule breaks a tie by picking one.",
+    "table": "duplicate_candidates",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "leftResource",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "left_resource",
+        "writable": "managed"
+      },
+      {
+        "name": "leftId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "left_id",
+        "writable": "managed"
+      },
+      {
+        "name": "leftOwner",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "left_owner",
+        "writable": "managed",
+        "values": [
+          "host",
+          "package"
+        ]
+      },
+      {
+        "name": "leftOwnerPackage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "left_owner_package",
+        "writable": "managed"
+      },
+      {
+        "name": "leftLabel",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "left_label",
+        "writable": "managed"
+      },
+      {
+        "name": "rightResource",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "right_resource",
+        "writable": "managed"
+      },
+      {
+        "name": "rightId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "right_id",
+        "writable": "managed"
+      },
+      {
+        "name": "rightOwner",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "right_owner",
+        "writable": "managed",
+        "values": [
+          "host",
+          "package"
+        ]
+      },
+      {
+        "name": "rightOwnerPackage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "right_owner_package",
+        "writable": "managed"
+      },
+      {
+        "name": "rightLabel",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "right_label",
+        "writable": "managed"
+      },
+      {
+        "name": "policy",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "policy",
+        "writable": "managed"
+      },
+      {
+        "name": "policyVersion",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "policy_version",
+        "writable": "managed"
+      },
+      {
+        "name": "policyFingerprint",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "policy_fingerprint",
+        "writable": "managed"
+      },
+      {
+        "name": "rule",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "rule",
+        "writable": "managed"
+      },
+      {
+        "name": "evidence",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "evidence",
+        "writable": "managed"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "status",
+        "writable": "managed",
+        "values": [
+          "unresolved",
+          "linked",
+          "dismissed"
+        ]
+      },
+      {
+        "name": "detectedByRunId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "detected_by_run_id",
+        "writable": "managed"
+      },
+      {
+        "name": "detectedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "detected_at",
+        "writable": "managed"
+      },
+      {
+        "name": "decisionId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "decision_id",
+        "writable": "managed"
+      },
+      {
+        "name": "decidedReason",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "decided_reason",
+        "writable": "managed"
+      },
+      {
+        "name": "decidedByType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "decided_by_type",
+        "writable": "managed",
+        "values": [
+          "user"
+        ]
+      },
+      {
+        "name": "decidedById",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "decided_by_id",
+        "writable": "managed"
+      },
+      {
+        "name": "decidedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "decided_at",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_duplicate_candidates",
+      "checksum": "21ea35b59c6903bc8ebe9f08b80eab64d0c3f31103bddcb55f3b548e81ab6d71",
+      "sql": "CREATE TABLE IF NOT EXISTS duplicate_candidates (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  left_resource TEXT,\n  left_id TEXT,\n  left_owner TEXT CHECK(left_owner IN ('host', 'package')),\n  left_owner_package TEXT,\n  left_label TEXT,\n  right_resource TEXT,\n  right_id TEXT,\n  right_owner TEXT CHECK(right_owner IN ('host', 'package')),\n  right_owner_package TEXT,\n  right_label TEXT,\n  policy TEXT,\n  policy_version INTEGER,\n  policy_fingerprint TEXT,\n  rule TEXT,\n  evidence TEXT,\n  status TEXT CHECK(status IN ('unresolved', 'linked', 'dismissed')),\n  detected_by_run_id TEXT,\n  detected_at TEXT,\n  decision_id TEXT,\n  decided_reason TEXT,\n  decided_by_type TEXT CHECK(decided_by_type IN ('user')),\n  decided_by_id TEXT,\n  decided_at TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS duplicate_candidates_left_resource ON duplicate_candidates(left_resource);\nCREATE INDEX IF NOT EXISTS duplicate_candidates_left_id ON duplicate_candidates(left_id);\nCREATE INDEX IF NOT EXISTS duplicate_candidates_right_resource ON duplicate_candidates(right_resource);\nCREATE INDEX IF NOT EXISTS duplicate_candidates_right_id ON duplicate_candidates(right_id);\nCREATE INDEX IF NOT EXISTS duplicate_candidates_status ON duplicate_candidates(status);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_duplicate_candidates",
+      "checksum": "a293307bf8b26661912cc5e5f0a4804e8ea4b86bae830cee070d0d985918d1b9",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"duplicate_candidates\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"left_resource\" TEXT,\n  \"left_id\" TEXT,\n  \"left_owner\" TEXT CHECK(\"left_owner\" IN ('host', 'package')),\n  \"left_owner_package\" TEXT,\n  \"left_label\" TEXT,\n  \"right_resource\" TEXT,\n  \"right_id\" TEXT,\n  \"right_owner\" TEXT CHECK(\"right_owner\" IN ('host', 'package')),\n  \"right_owner_package\" TEXT,\n  \"right_label\" TEXT,\n  \"policy\" TEXT,\n  \"policy_version\" BIGINT,\n  \"policy_fingerprint\" TEXT,\n  \"rule\" TEXT,\n  \"evidence\" TEXT,\n  \"status\" TEXT CHECK(\"status\" IN ('unresolved', 'linked', 'dismissed')),\n  \"detected_by_run_id\" TEXT,\n  \"detected_at\" TIMESTAMPTZ,\n  \"decision_id\" TEXT,\n  \"decided_reason\" TEXT,\n  \"decided_by_type\" TEXT CHECK(\"decided_by_type\" IN ('user')),\n  \"decided_by_id\" TEXT,\n  \"decided_at\" TIMESTAMPTZ,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"duplicate_candidates_left_resource\"\n  ON \"accordo\".\"duplicate_candidates\"(\"left_resource\");\n\nCREATE INDEX \"duplicate_candidates_left_id\"\n  ON \"accordo\".\"duplicate_candidates\"(\"left_id\");\n\nCREATE INDEX \"duplicate_candidates_right_resource\"\n  ON \"accordo\".\"duplicate_candidates\"(\"right_resource\");\n\nCREATE INDEX \"duplicate_candidates_right_id\"\n  ON \"accordo\".\"duplicate_candidates\"(\"right_id\");\n\nCREATE INDEX \"duplicate_candidates_status\"\n  ON \"accordo\".\"duplicate_candidates\"(\"status\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "495eb45324952b99962eedd8ada2c28372d73ff7792425dbbf718f3376310d96"
+      }
+    },
+    "evolutions": []
+  }
+}

@@ -589,10 +589,10 @@ export function createSequencesPackage(options = {}) {
       },
     ],
     policies: [],
-    /** Function-free, additive schema metadata. */
+    /** Function-free, additive schema metadata. The registry publishes
+     * `resources` from the composition, so restating it here is refused. */
     metadata() {
       return {
-        resources: [...SEQUENCES_RESOURCES],
         notModeled: [
           'provider sends: the channels outbox owns them; this package only queues',
           'AI text rewriting: the personalize hook is the seam; the built-in substitution is deterministic',

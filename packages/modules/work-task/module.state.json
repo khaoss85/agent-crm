@@ -1,0 +1,204 @@
+{
+  "stateVersion": 2,
+  "module": "work-task",
+  "revision": 1,
+  "fingerprint": "390be8798641aa80801e0e69f739ea9807604bfe8133b3088cc275aeae318de0",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "work-task",
+    "description": "A unit of human follow-up work arising from a business event, held against an opaque subject envelope. Every field is managed: a task exists only through the work package's actions or its follow-up capability, and no client can create, forge or rewrite one. It has an explicit transition table (open -> completed, open -> cancelled; both terminal, no reopen in v1) and no assignee: there is no authenticated or secure assignment here. dueAt is evidence only -- nothing is scheduled, nothing fires, and no clock changes a status.",
+    "table": "work_tasks",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "title",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "title",
+        "writable": "managed"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "status",
+        "writable": "managed",
+        "values": [
+          "open",
+          "completed",
+          "cancelled"
+        ]
+      },
+      {
+        "name": "dueAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "due_at",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectResource",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "subject_resource",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "subject_id",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectOwner",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "subject_owner",
+        "writable": "managed",
+        "values": [
+          "host",
+          "package"
+        ]
+      },
+      {
+        "name": "subjectOwnerPackage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "subject_owner_package",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectLabel",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "subject_label",
+        "writable": "managed"
+      },
+      {
+        "name": "sourcePackage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "source_package",
+        "writable": "managed"
+      },
+      {
+        "name": "sourceAction",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "source_action",
+        "writable": "managed"
+      },
+      {
+        "name": "openedByType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "opened_by_type",
+        "writable": "managed",
+        "values": [
+          "user",
+          "agent",
+          "system"
+        ]
+      },
+      {
+        "name": "openedById",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "opened_by_id",
+        "writable": "managed"
+      },
+      {
+        "name": "openedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "opened_at",
+        "writable": "managed"
+      },
+      {
+        "name": "completedBy",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "completed_by",
+        "writable": "managed"
+      },
+      {
+        "name": "completedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "completed_at",
+        "writable": "managed"
+      },
+      {
+        "name": "cancelledBy",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "cancelled_by",
+        "writable": "managed"
+      },
+      {
+        "name": "cancelledAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "cancelled_at",
+        "writable": "managed"
+      },
+      {
+        "name": "closingReason",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "closing_reason",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_work_tasks",
+      "checksum": "42f2f15c58bfebce0e745d9090e23461202d0aba60df85446688f7a99b1085a3",
+      "sql": "CREATE TABLE IF NOT EXISTS work_tasks (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  title TEXT,\n  status TEXT CHECK(status IN ('open', 'completed', 'cancelled')),\n  due_at TEXT,\n  subject_resource TEXT,\n  subject_id TEXT,\n  subject_owner TEXT CHECK(subject_owner IN ('host', 'package')),\n  subject_owner_package TEXT,\n  subject_label TEXT,\n  source_package TEXT,\n  source_action TEXT,\n  opened_by_type TEXT CHECK(opened_by_type IN ('user', 'agent', 'system')),\n  opened_by_id TEXT,\n  opened_at TEXT,\n  completed_by TEXT,\n  completed_at TEXT,\n  cancelled_by TEXT,\n  cancelled_at TEXT,\n  closing_reason TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS work_tasks_status ON work_tasks(status);\nCREATE INDEX IF NOT EXISTS work_tasks_subject_resource ON work_tasks(subject_resource);\nCREATE INDEX IF NOT EXISTS work_tasks_subject_id ON work_tasks(subject_id);\nCREATE INDEX IF NOT EXISTS work_tasks_source_package ON work_tasks(source_package);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_work_tasks",
+      "checksum": "3c3114ed031a0208c2c1abeb12026ef8502086923d88f87ef8d27bbc3e88c887",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"work_tasks\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"title\" TEXT,\n  \"status\" TEXT CHECK(\"status\" IN ('open', 'completed', 'cancelled')),\n  \"due_at\" TIMESTAMPTZ,\n  \"subject_resource\" TEXT,\n  \"subject_id\" TEXT,\n  \"subject_owner\" TEXT CHECK(\"subject_owner\" IN ('host', 'package')),\n  \"subject_owner_package\" TEXT,\n  \"subject_label\" TEXT,\n  \"source_package\" TEXT,\n  \"source_action\" TEXT,\n  \"opened_by_type\" TEXT CHECK(\"opened_by_type\" IN ('user', 'agent', 'system')),\n  \"opened_by_id\" TEXT,\n  \"opened_at\" TIMESTAMPTZ,\n  \"completed_by\" TEXT,\n  \"completed_at\" TIMESTAMPTZ,\n  \"cancelled_by\" TEXT,\n  \"cancelled_at\" TIMESTAMPTZ,\n  \"closing_reason\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"work_tasks_status\"\n  ON \"accordo\".\"work_tasks\"(\"status\");\n\nCREATE INDEX \"work_tasks_subject_resource\"\n  ON \"accordo\".\"work_tasks\"(\"subject_resource\");\n\nCREATE INDEX \"work_tasks_subject_id\"\n  ON \"accordo\".\"work_tasks\"(\"subject_id\");\n\nCREATE INDEX \"work_tasks_source_package\"\n  ON \"accordo\".\"work_tasks\"(\"source_package\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "390be8798641aa80801e0e69f739ea9807604bfe8133b3088cc275aeae318de0"
+      }
+    },
+    "evolutions": []
+  }
+}

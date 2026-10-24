@@ -1,0 +1,181 @@
+{
+  "stateVersion": 2,
+  "module": "channel-inbox-event",
+  "revision": 1,
+  "fingerprint": "0a8368865013ced2b4ab87cd1a985124674d7288a67d99e4f2591c93a7efe155",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "channel-inbox-event",
+    "description": "Append-only inbox of provider-verified channel webhook deliveries, one row per (space, connection, provider event id) (backlog:e5532d1c9146). Generalizes the M11 signature inbox to any channel adapter: verification before any write, DB-unique event identity plus payload fingerprint, quarantine for unknown subjects, an explicit effect per row, and a stable refusal that echoes nothing. Rows stored by the progressive initial history import carry that import's importKey (null for webhook rows), so a replayed page derives stored-by-this-import instead of recounting it.",
+    "table": "channel_inbox_events",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "space_id",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "connectionKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "connection_key",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "importKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "import_key",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "adapter",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "adapter",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "adapterVersion",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "adapter_version",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "providerEventId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "provider_event_id",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "subject",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "subject",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "payloadFingerprint",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "payload_fingerprint",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "sequence",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "sequence",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "occurredAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "occurred_at",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "receivedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "received_at",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "processed",
+        "type": "boolean",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "processed",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "effect",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "effect",
+        "writable": "managed",
+        "values": [
+          "pending",
+          "applied",
+          "ignored",
+          "quarantined",
+          "duplicate"
+        ],
+        "classification": "non-personal"
+      },
+      {
+        "name": "effectReason",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "effect_reason",
+        "writable": "managed",
+        "classification": "non-personal"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_channel_inbox_events",
+      "checksum": "1396d943cce41e642c8dc95b6cd6231bd3b340768789b9b8eedccac7d451e7c0",
+      "sql": "CREATE TABLE IF NOT EXISTS channel_inbox_events (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  connection_key TEXT,\n  import_key TEXT,\n  adapter TEXT,\n  adapter_version INTEGER,\n  provider_event_id TEXT,\n  subject TEXT,\n  payload_fingerprint TEXT,\n  sequence INTEGER,\n  occurred_at TEXT,\n  received_at TEXT,\n  processed INTEGER CHECK(processed IN (0, 1)),\n  effect TEXT CHECK(effect IN ('pending', 'applied', 'ignored', 'quarantined', 'duplicate')),\n  effect_reason TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS channel_inbox_events_space_id ON channel_inbox_events(space_id);\nCREATE INDEX IF NOT EXISTS channel_inbox_events_connection_key ON channel_inbox_events(connection_key);\nCREATE INDEX IF NOT EXISTS channel_inbox_events_import_key ON channel_inbox_events(import_key);\nCREATE INDEX IF NOT EXISTS channel_inbox_events_provider_event_id ON channel_inbox_events(provider_event_id);\nCREATE INDEX IF NOT EXISTS channel_inbox_events_subject ON channel_inbox_events(subject);\nCREATE INDEX IF NOT EXISTS channel_inbox_events_processed ON channel_inbox_events(processed);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_channel_inbox_events",
+      "checksum": "294f342f85a3fd3afd530e93de3a176de36d09bdbe3620312bfe0b72856cf872",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"channel_inbox_events\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"space_id\" TEXT,\n  \"connection_key\" TEXT,\n  \"import_key\" TEXT,\n  \"adapter\" TEXT,\n  \"adapter_version\" BIGINT,\n  \"provider_event_id\" TEXT,\n  \"subject\" TEXT,\n  \"payload_fingerprint\" TEXT,\n  \"sequence\" BIGINT,\n  \"occurred_at\" TIMESTAMPTZ,\n  \"received_at\" TIMESTAMPTZ,\n  \"processed\" BOOLEAN,\n  \"effect\" TEXT CHECK(\"effect\" IN ('pending', 'applied', 'ignored', 'quarantined', 'duplicate')),\n  \"effect_reason\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"channel_inbox_events_space_id\"\n  ON \"accordo\".\"channel_inbox_events\"(\"space_id\");\n\nCREATE INDEX \"channel_inbox_events_connection_key\"\n  ON \"accordo\".\"channel_inbox_events\"(\"connection_key\");\n\nCREATE INDEX \"channel_inbox_events_import_key\"\n  ON \"accordo\".\"channel_inbox_events\"(\"import_key\");\n\nCREATE INDEX \"channel_inbox_events_provider_event_id\"\n  ON \"accordo\".\"channel_inbox_events\"(\"provider_event_id\");\n\nCREATE INDEX \"channel_inbox_events_subject\"\n  ON \"accordo\".\"channel_inbox_events\"(\"subject\");\n\nCREATE INDEX \"channel_inbox_events_processed\"\n  ON \"accordo\".\"channel_inbox_events\"(\"processed\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "0a8368865013ced2b4ab87cd1a985124674d7288a67d99e4f2591c93a7efe155"
+      }
+    },
+    "evolutions": []
+  }
+}

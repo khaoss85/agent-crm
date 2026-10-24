@@ -1,0 +1,134 @@
+{
+  "manifestVersion": 1,
+  "revision": 1,
+  "name": "customer-import-row",
+  "description": "The receipt for one input row of an applied import: what it was, what happened to it, and which deterministic rule decided. Every rejected row has one of these, and accepted + rejected + skipped equals the run's row count exactly - a rejected row never disappears quietly.",
+  "table": "customer_import_rows",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "required": false,
+      "unique": true,
+      "column": "source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "runId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "run_id",
+      "writable": "managed"
+    },
+    {
+      "name": "rowIndex",
+      "type": "integer",
+      "required": false,
+      "unique": false,
+      "column": "row_index",
+      "writable": "managed"
+    },
+    {
+      "name": "inputDigest",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "input_digest",
+      "writable": "managed"
+    },
+    {
+      "name": "outcome",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "outcome",
+      "writable": "managed",
+      "values": [
+        "accepted",
+        "rejected",
+        "skipped"
+      ]
+    },
+    {
+      "name": "reasonCode",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "reason_code",
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "reason",
+      "writable": "managed"
+    },
+    {
+      "name": "matchRule",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "match_rule",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectResource",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "subject_resource",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "subject_id",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwner",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "subject_owner",
+      "writable": "managed",
+      "values": [
+        "host",
+        "package"
+      ]
+    },
+    {
+      "name": "subjectOwnerPackage",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "subject_owner_package",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectLabel",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "subject_label",
+      "writable": "managed"
+    },
+    {
+      "name": "createdSubject",
+      "type": "boolean",
+      "required": false,
+      "unique": false,
+      "column": "created_subject",
+      "writable": "managed"
+    }
+  ]
+}

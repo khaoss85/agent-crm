@@ -1,0 +1,132 @@
+{
+  "stateVersion": 2,
+  "module": "channel-import-outcome",
+  "revision": 1,
+  "fingerprint": "fb28bf16ad04b6d7db3e953b748be6bb74bc47667d7d1306159f4a19d9032ce6",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "channel-import-outcome",
+    "description": "Per-event outcomes of one connection's progressive initial history import (backlog:66282d13d81c). One row per (import, provider event): whether the event stored a new inbox row, was already present, or failed, plus its sender reconciliation. Rows are written once and never tallied by hand — the progress surface counts them (one COUNT per state), so racing advances and crash retries converge to the same numbers as a clean run, because the number is always the rows themselves. importKey references the channel-import-state row's sourceKey.",
+    "table": "channel_import_outcomes",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "space_id",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "connectionKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "connection_key",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "importKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "import_key",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "providerEventId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "provider_event_id",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "outcome",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "outcome",
+        "writable": "managed",
+        "values": [
+          "imported",
+          "duplicate",
+          "failed"
+        ],
+        "classification": "non-personal"
+      },
+      {
+        "name": "sender",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "sender",
+        "writable": "managed",
+        "values": [
+          "created",
+          "matched",
+          "unresolved",
+          "none",
+          "pending"
+        ],
+        "classification": "non-personal"
+      },
+      {
+        "name": "applied",
+        "type": "boolean",
+        "required": false,
+        "unique": false,
+        "column": "applied",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "note",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "note",
+        "writable": "managed",
+        "classification": "non-personal"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_channel_import_outcomes",
+      "checksum": "0394a9f9e93e3536bba9bfbeb0ced05e2afbe9d9536411dd5340d54c5dae3099",
+      "sql": "CREATE TABLE IF NOT EXISTS channel_import_outcomes (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  connection_key TEXT,\n  import_key TEXT,\n  provider_event_id TEXT,\n  outcome TEXT CHECK(outcome IN ('imported', 'duplicate', 'failed')),\n  sender TEXT CHECK(sender IN ('created', 'matched', 'unresolved', 'none', 'pending')),\n  applied INTEGER CHECK(applied IN (0, 1)),\n  note TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS channel_import_outcomes_space_id ON channel_import_outcomes(space_id);\nCREATE INDEX IF NOT EXISTS channel_import_outcomes_connection_key ON channel_import_outcomes(connection_key);\nCREATE INDEX IF NOT EXISTS channel_import_outcomes_import_key ON channel_import_outcomes(import_key);\nCREATE INDEX IF NOT EXISTS channel_import_outcomes_provider_event_id ON channel_import_outcomes(provider_event_id);\nCREATE INDEX IF NOT EXISTS channel_import_outcomes_outcome ON channel_import_outcomes(outcome);\nCREATE INDEX IF NOT EXISTS channel_import_outcomes_sender ON channel_import_outcomes(sender);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_channel_import_outcomes",
+      "checksum": "46f1ca44727782f41658d31183d8444d73b24fe34e8a2c64d1eb93890f54e886",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"channel_import_outcomes\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"space_id\" TEXT,\n  \"connection_key\" TEXT,\n  \"import_key\" TEXT,\n  \"provider_event_id\" TEXT,\n  \"outcome\" TEXT CHECK(\"outcome\" IN ('imported', 'duplicate', 'failed')),\n  \"sender\" TEXT CHECK(\"sender\" IN ('created', 'matched', 'unresolved', 'none', 'pending')),\n  \"applied\" BOOLEAN,\n  \"note\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"channel_import_outcomes_space_id\"\n  ON \"accordo\".\"channel_import_outcomes\"(\"space_id\");\n\nCREATE INDEX \"channel_import_outcomes_connection_key\"\n  ON \"accordo\".\"channel_import_outcomes\"(\"connection_key\");\n\nCREATE INDEX \"channel_import_outcomes_import_key\"\n  ON \"accordo\".\"channel_import_outcomes\"(\"import_key\");\n\nCREATE INDEX \"channel_import_outcomes_provider_event_id\"\n  ON \"accordo\".\"channel_import_outcomes\"(\"provider_event_id\");\n\nCREATE INDEX \"channel_import_outcomes_outcome\"\n  ON \"accordo\".\"channel_import_outcomes\"(\"outcome\");\n\nCREATE INDEX \"channel_import_outcomes_sender\"\n  ON \"accordo\".\"channel_import_outcomes\"(\"sender\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "fb28bf16ad04b6d7db3e953b748be6bb74bc47667d7d1306159f4a19d9032ce6"
+      }
+    },
+    "evolutions": []
+  }
+}

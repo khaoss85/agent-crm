@@ -1,0 +1,148 @@
+{
+  "stateVersion": 2,
+  "module": "channel-import-state",
+  "revision": 1,
+  "fingerprint": "c34692f30ee5673a04afa216a9f8ff41f44f796da5bdd5ab1a992de7da4bdf62",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "channel-import-state",
+    "description": "Progressive initial history import of one channel connection (backlog:66282d13d81c). One row per connection: the opaque provider cursor the next page resumes from, the window the run covers, and the phase plus the failure code. The row keeps no counters: the progress surface counts the channel-import-outcome rows carrying this row's sourceKey (one COUNT per state), so the number is always the rows themselves and no racing advance or crash retry can drift it.",
+    "table": "channel_import_states",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "space_id",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "connectionKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "connection_key",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "adapter",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "adapter",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "adapterVersion",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "adapter_version",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "status",
+        "writable": "managed",
+        "values": [
+          "running",
+          "done"
+        ],
+        "classification": "non-personal"
+      },
+      {
+        "name": "windowStart",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "window_start",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "nextPageToken",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "next_page_token",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "startedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "started_at",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "finishedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "finished_at",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "lastErrorCode",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "last_error_code",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "lastErrorReason",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "last_error_reason",
+        "writable": "managed",
+        "classification": "non-personal"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_channel_import_states",
+      "checksum": "97b88126f30e52267871c663b5bac8f2f89903b538c06fedd18b0f846ccac4f6",
+      "sql": "CREATE TABLE IF NOT EXISTS channel_import_states (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  connection_key TEXT,\n  adapter TEXT,\n  adapter_version INTEGER,\n  status TEXT CHECK(status IN ('running', 'done')),\n  window_start TEXT,\n  next_page_token TEXT,\n  started_at TEXT,\n  finished_at TEXT,\n  last_error_code TEXT,\n  last_error_reason TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS channel_import_states_space_id ON channel_import_states(space_id);\nCREATE INDEX IF NOT EXISTS channel_import_states_connection_key ON channel_import_states(connection_key);\nCREATE INDEX IF NOT EXISTS channel_import_states_status ON channel_import_states(status);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_channel_import_states",
+      "checksum": "da084012fe0c2d863b0033a007c36d083a1871a6c03895b032bbdf2b25065f6c",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"channel_import_states\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"space_id\" TEXT,\n  \"connection_key\" TEXT,\n  \"adapter\" TEXT,\n  \"adapter_version\" BIGINT,\n  \"status\" TEXT CHECK(\"status\" IN ('running', 'done')),\n  \"window_start\" TIMESTAMPTZ,\n  \"next_page_token\" TEXT,\n  \"started_at\" TIMESTAMPTZ,\n  \"finished_at\" TIMESTAMPTZ,\n  \"last_error_code\" TEXT,\n  \"last_error_reason\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"channel_import_states_space_id\"\n  ON \"accordo\".\"channel_import_states\"(\"space_id\");\n\nCREATE INDEX \"channel_import_states_connection_key\"\n  ON \"accordo\".\"channel_import_states\"(\"connection_key\");\n\nCREATE INDEX \"channel_import_states_status\"\n  ON \"accordo\".\"channel_import_states\"(\"status\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "c34692f30ee5673a04afa216a9f8ff41f44f796da5bdd5ab1a992de7da4bdf62"
+      }
+    },
+    "evolutions": []
+  }
+}
