@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assertPackageConforms } from './helpers/package-conformance.js';
 import { RATE_READ_CAP, hashIp } from '../packages/site-forms/src/rules.js';
 import { createSiteFormsPackage } from '../packages/site-forms/src/index.js';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 /**
  * **Site-form intake end to end (backlog:9d42035eca26).**
@@ -57,14 +58,17 @@ function project(t) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
   for (const manifest of CUSTOMER_DATA_MANIFESTS) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = cli(root, ['module', 'create', join(root, 'packages/customer-data/modules', manifest), '--apply']);
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }
   for (const manifest of INTERACTION_MANIFESTS) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = cli(root, ['module', 'create', join(root, 'packages/interactions/modules', manifest), '--apply']);
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }
   for (const manifest of SITE_FORMS_MANIFESTS) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = cli(root, ['module', 'create', join(root, 'packages/site-forms/modules', manifest), '--apply']);
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }

@@ -5,6 +5,7 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { moduleAlreadyPresent, stripGeneratedModules } from './helpers/apply-module.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -76,6 +77,7 @@ function project(t, { withWorkTables = true } = {}) {
   assert.equal(cli(root, ['module', 'create', join(starter, 'lead.module.json'), '--apply']).status, 0, 'lead');
   if (withWorkTables) {
     for (const manifest of ['work-task.module.json', 'work-activity.module.json']) {
+      if (moduleAlreadyPresent(root, manifest)) continue;
       assert.equal(cli(root, ['module', 'create', join(root, 'packages/work/modules', manifest), '--apply']).status, 0, manifest);
     }
     writeFileSync(join(root, 'packages/actions/generated/index.js'), [
@@ -85,6 +87,9 @@ function project(t, { withWorkTables = true } = {}) {
       '',
     ].join('\n'));
   } else {
+    // Absent from the start means no work records at all, the way every
+    // fixture looked before generated modules were checked into the repo.
+    stripGeneratedModules(root, ['work-task', 'work-activity']);
     writeFileSync(join(root, 'packages/actions/generated/index.js'),
       ['// @ts-check', 'export const generatedActions = [];', ''].join('\n'));
   }
@@ -222,7 +227,8 @@ test('the host Lead path without the work records names the edge instead of a ba
     join(root, 'examples/starters/b2b-lead-qualification/lead.module.json'), '--apply', '--root', root,
   ], { encoding: 'utf8', cwd: root });
   assert.equal(applied.status, 0, applied.stderr);
-  // The host consumer, with NEITHER work record applied and no work package.
+  // The host consumer, with NEITHER work record present and no work package.
+  stripGeneratedModules(root, ['work-task', 'work-activity']);
   writeFileSync(join(root, 'packages/actions/generated/index.js'), [
     "import { qualifyLead } from '../../../examples/starters/b2b-lead-qualification/actions/qualify.js';",
     'export const generatedActions = [qualifyLead];',

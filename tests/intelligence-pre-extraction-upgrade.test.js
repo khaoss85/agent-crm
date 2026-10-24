@@ -5,6 +5,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const FIXTURE = join(repoRoot, 'tests/fixtures/pre-extraction-m9.sql');
@@ -59,6 +60,7 @@ function project(t) {
     '../../../packages/work/modules/work-task.module.json',
     '../../../packages/work/modules/work-activity.module.json',
   ]) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = cli(['module', 'create', join(starter, manifest), '--apply']);
     assert.equal(applied.status, 0, `${manifest}: ${applied.stderr}`);
   }
