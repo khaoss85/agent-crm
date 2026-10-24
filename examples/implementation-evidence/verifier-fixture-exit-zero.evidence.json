@@ -1,8 +1,8 @@
 {
   "implementationEvidenceContract": 1,
   "plan": "examples/solution-plans/verifier-fixture-exit-zero.plan.json",
-  "planFingerprint": "f3efd25f6bab22a9ca7b4a2eeb6068988599cf4aeca60077647943bb1a0d71db",
-  "applicationInspectionFingerprint": "a0fe492e62b30863d7cba7f82beb08fbae1cd05d46673cf6a1a458f7bd5a4771",
+  "planFingerprint": "411444f5961704acf2514f0978a7c7e11aff2d80061c9380e770ac3d3eb29cc5",
+  "applicationInspectionFingerprint": "544920495251f2468b2f5c6fcdec656f1bb3fff09b84c8f161465a3f29a55ad6",
   "requirements": [
     {
       "requirementId": "step:step.activate-coverage-from-what-was-bought",

@@ -1,0 +1,74 @@
+{
+  "stateVersion": 2,
+  "module": "space-permission-override",
+  "revision": 1,
+  "fingerprint": "4cf21771c435e10a863f681eb1fb01157e1edd7b8c307d7287447eb30dea7688",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "space-permission-override",
+    "description": "One flipped AI switch of one space: which of the five permissions this space set explicitly, who flipped it and when. A space with no rows runs on the package defaults. Keyed by opaque control-plane space id; no spaces table exists in this package.",
+    "table": "space_permission_overrides",
+    "fields": [
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "space_id",
+        "writable": "managed"
+      },
+      {
+        "name": "scopeKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "scope_key",
+        "writable": "managed"
+      },
+      {
+        "name": "permission",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "permission",
+        "writable": "managed"
+      },
+      {
+        "name": "enabled",
+        "type": "boolean",
+        "required": false,
+        "unique": false,
+        "column": "enabled",
+        "writable": "managed"
+      },
+      {
+        "name": "updatedBy",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "updated_by",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_space_permission_overrides",
+      "checksum": "162686fdf7779342733fcfe0e921e223f11ee22906f76bbc4411f4341745c45b",
+      "sql": "CREATE TABLE IF NOT EXISTS space_permission_overrides (\n  id TEXT PRIMARY KEY,\n  space_id TEXT,\n  scope_key TEXT UNIQUE,\n  permission TEXT,\n  enabled INTEGER CHECK(enabled IN (0, 1)),\n  updated_by TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_space_permission_overrides",
+      "checksum": "a34bf6b440900c52f149b72a36164fc6d280dbdc1e8b85ccf121d0466d453f41",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"space_permission_overrides\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"space_id\" TEXT,\n  \"scope_key\" TEXT UNIQUE,\n  \"permission\" TEXT,\n  \"enabled\" BOOLEAN,\n  \"updated_by\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "4cf21771c435e10a863f681eb1fb01157e1edd7b8c307d7287447eb30dea7688"
+      }
+    },
+    "evolutions": []
+  }
+}

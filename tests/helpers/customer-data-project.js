@@ -2,9 +2,9 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -53,14 +53,19 @@ export function project(t, options = {}) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
 
-  for (const manifest of CUSTOMER_DATA_MANIFESTS) {
-    const applied = cli(root, ['module', 'create', join(root, 'packages/customer-data/modules', manifest), '--apply']);
+  // Idempotent fixture: generated record modules are checked into the repo, so
+  // the temp copy may already contain the module a manifest would create.
+  const applyUnlessPresent = (manifestDir, manifest) => {
+    if (existsSync(join(root, 'packages/modules', basename(manifest, '.module.json')))) return;
+    const applied = cli(root, ['module', 'create', join(root, manifestDir, manifest), '--apply']);
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
+  };
+  for (const manifest of CUSTOMER_DATA_MANIFESTS) {
+    applyUnlessPresent('packages/customer-data/modules', manifest);
   }
   if (options.withCommercial) {
     for (const manifest of COMMERCIAL_MANIFESTS) {
-      const applied = cli(root, ['module', 'create', join(root, 'packages/commercial/modules', manifest), '--apply']);
-      assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
+      applyUnlessPresent('packages/commercial/modules', manifest);
     }
   }
 

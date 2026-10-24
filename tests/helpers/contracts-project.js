@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /**
@@ -122,6 +122,14 @@ export function project(t, {
   }
   const starter = join(root, 'examples/starters/b2b-lead-qualification');
   const apply = (manifestPath) => {
+    // Idempotent fixture: generated record modules are checked into the repo,
+    // so the temp copy may already contain the module this manifest would
+    // create. Skipping the re-apply keeps the same end state (module present)
+    // without tripping module:create's refuse-to-overwrite guard.
+    const alreadyThere = existsSync(
+      join(root, 'packages/modules', basename(manifestPath, '.module.json')),
+    );
+    if (alreadyThere) return;
     const result = spawnSync(
       process.execPath,
       ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create', manifestPath, '--apply', '--root', root],

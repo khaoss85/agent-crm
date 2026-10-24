@@ -6,6 +6,7 @@ import { buildChannelConnectionActions } from '../packages/channels/src/index.js
 import { connectionSecretRef } from '../packages/channels/src/connection.js';
 import { createHttpServer } from '../apps/server/src/index.js';
 import { boot, project } from './helpers/customer-data-project.js';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 /**
  * Backoffice BO-F1-02 — collegare un connettore in 3 passi.
@@ -40,6 +41,7 @@ async function scene(t, tag) {
   const root = project(t, {});
   const { spawnSync } = await import('node:child_process');
   for (const manifest of CHANNEL_MANIFESTS) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = spawnSync(process.execPath,
       ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'),
         'module', 'create', join(root, 'packages/channels/modules', manifest), '--apply',

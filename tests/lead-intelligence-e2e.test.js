@@ -5,6 +5,7 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -33,6 +34,7 @@ function project(t, { enrichTimeoutMs } = {}) {
     'route-evaluation.module.json',
     'assignment.module.json',
   ]) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const from = [
     'lead.module.json',
     // Work v1 (ADR-030): the starter's bespoke `task` module is gone and its

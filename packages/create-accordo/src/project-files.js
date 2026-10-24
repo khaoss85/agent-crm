@@ -4,7 +4,7 @@
  * The files a project bootstrap writes itself, as opposed to the framework
  * source it copies.
  *
- * There are ten of them and none contains a business guess. No Company field,
+ * There are eleven of them and none contains a business guess. No Company field,
  * no pipeline stage, no policy threshold, no sample record: a generated domain
  * model is a claim about a business nobody has described, and an agent reads
  * generated code as a decision already taken. What the project gets instead is
@@ -18,6 +18,9 @@
  */
 
 /**
+ * Exported for the packaging regression: the generated project must carry
+ * exactly this reset, byte for byte.
+ *
  * @param {{name: string}} params
  * @returns {{relativePath: string, content: string}[]}
  */
@@ -33,7 +36,44 @@ export function projectFiles({ name }) {
     { relativePath: 'scripts/check.js', content: checkScript() },
     { relativePath: 'scripts/smoke.js', content: smokeScript(name) },
     { relativePath: 'tests/project.test.js', content: projectTest(name) },
+    // The framework repository itself ships a composed reference application,
+    // so the bootstrap resets the one copied file that names packages: a new
+    // project starts with the kernel only, exactly as the framework's own
+    // composition file documents.
+    { relativePath: 'packages/domains/generated/index.js', content: emptyDomainsIndex() },
   ];
+}
+
+/**
+ * The empty composition a new project starts from. The framework repository
+ * ships `packages/domains/generated/index.js` with its reference CRM
+ * composed; the bootstrap overwrites the copied file with this, so a project
+ * never arrives carrying somebody else's domain model — composing is one
+ * line a human adds deliberately, which is the framework's security model.
+ */
+export function emptyDomainsIndex() {
+  return `// @ts-check
+
+/**
+ * Checked-in registry of optional domain packages (ADR-018 addendum).
+ *
+ * A domain package owns its records, actions and versioned policies and is
+ * registered here by static import — the same code-first pattern used for
+ * actions, pipelines, intelligence, commercial and signature. Empty in a new
+ * project: write the imports this business wants.
+ *
+ * The kernel never imports a domain package; composition happens only here.
+ * Removing a line here removes the whole domain, and the application must
+ * keep working without it.
+ *
+ * Example:
+ *
+ *   import { createContractsDomain } from '../../contracts/src/index.js';
+ *   export const generatedDomains = [createContractsDomain()];
+ */
+
+export const generatedDomains = [];
+`;
 }
 
 /**

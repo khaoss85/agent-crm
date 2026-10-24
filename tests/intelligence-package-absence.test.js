@@ -5,6 +5,7 @@ import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -99,6 +100,7 @@ function project(t) {
     '../../../packages/work/modules/work-task.module.json',
     '../../../packages/work/modules/work-activity.module.json',
   ]) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     assert.equal(cli(root, ['module', 'create', join(starter, manifest), '--apply']).status, 0, manifest);
   }
   for (const manifest of MANIFESTS) {

@@ -10,6 +10,7 @@ import { boot } from './helpers/contracts-project.js';
 import { assertPackageConforms } from './helpers/package-conformance.js';
 import { createInteractionsPackage } from '../packages/interactions/src/index.js';
 import { NotFoundError } from '../packages/core/index.js';
+import { moduleAlreadyPresent, stripGeneratedModules } from './helpers/apply-module.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -40,14 +41,20 @@ function project(t, { withWork = true, withProbe = false, interactionManifests =
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
   for (const manifest of interactionManifests) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = cli(root, ['module', 'create', join(root, 'packages/interactions/modules', manifest), '--apply']);
     assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
   }
   if (withWork) {
     for (const manifest of WORK_MANIFESTS) {
+      if (moduleAlreadyPresent(root, manifest)) continue;
       const applied = cli(root, ['module', 'create', join(root, 'packages/work/modules', manifest), '--apply']);
       assert.equal(applied.status, 0, `apply ${manifest}: ${applied.stderr}`);
     }
+  } else {
+    // Without the work package the records must be genuinely absent, the way
+    // they were before generated modules were checked into the repo.
+    stripGeneratedModules(root, ['work-task', 'work-activity']);
   }
   writeFileSync(join(root, 'packages/actions/generated/index.js'), 'export const generatedActions = [];\n');
   writeFileSync(join(root, 'packages/domains/generated/index.js'), [

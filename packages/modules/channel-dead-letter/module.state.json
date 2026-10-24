@@ -1,0 +1,162 @@
+{
+  "stateVersion": 2,
+  "module": "channel-dead-letter",
+  "revision": 1,
+  "fingerprint": "60c406b19a3f33f2abcba5c41160cd0fd7cb43c620a1b9360d89920318ced9bd",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "channel-dead-letter",
+    "description": "Failure inventory for channel sends that exhausted their bounded attempts (backlog:e5532d1c9146). Carries the phase, the normalized error code and the payload fingerprint — never the raw payload and never a secret. A human or an explicit requeue retries it; silent infinite retry is forbidden.",
+    "table": "channel_dead_letters",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "space_id",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "connectionKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "connection_key",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "idempotencyKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "idempotency_key",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "jobId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "job_id",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "phase",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "phase",
+        "writable": "managed",
+        "values": [
+          "send"
+        ],
+        "classification": "non-personal"
+      },
+      {
+        "name": "errorCode",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "error_code",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "payloadFingerprint",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "payload_fingerprint",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "attempts",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "attempts",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "firstFailedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "first_failed_at",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "lastFailedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "last_failed_at",
+        "writable": "managed",
+        "classification": "non-personal"
+      },
+      {
+        "name": "state",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "state",
+        "writable": "managed",
+        "values": [
+          "open",
+          "requeued",
+          "resolved"
+        ],
+        "classification": "non-personal"
+      },
+      {
+        "name": "stateReason",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "state_reason",
+        "writable": "managed",
+        "classification": "non-personal"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_channel_dead_letters",
+      "checksum": "60072cdc325757761651dced3c916f8d0222536e07a7312013a0a2b2b36f593c",
+      "sql": "CREATE TABLE IF NOT EXISTS channel_dead_letters (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  connection_key TEXT,\n  idempotency_key TEXT,\n  job_id TEXT,\n  phase TEXT CHECK(phase IN ('send')),\n  error_code TEXT,\n  payload_fingerprint TEXT,\n  attempts INTEGER,\n  first_failed_at TEXT,\n  last_failed_at TEXT,\n  state TEXT CHECK(state IN ('open', 'requeued', 'resolved')),\n  state_reason TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS channel_dead_letters_space_id ON channel_dead_letters(space_id);\nCREATE INDEX IF NOT EXISTS channel_dead_letters_connection_key ON channel_dead_letters(connection_key);\nCREATE INDEX IF NOT EXISTS channel_dead_letters_idempotency_key ON channel_dead_letters(idempotency_key);\nCREATE INDEX IF NOT EXISTS channel_dead_letters_state ON channel_dead_letters(state);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_channel_dead_letters",
+      "checksum": "a9181f22c8cda1fb7a9437fb3e613fa97e6a950e77247ae1e8b801dc819bd158",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"channel_dead_letters\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"space_id\" TEXT,\n  \"connection_key\" TEXT,\n  \"idempotency_key\" TEXT,\n  \"job_id\" TEXT,\n  \"phase\" TEXT CHECK(\"phase\" IN ('send')),\n  \"error_code\" TEXT,\n  \"payload_fingerprint\" TEXT,\n  \"attempts\" BIGINT,\n  \"first_failed_at\" TIMESTAMPTZ,\n  \"last_failed_at\" TIMESTAMPTZ,\n  \"state\" TEXT CHECK(\"state\" IN ('open', 'requeued', 'resolved')),\n  \"state_reason\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"channel_dead_letters_space_id\"\n  ON \"accordo\".\"channel_dead_letters\"(\"space_id\");\n\nCREATE INDEX \"channel_dead_letters_connection_key\"\n  ON \"accordo\".\"channel_dead_letters\"(\"connection_key\");\n\nCREATE INDEX \"channel_dead_letters_idempotency_key\"\n  ON \"accordo\".\"channel_dead_letters\"(\"idempotency_key\");\n\nCREATE INDEX \"channel_dead_letters_state\"\n  ON \"accordo\".\"channel_dead_letters\"(\"state\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "60c406b19a3f33f2abcba5c41160cd0fd7cb43c620a1b9360d89920318ced9bd"
+      }
+    },
+    "evolutions": []
+  }
+}

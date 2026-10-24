@@ -5,6 +5,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -25,6 +26,7 @@ function project(t) {
   const starter = join(root, 'examples/starters/b2b-lead-qualification');
   assert.equal(cli(root, ['module', 'create', join(starter, 'lead.module.json'), '--apply']).status, 0, 'apply lead');
   for (const manifest of ['work-task.module.json', 'work-activity.module.json']) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     assert.equal(
       cli(root, ['module', 'create', join(root, 'packages/work/modules', manifest), '--apply']).status,
       0, `apply ${manifest}`,

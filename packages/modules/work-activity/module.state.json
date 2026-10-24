@@ -1,0 +1,146 @@
+{
+  "stateVersion": 2,
+  "module": "work-activity",
+  "revision": 2,
+  "fingerprint": "15aed7318556b43ebee90e238fc0cbf7328d463812311fdeb61cbaf9f00bdc66",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 2,
+    "name": "work-activity",
+    "description": "An append-only, user-facing entry on a subject's work timeline. Its vocabulary is closed -- task_created, task_completed, task_cancelled, note -- and it is written only inside the transaction of the action that caused it. It is NOT a projection of the audit log: audit and trace stay the technical record of every write, and this is the curated semantic one. It stores no provider payload, no attachment, no email body and no chat message; the only free text is a bounded, control-character-free note body. taskId is a plain indexed string rather than a reference field because managed fields cannot be references, and because a timeline entry must survive being read beside a subject the database cannot join to.",
+    "table": "work_activities",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "kind",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "kind",
+        "writable": "managed",
+        "values": [
+          "task_created",
+          "task_completed",
+          "task_cancelled",
+          "note"
+        ]
+      },
+      {
+        "name": "subjectResource",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "subject_resource",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "subject_id",
+        "writable": "managed"
+      },
+      {
+        "name": "taskId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "task_id",
+        "writable": "managed"
+      },
+      {
+        "name": "body",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "body",
+        "writable": "managed"
+      },
+      {
+        "name": "occurredAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "occurred_at",
+        "writable": "managed"
+      },
+      {
+        "name": "actorType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "actor_type",
+        "writable": "managed",
+        "values": [
+          "user",
+          "agent",
+          "system"
+        ]
+      },
+      {
+        "name": "actorId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "actor_id",
+        "writable": "managed"
+      },
+      {
+        "name": "sourcePackage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "source_package",
+        "writable": "managed"
+      },
+      {
+        "name": "sourceAction",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "source_action",
+        "writable": "managed"
+      },
+      {
+        "name": "seq",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "seq",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_work_activities",
+      "checksum": "42270f60cda19a00a619e349b9139484d6f7422dfb530806a253b6cb020d0fe2",
+      "sql": "CREATE TABLE IF NOT EXISTS work_activities (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  kind TEXT CHECK(kind IN ('task_created', 'task_completed', 'task_cancelled', 'note')),\n  subject_resource TEXT,\n  subject_id TEXT,\n  task_id TEXT,\n  body TEXT,\n  occurred_at TEXT,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  source_package TEXT,\n  source_action TEXT,\n  seq INTEGER,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS work_activities_kind ON work_activities(kind);\nCREATE INDEX IF NOT EXISTS work_activities_subject_resource ON work_activities(subject_resource);\nCREATE INDEX IF NOT EXISTS work_activities_subject_id ON work_activities(subject_id);\nCREATE INDEX IF NOT EXISTS work_activities_task_id ON work_activities(task_id);\nCREATE INDEX IF NOT EXISTS work_activities_source_package ON work_activities(source_package);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_work_activities",
+      "checksum": "105d69c5ce69c1f200ed4317d33112f5f3d3be9bc4bc79520100518e64279895",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"work_activities\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"kind\" TEXT CHECK(\"kind\" IN ('task_created', 'task_completed', 'task_cancelled', 'note')),\n  \"subject_resource\" TEXT,\n  \"subject_id\" TEXT,\n  \"task_id\" TEXT,\n  \"body\" TEXT,\n  \"occurred_at\" TIMESTAMPTZ,\n  \"actor_type\" TEXT CHECK(\"actor_type\" IN ('user', 'agent', 'system')),\n  \"actor_id\" TEXT,\n  \"source_package\" TEXT,\n  \"source_action\" TEXT,\n  \"seq\" BIGINT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"work_activities_kind\"\n  ON \"accordo\".\"work_activities\"(\"kind\");\n\nCREATE INDEX \"work_activities_subject_resource\"\n  ON \"accordo\".\"work_activities\"(\"subject_resource\");\n\nCREATE INDEX \"work_activities_subject_id\"\n  ON \"accordo\".\"work_activities\"(\"subject_id\");\n\nCREATE INDEX \"work_activities_task_id\"\n  ON \"accordo\".\"work_activities\"(\"task_id\");\n\nCREATE INDEX \"work_activities_source_package\"\n  ON \"accordo\".\"work_activities\"(\"source_package\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "15aed7318556b43ebee90e238fc0cbf7328d463812311fdeb61cbaf9f00bdc66"
+      }
+    },
+    "evolutions": []
+  }
+}

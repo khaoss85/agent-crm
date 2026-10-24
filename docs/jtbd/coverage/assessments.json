@@ -7,7 +7,7 @@
    "jtbdId": "ACC-JTBD-CRM-ADMIN-003",
    "jobName": "Configurare entità, campi, relazioni e layout",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "4ffefde81d3e33a42ec0e60888489845a2f7acf5",
+   "verifiedAtSha": "301ba286d9d40e2f2d722472a42b3fadcc2651cf",
    "evidence": [
     {
      "kind": "TEST",
@@ -19,7 +19,7 @@
      "kind": "TEST",
      "path": "tests/generated-api-e2e.test.js",
      "claim": "the generated module is reachable over the real HTTP API and the SDK, and appears in /api/schema",
-     "sha256": "51b5aa9ea45961f0f3ec0e59d846492d2749065776ae82f43feb2e7ae93347da"
+     "sha256": "7363e10e0265e535ea5007041e75873c1f73c69c195a8af49f6700208f1bccc7"
     },
     {
      "kind": "TEST",
@@ -50,7 +50,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-008",
    "jobName": "Instradare approvazioni",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "4ffefde81d3e33a42ec0e60888489845a2f7acf5",
+   "verifiedAtSha": "301ba286d9d40e2f2d722472a42b3fadcc2651cf",
    "evidence": [
     {
      "kind": "TEST",
@@ -88,7 +88,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-009",
    "jobName": "Generare quote e documenti",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "4ffefde81d3e33a42ec0e60888489845a2f7acf5",
+   "verifiedAtSha": "301ba286d9d40e2f2d722472a42b3fadcc2651cf",
    "evidence": [
     {
      "kind": "TEST",
@@ -124,7 +124,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-012",
    "jobName": "Portare contratto a firma e close",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "4ffefde81d3e33a42ec0e60888489845a2f7acf5",
+   "verifiedAtSha": "301ba286d9d40e2f2d722472a42b3fadcc2651cf",
    "evidence": [
     {
      "kind": "TEST",
@@ -154,13 +154,13 @@
    "jtbdId": "ACC-JTBD-DATA-SCI-005",
    "jobName": "Costruire lead e account scoring",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "4ffefde81d3e33a42ec0e60888489845a2f7acf5",
+   "verifiedAtSha": "301ba286d9d40e2f2d722472a42b3fadcc2651cf",
    "evidence": [
     {
      "kind": "TEST",
      "path": "tests/lead-intelligence-e2e.test.js",
      "claim": "a versioned scoring model produces a ScoreRun with per-rule contributions, reproducible for identical inputs and clamped to declared bounds",
-     "sha256": "619ab3a1afe810e1e3115715aab39a0dfd5669a9f35a24cd1c06de3f4d102eba"
+     "sha256": "e6a3cc35cbc0363830886090475d9ea9bb14ae2f097393d6683c97ee516ec6f0"
     },
     {
      "kind": "TEST",

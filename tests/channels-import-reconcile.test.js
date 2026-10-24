@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { buildChannelConnectionActions } from '../packages/channels/src/index.js';
 import { boot, project } from './helpers/customer-data-project.js';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 /**
  * Initial history import against the real reconciliation path
@@ -40,6 +41,7 @@ async function scene(t, tag) {
   const root = project(t, {});
   const { spawnSync } = await import('node:child_process');
   for (const manifest of CHANNEL_MANIFESTS) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = spawnSync(process.execPath,
       ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'),
         'module', 'create', join(root, 'packages/channels/modules', manifest), '--apply',

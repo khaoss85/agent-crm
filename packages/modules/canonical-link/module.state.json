@@ -1,0 +1,183 @@
+{
+  "stateVersion": 2,
+  "module": "canonical-link",
+  "revision": 1,
+  "fingerprint": "2f9d7d33dd74e34435695c115798671d6a03255d5452f71fd1d65a6f3bbd0b40",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "canonical-link",
+    "description": "One member of a canonical identity cluster, recorded by a human decision. This is a LOGICAL canonical merge - a link, not a deletion: every source record survives untouched, every reference to it keeps resolving, and no field of any other package is rewritten. Physical consolidation is deliberately not part of this milestone.",
+    "table": "canonical_links",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "clusterKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "cluster_key",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectResource",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "subject_resource",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "subject_id",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectOwner",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "subject_owner",
+        "writable": "managed",
+        "values": [
+          "host",
+          "package"
+        ]
+      },
+      {
+        "name": "subjectOwnerPackage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "subject_owner_package",
+        "writable": "managed"
+      },
+      {
+        "name": "subjectLabel",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "subject_label",
+        "writable": "managed"
+      },
+      {
+        "name": "role",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "role",
+        "writable": "managed",
+        "values": [
+          "canonical",
+          "alias"
+        ]
+      },
+      {
+        "name": "decisionId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "decision_id",
+        "writable": "managed"
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "reason",
+        "writable": "managed"
+      },
+      {
+        "name": "decidedByType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "decided_by_type",
+        "writable": "managed",
+        "values": [
+          "user"
+        ]
+      },
+      {
+        "name": "decidedById",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "decided_by_id",
+        "writable": "managed"
+      },
+      {
+        "name": "decidedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "decided_at",
+        "writable": "managed"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "status",
+        "writable": "managed",
+        "values": [
+          "active",
+          "withdrawn"
+        ]
+      },
+      {
+        "name": "withdrawnReason",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "withdrawn_reason",
+        "writable": "managed"
+      },
+      {
+        "name": "withdrawnAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "withdrawn_at",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_canonical_links",
+      "checksum": "e0f7d850e51c348a1dff2ac7569b3cfc73de2de8a9e3ab5b588d7974fb28927a",
+      "sql": "CREATE TABLE IF NOT EXISTS canonical_links (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  cluster_key TEXT,\n  subject_resource TEXT,\n  subject_id TEXT,\n  subject_owner TEXT CHECK(subject_owner IN ('host', 'package')),\n  subject_owner_package TEXT,\n  subject_label TEXT,\n  role TEXT CHECK(role IN ('canonical', 'alias')),\n  decision_id TEXT,\n  reason TEXT,\n  decided_by_type TEXT CHECK(decided_by_type IN ('user')),\n  decided_by_id TEXT,\n  decided_at TEXT,\n  status TEXT CHECK(status IN ('active', 'withdrawn')),\n  withdrawn_reason TEXT,\n  withdrawn_at TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS canonical_links_cluster_key ON canonical_links(cluster_key);\nCREATE INDEX IF NOT EXISTS canonical_links_subject_resource ON canonical_links(subject_resource);\nCREATE INDEX IF NOT EXISTS canonical_links_subject_id ON canonical_links(subject_id);\nCREATE INDEX IF NOT EXISTS canonical_links_role ON canonical_links(role);\nCREATE INDEX IF NOT EXISTS canonical_links_decision_id ON canonical_links(decision_id);\nCREATE INDEX IF NOT EXISTS canonical_links_status ON canonical_links(status);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_canonical_links",
+      "checksum": "1aabbe65c7ee0e8a5957f1d1b68cddf56b907c0eaa05c39d98045c0fe05a8013",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"canonical_links\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"cluster_key\" TEXT,\n  \"subject_resource\" TEXT,\n  \"subject_id\" TEXT,\n  \"subject_owner\" TEXT CHECK(\"subject_owner\" IN ('host', 'package')),\n  \"subject_owner_package\" TEXT,\n  \"subject_label\" TEXT,\n  \"role\" TEXT CHECK(\"role\" IN ('canonical', 'alias')),\n  \"decision_id\" TEXT,\n  \"reason\" TEXT,\n  \"decided_by_type\" TEXT CHECK(\"decided_by_type\" IN ('user')),\n  \"decided_by_id\" TEXT,\n  \"decided_at\" TIMESTAMPTZ,\n  \"status\" TEXT CHECK(\"status\" IN ('active', 'withdrawn')),\n  \"withdrawn_reason\" TEXT,\n  \"withdrawn_at\" TIMESTAMPTZ,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"canonical_links_cluster_key\"\n  ON \"accordo\".\"canonical_links\"(\"cluster_key\");\n\nCREATE INDEX \"canonical_links_subject_resource\"\n  ON \"accordo\".\"canonical_links\"(\"subject_resource\");\n\nCREATE INDEX \"canonical_links_subject_id\"\n  ON \"accordo\".\"canonical_links\"(\"subject_id\");\n\nCREATE INDEX \"canonical_links_role\"\n  ON \"accordo\".\"canonical_links\"(\"role\");\n\nCREATE INDEX \"canonical_links_decision_id\"\n  ON \"accordo\".\"canonical_links\"(\"decision_id\");\n\nCREATE INDEX \"canonical_links_status\"\n  ON \"accordo\".\"canonical_links\"(\"status\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "2f9d7d33dd74e34435695c115798671d6a03255d5452f71fd1d65a6f3bbd0b40"
+      }
+    },
+    "evolutions": []
+  }
+}

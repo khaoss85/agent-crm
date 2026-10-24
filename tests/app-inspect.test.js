@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspectApplication } from '../packages/cli/src/app-inspect.js';
+import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 /**
  * AX1 — deterministic application inspection.
@@ -120,7 +121,7 @@ test('a composed application is reported completely, and the report is the contr
   assert.equal(billing.packageContract, 1, 'package-contract version');
   assert.equal(billing.provides[0].version, 1, 'capability version');
   assert.equal(billing.provides[0].capabilityContract, 1, 'capability-contract version');
-  assert.equal(report.modules.find((entry) => entry.kind !== 'core')?.revision ?? null, null, 'no generated records in this fixture');
+  assert.equal(report.modules.find((entry) => entry.kind === 'package-owned') ?? null, null, 'neither fixture package brings records of its own');
 
   const capability = report.capabilities.find((entry) => entry.name === 'invoice-facts');
   assert.equal(capability.capabilityContract, 1);
@@ -633,6 +634,7 @@ test('the canonical Lead→Won objective is answered with what exists and what i
     '../../../packages/work/modules/work-activity.module.json',
   ].includes(manifest)
       ? starter : join(root, 'packages/intelligence/modules');
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const applied = spawnSync(process.execPath, ['--no-warnings', join(root, CLI), 'module', 'create', join(from, manifest), '--apply', '--root', root], { encoding: 'utf8', cwd: root });
     assert.equal(applied.status, 0, `${manifest}: ${applied.stderr}`);
   }
@@ -660,7 +662,7 @@ test('the canonical Lead→Won objective is answered with what exists and what i
   // invents a capability to fill it.
   for (const absent of [
     'touchpoint', 'campaign', 'audience', 'journey', 'experiment',
-    'attribution', 'funnel-step', 'channel-spend', 'data-quality-issue',
+    'attribution', 'funnel-step', 'channel-spend',
   ]) {
     assert.equal(resources.has(absent), false, `${absent} is not a resource this application has`);
     assert.equal(modules.has(absent), false, `${absent} is not a record this application has`);

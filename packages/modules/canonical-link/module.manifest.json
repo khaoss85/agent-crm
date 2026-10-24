@@ -1,0 +1,158 @@
+{
+  "manifestVersion": 1,
+  "revision": 1,
+  "name": "canonical-link",
+  "description": "One member of a canonical identity cluster, recorded by a human decision. This is a LOGICAL canonical merge - a link, not a deletion: every source record survives untouched, every reference to it keeps resolving, and no field of any other package is rewritten. Physical consolidation is deliberately not part of this milestone.",
+  "table": "canonical_links",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "required": false,
+      "unique": true,
+      "column": "source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "clusterKey",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "cluster_key",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectResource",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "subject_resource",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "subject_id",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwner",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "subject_owner",
+      "writable": "managed",
+      "values": [
+        "host",
+        "package"
+      ]
+    },
+    {
+      "name": "subjectOwnerPackage",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "subject_owner_package",
+      "writable": "managed"
+    },
+    {
+      "name": "subjectLabel",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "subject_label",
+      "writable": "managed"
+    },
+    {
+      "name": "role",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "role",
+      "writable": "managed",
+      "values": [
+        "canonical",
+        "alias"
+      ]
+    },
+    {
+      "name": "decisionId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "decision_id",
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "reason",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedByType",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "decided_by_type",
+      "writable": "managed",
+      "values": [
+        "user"
+      ]
+    },
+    {
+      "name": "decidedById",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "decided_by_id",
+      "writable": "managed"
+    },
+    {
+      "name": "decidedAt",
+      "type": "timestamp",
+      "required": false,
+      "unique": false,
+      "column": "decided_at",
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "status",
+      "writable": "managed",
+      "values": [
+        "active",
+        "withdrawn"
+      ]
+    },
+    {
+      "name": "withdrawnReason",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "withdrawn_reason",
+      "writable": "managed"
+    },
+    {
+      "name": "withdrawnAt",
+      "type": "timestamp",
+      "required": false,
+      "unique": false,
+      "column": "withdrawn_at",
+      "writable": "managed"
+    }
+  ]
+}

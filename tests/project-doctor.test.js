@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +36,7 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const cli = join(repoRoot, 'packages/cli/bin/accordo.js');
 
 /** A throwaway copy of this project: the doctor must never touch the original. */
-function project(t, { name = 'accordo-doctor-' } = {}) {
+function project(t, { name = 'accordo-doctor-', bareIndex = false, bareStates = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), name));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   // `site` carries the claims ledger that docs link to (docs/strategy/CATEGORY.md ->
@@ -44,6 +44,32 @@ function project(t, { name = 'accordo-doctor-' } = {}) {
   // called broken, over a link that resolves in the repository it was copied from.
   for (const entry of ['packages', 'apps', 'package.json', 'docs', 'examples', 'site']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
+  }
+  if (bareIndex) {
+    // The composition file is the ONLY place a project names its packages: an
+    // empty copy starts kernel-only, the way every copy looked before the
+    // reference CRM composition was checked into the repo.
+    writeFileSync(
+      join(root, 'packages/domains/generated/index.js'),
+      '// @ts-check\n\nexport const generatedDomains = [];\n',
+    );
+  }
+  if (bareStates) {
+    // The pre-generated-modules tree: the handwritten core records stay,
+    // every manifest-generated record module leaves the copy entirely
+    // (directory and registry entry), the way every copy looked before
+    // generated record modules were checked into the repo. Direct
+    // moduleChecks only — nothing here boots the copy.
+    for (const entry of readdirSync(join(root, 'packages/modules'))) {
+      if (entry === 'generated') continue;
+      if (!existsSync(join(root, 'packages/modules', entry, 'module.manifest.json'))) continue;
+      rmSync(join(root, 'packages/modules', entry), { recursive: true, force: true });
+    }
+    const indexPath = join(root, 'packages/modules/generated/index.js');
+    const kept = readFileSync(indexPath, 'utf8').split('\n').filter((line) =>
+      !line.includes('../') && !line.startsWith(`  { name: '`),
+    );
+    writeFileSync(indexPath, `${kept.join('\n')}`);
   }
   return root;
 }
@@ -272,7 +298,7 @@ test('an example import inside the composition file\'s own comment is not a comp
 });
 
 test('a project that composes nothing says so rather than grading directories', async (t) => {
-  const root = project(t);
+  const root = project(t, { bareIndex: true });
   const { exitCode, report } = await run(root);
   assert.equal(exitCode, 0);
   const boundary = byId(report, 'packages.source-boundary');
@@ -312,7 +338,7 @@ test('a hand-edited module state file is a failure, and module-evolution is the 
 });
 
 test('a tampered migration checksum is caught by module-evolution, not re-derived here', (t) => {
-  const root = project(t);
+  const root = project(t, { bareStates: true });
   const dir = join(root, 'packages/modules/company');
   mkdirSync(dir, { recursive: true });
   const manifest = { name: 'company', table: 'company', revision: 1, fields: [{ name: 'name', type: 'string', required: true }] };
@@ -344,7 +370,7 @@ test('a tampered migration checksum is caught by module-evolution, not re-derive
 });
 
 test('a module with no state file is not a failure', (t) => {
-  const root = project(t);
+  const root = project(t, { bareStates: true });
   const checks = moduleChecks({ rootDir: root });
   assert.equal(checks.find((entry) => entry.id === 'modules.state').status, 'passed');
   // Having no state file at all is the documented "predates the file" case.
