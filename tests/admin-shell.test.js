@@ -324,11 +324,12 @@ test('settings panel lists the four areas with honest availability', () => {
   }
   assert.ok(text.includes('2 cose da sistemare'));
   const links = mount.findAll('a');
-  // Personalizzazione (BO-F4-01, #323) and Catalogo prodotti (BO-F2-05) both
-  // link beside the Stato sync link, in area order.
-  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/customer-data']);
+  // Personalizzazione (BO-F4-01, #323), Catalogo prodotti (BO-F2-05) and
+  // Spazi e accessi (BO-F0-06) all link beside the Stato sync link, in area
+  // order.
+  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/customer-data', '#/spazi-accessi']);
   for (const link of links) link.dispatch('click', { preventDefault: () => {} });
-  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/customer-data']);
+  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/customer-data', '#/spazi-accessi']);
 
   const empty = createMount();
   renderSettingsPanel({ doc, mount: empty, fixCount: 0 });
@@ -344,15 +345,15 @@ test('Stato sync links only when the customer-data package is composed', () => {
   const doc = createFakeDocument();
   const off = createMount();
   renderSettingsPanel({ doc, mount: off, fixCount: 2, customerDataAvailable: false });
-  // Personalizzazione and Catalogo prodotti link; Stato sync stays an honest
-  // note until the customer-data package is composed.
-  assert.deepEqual(off.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo']);
+  // Personalizzazione, Catalogo prodotti and Spazi e accessi link; Stato sync
+  // stays an honest note until the customer-data package is composed.
+  assert.deepEqual(off.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi']);
   assert.ok(off.textContent.includes('Stato sync'));
   assert.ok(off.textContent.includes('non composto'));
 
   const implicit = createMount();
   renderSettingsPanel({ doc, mount: implicit, fixCount: 2 });
-  assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo']);
+  assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi']);
 });
 
 test('Stato sync row carries the real fix-count badge, absent at zero', () => {

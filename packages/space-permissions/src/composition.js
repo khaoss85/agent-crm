@@ -21,7 +21,7 @@
 import { AppError, ValidationError } from '../../core/index.js';
 import { checkSpaceId } from './permissions.js';
 import { escapeKeyPart } from './proposals.js';
-import { isUniqueConflict, requireIdentifiedActor } from './actions.js';
+import { buildSetPermissionAction, isUniqueConflict, requireIdentifiedActor } from './actions.js';
 
 /**
  * One activatable unit. Packages list the space-scoped record modules their
@@ -444,4 +444,46 @@ export function createSpacePackageOperations(context = {}) {
   }
 
   return Object.freeze({ activate, deactivate, preview });
+}
+
+/**
+ * The `set-space-ai-permission` composition operation (BO-F0-06, backoffice
+ * "08 Spazi e accessi"): the only HTTP-reachable flip path for the five AI
+ * switches of one space.
+ *
+ * It runs the SAME code as the `space-permission-override.set-permission`
+ * record action — same input checks, same human-only refusal, same
+ * create-on-first-flip with the same concurrent-winner retry — never a copy
+ * of it (MEM_ACC_REUSE). The action runtime's transaction, outbox and step
+ * collector stay on the record path; here the switch write is one atomic
+ * managed write, the unique `scopeKey` still serializes two concurrent first
+ * flips, and the actor still names the human in the row and the audit.
+ *
+ * @param {{modules?: any, database?: any}} context
+ */
+export function createSetSpaceAiPermissionOperation(context = {}) {
+  const modules = context?.modules;
+  const database = context?.database;
+  const action = buildSetPermissionAction();
+
+  /**
+   * @param {{spaceId?: unknown, permission?: unknown, enabled?: unknown, actor?: unknown}} params
+   */
+  async function setPermission(params) {
+    const record = params && typeof params === 'object' ? params : {};
+    const service = trusted(modules, 'space-permission-override', 'SPACE_PERMISSIONS_STORAGE_INVALID');
+    const run = () => action.execute({
+      input: { spaceId: record.spaceId, permission: record.permission, enabled: record.enabled },
+      actor: record.actor,
+      modules,
+      managed: (id, patch) => service.applyManaged(id, patch, { actor: record.actor }),
+      step: () => {},
+    });
+    if (database && typeof database.transactionAsync === 'function') {
+      return database.transactionAsync(run);
+    }
+    return run();
+  }
+
+  return Object.freeze({ set: setPermission });
 }
