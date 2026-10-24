@@ -609,6 +609,7 @@ test('a remapped customer-data composition serves the card through the provider 
     ['work', 'work-task.module.json'],
     ['work', 'work-activity.module.json'],
   ]) {
+    if (moduleAlreadyPresent(root, manifest)) continue;
     const step = spawnSync(process.execPath,
       ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create',
         join(root, 'packages', dir, 'modules', manifest), '--apply', '--root', root],

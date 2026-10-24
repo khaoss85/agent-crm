@@ -67,10 +67,12 @@ test('end-to-end: applied modules are served over HTTP and usable via client.mod
     // 3-4. Schema discovery: both generated modules with fields and capabilities.
     const schema = await fetch(`${instance.baseUrl}/api/schema`).then((response) => response.json());
     const generatedNames = schema.generatedModules.map((module) => module.name);
-    // The temp copy inherits the repo's checked-in generated modules; the two
-    // this test applies arrive last via CLI --apply.
-    assert.deepEqual(generatedNames.slice(-2), ['partner', 'supplier']);
-    const partnerSchema = schema.generatedModules[0];
+    // The temp copy inherits the repo's checked-in generated modules, so the
+    // list is no longer exactly the two this test applies — but both must be
+    // served with their fields and capabilities.
+    assert.ok(generatedNames.includes('partner') && generatedNames.includes('supplier'),
+      'both applied modules are served');
+    const partnerSchema = schema.generatedModules.find((module) => module.name === 'partner');
     assert.deepEqual(partnerSchema.capabilities, ['create', 'get', 'list', 'update']);
     assert.deepEqual(
       partnerSchema.fields.find((field) => field.name === 'tier').values,
@@ -194,7 +196,9 @@ test('end-to-end: applied modules are served over HTTP and usable via client.mod
     instance = await startServer();
     const clientAfter = new AccordoClient({ baseUrl: instance.baseUrl, actor: { type: 'agent', id: 'claude-code' } });
     const schemaAfter = await clientAfter.schema();
-    assert.deepEqual(schemaAfter.generatedModules.map((module) => module.name), ['partner', 'supplier']);
+    const namesAfter = schemaAfter.generatedModules.map((module) => module.name);
+    assert.ok(namesAfter.includes('partner') && namesAfter.includes('supplier'),
+      'both applied modules survive the restart');
     const survivors = await clientAfter.module('partner').list();
     assert.ok(survivors.items.some((item) => item.id === created.id && item.tier === 'platinum'), 'updated record lost across restart');
     assert.equal((await clientAfter.module('partner').get(created.id)).tier, 'platinum');
