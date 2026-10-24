@@ -7,7 +7,7 @@
    "jtbdId": "ACC-JTBD-CRM-ADMIN-003",
    "jobName": "Configurare entità, campi, relazioni e layout",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "a23d67c2c8e5c5602db2548e43da2a1e54d01421",
+   "verifiedAtSha": "4ffefde81d3e33a42ec0e60888489845a2f7acf5",
    "evidence": [
     {
      "kind": "TEST",
@@ -50,7 +50,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-008",
    "jobName": "Instradare approvazioni",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "a23d67c2c8e5c5602db2548e43da2a1e54d01421",
+   "verifiedAtSha": "4ffefde81d3e33a42ec0e60888489845a2f7acf5",
    "evidence": [
     {
      "kind": "TEST",
@@ -68,7 +68,7 @@
      "kind": "TEST",
      "path": "tests/commercial-e2e.test.js",
      "claim": "a discount above the versioned policy threshold requires a human decision before the quote version is approved",
-     "sha256": "d69b5bb2f0d8cfc946b2b1699281fa66a8043593f99ddd7972081067c3e5ca69"
+     "sha256": "91a06631d534c70729d191c2d52fabc3ef45929232037e14fcb0caffe294849d"
     }
    ],
    "factIds": [
@@ -88,19 +88,19 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-009",
    "jobName": "Generare quote e documenti",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "a23d67c2c8e5c5602db2548e43da2a1e54d01421",
+   "verifiedAtSha": "4ffefde81d3e33a42ec0e60888489845a2f7acf5",
    "evidence": [
     {
      "kind": "TEST",
      "path": "tests/commercial-e2e.test.js",
-     "claim": "a quote is priced on the server from a price book, frozen into an immutable Quote Version, and a discount is decided by a versioned policy with human approval",
-     "sha256": "d69b5bb2f0d8cfc946b2b1699281fa66a8043593f99ddd7972081067c3e5ca69"
+     "claim": "a quote is priced on the server from a price book, frozen into an immutable Quote Version, a discount is decided by a versioned policy with human approval, and later catalog movement never rewrites the frozen snapshot",
+     "sha256": "91a06631d534c70729d191c2d52fabc3ef45929232037e14fcb0caffe294849d"
     },
     {
      "kind": "TEST",
      "path": "tests/commercial-contract.test.js",
-     "claim": "the quote version snapshot is never rewritten by later movement in the catalog it was priced from",
-     "sha256": "8e4580403959107cea7008847bd74608f2ef670f8cc0070af3b87ba5b97310f9"
+     "claim": "commercial registries fingerprint transactionally with drift refusing re-registration; tier schedules validate ordered and gap-free; money arithmetic stays safe-integer only",
+     "sha256": "ebc9401106c252c11e6bbab928d93346c91fdf7dad26aeb616c7c5ca6652ca67"
     },
     {
      "kind": "TEST",
@@ -124,7 +124,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-012",
    "jobName": "Portare contratto a firma e close",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "a23d67c2c8e5c5602db2548e43da2a1e54d01421",
+   "verifiedAtSha": "4ffefde81d3e33a42ec0e60888489845a2f7acf5",
    "evidence": [
     {
      "kind": "TEST",
@@ -154,7 +154,7 @@
    "jtbdId": "ACC-JTBD-DATA-SCI-005",
    "jobName": "Costruire lead e account scoring",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "a23d67c2c8e5c5602db2548e43da2a1e54d01421",
+   "verifiedAtSha": "4ffefde81d3e33a42ec0e60888489845a2f7acf5",
    "evidence": [
     {
      "kind": "TEST",
