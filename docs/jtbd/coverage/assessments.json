@@ -93,13 +93,13 @@
     {
      "kind": "TEST",
      "path": "tests/commercial-e2e.test.js",
-     "claim": "a quote is priced on the server from a price book, frozen into an immutable Quote Version, and a discount is decided by a versioned policy with human approval",
+     "claim": "a quote is priced on the server from a price book, frozen into an immutable Quote Version, a discount is decided by a versioned policy with human approval, and later catalog movement never rewrites the frozen snapshot",
      "sha256": "91a06631d534c70729d191c2d52fabc3ef45929232037e14fcb0caffe294849d"
     },
     {
      "kind": "TEST",
      "path": "tests/commercial-contract.test.js",
-     "claim": "the quote version snapshot is never rewritten by later movement in the catalog it was priced from",
+     "claim": "commercial registries fingerprint transactionally with drift refusing re-registration; tier schedules validate ordered and gap-free; money arithmetic stays safe-integer only",
      "sha256": "ebc9401106c252c11e6bbab928d93346c91fdf7dad26aeb616c7c5ca6652ca67"
     },
     {
