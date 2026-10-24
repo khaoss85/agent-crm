@@ -37,9 +37,10 @@ import { projectFiles } from './project-files.js';
  * It reaches **no network**: nothing is fetched, downloaded, installed,
  * published or registered, and the framework's standing rule that nothing here
  * touches the network is the reason. It composes **no domain package** — the
- * generated `packages/domains/generated/index.js` is the empty one this
- * repository ships, because a project that arrives carrying somebody else's
- * Lead model is a guess about a business nobody described. It runs **no
+ * bootstrap overwrites the copied `packages/domains/generated/index.js` with
+ * the empty composition (the framework repository itself ships a composed
+ * reference application), because a project that arrives carrying somebody
+ * else's Lead model is a guess about a business nobody described. It runs **no
  * migration** and opens **no database**. And it publishes nothing to npm:
  * releasing a new version uses the separate staged-publication workflow.
  *

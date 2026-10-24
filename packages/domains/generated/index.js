@@ -5,8 +5,12 @@
  *
  * A domain package owns its records, actions and versioned policies and is
  * registered here by static import — the same code-first pattern used for
- * actions, pipelines, intelligence, commercial and signature. Empty in this
- * repository: a project (or a starter install) writes the imports it wants.
+ * actions, pipelines, intelligence, commercial and signature.
+ *
+ * This repository ships the reference CRM composition (customer-data,
+ * space-permissions, channels, sequences, work). A generated project starts
+ * empty instead: `create-accordo` overwrites this copied file with the empty
+ * composition, because composition is one line a human adds deliberately.
  *
  * The kernel never imports a domain package; composition happens only here.
  * Removing a line here removes the whole domain, and the application must

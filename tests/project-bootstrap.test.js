@@ -662,7 +662,7 @@ test('the text view leads with the refusal, not with files that were never writt
 
   // And the successful plan says plainly that it wrote nothing.
   const planned = render(planProjectBootstrap({ directory: join(workspace, 'fine'), cwd: workspace }).report);
-  assert.match(planned, /Files it would generate \(10\)/);
+  assert.match(planned, /Files it would generate \(11\)/);
   assert.match(planned, /Re-run without --dry-run/);
   assert.equal(planned.includes('Refused'), false);
 
