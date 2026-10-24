@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROWS, boot, project } from './helpers/customer-data-project.js';
+import { stripGeneratedModules } from './helpers/apply-module.js';
 
 /**
  * **Customer Data Foundation v1 (ADR-037), against a real composed app.**
@@ -41,8 +42,11 @@ async function refusal(promise) {
   }
 }
 
-async function scene(t, tag, options = {}) {
+async function scene(t, tag, options = {}, strip = []) {
   const root = project(t, options);
+  // Absence fixtures must genuinely lack the records — checked-in generated
+  // modules are present in every copy otherwise.
+  if (strip.length) stripGeneratedModules(root, strip);
   const context = await boot(root, join(root, 'data', `${tag}.sqlite`));
   t.after(() => context.close());
   return { root, ...context };
@@ -319,7 +323,7 @@ test('data-quality findings are explainable, and governing one never erases it',
 /* --------------------------------------------------------------- profile */
 
 test('the profile reads across packages, and absence is "not available" rather than empty', async (t) => {
-  const { app } = await scene(t, 'profile');
+  const { app } = await scene(t, 'profile', {}, ['work-task', 'work-activity']);
   await app.applyCustomerImport({ system: 'crm-export', rows: [ROWS.newContact], actor: ACTOR });
   const contact = app.database.raw.prepare('SELECT id FROM contacts LIMIT 1').get();
 
