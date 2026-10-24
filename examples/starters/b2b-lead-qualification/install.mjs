@@ -20,9 +20,9 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { sortTimeline } from '../../../packages/work/src/index.js';
 
@@ -1598,6 +1598,12 @@ try {
 
 /** @param {string} root @param {string} manifestPath */
 function applyModule(root, manifestPath) {
+  // Idempotent install step: generated record modules are checked into the
+  // repo, so the throwaway copy may already contain the module this manifest
+  // would create. Skipping the re-apply keeps the same end state without
+  // tripping module:create's refuse-to-overwrite guard (same rule as the
+  // copy+apply test fixtures in tests/helpers/apply-module.js).
+  if (existsSync(join(root, 'packages/modules', basename(manifestPath, '.module.json')))) return;
   const result = spawnSync(
     process.execPath,
     ['--no-warnings', join(root, 'packages/cli/bin/accordo.js'), 'module', 'create', manifestPath, '--apply', '--root', root],
