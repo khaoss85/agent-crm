@@ -1,13 +1,25 @@
 // @ts-check
 
 /**
- * BO-F0-06 Spazi e accessi (backlog:5872e92b): the flip route end to end.
+ * BO-F0-06 Spazi e accessi (backlog:5872e92b): the switch routes end to end.
  *
  * POST /api/space-permissions/set-permission flips one AI switch of one
  * space through the composed operation: a human user creates the override
- * row on the first flip and patches it after; anonymous, agent and unknown
- * inputs are refused with the action's own codes, and no refusal writes a
- * row. Real application and HTTP server over :memory:, like api.test.js.
+ * row on the first flip and patches it after; agent and bad inputs are
+ * refused with the action's own codes, and no refusal writes a row.
+ *
+ * GET /api/space-permissions/effective is the screen's only switch read: the
+ * generic records surface deliberately refuses `filter.spaceId` on the
+ * override module (index-backed filters only, ADR-008 addendum 2), so the
+ * screen scopes server-side here and never pages another space's rows.
+ *
+ * A missing header pair is NOT anonymous over HTTP in this composition: with
+ * no spine composed, the server's documented rule (requestIdentity) treats
+ * the legacy pair as an asserted local user, so every request below names
+ * its actor explicitly. True anonymity (actor null) is refused with
+ * SPACE_ACTOR_REQUIRED at the operation level, covered in
+ * tests/space-permissions.test.js. Real application and HTTP server over
+ * :memory:, like api.test.js.
  */
 
 import test from 'node:test';
@@ -31,54 +43,60 @@ async function started(t) {
   return base;
 }
 
+const userHeaders = { 'content-type': 'application/json', 'x-actor-type': 'user', 'x-actor-id': 'owner-1' };
+
+function headersFor(actor) {
+  return {
+    'content-type': 'application/json',
+    'x-actor-type': actor.type,
+    'x-actor-id': actor.id,
+  };
+}
+
 async function flip(base, body, actor) {
-  const headers = { 'content-type': 'application/json' };
-  if (actor) {
-    headers['x-actor-type'] = actor.type;
-    headers['x-actor-id'] = actor.id;
-  }
   const response = await fetch(`${base}/api/space-permissions/set-permission`, {
     method: 'POST',
-    headers,
+    headers: headersFor(actor),
     body: JSON.stringify(body),
   });
   const payload = await response.json();
   return { status: response.status, payload };
 }
 
-async function overrides(base, spaceId) {
+async function effective(base, spaceId) {
   const response = await fetch(
-    `${base}/api/modules/space-permission-override/records?filter.spaceId=${encodeURIComponent(spaceId)}`,
+    `${base}/api/space-permissions/effective?spaceId=${encodeURIComponent(spaceId)}`,
+    { headers: { ...userHeaders } },
   );
-  assert.equal(response.status, 200);
-  return (await response.json()).items;
+  const payload = await response.json();
+  return { status: response.status, payload };
 }
 
-test('a human flips a switch: first flip creates, second patches', async (t) => {
+test('a human flips a switch: first flip creates, second patches, the read follows', async (t) => {
   const base = await started(t);
   const user = { type: 'user', id: 'owner-1' };
   const first = await flip(base, { spaceId: 'spazio-1', permission: 'drafts', enabled: 'off' }, user);
   assert.equal(first.status, 200);
   assert.equal(first.payload.created, true);
   assert.equal(first.payload.enabled, false);
-  let rows = await overrides(base, 'spazio-1');
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].updatedBy, 'user:owner-1');
+
+  const read = await effective(base, 'spazio-1');
+  assert.equal(read.status, 200);
+  assert.equal(read.payload.spaceId, 'spazio-1');
+  assert.equal(read.payload.overrides.length, 1);
+  assert.equal(read.payload.resolved.drafts, false);
+  assert.equal(read.payload.resolved['send-without-approval'], false, 'untouched switches keep their defaults');
 
   const second = await flip(base, { spaceId: 'spazio-1', permission: 'drafts', enabled: 'on' }, user);
   assert.equal(second.status, 200);
   assert.equal(second.payload.created, false);
-  rows = await overrides(base, 'spazio-1');
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].enabled, true);
+  const reread = await effective(base, 'spazio-1');
+  assert.equal(reread.payload.overrides.length, 1);
+  assert.equal(reread.payload.resolved.drafts, true);
 });
 
-test('anonymous, agent and bad inputs are refused and write nothing', async (t) => {
+test('agent and bad inputs are refused and write nothing', async (t) => {
   const base = await started(t);
-  const anonymous = await flip(base, { spaceId: 'spazio-1', permission: 'drafts', enabled: 'off' }, null);
-  assert.equal(anonymous.status, 403);
-  assert.equal(anonymous.payload?.error?.code, 'SPACE_ACTOR_REQUIRED');
-
   const agent = await flip(
     base,
     { spaceId: 'spazio-1', permission: 'drafts', enabled: 'on' },
@@ -95,6 +113,14 @@ test('anonymous, agent and bad inputs are refused and write nothing', async (t) 
   assert.equal(unknown.status, 400);
   assert.equal(unknown.payload?.error?.code, 'SPACE_PERMISSION_UNKNOWN');
 
-  const rows = await overrides(base, 'spazio-1');
-  assert.equal(rows.length, 0, 'no refusal writes a row');
+  const read = await effective(base, 'spazio-1');
+  assert.equal(read.status, 200);
+  assert.equal(read.payload.overrides.length, 0, 'no refusal writes a row');
+  assert.equal(read.payload.resolved.drafts, true, 'defaults hold until a human flips');
+});
+
+test('the effective read refuses a shapeless space id', async (t) => {
+  const base = await started(t);
+  const read = await effective(base, '');
+  assert.equal(read.status, 400);
 });

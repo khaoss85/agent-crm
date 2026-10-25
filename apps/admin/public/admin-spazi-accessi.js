@@ -13,7 +13,9 @@
 // - reads: the shell spaces (injected, like every other view injects its
 //   space), GET /api/spine/context (my membership role), GET
 //   /api/spine/memberships (the team), GET
-//   /api/modules/space-permission-override/records (the flipped switches);
+//   /api/space-permissions/effective (the flipped switches, scoped
+//   server-side: the generic records surface cannot filter the override
+//   module by space, so the screen never pages it);
 // - writes: POST /api/spine/memberships (grant) and
 //   POST /api/spine/memberships/:subject/suspend (removal), the same store
 //   the Identity screen uses — grant names a reason, removal is two-step;
@@ -266,9 +268,9 @@ export function createSpaziAccessiView(deps) {
     }
     try {
       const answer = await client.request(
-        `/api/modules/space-permission-override/records?filter.spaceId=${encodeURIComponent(space)}`,
+        `/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`,
       );
-      const items = Array.isArray(answer?.items) ? answer.items : (Array.isArray(answer) ? answer : []);
+      const items = Array.isArray(answer?.overrides) ? answer.overrides : [];
       state.overrides = items;
     } catch (error) {
       const failure = errorOf(error);

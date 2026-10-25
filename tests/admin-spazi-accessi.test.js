@@ -64,9 +64,9 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
         members.splice(members.indexOf(found), 1);
         return { subject };
       }
-      if (path.startsWith('/api/modules/space-permission-override/records')) {
+      if (path.startsWith('/api/space-permissions/effective')) {
         if (fail.overrides) throw fail.overrides;
-        return { items: overrides.filter((row) => row.spaceId === SPACE) };
+        return { spaceId: SPACE, overrides: overrides.filter((row) => row.spaceId === SPACE) };
       }
       if (path === '/api/space-permissions/set-permission') {
         const found = overrides.find((row) => row.spaceId === body.spaceId && row.permission === body.permission);
@@ -258,7 +258,7 @@ test('a refused flip renders the server refusal and keeps the screen usable', as
     async request(path, options = {}) {
       if (path === '/api/spine/context') return { membership: { role: 'observer' }, roles: { observer: [] } };
       if (path === '/api/spine/memberships') return { items: [] };
-      if (path.startsWith('/api/modules/space-permission-override/records')) return { items: [] };
+      if (path.startsWith('/api/space-permissions/effective')) return { spaceId: 'spazio-1', overrides: [] };
       if (path === '/api/space-permissions/set-permission') {
         throw Object.assign(new Error('Flipping a space AI switch requires a human user actor'), { code: 'HUMAN_APPROVAL_REQUIRED' });
       }

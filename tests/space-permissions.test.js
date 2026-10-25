@@ -621,9 +621,9 @@ test('package definition composes: identity, resources, actions, capability', ()
   assert.equal(pkg.actions.length, 4);
   assert.equal(pkg.capabilities.length, 1);
   assert.equal(pkg.capabilities[0].name, 'space-permission-gate');
-  assert.equal(pkg.operations.length, 4);
+  assert.equal(pkg.operations.length, 5);
   assert.deepEqual(pkg.operations.map((entry) => entry.appMethod).sort(), [
-    'activateSpacePackage', 'deactivateSpacePackage', 'previewSpacePackage', 'setSpaceAiPermission',
+    'activateSpacePackage', 'deactivateSpacePackage', 'effectiveSpaceAiPermissions', 'previewSpacePackage', 'setSpaceAiPermission',
   ]);
   const meta = pkg.metadata();
   assert.ok(Array.isArray(meta.notModeled) && meta.notModeled.length > 0);
@@ -708,7 +708,36 @@ test('the set-permission operation refuses like the action: anonymous, agents, b
   );
   await assert.rejects(
     () => ops.set({ spaceId: SPACE_A, permission: 'drafts', enabled: 'maybe', actor: USER }),
-    (error) => error.field === 'enabled',
+    (error) => error.code === 'VALIDATION_ERROR' && error.details?.field === 'enabled',
   );
   assert.equal(stub.rows.length, 0, 'no refusal writes a row');
+});
+
+test('the effective operation resolves defaults, overrides and one space only', async () => {
+  const { createEffectiveSpaceAiPermissionsOperation } = await import('../packages/space-permissions/src/composition.js');
+  const stub = stubOperationModules();
+  stub.rows.push(
+    { id: 'row-1', spaceId: SPACE_A, scopeKey: `${SPACE_A}:drafts`, permission: 'drafts', enabled: false },
+    { id: 'row-2', spaceId: 'other-space', scopeKey: 'other-space:drafts', permission: 'drafts', enabled: false },
+  );
+  const ops = createEffectiveSpaceAiPermissionsOperation({ modules: stub.modules });
+  const answer = await ops.effective({ spaceId: SPACE_A });
+  assert.equal(answer.spaceId, SPACE_A);
+  assert.equal(answer.resolved.drafts, false, 'the flipped row wins over the default');
+  assert.equal(answer.resolved['send-without-approval'], false, 'an untouched switch keeps its default');
+  assert.equal(answer.resolved['move-offers'], true, 'an untouched switch keeps its default');
+  assert.ok(answer.overrides.every((row) => row.spaceId === SPACE_A), 'no row of another space leaves the server');
+  assert.deepEqual(Object.keys(answer.resolved).sort(), [
+    'book-appointments', 'drafts', 'merge-duplicates', 'move-offers', 'send-without-approval',
+  ]);
+});
+
+test('the effective operation refuses a shapeless space id', async () => {
+  const { createEffectiveSpaceAiPermissionsOperation } = await import('../packages/space-permissions/src/composition.js');
+  const stub = stubOperationModules();
+  const ops = createEffectiveSpaceAiPermissionsOperation({ modules: stub.modules });
+  await assert.rejects(
+    () => ops.effective({ spaceId: '' }),
+    (error) => error.code === 'VALIDATION_ERROR',
+  );
 });

@@ -19,7 +19,7 @@
  */
 
 import { AppError, ValidationError } from '../../core/index.js';
-import { checkSpaceId } from './permissions.js';
+import { checkSpaceId, resolveSpacePermissions } from './permissions.js';
 import { escapeKeyPart } from './proposals.js';
 import { buildSetPermissionAction, isUniqueConflict, requireIdentifiedActor } from './actions.js';
 
@@ -486,4 +486,47 @@ export function createSetSpaceAiPermissionOperation(context = {}) {
   }
 
   return Object.freeze({ set: setPermission });
+}
+
+/**
+ * The `effective-space-ai-permissions` composition operation (BO-F0-06,
+ * backoffice "08 Spazi e accessi"): the only HTTP-reachable read path for the
+ * five AI switches of one space.
+ *
+ * The generic `/api/modules/space-permission-override/records` surface cannot
+ * serve this screen: that module's `filterableFields` is deliberately
+ * index-backed only (ADR-008 addendum 2 — `id`, `scopeKey`), so a
+ * `filter.spaceId` read is refused instead of answered. This operation reads
+ * server-side with the store's own `listWhere({ spaceId })` — the same seam
+ * `preview` uses — and resolves the five effective values with
+ * `resolveSpacePermissions`, the same function the gate capability uses. No
+ * row of another space ever leaves the server: the read is scoped before it
+ * is shaped, so the browser cannot see what the operator must not see.
+ *
+ * @param {{modules?: any}} context
+ */
+export function createEffectiveSpaceAiPermissionsOperation(context = {}) {
+  const modules = context?.modules;
+
+  /**
+   * @param {{spaceId?: unknown}} params
+   */
+  async function effective(params) {
+    const record = params && typeof params === 'object' ? params : {};
+    const id = checkSpaceId(record.spaceId);
+    const service = trusted(modules, 'space-permission-override', 'SPACE_PERMISSIONS_STORAGE_INVALID');
+    const rows = await service.listWhere({ spaceId: id });
+    const list = Array.isArray(rows) ? rows : [];
+    return Object.freeze({
+      spaceId: id,
+      overrides: Object.freeze(list.map((row) => Object.freeze({
+        spaceId: row?.spaceId,
+        permission: row?.permission,
+        enabled: row?.enabled,
+      }))),
+      resolved: resolveSpacePermissions(id, list),
+    });
+  }
+
+  return Object.freeze({ effective });
 }

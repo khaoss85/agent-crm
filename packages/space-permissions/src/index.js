@@ -6,6 +6,7 @@ import { createSpacePermissionGateCapability } from './capability.js';
 import { SPACE_AI_PERMISSIONS } from './permissions.js';
 import {
   SPACE_PACKAGE_CATALOG,
+  createEffectiveSpaceAiPermissionsOperation,
   createSetSpaceAiPermissionOperation,
   createSpacePackageOperations,
 } from './composition.js';
@@ -120,6 +121,20 @@ export function createSpacePermissionsDomain(options = {}) {
       },
       {
         operationContract: 1,
+        name: 'effective-space-ai-permissions',
+        label: 'Effective space AI permissions',
+        appMethod: 'effectiveSpaceAiPermissions',
+        description: 'Read the five AI switches of one space with their effective values: the only HTTP-reachable read path (BO-F0-06). The generic records surface cannot filter this module by space, so this operation scopes server-side and resolves through the same defaults the gate uses.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'Opaque space id issued by the control plane.' },
+        ],
+        create(runtime) {
+          const ops = createEffectiveSpaceAiPermissionsOperation({ modules: runtime.modules });
+          return (params) => ops.effective(params);
+        },
+      },
+      {
+        operationContract: 1,
         name: 'set-space-ai-permission',
         label: 'Set space AI permission',
         appMethod: 'setSpaceAiPermission',
@@ -183,6 +198,7 @@ export { createSpacePermissionGateCapability } from './capability.js';
 export {
   SPACE_PACKAGE_CATALOG,
   compositionKeyFor,
+  createEffectiveSpaceAiPermissionsOperation,
   createSetSpaceAiPermissionOperation,
   createSpacePackageOperations,
   lookupSpacePackageUnit,
