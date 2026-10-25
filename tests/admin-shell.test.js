@@ -95,6 +95,29 @@ test('loadFixCount returns null (unknown) when a read fails — never 0-as-none'
   assert.equal(await loadFixCount(empty), 0);
 });
 
+test('a failed sync half of the badge logs its cause and keeps the quality count', async () => {
+  const client = {
+    async request(path) {
+      if (path.includes('data-quality-issue')) return { items: [{ status: 'open' }] };
+      if (path.includes('duplicate-candidate')) return { items: [] };
+      throw new Error('sync giù');
+    },
+  };
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+  try {
+    assert.equal(await loadFixCount(client, { spaceId: 'prova' }), 1);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0].includes('bo-shell sync count unreadable'));
+  assert.ok(warnings[0].includes('Error'));
+  assert.ok(warnings[0].includes('spaceId=prova'));
+  assert.ok(!warnings[0].includes('sync giù'));
+});
+
 test('⌘1/2/3 switch among the user spaces only', () => {
   const spaces = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
   assert.equal(resolveSpaceShortcut({ metaKey: true, key: '2' }, spaces), 'b');
@@ -326,12 +349,12 @@ test('settings panel lists the four areas with honest availability', () => {
   }
   assert.ok(text.includes('2 cose da sistemare'));
   const links = mount.findAll('a');
-  // Personalizzazione (BO-F4-01, #323), Catalogo prodotti (BO-F2-05) and
-  // Spazi e accessi (BO-F0-06) all link beside the Stato sync link, in area
+  // Personalizzazione (BO-F4-01, #323), Catalogo prodotti (BO-F2-05),
+  // Stato sync (BO-F1-03) and Spazi e accessi (BO-F0-06) all link, in area
   // order.
-  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/customer-data', '#/spazi-accessi']);
+  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi']);
   for (const link of links) link.dispatch('click', { preventDefault: () => {} });
-  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/customer-data', '#/spazi-accessi']);
+  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi']);
 
   const empty = createMount();
   renderSettingsPanel({ doc, mount: empty, fixCount: 0 });
@@ -343,7 +366,7 @@ test('settings panel lists the four areas with honest availability', () => {
   assert.ok(!unknown.textContent.includes('Niente da sistemare.'));
 });
 
-test('Stato sync links only when the customer-data package is composed', () => {
+test('Stato sync links its own screen once customer-data is composed', () => {
   const doc = createFakeDocument();
   const off = createMount();
   renderSettingsPanel({ doc, mount: off, fixCount: 2, customerDataAvailable: false });
@@ -356,6 +379,14 @@ test('Stato sync links only when the customer-data package is composed', () => {
   const implicit = createMount();
   renderSettingsPanel({ doc, mount: implicit, fixCount: 2 });
   assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi']);
+
+  const on = createMount();
+  renderSettingsPanel({ doc, mount: on, fixCount: 2, customerDataAvailable: true });
+  // With the package composed Stato sync links its own screen (BO-F1-03),
+  // in area order beside Spazi e accessi.
+  assert.deepEqual(on.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi']);
+  assert.ok(on.textContent.includes('Stato sync'));
+  assert.ok(!on.textContent.includes('non composto'));
 });
 
 test('Stato sync row carries the real fix-count badge, absent at zero', () => {
@@ -373,7 +404,7 @@ test('Stato sync row carries the real fix-count badge, absent at zero', () => {
   assert.ok(zero.textContent.includes('Niente da sistemare.'));
 
   const unknown = createMount();
-  renderSettingsPanel({ doc, mount: unknown, fixCount: null, customerDataAvailable: true });
+  renderSettingsPanel({ doc, mount: unknown, fixCount: null });
   assert.equal(unknown.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
 });
 

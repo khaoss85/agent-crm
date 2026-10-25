@@ -539,10 +539,10 @@ export function createConnectorsView(deps) {
       'I contatti che sembrano doppioni diventano proposte da decidere in Stato sync: nessuno viene unito da solo.'));
     const row = el(doc, 'p', undefined);
     const sync = el(doc, 'a', undefined, 'Vedi lo stato in Stato sync');
-    sync.setAttribute('href', '#/customer-data');
+    sync.setAttribute('href', '#/stato-sync');
     sync.addEventListener('click', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      navigate('#/customer-data');
+      navigate('#/stato-sync');
     });
     row.appendChild(sync);
     const close = el(doc, 'button', undefined, 'Chiudi');

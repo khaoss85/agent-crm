@@ -712,6 +712,70 @@ select.bo-spazi-input { flex: none; }
 }
 
 /*
+ * Stato sync (BO-F1-03): the indicator, the fix list, the channel table and
+ * the live feed. Same bordered-surface idiom as the shell and the clienti
+ * rows — no new visual identity, only authority tokens, never a literal
+ * colour. The cards stack in one column and the table scrolls inside its own
+ * card, so the page stays fluid under 700px with no page-level sideways scroll.
+ */
+.bo-sync { display: grid; gap: 18px; }
+.bo-sync h3 { margin: 6px 0 0; font-size: 15px; }
+.bo-sync-indicator {
+  display: flex; gap: 12px; align-items: flex-start;
+  border: 1px solid var(--line); background: var(--surface);
+  border-radius: 10px; padding: 12px 14px; min-width: 0;
+}
+.bo-sync-dot { flex: none; width: 12px; height: 12px; border-radius: 99px; margin-top: 4px; background: var(--muted); }
+.bo-sync-dot-ok { background: var(--accord); }
+.bo-sync-dot-fix { background: var(--human); }
+.bo-sync-dot-wait { background: var(--muted); }
+.bo-sync-indicator-text { display: grid; gap: 4px; min-width: 0; }
+.bo-sync-title { margin: 0; font-size: 15px; font-weight: 700; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.bo-sync-detail { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-sync-note { margin: 0; font-size: 13px; color: var(--muted); }
+.bo-sync-error { margin: 0; font-size: 13px; font-weight: 700; color: var(--danger); }
+.bo-sync-fixes { display: grid; gap: 10px; }
+.bo-sync-fix {
+  border: 1px solid var(--line); background: var(--surface);
+  border-radius: 10px; padding: 12px 14px; min-width: 0;
+}
+.bo-sync-fix-title { margin: 0 0 4px; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-sync-fix-detail { margin: 0 0 8px; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-sync-fix-action {
+  display: inline-block; font-size: 13px; font-weight: 700;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+  color: var(--ink); padding: 6px 12px; cursor: pointer; text-decoration: none;
+}
+.bo-sync-fix-action[disabled] { opacity: .45; cursor: default; }
+.bo-sync-tablewrap {
+  border: 1px solid var(--line); background: var(--surface);
+  border-radius: 10px; overflow-x: auto; max-width: 100%;
+}
+.bo-sync-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.bo-sync-table th, .bo-sync-table td {
+  text-align: left; vertical-align: top; padding: 9px 12px;
+  border-bottom: 1px solid var(--line); overflow-wrap: anywhere;
+}
+.bo-sync-table tr:last-child th, .bo-sync-table tr:last-child td { border-bottom: 0; }
+.bo-sync-table th { font-size: 11px; color: var(--dim); font-weight: 700; white-space: nowrap; }
+.bo-sync-table button {
+  font-size: 12px; font-weight: 700; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--surface); color: var(--ink);
+  padding: 5px 10px; cursor: pointer; white-space: nowrap;
+}
+.bo-sync-table button[disabled] { opacity: .45; cursor: default; }
+.bo-sync-muted { color: var(--muted); }
+.bo-sync-legend { margin: 0; font-size: 12px; color: var(--dim); }
+.bo-sync-feed { display: grid; gap: 6px; }
+.bo-sync-feed-line { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.bo-sync-feed-time { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-right: 8px; }
+
+@media (max-width: 700px) {
+  .bo-sync-indicator { align-items: flex-start; }
+  .bo-sync-title { font-size: 14px; }
+}
+
+/*
  * Product catalog (BO-F2-04 rules, BO-F2-05 table): the Stripe state, the
  * enforced price rules and one card per product with its offers. Same
  * authority tokens and radii as the rows above — no new visual identity.
