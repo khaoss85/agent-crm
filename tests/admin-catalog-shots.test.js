@@ -14,7 +14,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -120,6 +120,32 @@ function pngSize(file) {
   return { bytes: bytes.length, width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
+/**
+ * The browser must run WITHOUT blocking this process: the fixture server
+ * lives on the same event loop, so a synchronous spawn would starve it and
+ * the page could never load. Async spawn keeps the loop free to serve.
+ * @param {Array<string>} args
+ * @param {number} timeoutMs
+ */
+function runChromium(args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(CHROMIUM, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
+    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`chromium timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.on('error', (error) => { clearTimeout(timer); reject(error); });
+    child.on('close', (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr });
+    });
+  });
+}
+
 async function runBrowser({ width, height }) {
   const dir = new URL('../apps/admin/public/', import.meta.url);
   const server = createServer((req, res) => {
@@ -147,23 +173,29 @@ async function runBrowser({ width, height }) {
   const address = server.address();
   assert.ok(address && typeof address === 'object', 'the shot server listens');
   const port = address.port;
+  const page = `http://127.0.0.1:${port}/harness.html`;
+  // The browser reads the fixture from this process: prove the fixture
+  // serves before launching anything, so a browser-env failure can never
+  // disguise itself as a passing render.
+  const served = await fetch(page).then((response) => response.text());
+  assert.ok(served.includes('admin-catalog.js'), 'the harness serves the real view module');
   const out = join(mkdirTmp(), `catalog-${width}x${height}.png`);
   try {
-    const run = spawnSync(CHROMIUM, [
+    const run = await runChromium([
       '--headless',
       `--screenshot=${out}`,
       `--window-size=${width},${height}`,
       '--virtual-time-budget=8000',
       '--hide-scrollbars',
-      `http://127.0.0.1:${port}/harness.html`,
-    ], { encoding: 'utf8', timeout: 120000 });
+      page,
+    ], 120000);
     assert.equal(run.status, 0, `chromium exits 0 (stderr: ${(run.stderr ?? '').slice(-500)})`);
-    const dom = spawnSync(CHROMIUM, [
+    const dom = await runChromium([
       '--headless', '--dump-dom',
       `--window-size=${width},${height}`,
       '--virtual-time-budget=8000',
-      `http://127.0.0.1:${port}/harness.html`,
-    ], { encoding: 'utf8', timeout: 120000 });
+      page,
+    ], 120000);
     assert.equal(dom.status, 0, 'the probe run exits 0');
     return { out, dom: dom.stdout };
   } finally {
