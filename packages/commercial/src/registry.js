@@ -316,6 +316,22 @@ function legacyCatalogFingerprints(entry) {
   }));
 }
 
+/**
+ * The JSON-plain projection of a discount policy's tuning config for
+ * `/api/schema` readers. Plain objects survive with their data; anything
+ * else (absent, scalar, unserializable) reads null, never a function.
+ * @param {any} config
+ */
+export function serializableConfig(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
+  try {
+    const plain = JSON.parse(JSON.stringify(config));
+    return plain && typeof plain === 'object' && !Array.isArray(plain) ? plain : null;
+  } catch {
+    return null;
+  }
+}
+
 /** @param {any} definition */
 export function validateDiscountPolicy(definition) {
   assertIdentity('discount policy', definition);
@@ -500,6 +516,11 @@ export class CommercialRegistries {
           version: definition.version,
           label: definition.label ?? definition.name,
           fingerprint,
+          // Function-free tuning numbers only (same class as maxDiscountBps
+          // above): the backoffice price-rules section reads the live bands
+          // from here. The JSON round-trip drops anything non-serializable
+          // (functions stay server-side); anything unserializable reads null.
+          config: serializableConfig(definition.config),
         })),
     };
   }
