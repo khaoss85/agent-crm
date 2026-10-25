@@ -276,3 +276,88 @@ test('propose plans, confirm books: nothing is written before Conferma', async (
   assert.equal(payload(confirms[0]).confirmed, true);
   assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
 });
+
+test('late-evening wall times book the same Rome day, never tomorrow', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  const form = byName();
+  form.customerId.value = 'c1';
+  form.teamMemberId.value = 'marco';
+  form.serviceKey.value = 'taglio';
+  form.date.value = '2026-10-22';
+  form.start.value = '23:00';
+  form.end.value = '23:30';
+  clickButton(mount, 'Proponi');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  // 23:00 Rome on Oct 22 (summer, +2) is 21:00Z the same day — not Oct 23.
+  assert.equal(payload(proposes[0]).startsAt, '2026-10-22T21:00:00.000Z');
+  assert.equal(payload(proposes[0]).endsAt, '2026-10-22T21:30:00.000Z');
+});
+
+test('unsubmitted manual edits survive a week reload', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  byName().members.value = 'marco';
+  const form = byName();
+  form.customerId.value = 'c1';
+  form.teamMemberId.value = 'marco';
+  form.serviceKey.value = 'taglio';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).subject.id, 'c1');
+  // The operator retypes the customer before reloading the week.
+  const edited = byName();
+  edited.customerId.value = 'c2';
+  edited.customerId.dispatch('input');
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(byName().customerId.value, 'c2');
+  assert.equal(client.calls.filter((call) => call.path === '/api/appointments/propose').length, 1);
+});
+
+test('conferma books directly: no propose call on the confirm path', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  const form = byName();
+  form.customerId.value = 'c1';
+  form.teamMemberId.value = 'marco';
+  form.serviceKey.value = 'taglio';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Conferma');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  // An explicit confirmation reaches the idempotent confirm operation
+  // directly, so a retry after a committed-but-lost confirm replays instead
+  // of dying on propose against the confirmed row.
+  assert.equal(client.calls.filter((call) => call.path === '/api/appointments/propose').length, 0);
+  const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
+  assert.equal(confirms.length, 1);
+  assert.equal(payload(confirms[0]).startsAt, '2026-10-22T16:00:00.000Z');
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
+});

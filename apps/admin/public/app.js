@@ -374,6 +374,7 @@ import { createConnectorDetailView } from './admin-connector-detail.js';
 import { createReportingView } from './admin-reporting.js';
 import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
+import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createSpineView } from './admin-spine.js';
 import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
 
@@ -571,6 +572,27 @@ const personalizzazioneView = createPersonalizzazioneView({
   storage: shellStorage,
   toast,
 });
+
+// Spazi e accessi (BO-F0-06): spaces, team and AI switches of one space.
+// The spaces are the shell's own list (the sidebar switcher reads the same
+// source); picking one here switches the same active space everywhere.
+const spaziAccessiView = createSpaziAccessiView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  navigate: (hash) => { window.location.hash = hash; },
+  spaces: () => shellSpaces,
+  activeSpaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  onPickSpace: (id) => {
+    shellActiveSpace = id;
+    try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
+      // The switch still applies to this tab.
+    }
+    if (shellView) shellView.setSpaces(shellSpaces, id);
+  },
+  storage: shellStorage,
+  toast,
+});
 const shellSpaces = readSpaces(shellStorage);
 let shellActiveSpace = null;
 try {
@@ -681,6 +703,7 @@ function shellScreenFor(target) {
     case 'calendario': return { id: 'calendario', label: 'Calendario' };
     case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
     case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
+    case 'spazi-accessi': return { id: 'impostazioni', label: 'Spazi e accessi' };
     case 'invalid': return { id: null, label: 'Percorso non valido' };
     default: return { id: null, label: 'Vista' };
   }
@@ -906,6 +929,7 @@ async function route() {
     else if (target.view === 'calendario') await calendarioView.render();
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
     else if (target.view === 'personalizzazione') await personalizzazioneView.render();
+    else if (target.view === 'spazi-accessi') await spaziAccessiView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'customer-card') await customerCardView.renderCard(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();

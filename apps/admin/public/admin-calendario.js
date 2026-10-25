@@ -547,8 +547,13 @@ export function createCalendarioView(deps) {
     for (const [name, type, placeholder] of fields) {
       const input = el(doc, 'input', { attrs: { type, name, placeholder } });
       // Keep what the operator typed: a re-render (propose, slots, week)
-      // rebuilds the inputs, so restore the last manual values first.
+      // rebuilds the inputs, so restore the last manual values first — and
+      // track every keystroke live, so an unrelated re-render (week load,
+      // slot search, phrase draft) never discards unsubmitted edits.
       if (state.manual?.[name] != null) input.value = String(state.manual[name]);
+      input.addEventListener('input', () => {
+        state.manual = { ...(state.manual ?? {}), [name]: String(input.value ?? '') };
+      });
       inputs[name] = input;
       form.appendChild(input);
     }
@@ -561,6 +566,11 @@ export function createCalendarioView(deps) {
       if (dayKey) inputs.date.value = dayKey;
       if (romeTime(draft.startsAt)) inputs.start.value = romeTime(draft.startsAt);
       if (romeTime(draft.endsAt)) inputs.end.value = romeTime(draft.endsAt);
+      // The draft has been absorbed into the visible form: snapshot it, so
+      // a later re-render keeps the draft values instead of replaying them
+      // over the operator's own edits.
+      state.manual = snapshotManual(inputs);
+      state.draftFill = null;
     }
     const propose = el(doc, 'button', { className: 'primary small', text: 'Proponi' });
     propose.addEventListener('click', () => void submitBooking(inputs, false));
@@ -583,6 +593,13 @@ export function createCalendarioView(deps) {
   function fillManual(draft) {
     state.draftFill = draft;
     renderAll();
+  }
+
+  /** Live manual values, field by field, as the operator sees them. */
+  function snapshotManual(inputs) {
+    return Object.fromEntries(
+      Object.entries(inputs).map(([name, node]) => [name, String(node?.value ?? '')]),
+    );
   }
 
   /** Build the booking claim from the manual form: Rome day + HH:MM to instants. */
@@ -626,33 +643,43 @@ export function createCalendarioView(deps) {
 
   /**
    * Interpret HH:MM on a Rome day as a Rome wall time, returned as ISO.
-   * Solved by round-trip: guess UTC, read back the Rome wall time, correct
-   * the guess — one pass is exact because the offset is constant in a day
-   * except across a DST change inside the slot, which the server re-checks.
+   * Solved by round-trip: guess UTC, read back the Rome wall datetime,
+   * correct the guess. A late-evening guess reads back on the next Rome
+   * day, so whole-day drift is corrected separately from minutes — and the
+   * answer is accepted only when the full Rome wall datetime (day, hour,
+   * minute) matches. A drift that cannot be corrected fails closed (null),
+   * never books the wrong date. The server re-checks DST edges on write.
    */
   function romeWallToIso(day, hour, minute) {
     const fmt = (instant) => {
       try {
+        const seenDay = romeDayKey(instant);
         const parts = new Intl.DateTimeFormat('en-CA', {
           timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit', hour12: false,
         }).formatToParts(instant);
         const get = (type) => Number(parts.find((part) => part.type === type)?.value);
-        return { h: get('hour') % 24, m: get('minute') };
+        if (seenDay === null || Number.isNaN(get('hour')) || Number.isNaN(get('minute'))) return null;
+        return { day: seenDay, h: get('hour') % 24, m: get('minute') };
       } catch {
         return null;
       }
     };
     let guess = Date.parse(`${day}T${pad(hour)}:${pad(minute)}:00Z`);
     if (Number.isNaN(guess)) return null;
-    for (let pass = 0; pass < 2; pass += 1) {
+    for (let pass = 0; pass < 3; pass += 1) {
       const seen = fmt(new Date(guess));
       if (!seen) return null;
-      const diff = (hour * 60 + minute) - (seen.h * 60 + seen.m);
-      if (diff === 0) return new Date(guess).toISOString();
-      guess += diff * 60000;
+      if (seen.day === day && seen.h === hour && seen.m === minute) return new Date(guess).toISOString();
+      if (seen.day !== day) {
+        const drift = Math.round((Date.parse(`${seen.day}T12:00:00Z`) - Date.parse(`${day}T12:00:00Z`)) / 86400000);
+        if (!Number.isFinite(drift) || drift === 0) return null;
+        guess -= drift * 86400000;
+        continue;
+      }
+      guess += ((hour * 60 + minute) - (seen.h * 60 + seen.m)) * 60000;
     }
     const seen = fmt(new Date(guess));
-    if (!seen || seen.h !== hour || seen.m !== minute) return null;
+    if (!seen || seen.day !== day || seen.h !== hour || seen.m !== minute) return null;
     return new Date(guess).toISOString();
   }
 
@@ -667,23 +694,25 @@ export function createCalendarioView(deps) {
     // The manual form is the source of truth for this submit: remember every
     // raw value (draft-derived ones included) so the re-render after propose
     // shows the same form Conferma will book. The draft has been absorbed.
-    state.manual = Object.fromEntries(
-      Object.entries(inputs).map(([name, node]) => [name, String(node?.value ?? '')]),
-    );
+    state.manual = snapshotManual(inputs);
     state.draftFill = null;
     state.confirmed = null;
     try {
-      const proposed = await client.request('/api/appointments/propose', {
-        method: 'POST',
-        body: claim,
-      });
       if (!confirm) {
+        const proposed = await client.request('/api/appointments/propose', {
+          method: 'POST',
+          body: claim,
+        });
         state.bookingNote = proposed?.decision === 'proposal'
           ? 'Registrata come proposta: lo spazio non fissa in automatico.'
           : 'Bozza pronta: premi «Conferma» per scriverla davvero.';
         renderAll();
         return;
       }
+      // Explicit confirmation rides the idempotent confirm operation
+      // directly: the server re-checks the slot and replays the same source
+      // key, so a retry after a committed-but-lost confirm reaches the
+      // replay instead of dying on propose against the confirmed row.
       const booked = await client.request('/api/appointments/confirm', {
         method: 'POST',
         body: { ...claim, confirmed: true },

@@ -886,6 +886,41 @@ export function buildRouter(app) {
     return await app.deactivateSpacePackage({ spaceId, unit, actor });
   });
 
+  // Space AI permission read (BO-F0-06, backoffice "08 Spazi e accessi"). The
+  // screen's only switch read: the generic records surface cannot filter the
+  // override module by space (its filterableFields are index-backed only, so
+  // `filter.spaceId` is refused), and an unfiltered page would hand every
+  // space's rows to the browser. This route scopes server-side through the
+  // composed operation instead — without the package composed the method is
+  // absent and the route answers an honest 404, like the flip route below.
+  router.add('GET', '/api/space-permissions/effective', async ({ searchParams, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.effectiveSpaceAiPermissions !== 'function') {
+      throw new NotFoundError('Operation', 'space AI permissions');
+    }
+    const spaceId = searchParams?.get?.('spaceId') ?? '';
+    return await app.effectiveSpaceAiPermissions({ spaceId });
+  });
+
+  // Space AI permission flip (BO-F0-06, backoffice "08 Spazi e accessi"). The
+  // same delegation shape as the space-package routes above: the kernel owns
+  // the path, gates the write boundary, and delegates to the composed
+  // application operation — without the package composed the method is
+  // absent and the route answers an honest 404. The operation runs the
+  // human-only `set-permission` record action, so anonymous, agent and
+  // system callers are refused with the same codes there.
+  router.add('POST', '/api/space-permissions/set-permission', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.setSpaceAiPermission !== 'function') {
+      throw new NotFoundError('Operation', 'space AI permissions');
+    }
+    const input = stripServerControlledKeys(body);
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    const permission = typeof input.permission === 'string' ? input.permission : '';
+    const enabled = typeof input.enabled === 'string' ? input.enabled : '';
+    return await app.setSpaceAiPermission({ spaceId, permission, enabled, actor });
+  });
+
   // Customer Data Operations v2: bulk decisions and scale-safe export. The
   // same enumerated-adapter shape as the import routes above: the kernel
   // owns the path, gates the role boundary, and delegates to the composed

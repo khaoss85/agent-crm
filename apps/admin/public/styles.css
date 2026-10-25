@@ -476,6 +476,85 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 }
 
 /*
+ * Spazi e accessi (BO-F0-06): space cards, team rows with invite and
+ * two-step removal, and the five AI switches with their one-line meaning.
+ * Same tokens, radii and row idiom as the settings rows above — no new
+ * visual identity. Cards flow in a grid on wide screens and stack in one
+ * column under 700px; switch and member rows wrap instead of overflowing.
+ */
+.bo-spazi-section { display: grid; gap: 10px; margin-top: 22px; }
+.bo-spazi-section h3 { margin: 0; font-size: 15px; }
+.bo-spazi-section h4 { margin: 4px 0 0; font-size: 14px; }
+.bo-spazi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.bo-spazi-card {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 10px;
+  padding: 12px 14px; display: grid; gap: 10px; align-content: start;
+}
+.bo-spazi-head { display: flex; align-items: center; gap: 10px; }
+.bo-spazi-initials {
+  width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center;
+  font-weight: 800; font-size: 14px; flex: none; background: var(--ink); color: var(--paper);
+}
+.bo-spazi-names { min-width: 0; }
+.bo-spazi-name { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-spazi-here { font-size: 12px; font-weight: 700; color: var(--accent); }
+.bo-spazi-open {
+  font-size: 13px; font-weight: 700; cursor: pointer; justify-self: start;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--ink);
+  color: var(--paper); padding: 7px 13px;
+}
+.bo-spazi-team { display: grid; gap: 8px; }
+.bo-spazi-member {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 10px 12px;
+}
+.bo-spazi-subject { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-spazi-invite { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+.bo-spazi-input {
+  flex: 1; min-width: 140px; padding: 8px 10px; font-size: 13px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink);
+}
+select.bo-spazi-input { flex: none; }
+.bo-spazi-confirm {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center; flex-basis: 100%;
+  border-top: 1px solid var(--line); padding-top: 8px; margin-top: 4px;
+}
+.bo-spazi-quiet {
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--surface);
+  color: var(--ink); padding: 7px 12px;
+}
+.bo-spazi-danger {
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--ink);
+  color: var(--paper); padding: 7px 12px;
+}
+.bo-spazi-refusal { font-size: 13px; color: var(--accent); margin: 4px 0; overflow-wrap: anywhere; }
+.bo-spazi-switches { display: grid; gap: 8px; }
+.bo-spazi-switch {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px;
+}
+.bo-spazi-texts { display: grid; gap: 2px; min-width: 0; }
+.bo-spazi-label { font-size: 14px; font-weight: 700; }
+.bo-spazi-toggle {
+  position: relative; flex: none; width: 42px; height: 24px; border-radius: 99px;
+  border: none; cursor: pointer; background: var(--line);
+}
+.bo-spazi-toggle[data-on="true"] { background: var(--accent); }
+.bo-spazi-knob {
+  position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--paper); transition: left .2s;
+}
+.bo-spazi-toggle[data-on="true"] .bo-spazi-knob { left: 21px; }
+
+@media (max-width: 700px) {
+  .bo-spazi-grid { grid-template-columns: minmax(0, 1fr); }
+  .bo-spazi-switch { align-items: start; }
+  .bo-spazi-invite .bo-spazi-input { flex-basis: 100%; }
+}
+
+/*
  * Assistant (BO-F0-04): the ⌘K side panel. Fixed on the right so the shell
  * grid never moves; full width under 700px. Same bordered-surface idiom as
  * the shell, no new visual identity.
@@ -602,4 +681,47 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 @media (max-width: 700px) {
   .cal-grid { grid-template-columns: minmax(0, 1fr); }
   .cal-filter input, .cal-form input { flex-basis: 100%; }
+}
+
+/*
+ * Product catalog (BO-F2-04 rules, BO-F2-05 table): the Stripe state, the
+ * enforced price rules and one card per product with its offers. Same
+ * authority tokens and radii as the rows above — no new visual identity.
+ * Under 700px the filters stack full-width and every amount input takes
+ * the row width, so the table stays fluid on a phone with no sideways
+ * scrolling.
+ */
+.catalog-stripe, .catalog-rules { display: grid; gap: 8px; margin: 12px 0; }
+.catalog-stripe-ok { margin: 0; font-size: 13px; color: var(--accent); font-weight: 700; }
+.catalog-invite { margin: 0; font-size: 13px; color: var(--muted); }
+.catalog-rule { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 10px 12px; }
+.catalog-rule-name { margin: 0; font-size: 13px; font-weight: 700; }
+.catalog-rule-bands { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+.catalog-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.catalog-filters input, .catalog-filters select { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; }
+.catalog-list { display: grid; gap: 10px; }
+.catalog-row { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px; }
+.catalog-row h3 { margin: 0; font-size: 15px; }
+.catalog-meta { margin: 4px 0; font-size: 12px; color: var(--muted); }
+.catalog-readonly { margin: 6px 0; font-size: 12px; color: var(--data-ink); background: var(--data-soft); border-radius: 8px; padding: 6px 10px; }
+.catalog-empty { margin: 6px 0; font-size: 13px; color: var(--dim); }
+.catalog-offer { border-top: 1px solid var(--line); padding-top: 6px; margin-top: 6px; }
+.catalog-offer-name { margin: 4px 0; font-size: 13px; font-weight: 700; }
+.catalog-price { margin: 2px 0; font-size: 13px; }
+.catalog-ineligible { margin: 2px 0; font-size: 12px; color: var(--pending-ink); }
+.catalog-edit-wrap, .catalog-toggle-wrap { margin-top: 8px; display: grid; gap: 8px; }
+.catalog-edit-wrap > button, .catalog-toggle-wrap button { font-size: 13px; font-weight: 700; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 12px; cursor: pointer; justify-self: start; }
+.catalog-edit-form { display: grid; gap: 6px; }
+.catalog-amount-label { font-size: 12px; color: var(--muted); }
+.catalog-edit-form input { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; max-width: 220px; }
+.catalog-review { display: grid; gap: 6px; border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px; }
+.catalog-change { margin: 0; font-size: 13px; }
+.catalog-confirm { display: grid; gap: 6px; }
+.catalog-confirm button { justify-self: start; }
+
+@media (max-width: 700px) {
+  .catalog-filters { flex-direction: column; align-items: stretch; }
+  .catalog-filters input, .catalog-filters select { width: 100%; box-sizing: border-box; }
+  .catalog-edit-form input { max-width: none; width: 100%; box-sizing: border-box; }
+  .catalog-row { overflow-wrap: anywhere; }
 }

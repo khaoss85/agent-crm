@@ -398,6 +398,13 @@ export function parseModuleRoute(hash) {
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'personalizzazione' };
   }
+  // Spazi e accessi route: #/spazi-accessi (BO-F0-06). One screen — spaces,
+  // team, AI switches — reached from Impostazioni; any deeper path is
+  // invalid, not a lookup, like every route above.
+  if (rawParts.length && rawParts[0] === 'spazi-accessi') {
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'spazi-accessi' };
+  }
   if (rawParts.length === 0 || rawParts[0] !== 'modules') return { view: 'dashboard' };
   // An internal empty segment (e.g. "modules//new") is malformed, not a lookup.
   if (rawParts.some((part) => part === '')) return { view: 'invalid' };
