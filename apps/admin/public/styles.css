@@ -702,6 +702,13 @@ select.bo-spazi-input { flex: none; }
 @media (max-width: 700px) {
   .cal-grid { grid-template-columns: minmax(0, 1fr); }
   .cal-filter input, .cal-form input { flex-basis: 100%; }
+  /* The week pager (three buttons, no shrink) beside the title forces a
+   * ~580px row on a 390px phone: stack the header and let the actions wrap
+   * into equal buttons instead. Scoped to the calendario view so no other
+   * header changes shape. */
+  .cal-wrap .panel-heading { flex-direction: column; align-items: stretch; }
+  .cal-wrap .actions { flex-shrink: 1; flex-wrap: wrap; width: auto; }
+  .cal-wrap .actions button { flex: 1 1 140px; }
 }
 
 /*

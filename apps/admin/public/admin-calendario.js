@@ -73,9 +73,14 @@ export function weekLabel(weekKeys) {
   if (!Array.isArray(weekKeys) || weekKeys.length === 0) return null;
   const first = romeShortDay(`${weekKeys[0]}T12:00:00Z`);
   const last = romeShortDay(`${weekKeys[weekKeys.length - 1]}T12:00:00Z`);
-  const year = weekKeys[0].slice(0, 4);
   if (!first || !last) return null;
-  return `${first} – ${last} ${year}`;
+  // The short day labels carry no year, and a Rome week can straddle New
+  // Year: name both years when they differ instead of pinning the first
+  // key's year on the January days.
+  const firstYear = String(weekKeys[0]).slice(0, 4);
+  const lastYear = String(weekKeys[weekKeys.length - 1]).slice(0, 4);
+  if (firstYear === lastYear) return `${first} – ${last} ${lastYear}`;
+  return `${first} ${firstYear} – ${last} ${lastYear}`;
 }
 
 /** @param {any} doc @param {string} tag @param {{text?: string, className?: string, attrs?: Record<string,string>}} [options] */
@@ -156,7 +161,12 @@ export function createCalendarioView(deps) {
     state.week = null;
     state.slots = [];
     state.slotsNote = '';
-    void renderAll();
+    // The pager moves the window but keeps the named members: reload for
+    // them like the "Questa settimana" button does, so browsing never drops
+    // back to the "name someone" prompt mid-week.
+    const members = parseMemberFilter(state.memberFilter);
+    if (members.length > 0) void loadWeek(members);
+    else renderAll();
   }
 
   /** @param {Array<string>} members */
