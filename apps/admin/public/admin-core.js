@@ -238,7 +238,8 @@ export function shellNavInput(envelope) {
   const customerData = envelope?.domains?.['customer-data'];
   const customerDataAvailable = customerData?.metadata?.customerDataContract === 1
     || customerData?.customerDataContract === 1;
-  return { pipelines, customModules, customerDataAvailable, modulesSupported };
+  const sequencesAvailable = envelope?.domains?.sequences?.sequencesContract === 1;
+  return { pipelines, customModules, customerDataAvailable, sequencesAvailable, modulesSupported };
 }
 
 /**
@@ -327,6 +328,15 @@ export function parseModuleRoute(hash) {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'catalog' };
+  }
+  // Sequences route: #/sequenze (BO-F3-03). One screen: the elenco with the
+  // dettaglio of the selected sequence. Same canonical discipline as every
+  // other route here; anything else under the prefix is invalid, not a
+  // lookup, so a hostile hash never becomes a request path.
+  if (rawParts.length && rawParts[0] === 'sequenze') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'sequenze' };
   }
   // Quote builder routes: #/quotes and #/quotes/<id> (ADR-016). Same
   // canonical discipline; anything else is invalid, not a lookup.

@@ -372,6 +372,7 @@ import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
 import { createConnectorDetailView } from './admin-connector-detail.js';
 import { createReportingView } from './admin-reporting.js';
+import { createSequenzeView } from './admin-sequenze.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSpineView } from './admin-spine.js';
 import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
@@ -630,6 +631,8 @@ let shellItems = buildShellNav();
 
 /** The Oggi home view, created once per session under a space mount. */
 let oggiView = null;
+/** The Sequenze screen, created once per session under a space mount. */
+let sequenzeView = null;
 let shellFixCount = null;
 let shellCustomerData = false;
 
@@ -645,6 +648,7 @@ function shellScreenFor(target) {
     case 'customer-profile':
     case 'customer-card': return { id: 'clienti', label: 'Clienti' };
     case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
+    case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
     case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
     case 'list':
     case 'new':
@@ -888,6 +892,16 @@ async function route() {
     else if (target.view === 'connectors') await connectorsView.render();
     else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel);
     else if (target.view === 'reporting') await reportingView.renderReporting();
+    else if (target.view === 'sequenze') {
+      if (!sequenzeView) {
+        sequenzeView = createSequenzeView({
+          doc: document,
+          mount: moduleView,
+          client: moduleClient,
+        });
+      }
+      await sequenzeView.renderSequenze();
+    }
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
     else if (target.view === 'personalizzazione') await personalizzazioneView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);

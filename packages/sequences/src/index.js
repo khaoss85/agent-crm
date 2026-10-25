@@ -15,6 +15,8 @@ import {
 // factory at the composition site.
 import {
   advanceSequences,
+  buildActivateSequenceAction,
+  buildPauseSequenceAction,
   checkRecordKey,
   checkSpaceId,
   checkStepInput,
@@ -176,7 +178,10 @@ export function createSequencesPackage(options = {}) {
     resources: [...SEQUENCES_RESOURCES],
     requires: [...SEQUENCES_REQUIRES],
     capabilities: [],
-    actions: [],
+    actions: [
+      buildActivateSequenceAction(),
+      buildPauseSequenceAction(),
+    ],
     operations: [
       {
         operationContract: 1,
@@ -593,6 +598,7 @@ export function createSequencesPackage(options = {}) {
      * `resources` from the composition, so restating it here is refused. */
     metadata() {
       return {
+        sequencesContract: 1,
         notModeled: [
           'provider sends: the channels outbox owns them; this package only queues',
           'AI text rewriting: the personalize hook is the seam; the built-in substitution is deterministic',
