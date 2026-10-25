@@ -384,6 +384,13 @@ export function parseModuleRoute(hash) {
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'nuovo-modulo' };
   }
+  // Team calendar route: #/calendario (BO-F3 \"07 Calendario\"). One screen —
+  // the week, the phrase draft, the slot proposals and the manual form live
+  // in the view, never in the hash — so any deeper path is invalid.
+  if (rawParts.length && rawParts[0] === 'calendario') {
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'calendario' };
+  }
   // Personalizzazione route: #/personalizzazione (BO-F4-01). One screen with
   // its own tabs, like the connectors route above — tab state lives in the
   // view, never in the hash — so any deeper path is invalid, not a lookup.

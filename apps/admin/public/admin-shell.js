@@ -27,15 +27,16 @@ export const SPACES_KEY = 'accordo.spaces';
  * `route: null` in this static table means the voice cannot link on its own:
  * `buildShellNav` resolves what the composition allows (Clienti, Pipeline)
  * and the rest renders disabled with the story named, never as a dead link.
- * (Calendario and Sequenze have delivered framework reads — BO-F3-01/02 —
- * but no admin screen, so they stay disabled until one lands.)
+ * Calendario links unconditionally like Reporting: the screen itself renders
+ * honest states (not composed, no members named, empty week), so it is never
+ * a dead link to a blank screen. Sequenze still waits for its screen.
  * @typedef {{ id: string, label: string, group: 'home' | 'native' | 'custom' | 'settings', route: string | null, story: string }} ShellItem
  */
 export const SHELL_ITEMS = Object.freeze([
   { id: 'oggi', label: 'Oggi', group: 'home', route: '#/', story: 'BO-F0-02' },
   { id: 'clienti', label: 'Clienti', group: 'native', route: '#/customer-data', story: 'BO-F1' },
   { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2' },
-  { id: 'calendario', label: 'Calendario', group: 'native', route: null, story: 'BO-F3' },
+  { id: 'calendario', label: 'Calendario', group: 'native', route: '#/calendario', story: 'BO-F3' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3' },
   { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01' },
   { id: 'nuovo-modulo', label: 'Nuovo modulo', group: 'custom', route: '#/nuovo-modulo', story: 'BO-F5-01' },

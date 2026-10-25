@@ -372,6 +372,7 @@ import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
 import { createConnectorDetailView } from './admin-connector-detail.js';
 import { createReportingView } from './admin-reporting.js';
+import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSpineView } from './admin-spine.js';
 import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
@@ -546,6 +547,18 @@ const reportingView = createReportingView({
   },
 });
 
+// Team calendar (BO-F3 \"07 Calendario\"): the week, the phrase draft, the
+// slot proposals and the manual form over the appointments operations.
+// Renders honest states when the package is not composed; otherwise the
+// week is real. The space rides the shell storage like the connectors view.
+const calendarioView = createCalendarioView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  storage: shellStorage,
+  toast,
+});
+
 // Personalizzazione (BO-F4-01): Skill, Connettori and Pacchetti per space.
 // Renders only while the server publishes the space-permissions composition
 // catalog; otherwise the view itself says so.
@@ -665,6 +678,7 @@ function shellScreenFor(target) {
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
     case 'connector-detail': return { id: 'impostazioni', label: 'Dettaglio connettore' };
     case 'reporting': return { id: 'reporting', label: 'Reporting' };
+    case 'calendario': return { id: 'calendario', label: 'Calendario' };
     case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
     case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
     case 'invalid': return { id: null, label: 'Percorso non valido' };
@@ -856,6 +870,7 @@ async function route() {
       (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`) ||
       ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
       (target.view === 'catalog' && link.getAttribute('href') === '#/catalogo') ||
+      (target.view === 'calendario' && link.getAttribute('href') === '#/calendario') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
       ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card') && link.getAttribute('href') === '#/customer-data')
@@ -888,6 +903,7 @@ async function route() {
     else if (target.view === 'connectors') await connectorsView.render();
     else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel);
     else if (target.view === 'reporting') await reportingView.renderReporting();
+    else if (target.view === 'calendario') await calendarioView.render();
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
     else if (target.view === 'personalizzazione') await personalizzazioneView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
