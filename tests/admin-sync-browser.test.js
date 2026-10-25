@@ -184,26 +184,49 @@ const execFileAsync = promisify(execFile);
  * Run one headless Chromium call without blocking the fixture server on
  * this loop: the server must keep answering while Chromium loads the
  * harness page, so a synchronous wait would deadlock the render and time
- * the whole gate out. Returns the same { status, stderr } shape as before.
+ * the whole gate out. Returns { status, stdout, stderr }; the dump-dom
+ * caller needs stdout, so it must never be dropped.
  */
 async function runChromium(binary, args, maxBuffer = 1024 * 1024) {
   try {
-    const { stderr } = await execFileAsync(binary, args, { encoding: 'utf8', timeout: 120000, maxBuffer });
-    return { status: 0, stderr: typeof stderr === 'string' ? stderr : '' };
+    const { stdout, stderr } = await execFileAsync(binary, args, { encoding: 'utf8', timeout: 120000, maxBuffer });
+    return {
+      status: 0,
+      stdout: typeof stdout === 'string' ? stdout : '',
+      stderr: typeof stderr === 'string' ? stderr : '',
+    };
   } catch (error) {
     const status = typeof error?.code === 'number' ? error.code : 1;
+    const stdout = typeof error?.stdout === 'string' ? error.stdout : '';
     const stderr = typeof error?.stderr === 'string' && error.stderr !== ''
       ? error.stderr
       : String(error?.message ?? error);
-    return { status, stderr };
+    return { status, stdout, stderr };
   }
+}
+
+/**
+ * Headless flags follow scripts/site-shots.js: the Playwright headless
+ * shell is headless by definition and takes no --headless flag (a full
+ * Chromium binary does), both take the same sandbox, first-run and
+ * background-networking flags. --enable-logging=stderr keeps the
+ * renderer's console in stderr so a blank capture stays diagnosable.
+ */
+function headlessFlags(binary) {
+  return [
+    ...(/headless_shell/.test(binary) ? [] : ['--headless=new']),
+    '--disable-gpu',
+    '--no-sandbox',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-background-networking',
+    '--enable-logging=stderr',
+  ];
 }
 
 function shot(binary, url, width, png) {
   return runChromium(binary, [
-    '--headless',
-    '--disable-gpu',
-    '--no-sandbox',
+    ...headlessFlags(binary),
     '--hide-scrollbars',
     `--window-size=${width},900`,
     '--virtual-time-budget=15000',
@@ -214,9 +237,7 @@ function shot(binary, url, width, png) {
 
 function dom(binary, url, width) {
   return runChromium(binary, [
-    '--headless',
-    '--disable-gpu',
-    '--no-sandbox',
+    ...headlessFlags(binary),
     `--window-size=${width},900`,
     '--virtual-time-budget=15000',
     '--dump-dom',
@@ -237,12 +258,21 @@ test('Stato sync renders in a real browser with PNG evidence', { skip: SKIP, tim
           const rendered = await shot(BINARY, url, width, png);
           assert.equal(rendered.status, 0, `headless shell failed: ${rendered.stderr}`);
           assert.ok(existsSync(png), 'the PNG was captured');
-          // A real render of this screen is tens of kilobytes; a blank page
-          // would be an order of magnitude smaller.
-          assert.ok(statSync(png).size > 15000, `the PNG is a real render (${statSync(png).size} bytes)`);
+          // The DOM dump runs before the PNG size gate: when a capture is
+          // blank the dump says whether the view rendered (timing) or never
+          // did (harness), and the renderer console stays in the failure.
           const dumped = await dom(BINARY, url, width);
           assert.equal(dumped.status, 0, `dump-dom failed: ${dumped.stderr}`);
-          const html = dumped.stdout;
+          const html = typeof dumped.stdout === 'string' ? dumped.stdout : '';
+          const pngBytes = statSync(png).size;
+          // A real render of this screen is tens of kilobytes; a blank page
+          // would be an order of magnitude smaller.
+          assert.ok(
+            pngBytes > 15000,
+            `the PNG is a real render (${pngBytes} bytes, `
+            + `syncReady=${html.includes('data-sync-ready="yes"')}, `
+            + `console=${JSON.stringify(rendered.stderr.slice(-500))})`,
+          );
           assert.ok(html.includes('data-sync-ready="yes"'), 'the view finished rendering');
           assert.ok(html.includes('Stato sync'), 'the screen title is on screen');
           assert.ok(html.includes('bo-sync-table'), 'the channel table is on screen');
