@@ -123,6 +123,10 @@ export function createCalendarioView(deps) {
     bookingNote: '',
     /** @type {any} */
     confirmed: null,
+    /** Last manual form values, restored on every re-render. @type {any} */
+    manual: null,
+    /** Draft absorbed into manual on submit. @type {any} */
+    draftFill: null,
   };
 
   function clear() {
@@ -542,6 +546,9 @@ export function createCalendarioView(deps) {
     const inputs = {};
     for (const [name, type, placeholder] of fields) {
       const input = el(doc, 'input', { attrs: { type, name, placeholder } });
+      // Keep what the operator typed: a re-render (propose, slots, week)
+      // rebuilds the inputs, so restore the last manual values first.
+      if (state.manual?.[name] != null) input.value = String(state.manual[name]);
       inputs[name] = input;
       form.appendChild(input);
     }
@@ -657,6 +664,13 @@ export function createCalendarioView(deps) {
   /** @param {any} inputs @param {boolean} confirm */
   async function submitBooking(inputs, confirm) {
     const { claim } = claimFrom(inputs);
+    // The manual form is the source of truth for this submit: remember every
+    // raw value (draft-derived ones included) so the re-render after propose
+    // shows the same form Conferma will book. The draft has been absorbed.
+    state.manual = Object.fromEntries(
+      Object.entries(inputs).map(([name, node]) => [name, String(node?.value ?? '')]),
+    );
+    state.draftFill = null;
     state.confirmed = null;
     try {
       const proposed = await client.request('/api/appointments/propose', {
