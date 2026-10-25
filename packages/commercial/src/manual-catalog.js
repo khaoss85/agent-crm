@@ -659,6 +659,7 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
           for (const component of ordered) {
             const schedule = (await tiers.listWhere({ componentId: component.id })).sort((a, b) => a.position - b.position);
             componentRows.push({
+              key: component.componentKey ?? null,
               label: component.label,
               chargeType: component.chargeType,
               pricingModel: component.pricingModel,

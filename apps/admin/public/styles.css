@@ -566,3 +566,46 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
   .bo-clienti-menu { position: static; margin-top: 8px; max-width: none; box-shadow: none; }
   .bo-clienti-pager { row-gap: 8px; }
 }
+
+/*
+ * Product catalog (BO-F2-04 rules, BO-F2-05 table): the Stripe state, the
+ * enforced price rules and one card per product with its offers. Same
+ * authority tokens and radii as the rows above — no new visual identity.
+ * Under 700px the filters stack full-width and every amount input takes
+ * the row width, so the table stays fluid on a phone with no sideways
+ * scrolling.
+ */
+.catalog-stripe, .catalog-rules { display: grid; gap: 8px; margin: 12px 0; }
+.catalog-stripe-ok { margin: 0; font-size: 13px; color: var(--accent); font-weight: 700; }
+.catalog-invite { margin: 0; font-size: 13px; color: var(--muted); }
+.catalog-rule { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 10px 12px; }
+.catalog-rule-name { margin: 0; font-size: 13px; font-weight: 700; }
+.catalog-rule-bands { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+.catalog-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.catalog-filters input, .catalog-filters select { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; }
+.catalog-list { display: grid; gap: 10px; }
+.catalog-row { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px; }
+.catalog-row h3 { margin: 0; font-size: 15px; }
+.catalog-meta { margin: 4px 0; font-size: 12px; color: var(--muted); }
+.catalog-readonly { margin: 6px 0; font-size: 12px; color: var(--data-ink); background: var(--data-soft); border-radius: 8px; padding: 6px 10px; }
+.catalog-empty { margin: 6px 0; font-size: 13px; color: var(--dim); }
+.catalog-offer { border-top: 1px solid var(--line); padding-top: 6px; margin-top: 6px; }
+.catalog-offer-name { margin: 4px 0; font-size: 13px; font-weight: 700; }
+.catalog-price { margin: 2px 0; font-size: 13px; }
+.catalog-ineligible { margin: 2px 0; font-size: 12px; color: var(--pending-ink); }
+.catalog-edit-wrap, .catalog-toggle-wrap { margin-top: 8px; display: grid; gap: 8px; }
+.catalog-edit-wrap > button, .catalog-toggle-wrap button { font-size: 13px; font-weight: 700; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 12px; cursor: pointer; justify-self: start; }
+.catalog-edit-form { display: grid; gap: 6px; }
+.catalog-amount-label { font-size: 12px; color: var(--muted); }
+.catalog-edit-form input { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; max-width: 220px; }
+.catalog-review { display: grid; gap: 6px; border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px; }
+.catalog-change { margin: 0; font-size: 13px; }
+.catalog-confirm { display: grid; gap: 6px; }
+.catalog-confirm button { justify-self: start; }
+
+@media (max-width: 700px) {
+  .catalog-filters { flex-direction: column; align-items: stretch; }
+  .catalog-filters input, .catalog-filters select { width: 100%; box-sizing: border-box; }
+  .catalog-edit-form input { max-width: none; width: 100%; box-sizing: border-box; }
+  .catalog-row { overflow-wrap: anywhere; }
+}
