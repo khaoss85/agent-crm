@@ -160,7 +160,10 @@ function startServer() {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
     if (url.pathname === '/__harness.html') {
       const state = url.searchParams.get('state') === 'fix' ? 'fix' : 'ok';
-      response.writeHead(200, MIME['.html']);
+      // writeHead's second argument is the status message, not headers: the
+      // content type must ride in a headers object or module scripts load
+      // with an empty MIME type and the browser refuses them (blank capture).
+      response.writeHead(200, { 'content-type': MIME['.html'] });
       response.end(harnessHtml(state));
       return;
     }
@@ -170,7 +173,7 @@ function startServer() {
       response.end('no');
       return;
     }
-    response.writeHead(200, MIME[extname(file)] ?? 'application/octet-stream');
+    response.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
     response.end(readFileSync(file));
   });
   return new Promise((resolve) => {
