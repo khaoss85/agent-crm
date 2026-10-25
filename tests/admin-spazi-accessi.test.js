@@ -21,6 +21,7 @@ import {
   buildTeamRows,
   createSpaziAccessiView,
   effectiveSwitches,
+  memberInitials,
   spaceRoleLabel,
 } from '../apps/admin/public/admin-spazi-accessi.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
@@ -146,6 +147,42 @@ test('team rows sort by subject, hostile subjects stay text', () => {
     { subject: '<img src=x>', role: 'owner', status: 'active' },
   ]);
   assert.deepEqual(rows.map((row) => row.subject), ['<img src=x>', 'zeta']);
+});
+
+test('member initials come from the subject, never invented', () => {
+  assert.equal(memberInitials('marco'), 'MA');
+  assert.equal(memberInitials('owner-1'), 'OW');
+  assert.equal(memberInitials('luca.rossi@example.it'), 'LU');
+  assert.equal(memberInitials('<img src=x>'), 'IM');
+  assert.equal(memberInitials(''), '·');
+  assert.equal(memberInitials('---'), '·');
+  assert.equal(memberInitials(null), '·');
+  const rows = buildTeamRows([{ subject: 'marco', role: 'operator', status: 'active' }]);
+  assert.equal(rows[0].initials, 'MA');
+  assert.equal(rows[0].role, 'Operatore');
+});
+
+test('team and AI panels share one row container, members show avatar and role pill', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const { mount, view: v } = view({ client: stubClient({ members }) });
+  await v.render();
+  await flush();
+  const byClass = (tag, cls) => mount.findAll(tag)
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes(cls));
+  assert.equal(byClass('div', 'bo-spazi-panels').length, 1, 'one panels row holds team and AI');
+  const teamPanels = byClass('section', 'bo-spazi-team-panel');
+  const aiPanels = byClass('section', 'bo-spazi-ai-panel');
+  assert.equal(teamPanels.length, 1, 'the team panel renders');
+  assert.equal(aiPanels.length, 1, 'the AI panel renders');
+  assert.equal(teamPanels[0].parentNode, byClass('div', 'bo-spazi-panels')[0], 'team sits inside the row');
+  assert.equal(aiPanels[0].parentNode, byClass('div', 'bo-spazi-panels')[0], 'AI sits inside the row');
+  const avatars = byClass('span', 'bo-spazi-avatar');
+  assert.equal(avatars.length, 1, 'one avatar for one member');
+  assert.equal(avatars[0].textContent, 'MA', 'the avatar reads the subject initials');
+  const pills = byClass('span', 'bo-spazi-role');
+  assert.equal(pills.length, 1, 'one role pill for one member');
+  assert.equal(pills[0].textContent, 'Operatore', 'the pill names the Italian role');
+  assert.match(text(mount), /active/, 'the status stays next to the subject');
 });
 
 test('the screen lists spaces with roles, team and the five switches', async () => {
