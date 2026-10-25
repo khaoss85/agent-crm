@@ -3,7 +3,13 @@
 import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { buildSpacePermissionActions } from './actions.js';
 import { createSpacePermissionGateCapability } from './capability.js';
-import { SPACE_PACKAGE_CATALOG, createSpacePackageOperations } from './composition.js';
+import { SPACE_AI_PERMISSIONS } from './permissions.js';
+import {
+  SPACE_PACKAGE_CATALOG,
+  createEffectiveSpaceAiPermissionsOperation,
+  createSetSpaceAiPermissionOperation,
+  createSpacePackageOperations,
+} from './composition.js';
 
 /**
  * The Space Permissions domain package (BO-F0-06 — backoffice
@@ -113,6 +119,36 @@ export function createSpacePermissionsDomain(options = {}) {
           return (params) => ops.deactivate(params);
         },
       },
+      {
+        operationContract: 1,
+        name: 'effective-space-ai-permissions',
+        label: 'Effective space AI permissions',
+        appMethod: 'effectiveSpaceAiPermissions',
+        description: 'Read the five AI switches of one space with their effective values: the only HTTP-reachable read path (BO-F0-06). The generic records surface cannot filter this module by space, so this operation scopes server-side and resolves through the same defaults the gate uses.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'Opaque space id issued by the control plane.' },
+        ],
+        create(runtime) {
+          const ops = createEffectiveSpaceAiPermissionsOperation({ modules: runtime.modules });
+          return (params) => ops.effective(params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'set-space-ai-permission',
+        label: 'Set space AI permission',
+        appMethod: 'setSpaceAiPermission',
+        description: 'Flip one of the five AI switches of one space: the only HTTP-reachable flip path (BO-F0-06). Human user actor only; anonymous, agent and system flips are refused with the same codes as the record action.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'Opaque space id issued by the control plane.' },
+          { name: 'permission', type: 'string', required: true, hint: `One of: ${SPACE_AI_PERMISSIONS.join(', ')}.` },
+          { name: 'enabled', type: 'string', required: true, hint: 'on lets the agent act alone; off turns the action into a proposal.' },
+        ],
+        create(runtime) {
+          const ops = createSetSpaceAiPermissionOperation({ modules: runtime.modules, database: runtime.database });
+          return (params) => ops.set(params);
+        },
+      },
     ],
     /** Function-free, additive schema metadata. The registry publishes
      * `resources` from the composition, so restating it here is refused. */
@@ -162,6 +198,8 @@ export { createSpacePermissionGateCapability } from './capability.js';
 export {
   SPACE_PACKAGE_CATALOG,
   compositionKeyFor,
+  createEffectiveSpaceAiPermissionsOperation,
+  createSetSpaceAiPermissionOperation,
   createSpacePackageOperations,
   lookupSpacePackageUnit,
 } from './composition.js';

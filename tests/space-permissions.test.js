@@ -621,9 +621,9 @@ test('package definition composes: identity, resources, actions, capability', ()
   assert.equal(pkg.actions.length, 4);
   assert.equal(pkg.capabilities.length, 1);
   assert.equal(pkg.capabilities[0].name, 'space-permission-gate');
-  assert.equal(pkg.operations.length, 3);
+  assert.equal(pkg.operations.length, 5);
   assert.deepEqual(pkg.operations.map((entry) => entry.appMethod).sort(), [
-    'activateSpacePackage', 'deactivateSpacePackage', 'previewSpacePackage',
+    'activateSpacePackage', 'deactivateSpacePackage', 'effectiveSpaceAiPermissions', 'previewSpacePackage', 'setSpaceAiPermission',
   ]);
   const meta = pkg.metadata();
   assert.ok(Array.isArray(meta.notModeled) && meta.notModeled.length > 0);
@@ -636,4 +636,108 @@ test('response channels stay inside the framework channel vocabulary', async () 
   }
   assert.ok(!RESPONSE_CHANNELS.includes('tiktok'));
   assert.ok(!RESPONSE_CHANNELS.includes('site-form'));
+});
+
+/**
+ * The `set-space-ai-permission` operation is the HTTP flip path: it runs the
+ * same `set-permission` action code (same input checks, same human-only
+ * refusal, same create-on-first-flip), never a copy of it. Stub store with
+ * the managed-write surface the real registry service exposes.
+ */
+function stubOperationModules() {
+  const overrides = [];
+  let seq = 0;
+  const service = {
+    async listWhere(where) {
+      return overrides.filter((row) => Object.entries(where).every(([key, value]) => row[key] === value));
+    },
+    async createManaged(row) {
+      seq += 1;
+      const stored = { ...row, id: `row-${seq}` };
+      overrides.push(stored);
+      return { ...stored };
+    },
+    async applyManaged(id, patch) {
+      const found = overrides.find((row) => row.id === id);
+      if (!found) throw new Error(`unexpected row ${id}`);
+      Object.assign(found, patch);
+      return { ...found };
+    },
+  };
+  return {
+    rows: overrides,
+    modules: {
+      get(name) {
+        if (name === 'space-permission-override') return { service };
+        throw new Error(`unexpected module ${name}`);
+      },
+    },
+  };
+}
+
+test('the set-permission operation creates on first flip, patches after', async () => {
+  const { createSetSpaceAiPermissionOperation } = await import('../packages/space-permissions/src/composition.js');
+  const stub = stubOperationModules();
+  const ops = createSetSpaceAiPermissionOperation({ modules: stub.modules });
+  const created = await ops.set({ spaceId: SPACE_A, permission: 'drafts', enabled: 'off', actor: USER });
+  assert.equal(created.created, true);
+  assert.equal(created.enabled, false);
+  assert.equal(stub.rows.length, 1);
+  assert.equal(stub.rows[0].updatedBy, 'user:owner-1');
+  const updated = await ops.set({ spaceId: SPACE_A, permission: 'drafts', enabled: 'on', actor: USER });
+  assert.equal(updated.created, false);
+  assert.equal(stub.rows.length, 1);
+  assert.equal(stub.rows[0].enabled, true);
+});
+
+test('the set-permission operation refuses like the action: anonymous, agents, bad input', async () => {
+  const { createSetSpaceAiPermissionOperation } = await import('../packages/space-permissions/src/composition.js');
+  const stub = stubOperationModules();
+  const ops = createSetSpaceAiPermissionOperation({ modules: stub.modules });
+  await assert.rejects(
+    () => ops.set({ spaceId: SPACE_A, permission: 'drafts', enabled: 'off', actor: null }),
+    (error) => error.code === 'SPACE_ACTOR_REQUIRED',
+  );
+  await assert.rejects(
+    () => ops.set({ spaceId: SPACE_A, permission: 'drafts', enabled: 'on', actor: SYSTEM }),
+    (error) => error.code === 'HUMAN_APPROVAL_REQUIRED',
+  );
+  await assert.rejects(
+    () => ops.set({ spaceId: SPACE_A, permission: 'nope', enabled: 'on', actor: USER }),
+    (error) => error.code === 'SPACE_PERMISSION_UNKNOWN',
+  );
+  await assert.rejects(
+    () => ops.set({ spaceId: SPACE_A, permission: 'drafts', enabled: 'maybe', actor: USER }),
+    (error) => error.code === 'VALIDATION_ERROR' && error.details?.field === 'enabled',
+  );
+  assert.equal(stub.rows.length, 0, 'no refusal writes a row');
+});
+
+test('the effective operation resolves defaults, overrides and one space only', async () => {
+  const { createEffectiveSpaceAiPermissionsOperation } = await import('../packages/space-permissions/src/composition.js');
+  const stub = stubOperationModules();
+  stub.rows.push(
+    { id: 'row-1', spaceId: SPACE_A, scopeKey: `${SPACE_A}:drafts`, permission: 'drafts', enabled: false },
+    { id: 'row-2', spaceId: 'other-space', scopeKey: 'other-space:drafts', permission: 'drafts', enabled: false },
+  );
+  const ops = createEffectiveSpaceAiPermissionsOperation({ modules: stub.modules });
+  const answer = await ops.effective({ spaceId: SPACE_A });
+  assert.equal(answer.spaceId, SPACE_A);
+  assert.equal(answer.resolved.drafts, false, 'the flipped row wins over the default');
+  assert.equal(answer.resolved['send-without-approval'], false, 'an untouched switch keeps its default');
+  assert.equal(answer.resolved['move-offers'], true, 'an untouched switch keeps its default');
+  assert.ok(answer.overrides.every((row) => row.spaceId === SPACE_A), 'no row of another space leaves the server');
+  assert.deepEqual(Object.keys(answer.resolved).sort(), [
+    'book-appointments', 'drafts', 'merge-duplicates', 'move-offers', 'send-without-approval',
+  ]);
+});
+
+test('the effective operation refuses a shapeless space id', async () => {
+  const { createEffectiveSpaceAiPermissionsOperation } = await import('../packages/space-permissions/src/composition.js');
+  const stub = stubOperationModules();
+  const ops = createEffectiveSpaceAiPermissionsOperation({ modules: stub.modules });
+  await assert.rejects(
+    () => ops.effective({ spaceId: '' }),
+    (error) => error.code === 'VALIDATION_ERROR',
+  );
 });

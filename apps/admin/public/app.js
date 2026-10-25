@@ -373,7 +373,9 @@ import { createConnectorsView } from './admin-connectors.js';
 import { createConnectorDetailView } from './admin-connector-detail.js';
 import { createReportingView } from './admin-reporting.js';
 import { createSequenzeView } from './admin-sequenze.js';
+import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
+import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createSpineView } from './admin-spine.js';
 import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
 
@@ -547,6 +549,18 @@ const reportingView = createReportingView({
   },
 });
 
+// Team calendar (BO-F3 \"07 Calendario\"): the week, the phrase draft, the
+// slot proposals and the manual form over the appointments operations.
+// Renders honest states when the package is not composed; otherwise the
+// week is real. The space rides the shell storage like the connectors view.
+const calendarioView = createCalendarioView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  storage: shellStorage,
+  toast,
+});
+
 // Personalizzazione (BO-F4-01): Skill, Connettori and Pacchetti per space.
 // Renders only while the server publishes the space-permissions composition
 // catalog; otherwise the view itself says so.
@@ -556,6 +570,27 @@ const personalizzazioneView = createPersonalizzazioneView({
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
   spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  storage: shellStorage,
+  toast,
+});
+
+// Spazi e accessi (BO-F0-06): spaces, team and AI switches of one space.
+// The spaces are the shell's own list (the sidebar switcher reads the same
+// source); picking one here switches the same active space everywhere.
+const spaziAccessiView = createSpaziAccessiView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  navigate: (hash) => { window.location.hash = hash; },
+  spaces: () => shellSpaces,
+  activeSpaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  onPickSpace: (id) => {
+    shellActiveSpace = id;
+    try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
+      // The switch still applies to this tab.
+    }
+    if (shellView) shellView.setSpaces(shellSpaces, id);
+  },
   storage: shellStorage,
   toast,
 });
@@ -669,8 +704,10 @@ function shellScreenFor(target) {
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
     case 'connector-detail': return { id: 'impostazioni', label: 'Dettaglio connettore' };
     case 'reporting': return { id: 'reporting', label: 'Reporting' };
+    case 'calendario': return { id: 'calendario', label: 'Calendario' };
     case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
     case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
+    case 'spazi-accessi': return { id: 'impostazioni', label: 'Spazi e accessi' };
     case 'invalid': return { id: null, label: 'Percorso non valido' };
     default: return { id: null, label: 'Vista' };
   }
@@ -860,6 +897,7 @@ async function route() {
       (target.view === 'pipeline' && link.getAttribute('href') === `#/pipelines/${target.pipelineName}`) ||
       ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
       (target.view === 'catalog' && link.getAttribute('href') === '#/catalogo') ||
+      (target.view === 'calendario' && link.getAttribute('href') === '#/calendario') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
       ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card') && link.getAttribute('href') === '#/customer-data')
@@ -907,8 +945,10 @@ async function route() {
       }
       await sequenzeView.renderSequenze();
     }
+    else if (target.view === 'calendario') await calendarioView.render();
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
     else if (target.view === 'personalizzazione') await personalizzazioneView.render();
+    else if (target.view === 'spazi-accessi') await spaziAccessiView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'customer-card') await customerCardView.renderCard(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();

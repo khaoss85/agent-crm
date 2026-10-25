@@ -137,9 +137,12 @@ test('buildShellNav resolves Pipeline from the schema and leaves future screens 
   const bare = buildShellNav({ pipelines: [] });
   assert.equal(bare.find((item) => item.id === 'pipeline').available, false);
 
+  // Calendario ships its admin screen (BO-F3 \"07 Calendario\"): the voice
+  // links unconditionally like Reporting — the screen itself renders honest
+  // states when the package is not composed, so it is never a dead link.
   const calendar = bare.find((item) => item.id === 'calendario');
-  assert.equal(calendar.available, false);
-  assert.match(calendar.disabledReason, /BO-F3/);
+  assert.equal(calendar.available, true);
+  assert.equal(calendar.route, '#/calendario');
 
   // Sequenze has no admin screen (the framework read exists, but no screen):
   // it stays disabled with the story named instead of linking anywhere.
@@ -197,16 +200,15 @@ test('a composed schema envelope links every delivered screen (backlog:42fd49b8)
   for (const id of ['clienti', 'pipeline', 'impostazioni', 'oggi']) {
     assert.equal(byId[id].available, true, `${id} links its delivered screen`);
   }
-  for (const id of ['calendario', 'sequenze']) {
-    assert.equal(byId[id].available, false, `${id} has no admin screen yet`);
-    assert.equal(byId[id].route, null);
-  }
-  // BO-F5-01: Reporting and Nuovo modulo are delivered screens now.
-  for (const id of ['reporting', 'nuovo-modulo']) {
+  assert.equal(byId.sequenze.available, false, 'sequenze has no admin screen yet');
+  assert.equal(byId.sequenze.route, null);
+  // BO-F3: Calendario ships its screen now.
+  for (const id of ['reporting', 'nuovo-modulo', 'calendario']) {
     assert.equal(byId[id].available, true, `${id} links its delivered screen`);
   }
+  assert.equal(byId.calendario.route, '#/calendario');
   const oggiRoutes = buildOggiLinks(nav).map((link) => link.route);
-  for (const href of ['#/customer-data', '#/pipelines/vendite', '#/reporting', '#/nuovo-modulo', '#/impostazioni']) {
+  for (const href of ['#/customer-data', '#/pipelines/vendite', '#/reporting', '#/nuovo-modulo', '#/calendario', '#/impostazioni']) {
     assert.ok(oggiRoutes.includes(href), `Oggi lists the ready screen ${href}`);
   }
 });
@@ -324,11 +326,12 @@ test('settings panel lists the four areas with honest availability', () => {
   }
   assert.ok(text.includes('2 cose da sistemare'));
   const links = mount.findAll('a');
-  // Personalizzazione (BO-F4-01, #323) and Catalogo prodotti (BO-F2-05) both
-  // link beside the Stato sync link, in area order.
-  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/customer-data']);
+  // Personalizzazione (BO-F4-01, #323), Catalogo prodotti (BO-F2-05) and
+  // Spazi e accessi (BO-F0-06) all link beside the Stato sync link, in area
+  // order.
+  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/customer-data', '#/spazi-accessi']);
   for (const link of links) link.dispatch('click', { preventDefault: () => {} });
-  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/customer-data']);
+  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/customer-data', '#/spazi-accessi']);
 
   const empty = createMount();
   renderSettingsPanel({ doc, mount: empty, fixCount: 0 });
@@ -344,15 +347,15 @@ test('Stato sync links only when the customer-data package is composed', () => {
   const doc = createFakeDocument();
   const off = createMount();
   renderSettingsPanel({ doc, mount: off, fixCount: 2, customerDataAvailable: false });
-  // Personalizzazione and Catalogo prodotti link; Stato sync stays an honest
-  // note until the customer-data package is composed.
-  assert.deepEqual(off.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo']);
+  // Personalizzazione, Catalogo prodotti and Spazi e accessi link; Stato sync
+  // stays an honest note until the customer-data package is composed.
+  assert.deepEqual(off.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi']);
   assert.ok(off.textContent.includes('Stato sync'));
   assert.ok(off.textContent.includes('non composto'));
 
   const implicit = createMount();
   renderSettingsPanel({ doc, mount: implicit, fixCount: 2 });
-  assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo']);
+  assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi']);
 });
 
 test('Stato sync row carries the real fix-count badge, absent at zero', () => {
