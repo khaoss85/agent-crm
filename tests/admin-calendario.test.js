@@ -125,6 +125,22 @@ test('member filter splits, trims and dedups — never a whole-team read', () =>
   assert.deepEqual(parseMemberFilter(null), []);
 });
 
+test('week label names both years when the Rome week spans New Year', () => {
+  // Thursday 2026-01-01 belongs to the Dec 29 – Jan 4 week: the trailing
+  // year alone would pin the wrong year on the January days.
+  const keys = romeWeekKeys(new Date('2026-01-01T10:00:00Z'));
+  assert.deepEqual(keys[0], '2025-12-29');
+  assert.deepEqual(keys[6], '2026-01-04');
+  assert.equal(weekLabel(keys), '29 dic 2025 – 4 gen 2026');
+});
+
+test('week label keeps a single year inside one year', () => {
+  assert.equal(
+    weekLabel(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25']),
+    '19 ott – 25 ott 2026',
+  );
+});
+
 test('calendario route resolves, deeper paths stay invalid', () => {
   assert.deepEqual(parseModuleRoute('#/calendario'), { view: 'calendario' });
   assert.deepEqual(parseModuleRoute('#/calendario/marco'), { view: 'invalid' });
@@ -155,6 +171,38 @@ test('week renders seven day columns with real Rome-time events', async () => {
   // Customer link points at the scheda, never at a raw id.
   const links = mount.findAll('a').map((node) => node.getAttribute('href'));
   assert.ok(links.includes('#/customer-card/contact/c1'));
+});
+
+test('the week pager reloads the named members instead of blanking the week', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  const flush = async () => {
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  await flush();
+  const weeks = () => client.calls.filter((call) => call.path.startsWith('/api/appointments/team-week'));
+  assert.equal(weeks().length, 1);
+  clickButton(mount, 'Settimana dopo');
+  await flush();
+  // The pager moves the window AND reloads it for the still-named members:
+  // the operator never falls back to the "name someone" prompt mid-browse.
+  assert.equal(weeks().length, 2);
+  assert.ok(weeks()[1].path.includes('teamMemberIds=marco'));
+  assert.ok(weeks()[1].path.includes('from=2026-10-25T00'), `second window starts after the first week: ${weeks()[1].path}`);
+  // The stub week holds no events in the new window, so the reloaded panel
+  // honestly shows seven empty days — never the "name someone" prompt.
+  const days = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
+  assert.equal(days.length, 7);
+  assert.ok(texts(mount, 'p').some((text) => text.includes('26 ott')), 'the nav labels the moved week');
+  assert.ok(!texts(mount, 'p').some((text) => text.includes('Scegli le persone')));
 });
 
 test('hostile notes and subjects are inert text, never markup', async () => {
