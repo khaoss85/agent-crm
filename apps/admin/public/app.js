@@ -898,6 +898,11 @@ async function route() {
           doc: document,
           mount: moduleView,
           client: moduleClient,
+          submissions,
+          storage: shellStorage,
+          // The shell's active space, read late: the calls read stays
+          // space-explicit and follows the space switcher (BO-F1-08).
+          spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
         });
       }
       await sequenzeView.renderSequenze();

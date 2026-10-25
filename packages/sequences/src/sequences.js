@@ -1391,6 +1391,13 @@ export function buildActivateSequenceAction() {
     async execute({ record, actor, modules, now }) {
       const who = requireSequenceActor(actor, 'Activating a sequence');
       const sequences = trusted(modules, 'sequence');
+      const present = await trusted(modules, 'sequence-step')
+        .listWhere({ spaceId: record.spaceId, sequenceSourceKey: record.sourceKey });
+      if (!present.some((row) => row && Number.isInteger(row.stepOrder))) {
+        throw new AppError('Cannot activate a sequence with no steps', {
+          code: 'SEQUENCE_NO_STEPS', status: 409,
+        });
+      }
       return transitionSequence({ sequences, sequence: record, event: 'activate', at: now(), actor: who });
     },
   };

@@ -13,7 +13,11 @@
 //   managed modules, like every other admin view;
 // - writes: the `activate` / `pause` code-first actions of the sequences
 //   package (the only way a sequence changes state), with the screen asking
-//   twice before either;
+//   twice before either, posted through the bound submission client so the
+//   Admin mutation gate sees its Idempotency-Key;
+// - space scope: reads carry `filter.spaceId` from the shell accessor like
+//   the customer scheda, and a failed read renders as unavailable — never
+//   as a genuine zero;
 // - channel labels: CONNECTOR_CATALOG of admin-connectors.js.
 // Metrics are counted from the rows just read — people by enrollment
 // state, fires by send state — never stored, never invented. A space
@@ -26,6 +30,7 @@
 // person names are inert text, never markup.
 
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
+import { bindAdminMutations } from './admin-submission.js';
 
 /** How many rows each module read takes: one page, said out loud. */
 export const SEQUENZE_READ_LIMIT = 200;
@@ -274,14 +279,16 @@ async function readModulePage(client, module, filters = {}) {
  * package: without the sequences contract the screen renders the story
  * that delivers it, never a blank page.
  * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {string | null} [spaceId] the shell space to scope reads to, if any
  */
-export async function loadSequenzeData(client) {
+export async function loadSequenzeData(client, spaceId = null) {
   const outcome = {
     sequencesAvailable: false,
     sequences: [],
     enrollments: [],
     sends: [],
     capped: false,
+    unavailable: [],
   };
   let domains = {};
   try {
@@ -292,13 +299,17 @@ export async function loadSequenzeData(client) {
   }
   if (domains?.sequences?.sequencesContract !== 1) return outcome;
   outcome.sequencesAvailable = true;
+  const scoped = spaceId === null || spaceId === undefined || spaceId === ''
+    ? {}
+    : { spaceId };
   for (const [module, field] of [['sequence', 'sequences'], ['sequence-enrollment', 'enrollments'], ['sequence-send', 'sends']]) {
     try {
-      const page = await readModulePage(client, module);
+      const page = await readModulePage(client, module, scoped);
       outcome[field] = page.rows;
       if (page.capped) outcome.capped = true;
-    } catch {
-      return { ...outcome, sequencesAvailable: true, [field]: [] };
+    } catch (error) {
+      console.warn(`bo-sequenze ${field} unreadable:`, error instanceof Error ? error.name : 'unknown');
+      outcome.unavailable.push(field);
     }
   }
   return outcome;
@@ -309,12 +320,17 @@ export async function loadSequenzeData(client) {
  * draft and never edited once active, so the rows just read are the answer.
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {string} sequenceSourceKey
+ * @param {string | null} [spaceId] the shell space to scope the steps read to, if any
  */
-export async function loadSequenzaSteps(client, sequenceSourceKey) {
+export async function loadSequenzaSteps(client, sequenceSourceKey, spaceId = null) {
   try {
-    const page = await readModulePage(client, 'sequence-step', { sequenceSourceKey });
+    const scoped = spaceId === null || spaceId === undefined || spaceId === ''
+      ? {}
+      : { spaceId };
+    const page = await readModulePage(client, 'sequence-step', { sequenceSourceKey, ...scoped });
     return page.rows;
-  } catch {
+  } catch (error) {
+    console.warn('bo-sequenze steps unreadable:', error instanceof Error ? error.name : 'unknown');
     return [];
   }
 }
@@ -462,22 +478,28 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
 
 /**
  * The Sequenze screen: elenco + dettaglio, like every mounted admin view.
- * @param {{ doc?: object, mount: object, client: { request: (path: string, options?: any) => Promise<any> } }} deps
+ * Writes go through the bound submission client, reads stay space-explicit
+ * and follow the space switcher like the customer scheda does.
+ * @param {{ doc?: object, mount: object, client: { request: (path: string, options?: any) => Promise<any> }, submissions?: any, storage?: any, spaceId?: () => string | null }} deps
  */
-export function createSequenzeView({ doc = null, mount, client }) {
+export function createSequenzeView({ doc = null, mount, client, submissions, storage, spaceId }) {
   const documentNode = doc ?? (typeof document !== 'undefined' ? document : null);
+  const { client: bound } = bindAdminMutations(client, { submissions, storage });
+  const readSpace = typeof spaceId === 'function' ? spaceId : () => null;
   const state = {
     available: false,
     sequences: [],
     enrollments: [],
     sends: [],
     capped: false,
+    unavailable: [],
     stepsByKey: new Map(),
     selectedKey: '',
     confirming: null,
     busy: false,
     error: '',
     loaded: false,
+    space: null,
   };
 
   function paint() {
@@ -502,6 +524,10 @@ export function createSequenzeView({ doc = null, mount, client }) {
     ));
     if (state.capped) {
       mount.appendChild(el(documentNode, 'p', 'bo-muted', `Mostro i primi ${SEQUENZE_READ_LIMIT} record per elenco.`));
+    }
+    if (state.unavailable.length > 0) {
+      mount.appendChild(el(documentNode, 'p', 'bo-seq-error',
+        `Non riesco a leggere adesso: ${state.unavailable.join(', ')}. I numeri qui sotto contano solo quello che ho letto davvero.`));
     }
     if (state.error !== '') {
       mount.appendChild(el(documentNode, 'p', 'bo-seq-error', state.error));
@@ -538,7 +564,7 @@ export function createSequenzeView({ doc = null, mount, client }) {
     state.error = '';
     paint();
     if (key !== '' && !state.stepsByKey.has(key)) {
-      const steps = await loadSequenzaSteps(client, key);
+      const steps = await loadSequenzaSteps(client, key, state.space);
       if (state.selectedKey === key) {
         state.stepsByKey.set(key, steps);
         paint();
@@ -555,9 +581,9 @@ export function createSequenzeView({ doc = null, mount, client }) {
       if (id === undefined || id === null || String(id) === '') {
         throw new Error('Questa sequenza non ha un id stabile: ricarica e riprova.');
       }
-      await client.request(
+      await bound.request(
         `/api/modules/sequence/records/${encodeURIComponent(String(id))}/actions/${encodeURIComponent(action)}`,
-        { method: 'POST', body: JSON.stringify({}) },
+        { method: 'POST', body: {} },
       );
       state.confirming = null;
       await renderSequenze();
@@ -581,15 +607,23 @@ export function createSequenzeView({ doc = null, mount, client }) {
     state.busy = false;
     if (!documentNode) return;
     paint();
-    const data = await loadSequenzeData(client);
+    const space = readSpace();
+    if (space !== state.space) {
+      state.space = space;
+      state.selectedKey = '';
+      state.confirming = null;
+      state.stepsByKey = new Map();
+    }
+    const data = await loadSequenzeData(client, state.space);
     state.available = data.sequencesAvailable;
     state.sequences = data.sequences;
     state.enrollments = data.enrollments;
     state.sends = data.sends;
     state.capped = data.capped;
+    state.unavailable = data.unavailable;
     state.loaded = true;
     if (state.selectedKey !== '' && state.available) {
-      const steps = await loadSequenzaSteps(client, state.selectedKey);
+      const steps = await loadSequenzaSteps(client, state.selectedKey, state.space);
       state.stepsByKey.set(state.selectedKey, steps);
     }
     paint();

@@ -34,14 +34,24 @@ function compose() {
   const manifest = JSON.parse(
     readFileSync(join(here, '..', 'packages', 'sequences', 'modules', 'sequence.module.json'), 'utf8'),
   );
+  const stepManifest = JSON.parse(
+    readFileSync(join(here, '..', 'packages', 'sequences', 'modules', 'sequence-step.module.json'), 'utf8'),
+  );
   const database = createDatabase({ path: ':memory:' });
-  for (const { sql } of recordModuleMigrations([{ name: 'sequence', manifest }])) {
+  for (const { sql } of recordModuleMigrations([
+    { name: 'sequence', manifest },
+    { name: 'sequence-step', manifest: stepManifest },
+  ])) {
     database.raw.exec(sql);
   }
   const audit = new AuditLog(database);
   const events = new EventBus();
   const built = createRecordModuleFromManifest(manifest, { database, audit, events, references: {} });
-  const modules = new Map([['sequence', { service: built.service }]]);
+  const builtSteps = createRecordModuleFromManifest(stepManifest, { database, audit, events, references: {} });
+  const modules = new Map([
+    ['sequence', { service: built.service }],
+    ['sequence-step', { service: builtSteps.service }],
+  ]);
   return { modules };
 }
 
@@ -75,6 +85,23 @@ test('the package registers activate and pause on the sequence module', () => {
   assert.equal(registry.listForModule('sequence').length, 2);
 });
 
+async function addStep(modules, sequenceSourceKey, order = 0) {
+  const service = modules.get('sequence-step').service;
+  return service.createManaged({
+    sourceKey: `${sequenceSourceKey}:step:${order}`,
+    sequenceSourceKey,
+    spaceId: SPACE,
+    stepOrder: order,
+    dayOffset: 0,
+    channel: 'whatsapp',
+    templateName: 'presti_seq',
+    templateLanguage: 'it',
+    templateVars: JSON.stringify(['name']),
+    actorType: USER.type,
+    actorId: USER.id,
+  }, { actor: USER });
+}
+
 test('activate moves draft to active, pause moves active to paused', async () => {
   const { modules } = compose();
   const activate = buildActivateSequenceAction();
@@ -82,6 +109,7 @@ test('activate moves draft to active, pause moves active to paused', async () =>
   validateActionDefinition(activate, { moduleExists: () => true });
   validateActionDefinition(pause, { moduleExists: () => true });
   const created = await draftSequence(modules);
+  await addStep(modules, created.sourceKey);
   const started = await activate.execute({ record: created, actor: USER, modules, now: () => T0 });
   assert.equal(started.sequence.status, 'active');
   assert.equal(started.event, 'activate');
@@ -91,11 +119,24 @@ test('activate moves draft to active, pause moves active to paused', async () =>
   assert.equal(restarted.sequence.status, 'active');
 });
 
+test('activate on a draft with no steps refuses with SEQUENCE_NO_STEPS, like the operation', async () => {
+  const { modules } = compose();
+  const activate = buildActivateSequenceAction();
+  const created = await draftSequence(modules);
+  await assert.rejects(
+    activate.execute({ record: created, actor: USER, modules, now: () => T0 }),
+    (error) => error?.code === 'SEQUENCE_NO_STEPS' && error?.status === 409,
+  );
+  const rows = await modules.get('sequence').service.listWhere({ spaceId: SPACE, sourceKey: created.sourceKey });
+  assert.equal(rows[0].status, 'draft');
+});
+
 test('activate on active refuses with 409, pause on draft refuses with 409', async () => {
   const { modules } = compose();
   const activate = buildActivateSequenceAction();
   const pause = buildPauseSequenceAction();
   const created = await draftSequence(modules);
+  await addStep(modules, created.sourceKey);
   const started = await activate.execute({ record: created, actor: USER, modules, now: () => T0 });
   await assert.rejects(
     activate.execute({ record: started.sequence, actor: USER, modules, now: () => T0 }),

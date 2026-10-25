@@ -52,7 +52,7 @@ function stubClient({ sequences = [SEQUENCE], steps = STEPS, failAction = null }
   return {
     calls,
     request: async (path, options = {}) => {
-      calls.push({ path, method: options.method ?? 'GET', body: options.body });
+      calls.push({ path, method: options.method ?? 'GET', body: options.body, key: options.idempotencyKey ?? options.headers?.['Idempotency-Key'] ?? null });
       if (path === '/api/schema') return { domains: { sequences: { sequencesContract: 1 } } };
       if (path.startsWith('/api/modules/sequence/records?')) return { items: sequences };
       if (path.startsWith('/api/modules/sequence-enrollment/records?')) return { items: ENROLLMENTS };
@@ -155,6 +155,56 @@ test('full screen: elenco, dettaglio with passi, double-ask activate posts once'
   const posts = client.calls.filter((call) => call.method === 'POST');
   assert.equal(posts.length, postsBefore + 1);
   assert.ok(posts[posts.length - 1].path.endsWith('/actions/activate'));
+});
+
+test('activate posts through the submission client with an idempotency key', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-open="seq-bentornato"]').dispatch('click', {});
+  await flush();
+  mount.querySelector('button[data-action="activate"]').dispatch('click', {});
+  await flush();
+  mount.querySelector('button[data-confirm="activate"]').dispatch('click', {});
+  await flush();
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1);
+  assert.match(String(posts[0].key ?? ''), /^v1\./);
+});
+
+test('record reads stay space-explicit when the shell names a space', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createSequenzeView({ doc, mount, client, spaceId: () => 'presti' });
+  await view.renderSequenze();
+  await flush();
+  const reads = client.calls.filter((call) => call.method === 'GET' && call.path.includes('/api/modules/'));
+  assert.ok(reads.length > 0);
+  for (const call of reads) assert.ok(call.path.includes('filter.spaceId=presti'), call.path);
+});
+
+test('a failed dataset reads as unavailable, never as a genuine zero', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = stubClient();
+  const client = {
+    calls: inner.calls,
+    request: async (path, options) => {
+      if (path.startsWith('/api/modules/sequence-enrollment/records?')) {
+        throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  assert.ok(mount.textContent.includes('Bentornato in palestra'));
+  assert.ok(mount.textContent.includes('Non riesco a leggere adesso: enrollments.'));
 });
 
 test('a refused write says the state moved and reloads, never a raw error', async () => {
