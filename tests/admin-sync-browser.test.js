@@ -15,7 +15,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, extname } from 'node:path';
@@ -177,8 +178,29 @@ function startServer() {
   });
 }
 
+const execFileAsync = promisify(execFile);
+
+/**
+ * Run one headless Chromium call without blocking the fixture server on
+ * this loop: the server must keep answering while Chromium loads the
+ * harness page, so a synchronous wait would deadlock the render and time
+ * the whole gate out. Returns the same { status, stderr } shape as before.
+ */
+async function runChromium(binary, args, maxBuffer = 1024 * 1024) {
+  try {
+    const { stderr } = await execFileAsync(binary, args, { encoding: 'utf8', timeout: 120000, maxBuffer });
+    return { status: 0, stderr: typeof stderr === 'string' ? stderr : '' };
+  } catch (error) {
+    const status = typeof error?.code === 'number' ? error.code : 1;
+    const stderr = typeof error?.stderr === 'string' && error.stderr !== ''
+      ? error.stderr
+      : String(error?.message ?? error);
+    return { status, stderr };
+  }
+}
+
 function shot(binary, url, width, png) {
-  return spawnSync(binary, [
+  return runChromium(binary, [
     '--headless',
     '--disable-gpu',
     '--no-sandbox',
@@ -187,11 +209,11 @@ function shot(binary, url, width, png) {
     '--virtual-time-budget=15000',
     `--screenshot=${png}`,
     url,
-  ], { encoding: 'utf8', timeout: 120000 });
+  ]);
 }
 
 function dom(binary, url, width) {
-  return spawnSync(binary, [
+  return runChromium(binary, [
     '--headless',
     '--disable-gpu',
     '--no-sandbox',
@@ -199,7 +221,7 @@ function dom(binary, url, width) {
     '--virtual-time-budget=15000',
     '--dump-dom',
     url,
-  ], { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
+  ], 16 * 1024 * 1024);
 }
 
 test('Stato sync renders in a real browser with PNG evidence', { skip: SKIP, timeout: 300000 }, async (t) => {
@@ -212,13 +234,13 @@ test('Stato sync renders in a real browser with PNG evidence', { skip: SKIP, tim
         const url = `http://127.0.0.1:${port}/__harness.html?state=${state}`;
         const png = join(shots, `stato-sync-${state}-${width}.png`);
         await t.test(`screenshot ${state} at ${width}px`, async () => {
-          const rendered = shot(BINARY, url, width, png);
+          const rendered = await shot(BINARY, url, width, png);
           assert.equal(rendered.status, 0, `headless shell failed: ${rendered.stderr}`);
           assert.ok(existsSync(png), 'the PNG was captured');
           // A real render of this screen is tens of kilobytes; a blank page
           // would be an order of magnitude smaller.
           assert.ok(statSync(png).size > 15000, `the PNG is a real render (${statSync(png).size} bytes)`);
-          const dumped = dom(BINARY, url, width);
+          const dumped = await dom(BINARY, url, width);
           assert.equal(dumped.status, 0, `dump-dom failed: ${dumped.stderr}`);
           const html = dumped.stdout;
           assert.ok(html.includes('data-sync-ready="yes"'), 'the view finished rendering');

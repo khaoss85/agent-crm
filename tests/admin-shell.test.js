@@ -95,6 +95,29 @@ test('loadFixCount returns null (unknown) when a read fails — never 0-as-none'
   assert.equal(await loadFixCount(empty), 0);
 });
 
+test('a failed sync half of the badge logs its cause and keeps the quality count', async () => {
+  const client = {
+    async request(path) {
+      if (path.includes('data-quality-issue')) return { items: [{ status: 'open' }] };
+      if (path.includes('duplicate-candidate')) return { items: [] };
+      throw new Error('sync giù');
+    },
+  };
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+  try {
+    assert.equal(await loadFixCount(client, { spaceId: 'prova' }), 1);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0].includes('bo-shell sync count unreadable'));
+  assert.ok(warnings[0].includes('Error'));
+  assert.ok(warnings[0].includes('spaceId=prova'));
+  assert.ok(!warnings[0].includes('sync giù'));
+});
+
 test('⌘1/2/3 switch among the user spaces only', () => {
   const spaces = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
   assert.equal(resolveSpaceShortcut({ metaKey: true, key: '2' }, spaces), 'b');

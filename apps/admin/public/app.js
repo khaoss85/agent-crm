@@ -632,8 +632,11 @@ if (boSidebar && boTopbar) {
       // The open card shows space-scoped calls (BO-F1-08): re-render it on
       // the new space instead of leaving the previous space's summaries.
       // The mounted home greets with the space name: re-render it too.
+      // The Stato sync screen (BO-F1-03) reads space-scoped activity: it
+      // re-renders with the new space so its controls never submit a pull
+      // for the space just left behind.
       const openView = targetForHash(window.location.hash || '#/').view;
-      if (openView === 'customer-card' || (MOUNTED && openView === 'dashboard')) route();
+      if (openView === 'customer-card' || openView === 'sync' || (MOUNTED && openView === 'dashboard')) route();
     },
     win: typeof window !== 'undefined' ? window : null,
   });

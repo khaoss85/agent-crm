@@ -343,6 +343,53 @@ test('a failed pull toasts the cause and leaves the button usable', async () => 
   assert.ok(mount.findAll('button').some((node) => node.textContent === 'Sincronizza ora'));
 });
 
+test('a successful pull releases the guard so the next click pulls again', async () => {
+  const { mount, client, view } = renderView({
+    client: { activity: activityOf({ connections: [entryOf({ sync: { status: 'failed', lastErrorCode: 'X' }, health: 'attention', needsFix: 0 })] }) },
+  });
+  await view.render();
+  await flush();
+  const pulls = () => client.calls.filter((call) => call.path === '/api/connectors/sync-now');
+  mount.findAll('button').find((node) => node.textContent === 'Sincronizza ora').dispatch('click');
+  await flush(12);
+  assert.equal(pulls().length, 1);
+  // The rebuilt controls after a successful pull are enabled: a second
+  // click performs a second pull instead of staying disabled for the
+  // session.
+  const rebuilt = mount.findAll('button').filter((node) => node.textContent === 'Sincronizza ora');
+  assert.equal(rebuilt.length, 2);
+  rebuilt[0].dispatch('click');
+  await flush(12);
+  assert.equal(pulls().length, 2);
+});
+
+test('the view follows a space switch instead of keeping the old activity', async () => {
+  let space = 'prova';
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = fakeClient();
+  const view = createSyncView({
+    doc,
+    mount,
+    client,
+    storage: { getItem: () => space, setItem: () => {}, removeItem: () => {} },
+    navigate: () => {},
+    toast: () => {},
+  });
+  await view.render();
+  await flush();
+  const reads = () => client.calls.filter((call) => call.path.startsWith('/api/connectors/activity'));
+  assert.equal(reads().length, 1);
+  assert.ok(reads()[0].path.includes('spaceId=prova'));
+  // The host re-renders this screen on a space change (app.js onPickSpace):
+  // the view re-reads the storage and never submits for the old space.
+  space = 'nuova';
+  await view.render();
+  await flush();
+  assert.equal(reads().length, 2);
+  assert.ok(reads()[1].path.includes('spaceId=nuova'));
+});
+
 test('the view degrades honestly: no space, no channels, failed read', async () => {
   const noSpace = renderView({ spaceId: '' });
   await noSpace.view.render();

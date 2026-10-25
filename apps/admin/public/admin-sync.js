@@ -620,15 +620,17 @@ export function createSyncView(deps) {
       });
       toast('Sincronizzazione aggiornata.');
       await load();
-      render();
     } catch (error) {
       toast(errorOf(error), true);
-      // The button rebuilds enabled on the next render: no stale disabled
-      // control is left behind, in the fake DOM (no removeAttribute) or the
-      // real one.
+    } finally {
+      // The guard releases on both outcomes before the rebuild: a
+      // successful pull must not leave its own controls disabled for the
+      // session, and a failed one stays retryable. The next render rebuilds
+      // every button enabled (no removeAttribute needed), in the fake DOM
+      // or the real one.
       state.syncing.delete(connectionKey);
-      render();
     }
+    render();
   }
 
   function render() {

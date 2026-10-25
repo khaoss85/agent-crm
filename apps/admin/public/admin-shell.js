@@ -156,7 +156,15 @@ export async function loadFixCount(client, options = {}) {
       const extra = activity !== null && typeof activity === 'object'
         && Number.isInteger(activity.needsFix) && activity.needsFix > 0 ? activity.needsFix : 0;
       return base + extra;
-    } catch {
+    } catch (error) {
+      // Review gate (AGENTS.md): a swallowed failure must leave its cause
+      // diagnosable. Only the error name and the workspace id are logged —
+      // never record bodies, cookies or personal data here.
+      try {
+        console.warn('bo-shell sync count unreadable:', error instanceof Error ? error.name : 'unknown', `spaceId=${spaceId}`);
+      } catch {
+        // Logging must never break the badge read.
+      }
       return base;
     }
   } catch (error) {
