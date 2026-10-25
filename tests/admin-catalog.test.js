@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCatalogView, commercialBlock } from '../apps/admin/public/admin-catalog.js';
+import { createCatalogView, commercialBlock, bpsLabel, parseEuroToCents } from '../apps/admin/public/admin-catalog.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -10,6 +10,21 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
  */
 
 const SCHEMA = { commercial: { commercialContract: 1 } };
+
+const RULES_SCHEMA = {
+  commercial: {
+    commercialContract: 1,
+    discountPolicies: [
+      {
+        name: 'catalog-price-rules',
+        version: 1,
+        label: 'Catalog price rules (BO-F2-04)',
+        fingerprint: 'abc123',
+        config: { autoApproveMaxBps: 1000, ownerApprovalMaxBps: 3000, approvalKey: 'owner' },
+      },
+    ],
+  },
+};
 
 const MANUAL_TABLE = {
   products: [
@@ -33,6 +48,7 @@ const MANUAL_TABLE = {
           unsupportedReason: null,
           components: [
             {
+              key: 'prezzo-pacchetto',
               label: 'Prezzo del pacchetto',
               chargeType: 'one_time',
               pricingModel: 'flat_fee',
@@ -123,18 +139,36 @@ function stubClient({ schema = SCHEMA, tables = { '': MANUAL_TABLE }, fail = nul
   return {
     calls,
     async request(path, options = {}) {
-      calls.push({ path, method: options.method ?? 'GET' });
+      const method = String(options.method ?? 'GET').toUpperCase();
+      let body = options.body;
+      if (typeof body === 'string' && body !== '') {
+        try { body = JSON.parse(body); } catch { /* fingerprint the raw string */ }
+      }
+      calls.push({ path, method, body });
       if (fail && path.startsWith('/api/catalog/products')) {
         throw Object.assign(new Error(fail.message), fail);
       }
       if (path === '/api/schema') return schema;
       if (path.startsWith('/api/catalog/products')) {
+        if (method !== 'GET') return { ok: true };
         const query = path.includes('?') ? path.slice(path.indexOf('?') + 1) : '';
         return tables[query] ?? tables[''] ?? { products: [], summary: {} };
       }
-      throw new Error(`unexpected request ${path}`);
+      if (path === '/api/catalog/sync' && method === 'POST') return { ok: true, synced: 1 };
+      throw new Error(`unexpected request ${method} ${path}`);
     },
   };
+}
+
+async function flush(rounds = 30) {
+  for (let i = 0; i < rounds; i++) await new Promise((resolve) => setImmediate(resolve));
+}
+
+function clickButton(mount, text) {
+  const button = mount.findAll('button').find((node) => node.textContent === text);
+  assert.ok(button, `a "${text}" button renders`);
+  button.dispatch('click');
+  return button;
 }
 
 test('the table renders products with amounts, and the Stripe invite when no source is connected', async () => {
@@ -206,6 +240,125 @@ test('an unavailable catalog says so instead of a blank screen', async () => {
   });
   await failingView.renderTable({});
   assert.ok(failing.textContent.includes('non leggibile'), 'a failed read is visible with the cause');
+});
+
+test('a connected Stripe source names its provider with a confirm-gated sync', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': STRIPE_TABLE } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  assert.ok(mount.textContent.includes('Stripe collegato: stripe-test'), 'the connected state names the provider');
+  clickButton(mount, 'Sincronizza ora (stripe-test)');
+  assert.ok(mount.textContent.includes('Sincronizzare i prodotti da stripe-test?'), 'sync asks for confirmation first');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing is sent before confirmation');
+  clickButton(mount, 'Conferma');
+  await flush();
+  const sync = client.calls.find((call) => call.path === '/api/catalog/sync');
+  assert.ok(sync, 'confirmation sends the sync');
+  assert.equal(sync.method, 'POST');
+  assert.deepEqual(sync.body, { provider: 'stripe-test' });
+});
+
+test('the price rules section reads the live bands from the schema', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ schema: RULES_SCHEMA }) });
+  await view.renderTable({});
+
+  assert.ok(mount.textContent.includes('Regole di prezzo'), 'the rules section renders');
+  assert.ok(mount.textContent.includes('catalog-price-rules@1'), 'the policy identity renders');
+  assert.ok(mount.textContent.includes('fino al 10%'), 'the auto-approve band renders');
+  assert.ok(mount.textContent.includes('fino al 30%'), 'the owner band renders');
+  assert.ok(mount.textContent.includes('bloccano anche l'), 'the AI-blocking note renders');
+
+  const bareDoc = createFakeDocument();
+  const bareMount = createMount();
+  const bareView = createCatalogView({ doc: bareDoc, mount: bareMount, client: stubClient() });
+  await bareView.renderTable({});
+  assert.ok(bareMount.textContent.includes('Nessuna regola di prezzo pubblicata'), 'no policies is an honest note, not a blank section');
+});
+
+test('manual rows edit prices through review and confirmation, provider rows never', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  clickButton(mount, 'Modifica prezzi');
+  const amount = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Prezzo del pacchetto');
+  assert.ok(amount, 'the manual amount renders as an editable field');
+  assert.equal(amount.value, '99.00', 'the field starts from the server amount');
+  amount.value = '120,50';
+  clickButton(mount, 'Rivedi');
+  assert.ok(mount.textContent.includes('EUR 99.00 → EUR 120.50'), 'the review shows old then new');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'review sends nothing');
+  clickButton(mount, 'Conferma');
+  await flush();
+  const prices = client.calls.find((call) => call.path === '/api/catalog/products/p1/prices');
+  assert.ok(prices, 'confirmation sends the price replacement');
+  assert.deepEqual(prices.body.offerIds, ['o1']);
+  assert.equal(prices.body.offers.length, 1);
+  assert.equal(prices.body.offers[0].components[0].key, 'prezzo-pacchetto', 'the declared component key round-trips');
+  assert.equal(prices.body.offers[0].components[0].flatAmountCents, 12050, 'the comma decimal becomes cents');
+
+  const providerDoc = createFakeDocument();
+  const providerMount = createMount();
+  const providerView = createCatalogView({ doc: providerDoc, mount: providerMount, client: stubClient({ tables: { '': STRIPE_TABLE } }) });
+  await providerView.renderTable({});
+  const labels = providerMount.findAll('button').map((node) => node.textContent);
+  assert.ok(!labels.includes('Modifica prezzi'), 'provider rows offer no price edit');
+  assert.ok(!labels.some((label) => label === 'Attiva' || label === 'Disattiva'), 'provider rows offer no flag toggle');
+});
+
+test('a hostile amount never leaves the form', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  clickButton(mount, 'Modifica prezzi');
+  const amount = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Prezzo del pacchetto');
+  amount.value = '12.345';
+  clickButton(mount, 'Rivedi');
+  assert.ok(mount.textContent.includes('non negativo'), 'three decimals refuse with a reason');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'the hostile amount is never sent');
+});
+
+test('the active flag toggles only after confirmation', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  clickButton(mount, 'Disattiva');
+  assert.ok(mount.textContent.includes('Disattivare Pacchetto 10 lezioni?'), 'the toggle asks first');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing is sent before confirmation');
+  clickButton(mount, 'Conferma');
+  await flush();
+  const toggle = client.calls.find((call) => call.path === '/api/catalog/products/p1/active');
+  assert.ok(toggle, 'confirmation sends the flag change');
+  assert.deepEqual(toggle.body, { active: false });
+});
+
+test('band labels and euro parsing fail closed', () => {
+  assert.equal(bpsLabel(1000), '10%');
+  assert.equal(bpsLabel(250), '2.5%');
+  assert.equal(bpsLabel(-1), null);
+  assert.equal(bpsLabel('1000'), null);
+  assert.equal(bpsLabel(NaN), null);
+  assert.equal(parseEuroToCents('99.00'), 9900);
+  assert.equal(parseEuroToCents('120,50'), 12050);
+  assert.equal(parseEuroToCents('0'), 0);
+  assert.equal(parseEuroToCents('12.345'), null);
+  assert.equal(parseEuroToCents('-3'), null);
+  assert.equal(parseEuroToCents(''), null);
+  assert.equal(parseEuroToCents('abc'), null);
+  assert.equal(parseEuroToCents(42), null);
 });
 
 test('the nav gate reads the same domains block the view gates on', () => {
