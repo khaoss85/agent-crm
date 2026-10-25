@@ -439,6 +439,65 @@ export function buildRouter(app) {
     return await app.setManualProductActive({ ...stripServerControlledKeys(input), productId: params.id }, actor);
   });
 
+  // Team calendar (BO-F3 \"07 Calendario\"). Reads and the booking flow over
+  // the declared appointments operations — the kernel owns the paths and
+  // gates the role boundary, the package owns the reads and writes. Without
+  // the package composed each answers an honest 404. Reads gate
+  // `records.read`, writes gate `records.write` like every other write
+  // route. Query flags arrive as strings and are parsed here; bodies pass
+  // through (server-controlled keys stripped) because the operations
+  // validate their own input fail-closed.
+  router.add('GET', '/api/appointments/team-week', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readAppointmentTeamWeek !== 'function') {
+      throw new NotFoundError('Operation', 'team week');
+    }
+    return await app.readAppointmentTeamWeek({
+      teamMemberIds: parseMemberList(query.teamMemberIds),
+      from: query.from,
+      to: query.to,
+    });
+  });
+  router.add('GET', '/api/appointments/suggest-slots', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.suggestAppointmentSlots !== 'function') {
+      throw new NotFoundError('Operation', 'suggested slots');
+    }
+    const slotMinutes = query.slotMinutes === undefined
+      ? undefined
+      : Number.parseInt(String(query.slotMinutes), 10);
+    return await app.suggestAppointmentSlots({
+      teamMemberIds: parseMemberList(query.teamMemberIds),
+      from: query.from,
+      to: query.to,
+      ...(slotMinutes === undefined ? {} : { slotMinutes }),
+    });
+  });
+  router.add('POST', '/api/appointments/propose', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.proposeAppointmentBooking !== 'function') {
+      throw new NotFoundError('Operation', 'appointment proposal');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.proposeAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
+  });
+  router.add('POST', '/api/appointments/confirm', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.confirmAppointmentBooking !== 'function') {
+      throw new NotFoundError('Operation', 'appointment confirmation');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.confirmAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
+  });
+  router.add('POST', '/api/appointments/phrase', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.parseBookingPhrase !== 'function') {
+      throw new NotFoundError('Operation', 'booking phrase');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.parseBookingPhrase({ ...stripServerControlledKeys(input) }, actor);
+  });
+
   // Signature provider events (ADR-017). A dedicated route, NOT a record
   // action: the payload arrives from outside, must be verified as the exact
   // bytes the provider signed before any state is touched, and its identity
@@ -1406,6 +1465,20 @@ function parseLimit(value) {
   if (!value) return undefined;
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+/**
+ * Parse a comma-separated team member list from a query flag (BO-F3). The
+ * team is named per call — there is no roster to scan — so an empty or
+ * missing list fails closed here, never as a whole-team read. Duplicates
+ * are dropped, order kept.
+ * @param {unknown} value
+ */
+function parseMemberList(value) {
+  if (typeof value !== 'string') return [];
+  return [...new Set(
+    value.split(',').map((entry) => entry.trim()).filter((entry) => entry !== ''),
+  )];
 }
 
 /**

@@ -159,6 +159,31 @@ export {
  *   naming the edge.
  */
 export function createAppointmentsPackage(options = {}) {
+  // One composed instance PER APPLICATION runtime: the schedule and book
+  // capability handles below close over the package handovers and open per
+  // runtime modules — the same per-runtime pattern the channels operations
+  // use, so one composition module may serve several instances in one
+  // process. The actor rides the call, never the composition: each write
+  // opens its book handle with the caller's actor, so no caller ever books
+  // as another.
+  const composedByRuntime = new WeakMap();
+  const flowFor = (runtime) => {
+    let composed = composedByRuntime.get(runtime);
+    if (!composed) {
+      const schedule = createAppointmentScheduleCapability({ moduleNames: options.config });
+      const book = createAppointmentBookCapability({
+        moduleNames: options.config,
+        spacePermissions: options.spacePermissions,
+        llm: options.llm,
+      });
+      composed = {
+        schedule: schedule.create({ modules: runtime.modules }),
+        bookFor: (actor) => book.create({ modules: runtime.modules, actor }),
+      };
+      composedByRuntime.set(runtime, composed);
+    }
+    return composed;
+  };
   // This package's own graph contract. The handed-over flow edges
   // (space-permissions, llm) are validated against the provider capability
   // contract pinned by their edge version, on every graph.
@@ -177,7 +202,12 @@ export function createAppointmentsPackage(options = {}) {
   return selectPackageGraph(definePackage({
     packageContract: 1,
     name: APPOINTMENTS_DOMAIN,
-    version: 1,
+    // 2: the backoffice calendar reads and the BO-F3-02 booking flow
+    // (\"07 Calendario\"): the team-week and free-slot reads plus
+    // propose/confirmBooking and the phrase-to-draft parse, attached
+    // generically as `app.readAppointmentTeamWeek` and siblings. Additive:
+    // capabilities, records and the booking contract are untouched.
+    version: 2,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
@@ -205,6 +235,97 @@ export function createAppointmentsPackage(options = {}) {
       createAppointmentScheduleCapability({ moduleNames: options.config }),
     ],
     actions: [],
+
+    /**
+     * The declared application operations (ADR-032): the backoffice
+     * calendar reads and the BO-F3-02 booking flow, attached generically as
+     * `app.readAppointmentTeamWeek` and siblings — replacing no named lookup.
+     * Reads stay read-only; writes open their book handle with the caller's
+     * actor on every call and fail closed (named code, never a silent
+     * placeholder) when the space switch, the LLM edge or the calendar
+     * push is not composed.
+     */
+    operations: [
+      {
+        operationContract: 1,
+        name: 'read-team-week',
+        label: 'Read team week',
+        appMethod: 'readAppointmentTeamWeek',
+        description:
+          'The team week for the backoffice calendar (BO-F3-01): every appointment overlapping the window for each named team member, grouped per person. Returns an honest empty week when nothing is held.',
+        input: [
+          { name: 'teamMemberIds', type: 'json', required: true, hint: 'Named team member identities, at least one.' },
+          { name: 'from', type: 'string', required: true, hint: 'Window start, ISO instant.' },
+          { name: 'to', type: 'string', required: true, hint: 'Window end, ISO instant.' },
+        ],
+        create(runtime) {
+          return (input) => flowFor(runtime).schedule.teamWeekFor(input);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'suggest-appointment-slots',
+        label: 'Suggest appointment slots',
+        appMethod: 'suggestAppointmentSlots',
+        description:
+          'Free slots for the backoffice calendar (BO-F3-02): the named window cut into steps minus every step a held booking overlaps. Read-only: no row is written, no slot invented.',
+        input: [
+          { name: 'teamMemberIds', type: 'json', required: true, hint: 'Named team member identities, at least one.' },
+          { name: 'from', type: 'string', required: true, hint: 'Window start, ISO instant.' },
+          { name: 'to', type: 'string', required: true, hint: 'Window end, ISO instant.' },
+          { name: 'slotMinutes', type: 'integer', required: false, hint: 'Step granularity, one of 15 30 45 60 90 120 (default 30).' },
+        ],
+        create(runtime) {
+          // Read-only: the suggest path never touches the actor, so the book
+          // handle opens actorless — like the schedule handle above.
+          return (input) => flowFor(runtime).bookFor(undefined).suggestSlots(input);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'propose-appointment',
+        label: 'Propose appointment',
+        appMethod: 'proposeAppointmentBooking',
+        description:
+          'Plan one booking without writing (BO-F3-02): a confirm-required draft when the space switch is on, a space-ai-proposal when it is off.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The space the booking is gated on.' },
+        ],
+        create(runtime) {
+          return (input, actor) => flowFor(runtime).bookFor(actor).proposeBooking(input);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'confirm-appointment',
+        label: 'Confirm appointment',
+        appMethod: 'confirmAppointmentBooking',
+        description:
+          'Create the proposed booking on explicit confirmation only (BO-F3-02): without confirmed: true the call is refused before any read or write.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The space the booking is gated on.' },
+          { name: 'confirmed', type: 'json', required: true, hint: 'Must be true: nothing is created without it.' },
+        ],
+        create(runtime) {
+          return (input, actor) => flowFor(runtime).bookFor(actor).confirmBooking(input);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'parse-booking-phrase',
+        label: 'Parse booking phrase',
+        appMethod: 'parseBookingPhrase',
+        description:
+          'Draft booking parameters from one Italian sentence through the composed LLM (BO-F3-02 \"fissa con una frase\"). Without the LLM edge it fails closed naming the missing composition.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The space the phrase is parsed for.' },
+          { name: 'phrase', type: 'string', required: true, hint: 'One Italian booking sentence.' },
+        ],
+        create(runtime) {
+          return (input, actor) => flowFor(runtime).bookFor(actor).parseBookingPhrase(input);
+        },
+      },
+    ],
 
     // None. A versioned policy earns its fingerprint when two consumers share
     // a rule; the transition table and the overlap rule are published in
