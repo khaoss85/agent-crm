@@ -1365,3 +1365,67 @@ export async function transitionEnrollment({ enrollments, enrollment, event, at,
   );
   return { enrollment: rows[0] ?? { ...current, ...patch }, event };
 }
+
+/**
+ * `activate` — the only way a sequence starts (or restarts) sending.
+ *
+ * `fromStates: ['draft', 'paused']` is the transition table, enforced by the
+ * action runtime before this code runs: any other state answers `409` naming
+ * the state it is in. The write itself goes through `transitionSequence`,
+ * which re-reads the row inside the transaction first, so a decision taken
+ * on a stale screen cannot silently win over a newer one. `confirm: true`
+ * marks it for the backoffice: starting a sequence sends messages to real
+ * people, so the screen asks twice.
+ */
+export function buildActivateSequenceAction() {
+  return {
+    module: 'sequence',
+    name: 'activate',
+    label: 'Activate sequence',
+    description: 'Start a draft or paused sequence: due steps may queue sends. A human decision; it notifies nobody by itself.',
+    actionContract: 1,
+    confirm: true,
+    stateField: 'status',
+    fromStates: ['draft', 'paused'],
+    toState: 'active',
+    async execute({ record, actor, modules, now }) {
+      const who = requireSequenceActor(actor, 'Activating a sequence');
+      const sequences = trusted(modules, 'sequence');
+      const present = await trusted(modules, 'sequence-step')
+        .listWhere({ spaceId: record.spaceId, sequenceSourceKey: record.sourceKey });
+      if (!present.some((row) => row && Number.isInteger(row.stepOrder))) {
+        throw new AppError('Cannot activate a sequence with no steps', {
+          code: 'SEQUENCE_NO_STEPS', status: 409,
+        });
+      }
+      return transitionSequence({ sequences, sequence: record, event: 'activate', at: now(), actor: who });
+    },
+  };
+}
+
+/**
+ * `pause` — the only way an active sequence stops firing.
+ *
+ * A paused sequence fires nothing and a resume re-fires only steps with no
+ * send row, so pausing can never double-send on resume. Same double-ask as
+ * the activation: stopping a sequence in front of a customer is a decision
+ * the screen confirms.
+ */
+export function buildPauseSequenceAction() {
+  return {
+    module: 'sequence',
+    name: 'pause',
+    label: 'Pause sequence',
+    description: 'Stop an active sequence from firing. Steps already queued or sent are untouched; resume re-fires only steps with no send row.',
+    actionContract: 1,
+    confirm: true,
+    stateField: 'status',
+    fromStates: ['active'],
+    toState: 'paused',
+    async execute({ record, actor, modules, now }) {
+      const who = requireSequenceActor(actor, 'Pausing a sequence');
+      const sequences = trusted(modules, 'sequence');
+      return transitionSequence({ sequences, sequence: record, event: 'pause', at: now(), actor: who });
+    },
+  };
+}

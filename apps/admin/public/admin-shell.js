@@ -25,11 +25,11 @@ export const SPACES_KEY = 'accordo.spaces';
 /**
  * Fixed sidebar voices from the prototype, in Italian, in prototype order.
  * `route: null` in this static table means the voice cannot link on its own:
- * `buildShellNav` resolves what the composition allows (Clienti, Pipeline)
- * and the rest renders disabled with the story named, never as a dead link.
- * Calendario links unconditionally like Reporting: the screen itself renders
- * honest states (not composed, no members named, empty week), so it is never
- * a dead link to a blank screen. Sequenze still waits for its screen.
+ * `buildShellNav` resolves what the composition allows (Clienti, Pipeline,
+ * Sequenze) and the rest renders disabled with the story named, never as a
+ * dead link. Calendario links unconditionally like Reporting: the screen
+ * itself renders honest states (not composed, no members named, empty week),
+ * so it is never a dead link to a blank screen.
  * @typedef {{ id: string, label: string, group: 'home' | 'native' | 'custom' | 'settings', route: string | null, story: string }} ShellItem
  */
 export const SHELL_ITEMS = Object.freeze([
@@ -256,11 +256,12 @@ export function spaceMenuItems(spaces, activeId) {
  * voice resolves to the first composed pipeline; every other not-yet
  * delivered voice stays disabled with its story named. Clienti is available
  * only when the customer-data package is composed in the space
- * (customerDataAvailable): otherwise it stays disabled with its story,
- * like Pipeline/Calendario, never as a dead link to a blank screen.
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown }>, customerDataAvailable?: boolean }} input
+ * (customerDataAvailable), Sequenze only when the sequences package is
+ * composed (sequencesAvailable): otherwise each stays disabled with its
+ * story, like Pipeline/Calendario, never as a dead link to a blank screen.
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean }} input
  */
-export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false } = {}) {
+export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false } = {}) {
   const firstPipeline = pipelines.find(
     (pipeline) => typeof pipeline?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(pipeline.name),
   );
@@ -276,6 +277,12 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
         return { ...item, route: `#/pipelines/${firstPipeline.name}`, available: true, disabledReason: '' };
       }
       return { ...item, route: null, available: false, disabledReason: 'Nessuna pipeline composta' };
+    }
+    if (item.id === 'sequenze') {
+      if (sequencesAvailable) {
+        return { ...item, route: '#/sequenze', available: true, disabledReason: '' };
+      }
+      return { ...item, route: null, available: false, disabledReason: 'In arrivo con BO-F3' };
     }
     if (item.route === null) {
       return { ...item, available: false, disabledReason: `In arrivo con ${item.story}` };
