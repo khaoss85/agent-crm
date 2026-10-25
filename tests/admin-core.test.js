@@ -113,6 +113,17 @@ test('parseModuleRoute routes the catalog table to its view', () => {
   }
 });
 
+test('parseModuleRoute routes Stato sync to its own screen', () => {
+  assert.deepEqual(parseModuleRoute('#/stato-sync'), { view: 'sync' });
+  assert.deepEqual(parseModuleRoute('#/stato-sync/'), { view: 'sync' });
+  for (const hash of [
+    '#/stato-sync/extra',
+    '#/stato-sync//',
+  ]) {
+    assert.equal(parseModuleRoute(hash).view, 'invalid', hash);
+  }
+});
+
 test('parseModuleRoute routes the customer scheda to its three-column view', () => {
   assert.deepEqual(parseModuleRoute('#/customer-card/contact/c1'), { view: 'customer-card', resource: 'contact', subjectId: 'c1' });
   for (const hash of [

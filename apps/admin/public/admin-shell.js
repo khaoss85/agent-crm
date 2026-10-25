@@ -51,16 +51,18 @@ export const SHELL_GROUPS = Object.freeze([
 ]);
 
 /**
- * The four settings areas from the prototype. Stato sync is backed by the
- * data-quality queue that already exists in the customer-data section,
- * Personalizzazione opens the Skill/Connettori/Pacchetti screen (BO-F4-01)
- * and Catalogo prodotti opens the product table delivered by BO-F2-05; the
- * last area names the story that delivers it.
+ * The four settings areas from the prototype. Stato sync opens its own
+ * screen (BO-F1-03, #/stato-sync) — the indicator, the fix list and the
+ * channel table — which gates on the channels package itself and renders an
+ * honest note when it is not composed; Personalizzazione opens the
+ * Skill/Connettori/Pacchetti screen (BO-F4-01) and Catalogo prodotti opens
+ * the product table delivered by BO-F2-05; the last area names the story
+ * that delivers it.
  */
 export const SETTINGS_AREAS = Object.freeze([
   { id: 'personalizzazione', label: 'Personalizzazione', route: '#/personalizzazione', story: 'BO-F4-01' },
   { id: 'catalogo', label: 'Catalogo prodotti', route: '#/catalogo', story: 'BO-F2 (catalogo)' },
-  { id: 'stato-sync', label: 'Stato sync', route: '#/customer-data', story: 'BO-F1' },
+  { id: 'stato-sync', label: 'Stato sync', route: '#/stato-sync', story: 'BO-F1-03' },
   { id: 'spazi-accessi', label: 'Spazi e accessi', route: null, story: 'BO-F0-06' },
 ]);
 
@@ -128,17 +130,35 @@ export function countFixes({ issues = [], candidates = [] } = {}) {
  * Read the real fix count for the badge. Returns null (unknown) when the
  * customer-data package is not composed or a read fails: an unknown count
  * must never light the badge, and it must never render as "none" either.
+ * With a selected space the count also adds the sync attention rows the
+ * Stato sync screen lists (quarantined inbox rows plus open dead letters,
+ * read from the same activity payload); a failed or uncomposed sync read
+ * keeps the quality count instead of failing the badge — the screen shows
+ * its own honest note for that half.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
+ * @param {{ spaceId?: unknown }} [options]
  * @returns {Promise<number | null>}
  */
-export async function loadFixCount(client) {
+export async function loadFixCount(client, options = {}) {
   try {
     const [issuesRead, candidatesRead] = await Promise.all([
       client.request('/api/modules/data-quality-issue/records?limit=100'),
       client.request('/api/modules/duplicate-candidate/records?limit=100'),
     ]);
     if (!Array.isArray(issuesRead?.items) || !Array.isArray(candidatesRead?.items)) return null;
-    return countFixes({ issues: issuesRead.items, candidates: candidatesRead.items });
+    const base = countFixes({ issues: issuesRead.items, candidates: candidatesRead.items });
+    const spaceId = typeof options?.spaceId === 'string' ? options.spaceId.trim() : '';
+    if (spaceId === '') return base;
+    try {
+      const activity = await client.request(
+        `/api/connectors/activity?spaceId=${encodeURIComponent(spaceId)}&feedLimit=1`,
+      );
+      const extra = activity !== null && typeof activity === 'object'
+        && Number.isInteger(activity.needsFix) && activity.needsFix > 0 ? activity.needsFix : 0;
+      return base + extra;
+    } catch {
+      return base;
+    }
   } catch (error) {
     // Review gate (AGENTS.md): a swallowed failure must leave its cause
     // diagnosable. Only the error name is logged — never record bodies,
@@ -555,9 +575,9 @@ export function createShellView({
  * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the
  * same real fix-count badge as the sidebar entry: it renders only from a
  * count above zero, never at zero and never when the count is unknown.
- * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void, customerDataAvailable?: boolean }} options
+ * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void }} options
  */
-export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false } = {}) {
+export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {} } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
   mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
   mount.appendChild(el(doc, 'h2', undefined, 'Impostazioni'));
@@ -577,11 +597,10 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
   for (const area of SETTINGS_AREAS) {
     const row = el(doc, 'div', 'bo-setting-row');
     row.appendChild(el(doc, 'span', 'bo-setting-label', area.label));
-    // Stato sync opens the customer-data quality queue: without the package
-    // composed it stays an honest note, never a link to a blank screen.
-    if (area.id === 'stato-sync' && !customerDataAvailable) {
-      row.appendChild(el(doc, 'span', 'bo-setting-coming', CUSTOMER_DATA_UNAVAILABLE_REASON));
-    } else if (area.route !== null) {
+    // Every area with a route links there: the Stato sync screen gates on
+    // the channels package itself and renders its own honest note when it
+    // is not composed, never a blank screen.
+    if (area.route !== null) {
       const link = el(doc, 'a', 'bo-setting-link', 'Apri');
       link.setAttribute('href', area.route);
       link.addEventListener('click', (event) => {

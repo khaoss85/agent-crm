@@ -371,6 +371,7 @@ import { createCustomerCardView } from './admin-customer-card.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
 import { createConnectorDetailView } from './admin-connector-detail.js';
+import { createSyncView } from './admin-sync.js';
 import { createReportingView } from './admin-reporting.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSpineView } from './admin-spine.js';
@@ -530,6 +531,19 @@ const connectorDetailView = createConnectorDetailView({
   toast,
 });
 
+// Stato sync (BO-F1-03): the indicator, the fix list and the channel table
+// over GET /api/connectors/activity, with the pull behind Sincronizza ora.
+// Same shape as the connectors view above; owns no storage and no write.
+const syncView = createSyncView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  submissions,
+  navigate: (hash) => { window.location.hash = hash; },
+  storage: shellStorage,
+  toast,
+});
+
 // Reporting and "+ Nuovo modulo" (BO-F5-01, docs/BUNDLES.md): the reference
 // bundle's live rows plus the double option and the 'Sviluppa per Accordo'
 // card. The AI option forwards to the assistant panel on the nuovo-modulo
@@ -664,6 +678,7 @@ function shellScreenFor(target) {
     case 'quote-detail': return { id: null, label: 'Preventivo' };
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
     case 'connector-detail': return { id: 'impostazioni', label: 'Dettaglio connettore' };
+    case 'sync': return { id: 'impostazioni', label: 'Stato sync' };
     case 'reporting': return { id: 'reporting', label: 'Reporting' };
     case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
     case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
@@ -686,7 +701,17 @@ function syncShell(target) {
 
 async function refreshShellBadge() {
   if (!shellView || !shellCustomerData) return;
-  shellFixCount = await loadFixCount(moduleClient);
+  // The badge counts what the Stato sync screen points at: the data-quality
+  // rows plus the sync attention rows, both read live. Without a selected
+  // space the sync half is unknown and the badge keeps the quality count.
+  let spaceId = '';
+  try {
+    const stored = shellStorage.getItem(ACTIVE_SPACE_KEY);
+    if (typeof stored === 'string') spaceId = stored;
+  } catch {
+    spaceId = '';
+  }
+  shellFixCount = await loadFixCount(moduleClient, { spaceId });
   shellView.update({ fixCount: shellFixCount });
 }
 
@@ -800,7 +825,7 @@ async function populateNav() {
 
 function targetForHash(hash) {
   // Backoffice shell (BO-F0-02): the Impostazioni entry. Its tabs land in
-  // BO-F0-03; today Stato sync links to the existing quality queue.
+  // BO-F0-03; Stato sync opens its own screen (BO-F1-03, #/stato-sync).
   if (/^#\/impostazioni\/?$/.test(String(hash || '').split('?')[0])) return { view: 'settings' };
   return parseModuleRoute(hash);
 }
@@ -815,7 +840,6 @@ async function route() {
       mount: moduleView,
       fixCount: shellFixCount,
       navigate: (next) => { window.location.hash = next; },
-      customerDataAvailable: shellCustomerData,
     });
     syncShell({ view: 'settings' });
     return;
@@ -887,6 +911,7 @@ async function route() {
     else if (target.view === 'customer-data') await customerDataView.render();
     else if (target.view === 'connectors') await connectorsView.render();
     else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel);
+    else if (target.view === 'sync') await syncView.render();
     else if (target.view === 'reporting') await reportingView.renderReporting();
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
     else if (target.view === 'personalizzazione') await personalizzazioneView.render();

@@ -391,6 +391,13 @@ export function parseModuleRoute(hash) {
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'personalizzazione' };
   }
+  // Stato sync route: #/stato-sync (BO-F1-03). One screen — the indicator,
+  // the fix list and the channel table — so any deeper path is invalid, not
+  // a lookup. A hostile hash still never becomes a request path.
+  if (rawParts.length && rawParts[0] === 'stato-sync') {
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'sync' };
+  }
   if (rawParts.length === 0 || rawParts[0] !== 'modules') return { view: 'dashboard' };
   // An internal empty segment (e.g. "modules//new") is malformed, not a lookup.
   if (rawParts.some((part) => part === '')) return { view: 'invalid' };

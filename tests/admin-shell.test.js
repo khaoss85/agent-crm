@@ -317,7 +317,7 @@ test('settings panel lists the four areas with honest availability', () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const navigated = [];
-  renderSettingsPanel({ doc, mount, fixCount: 2, navigate: (hash) => navigated.push(hash), customerDataAvailable: true });
+  renderSettingsPanel({ doc, mount, fixCount: 2, navigate: (hash) => navigated.push(hash) });
   const text = mount.textContent;
   for (const area of ['Personalizzazione', 'Catalogo prodotti', 'Stato sync', 'Spazi e accessi']) {
     assert.ok(text.includes(area), `settings lists ${area}`);
@@ -326,9 +326,9 @@ test('settings panel lists the four areas with honest availability', () => {
   const links = mount.findAll('a');
   // Personalizzazione (BO-F4-01, #323) and Catalogo prodotti (BO-F2-05) both
   // link beside the Stato sync link, in area order.
-  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/customer-data']);
+  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync']);
   for (const link of links) link.dispatch('click', { preventDefault: () => {} });
-  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/customer-data']);
+  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/stato-sync']);
 
   const empty = createMount();
   renderSettingsPanel({ doc, mount: empty, fixCount: 0 });
@@ -340,37 +340,33 @@ test('settings panel lists the four areas with honest availability', () => {
   assert.ok(!unknown.textContent.includes('Niente da sistemare.'));
 });
 
-test('Stato sync links only when the customer-data package is composed', () => {
+test('Stato sync always links its own screen (it gates on channels itself)', () => {
   const doc = createFakeDocument();
-  const off = createMount();
-  renderSettingsPanel({ doc, mount: off, fixCount: 2, customerDataAvailable: false });
-  // Personalizzazione and Catalogo prodotti link; Stato sync stays an honest
-  // note until the customer-data package is composed.
-  assert.deepEqual(off.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo']);
-  assert.ok(off.textContent.includes('Stato sync'));
-  assert.ok(off.textContent.includes('non composto'));
-
-  const implicit = createMount();
-  renderSettingsPanel({ doc, mount: implicit, fixCount: 2 });
-  assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo']);
+  const mount = createMount();
+  renderSettingsPanel({ doc, mount, fixCount: 2 });
+  // Personalizzazione, Catalogo prodotti and Stato sync link in area order;
+  // the screen renders its own honest note when channels are not composed.
+  assert.deepEqual(mount.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync']);
+  assert.ok(mount.textContent.includes('Stato sync'));
+  assert.ok(!mount.textContent.includes('non composto'));
 });
 
 test('Stato sync row carries the real fix-count badge, absent at zero', () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  renderSettingsPanel({ doc, mount, fixCount: 2, customerDataAvailable: true });
+  renderSettingsPanel({ doc, mount, fixCount: 2 });
   const badges = mount.findAll('span').filter((node) => node.className.includes('bo-badge'));
   assert.equal(badges.length, 1);
   assert.equal(badges[0].textContent, '2');
   assert.ok(badges[0].parentNode.textContent.includes('Stato sync'));
 
   const zero = createMount();
-  renderSettingsPanel({ doc, mount: zero, fixCount: 0, customerDataAvailable: true });
+  renderSettingsPanel({ doc, mount: zero, fixCount: 0 });
   assert.equal(zero.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
   assert.ok(zero.textContent.includes('Niente da sistemare.'));
 
   const unknown = createMount();
-  renderSettingsPanel({ doc, mount: unknown, fixCount: null, customerDataAvailable: true });
+  renderSettingsPanel({ doc, mount: unknown, fixCount: null });
   assert.equal(unknown.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
 });
 
