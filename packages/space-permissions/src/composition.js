@@ -18,10 +18,11 @@
  * there would be nothing to demonstrate and nothing to record.
  */
 
-import { AppError, ValidationError } from '../../core/index.js';
-import { checkSpaceId } from './permissions.js';
+import { randomUUID } from 'node:crypto';
+import { AppError, ValidationError, nowIso, writeTrace } from '../../core/index.js';
+import { checkSpaceId, resolveSpacePermissions } from './permissions.js';
 import { escapeKeyPart } from './proposals.js';
-import { isUniqueConflict, requireIdentifiedActor } from './actions.js';
+import { buildSetPermissionAction, isUniqueConflict, requireIdentifiedActor } from './actions.js';
 
 /**
  * One activatable unit. Packages list the space-scoped record modules their
@@ -444,4 +445,133 @@ export function createSpacePackageOperations(context = {}) {
   }
 
   return Object.freeze({ activate, deactivate, preview });
+}
+
+/**
+ * The `set-space-ai-permission` composition operation (BO-F0-06, backoffice
+ * "08 Spazi e accessi"): the only HTTP-reachable flip path for the five AI
+ * switches of one space.
+ *
+ * It runs the SAME code as the `space-permission-override.set-permission`
+ * record action — same input checks, same human-only refusal, same
+ * create-on-first-flip with the same concurrent-winner retry — never a copy
+ * of it (MEM_ACC_REUSE). The action runtime's transaction, outbox and step
+ * collector stay on the record path; here the switch write is one atomic
+ * managed write, the unique `scopeKey` still serializes two concurrent first
+ * flips, and the actor still names the human in the row and the audit. The
+ * one thing the operation does NOT skip is the execution trace: it collects
+ * the action's own steps and persists a `workflow_runs` row through the
+ * published `writeTrace` surface (the e.g. catalog-sync ADR-016 envelope),
+ * best-effort after the flip commits — a trace failure is logged and never
+ * masks the flip's outcome.
+ *
+ * @param {{modules?: any, database?: any}} context
+ */
+export function createSetSpaceAiPermissionOperation(context = {}) {
+  const modules = context?.modules;
+  const database = context?.database;
+  const action = buildSetPermissionAction();
+
+  /**
+   * @param {{spaceId?: unknown, permission?: unknown, enabled?: unknown, actor?: unknown}} params
+   */
+  async function setPermission(params) {
+    const record = params && typeof params === 'object' ? params : {};
+    const service = trusted(modules, 'space-permission-override', 'SPACE_PERMISSIONS_STORAGE_INVALID');
+    const runId = randomUUID();
+    const startedAt = nowIso();
+    const steps = [];
+    const step = (name, output) => {
+      steps.push({ name, status: 'completed', output: output ?? null });
+    };
+    let failure = null;
+    let output = null;
+    try {
+      const run = () => action.execute({
+        input: { spaceId: record.spaceId, permission: record.permission, enabled: record.enabled },
+        actor: record.actor,
+        modules,
+        managed: (id, patch) => service.applyManaged(id, patch, { actor: record.actor }),
+        step,
+      });
+      if (database && typeof database.transactionAsync === 'function') {
+        output = await database.transactionAsync(run);
+      } else {
+        output = await run();
+      }
+    } catch (error) {
+      failure = error;
+      throw error;
+    } finally {
+      if (database) {
+        try {
+          await Promise.resolve(writeTrace(database, {
+            runId,
+            workflowName: 'space-permission-override.set-permission',
+            status: failure ? 'failed' : 'completed',
+            input: {
+              spaceId: record.spaceId,
+              permission: record.permission,
+              enabled: record.enabled,
+              actor: record.actor && typeof record.actor === 'object'
+                ? { type: record.actor.type ?? null, id: record.actor.id ?? null }
+                : null,
+            },
+            output: failure ? null : output,
+            error: failure ? (failure.message ?? String(failure)) : null,
+            startedAt,
+            steps,
+          }));
+        } catch (traceError) {
+          console.error(`[accordo] space-permission-override.set-permission run ${runId}: failed to persist trace: ${traceError instanceof Error ? traceError.message : String(traceError)}`);
+        }
+      }
+    }
+    return output;
+  }
+
+  return Object.freeze({ set: setPermission });
+}
+
+/**
+ * The `effective-space-ai-permissions` composition operation (BO-F0-06,
+ * backoffice "08 Spazi e accessi"): the only HTTP-reachable read path for the
+ * five AI switches of one space.
+ *
+ * The generic `/api/modules/space-permission-override/records` surface cannot
+ * serve this screen: that module's `filterableFields` is deliberately
+ * index-backed only (ADR-008 addendum 2 — `id`, `scopeKey`), so a
+ * `filter.spaceId` read is refused instead of answered. This operation reads
+ * server-side with the store's own `listWhere({ spaceId })` — the same seam
+ * `preview` uses — and resolves the five effective values with
+ * `resolveSpacePermissions`, the same function the gate capability uses. No
+ * row of another space ever leaves the server: the read is scoped before it
+ * is shaped, so the browser cannot see what the operator must not see.
+ *
+ * @param {{modules?: any}} context
+ */
+export function createEffectiveSpaceAiPermissionsOperation(context = {}) {
+  const modules = context?.modules;
+
+  /**
+   * @param {{spaceId?: unknown}} params
+   */
+  async function effective(params) {
+    const record = params && typeof params === 'object' ? params : {};
+    const id = checkSpaceId(record.spaceId);
+    const service = trusted(modules, 'space-permission-override', 'SPACE_PERMISSIONS_STORAGE_INVALID');
+    const rows = await service.listWhere({ spaceId: id });
+    const list = Array.isArray(rows) ? rows : [];
+    return Object.freeze({
+      spaceId: id,
+      overrides: Object.freeze(list.map((row) => Object.freeze({
+        spaceId: row?.spaceId,
+        permission: row?.permission,
+        enabled: row?.enabled,
+      }))),
+      resolved: resolveSpacePermissions(id, list),
+    });
+  }
+
+  return Object.freeze({ effective });
 }

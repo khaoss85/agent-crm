@@ -61,7 +61,7 @@ export const SETTINGS_AREAS = Object.freeze([
   { id: 'personalizzazione', label: 'Personalizzazione', route: '#/personalizzazione', story: 'BO-F4-01' },
   { id: 'catalogo', label: 'Catalogo prodotti', route: '#/catalogo', story: 'BO-F2 (catalogo)' },
   { id: 'stato-sync', label: 'Stato sync', route: '#/customer-data', story: 'BO-F1' },
-  { id: 'spazi-accessi', label: 'Spazi e accessi', route: null, story: 'BO-F0-06' },
+  { id: 'spazi-accessi', label: 'Spazi e accessi', route: '#/spazi-accessi', story: 'BO-F0-06' },
 ]);
 
 /**
