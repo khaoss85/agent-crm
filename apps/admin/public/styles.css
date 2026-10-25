@@ -480,7 +480,9 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
  * two-step removal, and the five AI switches with their one-line meaning.
  * Same tokens, radii and row idiom as the settings rows above — no new
  * visual identity. Cards flow in a grid on wide screens and stack in one
- * column under 700px; switch and member rows wrap instead of overflowing.
+ * column under 700px; team and AI panels sit side by side in a flex row
+ * (team wider, like prototype screen 08) and stack under 700px; switch and
+ * member rows wrap instead of overflowing.
  */
 .bo-spazi-section { display: grid; gap: 10px; margin-top: 22px; }
 .bo-spazi-section h3 { margin: 0; font-size: 15px; }
@@ -503,12 +505,28 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
   border: 1px solid var(--line); border-radius: 9px; background: var(--ink);
   color: var(--paper); padding: 7px 13px;
 }
+.bo-spazi-panels { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; margin-top: 22px; }
+.bo-spazi-panels .bo-spazi-section { margin-top: 0; }
+.bo-spazi-panel { min-width: 0; }
+.bo-spazi-team-panel { flex: 1.5 1 520px; }
+.bo-spazi-ai-panel { flex: 1 1 340px; }
 .bo-spazi-team { display: grid; gap: 8px; }
 .bo-spazi-member {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center;
   border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 10px 12px;
 }
+.bo-spazi-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.bo-spazi-avatar {
+  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 700; font-size: 12px; flex: none; background: var(--ink); color: var(--paper);
+}
 .bo-spazi-subject { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-spazi-member .bo-spazi-confirm { grid-column: 1 / -1; }
+.bo-spazi-status { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-spazi-role {
+  justify-self: start; padding: 4px 10px; border-radius: 99px; white-space: nowrap;
+  background: var(--surface-soft); font-size: 12px; font-weight: 700;
+}
 .bo-spazi-invite { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
 .bo-spazi-input {
   flex: 1; min-width: 140px; padding: 8px 10px; font-size: 13px;
@@ -550,6 +568,9 @@ select.bo-spazi-input { flex: none; }
 
 @media (max-width: 700px) {
   .bo-spazi-grid { grid-template-columns: minmax(0, 1fr); }
+  .bo-spazi-panels { flex-direction: column; align-items: stretch; }
+  .bo-spazi-team-panel, .bo-spazi-ai-panel { flex: 1 1 auto; width: 100%; }
+  .bo-spazi-member { grid-template-columns: minmax(0, 1fr); }
   .bo-spazi-switch { align-items: start; }
   .bo-spazi-invite .bo-spazi-input { flex-basis: 100%; }
 }

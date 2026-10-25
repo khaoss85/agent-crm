@@ -29,8 +29,8 @@
 // - flips: POST /api/space-permissions/set-permission, the operation that
 //   runs the package's own `set-permission` action (human-only, same codes),
 //   never a direct row write — every override row field is managed;
-// - the backoffice tokens and rows of styles.css (bo-*), single column under
-//   700px like every other backoffice screen.
+// - the backoffice tokens and rows of styles.css (bo-*): team and AI panels
+//   in a two-column row like prototype screen 08, single column under 700px.
 //
 // Conventions follow apps/admin/public/admin-shell.js: the model builders are
 // pure and DOM-free (unit-tested under node:test without a browser) and the
@@ -124,8 +124,24 @@ export function buildSpaziCards({ spaces = [], activeSpaceId = null, role = null
 }
 
 /**
- * One team row per membership: subject, Italian role, status. Sorted by
- * subject so the list is stable regardless of store order.
+ * Avatar initials for a team subject: the first two alphanumeric characters,
+ * uppercased. The spine membership store carries no display name and no
+ * email, so the subject itself is the only honest source — never a prettier
+ * invention. Prototype screen 08 shows name/email per member; those fields do
+ * not exist in the store, and the screen states the reason instead of
+ * inventing them.
+ * @param {unknown} subject
+ */
+export function memberInitials(subject) {
+  if (typeof subject !== 'string') return '·';
+  const clean = subject.replace(/[^0-9a-zA-Z\u00c0-\u00de\u00e0-\u00ff]/g, '');
+  if (clean === '') return '·';
+  return clean.slice(0, 2).toUpperCase();
+}
+
+/**
+ * One team row per membership: avatar initials, subject, Italian role pill,
+ * status. Sorted by subject so the list is stable regardless of store order.
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown}>} members
  */
 export function buildTeamRows(members = []) {
@@ -134,6 +150,7 @@ export function buildTeamRows(members = []) {
     .filter((member) => member && typeof member === 'object' && typeof member.subject === 'string' && member.subject !== '')
     .map((member) => ({
       subject: member.subject,
+      initials: memberInitials(member.subject),
       role: spaceRoleLabel(member.role),
       status: typeof member.status === 'string' && member.status !== '' ? member.status : 'sconosciuto',
     }))
@@ -352,7 +369,7 @@ export function createSpaziAccessiView(deps) {
   }
 
   function renderTeam(box) {
-    const section = el(doc, 'section', { cls: 'bo-spazi-section' });
+    const section = el(doc, 'section', { cls: 'bo-spazi-section bo-spazi-panel bo-spazi-team-panel' });
     section.appendChild(el(doc, 'h3', { text: 'Team dell\u2019organizzazione' }));
     section.appendChild(el(doc, 'p', {
       text: 'Lo stesso team per tutti gli spazi di questa postazione: rimuovere sospende la persona nell\u2019intera organizzazione, non nel singolo spazio.',
@@ -370,8 +387,14 @@ export function createSpaziAccessiView(deps) {
     }
     for (const row of rows) {
       const item = el(doc, 'div', { cls: 'bo-spazi-member' });
-      item.appendChild(el(doc, 'span', { text: row.subject, cls: 'bo-spazi-subject' }));
-      item.appendChild(el(doc, 'span', { text: `${row.role} · ${row.status}`, cls: 'bo-muted' }));
+      const identity = el(doc, 'div', { cls: 'bo-spazi-identity' });
+      identity.appendChild(el(doc, 'span', { text: row.initials, cls: 'bo-spazi-avatar', attrs: { 'aria-hidden': 'true' } }));
+      const names = el(doc, 'div', { cls: 'bo-spazi-names' });
+      names.appendChild(el(doc, 'div', { text: row.subject, cls: 'bo-spazi-subject' }));
+      names.appendChild(el(doc, 'div', { text: row.status, cls: 'bo-spazi-status' }));
+      identity.appendChild(names);
+      item.appendChild(identity);
+      item.appendChild(el(doc, 'span', { text: row.role, cls: 'bo-spazi-role' }));
       if (state.confirmRemove === row.subject) {
         const confirmBox = el(doc, 'div', { cls: 'bo-spazi-confirm' });
         confirmBox.appendChild(el(doc, 'p', {
@@ -471,7 +494,7 @@ export function createSpaziAccessiView(deps) {
   }
 
   function renderSwitches(box, space) {
-    const section = el(doc, 'section', { cls: 'bo-spazi-section' });
+    const section = el(doc, 'section', { cls: 'bo-spazi-section bo-spazi-panel bo-spazi-ai-panel' });
     section.appendChild(el(doc, 'h3', { text: '\u2726 Cosa pu\u00F2 fare l\u2019AI' }));
     section.appendChild(el(doc, 'p', {
       text: `Vale per tutto lo spazio ${space.name}. Quello che \u00E8 spento diventa una proposta da approvare.`,
@@ -567,8 +590,13 @@ export function createSpaziAccessiView(deps) {
       }));
       return;
     }
-    renderTeam(mount);
-    renderSwitches(mount, space);
+    // Team and AI panels sit side by side on wide screens (flex row, team
+    // 1.5fr + AI 1fr, like prototype screen 08) and stack in one column
+    // under 700px. The panels wrap instead of overflowing in between.
+    const panels = el(doc, 'div', { cls: 'bo-spazi-panels' });
+    renderTeam(panels);
+    renderSwitches(panels, space);
+    mount.appendChild(panels);
   }
 
   async function refresh() {
