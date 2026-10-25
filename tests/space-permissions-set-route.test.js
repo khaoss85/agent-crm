@@ -40,7 +40,7 @@ async function started(t) {
     await new Promise((resolve) => server.close(resolve));
     app.close();
   });
-  return base;
+  return { base, app };
 }
 
 const userHeaders = { 'content-type': 'application/json', 'x-actor-type': 'user', 'x-actor-id': 'owner-1' };
@@ -73,7 +73,7 @@ async function effective(base, spaceId) {
 }
 
 test('a human flips a switch: first flip creates, second patches, the read follows', async (t) => {
-  const base = await started(t);
+  const { base } = await started(t);
   const user = { type: 'user', id: 'owner-1' };
   const first = await flip(base, { spaceId: 'spazio-1', permission: 'drafts', enabled: 'off' }, user);
   assert.equal(first.status, 200);
@@ -96,7 +96,7 @@ test('a human flips a switch: first flip creates, second patches, the read follo
 });
 
 test('agent and bad inputs are refused and write nothing', async (t) => {
-  const base = await started(t);
+  const { base } = await started(t);
   const agent = await flip(
     base,
     { spaceId: 'spazio-1', permission: 'drafts', enabled: 'on' },
@@ -120,7 +120,35 @@ test('agent and bad inputs are refused and write nothing', async (t) => {
 });
 
 test('the effective read refuses a shapeless space id', async (t) => {
-  const base = await started(t);
+  const { base } = await started(t);
   const read = await effective(base, '');
   assert.equal(read.status, 400);
+});
+
+test('every flip leaves an execution trace, success or refusal', async (t) => {
+  const { base, app } = await started(t);
+  const user = { type: 'user', id: 'owner-1' };
+  const runs = (status) => app.database.raw.prepare(
+    `SELECT id, status FROM workflow_runs WHERE workflow_name = 'space-permission-override.set-permission' AND status = '${status}'`,
+  ).all();
+  const stepsOf = (runId) => app.database.raw.prepare(
+    'SELECT name, status FROM trace_spans WHERE run_id = ?',
+  ).all(runId);
+
+  const first = await flip(base, { spaceId: 'spazio-1', permission: 'drafts', enabled: 'off' }, user);
+  assert.equal(first.status, 200);
+  const completed = runs('completed');
+  assert.equal(completed.length, 1, 'the flip has a completed trace');
+  const stepNames = stepsOf(completed[0].id).map((row) => row.name);
+  assert.ok(stepNames.includes('space-permission.created'), `the action step is recorded, saw: ${stepNames.join(',')}`);
+
+  const refused = await flip(
+    base,
+    { spaceId: 'spazio-1', permission: 'drafts', enabled: 'on' },
+    { type: 'agent', id: 'agent-9' },
+  );
+  assert.equal(refused.status, 403);
+  const failed = runs('failed');
+  assert.equal(failed.length, 1, 'the refused flip has a failed trace, not silence');
+  assert.equal(runs('completed').length, 1, 'no extra completed trace');
 });

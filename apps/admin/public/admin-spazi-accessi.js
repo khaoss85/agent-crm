@@ -3,16 +3,23 @@
 // Spazi e accessi (BO-F0-06 — backoffice "08 Spazi e accessi").
 //
 // The backoffice screen for one space's world: the operator's spaces with
-// their role, the space team with invite and removal, and the five AI
+// their role, the organization team with invite and removal, and the five AI
 // switches of the space. Nothing here invents: spaces come from the shell's
-// own space list (the same source the sidebar switcher reads), roles and
-// members from the spine membership store, and the switches from the
-// space-permissions package — keys, defaults and the flip path it owns.
+// own space list (the same source the sidebar switcher reads), the team from
+// the spine membership store, and the switches from the space-permissions
+// package — keys, defaults and the flip path it owns.
+//
+// The team is the ORGANIZATION's team, shared by every space of the
+// postazione: membership lives in the spine per organization, and the
+// framework stores no per-space membership (space-permissions says so in its
+// own contract). The screen therefore never labels the team "di <spazio>" —
+// removal suspends the person in the whole organization, and the confirm step
+// says exactly that.
 //
 // What it reuses, never duplicates (MEM_ACC_REUSE):
 // - reads: the shell spaces (injected, like every other view injects its
 //   space), GET /api/spine/context (my membership role), GET
-//   /api/spine/memberships (the team), GET
+//   /api/spine/memberships (the organization team), GET
 //   /api/space-permissions/effective (the flipped switches, scoped
 //   server-side: the generic records surface cannot filter the override
 //   module by space, so the screen never pages it);
@@ -301,7 +308,7 @@ export function createSpaziAccessiView(deps) {
     box.appendChild(el(doc, 'p', { text: 'Spazi e accessi', cls: 'bo-kicker' }));
     box.appendChild(el(doc, 'h2', { text: 'Spazi di lavoro' }));
     box.appendChild(el(doc, 'p', {
-      text: 'Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali, clienti e team, e nessuno vede i dati degli altri.',
+      text: 'Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali e clienti, e nessuno vede i dati degli altri; il team invece \u00E8 uno solo per tutta l\u2019organizzazione.',
       cls: 'bo-muted',
     }));
   }
@@ -335,7 +342,7 @@ export function createSpaziAccessiView(deps) {
         open.addEventListener('click', () => {
           deps.onPickSpace(card.id);
           if (typeof navigate === 'function') navigate('#/');
-          void load().then(render);
+          void refresh();
         });
         cell.appendChild(open);
       }
@@ -344,9 +351,13 @@ export function createSpaziAccessiView(deps) {
     box.appendChild(grid);
   }
 
-  function renderTeam(box, space) {
+  function renderTeam(box) {
     const section = el(doc, 'section', { cls: 'bo-spazi-section' });
-    section.appendChild(el(doc, 'h3', { text: `Team di ${space.name}` }));
+    section.appendChild(el(doc, 'h3', { text: 'Team dell\u2019organizzazione' }));
+    section.appendChild(el(doc, 'p', {
+      text: 'Lo stesso team per tutti gli spazi di questa postazione: rimuovere sospende la persona nell\u2019intera organizzazione, non nel singolo spazio.',
+      cls: 'bo-muted',
+    }));
     if (state.members === null) {
       section.appendChild(el(doc, 'p', { text: state.membersUnavailable ?? 'Team non disponibile.', cls: 'bo-muted' }));
       box.appendChild(section);
@@ -364,7 +375,7 @@ export function createSpaziAccessiView(deps) {
       if (state.confirmRemove === row.subject) {
         const confirmBox = el(doc, 'div', { cls: 'bo-spazi-confirm' });
         confirmBox.appendChild(el(doc, 'p', {
-          text: `Rimuovere ${row.subject} dal team? Il motivo resta registrato.`,
+          text: `Rimuovere ${row.subject} dal team? La sospensione vale per l\u2019intera organizzazione. Il motivo resta registrato.`,
           cls: 'bo-muted',
         }));
         const reason = el(doc, 'input', {
@@ -388,7 +399,7 @@ export function createSpaziAccessiView(deps) {
             state.refusal = failure.message ?? String(failure.code ?? 'rimozione rifiutata');
             say(state.refusal, true);
           }
-          await load().then(render);
+          await refresh();
         });
         const no = el(doc, 'button', { text: 'Annulla', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
         no.addEventListener('click', () => { state.confirmRemove = null; state.refusal = null; render(); });
@@ -445,7 +456,7 @@ export function createSpaziAccessiView(deps) {
         state.refusal = failure.message ?? String(failure.code ?? 'invito rifiutato');
         say(state.refusal, true);
       }
-      await load().then(render);
+      await refresh();
     });
     invite.appendChild(send);
     if (state.refusal !== null) {
@@ -518,7 +529,7 @@ export function createSpaziAccessiView(deps) {
             state.refusal = failure.message ?? String(failure.code ?? 'modifica rifiutata');
             say(state.refusal, true);
           }
-          await load().then(render);
+          await refresh();
         });
         const no = el(doc, 'button', { text: 'Annulla', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
         no.addEventListener('click', () => { state.confirmFlip = null; state.refusal = null; render(); });
@@ -534,6 +545,16 @@ export function createSpaziAccessiView(deps) {
     box.appendChild(section);
   }
 
+  // Every refresh stamps its own generation and snapshots the mount's
+  // children. While its requests are in flight the operator may open another
+  // module, which renders into the same shared mount (the catalog and clienti
+  // views keep a token for their own reloads; a token alone cannot see a
+  // takeover from another view). A late answer renders only when it is still
+  // the newest refresh AND the mount still holds exactly what it held before
+  // the load — otherwise the shell moved on and this screen stays out.
+  let generation = 0;
+  const childrenOf = () => Array.from(mount?.childNodes ?? []);
+
   function render() {
     clear();
     const space = activeSpace();
@@ -546,13 +567,22 @@ export function createSpaziAccessiView(deps) {
       }));
       return;
     }
-    renderTeam(mount, space);
+    renderTeam(mount);
     renderSwitches(mount, space);
   }
 
-  async function renderView() {
+  async function refresh() {
+    const mine = (generation += 1);
+    const before = childrenOf();
     await load();
+    if (mine !== generation) return;
+    const now = childrenOf();
+    if (now.length !== before.length || now.some((node, index) => node !== before[index])) return;
     render();
+  }
+
+  async function renderView() {
+    await refresh();
   }
 
   return { render: renderView };

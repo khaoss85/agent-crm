@@ -160,7 +160,8 @@ test('the screen lists spaces with roles, team and the five switches', async () 
   assert.match(rendered, /Spazi di lavoro/);
   assert.match(rendered, /Stai lavorando qui/);
   assert.match(rendered, /Tu: Proprietario/);
-  assert.match(rendered, /Team di Negozio/);
+  assert.match(rendered, /Team dell\u2019organizzazione/);
+  assert.match(rendered, /intera organizzazione/);
   assert.match(rendered, /marco/);
   assert.match(rendered, /Cosa pu\u00F2 fare l\u2019AI/);
   for (const entry of SPAZI_AI_SWITCHES) {
@@ -223,6 +224,7 @@ test('inviting names subject, role and reason; removal asks twice with a reason'
   await remove.listeners.click[0]();
   await flush();
   assert.match(text(mount), /Conferma rimozione/, 'removal is two-step');
+  assert.match(text(mount), /intera organizzazione/, 'the confirm says the suspension is organization-wide');
   assert.ok(!calls.some((call) => call.path.includes('/suspend')), 'nothing is suspended before confirm');
   const confirmReason = mount.findAll('input').find((node) => (node.getAttribute('aria-label') ?? '').startsWith('Motivo della rimozione'));
   confirmReason.value = 'fine rapporto';
@@ -230,6 +232,37 @@ test('inviting names subject, role and reason; removal asks twice with a reason'
   await confirm.listeners.click[0]();
   await flush(20);
   assert.ok(calls.some((call) => call.path === '/api/spine/memberships/luca/suspend'), 'confirm suspends with the reason');
+});
+
+test('a late answer never repaints over the screen that replaced it', async () => {
+  let releaseMembers = null;
+  const membersGate = new Promise((resolve) => { releaseMembers = resolve; });
+  let membersCalls = 0;
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const inner = stubClient({ members });
+  const gated = {
+    async request(path, options = {}) {
+      const method = (options?.method ?? 'GET').toUpperCase();
+      if (path === '/api/spine/memberships' && method !== 'POST' && membersCalls++ === 0) {
+        await membersGate;
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { doc, mount, view: v } = view({ client: gated });
+  const first = v.render();
+  await flush(6);
+  // The operator opens another module while the team read is still in
+  // flight: the shell owns the mount now, and this screen must not touch it.
+  while (mount.firstChild) mount.removeChild(mount.firstChild);
+  const foreign = doc.createElement('p');
+  foreign.textContent = 'Modulo clienti';
+  mount.appendChild(foreign);
+  releaseMembers();
+  await first;
+  await flush(10);
+  assert.match(text(mount), /Modulo clienti/);
+  assert.doesNotMatch(text(mount), /Spazi di lavoro/, 'the stale answer stays out');
 });
 
 test('flipping a switch confirms first, then runs set-permission', async () => {
