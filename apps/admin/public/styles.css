@@ -646,6 +646,43 @@ select.bo-spazi-input { flex: none; }
   .bo-clienti-pager { row-gap: 8px; }
 }
 
+/* Team calendar (BO-F3 \"07 Calendario\"): the week grid, the phrase draft,
+   the slot proposals and the manual form. Same tokens as every other screen:
+   surface panels, line borders, accent primary, accord for held states. The
+   week is a grid of day columns on wide screens and a single stacked column
+   under 700px — never a horizontal scroll. Event titles are plain ink;
+   statuses reuse the mono badge, booked and confirmed in the accord pair,
+   every other state in the default ink/muted (no new hue). */
+.cal-wrap { display: grid; gap: 14px; }
+.cal-filter { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.cal-filter input { flex: 1 1 220px; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: var(--surface); color: var(--ink); font-size: 13px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.cal-day { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 10px; min-width: 0; }
+.cal-day-head { margin-bottom: 8px; }
+.cal-day-head strong { display: block; font-size: 13px; }
+.cal-day-head span { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.cal-empty { color: var(--dim); font-size: 12px; margin: 6px 0; }
+.cal-event { border-top: 1px solid var(--line); padding: 8px 0; display: grid; gap: 4px; }
+.cal-event:first-of-type { border-top: 0; }
+.cal-time { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.cal-event strong { font-size: 13px; overflow-wrap: anywhere; }
+.cal-meta { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.cal-event .badge.booked, .cal-event .badge.confirmed { background: var(--accent-soft); color: var(--accent); }
+.cal-event a { font-size: 12px; color: var(--accent); overflow-wrap: anywhere; }
+.cal-detail { font-size: 12px; color: var(--muted); display: grid; gap: 2px; margin-top: 4px; }
+.cal-detail p { margin: 0; overflow-wrap: anywhere; }
+.cal-draft { border: 1px dashed var(--line); border-radius: 9px; padding: 10px 12px; margin-top: 10px; font-size: 13px; }
+.cal-draft p { margin: 0 0 4px; }
+.cal-slots { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.cal-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.cal-form input { flex: 1 1 160px; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: var(--surface); color: var(--ink); font-size: 13px; }
+.cal-ok { color: var(--accent); font-weight: 700; font-size: 13px; }
+
+@media (max-width: 700px) {
+  .cal-grid { grid-template-columns: minmax(0, 1fr); }
+  .cal-filter input, .cal-form input { flex-basis: 100%; }
+}
+
 /*
  * Product catalog (BO-F2-04 rules, BO-F2-05 table): the Stripe state, the
  * enforced price rules and one card per product with its offers. Same
