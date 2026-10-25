@@ -27,15 +27,16 @@ export const SPACES_KEY = 'accordo.spaces';
  * `route: null` in this static table means the voice cannot link on its own:
  * `buildShellNav` resolves what the composition allows (Clienti, Pipeline)
  * and the rest renders disabled with the story named, never as a dead link.
- * (Calendario and Sequenze have delivered framework reads — BO-F3-01/02 —
- * but no admin screen, so they stay disabled until one lands.)
+ * Calendario links unconditionally like Reporting: the screen itself renders
+ * honest states (not composed, no members named, empty week), so it is never
+ * a dead link to a blank screen. Sequenze still waits for its screen.
  * @typedef {{ id: string, label: string, group: 'home' | 'native' | 'custom' | 'settings', route: string | null, story: string }} ShellItem
  */
 export const SHELL_ITEMS = Object.freeze([
   { id: 'oggi', label: 'Oggi', group: 'home', route: '#/', story: 'BO-F0-02' },
   { id: 'clienti', label: 'Clienti', group: 'native', route: '#/customer-data', story: 'BO-F1' },
   { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2' },
-  { id: 'calendario', label: 'Calendario', group: 'native', route: null, story: 'BO-F3' },
+  { id: 'calendario', label: 'Calendario', group: 'native', route: '#/calendario', story: 'BO-F3' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3' },
   { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01' },
   { id: 'nuovo-modulo', label: 'Nuovo modulo', group: 'custom', route: '#/nuovo-modulo', story: 'BO-F5-01' },
@@ -53,17 +54,17 @@ export const SHELL_GROUPS = Object.freeze([
 /**
  * The four settings areas from the prototype. Stato sync opens its own
  * screen (BO-F1-03, #/stato-sync) — the indicator, the fix list and the
- * channel table — which gates on the channels package itself and renders an
- * honest note when it is not composed; Personalizzazione opens the
- * Skill/Connettori/Pacchetti screen (BO-F4-01) and Catalogo prodotti opens
- * the product table delivered by BO-F2-05; the last area names the story
- * that delivers it.
+ * channel table — once the customer-data package is composed, and stays an
+ * honest note otherwise; Personalizzazione opens the
+ * Skill/Connettori/Pacchetti screen (BO-F4-01), Catalogo prodotti opens
+ * the product table delivered by BO-F2-05, and Spazi e accessi opens the
+ * team screen delivered by BO-F0-06.
  */
 export const SETTINGS_AREAS = Object.freeze([
   { id: 'personalizzazione', label: 'Personalizzazione', route: '#/personalizzazione', story: 'BO-F4-01' },
   { id: 'catalogo', label: 'Catalogo prodotti', route: '#/catalogo', story: 'BO-F2 (catalogo)' },
   { id: 'stato-sync', label: 'Stato sync', route: '#/stato-sync', story: 'BO-F1-03' },
-  { id: 'spazi-accessi', label: 'Spazi e accessi', route: null, story: 'BO-F0-06' },
+  { id: 'spazi-accessi', label: 'Spazi e accessi', route: '#/spazi-accessi', story: 'BO-F0-06' },
 ]);
 
 /**
@@ -583,9 +584,9 @@ export function createShellView({
  * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the
  * same real fix-count badge as the sidebar entry: it renders only from a
  * count above zero, never at zero and never when the count is unknown.
- * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void }} options
+ * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void, customerDataAvailable?: boolean }} options
  */
-export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {} } = {}) {
+export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
   mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
   mount.appendChild(el(doc, 'h2', undefined, 'Impostazioni'));
@@ -605,10 +606,12 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
   for (const area of SETTINGS_AREAS) {
     const row = el(doc, 'div', 'bo-setting-row');
     row.appendChild(el(doc, 'span', 'bo-setting-label', area.label));
-    // Every area with a route links there: the Stato sync screen gates on
-    // the channels package itself and renders its own honest note when it
-    // is not composed, never a blank screen.
-    if (area.route !== null) {
+    // Stato sync opens its own screen (BO-F1-03, #/stato-sync): without the
+    // customer-data package composed it stays an honest note, never a link
+    // to a blank screen. Every other area with a route links there.
+    if (area.id === 'stato-sync' && !customerDataAvailable) {
+      row.appendChild(el(doc, 'span', 'bo-setting-coming', CUSTOMER_DATA_UNAVAILABLE_REASON));
+    } else if (area.route !== null) {
       const link = el(doc, 'a', 'bo-setting-link', 'Apri');
       link.setAttribute('href', area.route);
       link.addEventListener('click', (event) => {
