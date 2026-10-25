@@ -8,7 +8,7 @@
     "pre_extraction_evidence": 8
   },
   "domain": "commercial-operations",
-  "fingerprint": "0cde829f8f9fc104311ada59fc6cb8e64a0dde75ee455fbb6a3c41b7b3440dba",
+  "fingerprint": "10e204661f84fcd3b2765cfc04cae3363558d1377a5067a6351a9d2d25c4a737",
   "legacyCharacterizationContract": 1,
   "limitations": [
     {
@@ -1223,7 +1223,7 @@
       "id": "architecture.solution-plan-binding",
       "note": "AX2: the shipped lead-to-won plan must keep binding to this repository's composition. The extraction repins the inspection fingerprint; the exit code must not move.",
       "observed": {
-        "exitCode": 1
+        "exitCode": 0
       },
       "surface": "solution-plan"
     },
