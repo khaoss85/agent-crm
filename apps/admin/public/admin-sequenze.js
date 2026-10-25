@@ -197,15 +197,18 @@ export function buildSequenzaDettaglio({ sequence = null, steps = [], enrollment
     return left < right ? -1 : left > right ? 1 : 0;
   });
   const fireRows = Array.isArray(sends) ? sends : [];
-  const byStatus = {};
+  // Maps, never plain objects: a hostile row status like `__proto__` must
+  // still count instead of hitting the prototype chain. `Object.fromEntries`
+  // below creates own properties, so the frozen metrics stay honest.
+  const byStatus = new Map();
   for (const row of people) {
     const status = typeof row?.status === 'string' ? row.status : 'unknown';
-    byStatus[status] = (byStatus[status] ?? 0) + 1;
+    byStatus.set(status, (byStatus.get(status) ?? 0) + 1);
   }
-  const firesByStatus = {};
+  const firesByStatus = new Map();
   for (const row of fireRows) {
     const status = typeof row?.status === 'string' ? row.status : 'unknown';
-    firesByStatus[status] = (firesByStatus[status] ?? 0) + 1;
+    firesByStatus.set(status, (firesByStatus.get(status) ?? 0) + 1);
   }
   return Object.freeze({
     sourceKey: key,
@@ -243,8 +246,8 @@ export function buildSequenzaDettaglio({ sequence = null, steps = [], enrollment
       });
     })),
     metrics: Object.freeze({
-      peopleByStatus: Object.freeze({ ...byStatus }),
-      firesByStatus: Object.freeze({ ...firesByStatus }),
+      peopleByStatus: Object.freeze(Object.fromEntries(byStatus)),
+      firesByStatus: Object.freeze(Object.fromEntries(firesByStatus)),
     }),
   });
 }
