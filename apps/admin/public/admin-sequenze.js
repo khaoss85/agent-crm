@@ -183,10 +183,12 @@ export function buildSequenzeElenco({ sequences = [], enrollments = [], sends = 
 /**
  * The detail of one sequence: ordered day+channel steps, people with their
  * state, and the counted metrics. Steps sort by stepOrder ascending; a step
- * without an order renders last with its order said missing.
- * @param {{ sequence?: any, steps?: Array<any>, enrollments?: Array<any>, sends?: Array<any> }} input
+ * without an order renders last with its order said missing. `stepsFailed`
+ * marks a read that never arrived, so the renderer says unavailable instead
+ * of painting a genuine zero.
+ * @param {{ sequence?: any, steps?: Array<any>, stepsFailed?: boolean, enrollments?: Array<any>, sends?: Array<any> }} input
  */
-export function buildSequenzaDettaglio({ sequence = null, steps = [], enrollments = [], sends = [] } = {}) {
+export function buildSequenzaDettaglio({ sequence = null, steps = [], stepsFailed = false, enrollments = [], sends = [] } = {}) {
   const key = nonEmptyText(sequence?.sourceKey) ?? nonEmptyText(sequence?.id) ?? '';
   const ordered = [...(Array.isArray(steps) ? steps : [])].sort((a, b) => {
     const left = Number.isInteger(a?.stepOrder) ? a.stepOrder : Number.MAX_SAFE_INTEGER;
@@ -220,6 +222,7 @@ export function buildSequenzaDettaglio({ sequence = null, steps = [], enrollment
     name: nonEmptyText(sequence?.name) ?? 'Senza nome',
     status: sequence?.status ?? 'unknown',
     statusLabel: sequenceStatusLabel(sequence?.status),
+    stepsFailed: stepsFailed === true,
     steps: Object.freeze(ordered.map((step) => {
       let vars = [];
       try {
@@ -318,6 +321,8 @@ export async function loadSequenzeData(client, spaceId = null) {
 /**
  * Load the steps of one sequence, order-ascending. Steps are append-only in
  * draft and never edited once active, so the rows just read are the answer.
+ * Never resolves a failed read as an empty list: `failed` tells the detail
+ * to render steps-unavailable instead of a genuine zero.
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {string} sequenceSourceKey
  * @param {string | null} [spaceId] the shell space to scope the steps read to, if any
@@ -328,10 +333,10 @@ export async function loadSequenzaSteps(client, sequenceSourceKey, spaceId = nul
       ? {}
       : { spaceId };
     const page = await readModulePage(client, 'sequence-step', { sequenceSourceKey, ...scoped });
-    return page.rows;
+    return { rows: page.rows, failed: false };
   } catch (error) {
     console.warn('bo-sequenze steps unreadable:', error instanceof Error ? error.name : 'unknown');
-    return [];
+    return { rows: [], failed: true };
   }
 }
 
@@ -436,7 +441,10 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
   }
   const steps = el(doc, 'div', 'bo-seq-steps');
   steps.appendChild(el(doc, 'h4', undefined, 'Passi'));
-  if (detail.steps.length === 0) {
+  if (detail.stepsFailed === true) {
+    steps.appendChild(el(doc, 'p', 'bo-seq-error',
+      'Non riesco a leggere i passi adesso: la lista manca, non è vuota. Riprova più tardi.'));
+  } else if (detail.steps.length === 0) {
     steps.appendChild(el(doc, 'p', 'bo-muted', 'Questa sequenza non ha passi registrati.'));
   } else {
     for (const step of detail.steps) {
@@ -539,9 +547,11 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
       if (sequence === null) {
         mount.appendChild(el(documentNode, 'p', 'bo-muted', 'Questa sequenza non c’è più: scegline un’altra dall’elenco.'));
       } else {
+        const outcome = state.stepsByKey.get(state.selectedKey) ?? { rows: [], failed: false };
         const detail = buildSequenzaDettaglio({
           sequence,
-          steps: state.stepsByKey.get(state.selectedKey) ?? [],
+          steps: outcome.rows,
+          stepsFailed: outcome.failed,
           enrollments: state.enrollments.filter((row) => row?.sequenceSourceKey === sequence?.sourceKey),
           sends: state.sends.filter((row) => row?.sequenceSourceKey === sequence?.sourceKey),
         });
@@ -564,9 +574,9 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     state.error = '';
     paint();
     if (key !== '' && !state.stepsByKey.has(key)) {
-      const steps = await loadSequenzaSteps(client, key, state.space);
+      const outcome = await loadSequenzaSteps(client, key, state.space);
       if (state.selectedKey === key) {
-        state.stepsByKey.set(key, steps);
+        state.stepsByKey.set(key, outcome);
         paint();
       }
     }
@@ -623,8 +633,8 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     state.unavailable = data.unavailable;
     state.loaded = true;
     if (state.selectedKey !== '' && state.available) {
-      const steps = await loadSequenzaSteps(client, state.selectedKey, state.space);
-      state.stepsByKey.set(state.selectedKey, steps);
+      const outcome = await loadSequenzaSteps(client, state.selectedKey, state.space);
+      state.stepsByKey.set(state.selectedKey, outcome);
     }
     paint();
   }

@@ -5,6 +5,7 @@ import {
   buildSequenzeElenco,
   createSequenzeView,
   loadSequenzeData,
+  loadSequenzaSteps,
   sequenceChannelLabel,
   sequenceDayLabel,
   sequenceStatusLabel,
@@ -205,6 +206,39 @@ test('a failed dataset reads as unavailable, never as a genuine zero', async () 
   await flush();
   assert.ok(mount.textContent.includes('Bentornato in palestra'));
   assert.ok(mount.textContent.includes('Non riesco a leggere adesso: enrollments.'));
+});
+
+test('a failed steps read stays failed, never an empty list', async () => {
+  const ok = await loadSequenzaSteps(stubClient());
+  assert.equal(ok.failed, false);
+  assert.equal(ok.rows.length, 2);
+  const failing = { request: async () => { throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' }); } };
+  const bad = await loadSequenzaSteps(failing, 'seq-bentornato', 'presti');
+  assert.equal(bad.failed, true);
+  assert.deepEqual(bad.rows, []);
+});
+
+test('a failed steps read renders unavailable in the dettaglio, never a genuine zero', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = stubClient();
+  const client = {
+    calls: inner.calls,
+    request: async (path, options) => {
+      if (path.startsWith('/api/modules/sequence-step/records?')) {
+        throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-open="seq-bentornato"]').dispatch('click', {});
+  await flush();
+  assert.ok(mount.textContent.includes('Non riesco a leggere i passi adesso'));
+  assert.ok(!mount.textContent.includes('non ha passi registrati'));
+  assert.ok(mount.textContent.includes('Giulia Rossi'));
 });
 
 test('a refused write says the state moved and reloads, never a raw error', async () => {
