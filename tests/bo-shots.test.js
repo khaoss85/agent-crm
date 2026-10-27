@@ -175,9 +175,10 @@ test('bo:shots renders one filled PNG per screen at 1440px and 390px', { skip: S
   const pngs = readdirSync(out).filter((name) => name.endsWith('.png')).sort();
   assert.equal(pngs.length, EXPECTED_SCREENS.length * 2, `one PNG per screen per width (${pngs.length} files)`);
   for (const name of EXPECTED_SCREENS) {
-    for (const [width, floor] of [[1440, 20000], [390, 10000]]) {
-      const shot = readPngSize(join(out, `${name}-${width}x${width === 1440 ? 1800 : 1600}.png`));
+    for (const [width, height, floor] of [[1440, 1800, 20000], [390, 1600, 10000]]) {
+      const shot = readPngSize(join(out, `${name}-${width}x${height}.png`));
       assert.equal(shot.width, width, `${name} renders at ${width}px`);
+      assert.equal(shot.height, height, `${name} renders at ${height}px`);
       assert.ok(shot.bytes >= floor, `${name} at ${width}px paints real pixels (${shot.bytes} bytes)`);
     }
   }

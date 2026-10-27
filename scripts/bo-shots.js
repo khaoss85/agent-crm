@@ -419,7 +419,6 @@ const DEMO_UNITS = [
 
 const DEMO_PACKAGE_ROWS = [
   { unit: 'channels', status: 'active', id: 'row-channels' },
-  { unit: 'payments', status: 'active', id: 'row-payments' },
 ];
 
 const DEMO_CATALOG = {
@@ -492,9 +491,9 @@ const SCREENS = [
   { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['taglio', 'Mostra settimana'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
-  { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Pacchetti', 'Canali'] },
+  { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Pacchetti', 'Pagamenti'] },
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Stripe collegato'] },
-  { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto a posto', 'whatsapp'] },
+  { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto a posto', 'WhatsApp'] },
   { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
 ];
 
@@ -549,9 +548,25 @@ const MENUS = {
     { id: 'tutti', label: 'Tutti' },
     { id: 'nuovi-lead', label: 'Nuovi lead' },
     { id: 'clienti-attivi', label: 'Clienti attivi' },
+    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
+    { id: 'rinnovi-30-giorni', label: 'Rinnovi entro 30 giorni' },
   ],
-  sorts: [{ id: 'recent', label: 'Ultimo contatto' }, { id: 'name', label: 'Nome A-Z' }],
-  columns: [{ id: 'canali', label: 'Canali', def: true }, { id: 'stato', label: 'Stato', def: true }],
+  sorts: [
+    { id: 'recent', label: 'Ultimo contatto' },
+    { id: 'name', label: 'Nome A-Z' },
+    { id: 'value', label: 'Valore offerta' },
+    { id: 'status', label: 'Stato' },
+  ],
+  columns: [
+    { id: 'canali', label: 'Canali', always: false, ai: false, def: true },
+    { id: 'stato', label: 'Stato', always: false, ai: false, def: true },
+    { id: 'ultimo', label: 'Ultimo contatto', always: false, ai: false, def: true },
+    { id: 'prossimo', label: 'Prossimo passo', always: false, ai: false, def: true },
+    { id: 'email', label: 'Email', always: false, ai: false, def: false },
+    { id: 'telefono', label: 'Telefono', always: false, ai: false, def: false },
+    { id: 'offerta', label: 'Valore offerta', always: false, ai: false, def: false },
+    { id: 'budget', label: 'Budget dichiarato', always: false, ai: true, def: false },
+  ],
   pageSizes: [10, 25, 50],
 };
 const client = {
@@ -1013,9 +1028,12 @@ async function renderScreen({ binary, port, screen, outDir }) {
         throw new Error(`${screen.name} ${kind}: the painted screen misses its demo data (${JSON.stringify(expected)})`);
       }
     }
+    if (!existsSync(file)) {
+      throw new Error(`${screen.name} ${kind}: chromium exits ${run.status} without writing the screenshot`);
+    }
     const shot = readPngSize(file);
-    if (shot.width !== viewport.width) {
-      throw new Error(`${screen.name} ${kind}: the PNG is ${shot.width}px wide, expected ${viewport.width}px`);
+    if (shot.width !== viewport.width || shot.height !== viewport.height) {
+      throw new Error(`${screen.name} ${kind}: the PNG is ${shot.width}x${shot.height}, expected ${viewport.width}x${viewport.height}`);
     }
     const floor = kind === 'desktop' ? MIN_BYTES.desktop : MIN_BYTES.phone;
     if (shot.bytes < floor) {
