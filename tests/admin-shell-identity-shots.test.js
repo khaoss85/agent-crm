@@ -98,6 +98,13 @@ const FIXTURE_SCRIPT = `
 import { createShellView } from './admin-shell.js';
 import { readSessionProfile } from './admin-session.js';
 import { createOggiView } from './admin-oggi.js';
+// Any throw still finishes the harness with its cause in the probe, so a CI
+// failure names the in-page error instead of only "module did not finish".
+const finishHarness = (probe) => {
+  document.getElementById('probe').textContent = JSON.stringify(probe);
+  document.title = 'shell-identity-ready';
+};
+try {
 const profile = readSessionProfile(document);
 const view = createShellView({
   doc: document,
@@ -142,8 +149,10 @@ const probe = {
   scrollWidth: document.documentElement.scrollWidth,
   innerWidth: window.innerWidth,
 };
-document.getElementById('probe').textContent = JSON.stringify(probe);
-document.title = 'shell-identity-ready';
+finishHarness(probe);
+} catch (error) {
+  finishHarness({ moduleError: error instanceof Error ? error.name + ': ' + error.message : String(error) });
+}
 `;
 
 function harnessHtml() {
@@ -254,6 +263,7 @@ function readProbe(html) {
 }
 
 function assertIdentityProbe(probe) {
+  assert.equal(probe.moduleError ?? null, null, `the harness module throws nothing (${probe.moduleError ?? 'ok'})`);
   assert.equal(probe.profileRead, true, 'the shell reads the injected session profile');
   assert.equal(probe.showsSpace, true, 'the session space shows');
   assert.equal(probe.showsRole, true, 'the session role shows as Titolare');
