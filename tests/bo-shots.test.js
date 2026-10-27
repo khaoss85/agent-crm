@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   BO_SCREENS,
+  SCREENS,
   USAGE,
   chromiumRuns,
   findChromium,
@@ -70,22 +71,9 @@ test('every harness module parses (top-level await included)', () => {
   assert.throws(() => harnessHtml('nope', publicDir), /no harness for screen/);
 });
 
-const SCREEN_MODULES = Object.freeze({
-  oggi: 'admin-oggi.js',
-  clienti: 'admin-clienti.js',
-  cliente: 'admin-customer-card.js',
-  pipeline: 'admin-pipeline.js',
-  calendario: 'admin-calendario.js',
-  sequenze: 'admin-sequenze.js',
-  reporting: 'admin-reporting.js',
-  personalizzazione: 'admin-personalizzazione.js',
-  catalogo: 'admin-catalog.js',
-  'stato-sync': 'admin-sync.js',
-  'spazi-accessi': 'admin-spazi-accessi.js',
-});
-
 test('every harness page serves its real module or the real login markup', () => {
   assert.ok(existsSync(join(publicDir, 'login.html')), 'login.html ships with the /bo assets');
+  const byName = new Map(SCREENS.map((screen) => [screen.name, screen]));
   for (const name of BO_SCREENS) {
     const page = harnessHtml(name, publicDir);
     if (name === 'login') {
@@ -93,11 +81,15 @@ test('every harness page serves its real module or the real login markup', () =>
       assert.ok(page.includes('Ogni conversazione'), 'login keeps its story panel');
       continue;
     }
-    const module = SCREEN_MODULES[name];
-    assert.ok(module, `${name} maps to a view module`);
-    assert.ok(existsSync(join(publicDir, module)), `${name}: ${module} ships with the /bo assets`);
+    const screen = byName.get(name);
+    assert.ok(screen?.module, `${name} maps to a view module`);
+    assert.ok(existsSync(join(publicDir, screen.module)), `${name}: ${screen.module} ships with the /bo assets`);
     assert.ok(page.includes('/styles.css'), `${name}: the real stylesheet`);
-    assert.ok(page.includes(`./${module}`), `${name}: the page drives the real ${module}`);
+    assert.ok(page.includes(`./${screen.module}`), `${name}: the page drives the real ${screen.module}`);
+    // The ready marker the run waits for is uniform: a renamed harness that
+    // keeps its old title would fail the browser run only on CI.
+    assert.equal(screen.ready, `${name}-ready`, `${name}: the ready marker matches the screen`);
+    assert.ok(page.includes(`document.title = '${name}-ready'`), `${name}: the harness sets its marker`);
   }
 });
 

@@ -482,7 +482,7 @@ const DEMO_MEMBERS = [
 // empty fails even when Chromium writes a PNG.
 // ---------------------------------------------------------------------------
 
-const SCREENS = [
+export const SCREENS = Object.freeze([
   { name: 'login', module: null, ready: null, expect: ['Ricevi il link di accesso', 'Ogni conversazione'] },
   { name: 'oggi', module: 'admin-oggi.js', ready: 'oggi-ready', expect: ['Richiama per il preventivo', 'Giulia Romano'] },
   { name: 'clienti', module: 'admin-clienti.js', ready: 'clienti-ready', expect: ['Marco Rossi', 'Anna Bianchi'] },
@@ -494,8 +494,8 @@ const SCREENS = [
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Pacchetti', 'Pagamenti'] },
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Stripe collegato'] },
   { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto a posto', 'WhatsApp'] },
-  { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
-];
+  { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-accessi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
+]);
 
 export const BO_SCREENS = Object.freeze(SCREENS.map((screen) => screen.name));
 
@@ -750,7 +750,7 @@ await view.renderTable({});
 document.getElementById('probe').textContent = JSON.stringify({
   table: document.querySelector('.catalog-list') ? document.querySelector('.catalog-list').textContent.slice(0, 60) : null,
 });
-document.title = 'catalog-ready';`;
+document.title = 'catalogo-ready';`;
     case 'stato-sync': return `
 import { createSyncView } from './admin-sync.js';
 const ACTIVITY = ${JSON.stringify(DEMO_SYNC_ACTIVITY)};
@@ -805,7 +805,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   spaces: document.querySelectorAll('.bo-spazi-card').length,
   members: document.querySelectorAll('.bo-spazi-member').length,
 });
-document.title = 'spazi-ready';`;
+document.title = 'spazi-accessi-ready';`;
     default:
       throw new Error(`bo:shots has no harness for screen "${name}"`);
   }
