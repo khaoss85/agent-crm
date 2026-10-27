@@ -322,6 +322,12 @@ export function createAdminShellMount(app, options = {}) {
         return json(404, { error: { code: 'NOT_FOUND', message: 'Route not found' } });
       }
       let data = found.data;
+      // Per-user bytes must never ride a shared cache: once a session
+      // profile is injected the HTML differs per operator and space, so it
+      // leaves with private headers. The untouched shell (no sessionFor, or
+      // a profile failure that degrades to no profile) stays byte-identical
+      // for every viewer, and keeps the shared-cacheable policy.
+      let profileInjected = false;
       if (found.contentType.startsWith('text/html')) {
         let html = injectAdminBase(found.data.toString('utf8'), basePath);
         if (sessionFor !== null) {
@@ -332,6 +338,7 @@ export function createAdminShellMount(app, options = {}) {
               path: rawPath,
             });
             html = injectSessionProfile(html, profile);
+            profileInjected = html.includes('<script id="bo-session"');
           } catch (error) {
             // Display-only: a profile failure serves the page without one —
             // the shell keeps its local identity — never a failed shell. The
@@ -353,7 +360,8 @@ export function createAdminShellMount(app, options = {}) {
       const responseHeaders = {
         'content-type': found.contentType,
         'content-length': String(data.byteLength),
-        'cache-control': 'no-cache',
+        'cache-control': profileInjected ? 'private, no-store' : 'no-cache',
+        ...(profileInjected ? { vary: 'Cookie' } : {}),
       };
       if (method === 'HEAD') return { status: 200, headers: responseHeaders, body: Buffer.alloc(0) };
       return { status: 200, headers: responseHeaders, body: data };

@@ -11,6 +11,7 @@ import {
   settingsBadge,
   countFixes,
   loadFixCount,
+  resolveBadgeSpaceId,
   defaultSpaces,
   readSpaces,
   resolveSpaceShortcut,
@@ -116,6 +117,22 @@ test('a failed sync half of the badge logs its cause and keeps the quality count
   assert.ok(warnings[0].includes('Error'));
   assert.ok(warnings[0].includes('spaceId=prova'));
   assert.ok(!warnings[0].includes('sync giù'));
+});
+
+test('the badge counts the session space first, the stored one only without a session', () => {
+  const stored = { getItem: () => 'locale' };
+  // A real session: the live space wins even when storage names another one.
+  assert.equal(resolveBadgeSpaceId('aurora', stored), 'aurora');
+  assert.equal(resolveBadgeSpaceId('aurora', { getItem: () => '' }), 'aurora');
+  assert.equal(resolveBadgeSpaceId('aurora', { getItem: () => { throw new Error('storage giù'); } }), 'aurora');
+  // No session: the stored selection is the space.
+  assert.equal(resolveBadgeSpaceId(null, stored), 'locale');
+  assert.equal(resolveBadgeSpaceId('', stored), 'locale');
+  assert.equal(resolveBadgeSpaceId(undefined, stored), 'locale');
+  // Neither: the sync half stays unknown, never a guessed space.
+  assert.equal(resolveBadgeSpaceId(null, { getItem: () => '' }), '');
+  assert.equal(resolveBadgeSpaceId(null, { getItem: () => { throw new Error('storage giù'); } }), '');
+  assert.equal(resolveBadgeSpaceId(null, null), '');
 });
 
 test('⌘1/2/3 switch among the user spaces only', () => {

@@ -627,6 +627,60 @@ test('the mount injects the embedder session profile into served HTML only', asy
   }
 });
 
+test('per-user session HTML leaves with private headers; shared HTML stays cacheable', async () => {
+  const app = readApp();
+  try {
+    const profile = {
+      space: { id: 'aurora', name: 'Studio Aurora' },
+      role: 'owner',
+      name: 'Elena Rinaldi',
+      email: 'elena@studioaurora.it',
+      logoutUrl: '/w/aurora/auth/logout',
+    };
+    const sessioned = createAdminShellMount(app, {
+      basePath: '/bo',
+      sessionFor: async () => profile,
+    });
+    const personal = await sessioned.handle({ method: 'GET', path: '/bo/', headers: {}, cookies: {} });
+    assert.equal(personal.status, 200);
+    assert.ok(personal.body.toString('utf8').includes('id="bo-session"'));
+    assert.equal(personal.headers['cache-control'], 'private, no-store');
+    assert.equal(personal.headers.vary, 'Cookie');
+    const personalHead = await sessioned.handle({ method: 'HEAD', path: '/bo/', headers: {}, cookies: {} });
+    assert.equal(personalHead.headers['cache-control'], 'private, no-store');
+    assert.equal(personalHead.headers.vary, 'Cookie');
+    assert.equal(personalHead.body.byteLength, 0);
+    // Non-HTML assets carry no profile, so they keep the shared policy.
+    const js = await sessioned.handle({ method: 'GET', path: '/bo/app.js', headers: {} });
+    assert.equal(js.headers['cache-control'], 'no-cache');
+    assert.equal(js.headers.vary, undefined);
+    // No sessionFor: the bytes are identical for every viewer.
+    const plain = createAdminShellMount(app, { basePath: '/bo' });
+    const shared = await plain.handle({ method: 'GET', path: '/bo/', headers: {}, cookies: {} });
+    assert.ok(!shared.body.toString('utf8').includes('id="bo-session"'));
+    assert.equal(shared.headers['cache-control'], 'no-cache');
+    assert.equal(shared.headers.vary, undefined);
+    // A profile failure degrades to the shared page, never to per-user bytes.
+    const failing = createAdminShellMount(app, {
+      basePath: '/bo',
+      sessionFor: async () => { throw new Error('down'); },
+    });
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    let degraded;
+    try {
+      degraded = await failing.handle({ method: 'GET', path: '/bo/', headers: {}, cookies: {} });
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.ok(!degraded.body.toString('utf8').includes('id="bo-session"'));
+    assert.equal(degraded.headers['cache-control'], 'no-cache');
+    assert.equal(degraded.headers.vary, undefined);
+  } finally {
+    app.close();
+  }
+});
+
 test('without sessionFor the served shell carries no profile; a failure degrades to none', async () => {
   const app = readApp();
   try {

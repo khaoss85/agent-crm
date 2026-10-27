@@ -130,6 +130,29 @@ export function countFixes({ issues = [], candidates = [] } = {}) {
 }
 
 /**
+ * Which space the Impostazioni badge counts for. The live session space
+ * wins: under a real session the stored local space is empty (or belongs
+ * to the development identity), and counting with it would silently drop
+ * the sync half of the badge. Without a session the stored selection is
+ * the space; with neither, the sync half stays unknown.
+ * @param {unknown} sessionSpaceId the live session's space id, if any
+ * @param {{ getItem?: unknown } | null | undefined} storage
+ * @param {string} [key]
+ * @returns {string} the space id to count for, or '' when unknown
+ */
+export function resolveBadgeSpaceId(sessionSpaceId, storage, key = ACTIVE_SPACE_KEY) {
+  if (typeof sessionSpaceId === 'string' && sessionSpaceId !== '') return sessionSpaceId;
+  try {
+    const stored = storage?.getItem?.(key);
+    if (typeof stored === 'string' && stored !== '') return stored;
+  } catch {
+    // A broken storage never breaks the badge: the count degrades to the
+    // quality half, like an unknown space.
+  }
+  return '';
+}
+
+/**
  * Read the real fix count for the badge. Returns null (unknown) when the
  * customer-data package is not composed or a read fails: an unknown count
  * must never light the badge, and it must never render as "none" either.

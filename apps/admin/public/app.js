@@ -358,6 +358,7 @@ import {
   loadFixCount,
   readSpaces,
   renderSettingsPanel,
+  resolveBadgeSpaceId,
 } from './admin-shell.js';
 import { buildOggiLinks, createOggiView, isSpaceMount } from './admin-oggi.js';
 import { DEV_USER, readSessionProfile, resolveLogoutTarget } from './admin-session.js';
@@ -768,13 +769,8 @@ async function refreshShellBadge() {
   // The badge counts what the Stato sync screen points at: the data-quality
   // rows plus the sync attention rows, both read live. Without a selected
   // space the sync half is unknown and the badge keeps the quality count.
-  let spaceId = '';
-  try {
-    const stored = shellStorage.getItem(ACTIVE_SPACE_KEY);
-    if (typeof stored === 'string') spaceId = stored;
-  } catch {
-    spaceId = '';
-  }
+  // The live session space wins over the stored local one (BO-F6-03).
+  const spaceId = resolveBadgeSpaceId(shellActiveSpace, shellStorage);
   shellFixCount = await loadFixCount(moduleClient, { spaceId });
   shellView.update({ fixCount: shellFixCount });
 }
