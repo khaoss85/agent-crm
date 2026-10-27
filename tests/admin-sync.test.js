@@ -186,7 +186,8 @@ test('a broken channel says what to do, with a real destination', () => {
   assert.ok(byKey.get('b').title.includes('scollegato'));
   assert.equal(byKey.get('c').action.route, '#/connettori');
   assert.deepEqual(byKey.get('d').action, { kind: 'sync-now', label: 'Sincronizza ora', connectionKey: 'd' });
-  assert.ok(byKey.get('d').title.includes('IMPORT_PROVIDER_FAILED'));
+  assert.ok(byKey.get('d').title.includes('si è fermata'));
+  assert.ok(!byKey.get('d').title.includes('IMPORT_PROVIDER_FAILED'));
   assert.equal(byKey.get('e:quarantena').action.route, '#/customer-data');
   assert.ok(byKey.get('f:invii').action.route.startsWith('#/connettori/'));
   // The merely waiting voice connection is not broken: no item.
