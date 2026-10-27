@@ -578,8 +578,8 @@ export const SHELL_SCREENS = Object.freeze({
   componenti: { id: '', label: 'Componenti' },
 });
 
-const SHELL_DEMO_SPACE = Object.freeze({ id: 'locale', name: 'Spazio locale', initials: 'SL' });
-const SHELL_DEMO_USER = Object.freeze({ name: 'Elena', email: 'elena@palestra-esempio.it' });
+const SHELL_DEMO_SPACE = Object.freeze({ id: 'locale', name: 'Studio Aurora', initials: 'SA' });
+const SHELL_DEMO_USER = Object.freeze({ name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' });
 
 /**
  * The shell prelude every harness page runs before its view module: the real
@@ -616,7 +616,66 @@ shellView.update({
   activeScreenId: ${JSON.stringify(shell.id)},
   aiScreenId: ${JSON.stringify(shell.ai ?? null)},
   screenLabel: ${JSON.stringify(shell.label)},
-});`;
+  // The prototype stages a lived-in space: 3 clients and 2 things to fix,
+  // so the Clienti and Impostazioni badges paint like the reference.
+  clientCount: 3,
+  clientCountExact: true,
+  fixCount: 2,
+});
+// The screenshot run fires on page load, not on painted text: under the
+// virtual-time budget the Bricolage variable face loses the race and the
+// shell paints in fallback metrics (CI recall 0.08 with the webfont
+// missing). Await the faces the shell paints before the fixtures run, so
+// the load event — and the screenshot — wait for real glyphs. Rejections
+// settle the wait instead of hanging the harness.
+await Promise.all([
+  document.fonts.load('400 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
+  document.fonts.load('700 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
+  document.fonts.load('400 12px "Spline Sans Mono"', 'STUDIO AURORA / OGGI 0123456789'),
+]).catch(() => {});
+await document.fonts.ready.catch(() => {});
+const diagEl = document.getElementById('bodiag');
+if (diagEl) {
+  let cssRules = -1;
+  try {
+    const link = document.querySelector('link[href="/styles.css"]');
+    cssRules = link && link.sheet ? link.sheet.cssRules.length : -3;
+  } catch (error) { cssRules = -2; }
+  const fonts = document.fonts || null;
+  const rectOf = (selector) => {
+    const node = document.querySelector(selector);
+    if (!node) return null;
+    const box = node.getBoundingClientRect();
+    return [Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)];
+  };
+  diagEl.textContent = JSON.stringify({
+    rects: {
+      space: rectOf('.bo-space'),
+      badge: rectOf('.bo-space-badge'),
+      name: rectOf('.bo-space-name'),
+      role: rectOf('.bo-space-role'),
+      navFirst: rectOf('.bo-nav-item'),
+      pill: rectOf('.bo-nav-item.active'),
+      sidebar: rectOf('.bo-sidebar'),
+      topbar: rectOf('.bo-topbar'),
+      bottomNav: rectOf('.bo-nav-bottom'),
+      user: rectOf('.bo-user'),
+      logout: rectOf('.bo-logout'),
+    },
+    roleText: (document.querySelector('.bo-space-role') || { textContent: null }).textContent,
+    navCount: document.querySelectorAll('.bo-nav-item').length,
+    fonts: fonts ? fonts.status : 'none',
+    bricolage: fonts ? fonts.check('700 14px "Bricolage Grotesque"') : false,
+    mono: fonts ? fonts.check('400 12px "Spline Sans Mono"') : false,
+    cssRules,
+    sidebarKids: document.getElementById('boSidebar').childElementCount,
+    pill: (document.querySelector('.bo-nav-item.active') || { textContent: null }).textContent,
+    space: (document.querySelector('.bo-space-name') || { textContent: null }).textContent,
+    dpr: window.devicePixelRatio || 0,
+    vw: window.innerWidth || 0,
+    vh: window.innerHeight || 0,
+  });
+}`;
 }
 
 const MIN_BYTES = Object.freeze({ desktop: 20000, phone: 10000 });
@@ -1018,7 +1077,7 @@ export function harnessHtml(name, publicDir) {
   return `<!doctype html><html lang="it"><head><meta charset="utf-8">`
     + `<meta name="viewport" content="width=device-width, initial-scale=1">`
     + `<link rel="stylesheet" href="/styles.css"></head>`
-    + `<body><main class="shell bo-shell">`
+    + `<body><main class="bo-shell">`
     + `<aside class="bo-sidebar" id="boSidebar" aria-label="Navigazione backoffice"></aside>`
     + `<div class="bo-main"><div class="bo-topbar" id="boTopbar"></div>`
     + `<section id="view-module" aria-live="polite"></section>`
@@ -1027,6 +1086,7 @@ export function harnessHtml(name, publicDir) {
     + `</div></main>`
     + `<aside class="bo-assistant-slot" id="boAssistant" aria-label="Assistente AI"></aside>`
     + `<div id="probe" hidden></div>`
+    + `<div id="bodiag" hidden></div>`
     + `<script type="module">${shellBoot(name)}${fixtureScript(name)}</script></body></html>`;
 }
 
@@ -1368,6 +1428,10 @@ async function renderScreen({ binary, port, screen, outDir }) {
     // dump-dom run paints the same harness URL with the same fixtures under
     // the same frozen virtual clock as the screenshot run, so gating the PNG
     // on this probe ties the file to the proven DOM state.
+    const diag = String(dom.stdout ?? '').match(/<div id="bodiag"[^>]*>(.*?)<\/div>/s);
+    if (diag) {
+      console.log(`  · ${screen.name} ${kind} paint: ${diag[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')}`);
+    }
     if (screen.name !== 'login') {
       try {
         assertProbe(screen.name, readProbe(dom.stdout, screen.name));

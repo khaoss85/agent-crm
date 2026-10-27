@@ -176,7 +176,7 @@ function harnessHtml() {
     + `<link rel="stylesheet" href="/styles.css">`
     + `<script id="bo-session" type="application/json">${SESSION_JSON}</script>`
     + `</head>`
-    + `<body><main class="shell bo-shell">`
+    + `<body><main class="bo-shell">`
     + `<aside class="bo-sidebar" id="boSidebar" aria-label="Navigazione backoffice"></aside>`
     + `<div class="bo-main"><div class="bo-topbar" id="boTopbar"></div>`
     + `<section id="view-module" aria-live="polite"></section>`
