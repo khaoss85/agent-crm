@@ -21,6 +21,10 @@ on:
       - 'apps/admin/public/**'
       - 'scripts/bo-shots.js'
       - '.github/workflows/bo-shots.yml'
+  # Manual evidence renders (BO-F6-02, backlog:c8364e59): the upload step is
+  # lossy while the account artifact quota is full, so a reviewer can
+  # re-render the PNGs on demand with `gh workflow run bo-shots.yml`.
+  workflow_dispatch:
 
 # One run per PR, always the newest; a superseded run is cancelled.
 concurrency:
