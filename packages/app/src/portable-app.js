@@ -29,6 +29,7 @@ import { createContactModule } from '../../modules/contact/src/index.js';
 import { createOpportunityModule } from '../../modules/opportunity/src/index.js';
 import { createApprovalModule } from '../../modules/approval/src/index.js';
 import { PipelineRegistry, pipelineMetadata } from '../../core/src/pipeline-registry.js';
+import { generatedPipelines } from '../../pipelines/generated/index.js';
 import { PackageRegistry } from '../../core/src/package-registry.js';
 import { isDefinitionVersionDrift } from '../../core/src/definition-version-store.js';
 import { createOperationRuntime, composePackageOperations } from '../../core/src/operation-runtime.js';
@@ -372,6 +373,12 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
   const pipelines = new PipelineRegistry({
     moduleExists: (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name),
   });
+  // Code-first pipelines (ADR-014, backlog:282de375): the checked-in
+  // generated pipelines first — the same source the sync factory registers —
+  // then the selected graph's explicit opt-ins. Either side fails closed in
+  // the registry (bad contract, unknown module, duplicate name or module).
+  for (const definition of generatedPipelines) pipelines.register(definition);
+  for (const definition of accepted.pipelines ?? []) pipelines.register(definition);
 
   // A drifted definition in one workspace reads as that workspace being
   // unavailable — never as the process being broken. On 2026-10-22 a single
@@ -506,6 +513,11 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
       get: (name) => domains.get(name),
       has: (name) => domains.has(name),
       names: () => domains.names(),
+      // Mirrors PackageRegistry#size (backlog:282de375): `/api/schema`
+      // publishes `domains` only when this is positive, and the facade
+      // without it kept every async composition — including the shared
+      // reader behind `/bo` — silent about its domains.
+      size: domains.size,
       resources: () => domains.resources(),
       metadata: () => domains.metadata(),
       report: () => domains.report(),

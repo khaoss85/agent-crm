@@ -169,6 +169,12 @@ export function preflightSelectedGraph(selected) {
   const packages = requireArray(selected.packages, 'packages');
   const actions = requireArray(selected.actions, 'actions');
   const modules = requireArray(selected.modules, 'modules');
+  // Opt-in code-first pipelines (ADR-014, backlog:282de375): the async
+  // factories never registered any pipeline, so `/api/schema` always listed
+  // none. A selected graph names the pipeline definitions it serves; the
+  // registry validates each one fail-closed at assembly, like the sync
+  // factory does for the checked-in generated pipelines.
+  const pipelines = requireArray(selected.pipelines, 'pipelines');
   const moduleNames = [];
   const recordModules = [];
   for (const entry of modules) {
@@ -225,6 +231,7 @@ export function preflightSelectedGraph(selected) {
     packageFacts,
     actions: Object.freeze(acceptedActions),
     modules: Object.freeze([...moduleNames]),
+    pipelines: Object.freeze([...pipelines]),
     // Record modules selected by manifest, with their DDL per dialect. Each
     // rendering is computed from the manifest, never translated between
     // dialects; lifecycles merge the one their storage executes.
