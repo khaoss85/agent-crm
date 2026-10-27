@@ -17,7 +17,7 @@
 // Rome clock: every instant renders with timeZone 'Europe/Rome' through the
 // Oggi helpers, never as UTC or ISO.
 
-import { formatMinorUnits } from './admin-core.js';
+import { formatMinorUnits, humanReadError } from './admin-core.js';
 import { romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
@@ -187,7 +187,9 @@ export function createCalendarioView(deps) {
         state.week = null;
         state.weekError = null;
       } else {
-        state.weekError = error?.message ?? 'Lettura della settimana fallita.';
+        state.weekError = humanReadError(error, {
+          failed: 'La settimana non si è potuta leggere. Riprova più tardi.',
+        });
       }
     }
     renderAll();
@@ -419,9 +421,10 @@ export function createCalendarioView(deps) {
         : 'Nessuna bozza dalla frase: usa il modulo qui sotto.';
     } catch (error) {
       state.draft = null;
-      state.draftNote = error?.code === 'NOT_FOUND' || error?.status === 404
-        ? 'Il calendario non è composto in questo spazio: usa il modulo qui sotto.'
-        : (error?.message ?? 'Interpretazione fallita: usa il modulo qui sotto.');
+      state.draftNote = humanReadError(error, {
+        failed: 'Interpretazione non riuscita: usa il modulo qui sotto.',
+        notComposed: 'Il calendario non è composto in questo spazio: usa il modulo qui sotto.',
+      });
     }
     renderAll();
     if (state.draft) fillManual(state.draft);
@@ -511,9 +514,10 @@ export function createCalendarioView(deps) {
         : '';
     } catch (error) {
       state.slots = [];
-      state.slotsNote = error?.code === 'NOT_FOUND' || error?.status === 404
-        ? 'Il calendario non è composto in questo spazio.'
-        : (error?.message ?? 'Ricerca slot fallita.');
+      state.slotsNote = humanReadError(error, {
+        failed: 'Ricerca non riuscita. Riprova più tardi.',
+        notComposed: 'Il calendario non è composto in questo spazio.',
+      });
     }
     renderAll();
   }
@@ -729,9 +733,10 @@ export function createCalendarioView(deps) {
         state.bookingNote = 'Registrata come proposta: lo spazio non fissa in automatico.';
       }
     } catch (error) {
-      state.bookingNote = error?.code === 'NOT_FOUND' || error?.status === 404
-        ? 'Il calendario non è composto in questo spazio.'
-        : (error?.message ?? 'Prenotazione fallita.');
+      state.bookingNote = humanReadError(error, {
+        failed: 'Prenotazione non riuscita. Riprova più tardi.',
+        notComposed: 'Il calendario non è composto in questo spazio.',
+      });
     }
     renderAll();
     const members = parseMemberFilter(state.memberFilter);

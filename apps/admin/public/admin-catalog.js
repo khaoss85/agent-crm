@@ -1,8 +1,7 @@
 // @ts-check
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-
-import { formatMinorUnits } from './admin-core.js';
+import { formatMinorUnits, humanReadError } from './admin-core.js';
 import { createSubmissionController } from './admin-submission.js';
 
 /**
@@ -437,7 +436,9 @@ export function createCatalogView(deps) {
       table = await client.request(`/api/catalog/products${query ? `?${query}` : ''}`);
     } catch (error) {
       if (token !== renderToken) return;
-      status.textContent = `Catalogo non leggibile: ${error?.message ?? 'richiesta fallita'}`;
+      status.textContent = humanReadError(error, {
+        failed: 'Il catalogo non si è potuto leggere. Riprova più tardi.',
+      });
       return;
     }
     if (token !== renderToken) return;

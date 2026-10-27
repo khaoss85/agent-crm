@@ -28,6 +28,7 @@
 // — never innerHTML with data, so a hostile account or adapter label is
 // inert text, never markup.
 
+import { humanReadError } from './admin-core.js';
 import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -375,13 +376,7 @@ export function detailSections({ entry, connection, spaceId = null }) {
 import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 function errorOf(error) {
-  if (error !== null && typeof error === 'object') {
-    const body = /** @type {{ message?: unknown, code?: unknown }} */ (error).message
-      ?? /** @type {{ message?: unknown }} */ (error).code;
-    if (typeof body === 'string' && body !== '') return body;
-  }
-  if (typeof error === 'string' && error !== '') return error;
-  return 'La richiesta non è riuscita.';
+  return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
 }
 
 /**
@@ -440,13 +435,10 @@ export function createConnectorDetailView(deps) {
       state.units = Array.isArray(catalog?.units) ? catalog.units : null;
     } catch (error) {
       // No silent fallback: the dependency list still renders with the
-      // declared unit names, but the failure stays visible with its code.
+      // declared unit names, and the failure stays visible as a human
+      // note — never with its code.
       state.units = null;
-      state.catalogError = error !== null && typeof error === 'object'
-        && typeof /** @type {{ code?: unknown }} */ (error).code === 'string'
-        && /** @type {{ code?: unknown }} */ (error).code !== ''
-        ? /** @type {{ code: string }} */ (error).code
-        : errorOf(error);
+      state.catalogError = errorOf(error);
     }
     if (!state.channelsReady || state.spaceId.trim() === '') return;
     try {
@@ -485,8 +477,10 @@ export function createConnectorDetailView(deps) {
     const panel = el(doc, 'section', 'bo-connector-row');
     panel.appendChild(el(doc, 'h3', undefined, 'Skill e pacchetti che lo usano'));
     if (state.catalogError !== null) {
+      // The failure stays visible, but never with its code: errorOf() already
+      // reduced the technical detail to a human note (backlog:9da124e5).
       panel.appendChild(el(doc, 'p', 'bo-muted',
-        `Etichette non caricate (${state.catalogError}): uso i nomi dichiarati delle unità.`));
+        'Etichette non caricate: uso i nomi dichiarati delle unità.'));
     }
     if (rows.length === 0) {
       panel.appendChild(el(doc, 'p', 'bo-muted', 'Nessun uso dichiarato per questo canale.'));

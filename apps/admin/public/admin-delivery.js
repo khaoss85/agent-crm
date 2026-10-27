@@ -1,6 +1,6 @@
 // @ts-check
 
-import { formatMinorUnits } from './admin-core.js';
+import { formatMinorUnits, humanReadError } from './admin-core.js';
 import { renderDeliveryChangeAcceptance } from './admin-delivery-change.js';
 
 /**
@@ -44,7 +44,7 @@ export async function renderDeliveryHandover({ contract, schema, mount, el, clie
   try {
     projects = (await fetchRows('delivery-project', (row) => row.contractId === contract.id)).rows;
   } catch (error) {
-    panel.appendChild(el('p', 'field-error', `Could not load delivery: ${error?.message ?? 'request failed'}`));
+    panel.appendChild(el('p', 'field-error', humanReadError(error, { failed: 'Could not load delivery. Try again later.' })));
     return;
   }
   if (projects[0]) {
@@ -313,7 +313,7 @@ async function renderProject({ project, domain, panel, el, fetchRows, money }) {
     milestones = (await fetchRows('delivery-milestone', (row) => row.deliveryProjectId === project.id)).rows;
     engagements = (await fetchRows('delivery-partner-engagement', (row) => row.deliveryProjectId === project.id)).rows;
   } catch (error) {
-    panel.appendChild(el('p', 'field-error', `Could not load the delivery project: ${error?.message ?? 'request failed'}`));
+    panel.appendChild(el('p', 'field-error', humanReadError(error, { failed: 'Could not load the delivery project. Try again later.' })));
     return;
   }
 

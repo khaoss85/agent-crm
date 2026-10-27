@@ -207,7 +207,8 @@ test('a broken channel says what to do, with a real destination', () => {
   assert.ok(byKey.get('b').title.includes('scollegato'));
   assert.equal(byKey.get('c').action.route, '#/connettori');
   assert.deepEqual(byKey.get('d').action, { kind: 'sync-now', label: 'Sincronizza ora', connectionKey: 'd' });
-  assert.ok(byKey.get('d').title.includes('IMPORT_PROVIDER_FAILED'));
+  assert.ok(byKey.get('d').title.includes('si è fermata'));
+  assert.ok(!byKey.get('d').title.includes('IMPORT_PROVIDER_FAILED'));
   assert.equal(byKey.get('e:quarantena').action.route, '#/customer-data');
   assert.ok(byKey.get('f:invii').action.route.startsWith('#/connettori/'));
   // The merely waiting voice connection is not broken: no item.
@@ -262,7 +263,7 @@ test('labels stay Italian and honest on unknown values', () => {
   assert.equal(channelLabel(''), 'Canale');
   assert.equal(feedKindLabel('applied'), 'registrato');
   assert.equal(feedKindLabel('quarantined'), 'in attesa di decisione');
-  assert.equal(feedKindLabel('dead-letter', 'CHANNEL_SEND_FAILED'), 'invio fermo (CHANNEL_SEND_FAILED)');
+  assert.equal(feedKindLabel('dead-letter', 'CHANNEL_SEND_FAILED'), 'invio fermo');
   assert.equal(timeAgo('2026-10-25T11:59:30.000Z', NOW), 'adesso');
   assert.equal(timeAgo('2026-10-25T11:30:00.000Z', NOW), '30 minuti fa');
   assert.equal(timeAgo('2026-10-25T09:00:00.000Z', NOW), '3 ore fa');
@@ -280,7 +281,7 @@ test('feed lists newest-first events without payload or provider wording', () =>
   }));
   assert.equal(items.length, 2);
   assert.deepEqual(items[0], { at: '2026-10-25T11:30:00.000Z', arrow: '←', channel: 'WhatsApp', text: 'registrato' });
-  assert.equal(items[1].text, 'invio fermo (CHANNEL_SEND_FAILED)');
+  assert.equal(items[1].text, 'invio fermo');
   assert.deepEqual(syncFeedItems(null), []);
 });
 
@@ -486,7 +487,8 @@ test('the view degrades honestly: no space, no channels, failed read', async () 
   const failed = renderView({ client: { failActivity: new Error('giù') } });
   await failed.view.render();
   await flush();
-  assert.ok(failed.mount.textContent.includes('giù'));
+  assert.ok(failed.mount.textContent.includes('non è riuscita'));
+  assert.ok(!failed.mount.textContent.includes('giù'));
   assert.equal(failed.toasts.filter((toast) => toast.isError).length, 1);
   assert.ok(!failed.mount.textContent.includes('Tutto sincronizzato'));
   // The tabs stay on screen even in the honest edge states.

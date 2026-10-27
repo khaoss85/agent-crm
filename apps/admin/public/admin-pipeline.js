@@ -19,7 +19,7 @@
 // input and asks for one before posting. The Lista rows are read-only; moves
 // happen on Kanban cards.
 
-import { formatMinorUnits } from './admin-core.js';
+import { formatMinorUnits, humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 const BOARD_LIMIT = 200;
@@ -181,7 +181,7 @@ export function createPipelineBoard(deps) {
       records = (await client.request(listPath)).items ?? [];
     } catch (error) {
       if (token !== renderToken) return;
-      showMessage(error?.message ?? 'Failed to load the pipeline.', { retry: () => renderBoard(pipelineName) });
+      showMessage(humanReadError(error, { failed: 'La pipeline non si è potuta leggere. Riprova più tardi.' }), { retry: () => renderBoard(pipelineName) });
       return;
     }
     if (token !== renderToken) return;

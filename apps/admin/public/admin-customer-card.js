@@ -1,6 +1,7 @@
 // @ts-check
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { humanReadError } from './admin-core.js';
 
 /**
  * **The customer scheda (BO-F1-06): one customer, three columns.**
@@ -443,7 +444,9 @@ export function createCustomerCardView(deps) {
     } catch (error) {
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
-      panel.appendChild(el('p', 'bo-muted', error?.message ?? 'la scheda non può essere letta'));
+      panel.appendChild(el('p', 'bo-muted', humanReadError(error, {
+        failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
+      })));
       mount.appendChild(panel);
       return;
     }

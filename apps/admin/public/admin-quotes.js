@@ -1,8 +1,7 @@
 // @ts-check
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-
-import { formatMinorUnits } from './admin-core.js';
+import { formatMinorUnits, humanReadError } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -106,7 +105,7 @@ export function createQuoteView(deps) {
       books = await fetchRows('price-book', (book) => book.active === true);
     } catch (error) {
       if (token !== renderToken) return;
-      status.textContent = `Could not load quotes: ${error?.message ?? 'request failed'}`;
+      status.textContent = humanReadError(error, { failed: 'Could not load quotes. Try again later.' });
       return;
     }
     if (token !== renderToken) return;
@@ -196,7 +195,7 @@ export function createQuoteView(deps) {
         .sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
     } catch (error) {
       if (token !== renderToken) return;
-      status.textContent = `Could not load the quote: ${error?.message ?? 'request failed'}`;
+      status.textContent = humanReadError(error, { failed: 'Could not load the quote. Try again later.' });
       return;
     }
     if (token !== renderToken) return;
@@ -464,7 +463,7 @@ export function createQuoteView(deps) {
       orders = (await fetchRows('order', (row) => row.quoteId === quote.id)).rows;
       orderTotals = (await fetchRows('order-total')).rows;
     } catch (error) {
-      panel.appendChild(el('p', 'field-error', `Could not load signature state: ${error?.message ?? 'request failed'}`));
+      panel.appendChild(el('p', 'field-error', humanReadError(error, { failed: 'Could not load signature state. Try again later.' })));
       return;
     }
     const envelope = envelopes[0] ?? null;

@@ -15,6 +15,9 @@ import {
   displayTitle,
   humanizeLabel,
   hasCapability,
+  humanReadError,
+  isNotComposedFailure,
+  isUnsupportedContractFailure,
 } from './admin-core.js';
 import { createSubmissionController } from './admin-submission.js';
 
@@ -107,7 +110,11 @@ export function createModuleAdmin(deps) {
         : [];
     } catch (error) {
       if (token !== renderToken) return;
-      showMessage(apiErrorToFormErrors(error).general, { retry: () => renderList(moduleName) });
+      const failed = humanReadError(error, { failed: 'The list could not be loaded. Try again later.' });
+      const needsUpdate = isUnsupportedContractFailure(error);
+      showMessage(needsUpdate ? 'This module needs an update before it can list records.' : failed, {
+        retry: needsUpdate ? undefined : () => renderList(moduleName),
+      });
       return;
     }
     if (token !== renderToken) return;
@@ -185,7 +192,11 @@ export function createModuleAdmin(deps) {
       meta = await fetchSchemaModule(moduleName);
     } catch (error) {
       if (token !== renderToken) return;
-      showMessage(apiErrorToFormErrors(error).general, { retry: () => renderNew(moduleName) });
+      const failed = humanReadError(error, { failed: 'The form could not be loaded. Try again later.' });
+      const needsUpdate = isUnsupportedContractFailure(error);
+      showMessage(needsUpdate ? 'This module needs an update before it can show the form.' : failed, {
+        retry: needsUpdate ? undefined : () => renderNew(moduleName),
+      });
       return;
     }
     if (token !== renderToken) return;
@@ -232,9 +243,15 @@ export function createModuleAdmin(deps) {
       record = await client.request(`/api/modules/${encodeURIComponent(moduleName)}/records/${encodeURIComponent(id)}`);
     } catch (error) {
       if (token !== renderToken) return;
-      const mapped = apiErrorToFormErrors(error);
-      showMessage(mapped.status === 404 ? 'Record not found.' : mapped.general, {
-        retry: mapped.status === 404 ? undefined : () => renderDetail(moduleName, id),
+      const failed = humanReadError(error, { failed: 'The record could not be loaded. Try again later.' });
+      const notFound = isNotComposedFailure(error);
+      const needsUpdate = isUnsupportedContractFailure(error);
+      if (needsUpdate) {
+        showMessage('This module needs an update before it can show this record.');
+        return;
+      }
+      showMessage(notFound ? 'Record not found.' : failed, {
+        retry: notFound ? undefined : () => renderDetail(moduleName, id),
       });
       return;
     }

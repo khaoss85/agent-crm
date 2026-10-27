@@ -239,7 +239,8 @@ test('an unavailable catalog says so instead of a blank screen', async () => {
     client: stubClient({ fail: { message: 'boom', status: 500 } }),
   });
   await failingView.renderTable({});
-  assert.ok(failing.textContent.includes('non leggibile'), 'a failed read is visible with the cause');
+  assert.ok(failing.textContent.includes('non si è potuto leggere'), 'a failed read is visible, human, without the cause');
+  assert.ok(!failing.textContent.includes('boom'), 'the server message never renders');
 });
 
 test('a connected Stripe source names its provider with a confirm-gated sync', async () => {

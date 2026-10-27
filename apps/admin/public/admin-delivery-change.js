@@ -1,5 +1,7 @@
 // @ts-check
 
+import { humanReadError } from './admin-core.js';
+
 /**
  * Delivery Change & Acceptance Admin (Milestone 14b2, the delivery package).
  *
@@ -88,7 +90,7 @@ export async function renderDeliveryChangeAcceptance({ project, schema, mount, e
       if (!token.fresh(mine)) return;
       clear(body);
       const failure = el('div', 'change-acceptance-error');
-      failure.appendChild(el('p', 'field-error', `Could not load change and acceptance evidence: ${error?.message ?? 'request failed'}`));
+      failure.appendChild(el('p', 'field-error', humanReadError(error, { failed: 'Could not load change and acceptance evidence. Try again later.' })));
       const retry = el('button', 'retry', 'Retry');
       retry.addEventListener('click', () => { void refresh(); });
       failure.appendChild(retry);

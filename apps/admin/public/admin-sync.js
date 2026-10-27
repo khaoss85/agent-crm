@@ -22,6 +22,7 @@
 // createElement + textContent/setAttribute — never innerHTML with data, so a
 // hostile channel, account or adapter label is inert text, never markup.
 
+import { humanReadError } from './admin-core.js';
 import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -287,7 +288,7 @@ export function syncFixItems(activity) {
     if (code !== null) {
       items.push({
         key, channel: entry.channel,
-        title: `L\u2019importazione di ${who} si è fermata (${code})`,
+        title: `L\u2019importazione di ${who} si è fermata.`,
         detail: 'Riprova con Sincronizza ora qui sotto: riprende da dove si è fermata.',
         action: { kind: 'sync-now', label: 'Sincronizza ora', connectionKey: key },
       });
@@ -367,15 +368,17 @@ export function syncChannelRows(activity) {
 }
 
 /**
- * Italian text for one feed event. The feed carries no subject, no payload
- * and no provider wording — only the effect the inbox recorded, or the
- * normalized code of an open dead letter.
+ * Italian text for one feed event. The feed carries no subject, no payload,
+ * no provider wording and no error code — only the effect the inbox
+ * recorded. `code` stays in the signature because callers pass the row
+ * through, but it never renders (backlog:9da124e5).
  * @param {unknown} kind
  * @param {unknown} code
  */
 export function feedKindLabel(kind, code) {
+  void code;
   if (kind === 'dead-letter') {
-    return typeof code === 'string' && code !== '' ? `invio fermo (${code})` : 'invio fermo';
+    return 'invio fermo';
   }
   if (kind === 'applied') return 'registrato';
   if (kind === 'quarantined') return 'in attesa di decisione';
@@ -411,13 +414,7 @@ export function syncFeedItems(activity) {
 import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 function errorOf(error) {
-  if (error !== null && typeof error === 'object') {
-    const body = /** @type {{ message?: unknown, code?: unknown }} */ (error).message
-      ?? /** @type {{ message?: unknown }} */ (error).code;
-    if (typeof body === 'string' && body !== '') return body;
-  }
-  if (typeof error === 'string' && error !== '') return error;
-  return 'La richiesta non è riuscita.';
+  return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
 }
 
 /**

@@ -480,7 +480,7 @@ export function createPersonalizzazioneView(deps) {
     }
     if (state.notComposed) {
       box.appendChild(el(doc, 'p', {
-        text: 'Personalizzazione non composta in questo progetto: il server non pubblica il catalogo (manca il pacchetto space-permissions).',
+        text: 'Personalizzazione non composta in questo progetto: il catalogo non è pubblicato.',
         cls: 'empty',
       }));
       mount.appendChild(box);

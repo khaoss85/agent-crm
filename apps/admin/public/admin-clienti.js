@@ -20,6 +20,8 @@ import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library
 // the entry point never breaks. The deterministic channel-word search
 // ("marco whatsapp") needs no LLM and always works.
 
+import { humanReadError } from './admin-core.js';
+
 const CHANNEL_LABELS = Object.freeze({
   whatsapp: 'WhatsApp',
   instagram: 'Instagram',
@@ -170,7 +172,7 @@ export function createCustomerListView(deps) {
       data = await client.request(`/api/customer-data/customers?${queryString()}`);
     } catch (error) {
       if (token !== renderToken) return;
-      data = { error: error?.message ?? 'la lista non può essere letta', status: error?.status ?? null };
+      data = { error: humanReadError(error, { failed: 'L\u2019elenco non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi.' }), status: error?.status ?? null };
     }
     if (token !== renderToken) return;
     drawShell();

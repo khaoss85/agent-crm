@@ -574,7 +574,7 @@ export function createReportingView(deps) {
       log('reporting dashboard request failed', cause);
       host.appendChild(el(doc, 'div', {
         class: 'empty',
-        text: 'Andamento non disponibile: la lettura del registro metriche è fallita. Riprova più tardi.',
+        text: 'Andamento non disponibile: i dati non si sono potuti leggere. Riprova più tardi.',
       }));
       return;
     }
@@ -582,7 +582,7 @@ export function createReportingView(deps) {
       log('reporting dashboard request failed', { name: 'Error', status: 200, code: null });
       host.appendChild(el(doc, 'div', {
         class: 'empty',
-        text: 'Andamento non disponibile: risposta illeggibile dal registro metriche.',
+        text: 'Andamento non disponibile: risposta illeggibile dal server. Riprova più tardi.',
       }));
       return;
     }
@@ -659,7 +659,7 @@ export function createReportingView(deps) {
     const panel = kicker('Moduli personalizzati', 'Reporting');
     panel.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: 'Sopra: andamento pipeline dal registro metriche dichiarato (ricalcolato a ogni filtro). Sotto: le righe del bundle reporting, dati dell\u2019operatore come l\u2019obiettivo di periodo.',
+      text: 'Sopra: l\u2019andamento della pipeline, aggiornato a ogni filtro. Sotto: le righe del report, con i dati dell\u2019operatore come l\u2019obiettivo di periodo.',
     }));
     if (loadError !== null) {
       panel.appendChild(el(doc, 'div', {

@@ -1,5 +1,7 @@
 // @ts-check
 
+import { humanReadError } from './admin-core.js';
+
 /**
  * Service Operations Admin (Milestone 15, the service domain package).
  *
@@ -195,7 +197,7 @@ export async function renderServiceOperations({ contract, schema, mount, el, cli
       if (!token.fresh(mine)) return;
       clear(body);
       const failure = el('div', 'service-error');
-      failure.appendChild(el('p', 'field-error', `Could not load service operations: ${error?.message ?? 'request failed'}`));
+      failure.appendChild(el('p', 'field-error', humanReadError(error, { failed: 'Could not load service operations. Try again later.' })));
       const retry = el('button', 'retry', 'Retry');
       retry.setAttribute('type', 'button');
       retry.addEventListener('click', () => { void refresh(); });

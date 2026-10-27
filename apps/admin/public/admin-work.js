@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-
+import { humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /**
@@ -146,7 +146,7 @@ export function createWorkView(deps) {
       tasks = await fetchRows('work-task');
     } catch (error) {
       if (token !== renderToken) return;
-      renderError(`Could not load work: ${error?.message ?? 'request failed'}`, renderQueue);
+      renderError(humanReadError(error, { failed: 'Could not load work. Try again later.' }), renderQueue);
       return;
     }
     if (token !== renderToken) return;
@@ -236,7 +236,7 @@ export function createWorkView(deps) {
       timeline = activities;
     } catch (error) {
       if (token !== renderToken) return;
-      renderError(`Could not load this task: ${error?.message ?? 'request failed'}`, () => renderTask(taskId));
+      renderError(humanReadError(error, { failed: 'Could not load this task. Try again later.' }), () => renderTask(taskId));
       return;
     }
     if (token !== renderToken) return;

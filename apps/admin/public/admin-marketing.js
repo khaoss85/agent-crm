@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-
+import { humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /**
@@ -152,7 +152,7 @@ export function createMarketingView(deps) {
       mount.appendChild(panel);
     } catch (error) {
       if (token !== renderToken) return;
-      renderError(error.message, () => renderProposalList());
+      renderError(humanReadError(error, { failed: 'Could not load the proposals. Try again later.' }), () => renderProposalList());
     }
   }
 
@@ -251,7 +251,7 @@ export function createMarketingView(deps) {
       mount.appendChild(panel);
     } catch (error) {
       if (token !== renderToken) return;
-      renderError(error.message, () => renderProposalDetail(proposalId));
+      renderError(humanReadError(error, { failed: 'Could not load the proposal. Try again later.' }), () => renderProposalDetail(proposalId));
     }
   }
 

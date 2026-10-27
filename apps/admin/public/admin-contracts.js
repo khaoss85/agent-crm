@@ -1,6 +1,6 @@
 // @ts-check
 
-import { formatMinorUnits } from './admin-core.js';
+import { formatMinorUnits, humanReadError } from './admin-core.js';
 import { renderDeliveryHandover } from './admin-delivery.js';
 import { renderServiceOperations } from './admin-service.js';
 import { renderAmendment } from './admin-lifecycle.js';
@@ -387,7 +387,7 @@ async function renderEvidence({ order, schema, domain, panel, el, fetchRows, mon
     deliveries = (await fetchRows('delivery-obligation', (row) => row.orderId === order.id)).rows;
     services = (await fetchRows('service-obligation', (row) => row.orderId === order.id)).rows;
   } catch (error) {
-    panel.appendChild(el('p', 'field-error', `Could not load the contract: ${error?.message ?? 'request failed'}`));
+    panel.appendChild(el('p', 'field-error', humanReadError(error, { failed: 'Could not load the contract. Try again later.' })));
     return;
   }
   const contract = contracts[0] ?? null;
