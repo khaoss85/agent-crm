@@ -483,5 +483,9 @@ test('an unsupported schema contract version fails gracefully', async (t) => {
   };
   const admin = createModuleAdmin({ doc, mount, client, navigate: () => {} });
   await admin.renderList('partner');
-  assert.ok(mount.textContent.toLowerCase().includes('needs an update'));
+  // backlog:9da124e5 — graceful human failure, never the contract code.
+  assert.ok(mount.textContent.includes('The list could not be loaded. Try again later.'));
+  assert.ok(!mount.textContent.includes('UNSUPPORTED_CONTRACT'), 'no error code reaches the customer');
+  assert.ok(!mount.textContent.includes('needs an update'), 'no internal update note reaches the customer');
+  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Retry'), 'a failure offers a way back');
 });

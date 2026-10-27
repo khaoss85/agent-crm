@@ -251,7 +251,10 @@ test('a catalog failure stays visible instead of failing silent', async () => {
   });
   await view.render('whatsapp');
   await flush();
-  assert.ok(mount.textContent.includes('Etichette non caricate (SPACE_PACKAGES_MISSING)'));
+  // backlog:9da124e5 — the failure stays visible, but never with its code.
+  assert.ok(mount.textContent.includes('Etichette non caricate'));
+  assert.ok(!mount.textContent.includes('SPACE_PACKAGES_MISSING'), 'no error code reaches the customer');
+  assert.ok(!mount.textContent.includes('no packages here'), 'no raw server message reaches the customer');
   assert.ok(mount.textContent.includes('Skill e pacchetti che lo usano'));
 });
 

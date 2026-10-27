@@ -81,10 +81,11 @@ const byClass = (mount, className) =>
     .flatMap((tag) => mount.findAll(tag))
     .find((node) => (node.getAttribute('class') ?? '') === className) ?? null;
 
-test('an absent package names itself instead of a blank screen', async () => {
+test('an absent package says so in human words instead of a blank screen', async () => {
   const mount = await render(stubClient({ withPackage: false }));
   assert.ok(mount.textContent.includes('non composto'), 'the view says the package is not composed');
-  assert.ok(mount.textContent.includes('customer-data'), 'the view names the missing package');
+  // backlog:9da124e5 — no package name reaches the customer.
+  assert.ok(!mount.textContent.includes('customer-data'), 'the view never names the missing package');
   assert.equal(byClass(mount, 'customer-data-section'), null);
 });
 

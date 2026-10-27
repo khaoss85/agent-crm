@@ -151,7 +151,9 @@ test('a failed load offers a retry that actually retries', async () => {
     },
   });
   await v.work.renderQueue();
-  assert.match(text(v.mount), /Could not load work: network is down/);
+  // backlog:9da124e5 — human text, never the raw server message.
+  assert.match(text(v.mount), /Could not load work\. Try again later\./);
+  assert.doesNotMatch(text(v.mount), /network is down/);
   const retry = v.mount.findAll('button').find((node) => node.textContent === 'Retry');
   assert.ok(retry, 'a failure without a way back is a dead end');
   failing = false;

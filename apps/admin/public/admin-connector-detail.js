@@ -477,8 +477,10 @@ export function createConnectorDetailView(deps) {
     const panel = el(doc, 'section', 'bo-connector-row');
     panel.appendChild(el(doc, 'h3', undefined, 'Skill e pacchetti che lo usano'));
     if (state.catalogError !== null) {
+      // The failure stays visible, but never with its code: errorOf() already
+      // reduced the technical detail to a human note (backlog:9da124e5).
       panel.appendChild(el(doc, 'p', 'bo-muted',
-        `Etichette non caricate (${state.catalogError}): uso i nomi dichiarati delle unità.`));
+        'Etichette non caricate: uso i nomi dichiarati delle unità.'));
     }
     if (rows.length === 0) {
       panel.appendChild(el(doc, 'p', 'bo-muted', 'Nessun uso dichiarato per questo canale.'));
