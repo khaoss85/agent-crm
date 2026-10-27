@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 import {
   BO_SCREENS,
   SCREENS,
+  SHELL_SCREENS,
   USAGE,
   chromiumRuns,
   findChromium,
@@ -90,6 +91,45 @@ test('every harness page serves its real module or the real login markup', () =>
     // keeps its old title would fail the browser run only on CI.
     assert.equal(screen.ready, `${name}-ready`, `${name}: the ready marker matches the screen`);
     assert.ok(page.includes(`document.title = '${name}-ready'`), `${name}: the harness sets its marker`);
+  }
+});
+
+test('harness pages photograph the full /bo shell with a hidden probe', () => {
+  for (const name of BO_SCREENS) {
+    if (name === 'login') continue;
+    const page = harnessHtml(name, publicDir);
+    assert.ok(page.includes('id="boSidebar"'), `${name}: the sidebar ships in the photographed page`);
+    assert.ok(page.includes('id="boTopbar"'), `${name}: the topbar ships in the photographed page`);
+    assert.ok(page.includes('./admin-shell.js'), `${name}: the page drives the real admin-shell.js`);
+    assert.ok(page.includes('createShellView'), `${name}: the shell renders through createShellView`);
+    assert.ok(page.includes(`getElementById('view-module')`), `${name}: the view mounts where the /bo app mounts it`);
+    assert.ok(!page.includes(`getElementById('mount')`), `${name}: no bare harness mount is left`);
+    assert.ok(/id="probe" hidden/.test(page), `${name}: the probe stays out of the photograph`);
+  }
+});
+
+test('every screen photographs with its shell identity from the /bo router', () => {
+  // Mirrors apps/admin/public/app.js `shellScreenFor`: the same sidebar
+  // voice is highlighted and the same path is crumbed as in the app.
+  assert.deepEqual(SHELL_SCREENS, {
+    oggi: { id: 'oggi', label: 'Oggi' },
+    clienti: { id: 'clienti', label: 'Clienti' },
+    cliente: { id: 'clienti', label: 'Clienti' },
+    pipeline: { id: 'pipeline', label: 'Pipeline' },
+    calendario: { id: 'calendario', label: 'Calendario' },
+    sequenze: { id: 'sequenze', label: 'Sequenze' },
+    reporting: { id: 'reporting', label: 'Reporting' },
+    personalizzazione: { id: 'impostazioni', label: 'Personalizzazione' },
+    catalogo: { id: '', label: 'Catalogo prodotti' },
+    'stato-sync': { id: 'impostazioni', label: 'Stato sync' },
+    'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
+  });
+  for (const name of BO_SCREENS) {
+    if (name === 'login') continue;
+    const page = harnessHtml(name, publicDir);
+    const shell = SHELL_SCREENS[name];
+    assert.ok(page.includes(`activeScreenId: "${shell.id}"`), `${name}: the shell highlights ${shell.id || 'no voice'}`);
+    assert.ok(page.includes(`screenLabel: "${shell.label}"`), `${name}: the topbar crumbs ${shell.label}`);
   }
 });
 
