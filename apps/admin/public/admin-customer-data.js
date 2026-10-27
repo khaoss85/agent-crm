@@ -1,5 +1,7 @@
 // @ts-check
 
+import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+
 import { createCustomerListView } from './admin-clienti.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -68,12 +70,7 @@ export function createCustomerDataView(deps) {
     doc, mount: listBox, client, navigate, notify,
     spaceId: deps.spaceId, onAskAi: deps.onAskAi ?? null, storage: deps.storage ?? null,
   });
-  const el = (tag, className, text) => {
-    const node = doc.createElement(tag);
-    if (className) node.setAttribute('class', className);
-    if (text !== undefined && text !== null) node.textContent = String(text); // safe: text, never HTML
-    return node;
-  };
+  const el = elFor(doc); // BO-F6-02: shared element builder.
   const fact = (label, value) => {
     const row = el('p', 'fact');
     row.appendChild(el('span', 'fact-label', `${label}: `));

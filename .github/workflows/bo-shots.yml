@@ -1,0 +1,50 @@
+# Backoffice screenshots for visual review (BO-F6-02, backlog:c8364e59).
+#
+# What it does: on every PR that touches the /bo static assets or the shots
+# script, it renders every backoffice screen at 1440px and 390px with
+# `npm run bo:shots` and uploads the PNGs as the `bo-shots` artifact, so a
+# reviewer can compare each changed screen against the approved prototype
+# without painting locally. This workflow is review evidence only: it never
+# blocks the merge gate (see `ci.yml`, job `fast`).
+#
+# Where it runs: the self-hosted accordo-ci Mac runner, the only runner with
+# a working Chromium (the billing lock rejects GitHub-hosted jobs for this
+# account, and sandboxes refuse Chromium's Mach bootstrap, so the script
+# skips cleanly anywhere else). When no runnable Chromium exists the render
+# exits 0 with a skip message and the upload warns instead of failing.
+
+name: bo-shots
+
+on:
+  pull_request:
+    paths:
+      - 'apps/admin/public/**'
+      - 'scripts/bo-shots.js'
+      - '.github/workflows/bo-shots.yml'
+
+# One run per PR, always the newest; a superseded run is cancelled.
+concurrency:
+  group: bo-shots-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shots:
+    # Self-hosted while the account billing lock rejects every GitHub-hosted
+    # job at start (0 steps, "account is locked due to a billing issue").
+    runs-on: [self-hosted, accordo-ci]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      # No `npm ci`: scripts/bo-shots.js uses node builtins only, so the
+      # render needs no install and no machine lock beyond the runner queue.
+      - name: Render every /bo screen at 1440px and 390px
+        run: node scripts/bo-shots.js --out "${RUNNER_TEMP}/bo-shots"
+      - name: Upload the PNGs for visual review
+        uses: actions/upload-artifact@v4
+        with:
+          name: bo-shots
+          path: ${{ runner.temp }}/bo-shots/
+          if-no-files-found: warn

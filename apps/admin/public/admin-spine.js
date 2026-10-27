@@ -1,5 +1,7 @@
 // @ts-check
 
+import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+
 import { bindAdminMutations } from './admin-submission.js';
 
 /**
@@ -62,12 +64,7 @@ export const TENANT_ISOLATION_WARNING =
 export function createSpineView(deps) {
   const { doc, mount } = deps;
   const { client } = bindAdminMutations(deps.client, deps);
-  const el = (tag, className, text) => {
-    const node = doc.createElement(tag);
-    if (className) node.setAttribute('class', className);
-    if (text !== undefined && text !== null) node.textContent = String(text); // text, never HTML
-    return node;
-  };
+  const el = elFor(doc); // BO-F6-02: shared element builder.
   const fact = (label, value) => {
     const row = el('p', 'fact');
     row.appendChild(el('span', 'fact-label', `${label}: `));

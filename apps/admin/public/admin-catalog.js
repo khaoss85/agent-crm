@@ -1,5 +1,7 @@
 // @ts-check
 
+import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+
 import { formatMinorUnits } from './admin-core.js';
 import { createSubmissionController } from './admin-submission.js';
 
@@ -88,12 +90,7 @@ export function createCatalogView(deps) {
   });
   let renderToken = 0;
 
-  const el = (tag, className, text) => {
-    const node = doc.createElement(tag);
-    if (className) node.setAttribute('class', className);
-    if (text !== undefined) node.textContent = String(text);
-    return node;
-  };
+  const el = elFor(doc); // BO-F6-02: shared element builder.
   const clear = () => {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   };
