@@ -115,6 +115,46 @@ export function normalizeRowFields(input, label) {
   };
 }
 
+/**
+ * The commercial snapshot a product version carries, in the shape r2
+ * fingerprints (sku, name, description, category plus the three backoffice
+ * row fields, null when absent). Legacy rows stored before r2 have no row
+ * columns: they normalize to the same nulls, so an identical provider
+ * catalog never opens a new version only because three nulls appeared.
+ * @param {{sku?: unknown, name?: unknown, description?: unknown, category?: unknown, unit?: unknown, maxDiscountBps?: unknown, stockQuantity?: unknown} | null | undefined} row
+ */
+export function normalizeStoredCommercial(row) {
+  const source = row && typeof row === 'object' ? row : {};
+  return {
+    sku: source.sku,
+    name: source.name,
+    description: source.description ?? null,
+    category: source.category ?? null,
+    unit: source.unit ?? null,
+    maxDiscountBps: source.maxDiscountBps ?? null,
+    stockQuantity: source.stockQuantity ?? null,
+  };
+}
+
+/**
+ * Legacy-tolerant unchanged check: a stored `sourceFingerprint` computed
+ * before r2 (four keys, no row fields) never matches an r2 fingerprint of
+ * the same product (seven keys with three nulls), so comparing fingerprints
+ * alone would version every product on the first sync after the upgrade and
+ * — because offers pin `productVersionId` — revise every offer. Recompute
+ * the stored row in the r2 shape and compare that too: equal content stays
+ * a no-op, any real change still opens a new version.
+ * @param {{sourceFingerprint?: unknown} | null | undefined} storedRow @param {string} incomingFingerprint
+ */
+export function isUnchangedCommercial(storedRow, incomingFingerprint) {
+  if (storedRow?.sourceFingerprint === incomingFingerprint) return true;
+  try {
+    return computeDefinitionFingerprint(normalizeStoredCommercial(storedRow)) === incomingFingerprint;
+  } catch {
+    return false;
+  }
+}
+
 /** @param {unknown} value @param {string} field */
 function requireComponentKey(value, field) {
   if (typeof value !== 'string' || !COMPONENT_KEY_RE.test(value)) {
@@ -540,7 +580,7 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
           ...rowFields,
         };
         const sourceFingerprint = computeDefinitionFingerprint(commercialData);
-        if (current.sourceFingerprint === sourceFingerprint) {
+        if (isUnchangedCommercial(current, sourceFingerprint)) {
           return { product: { id: product.id, version: current.version }, unchanged: true };
         }
         const nextNumber = (await versions.countWhere({ productId: product.id })) + 1;

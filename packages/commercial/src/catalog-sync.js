@@ -12,7 +12,7 @@ import {
   requireAmount,
 } from '../../core/index.js';
 import { requireCurrency, validatePriceComponent } from './money.js';
-import { normalizeRowFields } from './manual-catalog.js';
+import { isUnchangedCommercial, normalizeRowFields } from './manual-catalog.js';
 
 /**
  * Catalog synchronization (ADR-016): pull a provider's normalized catalog into
@@ -387,7 +387,7 @@ export function createCatalogSync({ database, events, modules, commercial, confi
             }
             const currentVersion = existing.currentVersionId ? await versions.get(existing.currentVersionId) : null;
             let versionId = currentVersion?.id ?? null;
-            if (!currentVersion || currentVersion.sourceFingerprint !== sourceFingerprint) {
+            if (!currentVersion || !isUnchangedCommercial(currentVersion, sourceFingerprint)) {
               const nextNumber = (await versions.countWhere({ productId: existing.id })) + 1;
               const version = await versions.createManaged(
                 {
