@@ -345,6 +345,7 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 .bo-user-who { flex: 1; min-width: 0; }
 .bo-user-name { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bo-user-email { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bo-user-role { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bo-logout {
   padding: 7px 10px; border-radius: 8px; border: none; background: transparent;
   color: var(--muted); font-size: 12px; font-weight: 700;

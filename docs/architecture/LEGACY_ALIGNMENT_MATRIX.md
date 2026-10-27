@@ -1641,6 +1641,26 @@ application is not a substitute.
 - **It does not make PROVE complete.** Both shipped consumers exit 1. That is the
   true state of both plans, and a green exit here would be the defect.
 
+## The session display profile answer, as the rule requires
+
+The BO-F6-03 session display profile (`sessionFor` on the admin mount,
+`apps/admin/public/admin-session.js`) is **not** a horizontal domain
+capability in the sense the rule usually means: no domain package provides
+or consumes it, and a domain does not "support" it or fail to. Its only
+consumers are embedding hosts (the shared pilot web), which build the
+profile from the session they verified. The matrix would carry the same
+value in every cell, so the gap is declared here rather than assumed.
+
+| Question | Answer |
+|---|---|
+| Which old domains does this touch? | **None, at runtime or in source.** The contract changes the shell chrome and the mount's HTML injection only. It refactors no domain, moves no package, and changes no record, action or capability version |
+| Is it horizontal? | **No, and that is the row.** Hosts consume it; domains do not. A future domain gains nothing by "adopting" it and loses nothing by ignoring it |
+| Which are already aligned? | Not applicable — there are no per-domain rows to align |
+| Which need a code backfill? | **None.** The development identity fallback (`DEV_USER`) is the same strings the shell always rendered; no domain text moves |
+| What is `deferred`, and closed by what | Nothing per domain. What is genuinely open is **host adoption**: the shared pilot web passes `sessionFor` once the framework PR merges and the pin moves (follow-up of backlog:5feaea01), and the control plane exposes the member's role, name and email to the space session (new item, out of the two repos this story names) |
+| What changed for extraction? | Nothing. The contract is neutral on the `needs_extraction` domains and adds no blocker |
+| Matrix updated? | Yes — this section, which records that the capability is not horizontal and why |
+
 ## The LA0 backfill answer, as the rule requires
 
 LA0 (the Lead Intelligence characterization harness) is **not** a horizontal

@@ -71,6 +71,18 @@
  * - **No domain logic.** The mount mounts: it interprets no payload, invents
  *   no identity, and maps no space. A space the caller's `identityFor`
  *   cannot resolve fails inside the framework gates, not here.
+ * - **Session display profile (BO-F6-03).** An embedder behind a real session
+ *   passes `sessionFor`, an async function of `{ headers, cookies, path }`
+ *   returning the display profile the shell shows — the contract of
+ *   `apps/admin/public/admin-session.js`
+ *   (`{ space: { id, name }, role, name, email, logoutUrl }`), or nullish
+ *   when there is none. The mount serializes it (never validating its
+ *   content — the embedder built it from its verified session) into served
+ *   HTML as `<script id="bo-session" type="application/json">`, with `<`
+ *   escaped so a hostile value cannot close the tag. A `sessionFor` failure
+ *   serves the page without a profile — the shell keeps its local
+ *   development identity — never a failed shell. Omitting `sessionFor`
+ *   (the standalone server) changes nothing.
  */
 
 import { resolve } from 'node:path';
@@ -155,12 +167,36 @@ export function injectAdminBase(html, basePath) {
 }
 
 /**
+ * Serialize a session display profile into served HTML (BO-F6-03). A
+ * non-object profile injects nothing; `<` is escaped so a hostile value
+ * cannot close the script tag. The reader (`admin-session.js`) validates
+ * the shape and drops anything it does not recognize.
+ * @param {string} html
+ * @param {unknown} profile
+ */
+export function injectSessionProfile(html, profile) {
+  if (typeof html !== 'string') return html;
+  if (profile === null || typeof profile !== 'object' || Array.isArray(profile)) return html;
+  let json;
+  try {
+    json = JSON.stringify(profile);
+  } catch {
+    return html;
+  }
+  if (typeof json !== 'string' || json === '') return html;
+  const script = `<script id="bo-session" type="application/json">${json.replace(/</g, '\\u003c')}</script>`;
+  if (/<\/head\s*>/i.test(html)) return html.replace(/<\/head\s*>/i, (head) => `${script}${head}`);
+  return `${script}${html}`;
+}
+
+/**
  * @param {any} app
- * @param {{ basePath?: string, publicDir?: string, identityFor?: Function, methods?: string[] }} [options]
+ * @param {{ basePath?: string, publicDir?: string, identityFor?: Function, sessionFor?: Function, methods?: string[] }} [options]
  */
 export function createAdminShellMount(app, options = {}) {
   const basePath = options.basePath ?? '';
   checkBasePath(basePath);
+  const sessionFor = typeof options.sessionFor === 'function' ? options.sessionFor : null;
   const publicDir = resolve(options.publicDir ?? DEFAULT_PUBLIC_DIR);
   const methods = Object.freeze(
     (options.methods ?? [...DEFAULT_METHODS]).map((method) => String(method).toUpperCase()),
@@ -286,8 +322,37 @@ export function createAdminShellMount(app, options = {}) {
         return json(404, { error: { code: 'NOT_FOUND', message: 'Route not found' } });
       }
       let data = found.data;
+      // Per-user bytes must never ride a shared cache: once a session
+      // profile is injected the HTML differs per operator and space, so it
+      // leaves with private headers. The untouched shell (no sessionFor, or
+      // a profile failure that degrades to no profile) stays byte-identical
+      // for every viewer, and keeps the shared-cacheable policy.
+      let profileInjected = false;
       if (found.contentType.startsWith('text/html')) {
-        data = Buffer.from(injectAdminBase(found.data.toString('utf8'), basePath), 'utf8');
+        let html = injectAdminBase(found.data.toString('utf8'), basePath);
+        if (sessionFor !== null) {
+          try {
+            const profile = await sessionFor({
+              headers: request?.headers ?? {},
+              cookies: request?.cookies ?? {},
+              path: rawPath,
+            });
+            html = injectSessionProfile(html, profile);
+            profileInjected = html.includes('<script id="bo-session"');
+          } catch (error) {
+            // Display-only: a profile failure serves the page without one —
+            // the shell keeps its local identity — never a failed shell. The
+            // cause still stays diagnosable (review gate: only the error name
+            // and the mount path, never bodies, cookies or profile data), so
+            // a broken integration reads differently from an absent profile.
+            try {
+              console.warn('bo-session profile unreadable:', error instanceof Error ? error.name : 'unknown', `path=${rawPath}`);
+            } catch {
+              // Logging must never break the shell.
+            }
+          }
+        }
+        data = Buffer.from(html, 'utf8');
       }
       // `content-length` is measured after the HTML injection above, and
       // `HEAD` answers the same headers with an empty body — the static
@@ -295,7 +360,8 @@ export function createAdminShellMount(app, options = {}) {
       const responseHeaders = {
         'content-type': found.contentType,
         'content-length': String(data.byteLength),
-        'cache-control': 'no-cache',
+        'cache-control': profileInjected ? 'private, no-store' : 'no-cache',
+        ...(profileInjected ? { vary: 'Cookie' } : {}),
       };
       if (method === 'HEAD') return { status: 200, headers: responseHeaders, body: Buffer.alloc(0) };
       return { status: 200, headers: responseHeaders, body: data };
