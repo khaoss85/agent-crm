@@ -144,3 +144,60 @@ export function resolveLogoutTarget({ profile } = {}) {
   const url = cleanLogoutUrl(/** @type {any} */ (profile).logoutUrl);
   return url === '' ? null : url;
 }
+
+/**
+ * Codes that send the shell to the space login: the session is gone
+ * (expired, revoked, never presented), or the space no longer accepts this
+ * member. Both cases need the person at the login, not staring at a
+ * development shell. Any other code keeps the current behavior: a failure
+ * the login cannot cure (a broken read) must not bounce the shell into a
+ * login loop, where signing in again returns to the same refusal.
+ */
+const SESSION_LOST_PREFIXES = Object.freeze(['SESSION_', 'SHARED_']);
+const SESSION_LOST_EXACT = Object.freeze(new Set([
+  'WORKSPACE_MEMBER_REQUIRED',
+  'WORKSPACE_SESSION_REQUIRED',
+  'WORKSPACE_SESSION_REFUSED',
+]));
+
+/**
+ * @param {unknown} code
+ */
+export function isSessionLostCode(code) {
+  if (typeof code !== 'string' || code === '') return false;
+  if (SESSION_LOST_EXACT.has(code)) return true;
+  return SESSION_LOST_PREFIXES.some((prefix) => code.startsWith(prefix));
+}
+
+/**
+ * The space login URL for a shell served under a mount, or null when it
+ * cannot be derived. The host injects the full public base as the admin
+ * base (e.g. `/w/<id>/bo`); the login lives at the space root, one segment
+ * up. Anything else — the standalone root, a base that does not end in the
+ * mount segment — resolves to null, never to a guessed route.
+ * @param {unknown} adminBase
+ */
+export function spaceLoginUrl(adminBase) {
+  if (typeof adminBase !== 'string' || !adminBase.endsWith('/bo')) return null;
+  const root = adminBase.slice(0, -'/bo'.length);
+  if (!/^\/[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*$/.test(root)) return null;
+  if (/(^|\/)\.\.?(\/|$)/.test(root)) return null;
+  return `${root}/`;
+}
+
+/**
+ * Where a failed API read under a mount must land: the space login URL when
+ * the failure says the session is gone, null otherwise. A followed redirect
+ * (`redirected`) or a 200 that is not JSON (`invalidResponse`) can only be
+ * the host's login redirect — the mount emits no other redirect for API
+ * paths — so they count exactly like a 401.
+ * @param {{ status?: unknown, code?: unknown, redirected?: unknown, invalidResponse?: unknown, adminBase?: unknown }} [input]
+ */
+export function sessionLostTarget({ status, code, redirected, invalidResponse, adminBase } = {}) {
+  const lost = status === 401
+    || (status === 403 && isSessionLostCode(code))
+    || redirected === true
+    || invalidResponse === true;
+  if (!lost) return null;
+  return spaceLoginUrl(adminBase);
+}

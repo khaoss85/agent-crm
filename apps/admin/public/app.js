@@ -1,6 +1,7 @@
 import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
 import { createAssistantPanel } from './admin-assistant.js';
 import { resolveAdminBase } from './admin-base.js';
+import { sessionLostTarget } from './admin-session.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -73,6 +74,24 @@ const submissions = createSubmissionController({
   }),
 });
 
+// Under a mount the shell has no session of its own: the host gates every
+// API read on the space session, and a lost session must land the browser
+// on the space login — never on the development identity with "not
+// composed" states (a cached page outliving its session). Standalone keeps
+// the local behavior: there is no login to land on.
+function leaveForSpaceLogin(target) {
+  if (typeof target !== 'string' || target === '') return;
+  try {
+    // Replace, not assign: the dead shell must not stay in history, or the
+    // back button would return to it and bounce forward again.
+    if (typeof window !== 'undefined' && typeof window?.location?.replace === 'function') {
+      window.location.replace(target);
+    }
+  } catch {
+    // Navigation is best-effort; the error below still throws.
+  }
+}
+
 // Request client for generated-module views. A declared identity for audit —
 // NOT authentication; a local caller can set any actor. The Admin is
 // local-development-only until a deployment supplies an identity verifier.
@@ -93,6 +112,13 @@ const moduleClient = {
       ...options,
       headers: requestHeaders,
     });
+    // fetch followed the host's login redirect (the mount emits no other
+    // redirect for API paths): the session is gone. Navigated once here;
+    // the branches below skip a second navigation for the same answer.
+    const followedLogin = MOUNTED && response.redirected === true;
+    if (followedLogin) {
+      leaveForSpaceLogin(sessionLostTarget({ redirected: true, adminBase: ADMIN_BASE }));
+    }
     const text = await response.text();
     let payload;
     try {
@@ -107,9 +133,23 @@ const moduleClient = {
         code: payload?.error?.code ?? 'UNKNOWN',
         details: payload?.error?.details ?? null,
       });
+      if (MOUNTED && !followedLogin) {
+        leaveForSpaceLogin(sessionLostTarget({
+          status: response.status,
+          code: /** @type {any} */ (error).code,
+          adminBase: ADMIN_BASE,
+        }));
+      }
       throw error;
     }
-    if (payload === undefined) throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+    if (payload === undefined) {
+      if (MOUNTED && !followedLogin) {
+        // A 200 that is not JSON under a mount is the followed login page
+        // fetch no longer flags (or a host that answered HTML directly).
+        leaveForSpaceLogin(sessionLostTarget({ invalidResponse: true, adminBase: ADMIN_BASE }));
+      }
+      throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+    }
     return payload;
   },
 };
