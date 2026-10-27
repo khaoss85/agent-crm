@@ -628,7 +628,25 @@ if (diagEl) {
     cssRules = link && link.sheet ? link.sheet.cssRules.length : -3;
   } catch (error) { cssRules = -2; }
   const fonts = document.fonts || null;
+  const rectOf = (selector) => {
+    const node = document.querySelector(selector);
+    if (!node) return null;
+    const box = node.getBoundingClientRect();
+    return [Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)];
+  };
   diagEl.textContent = JSON.stringify({
+    rects: {
+      space: rectOf('.bo-space'),
+      badge: rectOf('.bo-space-badge'),
+      name: rectOf('.bo-space-name'),
+      role: rectOf('.bo-space-role'),
+      navFirst: rectOf('.bo-nav-item'),
+      pill: rectOf('.bo-nav-item.active'),
+      sidebar: rectOf('.bo-sidebar'),
+      topbar: rectOf('.bo-topbar'),
+    },
+    roleText: (document.querySelector('.bo-space-role') || { textContent: null }).textContent,
+    navCount: document.querySelectorAll('.bo-nav-item').length,
     fonts: fonts ? fonts.status : 'none',
     bricolage: fonts ? fonts.check('700 14px "Bricolage Grotesque"') : false,
     mono: fonts ? fonts.check('400 12px "Spline Sans Mono"') : false,
