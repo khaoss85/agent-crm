@@ -486,6 +486,12 @@ const DEMO_MEMBERS = [
 // the same convention the `*-shots` tests use to prove the harness ran to
 // completion. `expect` lists demo strings that must appear in the painted
 // DOM: a screen that renders empty fails even when Chromium writes a PNG.
+// Every expect is a dynamic-only marker — a string the static page chrome
+// can never contain — because the static chrome alone (buttons, input
+// placeholders) already matches naive demo words. The primary proof is the
+// #probe JSON each fixture writes (see assertProbe): renderScreen parses it
+// from the dump-dom run and fails the screen unless the painted counts
+// match the demo fixtures.
 // ---------------------------------------------------------------------------
 
 export const SCREENS = Object.freeze([
@@ -494,7 +500,7 @@ export const SCREENS = Object.freeze([
   { name: 'clienti', module: 'admin-clienti.js', ready: 'clienti-ready', expect: ['Marco Rossi', 'Anna Bianchi'] },
   { name: 'cliente', module: 'admin-customer-card.js', ready: 'cliente-ready', expect: ['Guido Presti', 'Ciao, vorrei prenotare una prova'] },
   { name: 'pipeline', module: 'admin-pipeline.js', ready: 'pipeline-ready', expect: ['Palestra Esempio', 'Discovery'] },
-  { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['taglio', 'Mostra settimana'] },
+  { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['Scheda Ada', 'cal-event'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
@@ -732,6 +738,8 @@ await new Promise((r) => setTimeout(r, 100));
 document.getElementById('probe').textContent = JSON.stringify({
   days: document.querySelectorAll('.cal-day').length,
   events: [...document.querySelectorAll('.cal-event strong')].map((n) => n.textContent),
+  lede: document.querySelector('.cal-wrap .lede') ? document.querySelector('.cal-wrap .lede').textContent : null,
+  filled: byName('teamMemberId').value + '|' + byName('date').value + '|' + byName('start').value,
 });
 document.title = 'calendario-ready';`;
     case 'sequenze': return `
@@ -763,6 +771,11 @@ await new Promise((r) => setTimeout(r, 100));
 document.getElementById('probe').textContent = JSON.stringify({
   rows: document.querySelectorAll('.bo-seq-row').length,
   names: [...document.querySelectorAll('.bo-seq-name')].map((n) => n.textContent),
+  detail: document.querySelectorAll('.bo-seq-section h3')[1] ? document.querySelectorAll('.bo-seq-section h3')[1].textContent : null,
+  steps: document.querySelectorAll('.bo-seq-step').length,
+  firstDay: document.querySelector('.bo-seq-day') ? document.querySelector('.bo-seq-day').textContent : null,
+  firstChannel: document.querySelector('.bo-seq-channel') ? document.querySelector('.bo-seq-channel').textContent : null,
+  confirm: document.querySelector('.bo-seq-confirm') ? document.querySelector('.bo-seq-confirm').textContent : null,
 });
 document.title = 'sequenze-ready';`;
     case 'reporting': return `
@@ -824,6 +837,8 @@ const view = createCatalogView({ doc: document, mount: document.getElementById('
 await view.renderTable({});
 document.getElementById('probe').textContent = JSON.stringify({
   table: document.querySelector('.catalog-list') ? document.querySelector('.catalog-list').textContent.slice(0, 60) : null,
+  stripe: (document.querySelector('.catalog-stripe-ok') ?? { textContent: null }).textContent,
+  rules: (document.querySelector('.catalog-rule-bands') ?? { textContent: null }).textContent,
 });
 document.title = 'catalogo-ready';`;
     case 'stato-sync': return `
@@ -878,7 +893,12 @@ const view = createSpaziAccessiView({
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
   spaces: document.querySelectorAll('.bo-spazi-card').length,
+  here: document.querySelector('.bo-spazi-here')
+    ? document.querySelector('.bo-spazi-here').textContent : null,
   members: document.querySelectorAll('.bo-spazi-member').length,
+  avatars: document.querySelectorAll('.bo-spazi-avatar').length,
+  pills: document.querySelectorAll('.bo-spazi-role').length,
+  switches: document.querySelectorAll('button[role="switch"]').length,
 });
 document.title = 'spazi-accessi-ready';`;
     case 'componenti': return `
@@ -1072,9 +1092,147 @@ function runChromium(binary, args, timeoutMs) {
 }
 
 /**
+ * Reads the #probe JSON out of a `--dump-dom` stdout. The probe is the only
+ * proof tied to the painted counts: substring checks on the DOM can match
+ * static chrome (buttons, placeholders), so a screen with an empty grid
+ * would still pass them. Throws when the probe is missing or not JSON.
+ * @param {string} stdout the dump-dom output
+ * @param {string} name the screen the DOM claims to paint
+ */
+export function readProbe(stdout, name) {
+  const match = String(stdout ?? '').match(/<div id="probe"[^>]*>(.*?)<\/div>/s);
+  if (!match) {
+    throw new Error(`${name}: the harness probe is missing from the painted DOM`);
+  }
+  const json = match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  try {
+    const probe = JSON.parse(json);
+    if (probe === null || typeof probe !== 'object' || Array.isArray(probe)) {
+      throw new Error('not an object');
+    }
+    return probe;
+  } catch {
+    throw new Error(`${name}: the harness probe is not valid JSON`);
+  }
+}
+
+/**
+ * Fails a screen whose probe proves an empty or half-painted render, using
+ * the same invariants the `*-shots` tests assert on the same views: the
+ * calendario week holds seven day columns with the demo events and a
+ * prefilled manual form, sequenze lists both sequences with detail and
+ * steps, the catalog holds the product table with its Stripe state and
+ * price-rule bands, spazi-accessi holds both spaces with both members. The
+ * per-screen counts for oggi/clienti/pipeline/reporting prove the demo
+ * fixtures painted instead of an empty shell. Throws on the first mismatch.
+ * @param {string} name
+ * @param {any} probe the parsed #probe JSON (untyped by construction)
+ */
+export function assertProbe(name, probe) {
+  if (probe === null || typeof probe !== 'object' || Array.isArray(probe)) {
+    throw new Error(`${name}: the harness probe is not a JSON object`);
+  }
+  switch (name) {
+    case 'login':
+      return;
+    case 'oggi': {
+      if (probe.recap !== true) throw new Error('oggi: the probe shows no appointments recap');
+      if (probe.tasks !== 2) throw new Error(`oggi: the probe lists ${String(probe.tasks)} tasks, expected 2`);
+      return;
+    }
+    case 'clienti': {
+      if (probe.rows !== 3) throw new Error(`clienti: the probe lists ${String(probe.rows)} rows, expected 3`);
+      return;
+    }
+    case 'cliente': {
+      if (probe.name !== true) throw new Error('cliente: the probe shows no customer name');
+      return;
+    }
+    case 'pipeline': {
+      if (probe.deals !== 5) throw new Error(`pipeline: the probe lists ${String(probe.deals)} deals, expected 5`);
+      return;
+    }
+    case 'calendario': {
+      if (probe.days !== 7) throw new Error(`calendario: the probe holds ${String(probe.days)} day columns, expected 7`);
+      const events = Array.isArray(probe.events) ? probe.events : [];
+      if (!events.includes('taglio')) {
+        throw new Error('calendario: the probe lists no week events (expected taglio)');
+      }
+      if (typeof probe.lede !== 'string' || !probe.lede.includes('ott')) {
+        throw new Error(`calendario: the probe names no pinned week (${String(probe.lede)})`);
+      }
+      if (typeof probe.filled !== 'string' || !probe.filled.startsWith('marco|2026-10-22|')) {
+        throw new Error(`calendario: no slot click prefilled the manual form (${String(probe.filled)})`);
+      }
+      return;
+    }
+    case 'sequenze': {
+      if (probe.rows !== 2) throw new Error(`sequenze: the probe lists ${String(probe.rows)} rows, expected 2`);
+      const names = Array.isArray(probe.names) ? probe.names : [];
+      if (!names.includes('Bentornato in palestra') || !names.includes('Promemoria appuntamento')) {
+        throw new Error('sequenze: the probe names neither demo sequence');
+      }
+      if (probe.detail !== 'Bentornato in palestra') {
+        throw new Error(`sequenze: opening a row paints no dettaglio (${String(probe.detail)})`);
+      }
+      if (probe.steps !== 2) throw new Error(`sequenze: the dettaglio lists ${String(probe.steps)} steps, expected 2`);
+      return;
+    }
+    case 'reporting': {
+      if (probe.kpis !== 3) throw new Error(`reporting: the probe holds ${String(probe.kpis)} KPIs, expected 3`);
+      return;
+    }
+    case 'personalizzazione': {
+      if (probe.hero !== true) throw new Error('personalizzazione: the probe shows no Kit social hero');
+      if (typeof probe.sections !== 'number' || probe.sections < 1) {
+        throw new Error('personalizzazione: the probe shows no channel sections');
+      }
+      return;
+    }
+    case 'catalogo': {
+      if (typeof probe.table !== 'string' || !probe.table.includes('Pacchetto 10 lezioni')) {
+        throw new Error('catalogo: the probe holds no product table');
+      }
+      if (typeof probe.stripe !== 'string' || !probe.stripe.includes('Stripe collegato')) {
+        throw new Error('catalogo: the probe holds no Stripe state');
+      }
+      if (typeof probe.rules !== 'string' || !probe.rules.includes('10%')) {
+        throw new Error('catalogo: the probe holds no price-rule bands');
+      }
+      return;
+    }
+    case 'stato-sync': {
+      if (probe.ok !== true) throw new Error('stato-sync: the probe shows no healthy sync state');
+      return;
+    }
+    case 'spazi-accessi': {
+      if (probe.spaces !== 2) throw new Error(`spazi-accessi: the probe holds ${String(probe.spaces)} spaces, expected 2`);
+      if (probe.members !== 2) throw new Error(`spazi-accessi: the probe holds ${String(probe.members)} members, expected 2`);
+      if (probe.switches !== 5) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 5`);
+      return;
+    }
+    case 'componenti': {
+      if (typeof probe.sections !== 'number' || probe.sections < 1) {
+        throw new Error('componenti: the probe holds no catalog sections');
+      }
+      if (typeof probe.controls !== 'number' || probe.controls < 1) {
+        throw new Error('componenti: the probe holds no controls');
+      }
+      return;
+    }
+    default:
+      throw new Error(`bo:shots has no probe assertion for screen "${name}"`);
+  }
+}
+
+/**
  * Renders one screen at both viewports. Throws on the first failed proof:
  * a missing PNG, a wrong width, a too-small file (nothing painted), a
- * harness that never finished, or demo text missing from the painted DOM.
+ * harness that never finished, demo text missing from the painted DOM, or
+ * a probe that proves an empty or half-painted render. The PNG and the DOM
+ * proof come from two Chromium runs over the same harness URL with the
+ * same fixtures under a frozen virtual clock, so both runs paint the same
+ * logical page state and the PNG is gated on the probe of that state.
  * @param {{ binary: string, port: number, screen: object, outDir: string }} options
  */
 async function renderScreen({ binary, port, screen, outDir }) {
@@ -1122,6 +1280,19 @@ async function renderScreen({ binary, port, screen, outDir }) {
       }
       if (!/id="probe" hidden/.test(dom.stdout)) {
         throw new Error(`${screen.name} ${kind}: the harness probe is not hidden from the photograph`);
+      }
+    }
+    // The probe is the primary proof: substring expects below can match
+    // static chrome, so a styled-but-empty grid would still pass them. The
+    // dump-dom run paints the same harness URL with the same fixtures under
+    // the same frozen virtual clock as the screenshot run, so gating the PNG
+    // on this probe ties the file to the proven DOM state.
+    if (screen.name !== 'login') {
+      try {
+        assertProbe(screen.name, readProbe(dom.stdout, screen.name));
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`${screen.name} ${kind}: ${reason}`);
       }
     }
     for (const expected of screen.expect) {
