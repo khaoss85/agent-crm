@@ -607,7 +607,28 @@ shellView.update({
   clientCount: 3,
   clientCountExact: true,
   fixCount: 2,
-});`;
+});
+const diagEl = document.getElementById('bodiag');
+if (diagEl) {
+  let cssRules = -1;
+  try {
+    const link = document.querySelector('link[href="/styles.css"]');
+    cssRules = link && link.sheet ? link.sheet.cssRules.length : -3;
+  } catch (error) { cssRules = -2; }
+  const fonts = document.fonts || null;
+  diagEl.textContent = JSON.stringify({
+    fonts: fonts ? fonts.status : 'none',
+    bricolage: fonts ? fonts.check('700 14px "Bricolage Grotesque"') : false,
+    mono: fonts ? fonts.check('400 12px "Spline Sans Mono"') : false,
+    cssRules,
+    sidebarKids: document.getElementById('boSidebar').childElementCount,
+    pill: (document.querySelector('.bo-nav-item.active') || { textContent: null }).textContent,
+    space: (document.querySelector('.bo-space-name') || { textContent: null }).textContent,
+    dpr: window.devicePixelRatio || 0,
+    vw: window.innerWidth || 0,
+    vh: window.innerHeight || 0,
+  });
+}`;
 }
 
 const MIN_BYTES = Object.freeze({ desktop: 20000, phone: 10000 });
@@ -1018,6 +1039,7 @@ export function harnessHtml(name, publicDir) {
     + `</div></main>`
     + `<aside class="bo-assistant-slot" id="boAssistant" aria-label="Assistente AI"></aside>`
     + `<div id="probe" hidden></div>`
+    + `<div id="bodiag" hidden></div>`
     + `<script type="module">${shellBoot(name)}${fixtureScript(name)}</script></body></html>`;
 }
 
@@ -1359,6 +1381,10 @@ async function renderScreen({ binary, port, screen, outDir }) {
     // dump-dom run paints the same harness URL with the same fixtures under
     // the same frozen virtual clock as the screenshot run, so gating the PNG
     // on this probe ties the file to the proven DOM state.
+    const diag = String(dom.stdout ?? '').match(/<div id="bodiag"[^>]*>(.*?)<\/div>/s);
+    if (diag) {
+      console.log(`  · ${screen.name} ${kind} paint: ${diag[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')}`);
+    }
     if (screen.name !== 'login') {
       try {
         assertProbe(screen.name, readProbe(dom.stdout, screen.name));
