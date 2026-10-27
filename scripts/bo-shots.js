@@ -608,6 +608,18 @@ shellView.update({
   clientCountExact: true,
   fixCount: 2,
 });
+// The screenshot run fires on page load, not on painted text: under the
+// virtual-time budget the Bricolage variable face loses the race and the
+// shell paints in fallback metrics (CI recall 0.08 with the webfont
+// missing). Await the faces the shell paints before the fixtures run, so
+// the load event — and the screenshot — wait for real glyphs. Rejections
+// settle the wait instead of hanging the harness.
+await Promise.all([
+  document.fonts.load('400 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
+  document.fonts.load('700 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
+  document.fonts.load('400 12px "Spline Sans Mono"', 'STUDIO AURORA / OGGI 0123456789'),
+]).catch(() => {});
+await document.fonts.ready.catch(() => {});
 const diagEl = document.getElementById('bodiag');
 if (diagEl) {
   let cssRules = -1;
