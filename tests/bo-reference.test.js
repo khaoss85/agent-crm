@@ -42,7 +42,7 @@ import {
   shotFile,
 } from '../scripts/bo-reference.js';
 
-const root = join(fileURLToPath(import.meta.url), '..');
+const root = join(fileURLToPath(import.meta.url), '..', '..');
 
 // A 3x5 RGBA image using all five PNG filters (one per row), built offline:
 // translucent grays, a transparent pixel and opaque primaries.
@@ -64,6 +64,16 @@ const SYNTHETIC_RGBA_RGB = [
 const FLOORS = Object.freeze({
   desktop: { match: 0.6, recall: 0.5 },
   phone: { match: 0.5, recall: 0.4 },
+});
+
+test('the render harness resolves from the repository root', () => {
+  // Runs everywhere, Chromium or not: the render test below skips without a
+  // browser, which once masked a root pointing at tests/ instead of the repo
+  // (MODULE_NOT_FOUND on the Mac runner). This fails first anywhere.
+  assert.ok(
+    existsSync(join(root, 'scripts', 'bo-shots.js')),
+    `scripts/bo-shots.js resolves from the repo root (${root})`,
+  );
 });
 
 test('the reference fixtures ship with the repo at the render canvas sizes', () => {
