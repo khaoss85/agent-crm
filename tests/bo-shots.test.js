@@ -341,3 +341,34 @@ test('bo:shots --screen renders only that screen', { skip: SHOTS_SKIP }, () => {
   assert.deepEqual(pngs, ['login-1440x1800.png', 'login-390x1600.png']);
   assert.ok(USAGE.includes('bo:shots'), 'the usage names the command');
 });
+
+test('bo:shots profiles the production composition: appointments, interactions, accordo-sales', () => {
+  // backlog:1ef6dd76 (OWNER_ANSWER): the production pilot publishes
+  // appointments and interactions beside the five reference domains and opts
+  // into accordo-sales per space. The photographed pages fake the same
+  // surfaces: DECISION (to be confirmed): the default
+  // `packages/domains/generated/index.js` is deliberately UNCHANGED — adding
+  // the two packages there alone stops the default application at startup
+  // (`action "interaction-message.advance": target module
+  // "interaction-message" is not a generated module`), because their seven
+  // record modules are not staged in `packages/modules/generated/index.js`.
+  // Staging them changes the reference composition for every consumer and
+  // needs the module factory plus migrations: follow-up, not this shot.
+  const oggi = harnessHtml('oggi', publicDir);
+  for (const name of ['work', 'appointments', 'channels', 'interactions']) {
+    assert.ok(oggi.includes(`${name}: {}`) || oggi.includes(`${name}:{}`), `the oggi profile publishes ${name} like production`);
+  }
+  const source = readFileSync(join(root, 'packages', 'pipelines', 'generated', 'index.js'), 'utf8');
+  assert.ok(/generatedPipelines = \[\]/.test(source), 'accordo-sales stays opt-in per space, never a local default');
+});
+
+test('bo:shots photographs the production pipeline, not a demo invention', () => {
+  // The pipeline harness embeds the code-first accordo-sales definition the
+  // pilot opts into, and the demo deals ride its real stage keys.
+  const page = harnessHtml('pipeline', publicDir);
+  assert.ok(page.includes('"name":"accordo-sales"'), 'the photographed pipeline is accordo-sales');
+  assert.ok(page.includes('richiesta-info'), 'the photographed stages are the production keys');
+  assert.ok(page.includes("'Proposta'") || page.includes('Proposta'), 'the photographed board names a production stage');
+  const pipeline = SCREENS.find((screen) => screen.name === 'pipeline');
+  assert.ok(pipeline.expect.includes('Proposta'), 'the render gate watches a production stage label');
+});

@@ -41,6 +41,13 @@ import { homedir } from 'node:os';
 import { join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// The bo:shots composition profile (backlog:1ef6dd76): the photographed
+// pipeline is the production accordo-sales definition, statically imported —
+// the same code-first source the pilot opts into per space. The default
+// `packages/pipelines/generated/index.js` stays `[]` (opt-in per space, never
+// a default), so no project changes behavior.
+import { accordoSalesPipeline } from '../packages/pipelines/accordo-sales.js';
+
 const scriptDir = join(fileURLToPath(import.meta.url), '..');
 
 export const DESKTOP = Object.freeze({ width: 1440, height: 1800 });
@@ -290,27 +297,17 @@ const DEMO_PROFILE = {
   limitations: [],
 };
 
-const DEMO_PIPELINE = {
-  pipelineContract: 1,
-  name: 'b2b-sales',
-  label: 'B2B Sales',
-  module: 'opportunity',
-  defaultStage: 'discovery',
-  movePath: '/api/modules/opportunity/records/:id/actions/move-stage',
-  stages: [
-    { key: 'discovery', label: 'Discovery', order: 10, type: 'open', probability: 10 },
-    { key: 'demo', label: 'Demo', order: 20, type: 'open', probability: 30 },
-    { key: 'won', label: 'Won', order: 50, type: 'won', probability: 100 },
-    { key: 'lost', label: 'Lost', order: 60, type: 'lost', probability: 0 },
-  ],
-};
+// The photographed board is the production pipeline, not a demo invention:
+// the static accordo-sales definition above. Demo deals ride its real stage
+// keys, spread across open and terminal stages like the prototype board.
+const DEMO_PIPELINE = accordoSalesPipeline;
 
 const DEMO_DEALS = [
-  { id: 'a', name: 'Palestra Esempio', companyName: 'Palestra Esempio', valueCents: 120000, currency: 'EUR', pipelineKey: 'b2b-sales', pipelineStage: 'discovery' },
-  { id: 'b', name: 'Studio Aurora', companyName: 'Studio Aurora', valueCents: 50000, currency: 'EUR', pipelineKey: 'b2b-sales', pipelineStage: 'discovery' },
-  { id: 'c', name: 'Deal estero', companyName: 'Gym Intl', valueCents: 2500, currency: 'USD', pipelineKey: 'b2b-sales', pipelineStage: 'demo' },
-  { id: 'd', name: 'Cliente vinto', companyName: 'Fit Club', valueCents: 9900, currency: 'EUR', pipelineKey: 'b2b-sales', pipelineStage: 'won' },
-  { id: 'e', name: 'Perso per budget', companyName: 'Acme', valueCents: 30000, currency: 'EUR', pipelineKey: 'b2b-sales', pipelineStage: 'lost', closeReason: 'No budget' },
+  { id: 'a', name: 'Palestra Esempio', companyName: 'Palestra Esempio', valueCents: 120000, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'richiesta-info' },
+  { id: 'b', name: 'Studio Aurora', companyName: 'Studio Aurora', valueCents: 50000, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'prova' },
+  { id: 'c', name: 'Deal estero', companyName: 'Gym Intl', valueCents: 2500, currency: 'USD', pipelineKey: 'accordo-sales', pipelineStage: 'proposta' },
+  { id: 'd', name: 'Cliente vinto', companyName: 'Fit Club', valueCents: 9900, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'pagato' },
+  { id: 'e', name: 'Perso per budget', companyName: 'Acme', valueCents: 30000, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'perso', closeReason: 'No budget' },
 ];
 
 const DEMO_WEEK = {
@@ -499,7 +496,7 @@ export const SCREENS = Object.freeze([
   { name: 'oggi', module: 'admin-oggi.js', ready: 'oggi-ready', expect: ['Richiama per il preventivo', 'Giulia Romano'] },
   { name: 'clienti', module: 'admin-clienti.js', ready: 'clienti-ready', expect: ['Marco Rossi', 'Anna Bianchi'] },
   { name: 'cliente', module: 'admin-customer-card.js', ready: 'cliente-ready', expect: ['Guido Presti', 'Ciao, vorrei prenotare una prova'] },
-  { name: 'pipeline', module: 'admin-pipeline.js', ready: 'pipeline-ready', expect: ['Palestra Esempio', 'Discovery'] },
+  { name: 'pipeline', module: 'admin-pipeline.js', ready: 'pipeline-ready', expect: ['Palestra Esempio', 'Proposta'] },
   { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['Scheda Ada', 'cal-event'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
@@ -701,7 +698,7 @@ const client = {
   },
 };
 const board = createPipelineBoard({ doc: document, mount: document.getElementById('view-module'), client });
-await board.renderBoard('b2b-sales');
+await board.renderBoard('accordo-sales');
 document.getElementById('probe').textContent = JSON.stringify({
   deals: document.querySelectorAll('#view-module .pipeline-card').length,
 });
