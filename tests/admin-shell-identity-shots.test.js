@@ -13,7 +13,10 @@
  * names anywhere near this public repo.
  *
  * Where no Chromium exists the test skips with its reason instead of faking
- * a pass (same rule as the other *-shots tests).
+ * a pass (same rule as the other *-shots tests) — except on CI, where the
+ * proof is required: without a usable Chromium the browser tests fail
+ * instead of skipping, so the visual claim can never pass unproven where
+ * the merge gate runs.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -82,6 +85,14 @@ function usableChromium() {
 }
 
 const CHROMIUM = usableChromium();
+
+// Skip only where the proof cannot run AND nobody gates on it: on CI
+// (GitHub Actions sets CI=true) a missing Chromium fails the browser tests
+// below instead of skipping them. The gate then sees red, never a silent
+// pass — the class the P2 on #360 named.
+const SKIP_BROWSER = CHROMIUM
+  ? false
+  : (process.env.CI ? false : 'no usable Chromium here (set CHROMIUM_BIN)');
 
 // The session profile, serialized exactly as the mount injects it: JSON with
 // `<` escaped, so the bytes the shell reads here are the production bytes.
@@ -300,7 +311,8 @@ test('the harness module parses (top-level await included)', () => {
   assert.equal(checked.status, 0, `the harness module parses (${(checked.stderr ?? '').slice(-300)})`);
 });
 
-test('the session shell renders in a real browser: desktop 1440 PNG', { skip: CHROMIUM ? false : 'no usable Chromium here (set CHROMIUM_BIN)' }, async () => {
+test('the session shell renders in a real browser: desktop 1440 PNG', { skip: SKIP_BROWSER }, async () => {
+  assert.ok(CHROMIUM, 'the gate proves the shell in a real browser: no usable Chromium, no pass (set CHROMIUM_BIN)');
   const { out, dom, probeReady, probeStderr } = await runBrowser({ width: 1440, height: 900 });
   assert.ok(probeReady, `the harness module ran to completion in the page (dump ${dom.length} chars, head: ${dom.slice(0, 160)}; stderr: ${(probeStderr ?? '').slice(-500)})`);
   const probe = readProbe(dom);
@@ -312,7 +324,8 @@ test('the session shell renders in a real browser: desktop 1440 PNG', { skip: CH
   console.log(`shell-identity desktop PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);
 });
 
-test('the session shell renders in a real browser: phone 390 PNG without sideways scroll', { skip: CHROMIUM ? false : 'no usable Chromium here (set CHROMIUM_BIN)' }, async () => {
+test('the session shell renders in a real browser: phone 390 PNG without sideways scroll', { skip: SKIP_BROWSER }, async () => {
+  assert.ok(CHROMIUM, 'the gate proves the shell in a real browser: no usable Chromium, no pass (set CHROMIUM_BIN)');
   const { out, dom, probeReady, probeStderr } = await runBrowser({ width: 390, height: 844 });
   assert.ok(probeReady, `the harness module ran to completion in the page (dump ${dom.length} chars, head: ${dom.slice(0, 160)}; stderr: ${(probeStderr ?? '').slice(-500)})`);
   const probe = readProbe(dom);
