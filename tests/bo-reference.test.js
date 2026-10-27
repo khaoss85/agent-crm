@@ -39,6 +39,8 @@ import {
   REFERENCE_DIR,
   compareShot,
   decodePngRgb,
+  inCompareMask,
+  isInk,
   sha256Rgb,
   shotFile,
 } from '../scripts/bo-reference.js';
@@ -129,6 +131,9 @@ test('oggi and connettori renders match the approved prototype', { skip: RENDER_
       cwd: root,
       maxBuffer: 16 * 1024 * 1024,
     });
+    for (const line of String(run.stdout ?? '').split('\n')) {
+      if (line.includes('paint:')) console.log(line.trim());
+    }
     assert.equal(run.status, 0, `${screen}: the render exits 0 (stderr: ${(run.stderr ?? '').slice(-500)})`);
     for (const ref of REFERENCES.filter((entry) => entry.screen === screen)) {
       const file = shotFile(out, screen, ref.width, ref.height);
@@ -138,6 +143,32 @@ test('oggi and connettori renders match the approved prototype', { skip: RENDER_
       assert.equal(rendered.height, ref.height, `${screen}: the render is the reference canvas`);
       const reference = decodePngRgb(join(REFERENCE_DIR, ref.file));
       const compared = compareShot(rendered, reference);
+      // Ink census on both sides, so a CI failure names the world we are
+      // in: missing content (render ink far below reference ink) or moved
+      // content (similar ink, shifted box — fonts, metrics, layout).
+      const census = (image) => {
+        const found = { n: 0, x0: image.width, y0: image.height, x1: 0, y1: 0 };
+        for (let y = 0; y < image.height; y += 1) {
+          for (let x = 0; x < image.width; x += 1) {
+            if (!inCompareMask(x, y, image.width)) continue;
+            const o = (y * image.width + x) * 3;
+            if (!isInk(image.data[o], image.data[o + 1], image.data[o + 2])) continue;
+            found.n += 1;
+            if (x < found.x0) found.x0 = x;
+            if (x > found.x1) found.x1 = x;
+            if (y < found.y0) found.y0 = y;
+            if (y > found.y1) found.y1 = y;
+          }
+        }
+        return found;
+      };
+      const renderCensus = census(rendered);
+      const refCensus = census(reference);
+      console.log(
+        `${screen} ${ref.width}x${ref.height} ink: `
+        + `render=${renderCensus.n} box=[${renderCensus.x0},${renderCensus.y0},${renderCensus.x1},${renderCensus.y1}] `
+        + `reference=${refCensus.n} box=[${refCensus.x0},${refCensus.y0},${refCensus.x1},${refCensus.y1}]`,
+      );
       const kind = ref.width === 1440 ? 'desktop' : 'phone';
       const floors = FLOORS[kind];
       console.log(
