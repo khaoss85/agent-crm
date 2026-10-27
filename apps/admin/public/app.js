@@ -87,8 +87,15 @@ function leaveForSpaceLogin(target) {
     if (typeof window !== 'undefined' && typeof window?.location?.replace === 'function') {
       window.location.replace(target);
     }
-  } catch {
-    // Navigation is best-effort; the error below still throws.
+  } catch (error) {
+    // Navigation is best-effort and the error below still throws, but a
+    // failure to leave must stay diagnosable: the exception name only —
+    // never cookies, tokens or personal data.
+    try {
+      console.warn('bo-shell space login navigation failed:', error instanceof Error ? error.name : 'unknown');
+    } catch {
+      // Logging must never break the shell.
+    }
   }
 }
 
