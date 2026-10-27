@@ -45,28 +45,72 @@ export function weekStartOf(value) {
 }
 
 /**
- * Aggregate identity rows into per-(system, week) counts. Pure: the same
- * input always yields the same frozen output, so the capability, the
- * application operation and the tests share one implementation.
+ * Aggregate identity rows into per-(system, week) counts of distinct
+ * customers. Pure: the same input always yields the same frozen output, so
+ * the capability, the application operation and the tests share one
+ * implementation.
+ *
+ * One customer with several handles on the same channel counts once, in the
+ * week of its earliest observation on that channel: the dashboard measures
+ * new customers, never new identifiers. Rows without a subject envelope
+ * (unit fixtures) stay one count each, so the pure function keeps its
+ * old shape there.
  * @param {Array<Record<string, any>>} rows active external-identity rows
  * @returns {{ origins: Array<{ system: string, week: string | null, count: number }>, undated: number }}
  */
 export function aggregateChannelOrigins(rows) {
   // Nested maps, never a joined string key: a system name carrying a
-  // separator must not merge two channels into one aggregate.
-  const counts = new Map();
-  let undated = 0;
-  for (const row of rows ?? []) {
+  // separator must not merge two channels into one aggregate. The first
+  // level is the same nested shape; the dedupe level is a per-row customer
+  // key, never a string join of system and week.
+  const earliest = new Map();
+  const list = Array.isArray(rows) ? rows : [];
+  for (let index = 0; index < list.length; index += 1) {
+    const row = list[index];
     if (row === null || typeof row !== 'object') continue;
     const system = typeof row.system === 'string' && row.system !== '' ? row.system : 'unknown';
     const week = weekStartOf(row.firstObservedAt);
-    if (week === null) undated += 1;
+    const hasSubject = typeof row.subjectResource === 'string' && row.subjectResource !== ''
+      && typeof row.subjectId === 'string' && row.subjectId !== '';
+    // A subject-less row has no customer to deduplicate by: its sourceKey
+    // (unique per identity) keeps it distinct, like before.
+    const resource = hasSubject
+      ? row.subjectResource
+      : `row:${typeof row.sourceKey === 'string' ? row.sourceKey : `#${index}`}`;
+    const id = hasSubject ? row.subjectId : '';
+    let byResource = earliest.get(system);
+    if (!byResource) {
+      byResource = new Map();
+      earliest.set(system, byResource);
+    }
+    let byId = byResource.get(resource);
+    if (!byId) {
+      byId = new Map();
+      byResource.set(resource, byId);
+    }
+    const seen = byId.get(id);
+    if (seen === undefined) {
+      byId.set(id, week);
+    } else if (seen === null && week !== null) {
+      byId.set(id, week);
+    } else if (seen !== null && week !== null && week < seen) {
+      byId.set(id, week);
+    }
+  }
+  const counts = new Map();
+  let undated = 0;
+  for (const [system, byResource] of earliest) {
     let byWeek = counts.get(system);
     if (!byWeek) {
       byWeek = new Map();
       counts.set(system, byWeek);
     }
-    byWeek.set(week, (byWeek.get(week) ?? 0) + 1);
+    for (const byId of byResource.values()) {
+      for (const week of byId.values()) {
+        if (week === null) undated += 1;
+        byWeek.set(week, (byWeek.get(week) ?? 0) + 1);
+      }
+    }
   }
   const origins = [];
   for (const [system, byWeek] of counts) {

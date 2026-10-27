@@ -26,6 +26,7 @@ import {
   buildChannelBreakdown,
   buildDashboardCsv,
   buildDashboardModel,
+  channelWeekLabel,
   channelWeeksOf,
   dashboardCompilations,
   formatMinor,
@@ -570,6 +571,11 @@ test('channel weeks open the period month on the Monday of the week with the 1st
     channelWeeksOf('2026-06').map((slot) => slot.week),
     ['2026-06-01', '2026-06-08', '2026-06-15', '2026-06-22'],
   );
+});
+
+test('channel week labels pin UTC so a western timezone keeps the Monday', () => {
+  assert.equal(channelWeekLabel('2026-09-28'), '28 set');
+  assert.equal(channelWeekLabel('2026-10-05'), '5 ott');
 });
 
 test('channel breakdown counts per channel and week, totals over the shown weeks', () => {

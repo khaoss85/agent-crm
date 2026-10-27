@@ -184,7 +184,7 @@ export function formatMinor(minor, currency) {
  */
 export function channelWeekLabel(week) {
   const date = new Date(`${week}T00:00:00.000Z`);
-  return new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short' })
+  return new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', timeZone: 'UTC' })
     .format(date).replace(/\./g, '');
 }
 

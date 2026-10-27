@@ -67,6 +67,19 @@ test('aggregateChannelOrigins counts per system and week, undated stay out of ba
   assert.ok(Object.isFrozen(origins), 'the aggregate travels frozen');
 });
 
+test('two handles of one customer on one channel count once in the earliest week', () => {
+  const { origins, undated } = aggregateChannelOrigins([
+    { system: 'whatsapp', firstObservedAt: '2026-10-14T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    { system: 'whatsapp', firstObservedAt: '2026-10-12T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    { system: 'instagram', firstObservedAt: '2026-10-12T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+  ]);
+  assert.deepEqual(origins, [
+    { system: 'instagram', week: '2026-10-12', count: 1 },
+    { system: 'whatsapp', week: '2026-10-12', count: 1 },
+  ]);
+  assert.equal(undated, 0);
+});
+
 test('a hostile system name never merges two channels into one aggregate', () => {
   const hostile = 'whatsapp\n2026-10-12\tinjected';
   const { origins } = aggregateChannelOrigins([

@@ -402,6 +402,20 @@ const DEMO_REPORT = {
     method: 'Le probabili usano il tasso di chiusura storico (vinte su vinte + perse); non e una promessa.',
     note: 'Obiettivo 2.000.000,00 EUR dal bundle reporting.',
   },
+  channels: {
+    weeks: [
+      { week: '2026-09-28', label: '28 set' },
+      { week: '2026-10-05', label: '5 ott' },
+      { week: '2026-10-12', label: '12 ott' },
+      { week: '2026-10-19', label: '19 ott' },
+    ],
+    channels: [
+      { channel: 'instagram', total: 18, weeks: [4, 5, 6, 3] },
+      { channel: 'whatsapp', total: 10, weeks: [2, 3, 3, 2] },
+    ],
+    total: 28,
+    undated: 0,
+  },
   insights: [
     { id: 'redistribute', text: 'alice tiene molto aperto con il tasso piu basso: propone di spostare i lead senza data a bob.' },
   ],
