@@ -1091,7 +1091,15 @@ export function buildRouter(app) {
       // a broken bundle read must not masquerade as "no obiettivo".
       if (!(error instanceof NotFoundError)) throw error;
     }
-    return buildDashboardModel({ byStage, schedule }, bundleRows, dashboardQuery);
+    // Channel origins (BO-F6-13, slice 2): the customer-data package is
+    // optional like the bundle above — without it the channel card reads
+    // empty, never invented. A present-but-broken read still throws.
+    let channelOrigins = [];
+    if (typeof app.countCustomerChannelOrigins === 'function') {
+      const counted = await app.countCustomerChannelOrigins({});
+      if (Array.isArray(counted?.origins)) channelOrigins = counted.origins;
+    }
+    return buildDashboardModel({ byStage, schedule }, bundleRows, dashboardQuery, undefined, channelOrigins);
   });
 
   router.add('GET', '/api/approvals', async ({ query, identity, organizationId }) => {

@@ -45,6 +45,7 @@ function emptyDashboard() {
     monthly: [],
     team: [],
     owners: [],
+    channels: { weeks: [], channels: [], total: 0, undated: 0 },
     forecast: {
       currency: 'EUR', closedMinor: 0, probableMinor: 0, bestMinor: 0, targetMinor: null,
       heuristic: true, label: 'Stima euristica', method: 'metodo', note: 'nota',

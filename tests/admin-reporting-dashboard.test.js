@@ -63,6 +63,20 @@ const MODEL = {
     method: 'Le probabili usano il tasso di chiusura storico (vinte su vinte + perse); non è una promessa.',
     note: 'Obiettivo 2.000.000,00 € dal bundle reporting.',
   },
+  channels: {
+    weeks: [
+      { week: '2026-09-28', label: '28 set' },
+      { week: '2026-10-05', label: '5 ott' },
+      { week: '2026-10-12', label: '12 ott' },
+      { week: '2026-10-19', label: '19 ott' },
+    ],
+    channels: [
+      { channel: 'instagram', total: 18, weeks: [4, 5, 6, 3] },
+      { channel: 'whatsapp', total: 10, weeks: [2, 3, 3, 2] },
+    ],
+    total: 28,
+    undated: 0,
+  },
   insights: [
     { id: 'redistribute', text: 'alice tiene molto aperto con il tasso più basso: propone di spostare i lead senza data a bob.' },
   ],
@@ -276,5 +290,74 @@ test('isDashboardPayload requires every rendered list and the csv bytes', () => 
     const { [key]: _dropped, ...rest } = MODEL;
     assert.equal(isDashboardPayload(rest), false, `${key} is required`);
   }
+  const { channels: _channels, ...noChannels } = MODEL;
+  assert.equal(isDashboardPayload(noChannels), false, 'channels is required');
+  assert.equal(
+    isDashboardPayload({ ...MODEL, channels: { weeks: [], channels: [], total: 'many' } }),
+    false,
+    'a non-integer channel total is unreadable',
+  );
   assert.equal(isDashboardPayload({ ...MODEL, csv: { filename: 'x.csv' } }), false);
+});
+
+test('the channel card renders title, period total, week totals and legend (C6, C7)', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const text = [
+    ...mount.findAll('h3'), ...mount.findAll('p'), ...mount.findAll('span'),
+  ].map((node) => node.textContent).join(' | ');
+  assert.match(text, /Nuovi clienti per canale/, 'C6: card title');
+  assert.match(text, /28 nel periodo/, 'C6: <n> nel periodo');
+  assert.match(text, /Instagram 18/, 'C7: legend <nome canale> <n>');
+  assert.match(text, /WhatsApp 10/, 'C7: legend <nome canale> <n>');
+  for (const label of ['28 set', '5 ott', '12 ott', '19 ott']) {
+    assert.match(text, new RegExp(label), `week axis shows ${label}`);
+  }
+});
+
+test('an unknown channel renders under its raw name, never invented', async () => {
+  const { mount, view } = harness({
+    dashboard: {
+      ...MODEL,
+      channels: {
+        weeks: [{ week: '2026-10-05', label: '5 ott' }],
+        channels: [{ channel: 'carrier-pigeon', total: 2, weeks: [2] }],
+        total: 2,
+        undated: 0,
+      },
+    },
+  });
+  await view.renderReporting();
+  const text = [...mount.findAll('span')].map((node) => node.textContent).join(' | ');
+  assert.match(text, /carrier-pigeon 2/);
+});
+
+test('an empty channel breakdown renders title, zero and empty bars, never blank (C20)', async () => {
+  const { mount, view } = harness({
+    dashboard: { ...MODEL, channels: { weeks: [], channels: [], total: 0, undated: 0 } },
+  });
+  await view.renderReporting();
+  const text = [
+    ...mount.findAll('h3'), ...mount.findAll('p'), ...mount.findAll('span'),
+  ].map((node) => node.textContent).join(' | ');
+  assert.match(text, /Nuovi clienti per canale/);
+  assert.match(text, /0 nel periodo/);
+});
+
+test('reporting renders no button, select, input or textarea outside the visual system', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const raw = [];
+  const walk = (node) => {
+    const tag = String(node.tagName ?? '').toLowerCase();
+    if (['button', 'select', 'input', 'textarea'].includes(tag)) {
+      const classes = String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+      if (!classes.some((cls) => cls === 'ui' || cls.startsWith('ui-'))) {
+        raw.push(`${tag}[${classes.join('.')}]`);
+      }
+    }
+    for (const child of node.childNodes ?? []) walk(child);
+  };
+  walk(mount);
+  assert.deepEqual(raw, [], 'every control carries a ui-* system class');
 });

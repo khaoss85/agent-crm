@@ -2,6 +2,7 @@
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
 import { createBulkRunner } from './bulk.js';
+import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
 import {
   CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT, CUSTOMER_SORTS,
@@ -311,6 +312,22 @@ export function createCustomerDataOperations({ database, modules, events, config
      */
     async listCustomerRecords(request) {
       return listCustomerRecords({ modules, core, names }, request);
+    },
+
+    /**
+     * Channel origins (BO-F6-13, slice 2): new customers per origin channel
+     * and ISO week from the active external-identity rows. Creates nothing.
+     * The same pure aggregation the `customer-channel-origins@1` capability
+     * answers, so the pilot route and any declared consumer read identical
+     * numbers by construction.
+     * @param {any} request ignored: the aggregate is whole-table by design
+     */
+    async countCustomerChannelOrigins(request) {
+      void request;
+      // A correctness read, never a display page: see `deciding` in store.js.
+      const rows = await deciding(trusted(modules, names.identity), { status: 'active' });
+      const { origins, undated } = aggregateChannelOrigins(rows);
+      return Object.freeze({ origins, undated });
     },
   };
 
