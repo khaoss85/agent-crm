@@ -234,7 +234,7 @@ test('the Connettori tab renders the prototype hero and the two card sections', 
   const doc = createFakeDocument();
   const mount = createMount();
   const navigated = [];
-  const client = stubClient({ connectors: [{ channel: 'whatsapp', status: 'active' }] });
+  const client = stubClient({ connectors: [{ channel: 'whatsapp', connectionKey: 'wa-1', status: 'active' }] });
   const view = createPersonalizzazioneView({ doc, mount, client, navigate: (hash) => navigated.push(hash), spaceId });
   await view.render();
   await flush();
@@ -252,6 +252,8 @@ test('the Connettori tab renders the prototype hero and the two card sections', 
   const buttons = mount.findAll('button');
   const whatsapp = buttons.find((node) => node.textContent.includes('✓'));
   assert.ok(!whatsapp, 'the ✓ state is a badge, never a button');
+  const collegato = mount.querySelector('span[title="Collegato"]');
+  assert.ok(collegato && collegato.textContent.includes('✓'), 'the live-connected channel shows the ✓ badge');
   const facebook = buttons.find((node) => node.getAttribute('aria-label') === 'Collega Facebook');
   assert.ok(facebook, 'a not-connected channel offers +');
   facebook.dispatch('click');
@@ -296,7 +298,10 @@ test('the Connettori sections reuse the catalog channels with honest destination
   assert.equal(connettoriHref(CONNETTORI_SECTIONS[1].entries[1]), '#/calendario');
   assert.equal(connettoriHref(CONNETTORI_SECTIONS[1].entries[2]), '#/quotes');
   assert.equal(connettoriHref({}), '#/connettori', 'an entry with no destination falls back to the hub');
-  const live = [{ channel: 'whatsapp', status: 'active' }, { channel: 'instagram', status: 'pending' }];
+  const live = [
+    { channel: 'whatsapp', connectionKey: 'wa-1', status: 'active' },
+    { channel: 'instagram', connectionKey: 'ig-1', status: 'pending' },
+  ];
   assert.equal(connettoriCardState({ channel: 'whatsapp' }, live), 'collegato');
   assert.equal(connettoriCardState({ channel: 'instagram' }, live), 'da-collegare');
   assert.equal(connettoriCardState({ channel: null }, live), 'da-collegare');
@@ -305,7 +310,7 @@ test('the Connettori sections reuse the catalog channels with honest destination
 test('the Connettori search and stato sort filter the prototype cards', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient({ connectors: [{ channel: 'whatsapp', status: 'active' }] });
+  const client = stubClient({ connectors: [{ channel: 'whatsapp', connectionKey: 'wa-1', status: 'active' }] });
   const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
   await view.render();
   await flush();
@@ -313,8 +318,10 @@ test('the Connettori search and stato sort filter the prototype cards', async ()
   view.test.state.query = 'stripe';
   await view.render();
   await flush();
-  assert.ok(mount.textContent.includes('Stripe'), 'the query keeps the matching card');
-  assert.ok(!mount.textContent.includes('WhatsApp'), 'the query hides the other cards');
+  // Card labels only: the hero copy always names WhatsApp.
+  const cardLabels = () => mount.findAll('strong').map((node) => node.textContent);
+  assert.ok(cardLabels().includes('Stripe'), 'the query keeps the matching card');
+  assert.ok(!cardLabels().includes('WhatsApp'), 'the query hides the other cards');
   view.test.state.query = '';
   view.test.state.sort = 'stato';
   await view.render();
