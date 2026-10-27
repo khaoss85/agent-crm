@@ -207,6 +207,21 @@ test('every harness probe carries the fields the review gate asserts', () => {
   }
 });
 
+test('harness probes read the painted mounts, never the whole page', () => {
+  // Regression for the Codex P2 on #366: document.body.textContent includes
+  // the harness's own inline module script (fixture JSON plus the match
+  // patterns), so body-wide counts reject healthy renders (oggi counted 7
+  // tasks instead of 2 on CI). Every probe must scope to #view-module.
+  for (const screen of SCREENS) {
+    if (!screen.module) continue;
+    const page = harnessHtml(screen.name, publicDir);
+    assert.ok(
+      !page.includes('document.body'),
+      `${screen.name}: the probe reads #view-module, not the whole page`,
+    );
+  }
+});
+
 test('readProbe parses the hidden probe div from a dump-dom stdout', () => {
   const html = '<html><body><div id="probe" hidden="">{&quot;days&quot;:7,&quot;events&quot;:[&quot;taglio&quot;]}</div></body></html>';
   assert.deepEqual(readProbe(html, 'calendario'), { days: 7, events: ['taglio'] });

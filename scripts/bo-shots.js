@@ -612,9 +612,15 @@ const links = buildOggiLinks(buildShellNav({
 }));
 const view = createOggiView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {} });
 await view.render({ spaceName: 'Spazio locale', userName: 'Elena', links, now: new Date('2026-10-19T07:00:00.000Z') });
+// Rendered mounts only: whole-page text would also include this very module
+// script (fixture JSON plus the match patterns), so page-wide counts reject
+// healthy renders. The same rule holds for every probe below: read the
+// painted #view-module, never the whole page.
+const oggiViewText = document.getElementById('view-module').textContent;
+const oggiTitles = [...document.querySelectorAll('#view-module .bo-oggi-title')].map((node) => node.textContent);
 document.getElementById('probe').textContent = JSON.stringify({
-  recap: document.body.textContent.includes('Oggi hai 2 appuntamenti'),
-  tasks: (document.body.textContent.match(/Richiama per il preventivo|Prepara la call/g) ?? []).length,
+  recap: oggiViewText.includes('Oggi hai 2 appuntamenti'),
+  tasks: oggiTitles.filter((title) => title === 'Richiama per il preventivo' || title === 'Prepara la call con i prezzi del pacchetto').length,
 });
 document.title = 'oggi-ready';`;
     case 'clienti': return `
@@ -656,7 +662,7 @@ const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, 
 const view = createCustomerListView({ doc: document, mount: document.getElementById('view-module'), client, storage: store, notify: () => {} });
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
-  rows: (document.body.textContent.match(/Marco Rossi|Anna Bianchi|Luca Verdi/g) ?? []).length,
+  rows: document.querySelectorAll('#view-module .bo-clienti-row').length,
 });
 document.title = 'clienti-ready';`;
     case 'cliente': return `
@@ -680,7 +686,7 @@ const client = {
 };
 await createCustomerCardView({ doc: document, mount: document.getElementById('view-module'), client }).renderCard('contact', 'c1');
 document.getElementById('probe').textContent = JSON.stringify({
-  name: document.body.textContent.includes('Guido Presti'),
+  name: document.getElementById('view-module').textContent.includes('Guido Presti'),
 });
 document.title = 'cliente-ready';`;
     case 'pipeline': return `
@@ -697,7 +703,7 @@ const client = {
 const board = createPipelineBoard({ doc: document, mount: document.getElementById('view-module'), client });
 await board.renderBoard('b2b-sales');
 document.getElementById('probe').textContent = JSON.stringify({
-  deals: (document.body.textContent.match(/Palestra Esempio|Studio Aurora|Deal estero|Cliente vinto|Perso per budget/g) ?? []).length,
+  deals: document.querySelectorAll('#view-module .pipeline-card').length,
 });
 document.title = 'pipeline-ready';`;
     case 'calendario': return `
@@ -791,7 +797,7 @@ const client = {
 const view = createReportingView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {}, log: () => {}, download: () => {} });
 await view.renderReporting();
 document.getElementById('probe').textContent = JSON.stringify({
-  kpis: (document.body.textContent.match(/Valore pipeline aperto|Preventivi aperti|Tasso di chiusura/g) ?? []).length,
+  kpis: (document.getElementById('view-module').textContent.match(/Valore pipeline aperto|Preventivi aperti|Tasso di chiusura/g) ?? []).length,
 });
 document.title = 'reporting-ready';`;
     case 'personalizzazione': return `
@@ -815,8 +821,8 @@ const view = createPersonalizzazioneView({ doc: document, mount: document.getEle
 view.test.state.tab = 'connettori';
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
-  hero: document.body.textContent.includes('Kit social'),
-  sections: (document.body.textContent.match(/Canali di conversazione|Agenda, lead e pagamenti/g) ?? []).length,
+  hero: document.getElementById('view-module').textContent.includes('Kit social'),
+  sections: (document.getElementById('view-module').textContent.match(/Canali di conversazione|Agenda, lead e pagamenti/g) ?? []).length,
 });
 document.title = 'personalizzazione-ready';`;
     case 'catalogo': return `
@@ -861,7 +867,7 @@ const storage = { getItem: () => 'locale', setItem: () => {}, removeItem: () => 
 const view = createSyncView({ doc: document, mount: document.getElementById('view-module'), client, storage, navigate: () => {}, toast: () => {} });
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
-  ok: document.body.textContent.includes('Tutto a posto'),
+  ok: document.getElementById('view-module').textContent.includes('Tutto a posto'),
 });
 document.title = 'stato-sync-ready';`;
     case 'spazi-accessi': return `
