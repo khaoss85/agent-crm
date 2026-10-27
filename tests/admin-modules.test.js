@@ -473,7 +473,7 @@ test('hostile target labels render as text in the reference selector', async (t)
   assert.ok(select.findAll('option').some((o) => o.textContent.includes('<img src=x onerror=alert(1)>')));
 });
 
-test('an unsupported schema contract version fails gracefully', async (t) => {
+test('an unsupported schema contract version names the update, with no retry', async (t) => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = {
@@ -482,10 +482,30 @@ test('an unsupported schema contract version fails gracefully', async (t) => {
     },
   };
   const admin = createModuleAdmin({ doc, mount, client, navigate: () => {} });
+  const retryButtons = () => mount.findAll('button').filter((node) => node.textContent === 'Retry');
   await admin.renderList('partner');
-  // backlog:9da124e5 — graceful human failure, never the contract code.
-  assert.ok(mount.textContent.includes('The list could not be loaded. Try again later.'));
+  // backlog:9da124e5 — distinct non-retryable state, never the contract code.
+  assert.ok(mount.textContent.includes('needs an update'), 'list names the update');
   assert.ok(!mount.textContent.includes('UNSUPPORTED_CONTRACT'), 'no error code reaches the customer');
-  assert.ok(!mount.textContent.includes('needs an update'), 'no internal update note reaches the customer');
-  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Retry'), 'a failure offers a way back');
+  assert.equal(retryButtons().length, 0, 'no retry that can never succeed');
+  await admin.renderNew('partner');
+  assert.ok(mount.textContent.includes('needs an update'), 'form names the update');
+  assert.ok(!mount.textContent.includes('UNSUPPORTED_CONTRACT'), 'no error code reaches the customer');
+  assert.equal(retryButtons().length, 0, 'no retry that can never succeed');
+  await admin.renderDetail('partner', 'whatever');
+  assert.ok(mount.textContent.includes('needs an update'), 'detail names the update');
+  assert.ok(!mount.textContent.includes('UNSUPPORTED_CONTRACT'), 'no error code reaches the customer');
+  assert.equal(retryButtons().length, 0, 'no retry that can never succeed');
+});
+
+test('a transient list failure still offers a retry', async (t) => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = {
+    async request() { throw new Error('boom'); },
+  };
+  const admin = createModuleAdmin({ doc, mount, client, navigate: () => {} });
+  await admin.renderList('partner');
+  assert.ok(mount.textContent.includes('The list could not be loaded. Try again later.'));
+  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Retry'), 'a transient failure offers a way back');
 });

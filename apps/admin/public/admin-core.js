@@ -515,4 +515,16 @@ export function isNotComposedFailure(error) {
   return record.code === 'NOT_FOUND' || record.status === 404;
 }
 
+/**
+ * Whether a read failure means "this Admin is older than the schema it
+ * reads" (UNSUPPORTED_CONTRACT) rather than a transient failure. Like the
+ * not-composed state, retrying cannot help — the Admin bundle needs an
+ * update — so views answer a distinct human text with no Retry.
+ * @param {unknown} error the rejection from `client.request` or the schema guard
+ */
+export function isUnsupportedContractFailure(error) {
+  const record = error !== null && typeof error === 'object' ? error : {};
+  return record.code === 'UNSUPPORTED_CONTRACT';
+}
+
 export { IMMUTABLE_FIELDS };
