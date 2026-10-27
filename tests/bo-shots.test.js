@@ -125,7 +125,7 @@ test('every screen photographs with its shell identity from the /bo router', () 
     reporting: { id: 'reporting', label: 'Reporting' },
     personalizzazione: { id: 'impostazioni', label: 'Personalizzazione' },
     catalogo: { id: '', label: 'Catalogo prodotti' },
-    'stato-sync': { id: 'impostazioni', label: 'Stato sync' },
+    'stato-sync': { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' },
     'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
     componenti: { id: '', label: 'Componenti' },
   });

@@ -790,7 +790,9 @@ function shellScreenFor(target) {
     case 'quote-detail': return { id: null, label: 'Preventivo' };
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
     case 'connector-detail': return { id: 'impostazioni', label: 'Dettaglio connettore' };
-    case 'sync': return { id: 'impostazioni', label: 'Stato sync' };
+    // BO-F6-16: the sidebar still highlights Impostazioni, but the AI bar
+    // asks about sync (its own placeholder), not the generic settings one.
+    case 'sync': return { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' };
     case 'reporting': return { id: 'reporting', label: 'Reporting' };
     case 'calendario': return { id: 'calendario', label: 'Calendario' };
     case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
@@ -810,6 +812,7 @@ function syncShell(target) {
     fixCount: shellFixCount,
     items: shellItems,
     activeScreenId: typeof screen?.id === 'string' ? screen.id : '',
+    aiScreenId: typeof screen?.ai === 'string' && screen.ai !== '' ? screen.ai : null,
     screenLabel: typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista',
   });
 }

@@ -280,10 +280,10 @@ test('Stato sync renders in a real browser with PNG evidence', { skip: SKIP, tim
           assert.ok(html.includes('Stato sync'), 'the screen title is on screen');
           assert.ok(html.includes('bo-sync-table'), 'the channel table is on screen');
           if (state === 'ok') {
-            assert.ok(html.includes('Tutto a posto'), 'the ok indicator is on screen');
+            assert.ok(html.includes('Tutto sincronizzato'), 'the ok indicator is on screen');
             assert.ok(html.includes('Niente da sistemare'), 'the empty fix list is on screen');
           } else {
-            assert.ok(html.includes('da sistemare'), 'the fix indicator is on screen');
+            assert.ok(html.includes('Da sistemare'), 'the fix indicator is on screen');
             assert.ok(html.includes('Riattiva da Connettori'), 'the broken channel says what to do');
             assert.ok(html.includes('Sincronizza ora'), 'the pull button is on screen');
           }

@@ -1,7 +1,7 @@
 // @ts-check
 
 import { sessionRoleLabel } from './admin-session.js';
-import { el, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -91,6 +91,8 @@ const AI_PLACEHOLDERS = Object.freeze({
   reporting: 'Chiedi: «chi ha gestito più call questo mese?»',
   'nuovo-modulo': 'Descrivi: «un modulo sonde per i KPI del pilota»',
   impostazioni: 'Chiedi: «cosa può fare l\u2019AI senza chiedermi?»',
+  // BO-F6-16: the sync screen asks about sync, never the generic fallback.
+  'stato-sync': 'Chiedi: «c\u2019è qualcosa che non si è sincronizzato?»',
 });
 
 export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa… (⌘K)';
@@ -423,6 +425,10 @@ export function createShellView({
     spaces: Array.isArray(initialSpaces) && initialSpaces.length > 0 ? initialSpaces : defaultSpaces(),
     activeSpaceId: null,
     activeScreenId: screenId,
+    // BO-F6-16: the AI bar may ask about a screen finer than the sidebar
+    // highlight (Stato sync lives under Impostazioni). Null falls back to
+    // the highlighted screen id.
+    aiScreenId: null,
     screenLabel,
     fixCount: 0,
     clientCount: null,
@@ -625,7 +631,7 @@ export function createShellView({
     aiInput.setAttribute('type', 'search');
     aiInput.setAttribute('class', 'bo-ai-input ui-field'); // BO-F6-02: system field class.
     aiInput.setAttribute('aria-label', 'Barra AI: chiedi o fai qualcosa');
-    aiInput.setAttribute('placeholder', aiPlaceholder(state.activeScreenId));
+    aiInput.setAttribute('placeholder', aiPlaceholder(state.aiScreenId ?? state.activeScreenId));
     aiInput.setAttribute('title', 'Barra AI (⌘K): chiedi o fai qualcosa');
     form.appendChild(aiInput);
     const hint = el(doc, 'kbd', 'bo-ai-key', '⌘K');
@@ -642,9 +648,12 @@ export function createShellView({
   }
 
   function screenLabelFor(id) {
+    // BO-F6-16: the crumb names the open screen (Stato sync, Connettori,
+    // Personalizzazione), not the sidebar section hosting it (Impostazioni):
+    // the prototype reads "<SPACE> / <SCREEN>", uppercased by .bo-crumb.
+    if (typeof state.screenLabel === 'string' && state.screenLabel !== '') return state.screenLabel;
     const found = state.items.find((item) => item.id === id);
     if (found) return found.label;
-    if (typeof state.screenLabel === 'string' && state.screenLabel !== '') return state.screenLabel;
     return 'Oggi';
   }
 
@@ -673,11 +682,12 @@ export function createShellView({
   renderTopbar();
 
   return {
-    update({ fixCount, clientCount, clientCountExact, activeScreenId, screenLabel: nextLabel, items, user: nextUser } = {}) {
+    update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, screenLabel: nextLabel, items, user: nextUser } = {}) {
       if (fixCount !== undefined) state.fixCount = fixCount;
       if (clientCount !== undefined) state.clientCount = clientCount;
       if (clientCountExact !== undefined) state.clientCountExact = clientCountExact;
       if (typeof activeScreenId === 'string') state.activeScreenId = activeScreenId;
+      if (aiScreenId === null || typeof aiScreenId === 'string') state.aiScreenId = aiScreenId;
       if (typeof nextLabel === 'string' && nextLabel !== '') state.screenLabel = nextLabel;
       if (Array.isArray(items)) state.items = items;
       if (nextUser != null && typeof nextUser === 'object' && !Array.isArray(nextUser)) {
@@ -760,4 +770,42 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
     list.appendChild(row);
   }
   mount.appendChild(list);
+}
+
+/**
+ * The `IMPOSTAZIONI` tab row of the prototype (BO-F6-16): the four areas in
+ * order with the open one underlined, plus the yellow "things to fix" badge
+ * on Stato sync while its count is above zero (same count the sidebar shows,
+ * absent at zero and when unknown). Tabs reuse the `ui-tabs` builders
+ * (BO-F6-02); the badge reuses `.bo-badge`, like the sidebar pill.
+ * @param {any} doc
+ * @param {{ activeId?: string, fixCount?: unknown, navigate?: (hash: string) => void }} [options]
+ */
+export function settingsTabs(doc, { activeId = 'stato-sync', fixCount = null, navigate = () => {} } = {}) {
+  const wrap = el(doc, 'div', 'bo-settings-tabs');
+  wrap.appendChild(el(doc, 'p', 'bo-settings-label', 'IMPOSTAZIONI'));
+  const bar = uiTabs(doc, SETTINGS_AREAS.map((area) => ({
+    id: area.id,
+    label: area.label,
+    active: area.id === activeId,
+  })));
+  for (const area of SETTINGS_AREAS) {
+    const tab = typeof bar.querySelector === 'function'
+      ? bar.querySelector(`button[data-tab="${area.id}"]`)
+      : null;
+    if (tab === null || tab === undefined) continue;
+    if (area.id !== activeId) tab.addEventListener('click', () => navigate(area.route));
+    // The badge lights on the Stato sync tab (open or not) while its count
+    // is above zero — the same count the sidebar pill shows for this screen.
+    if (area.id === 'stato-sync') {
+      const badgeText = settingsBadge(fixCount);
+      if (badgeText !== '') {
+        const badge = el(doc, 'span', 'bo-badge', badgeText);
+        badge.setAttribute('aria-label', `${badgeText} da sistemare`);
+        tab.appendChild(badge);
+      }
+    }
+  }
+  wrap.appendChild(bar);
+  return wrap;
 }
