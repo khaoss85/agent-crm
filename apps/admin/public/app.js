@@ -135,7 +135,7 @@ async function refresh() {
     renderOpportunities(opportunities.items);
     renderApprovals(approvals.items);
     renderTraces(traces.items);
-    await refreshShellBadge();
+    await refreshShellCounts();
     const unacked = Array.isArray(pendingWrites?.items) ? pendingWrites.items.length : 0;
     if (unacked > 0) {
       toast(`${unacked} unacknowledged submission${unacked === 1 ? '' : 's'} recovered.`);
@@ -355,6 +355,7 @@ import {
   ACTIVE_SPACE_KEY,
   buildShellNav,
   createShellView,
+  loadClientCount,
   loadFixCount,
   readSpaces,
   renderSettingsPanel,
@@ -766,15 +767,26 @@ function syncShell(target) {
   });
 }
 
-async function refreshShellBadge() {
+async function refreshShellCounts() {
   if (!shellView || !shellCustomerData) return;
-  // The badge counts what the Stato sync screen points at: the data-quality
-  // rows plus the sync attention rows, both read live. Without a selected
-  // space the sync half is unknown and the badge keeps the quality count.
-  // The live session space wins over the stored local one (BO-F6-03).
+  // The Impostazioni badge counts what the Stato sync screen points at: the
+  // data-quality rows plus the sync attention rows, both read live. Without
+  // a selected space the sync half is unknown and the badge keeps the
+  // quality count. The live session space wins over the stored local one
+  // (BO-F6-03). The Clienti badge (BO-F6-01) is the live client count from
+  // the same customer list the Clienti screen reads — unknown (never zero)
+  // when the read fails, so the pill lights only from a real count.
   const spaceId = resolveBadgeSpaceId(shellActiveSpace, shellStorage);
-  shellFixCount = await loadFixCount(moduleClient, { spaceId });
-  shellView.update({ fixCount: shellFixCount });
+  const [fixes, clients] = await Promise.all([
+    loadFixCount(moduleClient, { spaceId }),
+    loadClientCount(moduleClient),
+  ]);
+  shellFixCount = fixes;
+  shellView.update({
+    fixCount: fixes,
+    clientCount: clients == null ? null : clients.count,
+    clientCountExact: clients == null ? true : clients.exact,
+  });
 }
 
 async function populateNav() {
@@ -791,7 +803,7 @@ async function populateNav() {
     // The route owns screen state: re-sync to the current hash after the
     // shell items update, so a cold deep link keeps its screen.
     syncShell(targetForHash(window.location.hash || '#/'));
-    await refreshShellBadge();
+    await refreshShellCounts();
     // Mounted home (backlog:7eee63a5): the Oggi links follow the delivered
     // screens, which are known only after the schema arrives — re-render an
     // open home so it never shows the pre-schema voices.

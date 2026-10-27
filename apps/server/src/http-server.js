@@ -349,7 +349,11 @@ export function buildRouter(app) {
     generatedModules: app.modules
       .list()
       .filter((module) => isExposableGeneratedModule(app.modules.get(module.name)))
-      .map((module) => generatedModuleMetadata(app.modules.get(module.name), app.actions.listForModule(module.name))),
+      .map((module) => generatedModuleMetadata(
+        app.modules.get(module.name),
+        app.actions.listForModule(module.name),
+        isCustomModule(app, module.name) ? 'bundle' : 'kernel',
+      )),
     workflows: app.workflows.list(),
     providers: app.providers.list(),
     // Code-first pipelines (ADR-014). Additive: an older client ignores it.
@@ -952,7 +956,11 @@ export function buildRouter(app) {
   router.add('GET', '/api/modules/:module', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     const module = resolveGeneratedModule(app, params.module);
-    return generatedModuleMetadata(module, app.actions.listForModule(module.name));
+    return generatedModuleMetadata(
+      module,
+      app.actions.listForModule(module.name),
+      isCustomModule(app, module.name) ? 'bundle' : 'kernel',
+    );
   });
   router.add('GET', '/api/modules/:module/records', async ({ params, searchParams, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
@@ -1599,12 +1607,29 @@ function actionInput(body) {
   return body;
 }
 
-/** @param {any} module @param {any[]} [actions] */
-function generatedModuleMetadata(module, actions = []) {
+/**
+ * Whether a registered module came from an opt-in bundle (BO-F6-01): the
+ * sidebar lists bundles but never kernel tables. Read from the application's
+ * bundle registry; unknown stays kernel fail-closed.
+ * @param {any} app @param {unknown} name
+ */
+function isCustomModule(app, name) {
+  return typeof name === 'string'
+    && Array.isArray(app?.customModuleNames)
+    && app.customModuleNames.includes(name);
+}
+
+/** @param {any} module @param {any[]} [actions] @param {'bundle' | 'kernel'} [origin] */
+function generatedModuleMetadata(module, actions = [], origin = 'kernel') {
   return {
     name: module.name,
     description: module.description ?? null,
     kind: module.kind,
+    // BO-F6-01: where the module came from — 'bundle' for opt-in user
+    // modules, 'kernel' for framework tables. Additive under
+    // generatedResourceContract 1: an older client simply ignores it, and the
+    // sidebar treats a missing origin as kernel (never lists it).
+    origin,
     manifestVersion: module.manifestVersion ?? 1,
     capabilities: module.capabilities,
     // ADR-008 addendum 2. Additive: a client that does not know about it simply

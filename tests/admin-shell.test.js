@@ -8,8 +8,10 @@ import {
   AI_ENTRY_FALLBACK,
   aiPlaceholder,
   crumb,
+  clientBadge,
   settingsBadge,
   countFixes,
+  loadClientCount,
   loadFixCount,
   resolveBadgeSpaceId,
   defaultSpaces,
@@ -22,6 +24,7 @@ import {
 } from '../apps/admin/public/admin-shell.js';
 import { shellNavInput } from '../apps/admin/public/admin-core.js';
 import { buildOggiLinks } from '../apps/admin/public/admin-oggi.js';
+import { parseCustomerListQuery } from '../packages/customer-data/src/customers.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 test('sidebar voices are the prototype voices, in Italian', () => {
@@ -45,6 +48,21 @@ test('sidebar voices are the prototype voices, in Italian', () => {
   const headers = Object.fromEntries(SHELL_GROUPS.map((group) => [group.id, group.header]));
   assert.equal(headers.native, 'Moduli nativi');
   assert.equal(headers.custom, 'Moduli personalizzati');
+});
+
+test('every sidebar voice has its own icon (BO-F6-01)', () => {
+  // Icons come from the single component library (BO-F6-02, MEM_ACC_REUSE):
+  // every voice names one, and the rendered row carries the shared ui-icon.
+  for (const item of SHELL_ITEMS) {
+    assert.ok(typeof item.icon === 'string' && item.icon !== '', `${item.id} names an icon`);
+  }
+  const { sidebar } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
+  const voices = [...sidebar.findAll('a'), ...sidebar.findAll('span')]
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-nav-item'));
+  assert.ok(voices.length >= SHELL_ITEMS.length, `each voice renders (${voices.length} shown)`);
+  for (const voice of voices) {
+    assert.equal(voice.findAll('svg').length, 1, `${voice.textContent} carries its icon`);
+  }
 });
 
 test('Impostazioni badge lights only from a real count (0 = no badge)', () => {
@@ -200,9 +218,23 @@ test('buildShellNav resolves Pipeline from the schema and leaves future screens 
     assert.equal(voice.story, 'BO-F5-01');
   }
 
-  const withCustom = buildShellNav({ customModules: [{ name: 'partner' }, { name: 'BAD NAME' }, {}] });
+  const withCustom = buildShellNav({ customModules: [{ name: 'partner', origin: 'bundle' }, { name: 'BAD NAME', origin: 'bundle' }, {}] });
   const custom = withCustom.filter((item) => item.group === 'custom' && item.id.startsWith('module-'));
   assert.deepEqual(custom.map((item) => item.route), ['#/modules/partner']);
+});
+
+test('the sidebar never lists kernel generated tables, only bundles (BO-F6-01)', () => {
+  // Mirrors a real `/api/schema` payload: framework tables (channel inbox,
+  // import state, quality rows…) beside one opt-in user bundle.
+  const nav = buildShellNav({
+    customModules: [
+      { name: 'channel-inbox-event', origin: 'kernel', kind: 'generated', capabilities: ['list'], fields: [] },
+      { name: 'data-quality-issue', kind: 'generated', capabilities: ['list'], fields: [] },
+      { name: 'sonde-kpi', origin: 'bundle', kind: 'generated', capabilities: ['list'], fields: [] },
+    ],
+  });
+  const custom = nav.filter((item) => item.group === 'custom' && item.id.startsWith('module-'));
+  assert.deepEqual(custom.map((item) => item.route), ['#/modules/sonde-kpi']);
 });
 
 test('Clienti is available only when the customer-data package is composed', () => {
@@ -292,13 +324,95 @@ test('shell renders sidebar voices, groups, add-module entry and logout', () => 
   const { sidebar, topbar } = renderShell();
   const text = sidebar.textContent;
   for (const voice of ['Studio Aurora', 'Oggi', 'Clienti', 'Moduli nativi', 'Moduli personalizzati',
-    '+ Nuovo modulo', 'Impostazioni', 'Elena Rinaldi', 'Esci']) {
+    '+ Nuovo modulo', 'Impostazioni', 'Elena Rinaldi']) {
     assert.ok(text.includes(voice), `sidebar shows ${voice}`);
   }
+  // BO-F6-01: every voice row carries its own icon from the component
+  // library; the exit keeps the prototype icon with a visible label
+  // (BO-F6-03 reviewed behavior) and an assistive-tech name.
+  const icons = sidebar.findAll('svg').filter((node) => (node.getAttribute('class') ?? '').includes('ui-icon'));
+  assert.ok(icons.length >= SHELL_ITEMS.length, `each voice has an icon (${icons.length} shown)`);
+  const logout = sidebar.findAll('button').find((node) => node.getAttribute('aria-label') === 'Esci');
+  assert.ok(logout, 'sidebar shows the exit button');
+  assert.ok(logout.textContent.includes('Esci'), 'the exit action names itself');
+  assert.equal(logout.findAll('svg').length, 1, 'the exit keeps its icon');
+  // No session in local development: the switcher shows no role line.
+  assert.ok(!text.includes('Titolare'), 'no role without a session');
   assert.ok(topbar.textContent.includes('Studio Aurora / Oggi'));
   assert.ok(topbar.textContent.includes('⌘K'));
+  assert.ok(topbar.textContent.includes('✦'), 'the AI bar opens with the spark');
   // No badge at zero fixes.
   assert.equal(sidebar.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
+});
+
+test('Clienti badge lights only from a real count, grey like the prototype (BO-F6-01)', () => {
+  assert.equal(clientBadge(0), '0');
+  assert.equal(clientBadge(3), '3');
+  assert.equal(clientBadge(3, false), '3+');
+  for (const bad of [-1, 2.5, '3', null, undefined, NaN]) {
+    assert.equal(clientBadge(bad), '', `no Clienti badge for ${String(bad)}`);
+  }
+  assert.equal(clientBadge(null), '');
+});
+
+test('loadClientCount reads the customer total once, unknown on failure', async () => {
+  assert.deepEqual(
+    await loadClientCount({ async request() { return { items: [], total: 3, totalIsExact: true }; } }),
+    { count: 3, exact: true },
+  );
+  assert.deepEqual(
+    await loadClientCount({ async request() { return { items: [], total: 3, totalIsExact: false }; } }),
+    { count: 3, exact: false },
+  );
+  const failing = { async request() { throw new Error('not composed'); } };
+  assert.equal(await loadClientCount(failing), null);
+  const shapeless = { async request() { return { items: [] }; } };
+  assert.equal(await loadClientCount(shapeless), null);
+});
+
+test('loadClientCount requests a supported page size on the real list path (BO-F6-01)', async () => {
+  // Regression: pageSize=1 is rejected by parseCustomerListQuery (400: only
+  // 10, 25 and 50 are accepted), so the grey pill never lit on the real
+  // path while the stubbed unit test stayed green. The badge must ask for a
+  // size the contract accepts, on the endpoint the Clienti screen reads.
+  const seen = [];
+  const result = await loadClientCount({
+    async request(path) {
+      seen.push(path);
+      return { items: [], total: 7, totalIsExact: true };
+    },
+  });
+  assert.deepEqual(result, { count: 7, exact: true });
+  assert.equal(seen.length, 1);
+  const url = new URL(seen[0], 'http://bo.local');
+  assert.equal(url.pathname, '/api/customer-data/customers');
+  const parsed = parseCustomerListQuery(Object.fromEntries(url.searchParams));
+  assert.equal(parsed.pageSize, 10);
+});
+
+test('shell shows the Clienti count pill after a real count arrives (BO-F6-01)', () => {
+  const { sidebar, view } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
+  const pills = () => sidebar.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-count'));
+  assert.equal(pills().length, 0);
+  view.update({ clientCount: null });
+  assert.equal(pills().length, 0);
+  view.update({ clientCount: 3, clientCountExact: true });
+  assert.equal(pills().length, 1);
+  assert.equal(pills()[0].textContent, '3');
+  view.update({ clientCount: 3, clientCountExact: false });
+  assert.equal(pills()[0].textContent, '3+');
+});
+
+test('space switcher shows the member role under the space name (BO-F6-01)', () => {
+  // The role comes from the session contract (BO-F6-03, reused): only the
+  // known codes render, as Italian labels; anything else shows no role line.
+  const plain = renderShell();
+  assert.ok(!plain.sidebar.textContent.includes('Titolare'));
+  const { sidebar } = renderShell({ user: { name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' } });
+  assert.ok(sidebar.textContent.includes('Titolare'), 'switcher shows the role');
+  const hostile = renderShell({ user: { name: 'Elena', email: 'e@s.it', role: '<img src=x onerror=alert(1)>' } });
+  assert.equal(hostile.sidebar.findAll('img').length, 0);
+  assert.ok(!hostile.sidebar.textContent.includes('Titolare'), 'no role for an unknown code');
 });
 
 test('shell shows the badge only after a real count arrives', () => {
@@ -349,7 +463,7 @@ test('keyboard: ⌘2 switches space, ⌘K focuses the AI entry', () => {
 
 test('logout calls back instead of faking a session', () => {
   const { sidebar, seen } = renderShell();
-  const logout = sidebar.findAll('button').find((node) => node.textContent === 'Esci');
+  const logout = sidebar.findAll('button').find((node) => node.getAttribute('aria-label') === 'Esci');
   assert.ok(logout);
   logout.dispatch('click');
   assert.equal(seen.loggedOut, 1);
@@ -431,6 +545,23 @@ test('shell stylesheet stays fluid under 700px', () => {
   assert.ok(css.includes('.bo-sidebar'), 'sidebar rules exist');
   const narrow = css.slice(css.indexOf('@media (max-width: 700px)'));
   assert.ok(narrow.includes('.bo-sidebar'), 'narrow rules restyle the sidebar');
+});
+
+test('shell stylesheet matches the prototype chrome (BO-F6-01)', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  // Full-height flat rail, never a box.
+  assert.ok(css.includes('border-right: 1px solid var(--line)'), 'sidebar keeps only its divider edge');
+  // Voice icons come from the single component library (BO-F6-02): the
+  // sidebar sizes the shared ui-icon, BO-F6-01 adds no icon geometry.
+  assert.ok(css.includes('.bo-sidebar .ui-icon'), 'voice icon rules exist');
+  assert.ok(css.includes('.bo-count'), 'Clienti count pill rules exist');
+  // Uppercase mono path and the violet AI spark.
+  const crumbRule = css.slice(css.indexOf('.bo-crumb'));
+  assert.ok(crumbRule.includes('text-transform: uppercase'), 'path reads uppercase');
+  assert.ok(css.includes('.bo-ai-spark'), 'AI spark rules exist');
+  // BO-F6-01 keeps no local icon geometry: the shell reuses admin-ui.js.
+  const shell = readFileSync(new URL('../apps/admin/public/admin-shell.js', import.meta.url), 'utf8');
+  assert.ok(!shell.includes('SHELL_ICONS'), 'no duplicated icon set in the shell');
 });
 
 test('a real session shows the space, the role, the name and the email (BO-F6-03)', () => {
