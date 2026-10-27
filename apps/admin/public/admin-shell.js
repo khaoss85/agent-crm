@@ -18,6 +18,29 @@
 /** Route for the settings entry. Its tabs land in BO-F0-03. */
 export const SETTINGS_ROUTE = '#/impostazioni';
 
+/** SVG namespace for the inline shell icons (static paths, never data). */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * Stroke icon geometry (24×24, currentColor) for every sidebar voice, the
+ * space switcher and the exit button. BO-F6-01: the prototype gives each
+ * voice its own icon; custom user modules share the generic module cube.
+ * Static path data only — hostile space, user or module names stay text.
+ */
+export const SHELL_ICONS = Object.freeze({
+  oggi: 'M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z M12 2.5v2.5 M12 19v2.5 M2.5 12h2.5 M19 12h2.5 M5 5l1.8 1.8 M17.2 17.2L19 19 M19 5l-1.8 1.8 M6.8 17.2L5 19',
+  clienti: 'M9 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z M2.8 20c.7-3.4 3.2-5.2 6.2-5.2s5.5 1.8 6.2 5.2 M15.5 5.2a3.5 3.5 0 0 1 0 5.9 M17.3 14.9c2 .8 3.3 2.4 3.9 5.1',
+  pipeline: 'M3.5 20h17 M6.5 20v-6 M12 20V6 M17.5 20v-9',
+  calendario: 'M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19z M4 10h16 M8.5 3v4 M15.5 3v4',
+  sequenze: 'M9 6h12 M9 12h12 M9 18h12 M4 6h1.5 M4 12h1.5 M4 18h1.5',
+  reporting: 'M4 4v15.5a.5.5 0 0 0 .5.5H20 M9.5 16.5v-4 M14 16.5V9 M18.5 16.5v-2.5',
+  'nuovo-modulo': 'M12 5v14 M5 12h14',
+  impostazioni: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M12 2.8v2.6 M12 18.6v2.6 M2.8 12h2.6 M18.6 12h2.6 M5.5 5.5l1.8 1.8 M16.7 16.7l1.8 1.8 M18.5 5.5l-1.8 1.8 M7.3 16.7l-1.8 1.8',
+  module: 'M12 3l8 4.5v9L12 21l-8-4.5v-9z M12 12l8-4.5 M12 12L4 7.5 M12 12v9',
+  logout: 'M13.5 4H6v16h7.5 M10.5 12H21 M17.5 8.5L21 12l-3.5 3.5',
+  expand: 'M12 4v16 M8 8l4-4 4 4 M8 16l4 4 4-4',
+});
+
 /** Storage keys for the local shell state (space selection only). */
 export const ACTIVE_SPACE_KEY = 'accordo.activeSpace';
 export const SPACES_KEY = 'accordo.spaces';
@@ -30,17 +53,17 @@ export const SPACES_KEY = 'accordo.spaces';
  * dead link. Calendario links unconditionally like Reporting: the screen
  * itself renders honest states (not composed, no members named, empty week),
  * so it is never a dead link to a blank screen.
- * @typedef {{ id: string, label: string, group: 'home' | 'native' | 'custom' | 'settings', route: string | null, story: string }} ShellItem
+ * @typedef {{ id: string, label: string, group: 'home' | 'native' | 'custom' | 'settings', route: string | null, story: string, icon: string }} ShellItem
  */
 export const SHELL_ITEMS = Object.freeze([
-  { id: 'oggi', label: 'Oggi', group: 'home', route: '#/', story: 'BO-F0-02' },
-  { id: 'clienti', label: 'Clienti', group: 'native', route: '#/customer-data', story: 'BO-F1' },
-  { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2' },
-  { id: 'calendario', label: 'Calendario', group: 'native', route: '#/calendario', story: 'BO-F3' },
-  { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3' },
-  { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01' },
-  { id: 'nuovo-modulo', label: 'Nuovo modulo', group: 'custom', route: '#/nuovo-modulo', story: 'BO-F5-01' },
-  { id: 'impostazioni', label: 'Impostazioni', group: 'settings', route: SETTINGS_ROUTE, story: 'BO-F0-02' },
+  { id: 'oggi', label: 'Oggi', group: 'home', route: '#/', story: 'BO-F0-02', icon: 'oggi' },
+  { id: 'clienti', label: 'Clienti', group: 'native', route: '#/customer-data', story: 'BO-F1', icon: 'clienti' },
+  { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2', icon: 'pipeline' },
+  { id: 'calendario', label: 'Calendario', group: 'native', route: '#/calendario', story: 'BO-F3', icon: 'calendario' },
+  { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze' },
+  { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01', icon: 'reporting' },
+  { id: 'nuovo-modulo', label: 'Nuovo modulo', group: 'custom', route: '#/nuovo-modulo', story: 'BO-F5-01', icon: 'nuovo-modulo' },
+  { id: 'impostazioni', label: 'Impostazioni', group: 'settings', route: SETTINGS_ROUTE, story: 'BO-F0-02', icon: 'impostazioni' },
 ]);
 
 /** Sidebar group headers, in render order. `null` renders no header. */
@@ -112,6 +135,46 @@ export function crumb(spaceName, screenLabel) {
 export function settingsBadge(fixCount) {
   if (typeof fixCount !== 'number' || !Number.isInteger(fixCount) || fixCount <= 0) return '';
   return String(fixCount);
+}
+
+/**
+ * Badge text for the Clienti entry (BO-F6-01): the live client count, like
+ * the prototype's grey pill. Unknown (or uncomposed) renders no badge at
+ * all — never 0-as-none. A partial server scan keeps its "+" so the pill
+ * never claims an exactness the read does not have.
+ * @param {unknown} count
+ * @param {unknown} [exact]
+ */
+export function clientBadge(count, exact = true) {
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return '';
+  return exact === false ? `${count}+` : String(count);
+}
+
+/**
+ * Read the live client count for the badge: one page of size 1 over the
+ * same customer list the Clienti screen reads, keeping only its `total`.
+ * Returns null (unknown) when the customer-data package is not composed or
+ * a read fails — an unknown count must never light the badge.
+ * @param {{ request: (path: string, options?: object) => Promise<any> }} client
+ * @returns {Promise<{ count: number, exact: boolean } | null>}
+ */
+export async function loadClientCount(client) {
+  try {
+    const page = await client.request('/api/customer-data/customers?pageSize=1');
+    const total = page?.total;
+    if (typeof total !== 'number' || !Number.isInteger(total) || total < 0) return null;
+    return { count: total, exact: page?.totalIsExact !== false };
+  } catch (error) {
+    // Review gate (AGENTS.md): a swallowed failure must leave its cause
+    // diagnosable. Only the error name is logged — never record bodies,
+    // cookies or personal data here.
+    try {
+      console.warn('bo-shell client count unreadable:', error instanceof Error ? error.name : 'unknown');
+    } catch {
+      // Logging must never break the badge read.
+    }
+    return null;
+  }
 }
 
 /**
@@ -252,14 +315,17 @@ export function spaceMenuItems(spaces, activeId) {
 
 /**
  * Build the sidebar model: fixed prototype voices plus the user's custom
- * modules (generated modules are the "personalizzati" group). The Pipeline
- * voice resolves to the first composed pipeline; every other not-yet
- * delivered voice stays disabled with its story named. Clienti is available
- * only when the customer-data package is composed in the space
+ * modules (opt-in bundles are the "personalizzati" group). BO-F6-01: kernel
+ * generated tables (channel inbox rows, import state, quality rows and the
+ * like) never list — only entries the server marks `origin: 'bundle'` join
+ * the sidebar, so an unknown or kernel origin stays out fail-closed. The
+ * Pipeline voice resolves to the first composed pipeline; every other
+ * not-yet delivered voice stays disabled with its story named. Clienti is
+ * available only when the customer-data package is composed in the space
  * (customerDataAvailable), Sequenze only when the sequences package is
  * composed (sequencesAvailable): otherwise each stays disabled with its
  * story, like Pipeline/Calendario, never as a dead link to a blank screen.
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean }} input
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean }} input
  */
 export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false } = {}) {
   const firstPipeline = pipelines.find(
@@ -291,12 +357,14 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
   });
   for (const module of customModules) {
     if (module == null || typeof module.name !== 'string' || !/^[a-z][a-z0-9-]*$/.test(module.name)) continue;
+    if (module.origin !== 'bundle') continue;
     items.push({
       id: `module-${module.name}`,
       label: module.name,
       group: 'custom',
       route: `#/modules/${module.name}`,
       story: 'BO-F0-02',
+      icon: 'module',
       available: true,
       disabledReason: '',
     });
@@ -318,6 +386,45 @@ function el(doc, tag, className, text) {
 }
 
 /**
+ * An inline stroke icon for a shell voice, button or switcher (BO-F6-01).
+ * Static geometry from SHELL_ICONS, currentColor strokes — user or tenant
+ * data never reaches markup here, only the icon name, which falls back to
+ * the generic module cube when unknown.
+ * @param {object} doc DOM document (real or fake).
+ * @param {string} name
+ * @param {string} className
+ */
+function svgIcon(doc, name, className) {
+  const make = doc != null && typeof doc.createElementNS === 'function'
+    ? (tag) => doc.createElementNS(SVG_NS, tag)
+    : (tag) => doc.createElement(tag);
+  const svg = make('svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', className);
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  const path = make('path');
+  path.setAttribute('d', typeof name === 'string' && typeof SHELL_ICONS[name] === 'string' ? SHELL_ICONS[name] : SHELL_ICONS.module);
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '2');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(path);
+  return svg;
+}
+
+/**
+ * The session role for the space switcher (BO-F6-01): the prototype shows
+ * the member's role under the space name ("Studio Aurora / Titolare").
+ * Absent without a session — never a development string.
+ * @param {unknown} role
+ */
+function spaceRoleLabel(role) {
+  return typeof role === 'string' && role.trim() !== '' ? role.trim() : '';
+}
+
+/**
  * Render the BO-F0-02 shell chrome (sidebar + topbar) into the given
  * mounts. All labels come from the model above; every value that can carry
  * user or tenant data is inserted as text.
@@ -327,13 +434,14 @@ function el(doc, tag, className, text) {
  *   sidebar: object,
  *   topbar: object,
  *   spaces?: Array<{ id: string, name: string, initials?: string }>,
- *   user?: { name?: string, email?: string },
+ *   user?: { name?: string, email?: string, role?: string },
  *   screenId?: string,
  *   screenLabel?: string,
  *   navigate?: (hash: string) => void,
  *   notify?: (message: string) => void,
  *   onLogout?: () => void,
  *   onPickSpace?: (id: string) => void,
+ *   onAiSubmit?: ((text: string) => void) | null,
  *   win?: { addEventListener?: (type: string, handler: (event: any) => void) => void } | null,
  * }} options
  */
@@ -358,6 +466,9 @@ export function createShellView({
     activeScreenId: screenId,
     screenLabel,
     fixCount: 0,
+    clientCount: null,
+    clientCountExact: true,
+    user: user != null && typeof user === 'object' ? { ...user } : {},
     items: buildShellNav(),
   };
   if (!state.spaces.some((space) => space.id === state.activeSpaceId)) {
@@ -378,11 +489,15 @@ export function createShellView({
     spaceButton.setAttribute('aria-haspopup', 'true');
     spaceButton.setAttribute('title', 'Cambia spazio (⌘1/2/3)');
     const badge = el(doc, 'span', 'bo-space-badge', space.initials ?? space.name.slice(0, 2).toUpperCase());
-    const spaceName = el(doc, 'span', 'bo-space-name', space.name);
-    const chevron = el(doc, 'span', 'bo-space-chevron', '▾');
+    // BO-F6-01: the switcher shows the space name with the member's role
+    // under it, like the prototype ("Studio Aurora / Titolare").
+    const spaceText = el(doc, 'span', 'bo-space-text');
+    spaceText.appendChild(el(doc, 'span', 'bo-space-name', space.name));
+    const roleLabel = spaceRoleLabel(state.user.role);
+    if (roleLabel !== '') spaceText.appendChild(el(doc, 'span', 'bo-space-role', roleLabel));
     spaceButton.appendChild(badge);
-    spaceButton.appendChild(spaceName);
-    spaceButton.appendChild(chevron);
+    spaceButton.appendChild(spaceText);
+    spaceButton.appendChild(svgIcon(doc, 'expand', 'bo-space-expand'));
     spaceButton.addEventListener('click', () => {
       menu.classList.toggle('hidden', !menu.classList.contains('hidden'));
     });
@@ -413,33 +528,53 @@ export function createShellView({
     menu.appendChild(manage);
     sidebar.appendChild(menu);
 
-    const nav = el(doc, 'nav', 'bo-nav');
-    nav.setAttribute('aria-label', 'Sezioni');
-    for (const group of SHELL_GROUPS) {
-      if (group.header !== null) nav.appendChild(el(doc, 'div', 'bo-nav-header', group.header));
-      for (const item of state.items.filter((candidate) => candidate.group === group.id)) {
-        const link = el(doc, item.available ? 'a' : 'span', 'bo-nav-item'
-          + (item.id === state.activeScreenId ? ' active' : '')
-          + (item.available ? '' : ' disabled'));
-        if (item.available) {
-          link.setAttribute('href', item.route);
-          if (item.id === state.activeScreenId) link.setAttribute('aria-current', 'page');
-          link.addEventListener('click', (event) => {
-            if (event && typeof event.preventDefault === 'function') event.preventDefault();
-            navigate(item.route);
-          });
-        } else {
-          link.setAttribute('aria-disabled', 'true');
-          link.setAttribute('title', item.disabledReason);
+    // One voice row: icon, label, then the voice's live badge, if any.
+    // Clienti carries the live client count (grey pill, BO-F6-01);
+    // Impostazioni carries the real "things to fix" count (yellow pill).
+    function appendVoice(container, item) {
+      const link = el(doc, item.available ? 'a' : 'span', 'bo-nav-item'
+        + (item.id === state.activeScreenId ? ' active' : '')
+        + (item.available ? '' : ' disabled'));
+      if (item.available) {
+        link.setAttribute('href', item.route);
+        if (item.id === state.activeScreenId) link.setAttribute('aria-current', 'page');
+        link.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          navigate(item.route);
+        });
+      } else {
+        link.setAttribute('aria-disabled', 'true');
+        link.setAttribute('title', item.disabledReason);
+      }
+      link.appendChild(svgIcon(doc, item.icon, 'bo-nav-icon'));
+      link.appendChild(el(doc, 'span', 'bo-nav-label', item.label));
+      if (item.id === 'clienti') {
+        const countText = clientBadge(state.clientCount, state.clientCountExact);
+        if (countText !== '') {
+          const pill = el(doc, 'span', 'bo-count', countText);
+          if (state.clientCountExact === false) pill.setAttribute('title', 'conteggio parziale: la scansione è limitata');
+          link.appendChild(pill);
         }
-        link.appendChild(el(doc, 'span', 'bo-nav-label', item.label));
-        if (item.id === 'impostazioni') {
-          const badgeText = settingsBadge(state.fixCount);
-          if (badgeText !== '') link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
+      }
+      if (item.id === 'impostazioni') {
+        const badgeText = settingsBadge(state.fixCount);
+        if (badgeText !== '') link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
+      }
+      container.appendChild(link);
+    }
+
+    function appendGroups(container, groupIds) {
+      for (const group of SHELL_GROUPS.filter((candidate) => groupIds.includes(candidate.id))) {
+        if (group.header !== null) container.appendChild(el(doc, 'div', 'bo-nav-header', group.header));
+        for (const item of state.items.filter((candidate) => candidate.group === group.id)) {
+          appendVoice(container, item);
         }
-        nav.appendChild(link);
       }
     }
+
+    const nav = el(doc, 'nav', 'bo-nav');
+    nav.setAttribute('aria-label', 'Sezioni');
+    appendGroups(nav, ['home', 'native', 'custom']);
     sidebar.appendChild(nav);
 
     const addWrap = el(doc, 'div', 'bo-add');
@@ -473,17 +608,29 @@ export function createShellView({
     const spacer = el(doc, 'div', 'bo-spacer');
     sidebar.appendChild(spacer);
 
+    // BO-F6-01: Impostazioni sits at the bottom, above the user row, like
+    // the prototype — with its yellow "things to fix" badge when lit.
+    const bottomNav = el(doc, 'nav', 'bo-nav bo-nav-bottom');
+    bottomNav.setAttribute('aria-label', 'Impostazioni');
+    appendGroups(bottomNav, ['settings']);
+    sidebar.appendChild(bottomNav);
+
+    const member = state.user;
     const userRow = el(doc, 'div', 'bo-user');
-    const initials = typeof user.name === 'string' && user.name.trim() !== ''
-      ? user.name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
+    const initials = typeof member.name === 'string' && member.name.trim() !== ''
+      ? member.name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
       : 'LO';
     userRow.appendChild(el(doc, 'span', 'bo-user-badge', initials));
     const who = el(doc, 'div', 'bo-user-who');
-    who.appendChild(el(doc, 'div', 'bo-user-name', typeof user.name === 'string' && user.name !== '' ? user.name : 'Operatore locale'));
-    who.appendChild(el(doc, 'div', 'bo-user-email', typeof user.email === 'string' && user.email !== '' ? user.email : 'sviluppo locale'));
+    who.appendChild(el(doc, 'div', 'bo-user-name', typeof member.name === 'string' && member.name !== '' ? member.name : 'Operatore locale'));
+    who.appendChild(el(doc, 'div', 'bo-user-email', typeof member.email === 'string' && member.email !== '' ? member.email : 'sviluppo locale'));
     userRow.appendChild(who);
-    const logout = el(doc, 'button', 'bo-logout', 'Esci');
-    logout.setAttribute('title', 'Esci (reimposta lo spazio locale)');
+    // BO-F6-01: the exit is an icon button, like the prototype — labelled
+    // for assistive tech, never bare.
+    const logout = el(doc, 'button', 'bo-logout');
+    logout.setAttribute('title', 'Esci');
+    logout.setAttribute('aria-label', 'Esci');
+    logout.appendChild(svgIcon(doc, 'logout', 'bo-logout-icon'));
     logout.addEventListener('click', () => onLogout());
     userRow.appendChild(logout);
     sidebar.appendChild(userRow);
@@ -505,6 +652,8 @@ export function createShellView({
 
     const form = el(doc, 'form', 'bo-ai');
     form.setAttribute('role', 'search');
+    // BO-F6-01: the AI bar opens with the ✦ mark, like the prototype.
+    form.appendChild(el(doc, 'span', 'bo-ai-spark', '✦'));
     aiInput = doc.createElement('input');
     aiInput.setAttribute('type', 'search');
     aiInput.setAttribute('class', 'bo-ai-input');
@@ -557,11 +706,16 @@ export function createShellView({
   renderTopbar();
 
   return {
-    update({ fixCount, activeScreenId, screenLabel: nextLabel, items } = {}) {
+    update({ fixCount, clientCount, clientCountExact, activeScreenId, screenLabel: nextLabel, items, user: nextUser } = {}) {
       if (fixCount !== undefined) state.fixCount = fixCount;
+      if (clientCount !== undefined) state.clientCount = clientCount;
+      if (clientCountExact !== undefined) state.clientCountExact = clientCountExact;
       if (typeof activeScreenId === 'string') state.activeScreenId = activeScreenId;
       if (typeof nextLabel === 'string' && nextLabel !== '') state.screenLabel = nextLabel;
       if (Array.isArray(items)) state.items = items;
+      if (nextUser != null && typeof nextUser === 'object' && !Array.isArray(nextUser)) {
+        state.user = { ...state.user, ...nextUser };
+      }
       renderSidebar();
       renderTopbar();
     },
@@ -580,6 +734,7 @@ export function createShellView({
         activeSpaceId: state.activeSpaceId,
         activeScreenId: state.activeScreenId,
         fixCount: state.fixCount,
+        clientCount: state.clientCount,
       };
     },
   };

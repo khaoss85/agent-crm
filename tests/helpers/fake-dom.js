@@ -121,6 +121,9 @@ class FakeNode {
 export function createFakeDocument() {
   return {
     createElement: (tag) => new FakeNode(tag),
+    // Namespace-aware creation for inline SVG icons (BO-F6-01): the fake
+    // node only needs the tag — namespaces never affect the assertions.
+    createElementNS: (_ns, tag) => new FakeNode(tag),
   };
 }
 
