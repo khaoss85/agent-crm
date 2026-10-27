@@ -19,7 +19,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -94,6 +94,10 @@ const SESSION_PROFILE = {
 };
 const SESSION_JSON = JSON.stringify(SESSION_PROFILE).replace(/</g, '\\u003c');
 
+// NOTE: FIXTURE_SCRIPT is a template literal, so every backslash inside it
+// is processed twice — once here, once in the page. A join on newline must
+// read '\\n' here (runtime '\n'): a single backslash puts a raw newline
+// inside a quoted string of the in-page module and it never executes.
 const FIXTURE_SCRIPT = `
 import { createShellView } from './admin-shell.js';
 import { readSessionProfile } from './admin-session.js';
@@ -134,7 +138,7 @@ await oggi.render({
 const renderedText = ['boSidebar', 'boTopbar', 'view-module']
   .map((id) => document.getElementById(id))
   .map((mount) => (mount && typeof mount.textContent === 'string' ? mount.textContent : ''))
-  .join('\n');
+  .join('\\n');
 const probe = {
   profileRead: profile !== null,
   showsSpace: renderedText.includes('Studio Aurora'),
@@ -234,29 +238,26 @@ async function runBrowser({ width, height }) {
       `--window-size=${width},${height}`,
       '--virtual-time-budget=8000',
       '--hide-scrollbars',
+      '--disable-background-networking',
       page,
     ], 120000);
     assert.equal(run.status, 0, `chromium exits 0 (stderr: ${(run.stderr ?? '').slice(-500)})`);
-    // The dump can race the harness module on a loaded runner: poll the
-    // probe run until the module marks itself done (bounded — a module that
-    // throws still marks itself done with its cause, via finishHarness).
-    const READY_TITLE = '<title>shell-identity-ready</title>';
-    let dom = '';
-    let probeReady = false;
-    const deadline = Date.now() + 60000;
-    while (!probeReady && Date.now() < deadline) {
-      const probeRun = await runChromium([
-        '--headless', '--dump-dom',
-        `--window-size=${width},${height}`,
-        '--virtual-time-budget=8000',
-        page,
-      ], 120000);
-      assert.equal(probeRun.status, 0, 'the probe run exits 0');
-      dom = probeRun.stdout;
-      probeReady = dom.includes(READY_TITLE);
-      if (!probeReady) await new Promise((resolve) => setTimeout(resolve, 2000));
-    }
-    return { out, dom, probeReady };
+    // One probe run per viewport, like the sibling *-shots tests: the
+    // module marks itself done on every path (success or its in-page
+    // error, via finishHarness), so a missing marker with a dump
+    // byte-identical to the unexecuted harness means the module never
+    // started — the stderr tail then names the cause.
+    const probeRun = await runChromium([
+      '--headless', '--dump-dom',
+      `--window-size=${width},${height}`,
+      '--virtual-time-budget=8000',
+      '--disable-background-networking',
+      page,
+    ], 120000);
+    assert.equal(probeRun.status, 0, `the probe run exits 0 (stderr: ${(probeRun.stderr ?? '').slice(-500)})`);
+    const dom = probeRun.stdout;
+    const probeReady = dom.includes('<title>shell-identity-ready</title>');
+    return { out, dom, probeReady, probeStderr: probeRun.stderr ?? '' };
   } finally {
     server.close();
   }
@@ -288,9 +289,20 @@ function assertIdentityProbe(probe) {
   assert.match(probe.greeting ?? '', /Elena Rinaldi/, 'Oggi greets with the session name');
 }
 
+test('the harness module parses (top-level await included)', () => {
+  // Like the bo-shots guard: the inline module is a template string the
+  // syntax check of this file cannot see — extract and node --check it, so
+  // a fixture edit can never silently stop executing in the page.
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-shell-identity-fixture-'));
+  const file = join(dir, 'fixture.mjs');
+  writeFileSync(file, FIXTURE_SCRIPT);
+  const checked = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8', timeout: 60000 });
+  assert.equal(checked.status, 0, `the harness module parses (${(checked.stderr ?? '').slice(-300)})`);
+});
+
 test('the session shell renders in a real browser: desktop 1440 PNG', { skip: CHROMIUM ? false : 'no usable Chromium here (set CHROMIUM_BIN)' }, async () => {
-  const { out, dom, probeReady } = await runBrowser({ width: 1440, height: 900 });
-  assert.ok(probeReady, `the harness module ran to completion in the page (dump ${dom.length} chars)`);
+  const { out, dom, probeReady, probeStderr } = await runBrowser({ width: 1440, height: 900 });
+  assert.ok(probeReady, `the harness module ran to completion in the page (dump ${dom.length} chars, head: ${dom.slice(0, 160)}; stderr: ${(probeStderr ?? '').slice(-500)})`);
   const probe = readProbe(dom);
   assertIdentityProbe(probe);
   const shot = pngSize(out);
@@ -301,8 +313,8 @@ test('the session shell renders in a real browser: desktop 1440 PNG', { skip: CH
 });
 
 test('the session shell renders in a real browser: phone 390 PNG without sideways scroll', { skip: CHROMIUM ? false : 'no usable Chromium here (set CHROMIUM_BIN)' }, async () => {
-  const { out, dom, probeReady } = await runBrowser({ width: 390, height: 844 });
-  assert.ok(probeReady, `the harness module ran to completion in the page (dump ${dom.length} chars)`);
+  const { out, dom, probeReady, probeStderr } = await runBrowser({ width: 390, height: 844 });
+  assert.ok(probeReady, `the harness module ran to completion in the page (dump ${dom.length} chars, head: ${dom.slice(0, 160)}; stderr: ${(probeStderr ?? '').slice(-500)})`);
   const probe = readProbe(dom);
   assertIdentityProbe(probe);
   assert.ok(probe.scrollWidth <= probe.innerWidth, `nothing paints sideways under 700px (${probe.scrollWidth} > ${probe.innerWidth})`);
