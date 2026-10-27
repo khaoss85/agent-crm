@@ -121,16 +121,22 @@ await oggi.render({
   links: [],
   now: new Date(2026, 9, 19, 9),
 });
-const bodyText = document.body.textContent;
+// Rendered text only: document.body.textContent would also include this
+// very module script (which names the development strings it probes for),
+// so read the three mounts the shell paints into instead.
+const renderedText = ['boSidebar', 'boTopbar', 'view-module']
+  .map((id) => document.getElementById(id))
+  .map((mount) => (mount && typeof mount.textContent === 'string' ? mount.textContent : ''))
+  .join('\n');
 const probe = {
   profileRead: profile !== null,
-  showsSpace: bodyText.includes('Studio Aurora'),
-  showsRole: bodyText.includes('Titolare'),
-  showsName: bodyText.includes('Elena Rinaldi'),
-  showsEmail: bodyText.includes('elena@studioaurora.it'),
-  noDevSpace: !bodyText.includes('Spazio locale'),
-  noDevUser: !bodyText.includes('Operatore locale'),
-  noDevEmail: !bodyText.includes('sviluppo locale'),
+  showsSpace: renderedText.includes('Studio Aurora'),
+  showsRole: renderedText.includes('Titolare'),
+  showsName: renderedText.includes('Elena Rinaldi'),
+  showsEmail: renderedText.includes('elena@studioaurora.it'),
+  noDevSpace: !renderedText.includes('Spazio locale'),
+  noDevUser: !renderedText.includes('Operatore locale'),
+  noDevEmail: !renderedText.includes('sviluppo locale'),
   crumb: document.querySelector('.bo-crumb') ? document.querySelector('.bo-crumb').textContent : null,
   greeting: document.querySelector('#view-module h1, #view-module h2') ? document.querySelector('#view-module h1, #view-module h2').textContent : null,
   scrollWidth: document.documentElement.scrollWidth,
