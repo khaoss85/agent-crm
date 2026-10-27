@@ -237,14 +237,26 @@ async function runBrowser({ width, height }) {
       page,
     ], 120000);
     assert.equal(run.status, 0, `chromium exits 0 (stderr: ${(run.stderr ?? '').slice(-500)})`);
-    const dom = await runChromium([
-      '--headless', '--dump-dom',
-      `--window-size=${width},${height}`,
-      '--virtual-time-budget=8000',
-      page,
-    ], 120000);
-    assert.equal(dom.status, 0, 'the probe run exits 0');
-    return { out, dom: dom.stdout };
+    // The dump can race the harness module on a loaded runner: poll the
+    // probe run until the module marks itself done (bounded — a module that
+    // throws still marks itself done with its cause, via finishHarness).
+    const READY_TITLE = '<title>shell-identity-ready</title>';
+    let dom = '';
+    let probeReady = false;
+    const deadline = Date.now() + 60000;
+    while (!probeReady && Date.now() < deadline) {
+      const probeRun = await runChromium([
+        '--headless', '--dump-dom',
+        `--window-size=${width},${height}`,
+        '--virtual-time-budget=8000',
+        page,
+      ], 120000);
+      assert.equal(probeRun.status, 0, 'the probe run exits 0');
+      dom = probeRun.stdout;
+      probeReady = dom.includes(READY_TITLE);
+      if (!probeReady) await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    return { out, dom, probeReady };
   } finally {
     server.close();
   }
@@ -277,8 +289,8 @@ function assertIdentityProbe(probe) {
 }
 
 test('the session shell renders in a real browser: desktop 1440 PNG', { skip: CHROMIUM ? false : 'no usable Chromium here (set CHROMIUM_BIN)' }, async () => {
-  const { out, dom } = await runBrowser({ width: 1440, height: 900 });
-  assert.ok(dom.includes('<title>shell-identity-ready</title>'), 'the harness module ran to completion in the page');
+  const { out, dom, probeReady } = await runBrowser({ width: 1440, height: 900 });
+  assert.ok(probeReady, `the harness module ran to completion in the page (dump ${dom.length} chars)`);
   const probe = readProbe(dom);
   assertIdentityProbe(probe);
   const shot = pngSize(out);
@@ -289,8 +301,8 @@ test('the session shell renders in a real browser: desktop 1440 PNG', { skip: CH
 });
 
 test('the session shell renders in a real browser: phone 390 PNG without sideways scroll', { skip: CHROMIUM ? false : 'no usable Chromium here (set CHROMIUM_BIN)' }, async () => {
-  const { out, dom } = await runBrowser({ width: 390, height: 844 });
-  assert.ok(dom.includes('<title>shell-identity-ready</title>'), 'the harness module ran to completion in the page');
+  const { out, dom, probeReady } = await runBrowser({ width: 390, height: 844 });
+  assert.ok(probeReady, `the harness module ran to completion in the page (dump ${dom.length} chars)`);
   const probe = readProbe(dom);
   assertIdentityProbe(probe);
   assert.ok(probe.scrollWidth <= probe.innerWidth, `nothing paints sideways under 700px (${probe.scrollWidth} > ${probe.innerWidth})`);
