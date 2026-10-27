@@ -467,4 +467,44 @@ export function formatMinorUnits(minorUnits, currency) {
   return `${String(currency ?? '')} ${sign}${grouped}.${cents}`.trim();
 }
 
+/**
+ * Regola per tutte le schermate (backlog:9da124e5): un errore tecnico non si
+ * mostra mai al cliente — niente codici (`NOT_FOUND`), niente nomi di
+ * pacchetti (`space-permissions`), niente comandi (`npm run …`), niente
+ * percorsi (`docs/…`). Ogni lettura fallita risponde un testo umano con un
+ * invito a riprovare; il dettaglio tecnico va solo nel log, mai nel DOM.
+ *
+ * @param {unknown} error the rejection from `client.request`
+ * @param {{ failed: string, notComposed?: string|null, log?: (message: string, cause: unknown) => void }} options
+ *   `failed`: the human text for a generic failure. `notComposed`: the human
+ *   text when the backend answers 404/NOT_FOUND for a missing composition
+ *   (a distinct state: retrying cannot help, enabling can). Without it a
+ *   404 also answers `failed`.
+ */
+export function humanReadError(error, { failed, notComposed = null, log = null } = {}) {
+  const record = error !== null && typeof error === 'object' ? error : {};
+  const code = typeof record.code === 'string' ? record.code : 'UNKNOWN';
+  const status = typeof record.status === 'number' ? record.status : null;
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const report = typeof log === 'function'
+    ? log
+    : (typeof console !== 'undefined' && typeof console.error === 'function'
+      ? (text, cause) => console.error(text, cause)
+      : () => {});
+  report('[bo] lettura fallita', { code, status, message });
+  if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
+  return failed;
+}
+
+/**
+ * Whether a read failure means "not composed here" (404/NOT_FOUND) rather
+ * than a transient failure. Views keep their own human texts; this only
+ * shares the predicate so the branches cannot drift apart.
+ * @param {unknown} error the rejection from `client.request`
+ */
+export function isNotComposedFailure(error) {
+  const record = error !== null && typeof error === 'object' ? error : {};
+  return record.code === 'NOT_FOUND' || record.status === 404;
+}
+
 export { IMMUTABLE_FIELDS };

@@ -28,6 +28,7 @@
 // — never innerHTML with data, so a hostile account or adapter label is
 // inert text, never markup.
 
+import { humanReadError } from './admin-core.js';
 import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -380,13 +381,7 @@ function el(doc, tag, cls, text) {
 }
 
 function errorOf(error) {
-  if (error !== null && typeof error === 'object') {
-    const body = /** @type {{ message?: unknown, code?: unknown }} */ (error).message
-      ?? /** @type {{ message?: unknown }} */ (error).code;
-    if (typeof body === 'string' && body !== '') return body;
-  }
-  if (typeof error === 'string' && error !== '') return error;
-  return 'La richiesta non è riuscita.';
+  return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
 }
 
 /**
@@ -445,13 +440,10 @@ export function createConnectorDetailView(deps) {
       state.units = Array.isArray(catalog?.units) ? catalog.units : null;
     } catch (error) {
       // No silent fallback: the dependency list still renders with the
-      // declared unit names, but the failure stays visible with its code.
+      // declared unit names, and the failure stays visible as a human
+      // note — never with its code.
       state.units = null;
-      state.catalogError = error !== null && typeof error === 'object'
-        && typeof /** @type {{ code?: unknown }} */ (error).code === 'string'
-        && /** @type {{ code?: unknown }} */ (error).code !== ''
-        ? /** @type {{ code: string }} */ (error).code
-        : errorOf(error);
+      state.catalogError = errorOf(error);
     }
     if (!state.channelsReady || state.spaceId.trim() === '') return;
     try {

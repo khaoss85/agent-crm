@@ -241,7 +241,7 @@ test('labels stay Italian and honest on unknown values', () => {
   assert.equal(channelLabel(''), 'Canale');
   assert.equal(feedKindLabel('applied'), 'registrato');
   assert.equal(feedKindLabel('quarantined'), 'in attesa di decisione');
-  assert.equal(feedKindLabel('dead-letter', 'CHANNEL_SEND_FAILED'), 'invio fermo (CHANNEL_SEND_FAILED)');
+  assert.equal(feedKindLabel('dead-letter', 'CHANNEL_SEND_FAILED'), 'invio fermo');
   assert.equal(timeAgo('2026-10-25T11:59:30.000Z', NOW), 'adesso');
   assert.equal(timeAgo('2026-10-25T11:30:00.000Z', NOW), '30 minuti fa');
   assert.equal(timeAgo('2026-10-25T09:00:00.000Z', NOW), '3 ore fa');
@@ -259,7 +259,7 @@ test('feed lists newest-first events without payload or provider wording', () =>
   }));
   assert.equal(items.length, 2);
   assert.deepEqual(items[0], { at: '2026-10-25T11:30:00.000Z', arrow: '←', channel: 'WhatsApp', text: 'registrato' });
-  assert.equal(items[1].text, 'invio fermo (CHANNEL_SEND_FAILED)');
+  assert.equal(items[1].text, 'invio fermo');
   assert.deepEqual(syncFeedItems(null), []);
 });
 
@@ -404,7 +404,8 @@ test('the view degrades honestly: no space, no channels, failed read', async () 
   const failed = renderView({ client: { failActivity: new Error('giù') } });
   await failed.view.render();
   await flush();
-  assert.ok(failed.mount.textContent.includes('giù'));
+  assert.ok(failed.mount.textContent.includes('non è riuscita'));
+  assert.ok(!failed.mount.textContent.includes('giù'));
   assert.equal(failed.toasts.filter((toast) => toast.isError).length, 1);
   assert.ok(!failed.mount.textContent.includes('Tutto a posto'));
 });

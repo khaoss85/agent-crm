@@ -1,6 +1,7 @@
 // @ts-check
 
 import { createCustomerListView } from './admin-clienti.js';
+import { humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /**
@@ -112,7 +113,9 @@ export function createCustomerDataView(deps) {
     try {
       schema = await client.request('/api/schema');
     } catch (error) {
-      mount.appendChild(el('p', 'field-error', error?.message ?? 'Could not load the schema'));
+      mount.appendChild(el('p', 'field-error', humanReadError(error, {
+        failed: 'Lo schema non si è potuto leggere. Riprova più tardi.',
+      })));
       return;
     }
     const meta = schema?.domains?.['customer-data']?.metadata ?? schema?.domains?.['customer-data'];
@@ -120,7 +123,7 @@ export function createCustomerDataView(deps) {
       // Optional package, not composed: name it instead of a blank screen —
       // a reachable route that renders nothing reads as broken navigation.
       mount.appendChild(el('p', 'empty customer-data-uncomposed',
-        'Clienti non composto in questo spazio: il server non pubblica il dominio (manca il pacchetto customer-data).'));
+        'Clienti non composto in questo spazio.'));
       return;
     }
 
@@ -136,7 +139,9 @@ export function createCustomerDataView(deps) {
       listBox.textContent = '';
       const fallback = doc.createElement('p');
       fallback.setAttribute('class', 'bo-muted');
-      fallback.textContent = `Clienti non disponibili: ${error?.message ?? 'errore sconosciuto'}`;
+      fallback.textContent = humanReadError(error, {
+        failed: 'Clienti non disponibili: la lettura non è riuscita. Riprova più tardi.',
+      });
       listBox.appendChild(fallback);
     });
 
@@ -374,7 +379,7 @@ export function createCustomerDataView(deps) {
       const response = await client.request(`/api/modules/${module}/records?limit=100`);
       return { items: response.items ?? [], unreadable: null };
     } catch (error) {
-      return { items: [], unreadable: error?.message ?? 'the request failed' };
+      return { items: [], unreadable: humanReadError(error, { failed: 'la lettura non è riuscita' }) };
     }
   }
 
@@ -401,7 +406,9 @@ export function createCustomerDataView(deps) {
     try {
       profile = await client.request(`/api/customer-data/profile/${encodeURIComponent(resource)}/${encodeURIComponent(id)}`);
     } catch (error) {
-      mount.appendChild(el('p', 'field-error', error?.message ?? 'Could not load the profile'));
+      mount.appendChild(el('p', 'field-error', humanReadError(error, {
+        failed: 'Il profilo non si è potuto leggere. Riprova più tardi.',
+      })));
       return;
     }
     const panel = el('div', 'customer-profile');

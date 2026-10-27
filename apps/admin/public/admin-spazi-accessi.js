@@ -38,6 +38,7 @@
 // never innerHTML with data, so hostile space, member or role strings are
 // inert text, never markup.
 
+import { humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /**
@@ -288,7 +289,9 @@ export function createSpaziAccessiView(deps) {
       state.members = null;
       state.membersUnavailable = failure.code === 'SPINE_MEMBERSHIP_FORBIDDEN' || failure.status === 403
         ? 'Non hai il permesso di vedere il team: il server ha rifiutato la lettura, e questa non \u00E8 una lista vuota.'
-        : `Il team non si \u00E8 potuto leggere (${failure.code}). Niente \u00E8 stato inventato al suo posto.`;
+        : humanReadError(failure, {
+          failed: 'Il team non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi: niente \u00E8 stato inventato al suo posto.',
+        });
     }
     try {
       const answer = await client.request(
@@ -299,9 +302,10 @@ export function createSpaziAccessiView(deps) {
     } catch (error) {
       const failure = errorOf(error);
       state.overrides = null;
-      state.switchesUnavailable = failure.code === 'NOT_FOUND' || failure.status === 404
-        ? 'I permessi AI non sono composti in questo spazio: la schermata li mostra quando il pacchetto space-permissions \u00E8 attivo.'
-        : `I permessi AI non si sono potuti leggere (${failure.code}).`;
+      state.switchesUnavailable = humanReadError(failure, {
+        failed: 'I permessi AI non si sono potuti leggere. Riprova pi\u00F9 tardi.',
+        notComposed: 'I permessi AI non sono attivi in questo spazio: la schermata li mostra quando saranno attivi.',
+      });
     }
   }
 

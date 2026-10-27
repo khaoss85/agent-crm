@@ -25,6 +25,7 @@
 // createElement + textContent/setAttribute — never innerHTML with data, so a
 // hostile channel, account or adapter label is inert text, never markup.
 
+import { humanReadError } from './admin-core.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -275,13 +276,7 @@ function el(doc, tag, cls, text) {
 }
 
 function errorOf(error) {
-  if (error !== null && typeof error === 'object') {
-    const body = /** @type {{ message?: unknown, code?: unknown }} */ (error).message
-      ?? /** @type {{ message?: unknown }} */ (error).code;
-    if (typeof body === 'string' && body !== '') return body;
-  }
-  if (typeof error === 'string' && error !== '') return error;
-  return 'La richiesta non è riuscita.';
+  return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
 }
 
 /**

@@ -224,7 +224,7 @@ test('missing permission rows render an honest note, never invented switches', a
   const { mount, view: v } = view({ client: stubClient({ fail: { overrides: missing } }) });
   await v.render();
   await flush();
-  assert.match(text(mount), /non sono composti in questo spazio/);
+  assert.match(text(mount), /non sono attivi in questo spazio/);
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 0);
 });
 
