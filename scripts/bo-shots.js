@@ -8,8 +8,8 @@
  * at 390x1600:
  *
  *   login, oggi, clienti, cliente, pipeline, calendario, sequenze, reporting,
- *   personalizzazione, catalogo, stato-sync, spazi-accessi, componenti
- *   (the F6-02 component catalog)
+ *   personalizzazione, catalogo, stato-sync, spazi-accessi, connettori,
+ *   componenti (the F6-02 component catalog)
  *
  * Each screen renders the real /bo page — the shell (`createShellView` from
  * `admin-shell.js`: sidebar plus topbar with the path and the AI bar) with
@@ -66,6 +66,7 @@ export const SCREEN_NAMES = Object.freeze([
   'catalogo',
   'stato-sync',
   'spazi-accessi',
+  'connettori',
   'componenti',
 ]);
 
@@ -475,6 +476,32 @@ const DEMO_MEMBERS = [
   { subject: 'marco', role: 'operator', status: 'active' },
 ];
 
+// The connectors screen (BO-F6-02): every catalog channel has a composed
+// fake adapter and no connection yet, so all eight rows paint the
+// da-collegare preview with its guided-flow button through the system
+// library — the "after" state of the F6-02 migration.
+const DEMO_CONNECTORS_SCHEMA = {
+  domains: {
+    channels: {
+      metadata: {
+        channelsContract: 1,
+        adapters: [
+          { channel: 'whatsapp', name: 'wa-fake', version: 1, label: 'WhatsApp (prova)' },
+          { channel: 'instagram', name: 'ig-fake', version: 1, label: 'Instagram (prova)' },
+          { channel: 'facebook', name: 'fb-fake', version: 1, label: 'Facebook (prova)' },
+          { channel: 'tiktok', name: 'tt-fake', version: 1, label: 'TikTok (prova)' },
+          { channel: 'sms', name: 'sms-fake', version: 1, label: 'SMS (prova)' },
+          { channel: 'email', name: 'mail-fake', version: 1, label: 'Email (prova)' },
+          { channel: 'voice', name: 'voice-fake', version: 1, label: 'Chiamate (prova)' },
+          { channel: 'site-form', name: 'form-fake', version: 1, label: 'Form del sito (prova)' },
+        ],
+      },
+    },
+  },
+};
+
+const DEMO_CONNECTORS_SYNC = { connectors: [] };
+
 // ---------------------------------------------------------------------------
 // Screens. `module` is the real view served from apps/admin/public (null for
 // the static login page). The harness page first runs the shell prelude
@@ -504,6 +531,7 @@ export const SCREENS = Object.freeze([
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Stripe collegato'] },
   { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto sincronizzato', 'WhatsApp'] },
   { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-accessi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
+  { name: 'connettori', module: 'admin-connectors.js', ready: 'connettori-ready', expect: ['Cosa succede quando colleghi:', 'Collega in 3 passi'] },
   { name: 'componenti', module: 'admin-ui-catalog.js', ready: 'componenti-ready', expect: ['Catalogo dei componenti', 'Primario scuro'] },
 ]);
 
@@ -528,6 +556,9 @@ export const SHELL_SCREENS = Object.freeze({
   catalogo: { id: '', label: 'Catalogo prodotti' },
   'stato-sync': { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' },
   'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
+  // The connectors screen (BO-F6-02): the same sidebar voice and path the
+  // app crumbs for it, exactly like shellScreenFor in app.js.
+  connettori: { id: 'impostazioni', label: 'Connettori' },
   // The component catalog (BO-F6-02): an honest crumb with no sidebar
   // highlight, exactly like shellScreenFor in apps/admin/public/app.js.
   componenti: { id: '', label: 'Componenti' },
@@ -905,6 +936,26 @@ document.getElementById('probe').textContent = JSON.stringify({
   switches: document.querySelectorAll('button[role="switch"]').length,
 });
 document.title = 'spazi-accessi-ready';`;
+    case 'connettori': return `
+import { createConnectorsView } from './admin-connectors.js';
+const SCHEMA = ${JSON.stringify(DEMO_CONNECTORS_SCHEMA)};
+const SYNC = ${JSON.stringify(DEMO_CONNECTORS_SYNC)};
+const client = {
+  async request(path) {
+    if (path === '/api/schema') return SCHEMA;
+    if (path.startsWith('/api/connectors?')) return SYNC;
+    throw new Error('unexpected request ' + path);
+  },
+};
+const storage = { getItem: () => 'locale', setItem: () => {}, removeItem: () => {} };
+const view = createConnectorsView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {}, storage });
+await view.render();
+document.getElementById('probe').textContent = JSON.stringify({
+  rows: document.querySelectorAll('#view-module .bo-connector-row').length,
+  previews: document.querySelectorAll('#view-module .bo-connect-preview').length,
+  flows: document.querySelectorAll('#view-module [data-action="connect-open"]').length,
+});
+document.title = 'connettori-ready';`;
     case 'componenti': return `
 import { createUiCatalogView } from './admin-ui-catalog.js';
 createUiCatalogView({ doc: document, mount: document.getElementById('view-module') }).render();
@@ -1126,7 +1177,9 @@ export function readProbe(stdout, name) {
  * calendario week holds seven day columns with the demo events and a
  * prefilled manual form, sequenze lists both sequences with detail and
  * steps, the catalog holds the product table with its Stripe state and
- * price-rule bands, spazi-accessi holds both spaces with both members. The
+ * price-rule bands, spazi-accessi holds both spaces with both members,
+ * connettori holds all eight channel rows with their connect previews and
+ * guided-flow buttons. The
  * per-screen counts for oggi/clienti/pipeline/reporting prove the demo
  * fixtures painted instead of an empty shell. Throws on the first mismatch.
  * @param {string} name
@@ -1213,6 +1266,16 @@ export function assertProbe(name, probe) {
       if (probe.spaces !== 2) throw new Error(`spazi-accessi: the probe holds ${String(probe.spaces)} spaces, expected 2`);
       if (probe.members !== 2) throw new Error(`spazi-accessi: the probe holds ${String(probe.members)} members, expected 2`);
       if (probe.switches !== 5) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 5`);
+      return;
+    }
+    case 'connettori': {
+      // Eight is the CONNECTOR_CATALOG length: every connectable channel
+      // paints its row, its what-happens preview and its guided-flow button.
+      if (probe.rows !== 8) throw new Error(`connettori: the probe lists ${String(probe.rows)} channel rows, expected 8`);
+      if (probe.previews !== 8) {
+        throw new Error(`connettori: the probe lists ${String(probe.previews)} connect previews, expected 8`);
+      }
+      if (probe.flows !== 8) throw new Error(`connettori: the probe lists ${String(probe.flows)} guided flows, expected 8`);
       return;
     }
     case 'componenti': {
