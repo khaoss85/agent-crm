@@ -468,13 +468,15 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
     modules: Object.freeze({
       get(name) {
         const module = modules.get(name);
-        return Object.freeze({
-          name: module.name,
-          version: module.version,
-          description: module.description,
-          entities: module.entities,
-          service: portableService(module.service),
-        });
+        // The generic module surface (`/api/modules`) resolves through this
+        // accessor and refuses anything that is not an exposable generated
+        // definition (backlog:22f40e0e: the /bo read `Generated module not
+        // found` on every manifest-selected record). The accessor returns
+        // the registry definition with the wrapped service, the same shape
+        // `list()` publishes minus its service, so the two agree by
+        // construction and the facade keeps its lexical allowlist: every
+        // other key on the definition is function-free metadata.
+        return Object.freeze({ ...module, service: portableService(module.service) });
       },
       list: () => modules.list(),
       schema: () => modules.schema(),
