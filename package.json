@@ -30,6 +30,7 @@
     "distribution:assemble-create": "node scripts/assemble-create-accordo.js",
     "gtm:check": "npm run site:check && node scripts/generate-llms.js --check && npm run distribution:check && npm run surface:check",
     "site:shots": "npm run site:build && node scripts/site-shots.js",
+    "bo:shots": "node scripts/bo-shots.js",
     "tour": "node --no-warnings scripts/tour.js",
     "bench:prompts": "node benchmarks/harness/generate-prompts.js",
     "bench:prepare": "node benchmarks/harness/prepare.js",
