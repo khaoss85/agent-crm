@@ -23,6 +23,7 @@ import {
   healthAuthority,
   healthLabel,
   healthTone,
+  syncAgo,
   syncChannelRows,
   syncFeedItems,
   syncFixItems,
@@ -132,13 +133,14 @@ test('Stato sync owns its route and the settings entry points at it', () => {
 test('indicator is ok with a count and fix with N things to fix', () => {
   const ok = syncIndicator(activityOf(), NOW);
   assert.equal(ok.tone, 'ok');
-  assert.equal(ok.title, 'Tutto a posto');
-  assert.ok(ok.detail.includes('Ultimo aggiornamento 30 minuti fa'));
-  assert.ok(ok.detail.includes('10 messaggi entrati'));
+  assert.equal(ok.title, 'Tutto sincronizzato');
+  assert.ok(ok.detail.includes('Ultimo aggiornamento 30 min fa'));
+  assert.ok(ok.detail.includes('10 eventi sincronizzati oggi, in entrata e in uscita.'));
 
   const one = syncIndicator(activityOf({ connections: [entryOf({ status: 'suspended', health: 'down' })] }), NOW);
   assert.equal(one.tone, 'fix');
-  assert.equal(one.title, '1 cosa da sistemare');
+  assert.equal(one.title, 'Quasi tutto sincronizzato');
+  assert.equal(one.count, 1);
 
   const two = syncIndicator(activityOf({
     connections: [
@@ -146,7 +148,8 @@ test('indicator is ok with a count and fix with N things to fix', () => {
       entryOf({ connectionKey: 'b', status: 'revoked', health: 'down' }),
     ],
   }), NOW);
-  assert.equal(two.title, '2 cose da sistemare');
+  assert.equal(two.title, 'Quasi tutto sincronizzato');
+  assert.equal(two.count, 2);
 
   const empty = syncIndicator(activityOf({ connections: [], feed: [], lastActivityAt: null }), NOW);
   assert.equal(empty.tone, 'ok');
@@ -154,7 +157,25 @@ test('indicator is ok with a count and fix with N things to fix', () => {
 
   const unknown = syncIndicator(null, NOW);
   assert.equal(unknown.tone, 'wait');
-  assert.ok(!unknown.title.includes('Tutto a posto'));
+  assert.ok(!unknown.title.includes('Tutto sincronizzato'));
+});
+
+test('syncAgo reads seconds, then minutes, then the longer wording', () => {
+  assert.equal(syncAgo('2026-10-25T11:59:58.000Z', NOW), 'adesso');
+  assert.equal(syncAgo('2026-10-25T11:59:38.000Z', NOW), '22 s fa');
+  assert.equal(syncAgo('2026-10-25T11:58:00.000Z', NOW), '2 min fa');
+  assert.equal(syncAgo('2026-10-25T11:30:00.000Z', NOW), '30 min fa');
+  assert.equal(syncAgo('2026-10-25T10:00:00.000Z', NOW), timeAgo('2026-10-25T10:00:00.000Z', NOW));
+  assert.equal(syncAgo(null, NOW), '—');
+  assert.equal(syncAgo('not-a-date', NOW), '—');
+});
+
+test('syncing keeps the count and reads as in corso', () => {
+  const running = syncIndicator(activityOf({ connections: [entryOf({ status: 'suspended', health: 'down' })] }), NOW, { syncing: true });
+  assert.equal(running.tone, 'syncing');
+  assert.equal(running.title, 'Sincronizzazione in corso');
+  assert.ok(running.detail.includes('in corso…'));
+  assert.equal(running.count, 1);
 });
 
 test('a broken channel says what to do, with a real destination', () => {
@@ -280,9 +301,13 @@ test('the screen renders indicator, fixes, table and feed from live activity', a
   await flush();
   const text = mount.textContent;
   assert.equal(toasts.length, 0);
-  for (const expected of ['Stato sync', '1 cosa da sistemare', 'Da sistemare', 'sospeso', 'Riattiva da Connettori', 'Canali', 'WhatsApp', 'Instagram', 'Sincronizza ora', 'In tempo reale', '← entra']) {
+  for (const expected of ['IMPOSTAZIONI', 'Personalizzazione', 'Catalogo prodotti', 'Stato sync', 'Spazi e accessi', 'Quasi tutto sincronizzato', 'Da sistemare 1', 'sospeso', 'Riattiva da Connettori', 'Canali', 'WhatsApp', 'Instagram', 'Sincronizza ora', 'In tempo reale', '← entra']) {
     assert.ok(text.includes(expected), `screen shows ${expected}`);
   }
+  // The Stato sync tab is the open one and carries the fix count.
+  const tabs = mount.findAll('button').filter((node) => node.getAttribute('data-tab') !== null);
+  assert.deepEqual(tabs.map((node) => node.textContent), ['Personalizzazione', 'Catalogo prodotti', 'Stato sync1', 'Spazi e accessi']);
+  assert.equal(tabs.find((node) => node.getAttribute('data-tab') === 'stato-sync').getAttribute('aria-selected'), 'true');
 });
 
 test('the ok screen says nothing is broken and still shows the table', async () => {
@@ -290,10 +315,66 @@ test('the ok screen says nothing is broken and still shows the table', async () 
   await view.render();
   await flush();
   const text = mount.textContent;
-  assert.ok(text.includes('Tutto a posto'));
-  assert.ok(text.includes('Niente da sistemare.'));
+  assert.ok(text.includes('Tutto sincronizzato'));
+  assert.ok(text.includes('✓ Niente da sistemare. Se qualcosa si blocca, ti avviso io.'));
+  assert.ok(text.includes('Ultimo aggiornamento'));
+  assert.ok(text.includes('eventi sincronizzati oggi, in entrata e in uscita.'));
   assert.ok(text.includes('WhatsApp'));
   assert.equal(mount.findAll('table').length, 1);
+  // No badge on the Stato sync tab while there is nothing to fix.
+  const tab = mount.findAll('button').find((node) => node.getAttribute('data-tab') === 'stato-sync');
+  assert.ok(!tab.textContent.includes('da sistemare'));
+});
+
+test('every control on the screen carries the visual-system classes', async () => {
+  for (const activity of [
+    activityOf(),
+    activityOf({ connections: [entryOf({ status: 'suspended', health: 'down' })] }),
+  ]) {
+    const { mount, view } = renderView({ client: { activity } });
+    await view.render();
+    await flush();
+    const controls = [
+      ...mount.findAll('button'),
+      ...mount.findAll('select'),
+      ...mount.findAll('input'),
+      ...mount.findAll('textarea'),
+    ];
+    assert.ok(controls.length > 0, 'the screen renders controls');
+    for (const control of controls) {
+      const classes = (control.getAttribute('class') ?? '').split(/\s+/);
+      assert.ok(classes.some((cls) => cls === 'ui' || cls.startsWith('ui-')), `control keeps a ui-* class: ${control.textContent}`);
+    }
+  }
+});
+
+test('the hero pull updates every syncable connection with one toast', async () => {
+  const { mount, client, view, toasts } = renderView({
+    client: {
+      activity: activityOf({
+        connections: [
+          entryOf(),
+          entryOf({ connectionKey: 'ig-1', channel: 'instagram', account: 'palestra.esempio' }),
+        ],
+      }),
+    },
+  });
+  await view.render();
+  await flush();
+  const hero = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'sync-all');
+  assert.equal(hero.textContent, 'Sincronizza ora');
+  // A double click on the global pull is a single pass, like the row guard.
+  hero.dispatch('click');
+  hero.dispatch('click');
+  await flush(12);
+  const pulls = client.calls.filter((call) => call.path === '/api/connectors/sync-now');
+  assert.equal(pulls.length, 2);
+  assert.deepEqual(pulls.map((pull) => JSON.parse(pull.options.body).connectionKey).sort(), ['ig-1', 'wa-1']);
+  assert.equal(toasts.filter((toast) => !toast.isError).length, 1);
+  // After the pass the hero button is back and enabled.
+  const rebuilt = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'sync-all');
+  assert.equal(rebuilt.textContent, 'Sincronizza ora');
+  assert.equal(rebuilt.getAttribute('disabled'), null);
 });
 
 test('hostile server text stays text, never markup', async () => {
@@ -318,9 +399,10 @@ test('Sincronizza ora pulls once per click and reloads the screen', async () => 
   });
   await view.render();
   await flush();
-  // The failed import owns two controls with one job: the fix-item action
-  // and the table row button.
-  const buttons = mount.findAll('button').filter((node) => node.textContent === 'Sincronizza ora');
+  // The failed import owns two row-level controls with one job: the
+  // fix-item action and the table row button (the hero pull is the third
+  // `Sincronizza ora` on screen, with data-action="sync-all").
+  const buttons = mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'sync-now');
   assert.equal(buttons.length, 2);
   // A double click on the same control joins the pending pull: one request.
   buttons[0].dispatch('click');
@@ -338,7 +420,7 @@ test('a failed pull toasts the cause and leaves the button usable', async () => 
   });
   await view.render();
   await flush();
-  mount.findAll('button').find((node) => node.textContent === 'Sincronizza ora').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'sync-now').dispatch('click');
   await flush(12);
   assert.equal(toasts.filter((toast) => toast.isError).length, 1);
   assert.ok(mount.findAll('button').some((node) => node.textContent === 'Sincronizza ora'));
@@ -351,13 +433,13 @@ test('a successful pull releases the guard so the next click pulls again', async
   await view.render();
   await flush();
   const pulls = () => client.calls.filter((call) => call.path === '/api/connectors/sync-now');
-  mount.findAll('button').find((node) => node.textContent === 'Sincronizza ora').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'sync-now').dispatch('click');
   await flush(12);
   assert.equal(pulls().length, 1);
   // The rebuilt controls after a successful pull are enabled: a second
   // click performs a second pull instead of staying disabled for the
   // session.
-  const rebuilt = mount.findAll('button').filter((node) => node.textContent === 'Sincronizza ora');
+  const rebuilt = mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'sync-now');
   assert.equal(rebuilt.length, 2);
   rebuilt[0].dispatch('click');
   await flush(12);
@@ -408,7 +490,9 @@ test('the view degrades honestly: no space, no channels, failed read', async () 
   assert.ok(failed.mount.textContent.includes('non è riuscita'));
   assert.ok(!failed.mount.textContent.includes('giù'));
   assert.equal(failed.toasts.filter((toast) => toast.isError).length, 1);
-  assert.ok(!failed.mount.textContent.includes('Tutto a posto'));
+  assert.ok(!failed.mount.textContent.includes('Tutto sincronizzato'));
+  // The tabs stay on screen even in the honest edge states.
+  assert.ok(failed.mount.textContent.includes('IMPOSTAZIONI'));
 });
 
 test('badge count adds the sync attention rows when a space is selected', async () => {

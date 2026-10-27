@@ -23,7 +23,7 @@
 // hostile channel, account or adapter label is inert text, never markup.
 
 import { humanReadError } from './admin-core.js';
-import { ACTIVE_SPACE_KEY } from './admin-shell.js';
+import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -135,13 +135,39 @@ function entriesOf(activity) {
 }
 
 /**
- * The always-visible honest indicator: `fix` with the count as soon as one
- * fix item exists, `ok` otherwise. The detail never invents an event count —
- * the payload carries none — only the freshest movement it actually saw.
- * @param {any} activity
+ * Short relative time for the hero subtitle: seconds while under a minute
+ * (`22 s fa`, `adesso` just now), minutes while under an hour, then the
+ * longer `timeAgo` wording.
+ * @param {unknown} iso
  * @param {number} [nowMs]
  */
-export function syncIndicator(activity, nowMs = Date.now()) {
+export function syncAgo(iso, nowMs = Date.now()) {
+  if (typeof iso !== 'string' || iso === '') return '—';
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return '—';
+  const deltaSec = Math.floor((nowMs - at) / 1000);
+  if (deltaSec < 5) return 'adesso';
+  if (deltaSec < 60) return `${deltaSec} s fa`;
+  if (deltaSec < 3600) {
+    const minutes = Math.floor(deltaSec / 60);
+    return minutes === 1 ? '1 min fa' : `${minutes} min fa`;
+  }
+  return timeAgo(iso, nowMs);
+}
+
+/**
+ * The always-visible honest indicator (BO-F6-16): the prototype hero titles
+ * (`Quasi tutto sincronizzato` / `Tutto sincronizzato`, `Sincronizzazione
+ * in corso` while a pull runs), with the subtitle
+ * `Ultimo aggiornamento <tempo> · <n> eventi sincronizzati oggi, in entrata
+ * e in uscita.` `<n>` sums the `received` counters the activity payload
+ * carries — the only today-count the payload has; entries with no traffic
+ * keep an honest fallback, never a zero posing as measured.
+ * @param {any} activity
+ * @param {number} [nowMs]
+ * @param {{ syncing?: boolean }} [options]
+ */
+export function syncIndicator(activity, nowMs = Date.now(), { syncing = false } = {}) {
   // A null payload is an unread state, never an ok one: unknown must not
   // pose as fresh. The view only calls this with a loaded payload; the
   // empty-space case below (a real object with no connections) stays ok.
@@ -158,20 +184,19 @@ export function syncIndicator(activity, nowMs = Date.now()) {
   const received = entries.reduce((total, entry) => total
     + (entry !== null && typeof entry === 'object' && entry.inbox !== null && typeof entry.inbox === 'object'
       && Number.isSafeInteger(entry.inbox.received) && entry.inbox.received > 0 ? entry.inbox.received : 0), 0);
+  const tempo = syncing ? 'in corso…' : (lastAt === null ? null : syncAgo(lastAt, nowMs));
   const detail = entries.length === 0
     ? 'Nessun connettore collegato: collega il primo da Connettori.'
-    : lastAt === null
+    : tempo === null
       ? 'Ancora nessun movimento registrato.'
-      : `Ultimo aggiornamento ${timeAgo(lastAt, nowMs)} · ${received} messaggi entrati`;
-  if (items.length > 0) {
-    return {
-      tone: 'fix',
-      title: items.length === 1 ? '1 cosa da sistemare' : `${items.length} cose da sistemare`,
-      detail,
-      count: items.length,
-    };
+      : `Ultimo aggiornamento ${tempo} · ${received} eventi sincronizzati oggi, in entrata e in uscita.`;
+  if (syncing) {
+    return { tone: 'syncing', title: 'Sincronizzazione in corso', detail, count: items.length };
   }
-  return { tone: 'ok', title: 'Tutto a posto', detail, count: 0 };
+  if (items.length > 0) {
+    return { tone: 'fix', title: 'Quasi tutto sincronizzato', detail, count: items.length };
+  }
+  return { tone: 'ok', title: 'Tutto sincronizzato', detail, count: 0 };
 }
 
 /**
@@ -424,6 +449,7 @@ export function createSyncView(deps) {
     loaded: false,
     loadError: null,
     /** @type {Set<string>} */ syncing: new Set(),
+    syncingAll: false,
   };
 
   async function load() {
@@ -456,34 +482,72 @@ export function createSyncView(deps) {
   }
 
   function renderNote(text, cls = 'bo-sync-note') {
+    // BO-F6-16: the Impostazioni tabs are chrome, not data — they stay on
+    // screen in every state, with no badge while nothing is counted.
+    mount.appendChild(settingsTabs(doc, { activeId: 'stato-sync', fixCount: null, navigate: go }));
     mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
     mount.appendChild(el(doc, 'h2', undefined, 'Stato sync'));
     mount.appendChild(el(doc, 'p', cls, text));
   }
 
-  function renderIndicator(box, activity) {
-    const indicator = syncIndicator(activity);
-    const card = el(doc, 'div', 'bo-sync-indicator');
-    const dot = el(doc, 'span', `bo-sync-dot bo-sync-dot-${indicator.tone}`);
+  // The prototype hero (BO-F6-16): eyebrow, pulsing dot, big title, fresh
+  // subtitle and the global pull on the right (full-width on a phone).
+  // While a pull runs the dot turns blue, the button reads `Sincronizzo…`
+  // with a spinner and ignores clicks, and the subtitle reads `in corso…`;
+  // afterwards the previous title returns.
+  function renderHero(box, activity) {
+    const syncing = state.syncingAll || state.syncing.size > 0;
+    const indicator = syncIndicator(activity, Date.now(), { syncing });
+    box.appendChild(settingsTabs(doc, { activeId: 'stato-sync', fixCount: indicator.count, navigate: go }));
+    box.appendChild(el(doc, 'p', 'bo-kicker', 'Stato sync'));
+    const hero = el(doc, 'div', 'bo-sync-hero');
+    const main = el(doc, 'div', 'bo-sync-hero-main');
+    const head = el(doc, 'div', 'bo-sync-hero-head');
+    const dot = el(doc, 'span', `bo-sync-hero-dot bo-sync-hero-dot-${indicator.tone}`);
     dot.setAttribute('aria-hidden', 'true');
-    card.appendChild(dot);
-    const textBox = el(doc, 'div', 'bo-sync-indicator-text');
-    const titleRow = el(doc, 'p', 'bo-sync-title');
-    titleRow.appendChild(el(doc, 'span', undefined, indicator.title));
-    const badge = el(doc, 'span', 'badge', indicator.tone === 'fix' ? 'da sistemare' : indicator.tone === 'wait' ? 'in attesa' : 'ok');
-    badge.setAttribute('data-authority', indicator.tone === 'fix' ? 'human' : indicator.tone === 'wait' ? 'policy' : 'accord');
-    titleRow.appendChild(badge);
-    textBox.appendChild(titleRow);
-    textBox.appendChild(el(doc, 'p', 'bo-sync-detail', indicator.detail));
-    card.appendChild(textBox);
-    box.appendChild(card);
+    head.appendChild(dot);
+    head.appendChild(el(doc, 'h1', 'bo-sync-hero-title', indicator.title));
+    main.appendChild(head);
+    main.appendChild(el(doc, 'p', 'bo-sync-hero-sub', indicator.detail));
+    hero.appendChild(main);
+    hero.appendChild(renderHeroPull(activity, syncing));
+    box.appendChild(hero);
+  }
+
+  // The global pull: every syncable connection through the same
+  // `sync-now-channel` path as the per-row buttons (no new backend), one
+  // toast at the end, a second click ignored while it runs.
+  function renderHeroPull(activity, syncing) {
+    const keys = syncChannelRows(activity)
+      .filter((row) => row.canSyncNow)
+      .map((row) => row.key);
+    const button = el(
+      doc,
+      'button',
+      'bo-sync-hero-pull',
+      syncing ? 'Sincronizzo…' : 'Sincronizza ora',
+    );
+    button.setAttribute('type', 'button');
+    button.setAttribute('data-action', 'sync-all');
+    if (syncing) {
+      const spin = el(doc, 'span', 'bo-sync-spin');
+      spin.setAttribute('aria-hidden', 'true');
+      button.appendChild(spin);
+    }
+    if (syncing || keys.length === 0) button.setAttribute('disabled', '');
+    button.addEventListener('click', () => {
+      void syncAll(keys);
+    });
+    return button;
   }
 
   function renderFixes(box, activity) {
-    box.appendChild(el(doc, 'h3', undefined, 'Da sistemare'));
     const items = syncFixItems(activity);
+    // BO-F6-16: the section names its count like the prototype
+    // (`Da sistemare <n>`); the quiet banner is the prototype wording.
+    box.appendChild(el(doc, 'h3', undefined, items.length === 0 ? 'Da sistemare' : `Da sistemare ${items.length}`));
     if (items.length === 0) {
-      box.appendChild(el(doc, 'p', 'bo-sync-note', 'Niente da sistemare. Se qualcosa si blocca, lo vedi qui.'));
+      box.appendChild(el(doc, 'p', 'bo-sync-note', '✓ Niente da sistemare. Se qualcosa si blocca, ti avviso io.'));
       return;
     }
     const list = el(doc, 'div', 'bo-sync-fixes');
@@ -625,6 +689,38 @@ export function createSyncView(deps) {
     render();
   }
 
+  // The hero pull (BO-F6-16): one pass over every syncable connection
+  // through the same mutation path as the per-row buttons, a single toast
+  // at the end, and a second click ignored while it runs. A failed row
+  // stays retryable — the next render rebuilds every button enabled.
+  async function syncAll(keys) {
+    if (state.syncingAll || keys.length === 0) return;
+    state.syncingAll = true;
+    for (const key of keys) state.syncing.add(key);
+    render();
+    let failed = 0;
+    for (const key of keys) {
+      try {
+        await client.request('/api/connectors/sync-now', {
+          method: 'POST',
+          body: { spaceId: state.spaceId.trim(), connectionKey: key },
+        });
+      } catch {
+        failed += 1;
+      }
+    }
+    try {
+      await load();
+    } catch {
+      // load() records its own error; render() below shows it honestly.
+    }
+    state.syncingAll = false;
+    state.syncing.clear();
+    if (failed === 0) toast('Sincronizzazione aggiornata.');
+    else toast('Alcuni canali non si sono aggiornati: riprova con Sincronizza ora.', true);
+    render();
+  }
+
   function render() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     if (state.spaceId.trim() === '') {
@@ -645,9 +741,7 @@ export function createSyncView(deps) {
     }
     const box = el(doc, 'div', 'bo-sync');
     mount.appendChild(box);
-    box.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
-    box.appendChild(el(doc, 'h2', undefined, 'Stato sync'));
-    renderIndicator(box, state.activity);
+    renderHero(box, state.activity);
     renderFixes(box, state.activity);
     renderTable(box, state.activity);
     renderFeed(box, state.activity);

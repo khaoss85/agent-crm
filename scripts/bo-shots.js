@@ -502,7 +502,7 @@ export const SCREENS = Object.freeze([
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Stripe collegato'] },
-  { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto a posto', 'WhatsApp'] },
+  { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto sincronizzato', 'WhatsApp'] },
   { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-accessi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
   { name: 'componenti', module: 'admin-ui-catalog.js', ready: 'componenti-ready', expect: ['Catalogo dei componenti', 'Primario scuro'] },
 ]);
@@ -526,7 +526,7 @@ export const SHELL_SCREENS = Object.freeze({
   reporting: { id: 'reporting', label: 'Reporting' },
   personalizzazione: { id: 'impostazioni', label: 'Personalizzazione' },
   catalogo: { id: '', label: 'Catalogo prodotti' },
-  'stato-sync': { id: 'impostazioni', label: 'Stato sync' },
+  'stato-sync': { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' },
   'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
   // The component catalog (BO-F6-02): an honest crumb with no sidebar
   // highlight, exactly like shellScreenFor in apps/admin/public/app.js.
@@ -569,6 +569,7 @@ shellView.update({
     sequencesAvailable: true,
   }),
   activeScreenId: ${JSON.stringify(shell.id)},
+  aiScreenId: ${JSON.stringify(shell.ai ?? null)},
   screenLabel: ${JSON.stringify(shell.label)},
 });`;
 }
@@ -864,7 +865,7 @@ const storage = { getItem: () => 'locale', setItem: () => {}, removeItem: () => 
 const view = createSyncView({ doc: document, mount: document.getElementById('view-module'), client, storage, navigate: () => {}, toast: () => {} });
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
-  ok: document.getElementById('view-module').textContent.includes('Tutto a posto'),
+  ok: document.getElementById('view-module').textContent.includes('Tutto sincronizzato'),
 });
 document.title = 'stato-sync-ready';`;
     case 'spazi-accessi': return `
