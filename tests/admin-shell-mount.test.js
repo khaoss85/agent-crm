@@ -638,9 +638,22 @@ test('without sessionFor the served shell carries no profile; a failure degrades
       basePath: '/bo',
       sessionFor: async () => { throw Object.assign(new Error('down'), { code: 'PROFILE_DOWN' }); },
     });
-    const degraded = await failing.handle({ method: 'GET', path: '/bo/', headers: {}, cookies: {} });
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+    let degraded;
+    try {
+      degraded = await failing.handle({ method: 'GET', path: '/bo/', headers: {}, cookies: {} });
+    } finally {
+      console.warn = originalWarn;
+    }
     assert.equal(degraded.status, 200, 'a display failure never fails the shell');
     assert.ok(!degraded.body.toString('utf8').includes('id="bo-session"'));
+    assert.equal(warnings.length, 1, 'one diagnostic, never silent');
+    assert.ok(warnings[0].includes('bo-session profile unreadable'));
+    assert.ok(warnings[0].includes('Error'));
+    assert.ok(warnings[0].includes('path=/bo/'));
+    assert.ok(!warnings[0].includes('down'), 'no error text, no profile data');
   } finally {
     app.close();
   }

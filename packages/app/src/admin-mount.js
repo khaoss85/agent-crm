@@ -332,9 +332,17 @@ export function createAdminShellMount(app, options = {}) {
               path: rawPath,
             });
             html = injectSessionProfile(html, profile);
-          } catch {
+          } catch (error) {
             // Display-only: a profile failure serves the page without one —
-            // the shell keeps its local identity — never a failed shell.
+            // the shell keeps its local identity — never a failed shell. The
+            // cause still stays diagnosable (review gate: only the error name
+            // and the mount path, never bodies, cookies or profile data), so
+            // a broken integration reads differently from an absent profile.
+            try {
+              console.warn('bo-session profile unreadable:', error instanceof Error ? error.name : 'unknown', `path=${rawPath}`);
+            } catch {
+              // Logging must never break the shell.
+            }
           }
         }
         data = Buffer.from(html, 'utf8');
