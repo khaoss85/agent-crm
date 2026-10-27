@@ -78,7 +78,9 @@ test('the personalizzazione route parses, deeper paths stay invalid', () => {
   assert.equal(parseModuleRoute('#/personalizzazione/altro').view, 'invalid');
   assert.ok(isPersonalizzazioneTab('pacchetti'));
   assert.ok(!isPersonalizzazioneTab('nope'));
-  assert.deepEqual([...PERSONALIZZAZIONE_TABS], ['pacchetti', 'skill', 'connettori']);
+  assert.deepEqual([...PERSONALIZZAZIONE_TABS], ['skill', 'connettori', 'pacchetti']);
+  assert.equal(PERSONALIZZAZIONE_TAB_LABELS.skill, 'Skill AI');
+  assert.equal(PERSONALIZZAZIONE_TAB_LABELS.connettori, 'Connettori');
   assert.equal(PERSONALIZZAZIONE_TAB_LABELS.pacchetti, 'Pacchetti');
 });
 
@@ -132,7 +134,9 @@ test('Scopri shows cards with Prova and +, activating moves the unit to I tuoi',
     calls,
     preview: () => ({ headline: 'Canali: 1 riga. La Prova non scrive nulla.', counts: [{ module: 'channel-connection', count: 1 }], uncomposed: [], writes: 0 }),
   });
-  await createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId }).render();
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  view.test.state.tab = 'pacchetti';
+  await view.render();
   await flush();
   const text = mount.textContent;
   assert.ok(text.includes('Personalizzazione'));
@@ -160,6 +164,7 @@ test('I tuoi renders the status table and deactivating keeps history server-side
     calls,
   });
   const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  view.test.state.tab = 'pacchetti';
   await view.render();
   await flush();
   view.test.state.view = 'tuoi';
@@ -180,7 +185,9 @@ test('hostile server text stays text', async () => {
     { name: 'channels', kind: 'package', label: '<img src=x onerror=alert(1)>', blurb: '<script>alert(2)</script>' },
   ];
   const client = stubClient({ catalog: hostile, rows: [] });
-  await createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId }).render();
+  const hostileView = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  hostileView.test.state.tab = 'pacchetti';
+  await hostileView.render();
   await flush();
   assert.ok(mount.textContent.includes('<img src=x onerror=alert(1)>'));
   assert.ok(mount.textContent.includes('<script>alert(2)</script>'));
@@ -197,7 +204,9 @@ test('an empty space and an uncomposed server render honest notes', async () => 
   const missingDoc = createFakeDocument();
   const missingMount = createMount();
   const down = stubClient({ failCatalog: Object.assign(new Error('Not found'), { code: 'NOT_FOUND', status: 404 }) });
-  await createPersonalizzazioneView({ doc: missingDoc, mount: missingMount, client: down, navigate: () => {}, spaceId }).render();
+  const missingView = createPersonalizzazioneView({ doc: missingDoc, mount: missingMount, client: down, navigate: () => {}, spaceId });
+  missingView.test.state.tab = 'pacchetti';
+  await missingView.render();
   await flush();
   assert.ok(missingMount.textContent.includes('non composta'));
 });
@@ -217,6 +226,7 @@ test('the pacchetti tab shows a loading note while the catalog is still flying',
     },
   };
   const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  view.test.state.tab = 'pacchetti';
   const pending = view.render();
   await flush(1);
   assert.ok(
@@ -305,6 +315,59 @@ test('the Connettori sections reuse the catalog channels with honest destination
   assert.equal(connettoriCardState({ channel: 'whatsapp' }, live), 'collegato');
   assert.equal(connettoriCardState({ channel: 'instagram' }, live), 'da-collegare');
   assert.equal(connettoriCardState({ channel: null }, live), 'da-collegare');
+});
+
+test('Connettori opens by default with the prototype copy, filtered badges and an Italian empty state', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ connectors: [] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  assert.equal(view.test.state.tab, 'connettori', 'the default tab is Connettori (spec C7)');
+  await view.render();
+  await flush();
+  const search = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Cerca');
+  assert.ok(search, 'the search field renders');
+  assert.equal(search.getAttribute('placeholder'), 'Cerca', 'the placeholder is the prototype verbatim (spec C8)');
+  const badges = mount.findAll('span').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('ui-conn-count'));
+  assert.deepEqual(badges.map((node) => node.textContent), ['6', '3'], 'badges count the visible cards (spec C13-C14)');
+  view.test.state.query = 'stripe';
+  await view.render();
+  await flush();
+  const filtered = mount.findAll('span').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('ui-conn-count'));
+  assert.deepEqual(filtered.map((node) => node.textContent), ['1'], 'the badge follows the filtered cards, not the section total');
+  view.test.state.query = 'zzz-no-such-channel';
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun risultato per questa ricerca.'), 'the empty state is the prototype verbatim (spec C21)');
+  assert.ok(!mount.textContent.includes('NOT_FOUND'), 'no technical codes leak (spec C25)');
+});
+
+test('a connectors outage renders the Italian error with Riprova', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let fail = true;
+  const client = {
+    async request(path) {
+      if (path === '/api/space-packages/catalog') return { units: UNITS };
+      if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
+      if (path.startsWith('/api/connectors?')) {
+        if (fail) throw Object.assign(new Error('boom'), { code: 'UPSTREAM_DOWN' });
+        return { connectors: [] };
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('Non riesco a caricare i connettori. Riprova.'), 'the error is Italian (spec Stati)');
+  const retry = mount.findAll('button').find((node) => node.textContent === 'Riprova');
+  assert.ok(retry, 'the error offers Riprova');
+  fail = false;
+  retry.dispatch('click');
+  await flush();
+  await flush();
+  assert.ok(mount.textContent.includes('Kit social'), 'Riprova reloads the sections');
 });
 
 test('the Connettori search and stato sort filter the prototype cards', async () => {
