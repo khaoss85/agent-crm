@@ -231,10 +231,16 @@ export function createAccordoApp(options = {}) {
   // validation. They deliberately do NOT join the action-eligible set below:
   // bundle modules are data modules, and actions on them arrive with the
   // bundle's own action definitions (follow-up), never implicitly.
+  // BO-F6-01: the sidebar lists opt-in bundles but never kernel tables, so
+  // the application remembers which registered modules came from a bundle.
+  // The names are read from the validated definitions, not the raw entries.
+  const customModuleNames = new Set();
   for (const bundle of bundleModules) {
-    modules.register(
-      validateGeneratedModuleDefinition(bundle.createModule({ database, audit, events, references })),
+    const registered = validateGeneratedModuleDefinition(
+      bundle.createModule({ database, audit, events, references }),
     );
+    if (typeof registered.name === 'string') customModuleNames.add(registered.name);
+    modules.register(registered);
   }
 
   // Code-first action registry (ADR-011/014). Actions target generated modules
@@ -356,6 +362,9 @@ export function createAccordoApp(options = {}) {
     pipelines,
     domains,
     actionEligibleCoreModules: [...ACTION_ELIGIBLE_CORE_MODULES].sort(),
+    // BO-F6-01: names of the registered modules that came from opt-in
+    // bundles (not kernel tables), for the schema `origin` marking below.
+    customModuleNames: [...customModuleNames].sort(),
     /**
      * Run a code-first record action atomically (ADR-011/012): the business
      * writes commit or roll back together and domain events become visible only

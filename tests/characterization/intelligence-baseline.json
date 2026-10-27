@@ -2542,12 +2542,12 @@
     }
   ],
   "source": {
-    "apps/server/src/http-server.js": "a3353bc134aaf6dcc69f6703d01bb3bb6ef1471c3d63daedb3e591e27b377408",
+    "apps/server/src/http-server.js": "5ab19d7b3f134bfe05e4a7de565968e557f56d0232a50595b61ddc46466de8f8",
     "examples/starters/b2b-lead-qualification/actions/disqualify.js": "8e722cf7073ff4d52c0f332391217fd6b4568f24f64bb1c7a058e989d9b07a69",
     "examples/starters/b2b-lead-qualification/actions/qualify.js": "3d5ddd5f51be258f7e65554b74ac9f449ac39f69845aef1d0d858b7660c06b78",
     "examples/starters/b2b-lead-qualification/intelligence.js": "388522415c8a324b3cd2d62028af9a8af2f6e5863c0ceab2ecd3d57ae43f52f5",
     "examples/starters/b2b-lead-qualification/lead.module.json": "f57c7d561fdeeb327463eb174e98c10b156b48dfabc06fecc548118b1233a03d",
-    "packages/app/src/create-app.js": "5fca21663eaf99adbf344d405588d01aacfbcbaaba9a553a36ec9e405bb7a6d4",
+    "packages/app/src/create-app.js": "bf7d8b8b9f4d7acea14cafd90cf1c6de73e044c9a5fc36675fb0958a7430dbb8",
     "packages/core/src/action-runtime.js": "b8870679dfe76d2293912866085c83713aa1bdbe8509acaabaa81fe6a100c851",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
     "packages/core/src/definition-version-store.js": "5b52e6a48145a91dc90f202e5541dfa168d9ae5ffaa8ff8bdfeda98ab2347467",
