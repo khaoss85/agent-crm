@@ -30,14 +30,14 @@
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 
-/** The three tabs, in prototype order. */
-export const PERSONALIZZAZIONE_TABS = Object.freeze(['pacchetti', 'skill', 'connettori']);
+/** The three tabs, in prototype order (spec C7): Skill AI, Connettori, Pacchetti. */
+export const PERSONALIZZAZIONE_TABS = Object.freeze(['skill', 'connettori', 'pacchetti']);
 
 /** @type {Record<string, string>} */
 export const PERSONALIZZAZIONE_TAB_LABELS = Object.freeze({
-  pacchetti: 'Pacchetti',
-  skill: 'Skill',
+  skill: 'Skill AI',
   connettori: 'Connettori',
+  pacchetti: 'Pacchetti',
 });
 
 /** The two views: yours (active in this space) and discover. */
@@ -296,7 +296,7 @@ export function createPersonalizzazioneView(deps) {
   };
 
   const state = {
-    tab: 'pacchetti',
+    tab: 'connettori',
     view: 'scopri',
     query: '',
     sort: 'nome',
@@ -357,8 +357,13 @@ export function createPersonalizzazioneView(deps) {
       state.connectors = Array.isArray(sync?.connectors) ? sync.connectors : [];
     } catch (error) {
       const failure = errorOf(error);
-      if (failure.code === 'NOT_FOUND' || failure.status === 404) state.connectorsMissing = true;
-      else state.connectors = [];
+      // 404 means the server does not publish connector state (package not
+      // composed): render the directory with every card as `+`, the honest
+      // zero-state, and let the wizard surface its own note. Any other
+      // failure is an outage: the Italian error with Riprova, never cards
+      // pretending every channel is disconnected.
+      if (failure.code === 'NOT_FOUND' || failure.status === 404) state.connectors = [];
+      else state.connectorsMissing = true;
     }
   }
 
@@ -430,7 +435,7 @@ export function createPersonalizzazioneView(deps) {
     }
     const search = el(doc, 'input', {
       cls: 'search',
-      attrs: { type: 'search', placeholder: 'Cerca per nome…', 'aria-label': 'Cerca', value: state.query },
+      attrs: { type: 'search', placeholder: 'Cerca', 'aria-label': 'Cerca', value: state.query },
     });
     search.value = state.query;
     search.addEventListener('input', () => { state.query = String(search.value ?? ''); renderList(); });
@@ -524,7 +529,7 @@ export function createPersonalizzazioneView(deps) {
   function renderMineTable(box, items) {
     const table = el(doc, 'table', { cls: 'mine' });
     const head = el(doc, 'tr');
-    head.appendChild(el(doc, 'th', { text: state.tab === 'skill' ? 'Skill' : 'Pacchetto' }));
+    head.appendChild(el(doc, 'th', { text: state.tab === 'skill' ? 'Skill AI' : 'Pacchetto' }));
     head.appendChild(el(doc, 'th', { text: 'Stato' }));
     head.appendChild(el(doc, 'th', { text: '' }));
     table.appendChild(head);
@@ -636,9 +641,17 @@ export function createPersonalizzazioneView(deps) {
   function renderConnectorsTab(box) {
     if (state.connectorsMissing) {
       box.appendChild(el(doc, 'p', {
-        text: 'Connettori non composti in questo progetto: il server non pubblica lo stato (manca il pacchetto channels).',
+        text: 'Non riesco a caricare i connettori. Riprova.',
         cls: 'empty',
       }));
+      const retry = uiButton(doc, { variant: 'secondary', label: 'Riprova', attrs: { type: 'button' } });
+      retry.addEventListener('click', () => {
+        state.connectorsMissing = false;
+        state.connectors = null;
+        renderList();
+        void loadConnectors().then(render);
+      });
+      box.appendChild(retry);
       return;
     }
     if (state.connectors === null) {
@@ -657,7 +670,7 @@ export function createPersonalizzazioneView(deps) {
     }
     box.appendChild(sections);
     if (shown === 0) {
-      box.appendChild(el(doc, 'p', { text: 'Nessun canale corrisponde alla ricerca.', cls: 'empty' }));
+      box.appendChild(el(doc, 'p', { text: 'Nessun risultato per questa ricerca.', cls: 'empty' }));
     }
   }
 
@@ -696,9 +709,9 @@ export function createPersonalizzazioneView(deps) {
     const head = el(doc, 'div', { cls: 'ui-conn-head' });
     head.appendChild(el(doc, 'h3', { text: group.section.title }));
     head.appendChild(el(doc, 'span', {
-      text: String(group.section.entries.length),
+      text: String(group.cards.length),
       cls: 'ui-conn-count',
-      attrs: { 'aria-label': `${group.section.entries.length} canali` },
+      attrs: { 'aria-label': `${group.cards.length} canali` },
     }));
     const all = el(doc, 'button', { text: 'Mostra tutto →', cls: 'ui-conn-all', attrs: { type: 'button' } });
     all.addEventListener('click', () => go('#/connettori'));
