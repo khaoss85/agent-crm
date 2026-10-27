@@ -1,5 +1,7 @@
 // @ts-check
 
+import { sessionRoleLabel } from './admin-session.js';
+
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
 // Reference: the approved backoffice prototype (sidebar on every screen with
@@ -327,7 +329,7 @@ function el(doc, tag, className, text) {
  *   sidebar: object,
  *   topbar: object,
  *   spaces?: Array<{ id: string, name: string, initials?: string }>,
- *   user?: { name?: string, email?: string },
+ *   user?: { name?: string, email?: string, role?: string },
  *   screenId?: string,
  *   screenLabel?: string,
  *   navigate?: (hash: string) => void,
@@ -481,9 +483,13 @@ export function createShellView({
     const who = el(doc, 'div', 'bo-user-who');
     who.appendChild(el(doc, 'div', 'bo-user-name', typeof user.name === 'string' && user.name !== '' ? user.name : 'Operatore locale'));
     who.appendChild(el(doc, 'div', 'bo-user-email', typeof user.email === 'string' && user.email !== '' ? user.email : 'sviluppo locale'));
+    // BO-F6-03: the session role travels with the user (Titolare/Operatore/
+    // Osservatore). Absent without a session — never a development string.
+    const roleLabel = sessionRoleLabel(user.role);
+    if (roleLabel !== '') who.appendChild(el(doc, 'div', 'bo-user-role', roleLabel));
     userRow.appendChild(who);
     const logout = el(doc, 'button', 'bo-logout', 'Esci');
-    logout.setAttribute('title', 'Esci (reimposta lo spazio locale)');
+    logout.setAttribute('title', 'Esci');
     logout.addEventListener('click', () => onLogout());
     userRow.appendChild(logout);
     sidebar.appendChild(userRow);

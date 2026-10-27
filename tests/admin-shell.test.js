@@ -415,3 +415,41 @@ test('shell stylesheet stays fluid under 700px', () => {
   const narrow = css.slice(css.indexOf('@media (max-width: 700px)'));
   assert.ok(narrow.includes('.bo-sidebar'), 'narrow rules restyle the sidebar');
 });
+
+test('a real session shows the space, the role, the name and the email (BO-F6-03)', () => {
+  const { sidebar, topbar } = renderShell({
+    spaces: [{ id: 'presti-group', name: 'Presti Group', initials: 'PR' }],
+    user: { name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' },
+  });
+  const text = sidebar.textContent;
+  assert.ok(text.includes('Presti Group'));
+  assert.ok(text.includes('Titolare'));
+  assert.ok(text.includes('Elena Rinaldi'));
+  assert.ok(text.includes('elena@studioaurora.it'));
+  assert.ok(!text.includes('Spazio locale'));
+  assert.ok(!text.includes('Operatore locale'));
+  assert.ok(!text.includes('sviluppo locale'));
+  assert.ok(topbar.textContent.includes('Presti Group / Oggi'));
+});
+
+test('without a session role no role line renders, never a development string', () => {
+  const { sidebar } = renderShell();
+  assert.ok(!sidebar.textContent.includes('Titolare'));
+  assert.ok(!sidebar.textContent.includes('Operatore locale'));
+  assert.ok(sidebar.textContent.includes('Elena Rinaldi'));
+});
+
+test('a hostile role renders as text, never markup', () => {
+  const doc = createFakeDocument();
+  const sidebar = createMount();
+  const topbar = createMount();
+  createShellView({
+    doc,
+    sidebar,
+    topbar,
+    spaces: [{ id: 'x', name: 'Prova' }],
+    user: { name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner<script>' },
+  });
+  assert.ok(!sidebar.textContent.includes('Titolare'));
+  assert.equal(sidebar.findAll('script').length, 0);
+});
