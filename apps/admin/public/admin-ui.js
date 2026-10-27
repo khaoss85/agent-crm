@@ -33,8 +33,8 @@ export const UI_BUTTON_VARIANTS = Object.freeze(['primary', 'cta', 'secondary', 
 /** Authorities that own a record: agent, policy(pending), human, evidence, accord. Red is faults only. */
 export const UI_AUTHORITIES = Object.freeze(['agent', 'pending', 'human', 'evidence', 'accord', 'data']);
 
-/** Channel chips of the prototype: IG WA TEL @ CAL S FB TT. */
-export const UI_CHANNELS = Object.freeze(['IG', 'WA', 'TEL', '@', 'CAL', 'S', 'FB', 'TT']);
+/** Channel chips of the prototype: IG WA TEL @ CAL S FB TT WEB (Form sito). */
+export const UI_CHANNELS = Object.freeze(['IG', 'WA', 'TEL', '@', 'CAL', 'S', 'FB', 'TT', 'WEB']);
 
 const CHANNEL_TINT = Object.freeze({
   IG: 'ui-chip-ig',
@@ -45,18 +45,21 @@ const CHANNEL_TINT = Object.freeze({
   S: 'ui-chip-s',
   FB: 'ui-chip-fb',
   TT: 'ui-chip-tt',
+  WEB: 'ui-chip-web',
 });
 
 /**
  * Legacy control classes mapped to their system class. A legacy call site
  * keeps its own classes (hooks + layout); the system class is added beside
  * them. Only paint-equivalent mappings live here: the accord-producing
- * actions map to CTA green, everything else to secondary, rejections to
- * refusal. Sites the table does not name get the safe default (secondary),
- * never an invented green.
+ * actions map to CTA green, the ordinary main action to dark primary,
+ * everything else to secondary, rejections to refusal. Sites the table
+ * does not name get the safe default (secondary), never an invented green.
  */
 const LEGACY_BUTTON_MAP = Object.freeze({
-  primary: 'ui-btn ui-btn-cta',
+  // Plain 'primary' is the ordinary main action (dark), never the
+  // accord-producing CTA: only uiButton({ variant: 'cta' }) paints green.
+  primary: 'ui-btn ui-btn-primary',
   approve: 'ui-btn ui-btn-cta',
   accept: 'ui-btn ui-btn-cta',
   'marketing-approve': 'ui-btn ui-btn-cta',
@@ -204,7 +207,9 @@ export const UI_ICONS = Object.freeze(Object.keys(ICON_PATHS));
  * @param {string} name
  */
 export function uiIcon(doc, name) {
-  const paths = ICON_PATHS[name] ?? ICON_PATHS.oggi;
+  // Unknown ids (custom modules) get the neutral 'new' glyph, never another
+  // screen's icon: reusing Oggi's sun would paint a false meaning.
+  const paths = ICON_PATHS[name] ?? ICON_PATHS.nuovo;
   const canNamespace = doc && typeof doc.createElementNS === 'function';
   const svg = canNamespace
     ? doc.createElementNS(SVG_NS, 'svg')

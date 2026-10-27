@@ -60,9 +60,8 @@ export function createUiCatalogView(deps) {
     row.appendChild(busy);
     const disabled = uiButton(doc, { variant: 'primary', label: 'In attesa dei dati' });
     disabled.setAttribute('disabled', 'disabled');
-    const note = el(doc, 'span', 'ui-hint', 'Un primario disabilitato sta sempre beside a stated reason.');
-    void note;
     row.appendChild(disabled);
+    row.appendChild(el(doc, 'span', 'ui-hint', 'Un primario disabilitato resta accanto al motivo che lo spiega.'));
     section.appendChild(row);
     box.appendChild(section);
   }
@@ -85,7 +84,7 @@ export function createUiCatalogView(deps) {
   }
 
   function renderChips(box) {
-    const section = heading('Chip dei canali', 'Un оттенimento per canale, sigla maiuscola come nel prototipo.');
+    const section = heading('Chip dei canali', 'Una tinta per canale, sigla maiuscola come nel prototipo.');
     const row = el(doc, 'p', undefined);
     for (const channel of UI_CHANNELS) {
       row.appendChild(uiChannelChip(doc, channel));

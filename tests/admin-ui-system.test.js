@@ -66,7 +66,8 @@ test('el() normalizes every control onto the system, keeping legacy hooks', () =
   const doc = createFakeDocument();
   const primary = el(doc, 'button', 'primary', 'Approve');
   assert.ok(primary.getAttribute('class').split(/\s+/).includes('ui-btn'));
-  assert.ok(primary.getAttribute('class').split(/\s+/).includes('ui-btn-cta'));
+  assert.ok(primary.getAttribute('class').split(/\s+/).includes('ui-btn-primary'));
+  assert.ok(!primary.getAttribute('class').split(/\s+/).includes('ui-btn-cta'));
   assert.ok(primary.getAttribute('class').split(/\s+/).includes('primary'));
   const raw = el(doc, 'button', undefined, 'Cerca');
   assert.ok(raw.getAttribute('class').split(/\s+/).includes('ui-btn'));
@@ -137,14 +138,25 @@ test('builders emit system classes with text-only content', () => {
   assert.deepEqual(rawControls(secret), []);
 });
 
-test('channel chips cover the eight prototype channels', () => {
+test('channel chips cover the nine prototype channels', () => {
   const doc = createFakeDocument();
-  assert.deepEqual([...UI_CHANNELS].sort(), ['@', 'CAL', 'FB', 'IG', 'S', 'TEL', 'TT', 'WA']);
+  assert.deepEqual([...UI_CHANNELS].sort(), ['@', 'CAL', 'FB', 'IG', 'S', 'TEL', 'TT', 'WA', 'WEB']);
+  const expectedTint = {
+    IG: 'ui-chip-ig',
+    WA: 'ui-chip-wa',
+    TEL: 'ui-chip-tel',
+    '@': 'ui-chip-at',
+    CAL: 'ui-chip-cal',
+    S: 'ui-chip-s',
+    FB: 'ui-chip-fb',
+    TT: 'ui-chip-tt',
+    WEB: 'ui-chip-web',
+  };
   for (const channel of UI_CHANNELS) {
     const chip = uiChannelChip(doc, channel);
     const classes = chip.getAttribute('class').split(/\s+/);
     assert.ok(classes.includes('ui-chip'), `${channel} is a system chip`);
-    assert.ok(classes.some((cls) => cls.startsWith('ui-chip-')), `${channel} has its tint`);
+    assert.ok(classes.includes(expectedTint[channel]), `${channel} has its own tint, not the plain fallback`);
   }
 });
 
@@ -159,6 +171,11 @@ test('authority badges name the five prototype authorities, red for faults only'
   const icon = uiIcon(doc, 'clienti');
   assert.equal(String(icon.tagName).toLowerCase(), 'svg');
   assert.ok(String(icon.getAttribute('class')).includes('ui-icon'));
+  // Unknown ids (custom modules) share the neutral 'nuovo' glyph, never Oggi's sun.
+  assert.equal(
+    uiIcon(doc, 'module-xyz').getAttribute('data-paths'),
+    uiIcon(doc, 'nuovo').getAttribute('data-paths'),
+  );
 });
 
 test('the component catalog renders no raw control', () => {
