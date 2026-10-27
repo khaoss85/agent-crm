@@ -12,8 +12,9 @@
  *   five PNG filters decodes to exact pixels, and interlaced, paletted or
  *   truncated input is refused fail-closed;
  * - where a runnable Chromium exists, Oggi and Connettori are rendered fresh
- *   and compared against the references (shell mask on desktop, whole image
- *   on phone). The swap protection is structural, not pixel-based: the
+ *   and compared against the references (shell mask on desktop, space block
+ *   on phone — the rail reference and the stacked render share only that
+ *   block). The swap protection is structural, not pixel-based: the
  *   harness wiring each screen to its real view module is asserted in
  *   tests/bo-shots.test.js, so the pixel gate only has to prove fidelity,
  *   presence of the chrome, and a painted (non-empty) screen. Every number

@@ -564,8 +564,8 @@ export const SHELL_SCREENS = Object.freeze({
   componenti: { id: '', label: 'Componenti' },
 });
 
-const SHELL_DEMO_SPACE = Object.freeze({ id: 'locale', name: 'Spazio locale', initials: 'SL' });
-const SHELL_DEMO_USER = Object.freeze({ name: 'Elena', email: 'elena@palestra-esempio.it' });
+const SHELL_DEMO_SPACE = Object.freeze({ id: 'locale', name: 'Studio Aurora', initials: 'SA' });
+const SHELL_DEMO_USER = Object.freeze({ name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' });
 
 /**
  * The shell prelude every harness page runs before its view module: the real
@@ -602,6 +602,11 @@ shellView.update({
   activeScreenId: ${JSON.stringify(shell.id)},
   aiScreenId: ${JSON.stringify(shell.ai ?? null)},
   screenLabel: ${JSON.stringify(shell.label)},
+  // The prototype stages a lived-in space: 3 clients and 2 things to fix,
+  // so the Clienti and Impostazioni badges paint like the reference.
+  clientCount: 3,
+  clientCountExact: true,
+  fixCount: 2,
 });`;
 }
 

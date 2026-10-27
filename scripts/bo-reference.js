@@ -10,8 +10,10 @@
  * reference. Bodies intentionally depart from the prototype (named cards and
  * heroes belong to later stories, recorded as follow-ups), therefore the
  * desktop comparison is scoped to the shell both stories share — the
- * full-height sidebar rail plus the topbar — while the phone comparison is a
- * whole-image fidelity tripwire (the phone stacks the chrome over the body).
+ * full-height sidebar rail plus the topbar — while the phone comparison is
+ * scoped to the space selector, the one chrome block the rail reference
+ * and the stacked phone render paint identically (the app stacks below
+ * 700px by reviewed responsive design; bodies stay out on both canvases).
  *
  * Two signals, both printed by the test so a CI failure is diagnosable:
  * - match fraction: pixels whose channels all land within tolerance. Catches
@@ -183,13 +185,17 @@ export function sha256Rgb(image) {
 
 /**
  * Whether a pixel belongs to the compared region. Desktop compares the
- * shell both stories share (sidebar rail plus topbar); the phone stacks the
- * chrome over the body, so the whole image is the tripwire.
+ * shell both stories share (sidebar rail plus topbar). The phone reference
+ * keeps the rail while the app stacks below 700px by reviewed responsive
+ * design, so the phone gate compares the one chrome block both layouts
+ * paint identically: the space selector (the rail gutter starts at x=225
+ * in both references; the block ends above y=64). Bodies stay out on both
+ * canvases: named cards and heroes belong to later stories.
  * @param {number} x @param {number} y @param {number} width
  */
 export function inCompareMask(x, y, width) {
   if (width === 1440) return x < 272 || y < 72;
-  return true;
+  return x < 225 && y < 64;
 }
 
 /** @param {number} r @param {number} g @param {number} b */
