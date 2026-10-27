@@ -335,12 +335,7 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
  * @param {string} [className]
  * @param {string} [text]
  */
-function el(doc, tag, className, text) {
-  const node = doc.createElement(tag);
-  if (className) node.setAttribute('class', className);
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
+import { el, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * Render the BO-F0-02 shell chrome (sidebar + topbar) into the given
@@ -457,6 +452,7 @@ export function createShellView({
           link.setAttribute('aria-disabled', 'true');
           link.setAttribute('title', item.disabledReason);
         }
+        link.appendChild(uiIcon(doc, item.id === 'nuovo-modulo' ? 'nuovo' : item.id));
         link.appendChild(el(doc, 'span', 'bo-nav-label', item.label));
         if (item.id === 'impostazioni') {
           const badgeText = settingsBadge(state.fixCount);
@@ -512,6 +508,7 @@ export function createShellView({
     if (roleLabel !== '') who.appendChild(el(doc, 'div', 'bo-user-role', roleLabel));
     userRow.appendChild(who);
     const logout = el(doc, 'button', 'bo-logout', 'Esci');
+    logout.appendChild(uiIcon(doc, 'logout'));
     logout.setAttribute('title', 'Esci');
     logout.addEventListener('click', () => onLogout());
     userRow.appendChild(logout);
@@ -536,7 +533,7 @@ export function createShellView({
     form.setAttribute('role', 'search');
     aiInput = doc.createElement('input');
     aiInput.setAttribute('type', 'search');
-    aiInput.setAttribute('class', 'bo-ai-input');
+    aiInput.setAttribute('class', 'bo-ai-input ui-field'); // BO-F6-02: system field class.
     aiInput.setAttribute('aria-label', 'Barra AI: chiedi o fai qualcosa');
     aiInput.setAttribute('placeholder', aiPlaceholder(state.activeScreenId));
     aiInput.setAttribute('title', 'Barra AI (⌘K): chiedi o fai qualcosa');

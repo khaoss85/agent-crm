@@ -1,5 +1,6 @@
 // @ts-check
 
+import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { formatMinorUnits, humanReadError } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -67,12 +68,7 @@ export function createQuoteView(deps) {
   const { client } = bindAdminMutations(deps.client, deps);
   let renderToken = 0;
 
-  const el = (tag, className, text) => {
-    const node = doc.createElement(tag);
-    if (className) node.setAttribute('class', className);
-    if (text !== undefined) node.textContent = String(text);
-    return node;
-  };
+  const el = elFor(doc); // BO-F6-02: shared element builder.
   const clear = () => {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   };

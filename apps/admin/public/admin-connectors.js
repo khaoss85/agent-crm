@@ -268,12 +268,7 @@ export function flowBack(flow) {
   return Object.freeze({ ...flow, step: 0, error: null });
 }
 
-function el(doc, tag, cls, text) {
-  const node = doc.createElement(tag);
-  if (cls) node.setAttribute('class', cls);
-  if (text !== undefined) node.textContent = text; // safe: text, never HTML
-  return node;
-}
+import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 function errorOf(error) {
   return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
@@ -372,6 +367,7 @@ export function createConnectorsView(deps) {
     const label = el(doc, 'label', 'bo-field');
     label.appendChild(el(doc, 'span', undefined, `${catalog.accountLabel}: `));
     const input = doc.createElement('input');
+    input.setAttribute('class', 'ui-field'); // BO-F6-02: system field class.
     input.setAttribute('name', 'account');
     input.setAttribute('placeholder', catalog.accountPlaceholder);
     input.value = flow.account;
@@ -434,6 +430,7 @@ export function createConnectorsView(deps) {
     box.appendChild(list);
     const label = el(doc, 'label', 'bo-field');
     const check = doc.createElement('input');
+    check.setAttribute('class', 'ui-check'); // BO-F6-02: system checkbox class.
     check.setAttribute('type', 'checkbox');
     check.checked = flow.history && importable;
     if (!importable) check.disabled = true;
@@ -687,6 +684,7 @@ export function createConnectorsView(deps) {
     const spaceRow = el(doc, 'p', 'bo-field');
     spaceRow.appendChild(el(doc, 'span', undefined, 'Spazio: '));
     const spaceInput = doc.createElement('input');
+    spaceInput.setAttribute('class', 'ui-field'); // BO-F6-02: system field class.
     spaceInput.setAttribute('name', 'spaceId');
     spaceInput.setAttribute('placeholder', 'lo-spazio');
     spaceInput.value = state.spaceId;

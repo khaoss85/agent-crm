@@ -8,7 +8,8 @@
  * at 390x1600:
  *
  *   login, oggi, clienti, cliente, pipeline, calendario, sequenze, reporting,
- *   personalizzazione, catalogo, stato-sync, spazi-accessi
+ *   personalizzazione, catalogo, stato-sync, spazi-accessi, componenti
+ *   (the F6-02 component catalog)
  *
  * Each screen renders the real /bo page — the shell (`createShellView` from
  * `admin-shell.js`: sidebar plus topbar with the path and the AI bar) with
@@ -58,6 +59,7 @@ export const SCREEN_NAMES = Object.freeze([
   'catalogo',
   'stato-sync',
   'spazi-accessi',
+  'componenti',
 ]);
 
 /**
@@ -495,10 +497,11 @@ export const SCREENS = Object.freeze([
   { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['taglio', 'Mostra settimana'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
-  { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Pacchetti', 'Pagamenti'] },
+  { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Stripe collegato'] },
   { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto a posto', 'WhatsApp'] },
   { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-accessi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
+  { name: 'componenti', module: 'admin-ui-catalog.js', ready: 'componenti-ready', expect: ['Catalogo dei componenti', 'Primario scuro'] },
 ]);
 
 export const BO_SCREENS = Object.freeze(SCREENS.map((screen) => screen.name));
@@ -522,6 +525,9 @@ export const SHELL_SCREENS = Object.freeze({
   catalogo: { id: '', label: 'Catalogo prodotti' },
   'stato-sync': { id: 'impostazioni', label: 'Stato sync' },
   'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
+  // The component catalog (BO-F6-02): an honest crumb with no sidebar
+  // highlight, exactly like shellScreenFor in apps/admin/public/app.js.
+  componenti: { id: '', label: 'Componenti' },
 });
 
 const SHELL_DEMO_SPACE = Object.freeze({ id: 'locale', name: 'Spazio locale', initials: 'SL' });
@@ -791,9 +797,13 @@ const client = {
   },
 };
 const view = createPersonalizzazioneView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {}, spaceId: () => 'locale' });
+// The shots prove the Connettori content (hero + prototype card sections),
+// the screen the review compares against the prototype.
+view.test.state.tab = 'connettori';
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
-  units: (document.body.textContent.match(/Canali|Pagamenti|Diagnosi/g) ?? []).length,
+  hero: document.body.textContent.includes('Kit social'),
+  sections: (document.body.textContent.match(/Canali di conversazione|Agenda, lead e pagamenti/g) ?? []).length,
 });
 document.title = 'personalizzazione-ready';`;
     case 'catalogo': return `
@@ -871,6 +881,14 @@ document.getElementById('probe').textContent = JSON.stringify({
   members: document.querySelectorAll('.bo-spazi-member').length,
 });
 document.title = 'spazi-accessi-ready';`;
+    case 'componenti': return `
+import { createUiCatalogView } from './admin-ui-catalog.js';
+createUiCatalogView({ doc: document, mount: document.getElementById('view-module') }).render();
+document.getElementById('probe').textContent = JSON.stringify({
+  sections: document.querySelectorAll('.ui-section').length,
+  controls: document.querySelectorAll('button,select,input,textarea').length,
+});
+document.title = 'componenti-ready';`;
     default:
       throw new Error(`bo:shots has no harness for screen "${name}"`);
   }

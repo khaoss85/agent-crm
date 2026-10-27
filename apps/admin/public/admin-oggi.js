@@ -816,12 +816,7 @@ export async function loadOggiData(client, now = new Date()) {
  * @param {string} [className]
  * @param {string} [text]
  */
-function el(doc, tag, className, text) {
-  const node = doc.createElement(tag);
-  if (className) node.setAttribute('class', className);
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
+import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * One advisor row: record tag, title, motive, the Domani and CTA buttons

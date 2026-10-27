@@ -185,13 +185,7 @@ export function effectiveSwitches(spaceId, overrideRows = []) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-function el(doc, tag, options = {}) {
-  const node = doc.createElement(tag);
-  if (options.text !== undefined) node.textContent = options.text; // safe: text, not HTML
-  if (options.cls) node.setAttribute('class', options.cls);
-  for (const [key, value] of Object.entries(options.attrs ?? {})) node.setAttribute(key, value);
-  return node;
-}
+import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the Spazi e accessi screen. Injecting `doc`,

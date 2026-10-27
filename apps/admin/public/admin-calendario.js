@@ -84,13 +84,7 @@ export function weekLabel(weekKeys) {
 }
 
 /** @param {any} doc @param {string} tag @param {{text?: string, className?: string, attrs?: Record<string,string>}} [options] */
-function el(doc, tag, options = {}) {
-  const node = doc.createElement(tag);
-  if (options.className) node.setAttribute('class', options.className);
-  if (options.text !== undefined) node.textContent = options.text;
-  for (const [key, value] of Object.entries(options.attrs ?? {})) node.setAttribute(key, value);
-  return node;
-}
+import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * @param {{doc: any, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, storage?: any, now?: () => Date}} deps

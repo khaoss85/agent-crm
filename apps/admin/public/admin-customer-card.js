@@ -1,5 +1,6 @@
 // @ts-check
 
+import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { humanReadError } from './admin-core.js';
 
 /**
@@ -70,12 +71,7 @@ export function createCustomerCardView(deps) {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
     return typeof raw === 'string' && raw !== '' ? raw : null;
   };
-  const el = (tag, className, text) => {
-    const node = doc.createElement(tag);
-    if (className) node.setAttribute('class', className);
-    if (text !== undefined && text !== null) node.textContent = String(text); // safe: text, never HTML
-    return node;
-  };
+  const el = elFor(doc); // BO-F6-02: shared element builder.
   const link = (href, text, action) => {
     const node = el('a', undefined, text);
     node.setAttribute('href', href);

@@ -72,12 +72,7 @@ function nonEmptyText(value) {
  * @param {string} [className]
  * @param {string} [text]
  */
-function el(doc, tag, className, text) {
-  const node = doc.createElement(tag);
-  if (className) node.setAttribute('class', className);
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
+import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * Italian label for a sequence state; unknown states say so, never blank.
