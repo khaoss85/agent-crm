@@ -376,6 +376,7 @@ import { createReportingView } from './admin-reporting.js';
 import { createSequenzeView } from './admin-sequenze.js';
 import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
+import { createUiCatalogView } from './admin-ui-catalog.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createSpineView } from './admin-spine.js';
 import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
@@ -726,6 +727,7 @@ function shellScreenFor(target) {
     case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
     case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
     case 'spazi-accessi': return { id: 'impostazioni', label: 'Spazi e accessi' };
+    case 'componenti': return { id: null, label: 'Componenti' };
     case 'invalid': return { id: null, label: 'Percorso non valido' };
     default: return { id: null, label: 'Vista' };
   }
@@ -977,6 +979,7 @@ async function route() {
     else if (target.view === 'calendario') await calendarioView.render();
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
     else if (target.view === 'personalizzazione') await personalizzazioneView.render();
+    else if (target.view === 'componenti') createUiCatalogView({ doc: document, mount: moduleView }).render();
     else if (target.view === 'spazi-accessi') await spaziAccessiView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'customer-card') await customerCardView.renderCard(target.resource, target.subjectId);

@@ -383,12 +383,7 @@ export function syncFeedItems(activity) {
   return items;
 }
 
-function el(doc, tag, cls, text) {
-  const node = doc.createElement(tag);
-  if (cls) node.setAttribute('class', cls);
-  if (text !== undefined) node.textContent = text; // safe: text, never HTML
-  return node;
-}
+import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 function errorOf(error) {
   if (error !== null && typeof error === 'object') {

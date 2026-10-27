@@ -203,13 +203,7 @@ export function reportingSummary(rows) {
  * @param {string} tag
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
-function el(doc, tag, options = {}) {
-  const node = doc.createElement(tag);
-  if (options.text !== undefined) node.textContent = options.text; // safe: text, not HTML
-  if (options.class) node.setAttribute('class', options.class);
-  for (const [key, value] of Object.entries(options.attrs ?? {})) node.setAttribute(key, value);
-  return node;
-}
+import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the Reporting and "+ Nuovo modulo" screens.
@@ -628,6 +622,7 @@ export function createReportingView(deps) {
     }));
     const label = el(doc, 'label', { text: 'Descrivi il modulo' });
     const area = doc.createElement('textarea');
+    area.setAttribute('class', 'ui-field'); // BO-F6-02: system field class.
     area.setAttribute('name', 'descrizione-modulo');
     area.setAttribute('rows', '3');
     area.setAttribute('placeholder', 'un modulo sonde per i KPI del pilota (etichetta + conteggio)');

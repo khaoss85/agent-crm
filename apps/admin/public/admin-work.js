@@ -1,5 +1,7 @@
 // @ts-check
 
+import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+
 import { bindAdminMutations } from './admin-submission.js';
 
 /**
@@ -46,12 +48,7 @@ export function createWorkView(deps) {
   /** Every control currently disabled for an in-flight request. */
   const busy = [];
 
-  const el = (tag, className, text) => {
-    const node = doc.createElement(tag);
-    if (className) node.setAttribute('class', className);
-    if (text !== undefined) node.textContent = String(text); // safe: text, never HTML
-    return node;
-  };
+  const el = elFor(doc); // BO-F6-02: shared element builder.
   const clear = () => {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   };

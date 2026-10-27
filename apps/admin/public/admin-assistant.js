@@ -1051,12 +1051,7 @@ export async function runAssistantAction(client, action, options = {}) {
  * @param {string} className
  * @param {string} [text]
  */
-function el(doc, tag, className, text) {
-  const node = doc.createElement(tag);
-  if (className) node.setAttribute('class', className);
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
+import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * The ⌘K side panel: suggestions for the current screen, answers with
@@ -1349,7 +1344,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     free.appendChild(el(doc, 'p', 'bo-assistant-heading', 'Domanda libera'));
     const input = doc.createElement('input');
     input.setAttribute('type', 'search');
-    input.setAttribute('class', 'bo-assistant-input');
+    input.setAttribute('class', 'bo-assistant-input ui-field'); // BO-F6-02: system field class.
     input.setAttribute('aria-label', 'Domanda libera');
     if (state.status?.mode !== 'live') {
       input.setAttribute('disabled', 'true');

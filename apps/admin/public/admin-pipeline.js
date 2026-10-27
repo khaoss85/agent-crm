@@ -29,13 +29,7 @@ const BOARD_LIMIT = 200;
  * @param {string} tag
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
-function el(doc, tag, options = {}) {
-  const node = doc.createElement(tag);
-  if (options.text !== undefined) node.textContent = options.text; // safe: text, not HTML
-  if (options.class) node.setAttribute('class', options.class);
-  for (const [key, value] of Object.entries(options.attrs ?? {})) node.setAttribute(key, value);
-  return node;
-}
+import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
 function dayOf(value) {
