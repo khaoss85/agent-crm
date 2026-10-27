@@ -34,6 +34,46 @@ export const REPORTING_ROUTE = '#/reporting';
 /** Display currency of the dashboard (the registry partitions, never mixes). */
 export const REPORTING_CURRENCY = 'EUR';
 
+/**
+ * Channel names and bar colors of the "Nuovi clienti per canale" card, as in
+ * the prototype. Systems the table actually carries but this map does not
+ * know render under their raw name in the fallback tint — visible, never
+ * invented.
+ */
+export const CHANNEL_LABELS = Object.freeze({
+  whatsapp: 'WhatsApp',
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  tiktok: 'TikTok',
+  email: 'Email',
+  phone: 'Telefono',
+});
+
+export const CHANNEL_COLORS = Object.freeze({
+  whatsapp: '#22a06b',
+  instagram: '#d6336c',
+  facebook: '#2f6fed',
+  tiktok: '#232323',
+  email: '#c9b896',
+  phone: '#6b7280',
+});
+
+export const CHANNEL_FALLBACK_COLOR = '#9aa0a6';
+
+/** @param {string} channel */
+export function channelLabel(channel) {
+  return typeof channel === 'string' && CHANNEL_LABELS[channel] !== undefined
+    ? CHANNEL_LABELS[channel]
+    : String(channel ?? '');
+}
+
+/** @param {string} channel */
+export function channelColor(channel) {
+  return typeof channel === 'string' && CHANNEL_COLORS[channel] !== undefined
+    ? CHANNEL_COLORS[channel]
+    : CHANNEL_FALLBACK_COLOR;
+}
+
 /** Current UTC month as YYYY-MM (the default dashboard period). */
 export function currentPeriod(nowIso) {
   const at = typeof nowIso === 'string' && nowIso.length >= 7 ? nowIso.slice(0, 7) : new Date().toISOString().slice(0, 7);
@@ -119,6 +159,10 @@ export function isDashboardPayload(model) {
   for (const key of ['forecast', 'csv', 'currencies']) {
     if (payload[key] === null || typeof payload[key] !== 'object') return false;
   }
+  const channels = /** @type {Record<string, unknown>} */ (payload.channels);
+  if (channels === null || typeof channels !== 'object') return false;
+  if (!Array.isArray(channels.weeks) || !Array.isArray(channels.channels)) return false;
+  if (!Number.isInteger(channels.total)) return false;
   const csv = /** @type {Record<string, unknown>} */ (payload.csv);
   return typeof csv.filename === 'string' && typeof csv.content === 'string';
 }
@@ -320,6 +364,68 @@ export function createReportingView(deps) {
   }
 
   /**
+   * "Nuovi clienti per canale" (BO-F6-13, slice 2, checklist C6-C7): stacked
+   * weekly bars with the week total above each bar and a `<nome canale> <n>`
+   * legend below. With no data the card still renders its title, `0 nel
+   * periodo` and empty bars — never a blank screen (C20). Identities without
+   * a usable date are named in a lede, never silently dropped.
+   */
+  function channelsCard(section, model) {
+    const breakdown = model.channels ?? { weeks: [], channels: [], total: 0, undated: 0 };
+    const panel = el(doc, 'section', { class: 'panel' });
+    panel.appendChild(el(doc, 'h3', { text: 'Nuovi clienti per canale' }));
+    panel.appendChild(el(doc, 'p', { class: 'lede', text: `${breakdown.total ?? 0} nel periodo` }));
+    const slots = Array.isArray(breakdown.weeks) ? breakdown.weeks : [];
+    const entries = Array.isArray(breakdown.channels) ? breakdown.channels : [];
+    const totals = slots.map((slot, index) => {
+      void slot;
+      return entries.reduce((sum, entry) => sum + (entry.weeks?.[index] ?? 0), 0);
+    });
+    const max = Math.max(0, ...totals);
+    const row = el(doc, 'div');
+    row.setAttribute('style', 'display:flex;align-items:flex-end;gap:18px;padding:12px 4px 0 4px;min-height:150px;');
+    slots.forEach((slot, index) => {
+      const column = el(doc, 'div');
+      column.setAttribute('style', 'flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0;');
+      column.appendChild(el(doc, 'span', { text: String(totals[index]) }));
+      const stack = el(doc, 'div');
+      const height = max > 0 ? Math.round((totals[index] / max) * 120) : 0;
+      stack.setAttribute('style', `width:100%;max-width:64px;height:${height}px;display:flex;flex-direction:column-reverse;border-radius:6px;overflow:hidden;background:var(--surface-soft);`);
+      for (const entry of entries) {
+        const count = entry.weeks?.[index] ?? 0;
+        if (count <= 0) continue;
+        const segment = el(doc, 'div');
+        segment.setAttribute('title', `${channelLabel(entry.channel)} ${count}`);
+        segment.setAttribute('style', `height:${max > 0 ? Math.max(2, Math.round((count / max) * 120)) : 0}px;background:${channelColor(entry.channel)};`);
+        stack.appendChild(segment);
+      }
+      column.appendChild(stack);
+      column.appendChild(el(doc, 'span', { text: slot.label ?? '' }));
+      row.appendChild(column);
+    });
+    panel.appendChild(row);
+    const legend = el(doc, 'div', { class: 'actions' });
+    for (const entry of entries) {
+      const dot = el(doc, 'span');
+      dot.setAttribute('style', `display:inline-block;width:10px;height:10px;border-radius:99px;background:${channelColor(entry.channel)};margin-right:6px;`);
+      const item = el(doc, 'span', { text: `${channelLabel(entry.channel)} ${entry.total}` });
+      item.setAttribute('style', 'margin-right:14px;font-size:13px;');
+      const wrap = el(doc, 'span');
+      wrap.appendChild(dot);
+      wrap.appendChild(item);
+      legend.appendChild(wrap);
+    }
+    panel.appendChild(legend);
+    if ((breakdown.undated ?? 0) > 0) {
+      panel.appendChild(el(doc, 'p', {
+        class: 'lede',
+        text: `Più ${breakdown.undated} senza data di primo contatto: contati nel riepilogo, fuori dalle barre.`,
+      }));
+    }
+    section.appendChild(panel);
+  }
+
+  /**
    * One CSS-bar chart. Values are text beside the bar, so the chart stays
    * readable where styles fail; widths come from barWidth (0% when empty).
    */
@@ -491,6 +597,7 @@ export function createReportingView(deps) {
       }));
     }
     kpiCards(host, model);
+    channelsCard(host, model);
     barChart(host, 'Preventivi', 'dall\u2019invio al pagamento, per fase', model.funnel.map((entry) => ({
       label: entry.label, minor: entry.count, text: `${entry.count} · ${entry.minor}`,
     })));

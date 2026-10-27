@@ -1,15 +1,15 @@
 # `customer-data` — governed customer identity, import provenance and data quality
 
-Ten records, three human actions, eight application operations and three declared
+Ten records, three human actions, nine application operations and four declared
 capabilities. It **requires nothing**.
 
 | | |
 |---|---|
 | Owns | `customer-import-run`, `customer-import-row`, `external-identity`, `duplicate-candidate`, `canonical-link`, `data-quality-issue`, `customer-bulk-run`, `customer-bulk-item`, `enriched-field`, `enrichment-opt-out` |
 | Requires | **nothing** |
-| Offers | `customer-identity@1`, `customer-profile@1`, `channel-sender@1` |
+| Offers | `customer-identity@1`, `customer-profile@1`, `channel-sender@1`, `customer-channel-origins@1` |
 | Actions | `duplicate-candidate.link-canonical-identity`, `duplicate-candidate.dismiss-duplicate-candidate`, `data-quality-issue.govern-data-quality-issue` |
-| Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile`, `apply-contact-enrichment`, `import-google-contacts`, `opt-out-contact-enrichment` (ADR-032) |
+| Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile`, `apply-contact-enrichment`, `import-google-contacts`, `opt-out-contact-enrichment`, `count-customer-channel-origins` (ADR-032) |
 | Policies | `deterministic-customer-match@1` |
 | ADR | ADR-037 · ExecPlan `docs/plans/customer-data-foundation-v1.md` |
 
