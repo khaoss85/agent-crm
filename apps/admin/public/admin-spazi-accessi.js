@@ -344,7 +344,7 @@ export function createSpaziAccessiView(deps) {
       const names = el(doc, 'div', { cls: 'bo-spazi-names' });
       names.appendChild(el(doc, 'div', { text: card.name, cls: 'bo-spazi-name' }));
       names.appendChild(el(doc, 'div', {
-        text: card.roleKnown ? `Tu: ${card.role}` : 'Tu: ruolo non disponibile',
+        text: card.roleKnown ? `Tu: ${card.role}` : 'Tu: ruolo non riconosciuto',
         cls: 'bo-muted',
       }));
       head.appendChild(names);

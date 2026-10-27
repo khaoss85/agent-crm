@@ -47,6 +47,7 @@ const TECHNICAL_MARKERS = Object.freeze([
   'Operation not found',
   'manual catalog',
   'space-permissions',
+  'registro metriche',
   'NOT_FOUND',
   'SPINE_',
   'UNKNOWN',
