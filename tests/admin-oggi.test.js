@@ -67,7 +67,7 @@ test('date line is the real date, in Italian', () => {
 test('Oggi links are the delivered screens only, never Oggi itself', () => {
   const items = buildShellNav({
     pipelines: [{ name: 'vendite', label: 'Vendite' }],
-    customModules: [{ name: 'magazzino' }],
+    customModules: [{ name: 'magazzino', origin: 'bundle' }],
     customerDataAvailable: true,
   });
   const links = buildOggiLinks(items);
@@ -190,9 +190,12 @@ test('sidebar under a space mount shows the Italian voices and links the deliver
   const text = sidebar.textContent;
   for (const voice of ['Spazio di prova', 'Oggi', 'Clienti', 'Pipeline', 'Calendario',
     'Sequenze', 'Moduli nativi', 'Moduli personalizzati', '+ Nuovo modulo',
-    'Impostazioni', 'Esci']) {
+    'Impostazioni']) {
     assert.ok(text.includes(voice), `sidebar shows ${voice}`);
   }
+  // BO-F6-01: the exit is an icon button, labelled for assistive tech.
+  const logout = sidebar.findAll('button').find((node) => node.getAttribute('aria-label') === 'Esci');
+  assert.ok(logout, 'sidebar shows the exit icon button');
   for (const banned of DEMO_STRINGS) {
     assert.ok(!text.includes(banned), `sidebar shows no demo text: ${banned}`);
   }

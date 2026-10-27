@@ -1,6 +1,7 @@
 // @ts-check
 
 import { sessionRoleLabel } from './admin-session.js';
+import { el, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -20,6 +21,11 @@ import { sessionRoleLabel } from './admin-session.js';
 /** Route for the settings entry. Its tabs land in BO-F0-03. */
 export const SETTINGS_ROUTE = '#/impostazioni';
 
+// BO-F6-01 icons and the element helper come from the single component
+// library (BO-F6-02, apps/admin/public/admin-ui.js): `el` keeps the bo-*
+// classes and adds the ui-* system ones, `uiIcon` covers every shell voice.
+// No local icon geometry here (MEM_ACC_REUSE).
+
 /** Storage keys for the local shell state (space selection only). */
 export const ACTIVE_SPACE_KEY = 'accordo.activeSpace';
 export const SPACES_KEY = 'accordo.spaces';
@@ -32,17 +38,17 @@ export const SPACES_KEY = 'accordo.spaces';
  * dead link. Calendario links unconditionally like Reporting: the screen
  * itself renders honest states (not composed, no members named, empty week),
  * so it is never a dead link to a blank screen.
- * @typedef {{ id: string, label: string, group: 'home' | 'native' | 'custom' | 'settings', route: string | null, story: string }} ShellItem
+ * @typedef {{ id: string, label: string, group: 'home' | 'native' | 'custom' | 'settings', route: string | null, story: string, icon: string }} ShellItem
  */
 export const SHELL_ITEMS = Object.freeze([
-  { id: 'oggi', label: 'Oggi', group: 'home', route: '#/', story: 'BO-F0-02' },
-  { id: 'clienti', label: 'Clienti', group: 'native', route: '#/customer-data', story: 'BO-F1' },
-  { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2' },
-  { id: 'calendario', label: 'Calendario', group: 'native', route: '#/calendario', story: 'BO-F3' },
-  { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3' },
-  { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01' },
-  { id: 'nuovo-modulo', label: 'Nuovo modulo', group: 'custom', route: '#/nuovo-modulo', story: 'BO-F5-01' },
-  { id: 'impostazioni', label: 'Impostazioni', group: 'settings', route: SETTINGS_ROUTE, story: 'BO-F0-02' },
+  { id: 'oggi', label: 'Oggi', group: 'home', route: '#/', story: 'BO-F0-02', icon: 'oggi' },
+  { id: 'clienti', label: 'Clienti', group: 'native', route: '#/customer-data', story: 'BO-F1', icon: 'clienti' },
+  { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2', icon: 'pipeline' },
+  { id: 'calendario', label: 'Calendario', group: 'native', route: '#/calendario', story: 'BO-F3', icon: 'calendario' },
+  { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze' },
+  { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01', icon: 'reporting' },
+  { id: 'nuovo-modulo', label: 'Nuovo modulo', group: 'custom', route: '#/nuovo-modulo', story: 'BO-F5-01', icon: 'nuovo-modulo' },
+  { id: 'impostazioni', label: 'Impostazioni', group: 'settings', route: SETTINGS_ROUTE, story: 'BO-F0-02', icon: 'impostazioni' },
 ]);
 
 /** Sidebar group headers, in render order. `null` renders no header. */
@@ -114,6 +120,49 @@ export function crumb(spaceName, screenLabel) {
 export function settingsBadge(fixCount) {
   if (typeof fixCount !== 'number' || !Number.isInteger(fixCount) || fixCount <= 0) return '';
   return String(fixCount);
+}
+
+/**
+ * Badge text for the Clienti entry (BO-F6-01): the live client count, like
+ * the prototype's grey pill. Unknown (or uncomposed) renders no badge at
+ * all — never 0-as-none. A partial server scan keeps its "+" so the pill
+ * never claims an exactness the read does not have.
+ * @param {unknown} count
+ * @param {unknown} [exact]
+ */
+export function clientBadge(count, exact = true) {
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return '';
+  return exact === false ? `${count}+` : String(count);
+}
+
+/**
+ * Read the live client count for the badge: the smallest supported page
+ * over the same customer list the Clienti screen reads, keeping only its
+ * `total`. pageSize=1 is rejected by parseCustomerListQuery (400: only 10,
+ * 25 and 50 are accepted), so the badge asks for pageSize=10 — the endpoint
+ * default — and never for an unsupported size.
+ * Returns null (unknown) when the customer-data package is not composed or
+ * a read fails — an unknown count must never light the badge.
+ * @param {{ request: (path: string, options?: object) => Promise<any> }} client
+ * @returns {Promise<{ count: number, exact: boolean } | null>}
+ */
+export async function loadClientCount(client) {
+  try {
+    const page = await client.request('/api/customer-data/customers?pageSize=10');
+    const total = page?.total;
+    if (typeof total !== 'number' || !Number.isInteger(total) || total < 0) return null;
+    return { count: total, exact: page?.totalIsExact !== false };
+  } catch (error) {
+    // Review gate (AGENTS.md): a swallowed failure must leave its cause
+    // diagnosable. Only the error name is logged — never record bodies,
+    // cookies or personal data here.
+    try {
+      console.warn('bo-shell client count unreadable:', error instanceof Error ? error.name : 'unknown');
+    } catch {
+      // Logging must never break the badge read.
+    }
+    return null;
+  }
 }
 
 /**
@@ -277,14 +326,17 @@ export function spaceMenuItems(spaces, activeId) {
 
 /**
  * Build the sidebar model: fixed prototype voices plus the user's custom
- * modules (generated modules are the "personalizzati" group). The Pipeline
- * voice resolves to the first composed pipeline; every other not-yet
- * delivered voice stays disabled with its story named. Clienti is available
- * only when the customer-data package is composed in the space
+ * modules (opt-in bundles are the "personalizzati" group). BO-F6-01: kernel
+ * generated tables (channel inbox rows, import state, quality rows and the
+ * like) never list — only entries the server marks `origin: 'bundle'` join
+ * the sidebar, so an unknown or kernel origin stays out fail-closed. The
+ * Pipeline voice resolves to the first composed pipeline; every other
+ * not-yet delivered voice stays disabled with its story named. Clienti is
+ * available only when the customer-data package is composed in the space
  * (customerDataAvailable), Sequenze only when the sequences package is
  * composed (sequencesAvailable): otherwise each stays disabled with its
  * story, like Pipeline/Calendario, never as a dead link to a blank screen.
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean }} input
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean }} input
  */
 export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false } = {}) {
   const firstPipeline = pipelines.find(
@@ -316,26 +368,20 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
   });
   for (const module of customModules) {
     if (module == null || typeof module.name !== 'string' || !/^[a-z][a-z0-9-]*$/.test(module.name)) continue;
+    if (module.origin !== 'bundle') continue;
     items.push({
       id: `module-${module.name}`,
       label: module.name,
       group: 'custom',
       route: `#/modules/${module.name}`,
       story: 'BO-F0-02',
+      icon: 'module',
       available: true,
       disabledReason: '',
     });
   }
   return items;
 }
-
-/**
- * @param {object} doc DOM document (real or fake).
- * @param {string} tag
- * @param {string} [className]
- * @param {string} [text]
- */
-import { el, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * Render the BO-F0-02 shell chrome (sidebar + topbar) into the given
@@ -354,6 +400,7 @@ import { el, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component li
  *   notify?: (message: string) => void,
  *   onLogout?: () => void,
  *   onPickSpace?: (id: string) => void,
+ *   onAiSubmit?: ((text: string) => void) | null,
  *   win?: { addEventListener?: (type: string, handler: (event: any) => void) => void } | null,
  * }} options
  */
@@ -378,6 +425,9 @@ export function createShellView({
     activeScreenId: screenId,
     screenLabel,
     fixCount: 0,
+    clientCount: null,
+    clientCountExact: true,
+    user: user != null && typeof user === 'object' ? { ...user } : {},
     items: buildShellNav(),
   };
   if (!state.spaces.some((space) => space.id === state.activeSpaceId)) {
@@ -398,11 +448,17 @@ export function createShellView({
     spaceButton.setAttribute('aria-haspopup', 'true');
     spaceButton.setAttribute('title', 'Cambia spazio (⌘1/2/3)');
     const badge = el(doc, 'span', 'bo-space-badge', space.initials ?? space.name.slice(0, 2).toUpperCase());
-    const spaceName = el(doc, 'span', 'bo-space-name', space.name);
-    const chevron = el(doc, 'span', 'bo-space-chevron', '▾');
+    // BO-F6-01: the switcher shows the space name with the member's role
+    // under it, like the prototype ("Studio Aurora / Titolare").
+    const spaceText = el(doc, 'span', 'bo-space-text');
+    spaceText.appendChild(el(doc, 'span', 'bo-space-name', space.name));
+    // BO-F6-03: the role label comes from the session contract
+    // (Titolare/Operatore/Osservatore), reused here, never raw text.
+    const spaceRole = sessionRoleLabel(state.user.role);
+    if (spaceRole !== '') spaceText.appendChild(el(doc, 'span', 'bo-space-role', spaceRole));
     spaceButton.appendChild(badge);
-    spaceButton.appendChild(spaceName);
-    spaceButton.appendChild(chevron);
+    spaceButton.appendChild(spaceText);
+    spaceButton.appendChild(el(doc, 'span', 'bo-space-chevron', '▾'));
     spaceButton.addEventListener('click', () => {
       menu.classList.toggle('hidden', !menu.classList.contains('hidden'));
     });
@@ -433,34 +489,55 @@ export function createShellView({
     menu.appendChild(manage);
     sidebar.appendChild(menu);
 
-    const nav = el(doc, 'nav', 'bo-nav');
-    nav.setAttribute('aria-label', 'Sezioni');
-    for (const group of SHELL_GROUPS) {
-      if (group.header !== null) nav.appendChild(el(doc, 'div', 'bo-nav-header', group.header));
-      for (const item of state.items.filter((candidate) => candidate.group === group.id)) {
-        const link = el(doc, item.available ? 'a' : 'span', 'bo-nav-item'
-          + (item.id === state.activeScreenId ? ' active' : '')
-          + (item.available ? '' : ' disabled'));
-        if (item.available) {
-          link.setAttribute('href', item.route);
-          if (item.id === state.activeScreenId) link.setAttribute('aria-current', 'page');
-          link.addEventListener('click', (event) => {
-            if (event && typeof event.preventDefault === 'function') event.preventDefault();
-            navigate(item.route);
-          });
-        } else {
-          link.setAttribute('aria-disabled', 'true');
-          link.setAttribute('title', item.disabledReason);
+    // One voice row: icon, label, then the voice's live badge, if any.
+    // Clienti carries the live client count (grey pill, BO-F6-01);
+    // Impostazioni carries the real "things to fix" count (yellow pill).
+    function appendVoice(container, item) {
+      const link = el(doc, item.available ? 'a' : 'span', 'bo-nav-item'
+        + (item.id === state.activeScreenId ? ' active' : '')
+        + (item.available ? '' : ' disabled'));
+      if (item.available) {
+        link.setAttribute('href', item.route);
+        if (item.id === state.activeScreenId) link.setAttribute('aria-current', 'page');
+        link.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          navigate(item.route);
+        });
+      } else {
+        link.setAttribute('aria-disabled', 'true');
+        link.setAttribute('title', item.disabledReason);
+      }
+      // BO-F6-02: voices use the single component-library icon (MEM_ACC_REUSE);
+      // custom modules (no icon named) fall back to the neutral glyph inside uiIcon.
+      link.appendChild(uiIcon(doc, item.icon === 'nuovo-modulo' ? 'nuovo' : item.icon));
+      link.appendChild(el(doc, 'span', 'bo-nav-label', item.label));
+      if (item.id === 'clienti') {
+        const countText = clientBadge(state.clientCount, state.clientCountExact);
+        if (countText !== '') {
+          const pill = el(doc, 'span', 'bo-count', countText);
+          if (state.clientCountExact === false) pill.setAttribute('title', 'conteggio parziale: la scansione è limitata');
+          link.appendChild(pill);
         }
-        link.appendChild(uiIcon(doc, item.id === 'nuovo-modulo' ? 'nuovo' : item.id));
-        link.appendChild(el(doc, 'span', 'bo-nav-label', item.label));
-        if (item.id === 'impostazioni') {
-          const badgeText = settingsBadge(state.fixCount);
-          if (badgeText !== '') link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
+      }
+      if (item.id === 'impostazioni') {
+        const badgeText = settingsBadge(state.fixCount);
+        if (badgeText !== '') link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
+      }
+      container.appendChild(link);
+    }
+
+    function appendGroups(container, groupIds) {
+      for (const group of SHELL_GROUPS.filter((candidate) => groupIds.includes(candidate.id))) {
+        if (group.header !== null) container.appendChild(el(doc, 'div', 'bo-nav-header', group.header));
+        for (const item of state.items.filter((candidate) => candidate.group === group.id)) {
+          appendVoice(container, item);
         }
-        nav.appendChild(link);
       }
     }
+
+    const nav = el(doc, 'nav', 'bo-nav');
+    nav.setAttribute('aria-label', 'Sezioni');
+    appendGroups(nav, ['home', 'native', 'custom']);
     sidebar.appendChild(nav);
 
     const addWrap = el(doc, 'div', 'bo-add');
@@ -494,22 +571,33 @@ export function createShellView({
     const spacer = el(doc, 'div', 'bo-spacer');
     sidebar.appendChild(spacer);
 
+    // BO-F6-01: Impostazioni sits at the bottom, above the user row, like
+    // the prototype — with its yellow "things to fix" badge when lit.
+    const bottomNav = el(doc, 'nav', 'bo-nav bo-nav-bottom');
+    bottomNav.setAttribute('aria-label', 'Impostazioni');
+    appendGroups(bottomNav, ['settings']);
+    sidebar.appendChild(bottomNav);
+
+    const member = state.user;
     const userRow = el(doc, 'div', 'bo-user');
-    const initials = typeof user.name === 'string' && user.name.trim() !== ''
-      ? user.name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
+    const initials = typeof member.name === 'string' && member.name.trim() !== ''
+      ? member.name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
       : 'LO';
     userRow.appendChild(el(doc, 'span', 'bo-user-badge', initials));
     const who = el(doc, 'div', 'bo-user-who');
-    who.appendChild(el(doc, 'div', 'bo-user-name', typeof user.name === 'string' && user.name !== '' ? user.name : 'Operatore locale'));
-    who.appendChild(el(doc, 'div', 'bo-user-email', typeof user.email === 'string' && user.email !== '' ? user.email : 'sviluppo locale'));
+    who.appendChild(el(doc, 'div', 'bo-user-name', typeof member.name === 'string' && member.name !== '' ? member.name : 'Operatore locale'));
+    who.appendChild(el(doc, 'div', 'bo-user-email', typeof member.email === 'string' && member.email !== '' ? member.email : 'sviluppo locale'));
     // BO-F6-03: the session role travels with the user (Titolare/Operatore/
     // Osservatore). Absent without a session — never a development string.
-    const roleLabel = sessionRoleLabel(user.role);
+    const roleLabel = sessionRoleLabel(member.role);
     if (roleLabel !== '') who.appendChild(el(doc, 'div', 'bo-user-role', roleLabel));
     userRow.appendChild(who);
+    // BO-F6-01: the exit keeps the prototype's icon; the visible label names
+    // the action (BO-F6-03 reviewed behavior), labelled for assistive tech.
     const logout = el(doc, 'button', 'bo-logout', 'Esci');
     logout.appendChild(uiIcon(doc, 'logout'));
     logout.setAttribute('title', 'Esci');
+    logout.setAttribute('aria-label', 'Esci');
     logout.addEventListener('click', () => onLogout());
     userRow.appendChild(logout);
     sidebar.appendChild(userRow);
@@ -531,6 +619,8 @@ export function createShellView({
 
     const form = el(doc, 'form', 'bo-ai');
     form.setAttribute('role', 'search');
+    // BO-F6-01: the AI bar opens with the ✦ mark, like the prototype.
+    form.appendChild(el(doc, 'span', 'bo-ai-spark', '✦'));
     aiInput = doc.createElement('input');
     aiInput.setAttribute('type', 'search');
     aiInput.setAttribute('class', 'bo-ai-input ui-field'); // BO-F6-02: system field class.
@@ -583,11 +673,16 @@ export function createShellView({
   renderTopbar();
 
   return {
-    update({ fixCount, activeScreenId, screenLabel: nextLabel, items } = {}) {
+    update({ fixCount, clientCount, clientCountExact, activeScreenId, screenLabel: nextLabel, items, user: nextUser } = {}) {
       if (fixCount !== undefined) state.fixCount = fixCount;
+      if (clientCount !== undefined) state.clientCount = clientCount;
+      if (clientCountExact !== undefined) state.clientCountExact = clientCountExact;
       if (typeof activeScreenId === 'string') state.activeScreenId = activeScreenId;
       if (typeof nextLabel === 'string' && nextLabel !== '') state.screenLabel = nextLabel;
       if (Array.isArray(items)) state.items = items;
+      if (nextUser != null && typeof nextUser === 'object' && !Array.isArray(nextUser)) {
+        state.user = { ...state.user, ...nextUser };
+      }
       renderSidebar();
       renderTopbar();
     },
@@ -606,6 +701,7 @@ export function createShellView({
         activeSpaceId: state.activeSpaceId,
         activeScreenId: state.activeScreenId,
         fixCount: state.fixCount,
+        clientCount: state.clientCount,
       };
     },
   };
