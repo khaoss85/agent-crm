@@ -323,7 +323,7 @@ export function uiBadge(doc, options = {}) {
 
 /**
  * @param {any} doc
- * @param {{ title?: unknown, children?: Array<any> }} [options]
+ * @param {{ title?: unknown, children?: Array<any>, className?: unknown }} [options]
  */
 export function uiCard(doc, options = {}) {
   const card = doc.createElement('section');
