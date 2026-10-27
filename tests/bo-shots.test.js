@@ -125,6 +125,7 @@ test('every screen photographs with its shell identity from the /bo router', () 
     catalogo: { id: '', label: 'Catalogo prodotti' },
     'stato-sync': { id: 'impostazioni', label: 'Stato sync' },
     'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
+    componenti: { id: '', label: 'Componenti' },
   });
   for (const name of BO_SCREENS) {
     if (name === 'login') continue;
