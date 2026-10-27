@@ -358,8 +358,10 @@ import {
   loadFixCount,
   readSpaces,
   renderSettingsPanel,
+  resolveBadgeSpaceId,
 } from './admin-shell.js';
 import { buildOggiLinks, createOggiView, isSpaceMount } from './admin-oggi.js';
+import { DEV_USER, readSessionProfile, resolveLogoutTarget } from './admin-session.js';
 import { renderDemoChrome } from './admin-demo.js';
 import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
@@ -609,13 +611,25 @@ const spaziAccessiView = createSpaziAccessiView({
   storage: shellStorage,
   toast,
 });
-const shellSpaces = readSpaces(shellStorage);
-let shellActiveSpace = null;
-try {
-  const stored = shellStorage.getItem(ACTIVE_SPACE_KEY);
-  if (typeof stored === 'string' && shellSpaces.some((space) => space.id === stored)) shellActiveSpace = stored;
-} catch {
-  // Keep the default space.
+// BO-F6-03: the session profile the host injected (a real session under a
+// mount: space, role, name, email and the space logout URL), or null locally
+// without a verifier. With a session the shell shows the session's space and
+// person — never the development identity — and Oggi greets with the same
+// name; without one the development identity stays (criterion 3).
+const sessionProfile = readSessionProfile(document);
+const shellSpaces = sessionProfile ? [sessionProfile.space] : readSpaces(shellStorage);
+const shellUser = sessionProfile
+  ? { name: sessionProfile.name, email: sessionProfile.email, role: sessionProfile.role ?? undefined }
+  : { ...DEV_USER };
+const sessionLogoutUrl = resolveLogoutTarget({ profile: sessionProfile });
+let shellActiveSpace = sessionProfile ? sessionProfile.space.id : null;
+if (!sessionProfile) {
+  try {
+    const stored = shellStorage.getItem(ACTIVE_SPACE_KEY);
+    if (typeof stored === 'string' && shellSpaces.some((space) => space.id === stored)) shellActiveSpace = stored;
+  } catch {
+    // Keep the default space.
+  }
 }
 
 let currentScreenId = 'oggi';
@@ -631,12 +645,6 @@ if (boAssistant) {
   });
 }
 
-/**
- * Local-development identity (the Admin is local-only until a deployment
- * supplies a verifier): the same name greets in the shell and in Oggi.
- */
-const SHELL_USER = Object.freeze({ name: 'Operatore locale', email: 'sviluppo locale' });
-
 let shellView = null;
 const boSidebar = document.querySelector('#boSidebar');
 const boTopbar = document.querySelector('#boTopbar');
@@ -646,10 +654,23 @@ if (boSidebar && boTopbar) {
     sidebar: boSidebar,
     topbar: boTopbar,
     spaces: shellSpaces,
-    user: { ...SHELL_USER },
+    user: shellUser,
     navigate: (hash) => { window.location.hash = hash; },
     notify: (message) => toast(message),
     onLogout: () => {
+      if (sessionLogoutUrl !== null) {
+        // A real session: the space logout closes it and returns to the
+        // space login. A full navigation, not a hash change: the session
+        // cookie lives on that route, not in this page.
+        window.location.assign(sessionLogoutUrl);
+        return;
+      }
+      if (sessionProfile !== null) {
+        // A session without a host logout route: never fake a logout with
+        // the local reset while the real session stays alive.
+        toast('Esci non disponibile: manca l’indirizzo di logout dello spazio.');
+        return;
+      }
       try { shellStorage.removeItem(ACTIVE_SPACE_KEY); } catch {
         // Logout still lands home without persistence.
       }
@@ -750,13 +771,8 @@ async function refreshShellBadge() {
   // The badge counts what the Stato sync screen points at: the data-quality
   // rows plus the sync attention rows, both read live. Without a selected
   // space the sync half is unknown and the badge keeps the quality count.
-  let spaceId = '';
-  try {
-    const stored = shellStorage.getItem(ACTIVE_SPACE_KEY);
-    if (typeof stored === 'string') spaceId = stored;
-  } catch {
-    spaceId = '';
-  }
+  // The live session space wins over the stored local one (BO-F6-03).
+  const spaceId = resolveBadgeSpaceId(shellActiveSpace, shellStorage);
   shellFixCount = await loadFixCount(moduleClient, { spaceId });
   shellView.update({ fixCount: shellFixCount });
 }
@@ -911,7 +927,7 @@ async function route() {
     }
     await oggiView.render({
       spaceName: currentSpaceName(),
-      userName: SHELL_USER.name,
+      userName: shellUser.name,
       links: buildOggiLinks(shellItems),
       now: new Date(),
     });

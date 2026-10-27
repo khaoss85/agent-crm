@@ -1,5 +1,7 @@
 // @ts-check
 
+import { sessionRoleLabel } from './admin-session.js';
+
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
 // Reference: the approved backoffice prototype (sidebar on every screen with
@@ -125,6 +127,29 @@ export function countFixes({ issues = [], candidates = [] } = {}) {
   const openIssues = issues.filter((row) => row != null && row.status === 'open').length;
   const openCandidates = candidates.filter((row) => row != null && row.status === 'unresolved').length;
   return openIssues + openCandidates;
+}
+
+/**
+ * Which space the Impostazioni badge counts for. The live session space
+ * wins: under a real session the stored local space is empty (or belongs
+ * to the development identity), and counting with it would silently drop
+ * the sync half of the badge. Without a session the stored selection is
+ * the space; with neither, the sync half stays unknown.
+ * @param {unknown} sessionSpaceId the live session's space id, if any
+ * @param {{ getItem?: unknown } | null | undefined} storage
+ * @param {string} [key]
+ * @returns {string} the space id to count for, or '' when unknown
+ */
+export function resolveBadgeSpaceId(sessionSpaceId, storage, key = ACTIVE_SPACE_KEY) {
+  if (typeof sessionSpaceId === 'string' && sessionSpaceId !== '') return sessionSpaceId;
+  try {
+    const stored = storage?.getItem?.(key);
+    if (typeof stored === 'string' && stored !== '') return stored;
+  } catch {
+    // A broken storage never breaks the badge: the count degrades to the
+    // quality half, like an unknown space.
+  }
+  return '';
 }
 
 /**
@@ -322,7 +347,7 @@ import { el, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component li
  *   sidebar: object,
  *   topbar: object,
  *   spaces?: Array<{ id: string, name: string, initials?: string }>,
- *   user?: { name?: string, email?: string },
+ *   user?: { name?: string, email?: string, role?: string },
  *   screenId?: string,
  *   screenLabel?: string,
  *   navigate?: (hash: string) => void,
@@ -477,10 +502,14 @@ export function createShellView({
     const who = el(doc, 'div', 'bo-user-who');
     who.appendChild(el(doc, 'div', 'bo-user-name', typeof user.name === 'string' && user.name !== '' ? user.name : 'Operatore locale'));
     who.appendChild(el(doc, 'div', 'bo-user-email', typeof user.email === 'string' && user.email !== '' ? user.email : 'sviluppo locale'));
+    // BO-F6-03: the session role travels with the user (Titolare/Operatore/
+    // Osservatore). Absent without a session — never a development string.
+    const roleLabel = sessionRoleLabel(user.role);
+    if (roleLabel !== '') who.appendChild(el(doc, 'div', 'bo-user-role', roleLabel));
     userRow.appendChild(who);
     const logout = el(doc, 'button', 'bo-logout', 'Esci');
     logout.appendChild(uiIcon(doc, 'logout'));
-    logout.setAttribute('title', 'Esci (reimposta lo spazio locale)');
+    logout.setAttribute('title', 'Esci');
     logout.addEventListener('click', () => onLogout());
     userRow.appendChild(logout);
     sidebar.appendChild(userRow);

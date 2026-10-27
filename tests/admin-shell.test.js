@@ -11,6 +11,7 @@ import {
   settingsBadge,
   countFixes,
   loadFixCount,
+  resolveBadgeSpaceId,
   defaultSpaces,
   readSpaces,
   resolveSpaceShortcut,
@@ -116,6 +117,22 @@ test('a failed sync half of the badge logs its cause and keeps the quality count
   assert.ok(warnings[0].includes('Error'));
   assert.ok(warnings[0].includes('spaceId=prova'));
   assert.ok(!warnings[0].includes('sync giù'));
+});
+
+test('the badge counts the session space first, the stored one only without a session', () => {
+  const stored = { getItem: () => 'locale' };
+  // A real session: the live space wins even when storage names another one.
+  assert.equal(resolveBadgeSpaceId('aurora', stored), 'aurora');
+  assert.equal(resolveBadgeSpaceId('aurora', { getItem: () => '' }), 'aurora');
+  assert.equal(resolveBadgeSpaceId('aurora', { getItem: () => { throw new Error('storage giù'); } }), 'aurora');
+  // No session: the stored selection is the space.
+  assert.equal(resolveBadgeSpaceId(null, stored), 'locale');
+  assert.equal(resolveBadgeSpaceId('', stored), 'locale');
+  assert.equal(resolveBadgeSpaceId(undefined, stored), 'locale');
+  // Neither: the sync half stays unknown, never a guessed space.
+  assert.equal(resolveBadgeSpaceId(null, { getItem: () => '' }), '');
+  assert.equal(resolveBadgeSpaceId(null, { getItem: () => { throw new Error('storage giù'); } }), '');
+  assert.equal(resolveBadgeSpaceId(null, null), '');
 });
 
 test('⌘1/2/3 switch among the user spaces only', () => {
@@ -414,4 +431,42 @@ test('shell stylesheet stays fluid under 700px', () => {
   assert.ok(css.includes('.bo-sidebar'), 'sidebar rules exist');
   const narrow = css.slice(css.indexOf('@media (max-width: 700px)'));
   assert.ok(narrow.includes('.bo-sidebar'), 'narrow rules restyle the sidebar');
+});
+
+test('a real session shows the space, the role, the name and the email (BO-F6-03)', () => {
+  const { sidebar, topbar } = renderShell({
+    spaces: [{ id: 'presti-group', name: 'Presti Group', initials: 'PR' }],
+    user: { name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' },
+  });
+  const text = sidebar.textContent;
+  assert.ok(text.includes('Presti Group'));
+  assert.ok(text.includes('Titolare'));
+  assert.ok(text.includes('Elena Rinaldi'));
+  assert.ok(text.includes('elena@studioaurora.it'));
+  assert.ok(!text.includes('Spazio locale'));
+  assert.ok(!text.includes('Operatore locale'));
+  assert.ok(!text.includes('sviluppo locale'));
+  assert.ok(topbar.textContent.includes('Presti Group / Oggi'));
+});
+
+test('without a session role no role line renders, never a development string', () => {
+  const { sidebar } = renderShell();
+  assert.ok(!sidebar.textContent.includes('Titolare'));
+  assert.ok(!sidebar.textContent.includes('Operatore locale'));
+  assert.ok(sidebar.textContent.includes('Elena Rinaldi'));
+});
+
+test('a hostile role renders as text, never markup', () => {
+  const doc = createFakeDocument();
+  const sidebar = createMount();
+  const topbar = createMount();
+  createShellView({
+    doc,
+    sidebar,
+    topbar,
+    spaces: [{ id: 'x', name: 'Prova' }],
+    user: { name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner<script>' },
+  });
+  assert.ok(!sidebar.textContent.includes('Titolare'));
+  assert.equal(sidebar.findAll('script').length, 0);
 });

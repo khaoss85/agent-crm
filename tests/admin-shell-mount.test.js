@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
-import { createAdminShellMount, injectAdminBase, serializeEnvelope } from '../packages/app/src/admin-mount.js';
+import { createAdminShellMount, injectAdminBase, injectSessionProfile, serializeEnvelope } from '../packages/app/src/admin-mount.js';
 import { resolveAdminBase } from '../apps/admin/public/admin-base.js';
 import { DEMO_STRINGS } from '../apps/admin/public/admin-oggi.js';
 
@@ -572,4 +572,143 @@ test('resolveAdminBase reads the injected meta, defaulting to ""', () => {
   assert.equal(resolveAdminBase(doc('')), '');
   assert.equal(resolveAdminBase(doc(undefined)), '');
   assert.equal(resolveAdminBase({ querySelector: () => null }), '');
+});
+
+test('injectSessionProfile serializes the session display profile, escaped', () => {
+  const html = '<html><head><title>x</title></head><body></body></html>';
+  const injected = injectSessionProfile(html, {
+    space: { id: 'presti-group', name: 'Presti Group' },
+    role: 'owner',
+    name: 'Elena Rinaldi',
+    email: 'elena@studioaurora.it',
+    logoutUrl: '/w/presti-group/auth/logout',
+  });
+  assert.match(injected, /<script id="bo-session" type="application\/json">/);
+  assert.ok(injected.includes('"Presti Group"'));
+  assert.ok(!injected.includes('</script><script'));
+  const hostile = injectSessionProfile(html, { name: '</script><script>alert(1)</script>', space: { id: 'x', name: 'y' } });
+  assert.ok(!hostile.includes('</script><script>'), 'hostile values never close the tag');
+  assert.equal(injectSessionProfile(html, null), html);
+  assert.equal(injectSessionProfile(html, 'nope'), html);
+  assert.equal(injectSessionProfile(html, [1]), html);
+});
+
+test('the mount injects the embedder session profile into served HTML only', async () => {
+  const app = readApp();
+  try {
+    const seen = [];
+    const mount = createAdminShellMount(app, {
+      basePath: '/bo',
+      sessionFor: async ({ cookies, path }) => {
+        seen.push({ path, session: cookies?.space_session });
+        return {
+          space: { id: 'presti-group', name: 'Presti Group' },
+          role: 'operator',
+          name: 'Elena Rinaldi',
+          email: 'elena@studioaurora.it',
+          logoutUrl: '/w/presti-group/auth/logout',
+        };
+      },
+    });
+    const page = await mount.handle({
+      method: 'GET', path: '/bo/', headers: {}, cookies: { space_session: 's1' },
+    });
+    assert.equal(page.status, 200);
+    const html = page.body.toString('utf8');
+    assert.deepEqual(seen, [{ path: '/bo/', session: 's1' }]);
+    assert.match(html, /<script id="bo-session" type="application\/json">/);
+    assert.ok(html.includes('Presti Group'));
+    // Non-HTML assets carry no profile.
+    const js = await mount.handle({ method: 'GET', path: '/bo/app.js', headers: {} });
+    assert.equal(js.status, 200);
+    assert.ok(!js.body.toString('utf8').includes('id="bo-session"'));
+  } finally {
+    app.close();
+  }
+});
+
+test('per-user session HTML leaves with private headers; shared HTML stays cacheable', async () => {
+  const app = readApp();
+  try {
+    const profile = {
+      space: { id: 'aurora', name: 'Studio Aurora' },
+      role: 'owner',
+      name: 'Elena Rinaldi',
+      email: 'elena@studioaurora.it',
+      logoutUrl: '/w/aurora/auth/logout',
+    };
+    const sessioned = createAdminShellMount(app, {
+      basePath: '/bo',
+      sessionFor: async () => profile,
+    });
+    const personal = await sessioned.handle({ method: 'GET', path: '/bo/', headers: {}, cookies: {} });
+    assert.equal(personal.status, 200);
+    assert.ok(personal.body.toString('utf8').includes('id="bo-session"'));
+    assert.equal(personal.headers['cache-control'], 'private, no-store');
+    assert.equal(personal.headers.vary, 'Cookie');
+    const personalHead = await sessioned.handle({ method: 'HEAD', path: '/bo/', headers: {}, cookies: {} });
+    assert.equal(personalHead.headers['cache-control'], 'private, no-store');
+    assert.equal(personalHead.headers.vary, 'Cookie');
+    assert.equal(personalHead.body.byteLength, 0);
+    // Non-HTML assets carry no profile, so they keep the shared policy.
+    const js = await sessioned.handle({ method: 'GET', path: '/bo/app.js', headers: {} });
+    assert.equal(js.headers['cache-control'], 'no-cache');
+    assert.equal(js.headers.vary, undefined);
+    // No sessionFor: the bytes are identical for every viewer.
+    const plain = createAdminShellMount(app, { basePath: '/bo' });
+    const shared = await plain.handle({ method: 'GET', path: '/bo/', headers: {}, cookies: {} });
+    assert.ok(!shared.body.toString('utf8').includes('id="bo-session"'));
+    assert.equal(shared.headers['cache-control'], 'no-cache');
+    assert.equal(shared.headers.vary, undefined);
+    // A profile failure degrades to the shared page, never to per-user bytes.
+    const failing = createAdminShellMount(app, {
+      basePath: '/bo',
+      sessionFor: async () => { throw new Error('down'); },
+    });
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    let degraded;
+    try {
+      degraded = await failing.handle({ method: 'GET', path: '/bo/', headers: {}, cookies: {} });
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.ok(!degraded.body.toString('utf8').includes('id="bo-session"'));
+    assert.equal(degraded.headers['cache-control'], 'no-cache');
+    assert.equal(degraded.headers.vary, undefined);
+  } finally {
+    app.close();
+  }
+});
+
+test('without sessionFor the served shell carries no profile; a failure degrades to none', async () => {
+  const app = readApp();
+  try {
+    const plain = createAdminShellMount(app, { basePath: '/bo' });
+    const page = await plain.handle({ method: 'GET', path: '/bo/', headers: {}, cookies: {} });
+    assert.equal(page.status, 200);
+    assert.ok(!page.body.toString('utf8').includes('id="bo-session"'));
+    const failing = createAdminShellMount(app, {
+      basePath: '/bo',
+      sessionFor: async () => { throw Object.assign(new Error('down'), { code: 'PROFILE_DOWN' }); },
+    });
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+    let degraded;
+    try {
+      degraded = await failing.handle({ method: 'GET', path: '/bo/', headers: {}, cookies: {} });
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.equal(degraded.status, 200, 'a display failure never fails the shell');
+    assert.ok(!degraded.body.toString('utf8').includes('id="bo-session"'));
+    assert.equal(warnings.length, 1, 'one diagnostic, never silent');
+    assert.ok(warnings[0].includes('bo-session profile unreadable'));
+    assert.ok(warnings[0].includes('Error'));
+    assert.ok(warnings[0].includes('path=/bo/'));
+    assert.ok(!warnings[0].includes('down'), 'no error text, no profile data');
+  } finally {
+    app.close();
+  }
 });
