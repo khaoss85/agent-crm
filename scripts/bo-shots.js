@@ -525,6 +525,9 @@ export const SHELL_SCREENS = Object.freeze({
   catalogo: { id: '', label: 'Catalogo prodotti' },
   'stato-sync': { id: 'impostazioni', label: 'Stato sync' },
   'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
+  // The component catalog (BO-F6-02): an honest crumb with no sidebar
+  // highlight, exactly like shellScreenFor in apps/admin/public/app.js.
+  componenti: { id: '', label: 'Componenti' },
 });
 
 const SHELL_DEMO_SPACE = Object.freeze({ id: 'locale', name: 'Spazio locale', initials: 'SL' });
