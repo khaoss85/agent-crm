@@ -329,6 +329,14 @@ export function parseModuleRoute(hash) {
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'catalog' };
   }
+  // Component catalog route: #/componenti (BO-F6-02). The visual-system
+  // catalog with demo data: static content, no fetch, no writes. Same
+  // canonical discipline as every other route here.
+  if (rawParts.length && rawParts[0] === 'componenti') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'componenti' };
+  }
   // Sequences route: #/sequenze (BO-F3-03). One screen: the elenco with the
   // dettaglio of the selected sequence. Same canonical discipline as every
   // other route here; anything else under the prefix is invalid, not a

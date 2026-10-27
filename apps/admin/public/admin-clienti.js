@@ -1,5 +1,7 @@
 // @ts-check
 
+import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+
 // BO-F1-05 — Elenco Clienti: viste rapide, ricerca, filtri raggruppati con
 // "Crea un filtro con l'AI", × sui filtri, ordinamento, colonne configurabili
 // (tra cui "Budget dichiarato" estratto dall'AI con fonte) e paginazione
@@ -89,12 +91,7 @@ export function createCustomerListView(deps) {
   };
   const store = deps.storage ?? null;
 
-  const el = (tag, className, text) => {
-    const node = doc.createElement(tag);
-    if (className) node.setAttribute('class', className);
-    if (text !== undefined && text !== null) node.textContent = String(text);
-    return node;
-  };
+  const el = elFor(doc); // BO-F6-02: shared element builder.
   const link = (href, text, action) => {
     const node = el('a', undefined, text);
     node.setAttribute('href', href);
@@ -235,6 +232,7 @@ export function createCustomerListView(deps) {
     form.setAttribute('role', 'search');
     const input = doc.createElement('input');
     input.setAttribute('type', 'search');
+    input.setAttribute('class', 'ui-field'); // BO-F6-02: system field class.
     input.setAttribute('name', 'q');
     input.setAttribute('aria-label', 'Cerca clienti');
     input.setAttribute('placeholder', 'Cerca nome, email, azienda, telefono…');

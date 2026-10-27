@@ -1,3 +1,3 @@
 export { createAccordoApp } from './create-app.js';
 export { createAccordoAppAsync } from './create-app-async.js';
-export { createAdminShellMount, injectAdminBase } from './admin-mount.js';
+export { createAdminShellMount, injectAdminBase, injectSessionProfile } from './admin-mount.js';

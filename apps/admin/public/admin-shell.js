@@ -1,5 +1,8 @@
 // @ts-check
 
+import { sessionRoleLabel } from './admin-session.js';
+import { el, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
+
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
 // Reference: the approved backoffice prototype (sidebar on every screen with
@@ -18,28 +21,10 @@
 /** Route for the settings entry. Its tabs land in BO-F0-03. */
 export const SETTINGS_ROUTE = '#/impostazioni';
 
-/** SVG namespace for the inline shell icons (static paths, never data). */
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/**
- * Stroke icon geometry (24×24, currentColor) for every sidebar voice, the
- * space switcher and the exit button. BO-F6-01: the prototype gives each
- * voice its own icon; custom user modules share the generic module cube.
- * Static path data only — hostile space, user or module names stay text.
- */
-export const SHELL_ICONS = Object.freeze({
-  oggi: 'M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z M12 2.5v2.5 M12 19v2.5 M2.5 12h2.5 M19 12h2.5 M5 5l1.8 1.8 M17.2 17.2L19 19 M19 5l-1.8 1.8 M6.8 17.2L5 19',
-  clienti: 'M9 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z M2.8 20c.7-3.4 3.2-5.2 6.2-5.2s5.5 1.8 6.2 5.2 M15.5 5.2a3.5 3.5 0 0 1 0 5.9 M17.3 14.9c2 .8 3.3 2.4 3.9 5.1',
-  pipeline: 'M3.5 20h17 M6.5 20v-6 M12 20V6 M17.5 20v-9',
-  calendario: 'M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19z M4 10h16 M8.5 3v4 M15.5 3v4',
-  sequenze: 'M9 6h12 M9 12h12 M9 18h12 M4 6h1.5 M4 12h1.5 M4 18h1.5',
-  reporting: 'M4 4v15.5a.5.5 0 0 0 .5.5H20 M9.5 16.5v-4 M14 16.5V9 M18.5 16.5v-2.5',
-  'nuovo-modulo': 'M12 5v14 M5 12h14',
-  impostazioni: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M12 2.8v2.6 M12 18.6v2.6 M2.8 12h2.6 M18.6 12h2.6 M5.5 5.5l1.8 1.8 M16.7 16.7l1.8 1.8 M18.5 5.5l-1.8 1.8 M7.3 16.7l-1.8 1.8',
-  module: 'M12 3l8 4.5v9L12 21l-8-4.5v-9z M12 12l8-4.5 M12 12L4 7.5 M12 12v9',
-  logout: 'M13.5 4H6v16h7.5 M10.5 12H21 M17.5 8.5L21 12l-3.5 3.5',
-  expand: 'M12 4v16 M8 8l4-4 4 4 M8 16l4 4 4-4',
-});
+// BO-F6-01 icons and the element helper come from the single component
+// library (BO-F6-02, apps/admin/public/admin-ui.js): `el` keeps the bo-*
+// classes and adds the ui-* system ones, `uiIcon` covers every shell voice.
+// No local icon geometry here (MEM_ACC_REUSE).
 
 /** Storage keys for the local shell state (space selection only). */
 export const ACTIVE_SPACE_KEY = 'accordo.activeSpace';
@@ -151,8 +136,11 @@ export function clientBadge(count, exact = true) {
 }
 
 /**
- * Read the live client count for the badge: one page of size 1 over the
- * same customer list the Clienti screen reads, keeping only its `total`.
+ * Read the live client count for the badge: the smallest supported page
+ * over the same customer list the Clienti screen reads, keeping only its
+ * `total`. pageSize=1 is rejected by parseCustomerListQuery (400: only 10,
+ * 25 and 50 are accepted), so the badge asks for pageSize=10 — the endpoint
+ * default — and never for an unsupported size.
  * Returns null (unknown) when the customer-data package is not composed or
  * a read fails — an unknown count must never light the badge.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
@@ -160,7 +148,7 @@ export function clientBadge(count, exact = true) {
  */
 export async function loadClientCount(client) {
   try {
-    const page = await client.request('/api/customer-data/customers?pageSize=1');
+    const page = await client.request('/api/customer-data/customers?pageSize=10');
     const total = page?.total;
     if (typeof total !== 'number' || !Number.isInteger(total) || total < 0) return null;
     return { count: total, exact: page?.totalIsExact !== false };
@@ -188,6 +176,29 @@ export function countFixes({ issues = [], candidates = [] } = {}) {
   const openIssues = issues.filter((row) => row != null && row.status === 'open').length;
   const openCandidates = candidates.filter((row) => row != null && row.status === 'unresolved').length;
   return openIssues + openCandidates;
+}
+
+/**
+ * Which space the Impostazioni badge counts for. The live session space
+ * wins: under a real session the stored local space is empty (or belongs
+ * to the development identity), and counting with it would silently drop
+ * the sync half of the badge. Without a session the stored selection is
+ * the space; with neither, the sync half stays unknown.
+ * @param {unknown} sessionSpaceId the live session's space id, if any
+ * @param {{ getItem?: unknown } | null | undefined} storage
+ * @param {string} [key]
+ * @returns {string} the space id to count for, or '' when unknown
+ */
+export function resolveBadgeSpaceId(sessionSpaceId, storage, key = ACTIVE_SPACE_KEY) {
+  if (typeof sessionSpaceId === 'string' && sessionSpaceId !== '') return sessionSpaceId;
+  try {
+    const stored = storage?.getItem?.(key);
+    if (typeof stored === 'string' && stored !== '') return stored;
+  } catch {
+    // A broken storage never breaks the badge: the count degrades to the
+    // quality half, like an unknown space.
+  }
+  return '';
 }
 
 /**
@@ -373,58 +384,6 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
 }
 
 /**
- * @param {object} doc DOM document (real or fake).
- * @param {string} tag
- * @param {string} [className]
- * @param {string} [text]
- */
-function el(doc, tag, className, text) {
-  const node = doc.createElement(tag);
-  if (className) node.setAttribute('class', className);
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-/**
- * An inline stroke icon for a shell voice, button or switcher (BO-F6-01).
- * Static geometry from SHELL_ICONS, currentColor strokes — user or tenant
- * data never reaches markup here, only the icon name, which falls back to
- * the generic module cube when unknown.
- * @param {object} doc DOM document (real or fake).
- * @param {string} name
- * @param {string} className
- */
-function svgIcon(doc, name, className) {
-  const make = doc != null && typeof doc.createElementNS === 'function'
-    ? (tag) => doc.createElementNS(SVG_NS, tag)
-    : (tag) => doc.createElement(tag);
-  const svg = make('svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('class', className);
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('focusable', 'false');
-  const path = make('path');
-  path.setAttribute('d', typeof name === 'string' && typeof SHELL_ICONS[name] === 'string' ? SHELL_ICONS[name] : SHELL_ICONS.module);
-  path.setAttribute('fill', 'none');
-  path.setAttribute('stroke', 'currentColor');
-  path.setAttribute('stroke-width', '2');
-  path.setAttribute('stroke-linecap', 'round');
-  path.setAttribute('stroke-linejoin', 'round');
-  svg.appendChild(path);
-  return svg;
-}
-
-/**
- * The session role for the space switcher (BO-F6-01): the prototype shows
- * the member's role under the space name ("Studio Aurora / Titolare").
- * Absent without a session — never a development string.
- * @param {unknown} role
- */
-function spaceRoleLabel(role) {
-  return typeof role === 'string' && role.trim() !== '' ? role.trim() : '';
-}
-
-/**
  * Render the BO-F0-02 shell chrome (sidebar + topbar) into the given
  * mounts. All labels come from the model above; every value that can carry
  * user or tenant data is inserted as text.
@@ -493,11 +452,13 @@ export function createShellView({
     // under it, like the prototype ("Studio Aurora / Titolare").
     const spaceText = el(doc, 'span', 'bo-space-text');
     spaceText.appendChild(el(doc, 'span', 'bo-space-name', space.name));
-    const roleLabel = spaceRoleLabel(state.user.role);
-    if (roleLabel !== '') spaceText.appendChild(el(doc, 'span', 'bo-space-role', roleLabel));
+    // BO-F6-03: the role label comes from the session contract
+    // (Titolare/Operatore/Osservatore), reused here, never raw text.
+    const spaceRole = sessionRoleLabel(state.user.role);
+    if (spaceRole !== '') spaceText.appendChild(el(doc, 'span', 'bo-space-role', spaceRole));
     spaceButton.appendChild(badge);
     spaceButton.appendChild(spaceText);
-    spaceButton.appendChild(svgIcon(doc, 'expand', 'bo-space-expand'));
+    spaceButton.appendChild(el(doc, 'span', 'bo-space-chevron', '▾'));
     spaceButton.addEventListener('click', () => {
       menu.classList.toggle('hidden', !menu.classList.contains('hidden'));
     });
@@ -546,7 +507,9 @@ export function createShellView({
         link.setAttribute('aria-disabled', 'true');
         link.setAttribute('title', item.disabledReason);
       }
-      link.appendChild(svgIcon(doc, item.icon, 'bo-nav-icon'));
+      // BO-F6-02: voices use the single component-library icon (MEM_ACC_REUSE);
+      // custom modules (no icon named) fall back to the neutral glyph inside uiIcon.
+      link.appendChild(uiIcon(doc, item.icon === 'nuovo-modulo' ? 'nuovo' : item.icon));
       link.appendChild(el(doc, 'span', 'bo-nav-label', item.label));
       if (item.id === 'clienti') {
         const countText = clientBadge(state.clientCount, state.clientCountExact);
@@ -624,13 +587,17 @@ export function createShellView({
     const who = el(doc, 'div', 'bo-user-who');
     who.appendChild(el(doc, 'div', 'bo-user-name', typeof member.name === 'string' && member.name !== '' ? member.name : 'Operatore locale'));
     who.appendChild(el(doc, 'div', 'bo-user-email', typeof member.email === 'string' && member.email !== '' ? member.email : 'sviluppo locale'));
+    // BO-F6-03: the session role travels with the user (Titolare/Operatore/
+    // Osservatore). Absent without a session — never a development string.
+    const roleLabel = sessionRoleLabel(member.role);
+    if (roleLabel !== '') who.appendChild(el(doc, 'div', 'bo-user-role', roleLabel));
     userRow.appendChild(who);
-    // BO-F6-01: the exit is an icon button, like the prototype — labelled
-    // for assistive tech, never bare.
-    const logout = el(doc, 'button', 'bo-logout');
+    // BO-F6-01: the exit keeps the prototype's icon; the visible label names
+    // the action (BO-F6-03 reviewed behavior), labelled for assistive tech.
+    const logout = el(doc, 'button', 'bo-logout', 'Esci');
+    logout.appendChild(uiIcon(doc, 'logout'));
     logout.setAttribute('title', 'Esci');
     logout.setAttribute('aria-label', 'Esci');
-    logout.appendChild(svgIcon(doc, 'logout', 'bo-logout-icon'));
     logout.addEventListener('click', () => onLogout());
     userRow.appendChild(logout);
     sidebar.appendChild(userRow);
@@ -656,7 +623,7 @@ export function createShellView({
     form.appendChild(el(doc, 'span', 'bo-ai-spark', '✦'));
     aiInput = doc.createElement('input');
     aiInput.setAttribute('type', 'search');
-    aiInput.setAttribute('class', 'bo-ai-input');
+    aiInput.setAttribute('class', 'bo-ai-input ui-field'); // BO-F6-02: system field class.
     aiInput.setAttribute('aria-label', 'Barra AI: chiedi o fai qualcosa');
     aiInput.setAttribute('placeholder', aiPlaceholder(state.activeScreenId));
     aiInput.setAttribute('title', 'Barra AI (⌘K): chiedi o fai qualcosa');

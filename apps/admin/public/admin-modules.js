@@ -40,13 +40,7 @@ const REFERENCE_LABEL_FETCH_BUDGET = 25;
  * @param {string} tag
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
-function el(doc, tag, options = {}) {
-  const node = doc.createElement(tag);
-  if (options.text !== undefined) node.textContent = options.text; // safe: text, not HTML
-  if (options.class) node.setAttribute('class', options.class);
-  for (const [key, value] of Object.entries(options.attrs ?? {})) node.setAttribute(key, value);
-  return node;
-}
+import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the generated-module screens. Injecting `doc`, `client`

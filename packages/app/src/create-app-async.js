@@ -14,7 +14,8 @@ import {
  * Opportunity and Approval over the source-private SQLite lifecycle, or a
  * complete PostgreSQL application when deployment storage / test harness
  * selects that adapter. The default selected graph is an explicit
- * packageContract 2 with empty package, action and module lists. Bundled and
+ * packageContract 2 with empty package, action, module and pipeline lists
+ * (pipelines are opt-in per selected graph, backlog:282de375). Bundled and
  * generated v1 registries are never the default. This module does not import
  * or wrap the synchronous v1 factory.
  */

@@ -8,15 +8,19 @@
  * at 390x1600:
  *
  *   login, oggi, clienti, cliente, pipeline, calendario, sequenze, reporting,
- *   personalizzazione, catalogo, stato-sync, spazi-accessi
+ *   personalizzazione, catalogo, stato-sync, spazi-accessi, componenti
+ *   (the F6-02 component catalog)
  *
- * Each screen renders its real view module plus the real `styles.css` inside
- * a real Chromium, driven by the same demo-shaped fixtures the repo's unit
- * and `*-shots` tests already prove filled — nothing is invented for the
- * camera. The Chromium lookup mirrors the `*-shots` tests (`CHROMIUM_BIN`,
- * then the Playwright headless-shell caches). Where no binary exists, or it
- * cannot run here, the command exits 0 with a skip message: shots are a
- * publishing convenience, not a gate.
+ * Each screen renders the real /bo page — the shell (`createShellView` from
+ * `admin-shell.js`: sidebar plus topbar with the path and the AI bar) with
+ * the view module mounted where the app mounts it — plus the real
+ * `styles.css` inside a real Chromium, driven by the same demo-shaped
+ * fixtures the repo's unit and `*-shots` tests already prove filled —
+ * nothing is invented for the camera. The completion probe stays in the DOM
+ * but hidden, so it can never leak into a PNG. The Chromium lookup mirrors
+ * the `*-shots` tests (`CHROMIUM_BIN`, then the Playwright headless-shell
+ * caches). Where no binary exists, or it cannot run here, the command exits
+ * 0 with a skip message: shots are a publishing convenience, not a gate.
  *
  * The command never touches the network: the fixture server binds 127.0.0.1
  * and Chromium runs with background networking disabled. The default output
@@ -55,6 +59,7 @@ export const SCREEN_NAMES = Object.freeze([
   'catalogo',
   'stato-sync',
   'spazi-accessi',
+  'componenti',
 ]);
 
 /**
@@ -475,11 +480,12 @@ const DEMO_MEMBERS = [
 
 // ---------------------------------------------------------------------------
 // Screens. `module` is the real view served from apps/admin/public (null for
-// the static login page). `code` drives the view with the fixtures above and
-// ends by setting document.title to `<name>-ready`, the same convention the
-// `*-shots` tests use to prove the harness ran to completion. `expect` lists
-// demo strings that must appear in the painted DOM: a screen that renders
-// empty fails even when Chromium writes a PNG.
+// the static login page). The harness page first runs the shell prelude
+// (`shellBoot`, from SHELL_SCREENS below), then `code` drives the view with
+// the fixtures above and ends by setting document.title to `<name>-ready`,
+// the same convention the `*-shots` tests use to prove the harness ran to
+// completion. `expect` lists demo strings that must appear in the painted
+// DOM: a screen that renders empty fails even when Chromium writes a PNG.
 // ---------------------------------------------------------------------------
 
 export const SCREENS = Object.freeze([
@@ -491,13 +497,78 @@ export const SCREENS = Object.freeze([
   { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['taglio', 'Mostra settimana'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
-  { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Pacchetti', 'Pagamenti'] },
+  { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Stripe collegato'] },
   { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto a posto', 'WhatsApp'] },
   { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-accessi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
+  { name: 'componenti', module: 'admin-ui-catalog.js', ready: 'componenti-ready', expect: ['Catalogo dei componenti', 'Primario scuro'] },
 ]);
 
 export const BO_SCREENS = Object.freeze(SCREENS.map((screen) => screen.name));
+
+// ---------------------------------------------------------------------------
+// Shell identity per screen. Mirrors the /bo router (apps/admin/public/app.js
+// `shellScreenFor`): the photographed page highlights the same sidebar voice
+// and crumbs the same path the app shows for that screen. `id: ''` means the
+// screen has an honest crumb with no sidebar highlight, exactly like the app.
+// ---------------------------------------------------------------------------
+
+export const SHELL_SCREENS = Object.freeze({
+  oggi: { id: 'oggi', label: 'Oggi' },
+  clienti: { id: 'clienti', label: 'Clienti' },
+  cliente: { id: 'clienti', label: 'Clienti' },
+  pipeline: { id: 'pipeline', label: 'Pipeline' },
+  calendario: { id: 'calendario', label: 'Calendario' },
+  sequenze: { id: 'sequenze', label: 'Sequenze' },
+  reporting: { id: 'reporting', label: 'Reporting' },
+  personalizzazione: { id: 'impostazioni', label: 'Personalizzazione' },
+  catalogo: { id: '', label: 'Catalogo prodotti' },
+  'stato-sync': { id: 'impostazioni', label: 'Stato sync' },
+  'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
+  // The component catalog (BO-F6-02): an honest crumb with no sidebar
+  // highlight, exactly like shellScreenFor in apps/admin/public/app.js.
+  componenti: { id: '', label: 'Componenti' },
+});
+
+const SHELL_DEMO_SPACE = Object.freeze({ id: 'locale', name: 'Spazio locale', initials: 'SL' });
+const SHELL_DEMO_USER = Object.freeze({ name: 'Elena', email: 'elena@palestra-esempio.it' });
+
+/**
+ * The shell prelude every harness page runs before its view module: the real
+ * `createShellView` renders the sidebar and the topbar (path + AI bar) into
+ * the page's shell mounts, with the demo composition the Oggi fixtures use
+ * (one pipeline, customer data and sequences composed).
+ * @param {string} name
+ */
+function shellBoot(name) {
+  const shell = SHELL_SCREENS[name];
+  if (!shell) throw new Error(`bo:shots has no shell identity for screen "${name}"`);
+  return `
+import { buildShellNav as buildHarnessShellNav, createShellView } from './admin-shell.js';
+const shellView = createShellView({
+  doc: document,
+  sidebar: document.getElementById('boSidebar'),
+  topbar: document.getElementById('boTopbar'),
+  spaces: [${JSON.stringify(SHELL_DEMO_SPACE)}],
+  user: ${JSON.stringify(SHELL_DEMO_USER)},
+  screenId: ${JSON.stringify(shell.id)},
+  screenLabel: ${JSON.stringify(shell.label)},
+  navigate: () => {},
+  notify: () => {},
+  onLogout: () => {},
+  onPickSpace: () => {},
+  win: null,
+});
+shellView.update({
+  items: buildHarnessShellNav({
+    pipelines: [{ name: 'vendite', label: 'Vendite' }],
+    customerDataAvailable: true,
+    sequencesAvailable: true,
+  }),
+  activeScreenId: ${JSON.stringify(shell.id)},
+  screenLabel: ${JSON.stringify(shell.label)},
+});`;
+}
 
 const MIN_BYTES = Object.freeze({ desktop: 20000, phone: 10000 });
 
@@ -533,7 +604,7 @@ const links = buildOggiLinks(buildShellNav({
   customerDataAvailable: true,
   sequencesAvailable: true,
 }));
-const view = createOggiView({ doc: document, mount: document.getElementById('mount'), client, navigate: () => {} });
+const view = createOggiView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {} });
 await view.render({ spaceName: 'Spazio locale', userName: 'Elena', links, now: new Date('2026-10-19T07:00:00.000Z') });
 document.getElementById('probe').textContent = JSON.stringify({
   recap: document.body.textContent.includes('Oggi hai 2 appuntamenti'),
@@ -576,7 +647,7 @@ const client = {
   },
 };
 const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); } };
-const view = createCustomerListView({ doc: document, mount: document.getElementById('mount'), client, storage: store, notify: () => {} });
+const view = createCustomerListView({ doc: document, mount: document.getElementById('view-module'), client, storage: store, notify: () => {} });
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
   rows: (document.body.textContent.match(/Marco Rossi|Anna Bianchi|Luca Verdi/g) ?? []).length,
@@ -601,7 +672,7 @@ const client = {
     throw new Error('unexpected request ' + path);
   },
 };
-await createCustomerCardView({ doc: document, mount: document.getElementById('mount'), client }).renderCard('contact', 'c1');
+await createCustomerCardView({ doc: document, mount: document.getElementById('view-module'), client }).renderCard('contact', 'c1');
 document.getElementById('probe').textContent = JSON.stringify({
   name: document.body.textContent.includes('Guido Presti'),
 });
@@ -617,7 +688,7 @@ const client = {
     return { items: DEALS };
   },
 };
-const board = createPipelineBoard({ doc: document, mount: document.getElementById('mount'), client });
+const board = createPipelineBoard({ doc: document, mount: document.getElementById('view-module'), client });
 await board.renderBoard('b2b-sales');
 document.getElementById('probe').textContent = JSON.stringify({
   deals: (document.body.textContent.match(/Palestra Esempio|Studio Aurora|Deal estero|Cliente vinto|Perso per budget/g) ?? []).length,
@@ -640,7 +711,7 @@ const byName = (inputName) => document.querySelector('input[name="' + inputName 
 const click = (label) => [...document.querySelectorAll('button')].find((b) => b.textContent.includes(label)).click();
 const view = createCalendarioView({
   doc: document,
-  mount: document.getElementById('mount'),
+  mount: document.getElementById('view-module'),
   client,
   now: () => new Date('2026-10-25T10:00:00Z'),
 });
@@ -679,7 +750,7 @@ const client = {
     throw new Error('unexpected ' + path);
   },
 };
-const view = createSequenzeView({ doc: document, mount: document.getElementById('mount'), client, spaceId: () => 'presti' });
+const view = createSequenzeView({ doc: document, mount: document.getElementById('view-module'), client, spaceId: () => 'presti' });
 await view.renderSequenze();
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
@@ -704,7 +775,7 @@ const client = {
     return { items: BUNDLE_ROWS };
   },
 };
-const view = createReportingView({ doc: document, mount: document.getElementById('mount'), client, navigate: () => {}, log: () => {}, download: () => {} });
+const view = createReportingView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {}, log: () => {}, download: () => {} });
 await view.renderReporting();
 document.getElementById('probe').textContent = JSON.stringify({
   kpis: (document.body.textContent.match(/Valore pipeline aperto|Preventivi aperti|Tasso di chiusura/g) ?? []).length,
@@ -725,10 +796,14 @@ const client = {
     throw new Error('unexpected request ' + path);
   },
 };
-const view = createPersonalizzazioneView({ doc: document, mount: document.getElementById('mount'), client, navigate: () => {}, spaceId: () => 'locale' });
+const view = createPersonalizzazioneView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {}, spaceId: () => 'locale' });
+// The shots prove the Connettori content (hero + prototype card sections),
+// the screen the review compares against the prototype.
+view.test.state.tab = 'connettori';
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
-  units: (document.body.textContent.match(/Canali|Pagamenti|Diagnosi/g) ?? []).length,
+  hero: document.body.textContent.includes('Kit social'),
+  sections: (document.body.textContent.match(/Canali di conversazione|Agenda, lead e pagamenti/g) ?? []).length,
 });
 document.title = 'personalizzazione-ready';`;
     case 'catalogo': return `
@@ -745,7 +820,7 @@ const client = {
     throw new Error('unexpected ' + path);
   },
 };
-const view = createCatalogView({ doc: document, mount: document.getElementById('mount'), client });
+const view = createCatalogView({ doc: document, mount: document.getElementById('view-module'), client });
 await view.renderTable({});
 document.getElementById('probe').textContent = JSON.stringify({
   table: document.querySelector('.catalog-list') ? document.querySelector('.catalog-list').textContent.slice(0, 60) : null,
@@ -768,7 +843,7 @@ const client = {
   },
 };
 const storage = { getItem: () => 'locale', setItem: () => {}, removeItem: () => {} };
-const view = createSyncView({ doc: document, mount: document.getElementById('mount'), client, storage, navigate: () => {}, toast: () => {} });
+const view = createSyncView({ doc: document, mount: document.getElementById('view-module'), client, storage, navigate: () => {}, toast: () => {} });
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
   ok: document.body.textContent.includes('Tutto a posto'),
@@ -795,7 +870,7 @@ const client = {
 };
 const view = createSpaziAccessiView({
   doc: document,
-  mount: document.getElementById('mount'),
+  mount: document.getElementById('view-module'),
   client,
   spaces: function () { return SPACES; },
   activeSpaceId: function () { return 'spazio-1'; },
@@ -806,6 +881,14 @@ document.getElementById('probe').textContent = JSON.stringify({
   members: document.querySelectorAll('.bo-spazi-member').length,
 });
 document.title = 'spazi-accessi-ready';`;
+    case 'componenti': return `
+import { createUiCatalogView } from './admin-ui-catalog.js';
+createUiCatalogView({ doc: document, mount: document.getElementById('view-module') }).render();
+document.getElementById('probe').textContent = JSON.stringify({
+  sections: document.querySelectorAll('.ui-section').length,
+  controls: document.querySelectorAll('button,select,input,textarea').length,
+});
+document.title = 'componenti-ready';`;
     default:
       throw new Error(`bo:shots has no harness for screen "${name}"`);
   }
@@ -830,8 +913,10 @@ const MIME = Object.freeze({
 });
 
 /**
- * The page Chromium opens for a screen: the static login page as-is, or a
- * harness that mounts the real view module with the demo fixtures.
+ * The page Chromium opens for a screen: the static login page as-is, or the
+ * /bo page itself (apps/admin/public/index.html) with the real shell chrome
+ * and the view module mounted where the app mounts it. The completion probe
+ * stays in the DOM but hidden, so it can never leak into a PNG.
  * @param {string} name
  * @param {string} publicDir
  */
@@ -844,8 +929,16 @@ export function harnessHtml(name, publicDir) {
   return `<!doctype html><html lang="it"><head><meta charset="utf-8">`
     + `<meta name="viewport" content="width=device-width, initial-scale=1">`
     + `<link rel="stylesheet" href="/styles.css"></head>`
-    + `<body><div id="mount"></div><div id="probe"></div>`
-    + `<script type="module">${fixtureScript(name)}</script></body></html>`;
+    + `<body><main class="shell bo-shell">`
+    + `<aside class="bo-sidebar" id="boSidebar" aria-label="Navigazione backoffice"></aside>`
+    + `<div class="bo-main"><div class="bo-topbar" id="boTopbar"></div>`
+    + `<section id="view-module" aria-live="polite"></section>`
+    + `<footer data-bo-technical><span>Accordo v0.1.0</span>`
+    + `<span>Same services behind Admin · REST · CLI · MCP</span></footer>`
+    + `</div></main>`
+    + `<aside class="bo-assistant-slot" id="boAssistant" aria-label="Assistente AI"></aside>`
+    + `<div id="probe" hidden></div>`
+    + `<script type="module">${shellBoot(name)}${fixtureScript(name)}</script></body></html>`;
 }
 
 /**
@@ -1022,6 +1115,14 @@ async function renderScreen({ binary, port, screen, outDir }) {
     }
     if (screen.ready !== null && !dom.stdout.includes(`<title>${screen.ready}</title>`)) {
       throw new Error(`${screen.name} ${kind}: the harness module did not run to completion (no ${screen.ready})`);
+    }
+    if (screen.module !== null) {
+      if (!dom.stdout.includes('id="boSidebar"') || !dom.stdout.includes('id="boTopbar"')) {
+        throw new Error(`${screen.name} ${kind}: the photographed page misses the shell (no #boSidebar or #boTopbar)`);
+      }
+      if (!/id="probe" hidden/.test(dom.stdout)) {
+        throw new Error(`${screen.name} ${kind}: the harness probe is not hidden from the photograph`);
+      }
     }
     for (const expected of screen.expect) {
       if (!dom.stdout.includes(expected)) {
