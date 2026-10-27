@@ -73,10 +73,10 @@ test('el() normalizes every control onto the system, keeping legacy hooks', () =
   const field = el(doc, 'input', undefined, undefined);
   assert.ok(field.getAttribute('class').split(/\s+/).includes('ui-field'));
   const picked = el(doc, 'button', 'ui-btn-primary', 'Ok');
-  assert.equal(
-    picked.getAttribute('class').split(/\s+/).filter((cls) => cls.startsWith('ui-btn')).length,
-    1,
-    'an explicit system class is never doubled',
+  assert.deepEqual(
+    picked.getAttribute('class').split(/\s+/).filter((cls) => cls.startsWith('ui-btn')),
+    ['ui-btn', 'ui-btn-primary'],
+    'an explicit variant gains the base without doubling',
   );
 });
 

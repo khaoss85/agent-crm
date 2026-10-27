@@ -105,6 +105,7 @@ export function normalizeControlClass(tag, className) {
         }
       }
     }
+    if (out.some((cls) => cls.startsWith('ui-btn-')) && !out.includes('ui-btn')) out.unshift('ui-btn');
     if (!hasSystem('ui-btn') && !hasSystem('ui-chip') && !hasSystem('ui-tab') && !hasSystem('ui-seg')) {
       out.push(...DEFAULT_BUTTON_CLASS.split(' '));
     }
