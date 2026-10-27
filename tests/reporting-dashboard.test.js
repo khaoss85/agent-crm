@@ -23,8 +23,11 @@ import { ValidationError } from '../packages/core/src/errors.js';
 import { compileReport, runReport } from '../packages/analytics/src/compiler.js';
 import { METRIC_DEFINITIONS } from '../packages/analytics/src/metric-definitions.js';
 import {
+  buildChannelBreakdown,
   buildDashboardCsv,
   buildDashboardModel,
+  channelWeekLabel,
+  channelWeeksOf,
   dashboardCompilations,
   formatMinor,
   formatMonth,
@@ -555,4 +558,65 @@ test('dashboard query refuses hostile input with a 400 and has no write surface'
   }
   const post = await fetch(`${baseUrl}/api/reporting/dashboard?period=2026-10`, { method: 'POST', body: '{}' });
   assert.equal(post.status, 404, 'no POST under /api/reporting/*: the proposal cannot reassign by itself');
+});
+
+test('channel weeks open the period month on the Monday of the week with the 1st', () => {
+  assert.deepEqual(channelWeeksOf('2026-10'), [
+    { week: '2026-09-28', label: '28 set' },
+    { week: '2026-10-05', label: '5 ott' },
+    { week: '2026-10-12', label: '12 ott' },
+    { week: '2026-10-19', label: '19 ott' },
+  ]);
+  assert.deepEqual(
+    channelWeeksOf('2026-06').map((slot) => slot.week),
+    ['2026-06-01', '2026-06-08', '2026-06-15', '2026-06-22'],
+  );
+});
+
+test('channel week labels pin UTC so a western timezone keeps the Monday', () => {
+  assert.equal(channelWeekLabel('2026-09-28'), '28 set');
+  assert.equal(channelWeekLabel('2026-10-05'), '5 ott');
+});
+
+test('channel breakdown counts per channel and week, totals over the shown weeks', () => {
+  const breakdown = buildChannelBreakdown(
+    [
+      { system: 'instagram', week: '2026-10-05', count: 5 },
+      { system: 'instagram', week: '2026-10-12', count: 6 },
+      { system: 'whatsapp', week: '2026-10-05', count: 3 },
+      { system: 'tiktok', week: '2026-11-02', count: 9 },
+      { system: 'email', week: null, count: 2 },
+    ],
+    { period: '2026-10' },
+  );
+  assert.equal(breakdown.total, 14, 'only the four shown weeks count');
+  assert.equal(breakdown.undated, 2, 'dateless identities are named, not dropped');
+  const instagram = breakdown.channels.find((entry) => entry.channel === 'instagram');
+  assert.deepEqual(instagram.weeks, [0, 5, 6, 0]);
+  assert.equal(instagram.total, 11);
+  assert.ok(breakdown.channels[0].total >= breakdown.channels[1].total, 'legend sorts by total');
+  assert.ok(breakdown.channels.every((entry) => entry.channel !== 'tiktok'), 'outside weeks stay out');
+  assert.ok(Object.isFrozen(breakdown) && Object.isFrozen(breakdown.channels));
+});
+
+test('the dashboard model carries the channel breakdown, empty when no origins', (t) => {
+  const database = fixtureDatabase(t);
+  const withOrigins = buildDashboardModel(
+    dashboardResults(database, QUERY_OCT),
+    [],
+    QUERY_OCT,
+    TS,
+    [
+      { system: 'whatsapp', week: '2026-10-05', count: 4 },
+      { system: 'instagram', week: '2026-10-12', count: 7 },
+    ],
+  );
+  assert.equal(withOrigins.channels.total, 11);
+  assert.deepEqual(
+    withOrigins.channels.channels.map((entry) => entry.channel),
+    ['instagram', 'whatsapp'],
+  );
+  const without = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
+  assert.equal(without.channels.total, 0);
+  assert.deepEqual(without.channels.channels, []);
 });

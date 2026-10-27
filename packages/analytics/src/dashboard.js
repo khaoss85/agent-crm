@@ -54,6 +54,8 @@ const CURRENCY_RE = /^[A-Z]{3}$/;
 export const DASHBOARD_DEFAULT_CURRENCY = 'EUR';
 /** Monthly chart depth: the selected period plus the five before it. */
 export const DASHBOARD_MONTHS = 6;
+/** Weekly bars on the channel card: the four weeks opening the period month. */
+export const DASHBOARD_CHANNEL_WEEKS = 4;
 /** CSV uses the Italian list separator, so Excel opens it as columns. */
 export const DASHBOARD_CSV_SEPARATOR = ';';
 
@@ -175,7 +177,73 @@ export function formatMinor(minor, currency) {
   }
 }
 
-/** @param {string} period YYYY-MM */
+/**
+ * Short Italian day label for a week start, like the prototype's bar axis
+ * (`28 set`, `5 ott`): day number plus abbreviated month, no trailing dot.
+ * @param {string} week YYYY-MM-DD Monday
+ */
+export function channelWeekLabel(week) {
+  const date = new Date(`${week}T00:00:00.000Z`);
+  return new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+    .format(date).replace(/\./g, '');
+}
+
+/**
+ * The four Monday-start weeks opening a YYYY-MM period: the Monday of the
+ * week containing the 1st, plus three. For 2026-10 that is 28 set, 5, 12
+ * and 19 ott — the prototype's axis.
+ * @param {string} period YYYY-MM
+ * @returns {Array<{week: string, label: string}>}
+ */
+export function channelWeeksOf(period) {
+  const first = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1));
+  const monday = new Date(first.getTime() - (((first.getUTCDay() + 6) % 7) * 24 * 60 * 60 * 1000));
+  return Array.from({ length: DASHBOARD_CHANNEL_WEEKS }, (_, index) => {
+    const start = new Date(monday.getTime() + index * 7 * 24 * 60 * 60 * 1000);
+    const week = start.toISOString().slice(0, 10);
+    return Object.freeze({ week, label: channelWeekLabel(week) });
+  });
+}
+
+/**
+ * Shape channel origins into the card model: per-channel weekly counts over
+ * the period's four weeks, totals over those weeks, and the grand total the
+ * subtitle reads as `<n> nel periodo`. Identities without a usable date stay
+ * out of the bars — they name no week — and count in `undated` so the view
+ * can say so honestly instead of silently dropping them.
+ * @param {Array<{system: string, week: string | null, count: number}>} origins
+ * @param {{period: string}} query
+ */
+export function buildChannelBreakdown(origins, query) {
+  const weeks = channelWeeksOf(query.period);
+  const inWindow = new Set(weeks.map((entry) => entry.week));
+  /** @type {Map<string, {channel: string, weeks: number[], total: number}>} */
+  const byChannel = new Map();
+  let undated = 0;
+  for (const entry of origins ?? []) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const channel = typeof entry.system === 'string' && entry.system !== '' ? entry.system : 'unknown';
+    const count = Number.isInteger(entry.count) && entry.count > 0 ? entry.count : 0;
+    if (typeof entry.week !== 'string' || !inWindow.has(entry.week)) {
+      if (entry.week === null || entry.week === undefined) undated += count;
+      continue;
+    }
+    let shaped = byChannel.get(channel);
+    if (!shaped) {
+      shaped = { channel, weeks: Array(DASHBOARD_CHANNEL_WEEKS).fill(0), total: 0 };
+      byChannel.set(channel, shaped);
+    }
+    const at = weeks.findIndex((slot) => slot.week === entry.week);
+    shaped.weeks[at] += count;
+    shaped.total += count;
+  }
+  const channels = Object.freeze([...byChannel.values()]
+    .sort((a, b) => b.total - a.total || (a.channel < b.channel ? -1 : 1))
+    .map((entry) => Object.freeze({ ...entry, weeks: Object.freeze([...entry.weeks]) })));
+  const total = channels.reduce((sum, entry) => sum + entry.total, 0);
+  return Object.freeze({ weeks: Object.freeze(weeks), channels, total, undated });
+}
+
 export function formatMonth(period) {
   const match = PERIOD_RE.exec(period);
   if (!match) return period;
@@ -243,8 +311,9 @@ function isOpenStage(value) {
  * @param {unknown} bundleRows reporting-bundle rows for the obiettivo lookup
  * @param {{period: string, owner: string | null, currency: string}} query
  * @param {string} [nowIso] generation stamp (injectable for tests)
+ * @param {Array<{system: string, week: string | null, count: number}>} [channelOrigins] channel aggregates (slice 2)
  */
-export function buildDashboardModel(results, bundleRows, query, nowIso) {
+export function buildDashboardModel(results, bundleRows, query, nowIso, channelOrigins = []) {
   const byStageRows = Array.isArray(results?.byStage?.rows) ? [...results.byStage.rows] : [];
   const scheduleRows = Array.isArray(results?.schedule?.rows) ? [...results.schedule.rows] : [];
   const inCurrency = (/** @type {Record<string, any>} */ row) => row['opportunity.currency'] === query.currency;
@@ -450,6 +519,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso) {
     }
   }
 
+  const channels = buildChannelBreakdown(channelOrigins, query);
   const csv = buildDashboardCsv({ kpis, funnel, team, forecast, query });
 
   return Object.freeze({
@@ -457,6 +527,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso) {
     periodLabel,
     owner: query.owner,
     currency: query.currency,
+    channels,
     currencies: Object.freeze({ shown: query.currency, others: Object.freeze(otherCurrencies) }),
     generatedAt: nowIso ?? new Date().toISOString(),
     metrics: Object.freeze({

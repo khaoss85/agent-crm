@@ -5,6 +5,7 @@ import { buildCustomerDataActions } from './actions.js';
 import { BULK_ACTIONS, MAX_BULK_ITEMS } from './bulk.js';
 import { createCustomerIdentityCapability } from './capability.js';
 import { createCustomerProfileCapability } from './capability-profile.js';
+import { createChannelOriginsCapability } from './capability-channel-origins.js';
 import { createChannelSenderCapability } from './sender-capability.js';
 import { EXPORT_MAX_ROWS } from './export.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
@@ -101,6 +102,7 @@ export function createCustomerDataPackage(options = {}) {
       createCustomerIdentityCapability(config),
       createCustomerProfileCapability(config),
       createChannelSenderCapability({ config, policy }),
+      createChannelOriginsCapability(config),
     ],
     actions: buildCustomerDataActions(config),
 
@@ -292,6 +294,24 @@ export function createCustomerDataPackage(options = {}) {
             config: runtime.config, core: runtime.core, policy, names,
           });
           return (request) => operations.listCustomerRecords(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'count-customer-channel-origins',
+        appMethod: 'countCustomerChannelOrigins',
+        label: 'Count new customers per origin channel and week',
+        description:
+          'Count new customers per origin channel and ISO week from the active external-identity rows: '
+          + 'which outside system first named a record, and in which week. Creates nothing. '
+          + 'The reporting dashboard reads this for its "Nuovi clienti per canale" card.',
+        input: [],
+        create(runtime) {
+          const operations = createCustomerDataOperations({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+          });
+          return (request) => operations.countCustomerChannelOrigins(request);
         },
       },
       {

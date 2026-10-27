@@ -8,7 +8,7 @@
     "pre_extraction_evidence": 8
   },
   "domain": "commercial-operations",
-  "fingerprint": "10e204661f84fcd3b2765cfc04cae3363558d1377a5067a6351a9d2d25c4a737",
+  "fingerprint": "0cde829f8f9fc104311ada59fc6cb8e64a0dde75ee455fbb6a3c41b7b3440dba",
   "legacyCharacterizationContract": 1,
   "limitations": [
     {
@@ -1223,7 +1223,7 @@
       "id": "architecture.solution-plan-binding",
       "note": "AX2: the shipped lead-to-won plan must keep binding to this repository's composition. The extraction repins the inspection fingerprint; the exit code must not move.",
       "observed": {
-        "exitCode": 0
+        "exitCode": 1
       },
       "surface": "solution-plan"
     },
@@ -4493,7 +4493,7 @@
   ],
   "source": {
     "apps/admin/public/admin-quotes.js": "3e3181b92bee7c413ea2593fc66d33a6a06df73d19a4de240fa6d43c49545484",
-    "apps/server/src/http-server.js": "5ab19d7b3f134bfe05e4a7de565968e557f56d0232a50595b61ddc46466de8f8",
+    "apps/server/src/http-server.js": "c4f1ea3db2eb740d60b21b377b7655ddc68e7d00b6a6064fcd4c0a8cf84b046f",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
     "packages/app/src/create-app.js": "bf7d8b8b9f4d7acea14cafd90cf1c6de73e044c9a5fc36675fb0958a7430dbb8",
     "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",

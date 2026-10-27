@@ -7,7 +7,7 @@
  *   counts the files and checks every width and byte floor);
  * - the run works fully offline (loopback only) and exits 0 with a skip
  *   message where no runnable Chromium exists;
- * - the screen registry is exactly the twelve delivered /bo screens plus the
+ * - the screen registry is exactly the thirteen delivered /bo screens plus the
  *   componenti catalog, and
  *   every harness page serves its real view module.
  *
@@ -54,10 +54,11 @@ const EXPECTED_SCREENS = [
   'catalogo',
   'stato-sync',
   'spazi-accessi',
+  'connettori',
   'componenti',
 ];
 
-test('the screen registry is the twelve delivered screens plus the componenti catalog', () => {
+test('the screen registry is the thirteen delivered screens plus the componenti catalog', () => {
   assert.deepEqual([...BO_SCREENS], EXPECTED_SCREENS);
 });
 
@@ -127,6 +128,7 @@ test('every screen photographs with its shell identity from the /bo router', () 
     catalogo: { id: '', label: 'Catalogo prodotti' },
     'stato-sync': { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' },
     'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
+    connettori: { id: 'impostazioni', label: 'Connettori' },
     componenti: { id: '', label: 'Componenti' },
   });
   for (const name of BO_SCREENS) {
@@ -189,6 +191,21 @@ test('calendario expects are dynamic-only: static chrome alone must fail them', 
   assert.ok(calendario.expect.includes('cal-event'), 'a painted event marker is expected');
 });
 
+test('connettori expects are dynamic-only: static chrome alone must fail them', () => {
+  // Same rule as calendario above: the empty connectors screen still
+  // serves the shell chrome and the space picker, so expects built from
+  // those substrings pass on an unpainted grid.
+  // Every connettori expect must be a string only the painted rows contain.
+  const screen = SCREENS.find((entry) => entry.name === 'connettori');
+  assert.ok(screen, 'the connettori screen exists');
+  assert.ok(screen.expect.includes('Collega in 3 passi'), 'a painted guided-flow button is expected');
+  assert.ok(screen.expect.includes('Cosa succede quando colleghi:'), 'a painted connect preview is expected');
+  const shell = readFileSync(join(publicDir, 'admin-shell.js'), 'utf8');
+  for (const expected of screen.expect) {
+    assert.ok(!shell.includes(expected), `the static shell chrome must not contain ${JSON.stringify(expected)}`);
+  }
+});
+
 test('every harness probe carries the fields the review gate asserts', () => {
   // Regression for review P2 (scripts/bo-shots.js:1026): renderScreen must
   // parse #probe and assert the same invariants the *-shots tests assert,
@@ -198,6 +215,7 @@ test('every harness probe carries the fields the review gate asserts', () => {
     ['sequenze', ['rows:', 'names:', 'detail:', 'steps:']],
     ['catalogo', ['table:', 'stripe:', 'rules:']],
     ['spazi-accessi', ['spaces:', 'members:', 'switches:']],
+    ['connettori', ['rows:', 'previews:', 'flows:']],
   ]);
   for (const [name, fields] of probes) {
     const page = harnessHtml(name, publicDir);
@@ -251,6 +269,7 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('catalogo', {
     table: '…Pacchetto 10 lezioni…', stripe: 'Stripe collegato', rules: 'auto 10%',
   }));
+  assert.doesNotThrow(() => assertProbe('connettori', { rows: 8, previews: 8, flows: 8 }));
   assert.doesNotThrow(() => assertProbe('stato-sync', { ok: true }));
   assert.doesNotThrow(() => assertProbe('spazi-accessi', {
     spaces: 2, here: 'Stai lavorando qui', members: 2, avatars: 2, pills: 2, switches: 5,
@@ -279,6 +298,7 @@ test('assertProbe fails an empty render the substring expects would pass', () =>
     /Stripe state/,
   );
   assert.throws(() => assertProbe('spazi-accessi', { spaces: 2, members: 0, switches: 5 }), /members/);
+  assert.throws(() => assertProbe('connettori', { rows: 0, previews: 0, flows: 0 }), /channel rows/);
 });
 
 test('without a runnable Chromium the command skips cleanly with exit 0', () => {

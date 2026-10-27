@@ -39,6 +39,7 @@ import {
   uiToast,
 } from '../apps/admin/public/admin-ui.js';
 import { createUiCatalogView } from '../apps/admin/public/admin-ui-catalog.js';
+import { createConnectorsView } from '../apps/admin/public/admin-connectors.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -186,4 +187,37 @@ test('the component catalog renders no raw control', () => {
   assert.deepEqual(raw, [], 'every catalog control carries a ui-* class');
   assert.ok(mount.textContent.includes('Primario scuro'), 'the catalog shows the dark primary');
   assert.ok(mount.textContent.includes('CTA verde'), 'the catalog shows the green CTA');
+});
+
+test('the connectors view renders no raw control', async () => {
+  // BO-F6-02 AC-3 "dopo" for /bo connectors: the existing view paints its
+  // eight channel rows through the single library, so no button, select or
+  // input reaches the DOM without a ui-* system class. The guided-flow
+  // assertion below proves the rows painted instead of an honest empty note.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const channels = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'sms', 'email', 'voice', 'site-form'];
+  const client = {
+    async request(path) {
+      if (path === '/api/schema') {
+        return {
+          domains: {
+            channels: {
+              metadata: {
+                channelsContract: 1,
+                adapters: channels.map((channel) => ({ channel, name: `${channel}-fake`, version: 1 })),
+              },
+            },
+          },
+        };
+      }
+      if (path.startsWith('/api/connectors?')) return { connectors: [] };
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const storage = { getItem: () => 'locale', setItem: () => {}, removeItem: () => {} };
+  await createConnectorsView({ doc, mount, client, navigate: () => {}, storage }).render();
+  const flows = mount.textContent.split('Collega in 3 passi').length - 1;
+  assert.equal(flows, 8, 'all eight channel rows offer the guided flow');
+  assert.deepEqual(rawControls(mount), [], 'every connectors control carries a ui-* class');
 });
