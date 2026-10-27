@@ -783,18 +783,6 @@ select.bo-spazi-input { flex: none; }
  */
 .bo-sync { display: grid; gap: 18px; }
 .bo-sync h3 { margin: 6px 0 0; font-size: 15px; }
-.bo-sync-indicator {
-  display: flex; gap: 12px; align-items: flex-start;
-  border: 1px solid var(--line); background: var(--surface);
-  border-radius: 10px; padding: 12px 14px; min-width: 0;
-}
-.bo-sync-dot { flex: none; width: 12px; height: 12px; border-radius: 99px; margin-top: 4px; background: var(--muted); }
-.bo-sync-dot-ok { background: var(--accord); }
-.bo-sync-dot-fix { background: var(--human); }
-.bo-sync-dot-wait { background: var(--muted); }
-.bo-sync-indicator-text { display: grid; gap: 4px; min-width: 0; }
-.bo-sync-title { margin: 0; font-size: 15px; font-weight: 700; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.bo-sync-detail { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .bo-sync-note { margin: 0; font-size: 13px; color: var(--muted); }
 .bo-sync-error { margin: 0; font-size: 13px; font-weight: 700; color: var(--danger); }
 .bo-sync-fixes { display: grid; gap: 10px; }
@@ -832,11 +820,42 @@ select.bo-spazi-input { flex: none; }
 .bo-sync-feed { display: grid; gap: 6px; }
 .bo-sync-feed-line { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 .bo-sync-feed-time { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-right: 8px; }
-
-@media (max-width: 700px) {
-  .bo-sync-indicator { align-items: flex-start; }
-  .bo-sync-title { font-size: 14px; }
+/* Stato sync hero (BO-F6-16): eyebrow, pulsing dot, big title, subtitle and
+ * the global pull — right of the title on desktop, full-width on a phone so
+ * no action is ever cut. The dot pulses unless the reader asked for less
+ * motion; colours reuse the existing tokens (green ok, yellow to fix,
+ * azure while pulling). */
+.bo-sync-hero { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.bo-sync-hero-main { display: grid; gap: 8px; min-width: 0; flex: 1 1 280px; }
+.bo-sync-hero-head { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.bo-sync-hero-dot { flex: none; width: 14px; height: 14px; border-radius: 99px; }
+.bo-sync-hero-dot-ok { background: var(--accord); }
+.bo-sync-hero-dot-fix { background: var(--pending); }
+.bo-sync-hero-dot-syncing { background: var(--data); }
+.bo-sync-hero-dot-wait { background: var(--muted); }
+@keyframes bo-sync-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+@media (prefers-reduced-motion: no-preference) {
+  .bo-sync-hero-dot { animation: bo-sync-pulse 2.2s ease-in-out infinite; }
 }
+.bo-sync-hero-title { margin: 0; font-size: 30px; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.bo-sync-hero-sub { margin: 0; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-sync-hero-pull { flex: none; align-self: center; }
+.bo-sync-spin { display: inline-block; width: 12px; height: 12px; margin-left: 8px; border-radius: 99px; border: 2px solid currentColor; border-top-color: transparent; vertical-align: -1px; }
+@media (prefers-reduced-motion: no-preference) {
+  .bo-sync-spin { animation: bo-sync-spin .8s linear infinite; }
+}
+@keyframes bo-sync-spin { to { transform: rotate(360deg); } }
+@media (max-width: 700px) {
+  .bo-sync-hero-title { font-size: 24px; }
+  .bo-sync-hero-pull { width: 100%; }
+}
+/* Impostazioni tab row on the sync screen (BO-F6-16): the section label over
+ * the underlined area tabs, reusing ui-tabs (which already scrolls under
+ * 700px); the badge reuses .bo-badge like the sidebar pill. */
+.bo-settings-tabs { display: grid; gap: 2px; }
+.bo-settings-label { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; color: var(--dim); margin: 0; }
+.bo-settings-tabs .ui-tabs { margin-bottom: 0; }
+.bo-settings-tabs .bo-badge { margin-left: 8px; }
 
 /*
  * Product catalog (BO-F2-04 rules, BO-F2-05 table): the Stripe state, the

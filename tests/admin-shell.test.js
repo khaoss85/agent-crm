@@ -10,6 +10,7 @@ import {
   crumb,
   clientBadge,
   settingsBadge,
+  settingsTabs,
   countFixes,
   loadClientCount,
   loadFixCount,
@@ -288,12 +289,51 @@ test('a composed schema envelope links every delivered screen (backlog:42fd49b8)
 test('AI entry placeholder is per screen, in Italian, with a fallback', () => {
   assert.equal(aiPlaceholder('oggi'), 'Chiedi: «cosa è più urgente oggi?»');
   assert.equal(aiPlaceholder('calendario'), 'Scrivi: «trova 45 minuti con Marco e Sara»');
+  assert.equal(aiPlaceholder('stato-sync'), 'Chiedi: «c’è qualcosa che non si è sincronizzato?»');
   assert.equal(aiPlaceholder('unknown-screen'), AI_ENTRY_FALLBACK);
   assert.equal(aiPlaceholder(null), AI_ENTRY_FALLBACK);
 });
 
+test('settings tabs list the four areas with the open one underlined', () => {
+  const doc = createFakeDocument();
+  const navigated = [];
+  const bar = settingsTabs(doc, { activeId: 'stato-sync', fixCount: 2, navigate: (hash) => navigated.push(hash) });
+  const tabs = bar.findAll('button');
+  assert.deepEqual(tabs.map((tab) => tab.getAttribute('data-tab')), ['personalizzazione', 'catalogo', 'stato-sync', 'spazi-accessi']);
+  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Personalizzazione', 'Catalogo prodotti', 'Stato sync2', 'Spazi e accessi']);
+  assert.equal(tabs.find((tab) => tab.getAttribute('data-tab') === 'stato-sync').getAttribute('aria-selected'), 'true');
+  // Every tab keeps a ui-* class (BO-F6-02 enforcement covers this screen).
+  for (const tab of tabs) {
+    assert.ok((tab.getAttribute('class') ?? '').split(/\s+/).some((cls) => cls.startsWith('ui-')), 'tab keeps a ui-* class');
+  }
+  // The badge is absent at zero and when the count is unknown.
+  assert.ok(!settingsTabs(doc, { activeId: 'stato-sync', fixCount: 0 }).textContent.includes('da sistemare'));
+  assert.ok(!settingsTabs(doc, { activeId: 'stato-sync', fixCount: null }).textContent.includes('da sistemare'));
+  // Other tabs navigate to their area; the open one stays put.
+  tabs.find((tab) => tab.getAttribute('data-tab') === 'catalogo').dispatch('click');
+  assert.deepEqual(navigated, ['#/catalogo']);
+  tabs.find((tab) => tab.getAttribute('data-tab') === 'stato-sync').dispatch('click');
+  assert.deepEqual(navigated, ['#/catalogo']);
+});
+
 test('breadcrumb reads "<space> / <screen>"', () => {
   assert.equal(crumb('Studio Aurora', 'Clienti'), 'Studio Aurora / Clienti');
+});
+
+test('sync screen chrome names the screen and asks about sync', () => {
+  const { view, topbar, sidebar } = renderShell();
+  // The sync screen lives under Impostazioni: the sidebar still highlights
+  // the section, but the crumb names the open screen (uppercased by CSS).
+  view.update({ activeScreenId: 'impostazioni', aiScreenId: 'stato-sync', screenLabel: 'Stato sync' });
+  assert.ok(topbar.textContent.includes('Studio Aurora / Stato sync'));
+  assert.ok(!topbar.textContent.includes('Studio Aurora / Impostazioni'));
+  const input = topbar.findAll('input')[0];
+  assert.equal(input.getAttribute('placeholder'), 'Chiedi: «c’è qualcosa che non si è sincronizzato?»');
+  assert.ok(sidebar.textContent.includes('Impostazioni'));
+  // Other screens fall back to their own placeholder again.
+  view.update({ activeScreenId: 'oggi', aiScreenId: null, screenLabel: 'Oggi' });
+  assert.ok(topbar.textContent.includes('Studio Aurora / Oggi'));
+  assert.equal(topbar.findAll('input')[0].getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
 });
 
 function renderShell(overrides = {}) {
