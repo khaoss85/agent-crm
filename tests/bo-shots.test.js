@@ -29,11 +29,13 @@ import {
   SCREENS,
   SHELL_SCREENS,
   USAGE,
+  assertProbe,
   chromiumRuns,
   findChromium,
   harnessHtml,
   parseArgs,
   readPngSize,
+  readProbe,
 } from '../scripts/bo-shots.js';
 
 const root = join(fileURLToPath(import.meta.url), '..', '..');
@@ -172,6 +174,111 @@ test('readPngSize reads dimensions and refuses non-PNG output', () => {
   const text = join(dir, 'page.html');
   writeFileSync(text, '<html></html>');
   assert.throws(() => readPngSize(text), /not a PNG/);
+});
+
+test('calendario expects are dynamic-only: static chrome alone must fail them', () => {
+  // Regression for review P2 (scripts/bo-shots.js:491): the empty week still
+  // serves the static 'Mostra settimana' button and the manual-form
+  // placeholder '...per il taglio', so expects built from those substrings
+  // pass on a painted-but-empty grid. Every calendario expect must be a
+  // string the static page can never contain: a painted event marker.
+  const calendario = SCREENS.find((screen) => screen.name === 'calendario');
+  assert.ok(calendario, 'the calendario screen exists');
+  assert.ok(!calendario.expect.includes('Mostra settimana'), 'the static button is not an expect');
+  assert.ok(calendario.expect.includes('Scheda Ada'), 'a painted subject link is expected');
+  assert.ok(calendario.expect.includes('cal-event'), 'a painted event marker is expected');
+});
+
+test('every harness probe carries the fields the review gate asserts', () => {
+  // Regression for review P2 (scripts/bo-shots.js:1026): renderScreen must
+  // parse #probe and assert the same invariants the *-shots tests assert,
+  // so each fixture has to record them. Static string checks only.
+  const probes = new Map([
+    ['calendario', ['days:', 'events:', 'lede:', 'filled:']],
+    ['sequenze', ['rows:', 'names:', 'detail:', 'steps:']],
+    ['catalogo', ['table:', 'stripe:', 'rules:']],
+    ['spazi-accessi', ['spaces:', 'members:', 'switches:']],
+  ]);
+  for (const [name, fields] of probes) {
+    const page = harnessHtml(name, publicDir);
+    for (const field of fields) {
+      assert.ok(page.includes(field), `${name}: the probe records ${field}`);
+    }
+  }
+});
+
+test('harness probes read the painted mounts, never the whole page', () => {
+  // Regression for the Codex P2 on #366: document.body.textContent includes
+  // the harness's own inline module script (fixture JSON plus the match
+  // patterns), so body-wide counts reject healthy renders (oggi counted 7
+  // tasks instead of 2 on CI). Every probe must scope to #view-module.
+  for (const screen of SCREENS) {
+    if (!screen.module) continue;
+    const page = harnessHtml(screen.name, publicDir);
+    assert.ok(
+      !page.includes('document.body'),
+      `${screen.name}: the probe reads #view-module, not the whole page`,
+    );
+  }
+});
+
+test('readProbe parses the hidden probe div from a dump-dom stdout', () => {
+  const html = '<html><body><div id="probe" hidden="">{&quot;days&quot;:7,&quot;events&quot;:[&quot;taglio&quot;]}</div></body></html>';
+  assert.deepEqual(readProbe(html, 'calendario'), { days: 7, events: ['taglio'] });
+  const bare = '<html><body><div id="probe">{"rows":2}</div></body></html>';
+  assert.deepEqual(readProbe(bare, 'sequenze'), { rows: 2 });
+  assert.throws(() => readProbe('<html><body>no probe here</body></html>', 'calendario'), /probe is missing/);
+  assert.throws(() => readProbe('<div id="probe" hidden="">nope</div>', 'calendario'), /not valid JSON/);
+  assert.throws(() => readProbe('<div id="probe" hidden="">[1,2]</div>', 'calendario'), /not valid JSON/);
+});
+
+test('assertProbe accepts the filled demo probes and rejects unknown screens', () => {
+  assert.doesNotThrow(() => assertProbe('login', {}));
+  assert.doesNotThrow(() => assertProbe('oggi', { recap: true, tasks: 2 }));
+  assert.doesNotThrow(() => assertProbe('clienti', { rows: 3 }));
+  assert.doesNotThrow(() => assertProbe('cliente', { name: true }));
+  assert.doesNotThrow(() => assertProbe('pipeline', { deals: 5 }));
+  assert.doesNotThrow(() => assertProbe('calendario', {
+    days: 7, events: ['taglio', 'barba'], lede: 'La settimana del team · 19 – 25 ott 2026', filled: 'marco|2026-10-22|09:00',
+  }));
+  assert.doesNotThrow(() => assertProbe('sequenze', {
+    rows: 2, names: ['Bentornato in palestra', 'Promemoria appuntamento'],
+    detail: 'Bentornato in palestra', steps: 2, firstDay: 'Giorno 0 · parte subito',
+    firstChannel: 'WhatsApp', confirm: 'Attivare questa sequenza?',
+  }));
+  assert.doesNotThrow(() => assertProbe('reporting', { kpis: 3 }));
+  assert.doesNotThrow(() => assertProbe('personalizzazione', { hero: true, sections: 2 }));
+  assert.doesNotThrow(() => assertProbe('catalogo', {
+    table: '…Pacchetto 10 lezioni…', stripe: 'Stripe collegato', rules: 'auto 10%',
+  }));
+  assert.doesNotThrow(() => assertProbe('stato-sync', { ok: true }));
+  assert.doesNotThrow(() => assertProbe('spazi-accessi', {
+    spaces: 2, here: 'Stai lavorando qui', members: 2, avatars: 2, pills: 2, switches: 5,
+  }));
+  assert.doesNotThrow(() => assertProbe('componenti', { sections: 4, controls: 12 }));
+  assert.throws(() => assertProbe('nope', {}), /no probe assertion/);
+  assert.throws(() => assertProbe('oggi', null), /not a JSON object/);
+});
+
+test('assertProbe fails an empty render the substring expects would pass', () => {
+  // The empty week still serves the static chrome: the 'Mostra settimana'
+  // button, the manual-form placeholder holding 'taglio', and the ready
+  // title. Substring checks pass on it; the probe gate must not.
+  const emptyWeek = [
+    '<title>calendario-ready</title>',
+    '<button>Mostra settimana</button>',
+    '<input name="phrase" placeholder="«giovedì alle 18 con Marco per il taglio»">',
+    '<div id="probe" hidden="">{&quot;days&quot;:0,&quot;events&quot;:[],&quot;lede&quot;:null,&quot;filled&quot;:&quot;||&quot;}</div>',
+  ].join('');
+  assert.ok(emptyWeek.includes('Mostra settimana') && emptyWeek.includes('taglio'));
+  assert.throws(() => assertProbe('calendario', readProbe(emptyWeek, 'calendario')), /day columns/);
+  assert.throws(() => assertProbe('sequenze', { rows: 0, names: [], detail: null, steps: 0 }), /rows/);
+  assert.throws(() => assertProbe('pipeline', { deals: 1 }), /deals/);
+  assert.throws(
+    () => assertProbe('catalogo', { table: 'Pacchetto 10 lezioni', stripe: null, rules: null }),
+    /Stripe state/,
+  );
+  assert.throws(() => assertProbe('spazi-accessi', { spaces: 2, members: 0, switches: 5 }), /members/);
 });
 
 test('without a runnable Chromium the command skips cleanly with exit 0', () => {
