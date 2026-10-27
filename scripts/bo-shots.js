@@ -8,7 +8,8 @@
  * at 390x1600:
  *
  *   login, oggi, clienti, cliente, pipeline, calendario, sequenze, reporting,
- *   personalizzazione, catalogo, stato-sync, spazi-accessi
+ *   personalizzazione, catalogo, stato-sync, spazi-accessi, componenti
+ *   (the F6-02 component catalog)
  *
  * Each screen renders its real view module plus the real `styles.css` inside
  * a real Chromium, driven by the same demo-shaped fixtures the repo's unit
@@ -55,6 +56,7 @@ export const SCREEN_NAMES = Object.freeze([
   'catalogo',
   'stato-sync',
   'spazi-accessi',
+  'componenti',
 ]);
 
 /**
@@ -495,6 +497,7 @@ export const SCREENS = Object.freeze([
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Stripe collegato'] },
   { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto a posto', 'WhatsApp'] },
   { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-accessi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
+  { name: 'componenti', module: 'admin-ui-catalog.js', ready: 'componenti-ready', expect: ['Catalogo dei componenti', 'Primario scuro'] },
 ]);
 
 export const BO_SCREENS = Object.freeze(SCREENS.map((screen) => screen.name));
@@ -806,6 +809,14 @@ document.getElementById('probe').textContent = JSON.stringify({
   members: document.querySelectorAll('.bo-spazi-member').length,
 });
 document.title = 'spazi-accessi-ready';`;
+    case 'componenti': return `
+import { createUiCatalogView } from './admin-ui-catalog.js';
+createUiCatalogView({ doc: document, mount: document.getElementById('mount') }).render();
+document.getElementById('probe').textContent = JSON.stringify({
+  sections: document.querySelectorAll('.ui-section').length,
+  controls: document.querySelectorAll('button,select,input,textarea').length,
+});
+document.title = 'componenti-ready';`;
     default:
       throw new Error(`bo:shots has no harness for screen "${name}"`);
   }

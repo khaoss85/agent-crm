@@ -7,7 +7,8 @@
  *   counts the files and checks every width and byte floor);
  * - the run works fully offline (loopback only) and exits 0 with a skip
  *   message where no runnable Chromium exists;
- * - the screen registry is exactly the twelve delivered /bo screens, and
+ * - the screen registry is exactly the twelve delivered /bo screens plus the
+ *   componenti catalog, and
  *   every harness page serves its real view module.
  *
  * The full render runs only where Chromium actually runs (the probe below
@@ -50,9 +51,10 @@ const EXPECTED_SCREENS = [
   'catalogo',
   'stato-sync',
   'spazi-accessi',
+  'componenti',
 ];
 
-test('the screen registry is exactly the twelve delivered screens', () => {
+test('the screen registry is the twelve delivered screens plus the componenti catalog', () => {
   assert.deepEqual([...BO_SCREENS], EXPECTED_SCREENS);
 });
 
