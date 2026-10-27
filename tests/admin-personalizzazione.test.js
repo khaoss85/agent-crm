@@ -230,7 +230,7 @@ test('the pacchetti tab shows a loading note while the catalog is still flying',
   assert.ok(mount.textContent.includes('Canali'), 'the catalog renders once it arrives');
 });
 
-test('the Connettori tab reuses the live summary and opens the guided flow', async () => {
+test('the Connettori tab renders the prototype hero and the two card sections', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const navigated = [];
@@ -241,10 +241,85 @@ test('the Connettori tab reuses the live summary and opens the guided flow', asy
   view.test.state.tab = 'connettori';
   await view.render();
   await flush();
-  assert.ok(mount.textContent.includes('WhatsApp'));
-  assert.ok(mount.textContent.includes('active'));
-  const open = mount.findAll('button').find((node) => node.textContent === 'Apri connettori');
-  assert.ok(open, 'the tab links to the guided flow instead of duplicating it');
-  open.dispatch('click');
-  assert.deepEqual(navigated, ['#/connettori']);
+  const text = mount.textContent;
+  assert.ok(text.includes('Kit social'), 'the hero names the Kit social');
+  assert.ok(text.includes('CURATO DA ACCORDO'), 'the hero keeps the prototype eyebrow');
+  assert.ok(text.includes('Canali di conversazione'), 'the first section renders');
+  assert.ok(text.includes('Agenda, lead e pagamenti'), 'the second section renders');
+  for (const label of ['WhatsApp', 'Instagram', 'Facebook', 'TikTok', 'Email', 'Telefono', 'Form sito', 'Google Calendar', 'Stripe']) {
+    assert.ok(text.includes(label), `the ${label} card renders`);
+  }
+  const buttons = mount.findAll('button');
+  const whatsapp = buttons.find((node) => node.textContent.includes('✓'));
+  assert.ok(!whatsapp, 'the ✓ state is a badge, never a button');
+  const facebook = buttons.find((node) => node.getAttribute('aria-label') === 'Collega Facebook');
+  assert.ok(facebook, 'a not-connected channel offers +');
+  facebook.dispatch('click');
+  assert.deepEqual(navigated, ['#/connettori/facebook'], 'the card opens the guided detail');
+  const all = buttons.find((node) => node.textContent === 'Mostra tutto →');
+  assert.ok(all, 'each section links the full list');
+  all.dispatch('click');
+  assert.ok(navigated.includes('#/connettori'), 'Mostra tutto opens the wizard hub');
+  const add = buttons.find((node) => node.textContent === 'Aggiungi ▾');
+  assert.ok(add, 'the green CTA renders on the Connettori tab');
+  assert.ok(add.getAttribute('class').split(/\s+/).includes('ui-btn-cta'), 'Aggiungi stays the green accord CTA');
+  add.dispatch('click');
+  assert.ok(navigated.includes('#/connettori'), 'Aggiungi opens the wizard hub');
+  for (const control of [...mount.findAll('button'), ...mount.findAll('select'), ...mount.findAll('input')]) {
+    const classes = String(control.getAttribute('class') ?? '').split(/\s+/);
+    assert.ok(classes.some((cls) => cls.startsWith('ui-')), `control ${control.textContent} carries a ui-* class`);
+  }
+});
+
+test('the Connettori sections reuse the catalog channels with honest destinations', async () => {
+  const { CONNECTOR_CATALOG } = await import('../apps/admin/public/admin-connectors.js');
+  const { UI_CHANNELS } = await import('../apps/admin/public/admin-ui.js');
+  const { CONNETTORI_SECTIONS, connettoriCardState, connettoriHref } = await import(
+    '../apps/admin/public/admin-personalizzazione.js'
+  );
+  const catalog = new Set(CONNECTOR_CATALOG.map((entry) => entry.channel));
+  let cards = 0;
+  const seen = new Set();
+  for (const section of CONNETTORI_SECTIONS) {
+    for (const entry of section.entries) {
+      cards += 1;
+      assert.ok(!seen.has(entry.key), `no duplicate card ${entry.key}`);
+      seen.add(entry.key);
+      assert.ok(UI_CHANNELS.includes(entry.chip), `${entry.key} reuses a system channel tint`);
+      if (entry.channel !== null) {
+        assert.ok(catalog.has(entry.channel), `${entry.key} reuses a catalog channel`);
+        assert.equal(connettoriHref(entry), `#/connettori/${entry.channel}`);
+      }
+    }
+  }
+  assert.equal(cards, 9, 'six conversation channels plus three agenda cards, like the prototype');
+  assert.equal(connettoriHref(CONNETTORI_SECTIONS[1].entries[1]), '#/calendario');
+  assert.equal(connettoriHref(CONNETTORI_SECTIONS[1].entries[2]), '#/quotes');
+  assert.equal(connettoriHref({}), '#/connettori', 'an entry with no destination falls back to the hub');
+  const live = [{ channel: 'whatsapp', status: 'active' }, { channel: 'instagram', status: 'pending' }];
+  assert.equal(connettoriCardState({ channel: 'whatsapp' }, live), 'collegato');
+  assert.equal(connettoriCardState({ channel: 'instagram' }, live), 'da-collegare');
+  assert.equal(connettoriCardState({ channel: null }, live), 'da-collegare');
+});
+
+test('the Connettori search and stato sort filter the prototype cards', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ connectors: [{ channel: 'whatsapp', status: 'active' }] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  await view.render();
+  await flush();
+  view.test.state.tab = 'connettori';
+  view.test.state.query = 'stripe';
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('Stripe'), 'the query keeps the matching card');
+  assert.ok(!mount.textContent.includes('WhatsApp'), 'the query hides the other cards');
+  view.test.state.query = '';
+  view.test.state.sort = 'stato';
+  await view.render();
+  await flush();
+  const labels = mount.findAll('strong').map((node) => node.textContent);
+  assert.ok(labels.includes('WhatsApp'), 'the connected card still renders under stato sort');
+  assert.equal(labels[0], 'WhatsApp', 'stato sorts the connected channel first');
 });

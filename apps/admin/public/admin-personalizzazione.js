@@ -16,8 +16,11 @@
 //   deactivate, mai cancellazione);
 // - "Prova" è GET /api/space-packages/preview: una dimostrazione sui dati
 //   veri dello spazio che per costruzione non scrive nulla;
-// - la scheda Connettori riusa il riepilogo di GET /api/connectors e rimanda
-//   al flusso guidato di `#/connettori` (BO-F1-02), senza rifarlo qui.
+// - la scheda Connettori rende il contenuto del prototipo (hero Kit social,
+//   sezioni Canali di conversazione e Agenda, lead e pagamenti da
+//   CONNETTORI_SECTIONS) con lo stato ✓/+ letto da GET /api/connectors, e
+//   rimanda al flusso guidato di `#/connettori` (BO-F1-02) o alle schermate
+//   di Calendario e Preventivi, senza rifare il wizard qui.
 //
 // Convenzioni da apps/admin/public/admin-core.js: i costruttori di modello
 // sono puri e senza DOM (testati con node:test senza browser) e il renderer
@@ -25,7 +28,7 @@
 // con dati, così un nome o un blurb ostile resta testo, mai markup.
 
 import { bindAdminMutations } from './admin-submission.js';
-import { CONNECTOR_CATALOG } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 
 /** The three tabs, in prototype order. */
 export const PERSONALIZZAZIONE_TABS = Object.freeze(['pacchetti', 'skill', 'connettori']);
@@ -147,7 +150,129 @@ export function previewLines(preview) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBadge, uiButton, uiChannelChip } from './admin-ui.js'; // BO-F6-02: the single component library.
+
+/**
+ * The Connettori tab content, from the approved prototype (shots-2026-10-24,
+ * `02 Personalizzazione`, Connettori): the Kit-social hero plus the
+ * `Canali di conversazione` and `Agenda, lead e pagamenti` card sections.
+ * Copy is presentational and static (Italian, like the prototype); only the
+ * ✓/+ state reads the live connector rows, so demo fixtures and the real
+ * server render the same structure.
+ *
+ * Entries with a `channel` reuse the guided `#/connettori` flow for that
+ * channel; the channel must be a CONNECTOR_CATALOG member (pinned by test),
+ * otherwise the card falls back to the hub link instead of a deep link.
+ * Google Calendar and Stripe live on their own screens, so their cards link
+ * there (DECISION to be confirmed: `#/calendario` and `#/quotes`).
+ */
+export const CONNETTORI_SECTIONS = Object.freeze([
+  {
+    id: 'conversazione',
+    title: 'Canali di conversazione',
+    entries: Object.freeze([
+      {
+        key: 'whatsapp', label: 'WhatsApp', chip: 'WA', channel: 'whatsapp',
+        lines: Object.freeze(['Messaggi, note vocali e allegati del numero aziendale.', 'di Meta · ↔ bidirezionale']),
+      },
+      {
+        key: 'instagram', label: 'Instagram', chip: 'IG', channel: 'instagram',
+        lines: Object.freeze(['DM, risposte alle storie e commenti ai post.', 'di Meta · ↔ bidirezionale']),
+      },
+      {
+        key: 'facebook', label: 'Facebook', chip: 'FB', channel: 'facebook',
+        lines: Object.freeze(['Messenger e lead dalle inserzioni.', 'di Meta · ↔ bidirezionale']),
+      },
+      {
+        key: 'tiktok', label: 'TikTok', chip: 'TT', channel: 'tiktok',
+        lines: Object.freeze(['Messaggi diretti e lead dai moduli TikTok.', 'di TikTok · ← in entrata']),
+      },
+      {
+        key: 'email', label: 'Email', chip: '@', channel: 'email',
+        lines: Object.freeze(['Gmail o Outlook: conversazioni e allegati.', 'Gmail e Outlook · ↔ bidirezionale']),
+      },
+      {
+        key: 'telefono', label: 'Telefono', chip: 'TEL', channel: 'voice',
+        lines: Object.freeze(['Chiamate in entrata e in uscita, con trascrizione AI.', 'di Accordo · ↔ bidirezionale']),
+      },
+    ]),
+  },
+  {
+    id: 'agenda',
+    title: 'Agenda, lead e pagamenti',
+    entries: Object.freeze([
+      {
+        key: 'form', label: 'Form sito', chip: 'WEB', channel: 'site-form',
+        lines: Object.freeze(['Ogni invio del form crea o aggiorna un contatto.', 'di Accordo · ← in entrata']),
+      },
+      {
+        key: 'calendar', label: 'Google Calendar', chip: 'CAL', channel: null, href: '#/calendario',
+        lines: Object.freeze(['Appuntamenti del team e disponibilità condivisa.', 'di Google · ↔ bidirezionale']),
+      },
+      {
+        key: 'stripe', label: 'Stripe', chip: 'S', channel: null, href: '#/quotes',
+        lines: Object.freeze(['Pagamenti, abbonamenti e rinnovi.', 'di Stripe · ↔ pagamenti e link']),
+      },
+    ]),
+  },
+]);
+
+const CONNETTORI_CATALOG_CHANNELS = new Set(CONNECTOR_CATALOG.map((entry) => entry && entry.channel));
+
+/**
+ * Where a card leads: the guided `#/connettori/<canale>` detail for a live
+ * catalog channel (the detail forwards to the wizard), the entry's own
+ * screen otherwise, the hub when nothing else applies.
+ * @param {{ channel?: unknown, href?: unknown }} entry
+ */
+export function connettoriHref(entry) {
+  if (entry && typeof entry.channel === 'string' && CONNETTORI_CATALOG_CHANNELS.has(entry.channel)) {
+    return `#/connettori/${entry.channel}`;
+  }
+  if (entry && typeof entry.href === 'string' && entry.href !== '') return entry.href;
+  return '#/connettori';
+}
+
+/**
+ * The card state from the live rows: `collegato` when an active row serves
+ * the entry's channel, `da-collegare` otherwise (and always for entries
+ * without a channel, which no `/api/connectors` row can serve).
+ * @param {{ channel?: unknown }} entry
+ * @param {unknown} connectors
+ */
+export function connettoriCardState(entry, connectors) {
+  const channel = entry && typeof entry.channel === 'string' ? entry.channel : '';
+  if (channel === '') return 'da-collegare';
+  const rows = matchConnections(channel, Array.isArray(connectors) ? connectors : []);
+  return rows.some((row) => row && row.status === 'active') ? 'collegato' : 'da-collegare';
+}
+
+/**
+ * Filter and sort the Connettori cards. Pure: the query matches label and
+ * lines case-insensitively, `stato` sorts connected cards first.
+ */
+export function filterConnettori({ connectors = [], query = '', sort = 'nome' } = {}) {
+  const needle = String(query ?? '').trim().toLowerCase();
+  return CONNETTORI_SECTIONS.map((section) => {
+    const cards = [];
+    for (const entry of section.entries) {
+      if (needle !== '') {
+        const hay = `${entry.label} ${entry.lines.join(' ')}`.toLowerCase();
+        if (!hay.includes(needle)) continue;
+      }
+      cards.push({ entry, state: connettoriCardState(entry, connectors) });
+    }
+    cards.sort((left, right) => {
+      if (sort === 'stato') {
+        const rank = (card) => (card.state === 'collegato' ? 0 : 1);
+        const byState = rank(left) - rank(right);
+        if (byState !== 0) return byState;
+      }
+      return String(left.entry.label).localeCompare(String(right.entry.label), 'it');
+    });
+    return { section, cards };
+  });
+}
 
 /**
  * A view controller for the Personalizzazione screen. Injecting `doc`,
@@ -253,9 +378,9 @@ export function createPersonalizzazioneView(deps) {
     }
   }
 
-  function channelLabel(channel) {
-    const found = CONNECTOR_CATALOG.find((entry) => entry.channel === channel);
-    return found ? found.label : String(channel);
+  /** @param {string} hash */
+  function go(hash) {
+    navigate(hash);
   }
 
   function renderHeader(box) {
@@ -302,34 +427,38 @@ export function createPersonalizzazioneView(deps) {
         button.addEventListener('click', () => { state.view = view; state.previewFor = null; state.preview = null; render(); });
         bar.appendChild(button);
       }
-      const search = el(doc, 'input', {
-        cls: 'search',
-        attrs: { type: 'search', placeholder: 'Cerca per nome…', 'aria-label': 'Cerca', value: state.query },
-      });
-      search.value = state.query;
-      search.addEventListener('input', () => { state.query = String(search.value ?? ''); renderList(); });
-      bar.appendChild(search);
-      const sort = el(doc, 'select', { cls: 'sort', attrs: { 'aria-label': 'Ordina per' } });
-      for (const [value, label] of [['nome', 'Ordina: nome'], ['stato', 'Ordina: stato']]) {
-        const option = el(doc, 'option', { text: label, attrs: { value } });
-        if (state.sort === value) option.setAttribute('selected', 'selected');
-        sort.appendChild(option);
-      }
-      // A real select element reports its choice; the fake keeps first.
-      try { sort.value = state.sort; } catch { /* keep rendered order */ }
-      sort.addEventListener('change', () => { state.sort = String(sort.value === 'stato' ? 'stato' : 'nome'); renderList(); });
-      bar.appendChild(sort);
-      const add = el(doc, 'button', { text: 'Aggiungi ▾', cls: 'add', attrs: { type: 'button' } });
-      add.disabled = state.busy;
-      add.addEventListener('click', () => {
-        if (state.tab === 'skill') {
-          say('Le skill personalizzate arrivano con BO-F4-02: intanto copia il prompt dalla Prova di una skill.');
-        } else {
-          say('I pacchetti personalizzati si creano con `accordo module:create` (vedi docs/MODULE_FACTORY.md).');
-        }
-      });
-      bar.appendChild(add);
     }
+    const search = el(doc, 'input', {
+      cls: 'search',
+      attrs: { type: 'search', placeholder: 'Cerca per nome…', 'aria-label': 'Cerca', value: state.query },
+    });
+    search.value = state.query;
+    search.addEventListener('input', () => { state.query = String(search.value ?? ''); renderList(); });
+    bar.appendChild(search);
+    const sort = el(doc, 'select', { cls: 'sort', attrs: { 'aria-label': 'Ordina per' } });
+    for (const [value, label] of [['nome', 'Ordina: nome'], ['stato', 'Ordina: stato']]) {
+      const option = el(doc, 'option', { text: label, attrs: { value } });
+      if (state.sort === value) option.setAttribute('selected', 'selected');
+      sort.appendChild(option);
+    }
+    // A real select element reports its choice; the fake keeps first.
+    try { sort.value = state.sort; } catch { /* keep rendered order */ }
+    sort.addEventListener('change', () => { state.sort = String(sort.value === 'stato' ? 'stato' : 'nome'); renderList(); });
+    bar.appendChild(sort);
+    // The green CTA opens where a unit is added: the guided wizard for a
+    // channel, the module factory note for packages, the skill note.
+    const add = uiButton(doc, { variant: 'cta', label: 'Aggiungi ▾', attrs: { type: 'button' } });
+    add.disabled = state.busy;
+    add.addEventListener('click', () => {
+      if (state.tab === 'connettori') {
+        go('#/connettori');
+      } else if (state.tab === 'skill') {
+        say('Le skill personalizzate arrivano con BO-F4-02: intanto copia il prompt dalla Prova di una skill.');
+      } else {
+        say('I pacchetti personalizzati si creano con `accordo module:create` (vedi docs/MODULE_FACTORY.md).');
+      }
+    });
+    bar.appendChild(add);
     const total = el(doc, 'span', { text: pluralize(count, 'voce', 'voci'), cls: 'muted' });
     bar.appendChild(total);
     box.appendChild(bar);
@@ -512,31 +641,97 @@ export function createPersonalizzazioneView(deps) {
       }));
       return;
     }
-    const entries = state.connectors ?? [];
     if (state.connectors === null) {
       box.appendChild(el(doc, 'p', { text: 'Lettura dei collegamenti…', cls: 'muted' }));
       return;
     }
-    if (entries.length === 0) {
-      box.appendChild(el(doc, 'p', { text: 'Nessun canale collegato in questo spazio.', cls: 'empty' }));
-    } else {
-      const table = el(doc, 'table', { cls: 'mine' });
-      const head = el(doc, 'tr');
-      head.appendChild(el(doc, 'th', { text: 'Canale' }));
-      head.appendChild(el(doc, 'th', { text: 'Stato' }));
-      table.appendChild(head);
-      for (const entry of entries) {
-        const line = el(doc, 'tr');
-        line.appendChild(el(doc, 'td', { text: channelLabel(entry.channel ?? entry.connectionKey) }));
-        line.appendChild(el(doc, 'td', { text: String(entry.status ?? '—') }));
-        table.appendChild(line);
-      }
-      box.appendChild(table);
+    renderConnettoriHero(box);
+    const connectors = state.connectors ?? [];
+    const groups = filterConnettori({ connectors, query: state.query, sort: state.sort });
+    const sections = el(doc, 'div', { cls: 'connettori-sections' });
+    let shown = 0;
+    for (const group of groups) {
+      if (group.cards.length === 0) continue;
+      shown += group.cards.length;
+      renderConnettoriSection(sections, group);
     }
-    const open = el(doc, 'button', { text: 'Apri connettori', attrs: { type: 'button' } });
-    open.disabled = state.busy;
-    open.addEventListener('click', () => navigate('#/connettori'));
-    box.appendChild(open);
+    box.appendChild(sections);
+    if (shown === 0) {
+      box.appendChild(el(doc, 'p', { text: 'Nessun canale corrisponde alla ricerca.', cls: 'empty' }));
+    }
+  }
+
+  /** @param {any} box */
+  function renderConnettoriHero(box) {
+    const hero = el(doc, 'section', { cls: 'ui-hero', attrs: { 'aria-label': 'Kit social' } });
+    const copy = el(doc, 'div', { cls: 'ui-hero-copy' });
+    copy.appendChild(el(doc, 'p', { text: 'CURATO DA ACCORDO', cls: 'ui-hero-eyebrow' }));
+    copy.appendChild(el(doc, 'h3', { text: 'Kit social', cls: 'ui-hero-title' }));
+    copy.appendChild(el(doc, 'p', {
+      text: 'Instagram, Facebook, TikTok e WhatsApp in un\u2019unica inbox, con risposte che partono dal canale originale.',
+      cls: 'ui-hero-text',
+    }));
+    const explore = uiButton(doc, { variant: 'secondary', label: 'Esplora', attrs: { type: 'button' } });
+    explore.addEventListener('click', () => {
+      try {
+        const sections = mount.querySelector('.connettori-sections');
+        if (sections && typeof sections.scrollIntoView === 'function') sections.scrollIntoView();
+      } catch { /* the fake DOM has no scrolling: the sections render below */ }
+    });
+    copy.appendChild(explore);
+    hero.appendChild(copy);
+    const tiles = el(doc, 'div', { cls: 'ui-hero-tiles', attrs: { 'aria-hidden': 'true' } });
+    for (const chip of ['IG', 'FB', 'TT', 'WA']) tiles.appendChild(uiChannelChip(doc, chip));
+    hero.appendChild(tiles);
+    const dots = el(doc, 'div', { cls: 'ui-hero-dots', attrs: { 'aria-hidden': 'true' } });
+    for (let index = 0; index < 3; index += 1) {
+      dots.appendChild(el(doc, 'span', { cls: index === 0 ? 'on' : undefined }));
+    }
+    hero.appendChild(dots);
+    box.appendChild(hero);
+  }
+
+  /** @param {any} box @param {{ section: any, cards: Array<{ entry: any, state: string }> }} group */
+  function renderConnettoriSection(box, group) {
+    const head = el(doc, 'div', { cls: 'ui-conn-head' });
+    head.appendChild(el(doc, 'h3', { text: group.section.title }));
+    head.appendChild(el(doc, 'span', {
+      text: String(group.section.entries.length),
+      cls: 'ui-conn-count',
+      attrs: { 'aria-label': `${group.section.entries.length} canali` },
+    }));
+    const all = el(doc, 'button', { text: 'Mostra tutto →', cls: 'ui-conn-all', attrs: { type: 'button' } });
+    all.addEventListener('click', () => go('#/connettori'));
+    head.appendChild(all);
+    box.appendChild(head);
+    const grid = el(doc, 'div', { cls: 'ui-conn-grid' });
+    for (const card of group.cards) {
+      const article = el(doc, 'article', { cls: 'ui-card ui-conn-card' });
+      article.appendChild(uiChannelChip(doc, card.entry.chip));
+      const body = el(doc, 'div', { cls: 'ui-conn-body' });
+      body.appendChild(el(doc, 'strong', { text: card.entry.label, cls: 'ui-conn-label' }));
+      for (const line of card.entry.lines) {
+        body.appendChild(el(doc, 'p', { text: line, cls: 'ui-conn-lines' }));
+      }
+      article.appendChild(body);
+      const state = el(doc, 'div', { cls: 'ui-conn-state' });
+      if (card.state === 'collegato') {
+        const badge = uiBadge(doc, { authority: 'accord', text: '✓' });
+        badge.setAttribute('title', 'Collegato');
+        state.appendChild(badge);
+      } else {
+        const add = uiButton(doc, {
+          variant: 'secondary', small: true, label: '+',
+          attrs: { type: 'button', 'aria-label': `Collega ${card.entry.label}` },
+        });
+        const href = connettoriHref(card.entry);
+        add.addEventListener('click', () => go(href));
+        state.appendChild(add);
+      }
+      article.appendChild(state);
+      grid.appendChild(article);
+    }
+    box.appendChild(grid);
   }
 
   function render() {
@@ -556,7 +751,8 @@ export function createPersonalizzazioneView(deps) {
     if (state.tab !== 'connettori') {
       count = filterUnits({ units, active: known, tab: state.tab, view: state.view, query: state.query, sort: state.sort }).length;
     } else if (Array.isArray(state.connectors)) {
-      count = state.connectors.length;
+      count = filterConnettori({ connectors: state.connectors, query: state.query, sort: state.sort })
+        .reduce((total, group) => total + group.cards.length, 0);
     }
     renderToolbar(box, count);
     mount.appendChild(box);
@@ -574,6 +770,9 @@ export function createPersonalizzazioneView(deps) {
   return {
     render: renderView,
     /** Test seam: drive the pure state without a browser. */
-    test: { state, filterUnits, activeByUnit, unitStatus, previewLines, bannerFor },
+    test: {
+      state, filterUnits, activeByUnit, unitStatus, previewLines, bannerFor,
+      filterConnettori, connettoriCardState, connettoriHref, sections: CONNETTORI_SECTIONS,
+    },
   };
 }
