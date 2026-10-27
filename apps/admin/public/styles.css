@@ -359,10 +359,14 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 .bo-user-email { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bo-user-role { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bo-logout {
-  display: grid; place-items: center; flex: none;
+  display: flex; align-items: center; gap: 8px; flex: none;
   padding: 7px; border-radius: 8px; border: none; background: transparent;
-  color: var(--muted);
+  color: var(--muted); font-size: 13px; font-weight: 600;
 }
+/* BO-F6-01 AC-3: the exit label sits beside its icon (the component
+ * library idiom), never stacked under it — the stacked grid doubled the
+ * button height and pushed the whole bottom block off the prototype. The
+ * visible label itself stays: BO-F6-03 reviewed behavior. */
 .bo-logout:hover { background: var(--surface-soft); }
 .bo-logout-icon { width: 18px; height: 18px; display: block; }
 .bo-topbar {
