@@ -18,7 +18,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const { createAccordoAppAsync } = await import('../packages/app/src/index.js');
+const { createAccordoAppAsync, createAdminShellMount } = await import('../packages/app/src/index.js');
+const { isExposableGeneratedModule } = await import('../packages/core/src/generated-module-contract.js');
 
 function loadManifest(packageName, recordName) {
   const path = join(HERE, '..', 'packages', packageName, 'modules', `${recordName}.module.json`);
@@ -158,6 +159,39 @@ test('selection mistakes fail closed at composition', async (t) => {
       `${label} refuses instead of composing half-working state`,
     );
   }
+});
+
+test('the composed facade exposes manifest-selected modules to the generic surface', async (t) => {
+  // backlog:22f40e0e: the async facade `modules.get()` returned only
+  // name/version/description/entities/service, so every
+  // `/api/modules/<record>/records` read behind the shared /bo answered
+  // `Generated module not found` while /api/schema listed the domain.
+  // The accessor now returns the registry definition with the wrapped
+  // service — the same shape `list()` publishes — and the generic surface
+  // resolves it.
+  const app = await createAccordoAppAsync({
+    dbPath: join(scratchDir(t), 'exposable.sqlite'),
+    selected: {
+      packageContract: 2, packages: [], actions: [],
+      modules: [{ name: 'canonical-link', manifest: loadManifest('customer-data', 'canonical-link') }],
+    },
+  });
+  t.after(() => app.close());
+
+  const exposed = app.modules.get('canonical-link');
+  assert.deepEqual(
+    Object.keys(exposed).sort(),
+    Object.keys(app.modules.list().find((module) => module.name === 'canonical-link')).concat('service').sort(),
+    'get() agrees with list() plus the wrapped service',
+  );
+  assert.ok(isExposableGeneratedModule(exposed), 'the facade value satisfies the exposable contract');
+  assert.equal(typeof exposed.service?.list, 'function', 'the wrapped service still lists');
+
+  const mount = createAdminShellMount(app, { basePath: '/bo' });
+  const answer = await mount.handle({ method: 'GET', path: '/bo/api/modules/canonical-link/records?limit=100', headers: {} });
+  assert.equal(answer.status, 200, 'the generic records surface reads through the facade');
+  const body = JSON.parse(typeof answer.body === 'string' ? answer.body : Buffer.from(answer.body).toString('utf8'));
+  assert.ok(Array.isArray(body.items), 'the records answer carries items');
 });
 
 test('a name string still selects eligibility only, registering nothing', async (t) => {
