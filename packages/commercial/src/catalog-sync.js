@@ -12,6 +12,7 @@ import {
   requireAmount,
 } from '../../core/index.js';
 import { requireCurrency, validatePriceComponent } from './money.js';
+import { normalizeRowFields } from './manual-catalog.js';
 
 /**
  * Catalog synchronization (ADR-016): pull a provider's normalized catalog into
@@ -146,6 +147,7 @@ function normalizeCatalog(raw) {
       name: requireText(product?.name, 'product.name', 200),
       description: optionalText(product?.description, 'product.description'),
       category: optionalText(product?.category, 'product.category', 100),
+      ...providerChecked(() => normalizeRowFields(product, 'product'), 'product.row'),
       active: requireBoolean(product?.active ?? true, 'product.active'),
     };
   });
@@ -346,7 +348,15 @@ export function createCatalogSync({ database, events, modules, commercial, confi
           /** @type {Map<string, {product: any, versionId: string}>} */
           const productByKey = new Map();
           for (const incoming of catalog.products) {
-            const commercialData = { sku: incoming.sku, name: incoming.name, description: incoming.description, category: incoming.category };
+            const commercialData = {
+              sku: incoming.sku,
+              name: incoming.name,
+              description: incoming.description,
+              category: incoming.category,
+              unit: incoming.unit ?? null,
+              maxDiscountBps: incoming.maxDiscountBps ?? null,
+              stockQuantity: incoming.stockQuantity ?? null,
+            };
             const sourceFingerprint = computeDefinitionFingerprint(commercialData);
             const existing = (await products.listWhere({ sourceKey: incoming.sourceKey }))[0];
             if (!existing) {

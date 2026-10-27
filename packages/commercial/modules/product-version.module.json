@@ -1,5 +1,6 @@
 {
   "manifestVersion": 1,
+  "revision": 2,
   "name": "product-version",
   "description": "Immutable commercial description snapshot of a product (ADR-016). A change creates a new version; history is never rewritten.",
   "fields": [
@@ -38,6 +39,21 @@
     {
       "name": "category",
       "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "unit",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "maxDiscountBps",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "stockQuantity",
+      "type": "integer",
       "writable": "managed"
     },
     {

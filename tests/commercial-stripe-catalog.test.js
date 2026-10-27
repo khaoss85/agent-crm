@@ -547,6 +547,92 @@ test('acceptance 3: without Stripe the manual catalog works end to end', async (
   );
 });
 
+test('backoffice row fields round-trip through create, describe and list, and fail closed', async (t) => {
+  const app = await bootApp(manualProject(t));
+  t.after(() => app.close());
+
+  const created = await app.createManualProduct({
+    sku: 'SRV-01', name: 'Sopralluogo e rilievo', currency: 'EUR',
+    unit: 'a corpo', maxDiscountBps: 1000, stockQuantity: null,
+    components: [MANUAL_COMPONENT],
+  }, ACTOR);
+  const table = await app.listCatalogProducts({});
+  const row = table.products.find((product) => product.productId === created.product.id);
+  assert.ok(row, 'the created product reads back');
+  assert.equal(row.unit, 'a corpo');
+  assert.equal(row.maxDiscountBps, 1000);
+  assert.equal(row.stockQuantity, null);
+
+  const stocked = await app.createManualProduct({
+    sku: 'ARR-01', name: 'Cucina', currency: 'EUR',
+    unit: 'ml', maxDiscountBps: 500, stockQuantity: 12,
+    components: [MANUAL_COMPONENT],
+  }, ACTOR);
+  const reread = await app.listCatalogProducts({});
+  const stockRow = reread.products.find((product) => product.productId === stocked.product.id);
+  assert.equal(stockRow.unit, 'ml');
+  assert.equal(stockRow.maxDiscountBps, 500);
+  assert.equal(stockRow.stockQuantity, 12);
+
+  // Describe: row fields join the version snapshot; unchanged input stays put.
+  const updated = await app.updateManualProduct({ productId: created.product.id, stockQuantity: 0 }, ACTOR);
+  assert.equal(updated.product.version, 2);
+  assert.equal(updated.unchanged, false);
+  const afterUpdate = (await app.listCatalogProducts({})).products.find((product) => product.productId === created.product.id);
+  assert.equal(afterUpdate.stockQuantity, 0, 'zero counts: sold out is a number, not a service');
+  assert.equal(afterUpdate.unit, 'a corpo', 'untouched fields ride along');
+  const same = await app.updateManualProduct({ productId: created.product.id, stockQuantity: 0 }, ACTOR);
+  assert.equal(same.unchanged, true);
+
+  // Fail closed: negative stock, over-100% ceilings and empty units refuse.
+  await assert.rejects(
+    () => app.createManualProduct({ sku: 'BAD-STOCK', name: 'Bad', currency: 'EUR', stockQuantity: -1, components: [MANUAL_COMPONENT] }, ACTOR),
+    /stockQuantity/,
+  );
+  await assert.rejects(
+    () => app.createManualProduct({ sku: 'BAD-BPS', name: 'Bad', currency: 'EUR', maxDiscountBps: 10001, components: [MANUAL_COMPONENT] }, ACTOR),
+    /maxDiscountBps/,
+  );
+  await assert.rejects(
+    () => app.createManualProduct({ sku: 'BAD-UNIT', name: 'Bad', currency: 'EUR', unit: '  ', components: [MANUAL_COMPONENT] }, ACTOR),
+    /unit/,
+  );
+});
+
+test('provider row fields flow from Stripe metadata and garbage fails as provider-invalid', async () => {
+  const provider = createStripeCatalogProvider({
+    name: 'stripe-test',
+    version: 1,
+    stripe: {
+      async listProducts() {
+        return [{ id: 'prod_u', name: 'Incontro', active: true, metadata: { sku: 'U-1', category: 'servizi', unit: 'incontro' } }];
+      },
+      async listPrices() {
+        return [{ id: 'price_u', product: 'prod_u', active: true, currency: 'eur', unit_amount: 5000 }];
+      },
+    },
+  });
+  const catalog = normalizeCatalog(await provider.fetchCatalog({}));
+  assert.equal(catalog.products[0].unit, 'incontro');
+  assert.equal(catalog.products[0].maxDiscountBps, null);
+  assert.equal(catalog.products[0].stockQuantity, null);
+
+  const bad = createStripeCatalogProvider({
+    name: 'stripe-test',
+    version: 1,
+    stripe: {
+      async listProducts() {
+        return [{ id: 'prod_b', name: 'Bad', active: true, metadata: { unit: 'x'.repeat(41) } }];
+      },
+      async listPrices() { return []; },
+    },
+  });
+  await assert.rejects(
+    () => bad.fetchCatalog({}).then((raw) => normalizeCatalog(raw)),
+    (error) => error.code === 'PROVIDER_INVALID',
+  );
+});
+
 test('setManualPrices refuses a stale offer revision instead of forking history', async (t) => {
   const app = await bootApp(manualProject(t));
   t.after(() => app.close());
