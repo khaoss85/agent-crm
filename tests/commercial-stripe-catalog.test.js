@@ -30,6 +30,8 @@ import {
   createStripeCatalogProvider,
 } from '../packages/commercial/src/stripe-catalog.js';
 import { normalizeCatalog } from '../packages/commercial/src/catalog-sync.js';
+import { isUnchangedCommercial } from '../packages/commercial/src/manual-catalog.js';
+import { computeDefinitionFingerprint } from '../packages/core/index.js';
 import { boot } from './helpers/contracts-project.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -545,6 +547,135 @@ test('acceptance 3: without Stripe the manual catalog works end to end', async (
     }, ACTOR),
     /flat_fee/,
   );
+});
+
+test('backoffice row fields round-trip through create, describe and list, and fail closed', async (t) => {
+  const app = await bootApp(manualProject(t));
+  t.after(() => app.close());
+
+  const created = await app.createManualProduct({
+    sku: 'SRV-01', name: 'Sopralluogo e rilievo', currency: 'EUR',
+    unit: 'a corpo', maxDiscountBps: 1000, stockQuantity: null,
+    components: [MANUAL_COMPONENT],
+  }, ACTOR);
+  const table = await app.listCatalogProducts({});
+  const row = table.products.find((product) => product.productId === created.product.id);
+  assert.ok(row, 'the created product reads back');
+  assert.equal(row.unit, 'a corpo');
+  assert.equal(row.maxDiscountBps, 1000);
+  assert.equal(row.stockQuantity, null);
+
+  const stocked = await app.createManualProduct({
+    sku: 'ARR-01', name: 'Cucina', currency: 'EUR',
+    unit: 'ml', maxDiscountBps: 500, stockQuantity: 12,
+    components: [MANUAL_COMPONENT],
+  }, ACTOR);
+  const reread = await app.listCatalogProducts({});
+  const stockRow = reread.products.find((product) => product.productId === stocked.product.id);
+  assert.equal(stockRow.unit, 'ml');
+  assert.equal(stockRow.maxDiscountBps, 500);
+  assert.equal(stockRow.stockQuantity, 12);
+
+  // Describe: row fields join the version snapshot; unchanged input stays put.
+  const updated = await app.updateManualProduct({ productId: created.product.id, stockQuantity: 0 }, ACTOR);
+  assert.equal(updated.product.version, 2);
+  assert.equal(updated.unchanged, false);
+  const afterUpdate = (await app.listCatalogProducts({})).products.find((product) => product.productId === created.product.id);
+  assert.equal(afterUpdate.stockQuantity, 0, 'zero counts: sold out is a number, not a service');
+  assert.equal(afterUpdate.unit, 'a corpo', 'untouched fields ride along');
+  const same = await app.updateManualProduct({ productId: created.product.id, stockQuantity: 0 }, ACTOR);
+  assert.equal(same.unchanged, true);
+
+  // Fail closed: negative stock, over-100% ceilings and empty units refuse.
+  await assert.rejects(
+    () => app.createManualProduct({ sku: 'BAD-STOCK', name: 'Bad', currency: 'EUR', stockQuantity: -1, components: [MANUAL_COMPONENT] }, ACTOR),
+    /stockQuantity/,
+  );
+  await assert.rejects(
+    () => app.createManualProduct({ sku: 'BAD-BPS', name: 'Bad', currency: 'EUR', maxDiscountBps: 10001, components: [MANUAL_COMPONENT] }, ACTOR),
+    /maxDiscountBps/,
+  );
+  await assert.rejects(
+    () => app.createManualProduct({ sku: 'BAD-UNIT', name: 'Bad', currency: 'EUR', unit: '  ', components: [MANUAL_COMPONENT] }, ACTOR),
+    /unit/,
+  );
+});
+
+test('provider row fields flow from Stripe metadata and garbage fails as provider-invalid', async () => {
+  const provider = createStripeCatalogProvider({
+    name: 'stripe-test',
+    version: 1,
+    stripe: {
+      async listProducts() {
+        return [{ id: 'prod_u', name: 'Incontro', active: true, metadata: { sku: 'U-1', category: 'servizi', unit: 'incontro' } }];
+      },
+      async listPrices() {
+        return [{ id: 'price_u', product: 'prod_u', active: true, currency: 'eur', unit_amount: 5000 }];
+      },
+    },
+  });
+  const catalog = normalizeCatalog(await provider.fetchCatalog({}));
+  assert.equal(catalog.products[0].unit, 'incontro');
+  assert.equal(catalog.products[0].maxDiscountBps, null);
+  assert.equal(catalog.products[0].stockQuantity, null);
+
+  const bad = createStripeCatalogProvider({
+    name: 'stripe-test',
+    version: 1,
+    stripe: {
+      async listProducts() {
+        return [{ id: 'prod_b', name: 'Bad', active: true, metadata: { unit: 'x'.repeat(41) } }];
+      },
+      async listPrices() { return []; },
+    },
+  });
+  await assert.rejects(
+    () => bad.fetchCatalog({}).then((raw) => normalizeCatalog(raw)),
+    (error) => error.code === 'PROVIDER_INVALID',
+  );
+});
+
+test('a re-sync of an unchanged catalog stays a no-op for pre-r2 versions (no offer churn)', async (t) => {
+  const root = flipProject(t, [
+    { id: 'price_legacy', product: 'prod_flip', active: true, currency: 'eur', unit_amount: 3000, billing_scheme: 'per_unit' },
+  ]);
+  const app = await bootApp(root);
+  t.after(() => app.close());
+  const first = await app.syncCatalog({ provider: 'stripe-flip', actor: ACTOR });
+  assert.equal(first.counts.versionsCreated, 1);
+  assert.equal(first.counts.offersCreated, 1);
+
+  // Simulate a database populated before r2: the stored version keeps the
+  // legacy four-key fingerprint while the row columns stay null.
+  const products = app.modules.get('product').service;
+  const versions = app.modules.get('product-version').service;
+  const offers = app.modules.get('offer').service;
+  const product = products.listWhere({})[0];
+  const current = await versions.get(product.currentVersionId);
+  const legacyFingerprint = computeDefinitionFingerprint({
+    sku: current.sku, name: current.name, description: current.description ?? null, category: current.category ?? null,
+  });
+  assert.notEqual(legacyFingerprint, current.sourceFingerprint, 'r2 adds three null row fields to the fingerprint');
+  await versions.applyManaged(current.id, { sourceFingerprint: legacyFingerprint });
+  const legacyRow = await versions.get(current.id);
+  assert.equal(legacyRow.sourceFingerprint, legacyFingerprint);
+
+  // The helper tolerates the legacy shape: same content is unchanged.
+  const incomingFingerprint = current.sourceFingerprint;
+  assert.equal(isUnchangedCommercial(legacyRow, incomingFingerprint), true, 'identical catalog is a no-op on a legacy row');
+  const changedFingerprint = computeDefinitionFingerprint({
+    sku: current.sku, name: current.name, description: current.description ?? null, category: current.category ?? null,
+    unit: 'incontro', maxDiscountBps: null, stockQuantity: null,
+  });
+  assert.equal(isUnchangedCommercial(legacyRow, changedFingerprint), false, 'a real row change still versions');
+
+  const second = await app.syncCatalog({ provider: 'stripe-flip', actor: ACTOR });
+  assert.equal(second.counts.versionsCreated, 0, 'no new product version for an identical catalog');
+  assert.equal(second.counts.offersRevised, 0, 'no offer revision when the product version did not move');
+  assert.equal(second.counts.offersCreated, 0);
+  const reread = await versions.get(product.currentVersionId);
+  assert.equal(reread.id, current.id, 'the current version id does not move on a no-op re-sync');
+  assert.ok(offers.listWhere({}).every((offer) => offer.active === true), 'offers stay active without churn');
 });
 
 test('setManualPrices refuses a stale offer revision instead of forking history', async (t) => {

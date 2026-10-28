@@ -62,7 +62,7 @@ const RECORDED = Object.freeze({
   "price-book": { revision: 1, sqlite: "8d4ba11f65b5361d56bc1fc4066499a3fc3ce8a7cc135d14e3761a8df94fc506", pg: "d30372805d2648dac1e9cb6e1929d0c34f124937ae41670f176f3b431fc1b531" },
   "price-component": { revision: 1, sqlite: "2dc66c47c6b6064b09c05433472e771f8387c1c1c9c8c292938776fd2c8a59b2", pg: "97c1aee62f29bb0d7aa99ed68d487b199cbf5b26e27f2cb8008e42a828eea490" },
   "price-tier": { revision: 1, sqlite: "71974683f1f965313014ec0e408ec533b76dfd60a7ec11a03a19241618d2a43f", pg: "8cd1b3197d75ea6b6b41824d9aab3a85a046b1c61a90072a44e4683cb6da9167" },
-  "product-version": { revision: 1, sqlite: "4140e2f815f8b0c23fdae4e9980351644276a2691daaac5b42978f001358b21c", pg: "56cfccf285c9ccc7f7a4262f933d82fe8e69220c16a31c50b61d294e343b723d" },
+  "product-version": { revision: 2, sqlite: "04ac7b3db66b9fd2a0066422f8c383c2651f7e35af9d730df501bd5773df3d70", pg: "82b1e09e917ac8a281d603a5819bfe40486afefbe345a02f40bf0e0966a3676c" },
   "product": { revision: 1, sqlite: "858d4574ce96b4f775845105342bc456da1b22cb8935ef4cb8cb0ddc1f775b90", pg: "6ef4f2514efa89aaf2fac031f70dfa325606cc56270b30963714c6a80faa5023" },
   "product-import": { revision: 1, sqlite: "2f0606e38668fd7871b26aef6bad02f2645e512c4910c7e2b218b2c74a55a60d", pg: "8041436d56da09d32097d5ea2f757ff364812a2322ffb25f4db406d5ad1c3dc2" },
   "product-import-row": { revision: 1, sqlite: "ec415063d066d3fa71f12977dfd18ee7ce00750d4974febd57bb6808d40db1c9", pg: "0208a6291853fc0cbe3b316d809d022f0c8bcaf654a1a605752168c35fe4c1a5" },

@@ -278,6 +278,7 @@ export function createStripeCatalogProvider({ name, version, label, stripe, deac
         name: requireText(stripeProduct?.name, 'product.name', 200),
         description: optionalText(stripeProduct?.description, 'product.description'),
         category: optionalText(metadata.category, 'product.metadata.category', 100),
+        unit: optionalText(metadata.unit, 'product.metadata.unit', 40),
         active: stripeProduct?.active ?? true,
       };
       if (typeof record.active !== 'boolean') {
