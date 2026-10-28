@@ -14,6 +14,7 @@ import {
   parseMemberFilter,
   romeMinutes,
   romeWeekKeys,
+  teamRows,
   weekLabel,
   weekWindow,
 } from '../apps/admin/public/admin-calendario.js';
@@ -1327,4 +1328,127 @@ test('a missing profile stays silent while the card falls back', async () => {
   } finally {
     console.warn = originalWarn;
   }
+});
+
+// BO-F6-11 fetta 6 (specs/calendario.md C10): one toggle row per named
+// member — opaque identities, never invented people, no role line.
+test('teamRows names one toggle row per named member, never invented people', () => {
+  const rows = teamRows(['marco', 'sara', 'marco'], ['sara']);
+  assert.equal(rows.length, 2, 'named members dedup, no invented rows');
+  assert.deepEqual(rows[0], {
+    id: 'marco', active: true, color: memberColorIndex('marco'), initials: 'MA',
+  });
+  assert.deepEqual(rows[1], {
+    id: 'sara', active: false, color: memberColorIndex('sara'), initials: 'SA',
+  });
+  assert.deepEqual(teamRows([], []), [], 'no names, no rows');
+  assert.deepEqual(teamRows(null, undefined), [], 'non-lists stay empty');
+  assert.deepEqual(teamRows(['marco', 42, ''], []), [
+    { id: 'marco', active: true, color: memberColorIndex('marco'), initials: 'MA' },
+  ], 'non-identities never become rows');
+});
+
+const WEEK_TWO = {
+  from: '2026-10-19T00:00:00.000Z',
+  to: '2026-10-26T00:00:00.000Z',
+  members: [
+    {
+      teamMemberId: 'marco',
+      appointments: [
+        {
+          id: 'a1',
+          status: 'booked',
+          startsAt: '2026-10-22T16:00:00.000Z',
+          endsAt: '2026-10-22T16:30:00.000Z',
+          serviceKey: 'taglio',
+          teamMemberId: 'marco',
+          priceCents: 4500,
+          currency: 'EUR',
+          notes: null,
+          sourceKey: 'calendario:marco:1:c1',
+          subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+        },
+      ],
+    },
+    {
+      teamMemberId: 'sara',
+      appointments: [
+        {
+          id: 's1',
+          status: 'booked',
+          startsAt: '2026-10-22T14:00:00.000Z',
+          endsAt: '2026-10-22T14:30:00.000Z',
+          serviceKey: 'piega',
+          teamMemberId: 'sara',
+          priceCents: 3000,
+          currency: 'EUR',
+          notes: null,
+          sourceKey: 'calendario:sara:1:c9',
+          subject: { resource: 'contact', id: 'c9', owner: 'host', ownerPackage: null, label: 'Bea' },
+        },
+      ],
+    },
+  ],
+};
+
+// Team toggles carry a title naming the week filter; grid blocks do not,
+// so the title scopes the helper to the card (both use aria-pressed).
+const teamToggles = (mount) => mount.findAll('button')
+  .filter((node) => String(node.getAttribute('title') ?? '').includes('settimana'));
+
+// BO-F6-11 fetta 6 (specs/calendario.md C10, C11): the Team card lists one
+// toggle per named member; a click hides that member's blocks with no
+// reload, and reselecting brings them back.
+test('the Team card toggles one row per named member and filters the grid', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ week: WEEK_TWO });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  assert.ok(texts(mount, 'h2').includes('Team'), 'C10: the Team card paints');
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Nomina le persone')), 'no names, honest prompt');
+  assert.equal(teamToggles(mount).length, 0, 'no names, no toggles');
+
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco, sara';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(teamToggles(mount).length, 2, 'C10: one toggle row per named member');
+  assert.ok(teamToggles(mount).every((node) => node.getAttribute('aria-pressed') === 'true'));
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('MA') && node.textContent.includes('marco')));
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('SA') && node.textContent.includes('sara')));
+  assert.ok(texts(mount, 'strong').includes('taglio'));
+  assert.ok(texts(mount, 'strong').includes('piega'));
+
+  const callsBefore = client.calls.length;
+  teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
+  assert.equal(client.calls.length, callsBefore, 'C11: filtering needs no reload');
+  assert.ok(texts(mount, 'strong').includes('taglio'), 'the active member stays');
+  assert.ok(!texts(mount, 'strong').includes('piega'), 'C11: the deselected member disappears');
+  assert.equal(teamToggles(mount).find((node) => node.textContent.includes('sara')).getAttribute('aria-pressed'), 'false');
+
+  teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
+  assert.ok(texts(mount, 'strong').includes('piega'), 'C11: reselecting brings them back');
+  assert.equal(teamToggles(mount).find((node) => node.textContent.includes('sara')).getAttribute('aria-pressed'), 'true');
+});
+
+// Hiding the selected block's member closes the detail card: its selection
+// border is gone, so the card would point at nothing visible.
+test('hiding the selected block member closes the detail card', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ week: WEEK_TWO });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco, sara';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  mount.findAll('button').find((node) => node.textContent.includes('piega')).dispatch('click');
+  assert.ok(mount.findAll('button').some((node) => node.textContent === '×'), 'the detail card opens');
+  teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
+  assert.ok(!mount.findAll('button').some((node) => node.textContent === '×'), 'hiding the member closes the card');
+  assert.ok(!texts(mount, 'strong').includes('piega'));
 });
