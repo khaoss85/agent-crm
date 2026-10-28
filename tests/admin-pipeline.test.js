@@ -671,7 +671,7 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
   assert.ok(toasts.some((message) => message.includes('Spostata in attesa.')), 'move success is toasted in Italian');
   assertNoEnglish('after move');
   const lostColumn = mount.findAll('div').find((n) => n.getAttribute('data-stage') === 'persa');
-  await lostColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'attesa' }));
+  await lostColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'richiesta' }));
   const fresh = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
   assert.equal(fresh.__reason.getAttribute('class'), '', 'the reason input is revealed');
   assert.match(fresh.findAll('small')[0].textContent, /motivo della perdita/, 'the reason prompt is Italian');
@@ -687,5 +687,4 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
   search.dispatch('input');
   assert.ok(painted().includes('Nessun record corrisponde ai filtri attivi.'), 'empty lista is Italian');
   assertNoEnglish('lista filtered');
-});
 });
