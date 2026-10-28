@@ -119,7 +119,7 @@ test('the five quick views render as tabs, with Tutti active first', async () =>
   const { mount } = await render(stubClient());
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
   assert.deepEqual(tabs.map((node) => node.textContent),
-    ['Tutti', 'Nuovi lead', 'Clienti attivi', 'Da ricontattare oggi', 'Rinnovi entro 30 giorni']);
+    ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
   const active = tabs.find((node) => node.getAttribute('data-view') === 'tutti');
   assert.equal(active.getAttribute('aria-selected'), 'true');
   assert.ok(mount.textContent.includes('Marco Rossi'));
