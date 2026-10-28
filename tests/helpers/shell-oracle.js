@@ -6,11 +6,11 @@
  *
  * The oracle used to live in one test file, so one measure piece held the
  * whole 26,880-cell full corpus and needed a 1,800 s lock maximum while
- * every other piece declared 900 s. The independent verifier failed that
- * exception (every piece must declare 900 s), so the corpus is sliced here
+ * every other piece declared the common maximum. The independent verifier failed that
+ * exception (every piece must declare the same maximum), so the corpus is sliced here
  * by grouping singleton — each slice about a sixth of the cells, the
- * heaviest full slice holding documented margin under 900 s — and each
- * slice file lands in its own measure piece under the same 900 s maximum
+ * heaviest full slice holding documented margin under the common maximum — and each
+ * slice file lands in its own measure piece under the same maximum (1800 s)
  * as everything else. The cells are unchanged: the union of the six slices
  * is exactly the corpus the single file generated.
  *
@@ -313,7 +313,7 @@ for (const spelling of SHELL_ORACLE_HEREDOC_SPELLINGS) {
  * The whole corpus: one cross-product for command shape, one for heredoc shape.
  *
  * Sliced by grouping singleton for the six oracle test files (each about a
- * sixth of the cells, each in its own measure piece under 900 s):
+ * sixth of the cells, each in its own measure piece under the common maximum):
  * `groupings` names the grouping values this slice covers, `withHeredoc`
  * carries the heredoc/arithmetic cells (only one slice sets it, so no cell
  * runs twice). An unknown grouping name fails here, not as a silently

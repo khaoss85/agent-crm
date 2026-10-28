@@ -3,7 +3,7 @@
 /**
  * Shell-oracle slice E (backlog:664d5f481a96): the command-shape cells whose
  * grouping is `functionBody`, about a sixth of the oracle corpus. Runs in
- * its own measure piece under the same 900 s lock maximum as every other
+ * its own measure piece under the same lock maximum (1800 s, scripts/measure-pieces.sh) as every other
  * piece. The corpus generator and the agreement assertions are shared with
  * the other slices in tests/helpers/shell-oracle.js; this file only names
  * its slice, so no cell runs twice and none is lost

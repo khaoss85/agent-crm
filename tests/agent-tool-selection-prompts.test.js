@@ -440,10 +440,10 @@ test('the milestone identifiers a prompt may not carry are read from the reposit
 /**
  * The shell-classifier oracle used to live in this file: one test file, one
  * measure piece, one 26,880-cell corpus. That piece needed a 1,800 s lock
- * maximum while every other piece declared 900 s, which the verifier failed
- * (backlog:664d5f481a96: every piece declares 900 s). The corpus now lives in
+ * maximum while every other piece declared the common maximum, which the verifier failed
+ * (backlog:664d5f481a96: every piece declares the same maximum). The corpus now lives in
  * tests/helpers/shell-oracle.js, sliced one grouping per file across
- * tests/shell-oracle-a/b/c/d/e/f.test.js — same cells, six pieces, all 900 s.
+ * tests/shell-oracle-a/b/c/d/e/f.test.js — same cells, six pieces, all under the same maximum (1800 s).
  * The bounds below stay here: they pin the classifier, not the corpus.
  */
 

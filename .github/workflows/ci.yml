@@ -231,7 +231,7 @@ jobs:
       # The measurement runs piece by piece (`npm run measure`,
       # `scripts/measure-pieces.sh`) on this clean checkout: `npm run check`,
       # then one `measure-suite.js --shard i/n` per piece, each under its OWN
-      # heavy-job acquisition with its OWN declared maximum (900 s every
+      # heavy-job acquisition with its OWN declared maximum (1800 s every
       # piece — the shell-oracle corpus is sliced one grouping per file
       # across six files, so no
       # piece needs more: backlog:9fff957f3968, backlog:664d5f481a96) — the

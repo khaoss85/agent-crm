@@ -273,7 +273,7 @@ it runs only where a merge has already happened — never on a PR push. Since
 backlog:9fff957f3968 the measurement itself runs in short pieces
 (`npm run measure`, `scripts/measure-pieces.sh`): `npm run check`, then one
 `measure-suite.js --shard i/n` per piece, each under its own heavy-job
-acquisition with its own declared maximum (900 s every piece — the
+acquisition with its own declared maximum (1800 s every piece — the
 shell-classifier oracle corpus is sliced one grouping per file across
 tests/shell-oracle-a/b/c/d/e/f.test.js, six slices needing six pieces at
 minimum, so no piece needs more: backlog:664d5f481a96, see
