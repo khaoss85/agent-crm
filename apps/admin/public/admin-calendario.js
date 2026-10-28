@@ -484,8 +484,21 @@ export function createCalendarioView(deps) {
       const answer = await client.request('/api/spine/memberships');
       if (token !== memberToken) return;
       state.members = Array.isArray(answer?.items) ? answer.items : [];
-    } catch {
+    } catch (error) {
       if (token !== memberToken) return;
+      // Fail-soft UI, but a failure nobody can diagnose blocks review
+      // (AGENTS.md): record the sanitized cause with the active space —
+      // never the message or personal data, like the profile read below.
+      // A refused list (403) or an uncomposed spine (404) is an expected
+      // absence, not a fault: silent.
+      const refused = error?.code === 'SPINE_MEMBERSHIP_FORBIDDEN' || error?.status === 403;
+      if (!refused && !isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
+        console.warn(
+          'bo-calendario members unreadable:',
+          error instanceof Error ? error.name : (error?.code ?? 'unknown'),
+          `spaceId=${readSpace()}`,
+        );
+      }
       state.members = null;
       return;
     }

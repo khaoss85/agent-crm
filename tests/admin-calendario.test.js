@@ -1123,6 +1123,14 @@ test('overlapping profile reads cache under their own keys', async () => {
         return { identity: { contact: { id, firstName: `Nome-${id}`, lastName: '' }, company: null } };
       }
       if (path.startsWith('/api/appointments/team-week')) return week;
+      if (path === '/api/spine/memberships') {
+        // No roster on this double: the spine is uncomposed here, an
+        // expected absence the view keeps silent (fetta 7).
+        const missing = new Error('no spine here');
+        missing.code = 'NOT_FOUND';
+        missing.status = 404;
+        throw missing;
+      }
       throw new Error(`unexpected path ${path}`);
     },
   };
@@ -1215,6 +1223,14 @@ test('a late profile answer never repaints over the customer card', async () => 
         return { identity: { contact: { id: 'c1', firstName: 'Ada', lastName: 'Rossi' }, company: null } };
       }
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
+      if (path === '/api/spine/memberships') {
+        // No roster on this double: the spine is uncomposed here, an
+        // expected absence the view keeps silent (fetta 7).
+        const missing = new Error('no spine here');
+        missing.code = 'NOT_FOUND';
+        missing.status = 404;
+        throw missing;
+      }
       throw new Error(`unexpected path ${path}`);
     },
   };
@@ -1263,6 +1279,14 @@ test('an unexpected profile failure is logged with the space, never the message'
     async request(path) {
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
+      if (path === '/api/spine/memberships') {
+        // No roster on this double: the spine is uncomposed here, an
+        // expected absence the view keeps silent (fetta 7).
+        const missing = new Error('no spine here');
+        missing.code = 'NOT_FOUND';
+        missing.status = 404;
+        throw missing;
+      }
       throw new Error(`unexpected path ${path}`);
     },
   };
@@ -1309,6 +1333,14 @@ test('a missing profile stays silent while the card falls back', async () => {
     async request(path) {
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
+      if (path === '/api/spine/memberships') {
+        // No roster on this double: the spine is uncomposed here, an
+        // expected absence the view keeps silent (fetta 7).
+        const missing = new Error('no spine here');
+        missing.code = 'NOT_FOUND';
+        missing.status = 404;
+        throw missing;
+      }
       throw new Error(`unexpected path ${path}`);
     },
   };
@@ -1531,10 +1563,18 @@ test('a refused member list keeps the opaque toggles with no error', async () =>
   refused.code = 'SPINE_MEMBERSHIP_FORBIDDEN';
   refused.status = 403;
   const client = stubClient({ week: WEEK_TWO, membershipsError: refused });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
-  await view.render();
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
+  const warned = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warned.push(args.map(String).join(' ')); };
+  try {
+    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+    await view.render();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warned.length, 0, 'an expected refusal stays silent');
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco, sara';
   clickButton(mount, 'Mostra settimana');
@@ -1546,6 +1586,32 @@ test('a refused member list keeps the opaque toggles with no error', async () =>
   for (const banned of ['NOT_FOUND', 'non composto', 'SPINE_', '403', 'undefined']) {
     assert.ok(!body.includes(banned), `no technical residue in the Team card: ${banned}`);
   }
+});
+
+// An unexpected member-list failure is logged with the space, never the
+// message or personal data — the same rule as the profile read.
+test('an unexpected member-list failure is logged with the space, never the message', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const fault = new Error('boom token=secret-payload');
+  fault.status = 500;
+  const client = stubClient({ week: WEEK_TWO, membershipsError: fault });
+  const warned = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warned.push(args.map(String).join(' ')); };
+  try {
+    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+    await view.render();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warned.length, 1, 'one diagnostic line for the unexpected fault');
+  assert.ok(warned[0].startsWith('bo-calendario members unreadable:'), 'sanitized cause, not the message');
+  assert.ok(!warned[0].includes('secret-payload'), 'no personal data in the log');
+  assert.ok(warned[0].includes('spaceId='), 'the space rides along for diagnosis');
+  assert.equal(teamToggles(mount).length, 0, 'the card still falls back to the honest prompt');
 });
 
 // BO-F6-11 fetta 7 (specs/calendario.md C12): the «Prenotazione online»
