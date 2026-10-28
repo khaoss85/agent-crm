@@ -4,6 +4,7 @@ import { AppError, definePackage, selectPackageGraph } from '../../core/index.js
 import {
   ACTIVITY_KINDS,
   ACTIVITY_MODULE,
+  POSTPONE_NOTE_BODY,
   TASK_MODULE,
   TASK_OPEN,
   TASK_STATES,
@@ -12,7 +13,10 @@ import {
   bounds,
   closingKey,
   createFollowUp,
+  isUniqueConflict,
   optionalSafeText,
+  postponeDueAt,
+  postponeKey,
   recordActivity,
   requireCallerTransaction,
   requireHumanActor,
@@ -55,8 +59,8 @@ export const WORK_RESOURCES = Object.freeze([TASK_MODULE, ACTIVITY_MODULE]);
 export const FOLLOW_UP_CAPABILITY = Object.freeze({ package: WORK_PACKAGE, capability: 'follow-up', version: 1 });
 
 export {
-  ACTIVITY_KINDS, ACTIVITY_MODULE, TASK_MODULE, TASK_OPEN, TASK_STATES,
-  TASK_TERMINAL, TASK_TRANSITIONS, createFollowUp, sortTimeline,
+  ACTIVITY_KINDS, ACTIVITY_MODULE, POSTPONE_NOTE_BODY, TASK_MODULE, TASK_OPEN, TASK_STATES,
+  TASK_TERMINAL, TASK_TRANSITIONS, createFollowUp, postponeDueAt, postponeKey, sortTimeline,
 };
 
 /** @param {Record<string, string>} [moduleNames] */
@@ -202,6 +206,72 @@ export function buildCancelTaskAction(moduleNames) {
 }
 
 /**
+ * `postpone` — defer an open task by one day, durably.
+ *
+ * "Domani" on the Oggi screen used to be a session-local triage flag: a reload
+ * lost the decision and the task kept its old due date. This action is what
+ * that button runs now — the due date moves 24 hours ahead and the deferral is
+ * recorded on the subject timeline, so the decision survives a reload and
+ * reads as evidence instead of vanishing.
+ *
+ * It is deliberately **not** a transition: the task stays `open`, so there is
+ * no new status, no migration and no reopen problem. `fromStates: ['open']` is
+ * the whole guard — a completed or cancelled task answers `409 INVALID_STATE`
+ * naming the state it is in, from the action runtime before this code runs.
+ * Same-day repeats replay the existing note instead of writing another one:
+ * the note key carries the target UTC day, so postponing again tomorrow is a
+ * new deferral with its own evidence, and a lost retry is a replay rather
+ * than a second note.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function buildPostponeTaskAction(moduleNames) {
+  const names = resolvedNames(moduleNames);
+  return {
+    module: names.task,
+    name: 'postpone',
+    label: 'Postpone task',
+    description: 'Defer this follow-up by one day: the due date moves 24 hours ahead and the deferral is recorded on the timeline. A human decision; it notifies nobody and schedules nothing.',
+    actionContract: 1,
+    stateField: 'status',
+    fromStates: [TASK_OPEN],
+    input: [],
+    async execute({ record, actor, modules, managed, now }) {
+      requireHumanActor(actor, 'Postponing a task');
+      const activities = closingServices(modules, names);
+      const postponedAt = now();
+      const dueAt = postponeDueAt(postponedAt);
+      const sourceKey = postponeKey(record.id, dueAt.slice(0, 10));
+      const replayed = (await activities.listWhere({ sourceKey }))[0] ?? null;
+      if (replayed) return { task: record, activity: replayed, replayed: true };
+      const task = await managed(record.id, { dueAt });
+      let activity;
+      try {
+        activity = await recordActivity({ activities, actor }, {
+          sourceKey,
+          kind: 'note',
+          subject: subjectOf(record),
+          taskId: record.id,
+          body: POSTPONE_NOTE_BODY,
+          occurredAt: postponedAt,
+          source: { package: WORK_PACKAGE, action: 'postpone' },
+        });
+      } catch (error) {
+        // Two deferrals of the same day raced: the unique note key picked a
+        // winner. The loser answers from the winner's note rather than from a
+        // driver error — the same pattern follow-up creation uses — and a
+        // payload that genuinely differs is still the driver's own refusal.
+        if (!isUniqueConflict(error)) throw error;
+        const winner = (await activities.listWhere({ sourceKey }))[0] ?? null;
+        if (!winner) throw error;
+        return { task, activity: winner, replayed: true };
+      }
+      return { task, activity, replayed: false };
+    },
+  };
+}
+
+/**
  * `add-note` — the one place a human writes free text into the timeline.
  *
  * It has **no `fromStates`**: a note on a closed task is legitimate — often it
@@ -317,6 +387,7 @@ export function createWorkPackage(options = {}) {
     actions: [
       buildCompleteTaskAction(options.modules),
       buildCancelTaskAction(options.modules),
+      buildPostponeTaskAction(options.modules),
       buildAddNoteAction(options.modules),
     ],
     // None. A versioned policy earns its fingerprint when two consumers share a
@@ -370,10 +441,12 @@ export function createWorkPackage(options = {}) {
             'source.action and subject.ownerPackage remain caller-asserted with no registry knowledge behind them: the registry does not know which of a package\'s actions is calling, and a subject may legitimately be owned by a third package',
         },
         humanApproval:
-          'complete, cancel and add-note require actor.type === "user"; an agent actor is refused 403 HUMAN_APPROVAL_REQUIRED. A human-actor boundary, not RBAC and not authentication',
+          'complete, cancel, postpone and add-note require actor.type === "user"; an agent actor is refused 403 HUMAN_APPROVAL_REQUIRED. A human-actor boundary, not RBAC and not authentication',
         idempotency: {
           followUp:
             'the caller supplies a business source key. Same key and same payload returns the existing task and its creation activity; same key with any different semantic field is refused 409 WORK_FOLLOW_UP_CONFLICT naming the fields that differ. A new business round uses a new key and creates a new task',
+          postpone:
+            'a deferral carries the task and the target UTC day as its note key. A repeat decided the same day returns the existing task and note without writing again; a deferral decided another day writes a new note and moves the due date again. Postpone never changes status, so it needs no transition and no reopen rule',
           semanticIdentity: [
             'title', 'dueAt', 'subjectResource', 'subjectId', 'subjectOwner', 'subjectOwnerPackage',
             'sourcePackage', 'sourceAction',
@@ -385,7 +458,7 @@ export function createWorkPackage(options = {}) {
           notes: 'MANUAL_NOTES_ARE_NOT_IDEMPOTENT — a note carries no key, because two identical notes are two statements',
         },
         wording: {
-          recorded: ['follow-up task opened', 'task completed', 'task cancelled', 'note recorded'],
+          recorded: ['follow-up task opened', 'task completed', 'task cancelled', 'task postponed', 'note recorded'],
           neverClaimed: ['reminded', 'notified', 'scheduled', 'assigned', 'emailed', 'escalated', 'due today'],
         },
         notModeled: [

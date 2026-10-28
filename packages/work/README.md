@@ -1,13 +1,13 @@
 # `work` — tasks and activity evidence
 
-Two records, three human actions and one declared capability.
+Two records, four human actions and one declared capability.
 
 | | |
 |---|---|
 | Owns | `work-task`, `work-activity` |
 | Requires | **nothing** |
 | Offers | `follow-up@1` |
-| Actions | `work-task.complete`, `work-task.cancel`, `work-task.add-note` |
+| Actions | `work-task.complete`, `work-task.cancel`, `work-task.postpone`, `work-task.add-note` |
 | Policies | none |
 | ADR | ADR-030 · ExecPlan `docs/plans/activity-task-operations.md` · guide `docs/WORK_TASKS.md` |
 
@@ -61,9 +61,14 @@ An explicit transition table, published in the schema and in `app inspect`:
 ```text
 open  →  completed        work.complete   (human actor)
 open  →  cancelled        work.cancel     (human actor, reason required)
+open  →  open (dueAt +24h, timeline note)  work.postpone  (human actor)
 completed → nothing
 cancelled → nothing
 ```
+
+`postpone` is not a transition: the task stays `open`, so "Domani" survives a
+reload without a new status or a migration. A repeat decided the same day
+replays the existing note instead of writing another one.
 
 - **`open → completed` is direct.** An `in_progress` state would change no read,
   no action and no refusal, so it would be a label that also forces a rule nobody
@@ -197,8 +202,8 @@ no fallback. Published as `HOST_ACTIONS_CANNOT_DECLARE_CAPABILITIES`.
 
 ## Human-actor boundary
 
-`complete`, `cancel` and `add-note` require `actor.type === 'user'`; an agent
-actor is refused `403 HUMAN_APPROVAL_REQUIRED`. **This is not RBAC, not
+`complete`, `cancel`, `postpone` and `add-note` require `actor.type === 'user'`;
+an agent actor is refused `403 HUMAN_APPROVAL_REQUIRED`. **This is not RBAC, not
 authentication and not secure assignment** — a local caller sets its own actor
 header. What it buys is that an agent cannot silently close somebody's work.
 
