@@ -164,6 +164,19 @@ test('the board discloses truncation and excluded off-pipeline records', async (
   assert.ok(mount.textContent.includes('1 record non in questa pipeline (non mostrato)'), 'exclusion disclosed');
 });
 
+test('the off-pipeline disclosure uses the Italian plural for several records', async () => {
+  const records = [
+    record('a', 'discovery'),
+    { ...record('x', 'discovery'), pipelineKey: 'other' },
+    { ...record('y', 'discovery'), pipelineKey: 'other' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+  assert.ok(mount.textContent.includes('2 record non in questa pipeline (non mostrati).'), 'plural exclusion disclosed');
+});
+
 test('hostile stage labels and record values render as inert text', async () => {
   const hostile = '<img src=x onerror=alert(1)>';
   const doc = createFakeDocument();

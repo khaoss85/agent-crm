@@ -241,7 +241,7 @@ export function createPipelineBoard(deps) {
     if (offPipeline > 0) {
       titleBox.appendChild(el(doc, 'p', {
         class: 'hint',
-        text: `${offPipeline} record non in questa pipeline (non mostrato${offPipeline === 1 ? '' : 'i'}).`,
+        text: `${offPipeline} record non in questa pipeline (non mostrat${offPipeline === 1 ? 'o' : 'i'}).`,
       }));
     }
     heading.appendChild(titleBox);
