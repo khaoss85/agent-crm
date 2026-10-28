@@ -54,8 +54,31 @@ const SYNC_LABELS = Object.freeze({
   'no-answer': 'senza risposta',
 });
 
+/**
+ * Commercial state in the operator's words. Quotes (`draft`,
+ * `pending_approval`, `approved`, `rejected`) and the opportunity fallback
+ * stages share one table; anything unknown reads back raw, never blank.
+ */
+const OFFER_STATUS_LABELS = Object.freeze({
+  draft: 'bozza',
+  pending_approval: 'in attesa di approvazione',
+  approved: 'approvata',
+  rejected: 'rifiutata',
+  discovery: 'scoperta',
+  qualification: 'qualificazione',
+  proposal: 'proposta',
+  approval_pending: 'in attesa di approvazione',
+  negotiation: 'trattativa',
+  won: 'vinta',
+  lost: 'persa',
+});
+
 const channelLabel = (channel) => CHANNEL_LABELS[String(channel ?? '').toLowerCase()] ?? String(channel ?? 'canale');
 const syncLabel = (sync) => SYNC_LABELS[String(sync ?? '').toLowerCase()] ?? String(sync ?? 'stato ignoto');
+const offerStatusLabel = (status) => {
+  if (status === null || status === undefined || status === '') return null;
+  return OFFER_STATUS_LABELS[String(status).toLowerCase()] ?? String(status);
+};
 
 /**
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
@@ -346,19 +369,33 @@ export function createCustomerCardView(deps) {
   }
 
   function offer(box, profile) {
+    // The offer panel shows one commercial line for THIS customer only: the
+    // profile behind it is already scoped to the customer (contact-scoped
+    // records never leak onto a company-mate's card), so the first row here
+    // is this customer's own. A quote carries no human name of its own, so
+    // it reads after the opportunity it was made for; the state reads in
+    // Italian, never a raw English status.
     box.appendChild(el('h4', undefined, 'Offerta'));
     const quotes = profile?.quotes?.available === true && Array.isArray(profile.quotes.items) ? profile.quotes.items : [];
     const opportunities = profile?.opportunities?.available === true && Array.isArray(profile.opportunities.items)
       ? profile.opportunities.items : [];
-    const first = quotes[0] ?? opportunities[0] ?? null;
+    const fromQuote = quotes.length > 0;
+    const first = fromQuote ? quotes[0] : (opportunities[0] ?? null);
     if (!first) {
-      const reason = profile?.quotes?.available === true
+      // No linked offer: when the hop itself was readable (either section
+      // available, even empty) the customer plainly has none; otherwise the
+      // commercial records cannot be read from here — say so with the reason.
+      const canRead = profile?.quotes?.available === true || profile?.opportunities?.available === true;
+      box.appendChild(el('p', 'bo-muted', canRead
         ? 'nessuna offerta registrata'
-        : (profile?.quotes?.reason ?? 'offerte non disponibili');
-      box.appendChild(el('p', 'bo-muted', reason));
+        : (profile?.quotes?.reason ?? profile?.opportunities?.reason ?? 'offerte non disponibili')));
       return;
     }
-    box.appendChild(el('p', 'bo-scheda-offer', `${first?.name ?? first?.id ?? 'offerta'}${first?.status ? ` · ${first.status}` : ''}`));
+    const name = fromQuote
+      ? (first?.opportunityName ?? first?.name ?? null)
+      : (first?.name ?? null);
+    const status = offerStatusLabel(first?.status);
+    box.appendChild(el('p', 'bo-scheda-offer', `${name ?? first?.id ?? 'offerta'}${status ? ` · ${status}` : ''}`));
   }
 
   // Terminal booking states, mirroring APPOINTMENT_TERMINAL in
