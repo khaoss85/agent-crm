@@ -852,7 +852,7 @@ import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
  * @param {object} doc
  * @param {{ id?: unknown, kind?: unknown, mono?: unknown, title?: unknown, why?: unknown, cta?: unknown, href?: unknown, run?: unknown }} action
  * @param {'open' | 'done' | 'postponed'} state
- * @param {{ onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void }} [events]
+ * @param {{ onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void }} [events]
  * @param {boolean} [disabled]
  */
 function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
@@ -861,10 +861,19 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
   if (state !== 'open') row.setAttribute('data-state', state);
   row.appendChild(el(doc, 'span', `bo-oggi-mono${action?.channel ? ` bo-tile-${String(action.channel).toLowerCase()}` : ''}`, String(action?.mono ?? '')));
   const body = el(doc, 'div', 'bo-oggi-body');
-  // The prototype's title opens the record the suggestion is about.
+  // The prototype's title opens the record the suggestion is about, through
+  // the shell router like every other in-app anchor.
   const href = typeof action?.href === 'string' && action.href !== '' ? action.href : null;
   const title = el(doc, href ? 'a' : 'p', 'bo-oggi-title', String(action?.title ?? ''));
-  if (href) title.setAttribute('href', href);
+  if (href) {
+    title.setAttribute('href', href);
+    if (typeof events?.navigate === 'function') {
+      title.addEventListener('click', (event) => {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        events.navigate(href);
+      });
+    }
+  }
   body.appendChild(title);
   body.appendChild(el(doc, 'p', 'bo-oggi-why', String(action?.why ?? '')));
   // The prototype's violet third line: the AI's prepared next step, only
@@ -930,7 +939,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
  *     missing?: Array<{ channel: unknown, label: unknown }>,
  *     availability?: { work?: boolean, appointments?: boolean, channels?: boolean },
  *     error?: string,
- *     events?: { onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void },
+ *     events?: { onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void },
  *     disabled?: boolean,
  *   },
  * }} options
@@ -999,7 +1008,7 @@ export function renderOggi({
   } else {
     const list = el(doc, 'div', 'bo-oggi-actions');
     for (const action of actions) {
-      list.appendChild(renderAdvisorRow(doc, action, triageState(triage, action?.id), events, disabled));
+      list.appendChild(renderAdvisorRow(doc, action, triageState(triage, action?.id), { ...events, navigate }, disabled));
     }
     advisor.appendChild(list);
     if (home.capped === true) {

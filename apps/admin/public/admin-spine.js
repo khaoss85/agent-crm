@@ -272,16 +272,16 @@ export function createSpineView(deps) {
 
     // ── what this build cannot promise ──────────────────────────────────
     const limits = el('div', 'spine-limits');
-    limits.appendChild(el('h4', undefined, 'What this does not do'));
+    limits.appendChild(el('h4', undefined, 'Cosa non fa'));
     for (const limitation of context.limitations ?? []) {
       limits.appendChild(el('p', 'muted spine-limit', limitation));
     }
     for (const absent of context.notModeled ?? []) {
-      limits.appendChild(el('p', 'muted spine-not-modeled', `Not modeled: ${absent}`));
+      limits.appendChild(el('p', 'muted spine-not-modeled', `Non modellato: ${absent}`));
     }
     limits.appendChild(el('p', 'muted spine-no-readiness',
-      'This is not a production-readiness statement. PostgreSQL and shared-database tenancy, durable jobs, '
-      + 'secrets, backups and deployment are all absent.'));
+      'Non è una dichiarazione di prontezza per la produzione: mancano PostgreSQL con più spazi sullo stesso '
+      + 'database, job durevoli, segreti, backup e rilascio.'));
     panel.appendChild(limits);
 
     mount.appendChild(panel);

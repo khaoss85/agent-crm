@@ -232,9 +232,9 @@ test('the section states what it cannot promise, including that it is not produc
   const mount = await render(stubClient());
   const text = mount.textContent;
   assert.match(text, /NOT_SHARED_DATABASE_TENANCY/);
-  assert.match(text, /Not modeled: durable jobs/);
-  assert.match(text, /not a production-readiness statement/);
-  assert.match(text, /PostgreSQL and shared-database tenancy, durable jobs, secrets, backups and deployment are all absent/);
+  assert.match(text, /Non modellato: durable jobs/);
+  assert.match(text, /prontezza per la produzione/);
+  assert.match(text, /mancano PostgreSQL con più spazi/);
 });
 
 test('an Organization never renders as a Company', async () => {
