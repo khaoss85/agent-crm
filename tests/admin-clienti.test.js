@@ -229,6 +229,72 @@ test('a space the server does not compose reads as unavailable, never blank', as
   assert.ok(mount.textContent.includes('Clienti non composto in questo spazio'));
 });
 
+test('BO-F6-08 fetta 1: the title is the only h1 and carries the total', async () => {
+  const { mount } = await render(stubClient());
+  const titles = mount.findAll('h1');
+  assert.equal(titles.length, 1, 'exactly one h1 on the screen');
+  assert.equal(titles[0].textContent, 'Clienti 2');
+  assert.deepEqual(mount.findAll('h3'), [], 'no legacy h3 title remains');
+});
+
+test('BO-F6-08 fetta 1: the search bar shows the prototype placeholder and an Azzera while typing', async () => {
+  const client = stubClient();
+  const { mount } = await render(client);
+  const input = mount.findAll('input')[0];
+  assert.equal(input.getAttribute('placeholder'), 'Cerca per nome o chiedi: «lead da Instagram», «chi è di Milano»');
+  const clear = byAttr(mount, 'button', 'data-action', 'clear-search');
+  assert.ok(clear, 'the search bar carries its own Azzera');
+  assert.ok(clear.classList.contains('hidden'), 'Azzera stays hidden without a search');
+  assert.equal(client.calls.length, 1);
+  input.value = 'milano';
+  input.dispatch('input');
+  assert.ok(!clear.classList.contains('hidden'), 'typing reveals Azzera');
+  clear.dispatch('click');
+  await flush();
+  assert.equal(input.value, '', 'Azzera empties the field');
+  assert.equal(client.calls.length, 2, 'Azzera reloads the list');
+  assert.ok(!client.calls[1].includes('q='), `the search is gone: ${client.calls[1]}`);
+});
+
+test('BO-F6-08 fetta 1: the toolbar names Filtri, Ordina and Colonne with its visible count', async () => {
+  const { mount } = await render(stubClient());
+  const labels = buttons(mount).map((node) => node.textContent);
+  assert.ok(labels.includes('Filtri'), 'Filtri button renders');
+  assert.ok(labels.includes('Ordina'), 'Ordina button renders');
+  assert.ok(labels.includes('Colonne 4/8'), `Colonne carries visible/total, got: ${labels.join(' | ')}`);
+  assert.ok(mount.textContent.includes('Ordina per'), 'the sort menu names its title');
+});
+
+test('BO-F6-08 fetta 1: the table header names Cliente plus only the visible columns', async () => {
+  const { mount } = await render(stubClient());
+  const heads = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-clienti-th'));
+  assert.deepEqual(heads.map((node) => node.textContent),
+    ['Cliente', 'Canali', 'Stato', 'Ultimo contatto', 'Prossimo passo']);
+  byAttr(mount, 'button', 'data-column', 'email').dispatch('click');
+  const grown = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-clienti-th'));
+  assert.ok(grown.map((node) => node.textContent).includes('Email'), 'enabling a column adds it to the header');
+});
+
+test('BO-F6-08 fetta 1: an empty page reads the prototype text and 0 di 0 with page controls', async () => {
+  const empty = { calls: [], async request() { return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS }; } };
+  const { mount } = await render(empty);
+  assert.ok(mount.textContent.includes('Nessun cliente corrisponde. Prova con un nome, una città o un canale.'));
+  assert.ok(mount.textContent.includes('0 di 0'), 'the pager keeps its 0 di 0 interval');
+  assert.ok(mount.textContent.includes('Righe per pagina'), 'the page-size group stays labelled');
+  assert.ok(byAttr(mount, 'button', 'aria-label', 'Pagina precedente'), 'previous keeps its accessible label');
+  assert.ok(byAttr(mount, 'button', 'aria-label', 'Pagina successiva'), 'next keeps its accessible label');
+  for (const size of ['10', '25', '50']) {
+    assert.ok(byAttr(mount, 'button', 'data-size', size), `size ${size} stays clickable on an empty page`);
+  }
+});
+
+test('BO-F6-08 fetta 1: a filled page shows its interval in the pager', async () => {
+  const { mount } = await render(stubClient());
+  const ranges = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-clienti-range'));
+  assert.equal(ranges.length, 1, 'one interval in the pager');
+  assert.equal(ranges[0].textContent, '1–2 di 2');
+});
+
 test('the shell storage initializes before the views that read it', () => {
   const source = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
   const initialized = source.indexOf('const shellStorage = guardedStorage();');

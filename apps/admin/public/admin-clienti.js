@@ -183,10 +183,11 @@ export function createCustomerListView(deps) {
     void load();
   }
 
-  function menuBox(label, build) {
+  function menuBox(label, build, title) {
     const wrap = el('div', 'bo-clienti-menuwrap');
     const button = el('button', 'bo-clienti-menubutton', label);
     button.setAttribute('aria-haspopup', 'true');
+    button.setAttribute('title', title ?? label);
     const menu = el('div', 'bo-clienti-menu hidden');
     button.addEventListener('click', () => {
       menu.classList.toggle('hidden', !menu.classList.contains('hidden'));
@@ -200,7 +201,8 @@ export function createCustomerListView(deps) {
   function drawShell() {
     clearMount();
     const panel = el('section', 'bo-clienti');
-    panel.appendChild(el('h3', undefined, 'Clienti'));
+    const total = data && Number.isFinite(Number(data.total)) ? Number(data.total) : null;
+    panel.appendChild(el('h1', undefined, total === null ? 'Clienti' : `Clienti ${total}`));
     panel.appendChild(el('p', 'bo-muted bo-clienti-status', ''));
 
     const views = data?.views ?? FALLBACK_VIEWS;
@@ -237,11 +239,26 @@ export function createCustomerListView(deps) {
     input.setAttribute('class', 'ui-field'); // BO-F6-02: system field class.
     input.setAttribute('name', 'q');
     input.setAttribute('aria-label', 'Cerca clienti');
-    input.setAttribute('placeholder', 'Cerca nome, email, azienda, telefono…');
+    input.setAttribute('placeholder', 'Cerca per nome o chiedi: «lead da Instagram», «chi è di Milano»');
     input.value = state.q;
+    const clearSearch = el('button', 'bo-clienti-searchclear', 'Azzera');
+    clearSearch.setAttribute('type', 'button');
+    clearSearch.setAttribute('data-action', 'clear-search');
+    const syncClearSearch = () => {
+      clearSearch.classList.toggle('hidden', String(input.value ?? '') === '');
+    };
+    input.addEventListener('input', syncClearSearch);
+    syncClearSearch();
+    clearSearch.addEventListener('click', () => {
+      input.value = '';
+      state.q = '';
+      syncClearSearch();
+      reload();
+    });
     const go = el('button', undefined, 'Cerca');
     go.setAttribute('type', 'submit');
     form.appendChild(input);
+    form.appendChild(clearSearch);
     form.appendChild(go);
     form.addEventListener('submit', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -287,7 +304,8 @@ export function createCustomerListView(deps) {
     });
     toolbar.appendChild(aiButton);
 
-    toolbar.appendChild(menuBox('Ordina per', (menu) => {
+    toolbar.appendChild(menuBox('Ordina', (menu) => {
+      menu.appendChild(el('p', 'bo-clienti-group', 'Ordina per'));
       for (const sort of sorts) {
         const item = el('button', 'bo-clienti-item' + (state.sort === sort.id ? ' active' : ''), sort.label);
         item.setAttribute('data-sort', sort.id);
@@ -299,7 +317,9 @@ export function createCustomerListView(deps) {
       }
     }));
 
-    toolbar.appendChild(menuBox('Colonne', (menu) => {
+    const configurable = columnsMeta.filter((column) => !column.always);
+    const visibleCount = configurable.filter((column) => state.columns[column.id] === true).length;
+    toolbar.appendChild(menuBox(`Colonne ${visibleCount}/${configurable.length}`, (menu) => {
       for (const column of columnsMeta) {
         if (column.always) continue;
         const on = state.columns[column.id] === true;
@@ -321,7 +341,7 @@ export function createCustomerListView(deps) {
         drawShell();
       });
       menu.appendChild(reset);
-    }));
+    }, 'Colonne'));
     panel.appendChild(toolbar);
 
     // ── active filter chips with × ────────────────────────────────────────
@@ -411,21 +431,23 @@ export function createCustomerListView(deps) {
     const page = Number(data.page ?? 1);
     const pages = Math.max(1, Number(data.pages ?? 1));
     const pageSize = Number(data.pageSize ?? state.pageSize);
+    const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+    const to = Math.min(page * pageSize, total);
+    const prefix = data.totalIsExact === false ? 'almeno ' : '';
+    const range = total === 0 ? '0 di 0' : `${from}–${to} di ${prefix}${total}`;
     const statusLine = panel.querySelector('.bo-clienti-status');
     if (statusLine) {
-      const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
-      const to = Math.min(page * pageSize, total);
-      const prefix = data.totalIsExact === false ? 'almeno ' : '';
       statusLine.textContent = total === 0
-        ? 'Nessun cliente con questi filtri'
-        : `${from}–${to} di ${prefix}${total} clienti`;
+        ? 'Nessun cliente corrisponde. Prova con un nome, una città o un canale.'
+        : `${range} clienti`;
       if (data.totalIsExact === false) statusLine.setAttribute('title', 'conteggio parziale: la scansione è limitata');
     }
-    if (items.length === 0) {
-      panel.appendChild(el('p', 'bo-muted', total === 0 ? 'Prova ad allargare i filtri.' : ''));
-      return;
-    }
     const visible = columnsMeta.filter((column) => !column.always && state.columns[column.id] === true);
+    const head = el('div', 'bo-clienti-thead');
+    head.setAttribute('role', 'row');
+    head.appendChild(el('span', 'bo-clienti-th', 'Cliente'));
+    for (const column of visible) head.appendChild(el('span', 'bo-clienti-th', column.label));
+    panel.appendChild(head);
     const list = el('div', 'bo-clienti-list');
     for (const row of items) {
       const card = el('article', 'bo-clienti-row');
@@ -450,41 +472,47 @@ export function createCustomerListView(deps) {
     panel.appendChild(list);
 
     // ── pagination: 10/25/50 with ellipses ──────────────────────────────
-    if (pages > 1 || items.length > 0) {
-      const pager = el('nav', 'bo-clienti-pager');
-      pager.setAttribute('aria-label', 'Paginazione');
-      const prev = el('button', undefined, '‹');
-      prev.setAttribute('data-page', 'prev');
-      if (page <= 1) prev.setAttribute('disabled', 'true');
-      else prev.addEventListener('click', () => { state.page = page - 1; void load(); });
-      pager.appendChild(prev);
-      for (const num of pageNumbers(pages, page)) {
-        if (num === '…') {
-          pager.appendChild(el('span', 'bo-clienti-gap', '…'));
-          continue;
-        }
-        const button = el('button', 'bo-clienti-page' + (num === page ? ' active' : ''), String(num));
-        button.setAttribute('data-page', String(num));
-        if (num !== page) button.addEventListener('click', () => { state.page = num; void load(); });
-        else button.setAttribute('aria-current', 'page');
-        pager.appendChild(button);
+    const pager = el('nav', 'bo-clienti-pager');
+    pager.setAttribute('aria-label', 'Paginazione');
+    pager.appendChild(el('span', 'bo-clienti-range', range));
+    const prev = el('button', undefined, '‹');
+    prev.setAttribute('data-page', 'prev');
+    prev.setAttribute('aria-label', 'Pagina precedente');
+    if (page <= 1) prev.setAttribute('disabled', 'true');
+    else prev.addEventListener('click', () => { state.page = page - 1; void load(); });
+    pager.appendChild(prev);
+    for (const num of pageNumbers(pages, page)) {
+      if (num === '…') {
+        pager.appendChild(el('span', 'bo-clienti-gap', '…'));
+        continue;
       }
-      const next = el('button', undefined, '›');
-      next.setAttribute('data-page', 'next');
-      if (page >= pages) next.setAttribute('disabled', 'true');
-      else next.addEventListener('click', () => { state.page = page + 1; void load(); });
-      pager.appendChild(next);
-      for (const size of sizes) {
-        const button = el('button', 'bo-clienti-size' + (pageSize === size ? ' active' : ''), String(size));
-        button.setAttribute('data-size', String(size));
-        button.addEventListener('click', () => {
-          state.pageSize = size;
-          reload();
-        });
-        pager.appendChild(button);
+      const button = el('button', 'bo-clienti-page' + (num === page ? ' active' : ''), String(num));
+      button.setAttribute('data-page', String(num));
+      if (num !== page) button.addEventListener('click', () => { state.page = num; void load(); });
+      else {
+        button.setAttribute('aria-current', 'page');
+        button.setAttribute('aria-label', `Pagina ${num}`);
       }
-      panel.appendChild(pager);
+      pager.appendChild(button);
     }
+    const next = el('button', undefined, '›');
+    next.setAttribute('data-page', 'next');
+    next.setAttribute('aria-label', 'Pagina successiva');
+    if (page >= pages) next.setAttribute('disabled', 'true');
+    else next.addEventListener('click', () => { state.page = page + 1; void load(); });
+    pager.appendChild(next);
+    pager.appendChild(el('span', 'bo-clienti-sizeslabel', 'Righe per pagina'));
+    for (const size of sizes) {
+      const button = el('button', 'bo-clienti-size' + (pageSize === size ? ' active' : ''), String(size));
+      button.setAttribute('data-size', String(size));
+      button.setAttribute('aria-label', `${size} righe per pagina`);
+      button.addEventListener('click', () => {
+        state.pageSize = size;
+        reload();
+      });
+      pager.appendChild(button);
+    }
+    panel.appendChild(pager);
   }
 
   return { render: load, reload, getState: () => ({ ...state }) };
