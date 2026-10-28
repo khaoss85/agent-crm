@@ -40,6 +40,7 @@
 
 import { humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { settingsTabs } from './admin-shell.js';
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -145,6 +146,8 @@ export function memberInitials(subject) {
  * status. Sorted by subject so the list is stable regardless of store order.
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown}>} members
  */
+const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', invited: 'invitato', pending: 'in attesa' });
+
 export function buildTeamRows(members = []) {
   const list = Array.isArray(members) ? members : [];
   return list
@@ -153,7 +156,7 @@ export function buildTeamRows(members = []) {
       subject: member.subject,
       initials: memberInitials(member.subject),
       role: spaceRoleLabel(member.role),
-      status: typeof member.status === 'string' && member.status !== '' ? member.status : 'sconosciuto',
+      status: MEMBER_STATUS[member.status] ?? (typeof member.status === 'string' && member.status !== '' ? member.status : 'sconosciuto'),
     }))
     .sort((left, right) => (left.subject < right.subject ? -1 : left.subject > right.subject ? 1 : 0));
 }
@@ -217,6 +220,8 @@ export function createSpaziAccessiView(deps) {
   };
 
   const state = {
+    /** The invite form opens in place from the team card head. */
+    inviteOpen: false,
     /** @type {string|null} my membership role, or null when unknown */
     myRole: null,
     /** @type {Array<string>|null} roles the server advertises, or null */
@@ -335,10 +340,10 @@ export function createSpaziAccessiView(deps) {
 
   function renderHeader(box) {
     box.appendChild(el(doc, 'p', { text: 'Spazi e accessi', cls: 'bo-kicker' }));
-    box.appendChild(el(doc, 'h2', { text: 'Spazi di lavoro' }));
+    box.appendChild(el(doc, 'h2', { text: 'Spazi di lavoro', cls: 'bo-spazi-title' }));
     box.appendChild(el(doc, 'p', {
       text: 'Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali, clienti e team, e nessuno vede i dati degli altri.',
-      cls: 'bo-muted',
+      cls: 'bo-muted bo-spazi-lede',
     }));
   }
 
@@ -382,7 +387,14 @@ export function createSpaziAccessiView(deps) {
 
   function renderTeam(box) {
     const section = el(doc, 'section', { cls: 'bo-spazi-section bo-spazi-panel bo-spazi-team-panel' });
-    section.appendChild(el(doc, 'h3', { text: 'Team dell\u2019organizzazione' }));
+    // Prototype 08: the team card head carries the green «Invita persona»,
+    // which opens the invite form in place.
+    const teamHead = el(doc, 'div', { cls: 'bo-spazi-teamhead' });
+    teamHead.appendChild(el(doc, 'h3', { text: 'Team dell\u2019organizzazione' }));
+    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'aria-expanded': state.inviteOpen ? 'true' : 'false' } });
+    inviteToggle.addEventListener('click', () => { state.inviteOpen = !state.inviteOpen; render(); });
+    teamHead.appendChild(inviteToggle);
+    section.appendChild(teamHead);
     section.appendChild(el(doc, 'p', {
       text: 'Lo stesso team per tutti gli spazi di questa postazione: rimuovere sospende la persona nell\u2019intera organizzazione, non nel singolo spazio.',
       cls: 'bo-muted',
@@ -451,11 +463,11 @@ export function createSpaziAccessiView(deps) {
     }
     section.appendChild(list);
 
-    const invite = el(doc, 'div', { cls: 'bo-spazi-invite' });
+    const invite = el(doc, 'div', { cls: `bo-spazi-invite${state.inviteOpen || state.refusal !== null ? ' open' : ''}` });
     invite.appendChild(el(doc, 'h4', { text: 'Invita persona' }));
     const subject = el(doc, 'input', {
       cls: 'bo-spazi-input',
-      attrs: { type: 'text', placeholder: 'Identificativo del provider di identit\u00E0', 'aria-label': 'Identificativo della persona da invitare' },
+      attrs: { type: 'text', placeholder: 'Email o account Google della persona', 'aria-label': 'Identificativo della persona da invitare' },
     });
     invite.appendChild(subject);
     const role = el(doc, 'select', { cls: 'bo-spazi-input', attrs: { 'aria-label': 'Ruolo del nuovo membro' } });
@@ -498,7 +510,7 @@ export function createSpaziAccessiView(deps) {
       invite.appendChild(el(doc, 'p', { text: state.refusal, cls: 'bo-spazi-refusal' }));
     }
     invite.appendChild(el(doc, 'p', {
-      text: 'Nessuna email parte da qui: l\u2019invito registra una decisione su un identificativo che il provider di identit\u00E0 conosce gi\u00E0.',
+      text: 'Nessuna email parte da qui: la persona entra con il suo account Google al primo accesso.',
       cls: 'bo-muted',
     }));
     section.appendChild(invite);
@@ -593,6 +605,7 @@ export function createSpaziAccessiView(deps) {
   function render() {
     clear();
     const space = activeSpace();
+    mount.appendChild(settingsTabs(doc, { activeId: 'spazi-accessi', navigate: typeof navigate === 'function' ? navigate : () => {} }));
     renderHeader(mount);
     renderSpaces(mount);
     if (space === null) {
