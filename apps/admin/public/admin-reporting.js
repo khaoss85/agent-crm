@@ -210,7 +210,7 @@ export function manualSteps() {
       'description in italiano: cosa misura il modulo',
     ],
     commands: bundleCommands({ createdBy: 'manual' }),
-    proof: 'bundle verify avvia l\u2019app vera con il bundle composto e serve un record: se non si avvia e non serve, il bundle non esiste.',
+    proof: 'La prova è pratica: il modulo si apre davvero e mostra un record. Se non si apre o non mostra niente, non esiste.',
   };
 }
 
@@ -696,13 +696,13 @@ export function createReportingView(deps) {
     card.appendChild(el(doc, 'h2', { text: 'I bundle restano fuori dal processo condiviso' }));
     card.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: 'Un bundle è un set di moduli versionato e rimovibile: vive in bundles/<nome>/<versione>/, non tocca clienti, pipeline e calendario, e si installa solo dove l\u2019host lo compone. Il codice generato non gira mai nel processo condiviso.',
+      text: 'Un modulo è un pacchetto di funzioni a parte: si aggiunge e si toglie senza toccare clienti, pipeline e calendario. Come è fatto davvero è scritto in docs/BUNDLES.md.',
     }));
     const list = el(doc, 'ul');
     for (const line of [
-      'Versionato: una versione non si rigenera mai, una modifica è una nuova versione.',
-      'Rimovibile: uninstall toglie solo le sue tabelle, i dati kernel restano.',
-      'Vero: bundle verify avvia l\u2019app e serve un record, o il bundle non esiste.',
+      'Versionato: una versione non cambia mai, per cambiare si fa una versione nuova.',
+      'Rimovibile: toglierlo toglie solo le sue tabelle, il resto resta.',
+      'Vero: il modulo funziona davvero e mostra un record, altrimenti non esiste.',
     ]) {
       list.appendChild(el(doc, 'li', { text: line }));
     }
@@ -727,7 +727,7 @@ export function createReportingView(deps) {
     ai.appendChild(el(doc, 'h3', { text: 'Crea con l\u2019AI' }));
     ai.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: 'Descrivi il modulo: l\u2019assistente apre il percorso guidato e l\u2019agente di coding redige il manifest ed esegue bundle create --apply e bundle verify. Niente codice simulato.',
+      text: 'Descrivi il modulo: l\u2019assistente apre il percorso guidato e prepara tutto, senza simulare niente.',
     }));
     const label = el(doc, 'label', { text: 'Descrivi il modulo' });
     const area = doc.createElement('textarea');
