@@ -137,7 +137,7 @@ test('free text matches name, email, company and phone, case-insensitively', () 
 test('the five quick views are saved filter descriptors, not row snapshots', () => {
   assert.equal(CUSTOMER_VIEWS.length, 5);
   assert.deepEqual(CUSTOMER_VIEWS.map((view) => view.id),
-    ['tutti', 'nuovi-lead', 'clienti-attivi', 'ricontattare-oggi', 'rinnovi-30-giorni']);
+    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni']);
   for (const view of CUSTOMER_VIEWS) {
     assert.equal(typeof view.label, 'string');
     assert.ok(view.label.length > 0);

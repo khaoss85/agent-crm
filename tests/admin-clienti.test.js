@@ -21,9 +21,9 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 const MENUS = {
   views: [
     { id: 'tutti', label: 'Tutti' },
+    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
     { id: 'nuovi-lead', label: 'Nuovi lead' },
     { id: 'clienti-attivi', label: 'Clienti attivi' },
-    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
     { id: 'rinnovi-30-giorni', label: 'Rinnovi entro 30 giorni' },
   ],
   sorts: [
@@ -401,6 +401,50 @@ test('Aggiungi cliente carries a single ui-btn-* variant', async () => {
   assert.deepEqual(variants, ['ui-btn-primary'], 'a single primary variant, never primary plus secondary');
 });
 
+test('title row and open menu lines reuse styled classes only', async () => {
+  // P2 rev-agent-crm-409-729d783ba359: the title-plus-button row and the
+  // Aggiungi/Filtri/Colonne inner lines shipped classes no stylesheet
+  // defines, so the row could not be a row. This screen owns no CSS: every
+  // bo-* class its nodes carry must already be defined in styles.css.
+  // bo-tile-*/bo-pill-* tint variants are exempt: they always pair with the
+  // styled bo-clienti-tile/bo-clienti-pill bases and degrade to the neutral
+  // base for channel systems or stati the stylesheet does not tint.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const defined = new Set([...css.matchAll(/\.([A-Za-z_][\w-]*)/g)].map((match) => match[1]));
+  const boClasses = (root) => {
+    const out = [];
+    const walk = (node) => {
+      for (const cls of String(node.getAttribute?.('class') ?? '').split(/\s+/).filter(Boolean)) {
+        if (cls.startsWith('bo-') && !/^bo-(tile|pill)-/.test(cls)) out.push(cls);
+      }
+      for (const child of node.childNodes ?? []) walk(child);
+    };
+    walk(root);
+    return out;
+  };
+  const styled = (node, what) => {
+    const classes = boClasses(node);
+    assert.ok(classes.length > 0, `${what} carries bo-* classes`);
+    for (const cls of classes) assert.ok(defined.has(cls), `${what} class .${cls} is defined in styles.css`);
+  };
+  const { mount } = await render(stubClient());
+  const title = mount.findAll('h1')[0];
+  assert.ok(title, 'the screen renders its h1 title');
+  styled(title.parentNode, 'title row');
+  const opener = (label) => mount.findAll('button').find((node) => node.textContent === label)
+    ?? mount.findAll('button').find((node) => String(node.textContent).startsWith(label));
+  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-menu'));
+  opener('Aggiungi cliente').dispatch('click');
+  assert.ok(!menus()[0].classList.contains('hidden'), 'the add menu opens');
+  styled(menus()[0], 'Aggiungi menu');
+  opener('Filtri').dispatch('click');
+  assert.ok(!menus()[1].classList.contains('hidden'), 'the filters menu opens');
+  styled(menus()[1], 'Filtri menu');
+  opener('Colonne').dispatch('click');
+  assert.ok(!menus()[3].classList.contains('hidden'), 'the columns menu opens');
+  styled(menus()[3], 'Colonne menu');
+});
+
 test('the columns menu names its title and the always-visible Cliente row', async () => {
   const { mount } = await render(stubClient());
   mount.findAll('button').find((node) => node.textContent === 'Colonne 4/8').dispatch('click');
@@ -429,7 +473,7 @@ test('view pills show server counts when the server names them', async () => {
   const { mount } = await render(counted);
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
   assert.deepEqual(tabs.map((node) => node.textContent),
-    ['Tutti 3', 'Nuovi lead 6', 'Clienti attivi 9', 'Da ricontattare oggi 12', 'Rinnovi entro 30 giorni 15']);
+    ['Tutti 3', 'Da ricontattare oggi 6', 'Nuovi lead 9', 'Clienti attivi 12', 'Rinnovi entro 30 giorni 15']);
 });
 
 test('the fallback views keep the prototype order before the server answers', async () => {

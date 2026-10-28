@@ -283,7 +283,7 @@ export function createCustomerListView(deps) {
     const total = data && Number.isFinite(Number(data.total)) ? Number(data.total) : null;
     const title = el('h1', 'bo-clienti-title', total === null ? 'Clienti' : 'Clienti ');
     if (total !== null) title.appendChild(el('span', 'bo-clienti-count', String(total)));
-    const headRow = el('div', 'bo-clienti-headrow');
+    const headRow = el('div', 'bo-clienti-bar');
     headRow.appendChild(title);
     // "Aggiungi cliente": AI paste writes nothing until applied (preview is
     // the plan-then-confirm surface below), manual entry is the host contact
@@ -292,7 +292,7 @@ export function createCustomerListView(deps) {
       const addItem = (action, label, hint, onPick) => {
         const item = el('button', 'bo-clienti-item', label);
         item.setAttribute('data-action', action);
-        item.appendChild(el('span', 'bo-clienti-menuhint', hint));
+        item.appendChild(el('span', 'bo-muted', hint));
         item.addEventListener('click', () => {
           closeMenu();
           onPick();
@@ -407,7 +407,7 @@ export function createCustomerListView(deps) {
         });
         menu.appendChild(item);
       }
-      menu.appendChild(el('p', 'bo-clienti-menuexample', 'Es. «clienti di Milano con offerta sopra 10.000 €»'));
+      menu.appendChild(el('p', 'bo-muted', 'Es. «clienti di Milano con offerta sopra 10.000 €»'));
     }));
 
     const aiButton = el('button', 'bo-clienti-ai', '✦ Crea un filtro con l\u2019AI');
@@ -441,7 +441,7 @@ export function createCustomerListView(deps) {
       menu.appendChild(el('p', 'bo-clienti-group', 'Colonne visibili'));
       for (const column of columnsMeta) {
         if (!column.always) continue;
-        const fixed = el('span', 'bo-clienti-fixed', `${column.label} · sempre visibile`);
+        const fixed = el('span', 'bo-muted', `${column.label} · sempre visibile`);
         fixed.setAttribute('aria-disabled', 'true');
         menu.appendChild(fixed);
       }
