@@ -29,6 +29,7 @@
 
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
+import { humanReadError } from './admin-core.js';
 
 /** The three tabs, in prototype order (spec C7): Skill AI, Connettori, Pacchetti. */
 export const PERSONALIZZAZIONE_TABS = Object.freeze(['skill', 'connettori', 'pacchetti']);
@@ -303,6 +304,8 @@ export function createPersonalizzazioneView(deps) {
     /** @type {Array<any> | null} */ units: null,
     /** @type {Array<any> | null} */ rows: null,
     notComposed: false,
+    /** @type {string | null} human text for a failed catalog read, with a retry */
+    unitsError: null,
     /** @type {Array<any> | null} */ connectors: null,
     connectorsMissing: false,
     /** @type {string | null} */ previewFor: null,
@@ -314,10 +317,24 @@ export function createPersonalizzazioneView(deps) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   }
 
-  /** @param {unknown} error */
+  /**
+   * Normalize a client rejection without losing what the page branches on.
+   * A rejection with a code passes through untouched; anything else becomes
+   * {code: 'UNKNOWN', ...} keeping the record's own status and message, so a
+   * status-only 404 still reads as not-composed and the log keeps the cause.
+   * @param {unknown} error
+   */
   function errorOf(error) {
     if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') return error;
-    return { code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) };
+    if (error instanceof Error) {
+      /** @type {{code: string, message: string, status?: number}} */
+      const normalized = { code: 'UNKNOWN', message: error.message };
+      const status = /** @type {any} */ (error).status;
+      if (typeof status === 'number') normalized.status = status;
+      return normalized;
+    }
+    if (error && typeof error === 'object') return { ...error, code: 'UNKNOWN' };
+    return { code: 'UNKNOWN', message: String(error) };
   }
 
   async function load() {
@@ -325,6 +342,7 @@ export function createPersonalizzazioneView(deps) {
     state.units = null;
     state.rows = null;
     state.notComposed = false;
+    state.unitsError = null;
     state.previewFor = null;
     state.preview = null;
     if (space === '') return;
@@ -334,7 +352,16 @@ export function createPersonalizzazioneView(deps) {
     } catch (error) {
       const failure = errorOf(error);
       if (failure.code === 'NOT_FOUND' || failure.status === 404) state.notComposed = true;
-      else state.units = [];
+      else {
+        // A failed catalog read is not an empty catalog: keep the human
+        // text (the technical detail stays in the console) with a retry.
+        // The original error goes to humanReadError, never the normalized
+        // copy, so code, status and message all survive.
+        state.units = [];
+        state.unitsError = humanReadError(error, {
+          failed: 'La personalizzazione non si è potuta leggere. Riprova più tardi.',
+        });
+      }
     }
     if (state.notComposed) return;
     try {
@@ -488,6 +515,26 @@ export function createPersonalizzazioneView(deps) {
         text: 'Personalizzazione non composta in questo progetto: il catalogo non è pubblicato.',
         cls: 'empty',
       }));
+      mount.appendChild(box);
+      return;
+    }
+    if (state.unitsError !== null) {
+      box.appendChild(el(doc, 'p', { text: state.unitsError, cls: 'empty' }));
+      const retry = uiButton(doc, { variant: 'secondary', label: 'Riprova', attrs: { type: 'button' } });
+      retry.addEventListener('click', () => {
+        state.unitsError = null;
+        state.units = null;
+        state.rows = null;
+        renderList();
+        // Same reload as the first paint: catalog, rows, and connectors on
+        // the connectors tab.
+        void (async () => {
+          await load();
+          if (state.tab === 'connettori') await loadConnectors();
+          render();
+        })();
+      });
+      box.appendChild(retry);
       mount.appendChild(box);
       return;
     }

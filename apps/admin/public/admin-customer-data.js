@@ -376,7 +376,14 @@ export function createCustomerDataView(deps) {
       const response = await client.request(`/api/modules/${module}/records?limit=100`);
       return { items: response.items ?? [], unreadable: null };
     } catch (error) {
-      return { items: [], unreadable: humanReadError(error, { failed: 'la lettura non è riuscita' }) };
+      // A full human sentence in the view's language (English), never a
+      // parenthesized fragment: listHeading renders it as its own line.
+      return {
+        items: [],
+        unreadable: humanReadError(error, {
+          failed: 'This list could not be read, so it is not shown. That is not a claim that there are none. Try again later.',
+        }),
+      };
     }
   }
 
@@ -384,10 +391,13 @@ export function createCustomerDataView(deps) {
   function listHeading(box, read, label, countText) {
     if (read.unreadable) {
       box.appendChild(el('h4', undefined, `${label} (could not be read)`));
-      const line = el('p', 'field-error customer-data-unreadable',
-        `This list could not be read, so it is not shown. That is not a claim that there are none. (${read.unreadable})`);
+      const line = el('p', 'field-error customer-data-unreadable', read.unreadable);
       line.setAttribute('data-unreadable', label);
       box.appendChild(line);
+      const retry = el('button', undefined, 'Try again');
+      retry.setAttribute('data-action', 'retry-customer-data-list');
+      retry.addEventListener('click', () => { void render(); });
+      box.appendChild(retry);
       return;
     }
     box.appendChild(el('h4', undefined, `${label} (${countText})`));

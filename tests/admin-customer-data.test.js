@@ -169,7 +169,10 @@ test('applying after a preview reuses the rows the operator typed once', async (
 });
 
 test('a list that could not be read says so, and never renders as zero', async () => {
-  const mount = await render(stubClient({ unreadableModules: true }));
+  const client = stubClient({ unreadableModules: true });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerDataView({ doc, mount, client }).render();
   const text = mount.textContent;
 
   for (const label of ['Import runs', 'Duplicate candidates', 'Data quality']) {
@@ -179,9 +182,24 @@ test('a list that could not be read says so, and never renders as zero', async (
   assert.doesNotMatch(text, /Import runs \(0\)/);
   assert.doesNotMatch(text, /\(0 unresolved\)/);
   assert.doesNotMatch(text, /\(0 open\)/);
+  // A full human sentence in the view's language, never a parenthesized
+  // fragment: the technical detail stays in the console.
+  assert.doesNotMatch(text, /\(la lettura non è riuscita\)/);
+  assert.ok(text.includes('This list could not be read, so it is not shown.'));
+  assert.ok(text.includes('Try again later.'));
+
+  // Each unreadable list offers its own retry, and the retry re-reads.
+  const retries = mount.findAll('button')
+    .filter((node) => node.getAttribute('data-action') === 'retry-customer-data-list');
+  assert.equal(retries.length, 3, 'one retry per unreadable list');
+  const readsBefore = client.calls.filter((call) => String(call.path).includes('/records?limit=100')).length;
+  retries[0].dispatch('click');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const readsAfter = client.calls.filter((call) => String(call.path).includes('/records?limit=100')).length;
+  assert.ok(readsAfter > readsBefore, 'the retry re-reads the lists');
 
   // The limits still render: the surface stays honest in its failure state too.
-  for (const sentence of CUSTOMER_DATA_DISCLAIMERS) assert.ok(text.includes(sentence));
+  for (const sentence of CUSTOMER_DATA_DISCLAIMERS) assert.ok(mount.textContent.includes(sentence));
 });
 
 test('a duplicate candidate offers a human decision, never an automatic one', async () => {

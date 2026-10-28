@@ -121,21 +121,91 @@ test('spazi e accessi: team and switches failures never render codes', async () 
   assert.ok(text.includes('Spazi di lavoro'), 'the screen still names itself');
 });
 
+test('personalizzazione: a failed catalog read renders a human error with retry, not an empty list', async () => {
+  // A 500 is not an empty catalog: the screen says so in human words and
+  // offers a retry. checkHumanText alone would stay green on the silent
+  // 'Nessun risultato' empty state, so presence is asserted, not just
+  // absence of technical markers.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createPersonalizzazioneView({
+    doc,
+    mount,
+    client: failingClient(),
+    navigate: () => {},
+    spaceId: () => 'spazio-1',
+  });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  checkHumanText(text, 'personalizzazione');
+  assert.ok(
+    text.includes('La personalizzazione non si è potuta leggere. Riprova più tardi.'),
+    'the failed read says so in human words',
+  );
+  assert.ok(!text.includes('Nessun risultato'), 'a failed read is never an empty list');
+  assert.ok(!text.includes('Prova a cambiare ricerca'), 'a failed read never suggests searching');
+  const retry = mount.findAll('button').find((node) => node.textContent === 'Riprova');
+  assert.ok(retry, 'the failed read offers a retry');
+});
+
+test('personalizzazione: the retry reloads the catalog after a failure', async () => {
+  let catalogCalls = 0;
+  const flaky = {
+    async request(path) {
+      if (path === '/api/space-packages/catalog') {
+        catalogCalls += 1;
+        if (catalogCalls === 1) throw opFail(NASTY_MESSAGE, 'BOOM', 500);
+        return { units: [] };
+      }
+      if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
+      if (path.startsWith('/api/connectors')) return { connectors: [] };
+      throw opFail(NASTY_MESSAGE, 'BOOM', 500);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createPersonalizzazioneView({
+    doc,
+    mount,
+    client: flaky,
+    navigate: () => {},
+    spaceId: () => 'spazio-1',
+  });
+  await view.render();
+  await flush();
+  assert.ok(
+    mount.textContent.includes('La personalizzazione non si è potuta leggere. Riprova più tardi.'),
+    'the first read fails loudly',
+  );
+  const retry = mount.findAll('button').find((node) => node.textContent === 'Riprova');
+  assert.ok(retry, 'the failed read offers a retry');
+  retry.dispatch('click');
+  await flush();
+  assert.ok(
+    !mount.textContent.includes('La personalizzazione non si è potuta leggere.'),
+    'the retry clears the error once the catalog reads',
+  );
+});
+
 test('personalizzazione: the not-composed note never names the package', async () => {
-  for (const client of [failingClient(), missingClient()]) {
-    const doc = createFakeDocument();
-    const mount = createMount();
-    const view = createPersonalizzazioneView({
-      doc,
-      mount,
-      client,
-      navigate: () => {},
-      spaceId: () => 'spazio-1',
-    });
-    await view.render();
-    await flush();
-    checkHumanText(mount.textContent, 'personalizzazione');
-  }
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createPersonalizzazioneView({
+    doc,
+    mount,
+    client: missingClient(),
+    navigate: () => {},
+    spaceId: () => 'spazio-1',
+  });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  checkHumanText(text, 'personalizzazione');
+  assert.ok(
+    text.includes('non composta in questo progetto'),
+    'the 404 names the state, never the package',
+  );
 });
 
 test('clienti: a failed list read never renders the server message', async () => {
@@ -178,8 +248,56 @@ test('customer-data: schema, list and profile failures never render the message'
     });
     await view.render();
     await flush();
-    checkHumanText(mount.textContent, 'customer-data');
+    const text = mount.textContent;
+    checkHumanText(text, 'customer-data');
+    assert.ok(
+      text.includes('This list could not be read, so it is not shown.')
+        || text.includes('non composto')
+        || text.includes('non si è potuto leggere'),
+      'a failed customer-data read says so in human words, never silently',
+    );
+    assert.ok(
+      !text.includes('(la lettura non è riuscita)'),
+      'no parenthesized Italian fragment inside the English sentence',
+    );
   }
+  // The failing module rows carry their own retry, not just a note. The
+  // schema composes here, so the section reaches rowsOf with failing rows.
+  const rowsFail = {
+    async request(path) {
+      if (path === '/api/schema') return { domains: { 'customer-data': { metadata: {} } } };
+      throw opFail();
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerDataView({
+    doc,
+    mount,
+    client: rowsFail,
+    navigate: () => {},
+    notify: () => {},
+    spaceId: 'spazio-1',
+    storage: memStore(),
+  });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  // Targeted leak assertions instead of the blanket checkHumanText: the
+  // healthy import form labels its textarea 'Rows (JSON):', a static format
+  // name that trips the blanket parenthesized-code heuristic without
+  // leaking anything. What must never render is the server's error.
+  for (const marker of TECHNICAL_MARKERS) {
+    assert.ok(!text.includes(marker), `customer-data leaks technical detail ${JSON.stringify(marker)}`);
+  }
+  assert.ok(!text.includes(NASTY_MESSAGE), 'customer-data renders the raw server message');
+  assert.ok(!text.includes('(BOOM)'), 'customer-data renders the parenthesized error code');
+  assert.ok(
+    text.includes('This list could not be read, so it is not shown.'),
+    'an unreadable module list says so in a full sentence',
+  );
+  const retry = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'retry-customer-data-list');
+  assert.ok(retry, 'an unreadable customer-data list offers a retry');
 });
 
 test('calendario: a failed week read never renders the message', async () => {
