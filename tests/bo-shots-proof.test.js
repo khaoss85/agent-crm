@@ -24,11 +24,13 @@
  *   Only the global stylesheet moved since (#406), so these show the same
  *   screens and demo data in the previous dressing.
  * - login: rendered by the CI `bo-shots` workflow on the self-hosted Mac
- *   runner for this PR (see the PR body for the run id). The account
- *   artifact quota is full (`Failed to CreateArtifact: Artifact storage
- *   quota has been hit`), so the workflow commits the login pair straight
- *   to this branch instead of uploading an artifact. The render is
- *   probe-gated on painted demo data like every other screen.
+ *   runner for this branch (workflow_dispatch run 40775943607 on
+ *   `minimal/5acdfd87-login`). The account artifact quota is full
+ *   (`Failed to CreateArtifact: Artifact storage quota has been hit`), so
+ *   the workflow committed the login pair straight to the branch instead
+ *   of uploading an artifact (temporary commit-back step, reverted before
+ *   the PR). The render is probe-gated on painted demo data like every
+ *   other screen.
  */
 
 import test from 'node:test';
