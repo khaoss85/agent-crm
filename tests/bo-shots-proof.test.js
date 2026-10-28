@@ -23,36 +23,43 @@
  *   `admin-customer-data.js` (loaded by no harness page, only by app.js).
  *   Only the global stylesheet moved since (#406), so these show the same
  *   screens and demo data in the previous dressing.
- * - login: pending. #408 restyled the login files after every committed
- *   login render, and the account artifact quota is full (`Failed to
- *   CreateArtifact: Artifact storage quota has been hit`, recalculated
- *   every 6-12 h), so no fresh login render can be stored right now. The
- *   login pair lands in a follow-up once the quota frees: re-run
- *   `gh workflow run bo-shots.yml`, copy `login-*.png` here, and drop the
- *   PENDING_LOGIN exception below.
+ * - login: rendered by the CI `bo-shots` workflow on the self-hosted Mac
+ *   runner for this branch (workflow_dispatch run 40775943607 on
+ *   `minimal/5acdfd87-login`; `login.html`/`login.js` byte-identical to
+ *   this tree). The account artifact quota is full
+ *   (`Failed to CreateArtifact: Artifact storage quota has been hit`), so
+ *   the workflow committed the login pair straight to the branch instead
+ *   of uploading an artifact (temporary commit-back step, reverted before
+ *   the PR). That render checked the login expects in the painted DOM; the
+ *   pair below is tied to the current tree two ways: the stale pre-#408
+ *   blobs are refused outright and the login source fingerprints must
+ *   match, so a restyle without a fresh render fails. The next render also
+ *   runs the login probe gate (`assertProbe` 'login': magic form, email
+ *   field, Google button, story panel, installed #408 enhancement).
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DESKTOP, PHONE, SCREEN_NAMES, readPngSize } from '../scripts/bo-shots.js';
 
 const proofDir = join(fileURLToPath(new URL('.', import.meta.url)), 'fixtures', 'bo-shots-proof');
+const repoRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 
-// Screens whose proof PNGs are committed. `login` stays out until the
-// quota-blocked CI upload can store a render of the current tree (see header).
-const PENDING_LOGIN = ['login'];
-const PROVEN_SCREENS = SCREEN_NAMES.filter((name) => !PENDING_LOGIN.includes(name));
+// All fourteen screens carry committed proof PNGs, login included.
+const PROVEN_SCREENS = [...SCREEN_NAMES];
 
 test('bo:shots proof fixtures show every committed screen filled at both widths', () => {
   assert.deepEqual(
-    [...PROVEN_SCREENS, ...PENDING_LOGIN].sort(),
+    [...PROVEN_SCREENS].sort(),
     [...SCREEN_NAMES].sort(),
-    'the proof set plus the pending login pair covers the whole registry',
+    'the proof set covers the whole screen registry',
   );
-  assert.equal(PROVEN_SCREENS.length, 13, 'thirteen screens carry committed proof');
+  assert.equal(PROVEN_SCREENS.length, 14, 'fourteen screens carry committed proof');
   for (const name of PROVEN_SCREENS) {
     for (const [viewport, floor] of [[DESKTOP, 20000], [PHONE, 10000]]) {
       const file = `${name}-${viewport.width}x${viewport.height}.png`;
@@ -64,4 +71,42 @@ test('bo:shots proof fixtures show every committed screen filled at both widths'
   }
 });
 
-test.todo('bo:shots proof fixtures for login (quota-blocked CI upload, see file header)');
+// Regression for the review P2 on this PR: the proof above is size-only, so
+// the stale pre-#408 login pair (1440x1800 at 113941 bytes, 390x1600 at
+// 86426 bytes) passed it. The committed pair must differ from those blobs
+// AND come from the current login sources: the fingerprints below are the
+// sha256 of apps/admin/public/login.html and login.js at the CI render
+// (byte-identical to this tree), so a login restyle without a fresh render
+// fails here first.
+const STALE_LOGIN_BLOBS = Object.freeze({
+  'login-1440x1800.png': '853fda6b8fd1c9ea46e3dfca0297ecaa5fdb21127ff60a774e82c1106f6f0c48',
+  'login-390x1600.png': 'f9f61b8291c3e94667d52adf643acf66ec1b9df90ad87e193bcb81400abcde03',
+});
+
+const LOGIN_SOURCES = Object.freeze({
+  'apps/admin/public/login.html': 'e03cb839f27a4ed6234570ca40bc4a74bf6b1c8864d59a88c042bce3d9c62b64',
+  'apps/admin/public/login.js': '15e8530c640156e11f00afad2f489f824de5dcf88ee831ad7e8bca069633e55e',
+});
+
+function sha256Hex(file) {
+  return createHash('sha256').update(readFileSync(file)).digest('hex');
+}
+
+test('the login proof pair is a render of the current tree, never the stale pre-#408 pair', () => {
+  for (const [file, stale] of Object.entries(STALE_LOGIN_BLOBS)) {
+    assert.notEqual(
+      sha256Hex(join(proofDir, file)),
+      stale,
+      `${file} is the stale pre-#408 render: re-run \`npm run bo:shots -- --screen login\`, copy the pair here and record the new source fingerprints`,
+    );
+  }
+  const current = {};
+  for (const relative of Object.keys(LOGIN_SOURCES)) {
+    current[relative] = sha256Hex(join(repoRoot, relative));
+  }
+  assert.deepEqual(
+    current,
+    { ...LOGIN_SOURCES },
+    'a login source moved without a fresh render: re-run `npm run bo:shots -- --screen login`, copy the pair here and record the new fingerprints deliberately',
+  );
+});
