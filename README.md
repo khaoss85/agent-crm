@@ -127,7 +127,7 @@ same one CI runs on every push) into a directory it keeps, then inspects the res
 
 ```text
   modules       98        resources     77        policies       7
-  packages       9        actions       64        providers      1
+  packages       9        actions       65        providers      1
 
   production posture — not a readiness claim: the framework authenticates
                        nobody (a deployment adapter supplies verified

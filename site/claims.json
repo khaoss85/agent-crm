@@ -953,7 +953,7 @@
     },
     {
       "id": "C-22",
-      "text": "One command composes the whole thing and then inspects it: 98 modules, 9 packages, 77 resources, 64 actions, 7 policies and 1 providers, applied from manifests and driven end to end \u2014 then it prints the eleven things the inspector says it cannot see.",
+      "text": "One command composes the whole thing and then inspects it: 98 modules, 9 packages, 77 resources, 65 actions, 7 policies and 1 providers, applied from manifests and driven end to end \u2014 then it prints the eleven things the inspector says it cannot see.",
       "evidence": {
         "tests": [
           "tests/app-inspect.test.js",
