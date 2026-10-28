@@ -181,6 +181,26 @@ export function channelOf(row) {
 }
 
 /**
+ * BO-F6-11 fetta 6 (specs/calendario.md C10): one Team toggle row per NAMED
+ * member — never invented people. The framework stores no roster
+ * (space-permissions keeps no members; membership is control-plane data),
+ * so each row shows the opaque identity the operator named, tinted and
+ * initialled by that identity. No role line: no role source exists in the
+ * framework, and an invented role would lie to the operator.
+ * @param {unknown} named @param {unknown} hidden
+ */
+export function teamRows(named, hidden) {
+  const names = Array.isArray(named) ? named.filter((id) => typeof id === 'string' && id !== '') : [];
+  const off = new Set(Array.isArray(hidden) ? hidden.filter((id) => typeof id === 'string') : []);
+  return [...new Set(names)].map((id) => ({
+    id,
+    active: !off.has(id),
+    color: memberColorIndex(id),
+    initials: memberInitials(id),
+  }));
+}
+
+/**
  * Rome wall minutes since midnight for an instant, or null when the instant
  * does not parse. Presentation only: the server stays the write authority.
  * @param {unknown} value
@@ -280,6 +300,8 @@ export function createCalendarioView(deps) {
 
   const state = {
     memberFilter: '',
+    /** Deselected opaque member ids: their events stay loaded but hidden (C11). @type {Array<string>} */
+    hiddenMembers: [],
     weekKeys: romeWeekKeys(clock()),
     /** Selected event id: a block click opens the detail card (fetta 4). @type {string|null} */
     selectedId: null,
@@ -368,6 +390,14 @@ export function createCalendarioView(deps) {
       state.week = week;
       state.weekError = null;
       state.unavailable = false;
+      // A reloaded week drops deselections nobody named anymore: toggling a
+      // ghost would filter nothing and confuse the next render. A selection
+      // whose member stays hidden loses its detail card with the reload.
+      state.hiddenMembers = state.hiddenMembers.filter((id) => members.includes(id));
+      if (state.selectedId !== null) {
+        const reselected = selectedRow();
+        if (reselected && state.hiddenMembers.includes(String(reselected.teamMemberId ?? ''))) state.selectedId = null;
+      }
     } catch (error) {
       if (token !== renderToken) return;
       if (error?.code === 'NOT_FOUND' || error?.status === 404) {
@@ -411,11 +441,13 @@ export function createCalendarioView(deps) {
       return;
     }
     // BO-F6-11 fetta 4 (specs/calendario.md C6): the detail card paints above
-    // the grid while a block stays selected — the left-column home of fetta 5
-    // (with Team and booking cards) arrives with fette 6–7.
+    // the grid while a block stays selected. Fetta 6 seats the Team toggles
+    // between the detail and the grid they filter; the booking card follows
+    // with fetta 7 (its final left-column home lands with fetta 8).
     const selected = selectedRow();
     if (selected) wrap.appendChild(renderDetailCard(selected));
     else state.selectedId = null;
+    wrap.appendChild(renderTeam());
     wrap.appendChild(renderWeek());
     wrap.appendChild(renderAi());
     wrap.appendChild(renderManual());
@@ -564,7 +596,11 @@ export function createCalendarioView(deps) {
   function weekColumns() {
     /** @type {Map<string, Array<any>>} */
     const byDay = new Map(displayKeys(state.weekKeys).map((key) => [key, []]));
+    const hidden = new Set(state.hiddenMembers);
     for (const group of state.week?.members ?? []) {
+      // C11: a deselected member's events stay loaded but paint nothing —
+      // reselecting shows them again with no reload.
+      if (hidden.has(group?.teamMemberId)) continue;
       for (const row of group?.appointments ?? []) {
         const key = romeDayKey(row.startsAt);
         if (key !== null && byDay.has(key)) byDay.get(key).push({ ...row, teamMemberId: group.teamMemberId });
@@ -574,6 +610,57 @@ export function createCalendarioView(deps) {
       rows.sort((a, b) => String(a.startsAt).localeCompare(String(b.startsAt)));
     }
     return [...byDay.entries()];
+  }
+
+  /**
+   * BO-F6-11 fetta 6 (specs/calendario.md C10, C11): the Team card — one
+   * toggle row per named member, in filter order. No roster exists in the
+   * framework, so rows name opaque identities, never people; the checkbox
+   * tint and avatar reuse the member's grid colour and initials. A click
+   * hides that member's blocks (C11) with no reload; hiding the selected
+   * block's member closes the detail card, since its selection border is
+   * gone. Every row is a button, so the raw-control walk stays green.
+   */
+  function renderTeam() {
+    const panel = el(doc, 'div', { className: 'panel' });
+    panel.appendChild(el(doc, 'h2', { text: 'Team' }));
+    const named = parseMemberFilter(state.memberFilter);
+    if (named.length === 0) {
+      panel.appendChild(el(doc, 'p', {
+        className: 'empty',
+        text: 'Nomina le persone del team sopra: qui compaiono come interruttori per filtrare la settimana.',
+      }));
+      return panel;
+    }
+    for (const row of teamRows(named, state.hiddenMembers)) {
+      const toggle = el(doc, 'button', {
+        className: 'secondary small',
+        attrs: {
+          type: 'button',
+          'aria-pressed': row.active ? 'true' : 'false',
+          title: row.active ? `Nascondi ${row.id} dalla settimana` : `Mostra ${row.id} nella settimana`,
+        },
+      });
+      const box = el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.active ? '✓' : '' });
+      toggle.appendChild(box);
+      toggle.appendChild(el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.initials }));
+      toggle.appendChild(el(doc, 'span', { text: row.id }));
+      toggle.addEventListener('click', () => {
+        const hidden = new Set(state.hiddenMembers);
+        if (row.active) {
+          hidden.add(row.id);
+          // A hidden selection has no visible border: close its detail card.
+          const selected = selectedRow();
+          if (selected && String(selected.teamMemberId ?? '') === row.id) state.selectedId = null;
+        } else {
+          hidden.delete(row.id);
+        }
+        state.hiddenMembers = [...hidden];
+        renderAll();
+      });
+      panel.appendChild(toggle);
+    }
+    return panel;
   }
 
   /**
