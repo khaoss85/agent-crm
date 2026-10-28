@@ -1501,8 +1501,9 @@ export function createChannelOperations(deps) {
    * "Stato sync" screen renders, all read from the real inbox and
    * dead-letter rows — never invented, never provider text. One entry per
    * connection — its binding, the same import progress surface
-   * `readInitialImport` returns, inbox tallies by effect, open dead
-   * letters, the observed direction (`in` when inbox rows exist, `out`
+   * `readInitialImport` returns, the provider-stated grant expiry
+   * (`grantExpiresAt`, null when the binding states none), inbox tallies by
+   * effect, open dead letters, the observed direction (`in` when inbox rows exist, `out`
    * when dead-letter rows exist, `both` when both do, null before any
    * traffic), and a health verdict (`idle` while a binding waits for
    * activation or before the first pull of an importable connection
@@ -1558,6 +1559,11 @@ export function createChannelOperations(deps) {
       const direction = inboxCount.received > 0 && letterCount > 0 ? 'both'
         : inboxCount.received > 0 ? 'in'
           : letterCount > 0 ? 'out' : null;
+      // BO-F6-16: the Stato sync screen names an expiring grant before it
+      // breaks (the yellow card and the channel pill). Absent means no
+      // stated expiry — never a guess.
+      const grantExpiresAt = typeof connection.grantExpiresAt === 'string' && connection.grantExpiresAt !== ''
+        ? connection.grantExpiresAt : null;
       return Object.freeze({
         connectionKey: connection.sourceKey,
         channel: connection.channel,
@@ -1566,6 +1572,7 @@ export function createChannelOperations(deps) {
         adapterVersion: connection.adapterVersion,
         status: connection.status,
         importable: isHistoryImportable(connection),
+        grantExpiresAt,
         sync,
         inbox: Object.freeze(inboxCount),
         outbox,
