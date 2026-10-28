@@ -31,6 +31,12 @@ export const sequenceMigrations = [
       "CREATE INDEX IF NOT EXISTS sequences_status ON sequences(status);" + '\n' +
       "CREATE INDEX IF NOT EXISTS sequences_source_package ON sequences(source_package);",
   },
+  {
+    name: "evolve_sequences_r2",
+    sql:
+      "ALTER TABLE sequences ADD COLUMN trigger_label TEXT;" + '\n' +
+      "ALTER TABLE sequences ADD COLUMN stop_label TEXT;" + '\n',
+  },
 ];
 
 /** The create migration, kept as a named export for pre-evolution consumers. */

@@ -1,5 +1,6 @@
 {
   "manifestVersion": 1,
+  "revision": 2,
   "name": "sequence",
   "table": "sequences",
   "description": "One follow-up sequence of one space (BO-F3-03): an ordered list of day+channel steps with AI-personalized templates, a trigger that enrolls people, and an automatic stop at the first recorded reply. Every field is managed: a sequence exists only through the sequences package's create operation and moves draft -> active | paused only through its pause/resume operations. (backlog:22bb154a72ea)",
@@ -7,6 +8,8 @@
     { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
     { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
     { "name": "name", "type": "string", "writable": "managed" },
+    { "name": "triggerLabel", "type": "string", "writable": "managed" },
+    { "name": "stopLabel", "type": "string", "writable": "managed" },
     { "name": "status", "type": "enum", "values": ["draft", "active", "paused"], "index": true, "writable": "managed" },
     { "name": "decidedAt", "type": "timestamp", "writable": "managed" },
     { "name": "actorType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },

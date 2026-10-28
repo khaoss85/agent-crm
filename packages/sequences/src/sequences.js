@@ -104,6 +104,21 @@ export function checkRecordKey(value, field, max = 256) {
   return boundedLine(value, field, max);
 }
 
+/**
+ * Optional backoffice label for the `Quando …` / `Si ferma quando: …` pills
+ * (BO-F6-12, backlog:ca96298ca38a): null when the sequence carries no label,
+ * otherwise bounded single-line text (280 keeps the pill on one line).
+ * Empty and overlong labels refuse fail-closed, like every other row field.
+ * @param {unknown} value @param {string} field
+ */
+export function optionalSequenceLabel(value, field) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || value.trim() === '' || value.length > 280 || CONTROL_RE.test(value)) {
+    throw new ValidationError(`${field} must be bounded single-line text when present`, { field });
+  }
+  return value;
+}
+
 /** @param {unknown} value @param {string} field */
 function boundedLine(value, field, max = MAX_LINE) {
   if (typeof value !== 'string' || value.trim() === '' || value.length > max || CONTROL_RE.test(value)) {
