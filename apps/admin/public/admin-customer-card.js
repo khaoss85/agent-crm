@@ -115,6 +115,40 @@ const timeParts = (value) => {
   }).format(new Date(ms));
 };
 
+/**
+ * Voce 59def6cb805d (C16): the Rome calendar day of an instant, as
+ * `YYYY-MM-DD`, so the timeline can mark the passages of today with the
+ * prototype's `OGGI · ` prefix. Day-level only — never an instant on screen.
+ */
+const romeDayKey = (ms) => {
+  if (!Number.isFinite(ms)) return null;
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(ms));
+};
+
+/**
+ * Voce 59def6cb805d (C19): a call duration in `<m:ss>` for the timeline
+ * card (`372` → `6:12`). Null when the data holds no usable duration — the
+ * card then shows no duration instead of an invented one.
+ */
+const durationParts = (sec) => {
+  const total = typeof sec === 'number' ? Math.floor(sec) : Number.NaN;
+  if (!Number.isFinite(total) || total < 0) return null;
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
+
+/**
+ * Voce 59def6cb805d (C17): the sync-row arrow of the prototype
+ * (`↔/←/→ <canale> · <stato>`). Inbound `←`, outbound `→`; a passage with
+ * no recorded direction carries no arrow instead of an invented one.
+ */
+const syncArrow = (direction) => {
+  if (direction === 'inbound') return '← ';
+  if (direction === 'outbound') return '→ ';
+  return '';
+};
+
 const STATUS_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' });
 const statusLabel = (value) => STATUS_LABELS[String(value ?? '').toLowerCase()]
   ?? String(value ?? 'Contatto').replace(/^./, (first) => first.toUpperCase());
@@ -392,7 +426,9 @@ export function createCustomerCardView(deps) {
   }
 
   function timelineBox(box, timeline) {
-    box.appendChild(el('h4', undefined, 'Cronologia'));
+    // Voce 59def6cb805d (C14): the prototype names this section, not the
+    // record kind behind it.
+    box.appendChild(el('h4', undefined, 'Tutti i contatti'));
     const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     const chips = el('p', 'bo-scheda-chips');
@@ -415,18 +451,26 @@ export function createCustomerCardView(deps) {
       while (list.firstChild) list.removeChild(list.firstChild);
       const visible = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
       if (visible.length === 0) {
-        list.appendChild(el('p', 'bo-muted', channelFilter === 'all'
-          ? 'nessun passaggio registrato su nessun canale'
-          : `nessun passaggio su ${channelLabel(channelFilter)}`));
+        // Voce 59def6cb805d (C27): the exact empty state of the prototype,
+        // never a technical sentence.
+        list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessun messaggio qui'));
+        list.appendChild(el('p', 'bo-muted', 'Prova un altro canale oppure scrivi il primo messaggio qui sotto.'));
         return;
       }
+      const todayKey = romeDayKey(Date.now());
       let currentDay = null;
       for (const item of visible) {
         // Voce 1a066ddfe42a: group and label by the readable Rome day.
-        const day = dayParts(item?.occurredAt) ?? 'senza data';
-        if (day !== currentDay) {
-          currentDay = day;
-          list.appendChild(el('h5', 'bo-scheda-day', day));
+        // Voce 59def6cb805d (C16): the day reads uppercase, like the
+        // prototype (`LUNEDÌ 20 OTTOBRE 2026`), with the `OGGI · ` prefix on
+        // the passages of today.
+        const occurredMs = Date.parse(String(item?.occurredAt ?? ''));
+        const dayKey = romeDayKey(occurredMs);
+        const day = (dayParts(item?.occurredAt) ?? 'senza data').toUpperCase();
+        const dayLabel = dayKey !== null && dayKey === todayKey ? `OGGI · ${day}` : day;
+        if (dayLabel !== currentDay) {
+          currentDay = dayLabel;
+          list.appendChild(el('h5', 'bo-scheda-day', dayLabel));
         }
         const row = el('div', 'bo-scheda-entry');
         row.setAttribute('data-entry', String(item?.id ?? ''));
@@ -437,16 +481,24 @@ export function createCustomerCardView(deps) {
         const who = isOutbound
           ? (isHumanHandle(item?.teamAuthorId) ? `inviato da ${String(item.teamAuthorId).trim()}` : 'inviato dal team')
           : (item?.remoteHandle ? `da ${item.remoteHandle}` : 'ricevuto');
-        const when = dateTimeParts(item?.occurredAt);
+        // Voce 59def6cb805d (C17): the day already heads the group, so the
+        // card shows the hour only (`<hh:mm>`) beside channel and direction.
+        const when = timeParts(item?.occurredAt);
         row.appendChild(el('p', 'bo-scheda-entry-head',
           when ? `${channelLabel(item?.channel)} · ${who} · ${when}` : `${channelLabel(item?.channel)} · ${who}`));
         if (item?.entry === 'call') {
-          const dur = item?.durationSec != null ? ` · ${item.durationSec}s` : '';
-          row.appendChild(el('p', undefined, `chiamata ${isOutbound ? 'in uscita' : 'in entrata'}${dur}`));
+          // Voce 59def6cb805d (C19): the duration reads `<m:ss>`; with no
+          // audio URL in the data no player is rendered (never a dead one).
+          const dur = durationParts(item?.durationSec);
+          row.appendChild(el('p', undefined,
+            dur ? `chiamata ${isOutbound ? 'in uscita' : 'in entrata'} · ${dur}` : `chiamata ${isOutbound ? 'in uscita' : 'in entrata'}`));
         } else if (typeof item?.body === 'string' && item.body !== '') {
           row.appendChild(el('p', undefined, item.body));
         }
-        row.appendChild(el('p', 'bo-scheda-sync', syncLabel(item?.sync)));
+        // Voce 59def6cb805d (C17): the sync row of the prototype,
+        // `←/→ <canale> · <stato>`.
+        row.appendChild(el('p', 'bo-scheda-sync',
+          `${syncArrow(item?.direction)}${channelLabel(item?.channel)} · ${syncLabel(item?.sync)}`));
         list.appendChild(row);
       }
     };
@@ -542,12 +594,16 @@ export function createCustomerCardView(deps) {
   function aiSummary(box, calls) {
     // BO-F1-08: the per-customer AI summary is the latest summarized call.
     // Without a recorded source it stays unavailable — never an invented one.
-    box.appendChild(el('h4', undefined, 'Riepilogo AI'));
+    // Voce 59def6cb805d (C23): the prototype's `<quando aggiornato>` row —
+    // when the summarized call was recorded, never an invented freshness.
+    box.appendChild(el('h4', undefined, '✦ Riepilogo AI'));
     const latest = latestSummarized(calls);
     if (!latest) {
       box.appendChild(el('p', 'bo-muted', 'non disponibile: nessun riepilogo registrato per questo cliente'));
       return;
     }
+    const updated = dateTimeParts(latest?.recordedAt);
+    if (updated) box.appendChild(el('p', 'bo-scheda-summary-when', `Aggiornato ${updated}`));
     box.appendChild(el('p', 'bo-scheda-summary', latest.summary));
   }
 
@@ -588,14 +644,27 @@ export function createCustomerCardView(deps) {
     }
     const transcript = latest?.transcript;
     if (transcript?.available === true) {
-      const openable = doc.createElement('details');
-      const caption = doc.createElement('summary');
-      caption.textContent = 'Trascrizione';
-      openable.appendChild(caption);
-      const body = doc.createElement('p');
-      body.textContent = String(transcript.text ?? '');
-      openable.appendChild(body);
-      box.appendChild(openable);
+      // Voce 59def6cb805d (C20): the prototype's toggle with its exact
+      // texts — one speaker row per transcript line. The rows mount only
+      // while open, so a closed transcript shows nothing of its content.
+      const toggle = el('button', 'bo-scheda-transcript-toggle', 'Mostra trascrizione');
+      toggle.setAttribute('type', 'button');
+      toggle.setAttribute('aria-expanded', 'false');
+      const body = el('div', 'bo-scheda-transcript');
+      toggle.addEventListener('click', () => {
+        const open = toggle.getAttribute('aria-expanded') !== 'true';
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggle.textContent = open ? 'Nascondi trascrizione' : 'Mostra trascrizione';
+        while (body.firstChild) body.removeChild(body.firstChild);
+        if (open) {
+          for (const line of String(transcript.text ?? '').split('\n')) {
+            if (line.trim() === '') continue;
+            body.appendChild(el('p', 'bo-scheda-transcript-row', line));
+          }
+        }
+      });
+      box.appendChild(toggle);
+      box.appendChild(body);
     } else {
       box.appendChild(el('p', 'bo-muted',
         typeof transcript?.reason === 'string' && transcript.reason !== ''
